@@ -121,7 +121,53 @@ export async function restartGatewayChannels(options: {
           }
         }
       } else {
-        params.releaseChannelRouteHandoffs(channel, accountId);
+        const accountRestarts = collectChannelAccountTargets();
+        const accountRestartFailures: string[] = [];
+        for (const [channel, accountId] of accountRestarts) {
+          try {
+            params.logChannels.info(`restarting ${channel} account ${accountId}`);
+            if (!wasStoppedBeforePluginReload(channel, accountId)) {
+              await params.stopChannel(channel, accountId, { manual: false });
+            }
+            if (isLifecycleReloadAborted()) {
+              continue;
+            }
+            await startGatewayChannelFromActiveRegistry(params, channel, accountId);
+          } catch (err) {
+            accountRestartFailures.push(`${channel}[${accountId}]`);
+            params.logChannels.error(
+              `failed to restart ${channel} account ${accountId} during hot reload: ${formatErrorMessage(err)}`,
+            );
+          }
+        }
+        const restartChannel = async (name: ChannelKind) => {
+          if (plan.reloadPlugins && activePluginChannelsAfterReload?.has(name) === false) {
+            return;
+          }
+          params.logChannels.info(`restarting ${name} channel`);
+          if (!channelsStoppedBeforePluginReload.has(name)) {
+            await params.stopChannel(name, undefined, { manual: false });
+          }
+          if (isLifecycleReloadAborted()) {
+            return;
+          }
+          await runOutsideGatewayRootWorkAdmission(() =>
+            params.startChannel(name, undefined, { includeKnownAccounts: true }),
+          );
+        };
+        const restartFailures = await collectChannelOperationFailures({
+          channels: channelsToRestart,
+          run: restartChannel,
+          onFailure: (channel, err) => {
+            params.logChannels.error(
+              `failed to restart ${channel} channel during hot reload: ${formatErrorMessage(err)}`,
+            );
+          },
+        });
+        const allRestartFailures = [...accountRestartFailures, ...restartFailures];
+        if (allRestartFailures.length > 0) {
+          scheduleRecoveryRestart(`channel restart (${allRestartFailures.join(", ")})`);
+        }
       }
     } catch (err) {
       failures.push(accountId === undefined ? channel : `${channel}[${accountId}]`);

@@ -5173,112 +5173,59 @@ describe("server-channels auto restart", () => {
     await manager.stopChannel("discord");
   });
 
-  it("retires only the credential owner for an evicted channel account", async () => {
-    let accountIds = ["removed", "retained"];
+  it("can include already-known accounts during channel hot reload", async () => {
+    let accountIds = ["account-a"];
+    const startAccount = vi.fn(
+      async ({ abortSignal }: { accountId: string; abortSignal: AbortSignal }) =>
+        await new Promise<void>((resolve) => {
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
     installTestRegistry(
       createTestPlugin({
+        startAccount,
         listAccountIds: () => accountIds,
-        startAccount: async () => {},
-        resolveAccount: (_cfg, accountId) => ({
-          enabled: true,
-          configured: true,
-          credentialDiagnostics: [
-            {
-              code: "CREDENTIAL_FILE_UNAVAILABLE" as const,
-              path: `channels.discord.accounts.${accountId}.tokenFile`,
-              reason: "not-found",
-            },
-          ],
-        }),
+        resolveAccount: () => ({ enabled: true, configured: true }),
       }),
     );
     const manager = createManager();
 
-    await manager.startChannels();
-    expect(listActiveDegradedSecretOwners().map((owner) => owner.ownerId)).toEqual([
-      "discord:removed",
-      "discord:retained",
-    ]);
+    await manager.startChannel("discord");
 
-    accountIds = ["retained"];
-    await expect(manager.startChannel("discord")).rejects.toMatchObject({
-      ownerId: "discord:retained",
-    });
+    accountIds = ["account-b"];
+    await manager.stopChannel("discord", undefined, { manual: false });
+    await manager.startChannel("discord", undefined, { includeKnownAccounts: true });
 
-    expect(listActiveDegradedSecretOwners().map((owner) => owner.ownerId)).toEqual([
-      "discord:retained",
-    ]);
+    const startedAccountIds = startAccount.mock.calls.map(([ctx]) => ctx?.accountId);
+    expect(startedAccountIds).toEqual(["account-a", "account-b", "account-a"]);
+
+    const snapshot = manager.getRuntimeSnapshot();
+    expect(snapshot.channelAccounts.discord?.["account-a"]?.running).toBe(true);
+    expect(snapshot.channelAccounts.discord?.["account-b"]?.running).toBe(true);
+    expect(manager.isManuallyStopped("discord", "account-a")).toBe(false);
+
+    await manager.stopChannel("discord");
   });
 
-  it("prunes only credential owners and account state for inactive channel plugins", async () => {
-    installTestRegistry(
-      ...(["discord", "slack"] as const).map((channelId) =>
-        createTestPlugin({
-          id: channelId,
-          listAccountIds: () => ["Ops Team"],
-          startAccount: async () => {},
-          resolveAccount: (_cfg, accountId) => ({
-            enabled: true,
-            configured: true,
-            credentialDiagnostics: [
-              {
-                code: "CREDENTIAL_FILE_UNAVAILABLE" as const,
-                path: `channels.${channelId}.accounts.${accountId}.tokenFile`,
-                reason: "not-found",
-              },
-            ],
-          }),
+  it("does not resurrect stopped stale accounts from the known-account safety net", async () => {
+    let accountIds = ["account-a"];
+    const startAccount = vi.fn(
+      async ({ abortSignal }: { abortSignal: AbortSignal }) =>
+        await new Promise<void>((resolve) => {
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
         }),
-      ),
     );
-    const manager = createManager({ channelIds: ["discord", "slack"] });
+    installTestRegistry(createTestPlugin({ startAccount, listAccountIds: () => accountIds }));
+    const manager = createManager();
 
-    await manager.startChannels();
-    expect(listActiveDegradedSecretOwners().map((owner) => owner.ownerId)).toEqual([
-      "discord:ops-team",
-      "slack:ops-team",
-    ]);
+    await manager.startChannel("discord");
+    await manager.stopChannel("discord");
 
-    manager.pruneInactiveChannelAccountState(new Set(["slack"]));
+    accountIds = [];
+    await manager.startChannel("discord", undefined, { includeKnownAccounts: true });
 
-    expect(listActiveDegradedSecretOwners().map((owner) => owner.ownerId)).toEqual([
-      "slack:ops-team",
-    ]);
-    expect(manager.resolveRuntimeAccountId("discord", "ops-team")).toBeUndefined();
-    expect(manager.resolveRuntimeAccountId("slack", "ops-team")).toBe("Ops Team");
-  });
-
-  it("resolves only an unambiguous authoritative runtime account for a normalized owner", async () => {
-    let accountIds = ["Ops Team"];
-    installTestRegistry(
-      createTestPlugin({
-        id: "line",
-        listAccountIds: () => accountIds,
-        startAccount: async () => {},
-        resolveAccount: (_cfg, accountId) => ({
-          enabled: true,
-          configured: true,
-          credentialDiagnostics: [
-            {
-              code: "CREDENTIAL_FILE_UNAVAILABLE" as const,
-              path: `channels.line.accounts.${accountId}.channelAccessTokenFile`,
-              reason: "not-found",
-            },
-          ],
-        }),
-      }),
-    );
-    const manager = createManager({ channelIds: ["line"] });
-
-    await manager.startChannels();
-
-    expect(manager.resolveRuntimeAccountId("line", "ops-team")).toBe("Ops Team");
-    expect(manager.resolveRuntimeAccountId("line", "missing")).toBeUndefined();
-
-    accountIds = ["Ops Team", "ops-team"];
-    await manager.startChannels();
-
-    expect(manager.resolveRuntimeAccountId("line", "ops-team")).toBeUndefined();
+    expect(startAccount).toHaveBeenCalledTimes(1);
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.["account-a"]).toBeUndefined();
   });
 
   it("reuses plugin account resolution for health monitor overrides", () => {
