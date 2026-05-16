@@ -489,23 +489,43 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         throw new GatewayHotReloadRecoveryError(surface);
       }
     };
-    let pluginRuntimeApplication: GatewayPluginReloadResult["runtime"] | undefined;
-    try {
-      if (plan.reloadPlugins) {
-        // The plugin lifecycle owner drains and restores its own channel/service instances.
-        // This config transaction owns only publication and unrelated config effects.
-        const result = await params.reloadPlugins({
-          nextConfig,
-          sourceConfig: publication ? publication.sourceConfig : nextConfig,
-          changedPaths: plan.changedPaths,
-          reloadPluginIds: plan.reloadPluginIds,
-          pluginLifecycle: plan.pluginLifecycle,
-          prepareConfigEffects,
-          commitRuntime,
-          env: publication?.runtimeEnv ?? process.env,
-          isAborted: isPluginReloadAborted,
-          checkpoint: publication?.checkpoint,
-          assertInvokerOwned: publication?.assertInvokerOwned,
+    if (plan.reloadPlugins) {
+      const restartStoppedPluginAccounts = async (reason: string): Promise<string[]> => {
+        const failures: string[] = [];
+        for (const [channel, accountIds] of accountsStoppedBeforePluginReload) {
+          for (const accountId of accountIds) {
+            try {
+              params.logChannels.info(`restarting ${channel} account ${accountId} after ${reason}`);
+              await startGatewayChannelFromActiveRegistry(params, channel, accountId);
+              accountIds.delete(accountId);
+            } catch (err) {
+              failures.push(`${channel}[${accountId}]`);
+              params.logChannels.error(
+                `failed to restart ${channel} account ${accountId} after ${reason}: ${formatErrorMessage(err)}`,
+              );
+            }
+          }
+          if (accountIds.size === 0) {
+            accountsStoppedBeforePluginReload.delete(channel);
+          }
+        }
+        return failures;
+      };
+      const restartStoppedPluginChannels = async (reason: string) =>
+        await collectChannelOperationFailures({
+          channels: [...channelsStoppedBeforePluginReload],
+          run: async (channel) => {
+            params.logChannels.info(`restarting ${channel} channel after ${reason}`);
+            await runOutsideGatewayRootWorkAdmission(() =>
+              params.startChannel(channel, undefined, { includeKnownAccounts: true }),
+            );
+            channelsStoppedBeforePluginReload.delete(channel);
+          },
+          onFailure: (channel, err) => {
+            params.logChannels.error(
+              `failed to restart ${channel} channel after ${reason}: ${formatErrorMessage(err)}`,
+            );
+          },
         });
         pluginReloadAborted = isPluginReloadAborted();
         if (!pluginReloadAborted) {
