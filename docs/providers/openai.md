@@ -690,7 +690,7 @@ Legacy `plugins.entries.openai.config.personality` is still read as a compatibil
     voice such as `fable`, `nova`, or `onyx` is valid for Realtime sessions.
 
     <Note>
-    Backend OpenAI realtime bridges use the GA Realtime WebSocket session shape, which does not accept `session.temperature`. Azure OpenAI deployments remain available via `azureEndpoint` and `azureDeployment` and keep the deployment-compatible session shape. Supports bidirectional tool calling and G.711 u-law audio.
+    Backend OpenAI realtime bridges use the GA Realtime WebSocket session shape, which does not accept `session.temperature`. Azure OpenAI deployments remain available via `azureEndpoint` and `azureDeployment`. Set `azureApiVersion` to `v1` or `ga` for Azure's GA `/openai/v1/realtime?model=<deployment>` endpoint; preview API versions continue to use Azure's deployment-compatible `/openai/realtime?api-version=...&deployment=...` endpoint and session shape. Supports bidirectional tool calling and G.711 u-law audio.
     </Note>
 
     <Note>

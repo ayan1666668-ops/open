@@ -626,6 +626,19 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
       const base = cfg.azureEndpoint
         .replace(/\/$/, "")
         .replace(/^http(s?):/, (_, secure: string) => `ws${secure}:`);
+      if (this.usesAzureGaRealtimeApi()) {
+        const url = `${base}/openai/v1/realtime?model=${encodeURIComponent(cfg.azureDeployment)}`;
+        return {
+          url,
+          headers: resolveProviderRequestHeaders({
+            provider: "openai",
+            baseUrl: url,
+            capability: "audio",
+            transport: "websocket",
+            defaultHeaders: { "api-key": apiKey },
+          }) ?? { "api-key": apiKey },
+        };
+      }
       const apiVersion = cfg.azureApiVersion ?? "2024-10-01-preview";
       const url = `${base}/openai/realtime?api-version=${apiVersion}&deployment=${encodeURIComponent(
         cfg.azureDeployment,
@@ -750,7 +763,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   }
 
   private sendSessionUpdate(): void {
-    if (this.usesAzureDeploymentRealtimeApi()) {
+    if (this.usesAzureDeploymentPreviewRealtimeApi()) {
       this.sendEvent(this.buildAzureDeploymentSessionUpdate());
       return;
     }
@@ -766,7 +779,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
       type: "session.update",
       session: {
         type: "realtime",
-        model: cfg.model ?? OpenAIRealtimeVoiceBridge.DEFAULT_MODEL,
+        model: this.resolveGaRealtimeModel(),
         instructions: cfg.instructions,
         output_modalities: ["audio"],
         audio: {
@@ -799,8 +812,28 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
     };
   }
 
-  private usesAzureDeploymentRealtimeApi(): boolean {
-    return Boolean(this.config.azureEndpoint && this.config.azureDeployment);
+  private usesAzureGaRealtimeApi(): boolean {
+    const apiVersion = this.config.azureApiVersion?.trim().toLowerCase();
+    return Boolean(
+      this.config.azureEndpoint &&
+      this.config.azureDeployment &&
+      (apiVersion === "v1" || apiVersion === "ga"),
+    );
+  }
+
+  private usesAzureDeploymentPreviewRealtimeApi(): boolean {
+    return Boolean(
+      this.config.azureEndpoint && this.config.azureDeployment && !this.usesAzureGaRealtimeApi(),
+    );
+  }
+
+  private resolveGaRealtimeModel(): string {
+    if (this.usesAzureGaRealtimeApi()) {
+      return (
+        this.config.model ?? this.config.azureDeployment ?? OpenAIRealtimeVoiceBridge.DEFAULT_MODEL
+      );
+    }
+    return this.config.model ?? OpenAIRealtimeVoiceBridge.DEFAULT_MODEL;
   }
 
   private buildAzureDeploymentSessionUpdate(): RealtimeAzureDeploymentSessionUpdate {

@@ -743,6 +743,53 @@ describe("buildOpenAIRealtimeVoiceProvider", () => {
     await connecting;
   });
 
+  it("uses Azure GA realtime endpoint and GA session payload when azureApiVersion is v1", async () => {
+    const provider = buildOpenAIRealtimeVoiceProvider();
+    const bridge = provider.createBridge({
+      providerConfig: {
+        apiKey: "sk-test", // pragma: allowlist secret
+        azureEndpoint: "https://example.openai.azure.com/",
+        azureDeployment: "gpt-realtime-1-5",
+        azureApiVersion: "v1",
+        voice: "sage",
+      },
+      audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+      instructions: "Be helpful.",
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+    const connecting = bridge.connect();
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) {
+      throw new Error("expected bridge to create a websocket");
+    }
+
+    expect(socket.args[0]).toBe(
+      "wss://example.openai.azure.com/openai/v1/realtime?model=gpt-realtime-1-5",
+    );
+
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.emit("open");
+    await Promise.resolve();
+
+    const session = requireSession(socket);
+    expectRecordFields(session, "session", {
+      type: "realtime",
+      model: "gpt-realtime-1-5",
+      instructions: "Be helpful.",
+      output_modalities: ["audio"],
+    });
+    expect(requireNestedRecord(session, ["audio", "output"])).toEqual({
+      format: { type: "audio/pcm", rate: 24000 },
+      voice: "sage",
+    });
+    expect(session).not.toHaveProperty("modalities");
+    expect(session).not.toHaveProperty("temperature");
+
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "session.updated" })));
+    await connecting;
+  });
+
   it("rejects connection when session configuration fails before readiness", async () => {
     const provider = buildOpenAIRealtimeVoiceProvider();
     const bridge = provider.createBridge({
