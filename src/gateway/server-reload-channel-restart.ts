@@ -3,6 +3,11 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { ChannelKind } from "./config-reload-plan.js";
 import type { GatewayReloadHandlerParams } from "./server-reload-contracts.js";
+import { collectChannelOperationFailures } from "./server-reload-utils.js";
+
+function isChannelAccountIndexReloadPath(path: string, channel: ChannelKind): boolean {
+  return path === `channels.${channel}.channelConfigUpdatedAt`;
+}
 
 export async function restartGatewayChannels(options: {
   params: Pick<
@@ -144,6 +149,10 @@ export async function restartGatewayChannels(options: {
           if (plan.reloadPlugins && activePluginChannelsAfterReload?.has(name) === false) {
             return;
           }
+          const includeKnownAccounts =
+            (plan.reloadPlugins && channelsStoppedBeforePluginReload.has(name)) ||
+            (!plan.reloadPlugins &&
+              plan.changedPaths.some((path) => isChannelAccountIndexReloadPath(path, name)));
           params.logChannels.info(`restarting ${name} channel`);
           if (!channelsStoppedBeforePluginReload.has(name)) {
             await params.stopChannel(name, undefined, { manual: false });
@@ -151,7 +160,7 @@ export async function restartGatewayChannels(options: {
           if (isLifecycleReloadAborted()) {
             return;
           }
-          if (plan.reloadPlugins && channelsStoppedBeforePluginReload.has(name)) {
+          if (includeKnownAccounts) {
             await runOutsideGatewayRootWorkAdmission(() =>
               params.startChannel(name, undefined, { includeKnownAccounts: true }),
             );
