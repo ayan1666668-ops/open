@@ -8108,6 +8108,11 @@ describe("deferred channel reload abort generation", () => {
     restartChannels: new Set(["whatsapp"]),
   });
 
+  beforeEach(() => {
+    delete process.env.OPENCLAW_SKIP_CHANNELS;
+    delete process.env.OPENCLAW_SKIP_PROVIDERS;
+  });
+
   afterEach(() => {
     hoisted.activeTaskCount.value = 0;
     vi.useRealTimers();
