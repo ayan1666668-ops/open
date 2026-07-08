@@ -22,6 +22,7 @@ import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
+import { getProcessSupervisor } from "../process/supervisor/index.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import {
   scheduleRestartSentinelWake,
@@ -59,6 +60,13 @@ export async function startGatewaySidecars(params: {
     }
   } catch (err) {
     params.log.warn(`session lock cleanup failed on startup: ${String(err)}`);
+  }
+
+  // Kill and clean up exec children orphaned by a previous gateway crash.
+  try {
+    await getProcessSupervisor().reconcileOrphans();
+  } catch (err) {
+    params.log.warn(`orphan process reconcile failed on startup: ${String(err)}`);
   }
 
   // Start OpenClaw browser control server (unless disabled via config).

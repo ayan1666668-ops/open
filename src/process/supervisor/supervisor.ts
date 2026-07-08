@@ -3,6 +3,12 @@ import { getShellConfig } from "../../agents/shell-utils.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { createChildAdapter } from "./adapters/child.js";
 import { createPtyAdapter } from "./adapters/pty.js";
+import {
+  ownProcessStartTimeMs,
+  persistRunRecord,
+  reconcilePersistedOrphans,
+  removeRunRecord,
+} from "./orphans.js";
 import { createRunRegistry } from "./registry.js";
 import type {
   ManagedRun,
@@ -145,6 +151,21 @@ export function createProcessSupervisor(): ProcessSupervisor {
             });
 
       registry.updateState(runId, "running", { pid: adapter.pid });
+      if (typeof adapter.pid === "number" && adapter.pid > 0) {
+        // Persist ownership so a restarted gateway can reconcile children we
+        // leave behind on crash (see reconcileOrphans / orphans.ts).
+        persistRunRecord({
+          runId,
+          pid: adapter.pid,
+          ownerPid: process.pid,
+          ownerStartedAtMs: ownProcessStartTimeMs(),
+          createdAtMs: Date.now(),
+          argvPreview: (input.mode === "child" ? input.argv.join(" ") : input.ptyCommand).slice(
+            0,
+            160,
+          ),
+        });
+      }
 
       const clearTimers = () => {
         if (timeoutTimer) {
@@ -226,6 +247,7 @@ export function createProcessSupervisor(): ProcessSupervisor {
           exitCode: exit.exitCode,
           exitSignal: exit.exitSignal,
         });
+        removeRunRecord(runId);
         return exit;
       })().catch((err) => {
         if (!settled) {
@@ -238,6 +260,7 @@ export function createProcessSupervisor(): ProcessSupervisor {
             exitCode: null,
             exitSignal: null,
           });
+          removeRunRecord(runId);
         }
         throw err;
       });
@@ -264,6 +287,7 @@ export function createProcessSupervisor(): ProcessSupervisor {
         exitCode: null,
         exitSignal: null,
       });
+      removeRunRecord(runId);
       log.warn(`spawn failed: runId=${runId} reason=${String(err)}`);
       throw err;
     }
@@ -274,8 +298,12 @@ export function createProcessSupervisor(): ProcessSupervisor {
     cancel,
     cancelScope,
     reconcileOrphans: async () => {
-      // Deliberate no-op: this supervisor uses in-memory ownership only.
-      // Active runs are not recovered after process restart in the current model.
+      const result = await reconcilePersistedOrphans();
+      if (result.scanned > 0) {
+        log.info(
+          `orphan reconcile: scanned=${result.scanned} killed=${result.killed} removed=${result.removed}`,
+        );
+      }
     },
     getRecord: (runId: string) => registry.get(runId),
   };
