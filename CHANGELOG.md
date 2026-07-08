@@ -37,6 +37,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Agents/Embedded runner: stop switching the process-wide working directory per run; the workspace path is now passed explicitly to tools, prompts, and the agent session. Prevents concurrent runs on different lanes (main/cron/subagent/nested) from reading or writing files in each other's workspace.
+- Gateway/Requests: guarantee exactly one response per WebSocket request — duplicate responses are dropped, requests still pending after 60s log a warning, and a hung handler now fails the request with a retryable timeout error after 15 minutes instead of leaving the client waiting forever.
 - Docker/Image health checks: add Dockerfile `HEALTHCHECK` that probes gateway `GET /healthz` so container runtimes can mark unhealthy instances without requiring auth credentials in the probe command. (#11478) Thanks @U-C4N and @vincentkoc.
 - Android/Nodes reliability: reject `facing=both` when `deviceId` is set to avoid mislabeled duplicate captures, allow notification `open`/`reply` on non-clearable entries while still gating dismiss, trigger listener rebind before notification actions, and scale invoke-result ack timeout to invoke budget for large clip payloads. (#28260) Thanks @obviyus.
 - Windows/Plugin install: avoid `spawn EINVAL` on Windows npm/npx invocations by resolving to `node` + npm CLI scripts instead of spawning `.cmd` directly. Landed from contributor PR #31147 by @codertony. Thanks @codertony.

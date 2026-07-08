@@ -84,6 +84,7 @@ import {
   resolveControlUiAuthPolicy,
   shouldSkipControlUiPairing,
 } from "./connect-policy.js";
+import { createGuardedResponder } from "./respond-guard.js";
 import { isUnauthorizedRoleError, UnauthorizedFloodGuard } from "./unauthorized-flood-guard.js";
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
@@ -1147,10 +1148,26 @@ export function attachGatewayWsMessageHandler(params: {
         });
       };
 
+      // Every request must get exactly one response: duplicates are dropped,
+      // and a hung handler fails the request instead of leaving the client
+      // waiting forever (with an earlier warn so hangs show up in logs).
+      const respondGuarded = createGuardedResponder({
+        respond,
+        method: req.method,
+        onWarn: (pendingMs) => {
+          logGateway.warn(
+            `request still pending after ${Math.round(pendingMs / 1000)}s: method=${req.method} id=${req.id} conn=${connId}`,
+          );
+        },
+        onDuplicate: () => {
+          logWs("out", "res-duplicate-dropped", { connId, id: req.id, method: req.method });
+        },
+      });
+
       void (async () => {
         await handleGatewayRequest({
           req,
-          respond,
+          respond: respondGuarded,
           client,
           isWebchatConnect,
           extraHandlers,
@@ -1158,7 +1175,7 @@ export function attachGatewayWsMessageHandler(params: {
         });
       })().catch((err) => {
         logGateway.error(`request handler failed: ${formatForLog(err)}`);
-        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+        respondGuarded(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
       });
     } catch (err) {
       logGateway.error(`parse/handle error: ${String(err)}`);
