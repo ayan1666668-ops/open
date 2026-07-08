@@ -965,6 +965,20 @@ function scanMutableAllowlistEntries(cfg: OpenClawConfig): MutableAllowlistHit[]
   return hits;
 }
 
+type AllowFromMode = "topOnly" | "topOrNested" | "nestedOnly";
+
+// Where each channel keeps its DM allowFrom list (top-level `allowFrom`,
+// nested `dm.allowFrom`, or either) — must stay in sync with the zod schemas.
+function resolveAllowFromMode(channelName: string): AllowFromMode {
+  if (channelName === "googlechat") {
+    return "nestedOnly";
+  }
+  if (channelName === "discord" || channelName === "slack") {
+    return "topOrNested";
+  }
+  return "topOnly";
+}
+
 /**
  * Scan all channel configs for dmPolicy="open" without allowFrom including "*".
  * This configuration is rejected by the schema validator but can easily occur when
@@ -983,25 +997,13 @@ function maybeRepairOpenPolicyAllowFrom(cfg: OpenClawConfig): {
   const next = structuredClone(cfg);
   const changes: string[] = [];
 
-  type OpenPolicyAllowFromMode = "topOnly" | "topOrNested" | "nestedOnly";
-
-  const resolveAllowFromMode = (channelName: string): OpenPolicyAllowFromMode => {
-    if (channelName === "googlechat") {
-      return "nestedOnly";
-    }
-    if (channelName === "discord" || channelName === "slack") {
-      return "topOrNested";
-    }
-    return "topOnly";
-  };
-
   const hasWildcard = (list?: Array<string | number>) =>
     list?.some((v) => String(v).trim() === "*") ?? false;
 
   const ensureWildcard = (
     account: Record<string, unknown>,
     prefix: string,
-    mode: OpenPolicyAllowFromMode,
+    mode: AllowFromMode,
   ) => {
     const dmEntry = account.dm;
     const dm =
@@ -1108,18 +1110,6 @@ async function maybeRepairAllowlistPolicyAllowFrom(cfg: OpenClawConfig): Promise
   if (!channels || typeof channels !== "object") {
     return { config: cfg, changes: [] };
   }
-
-  type AllowFromMode = "topOnly" | "topOrNested" | "nestedOnly";
-
-  const resolveAllowFromMode = (channelName: string): AllowFromMode => {
-    if (channelName === "googlechat") {
-      return "nestedOnly";
-    }
-    if (channelName === "discord" || channelName === "slack") {
-      return "topOrNested";
-    }
-    return "topOnly";
-  };
 
   const next = structuredClone(cfg);
   const changes: string[] = [];

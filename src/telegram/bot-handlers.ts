@@ -69,6 +69,8 @@ import { buildInlineKeyboard } from "./send.js";
 import { wasSentByBot } from "./sent-message-cache.js";
 
 function isMediaSizeLimitError(err: unknown): boolean {
+  // Matches size-limit errors thrown by our own media pipeline
+  // (src/web/media.ts, src/media/store.ts) — keep wording in sync there.
   const errMsg = String(err);
   return errMsg.includes("exceeds") && errMsg.includes("MB limit");
 }
@@ -401,12 +403,18 @@ export const registerTelegramHandlers = ({
     }
   };
 
+  // Chain catches keep the serialization queue alive on failure, but never
+  // swallow silently: a dropped flush means a user message was lost.
+  const logQueueFailure = (label: string) => (err: unknown) => {
+    runtime.error?.(danger(`telegram ${label} queue failed: ${String(err)}`));
+  };
+
   const queueTextFragmentFlush = async (entry: TextFragmentEntry) => {
     textFragmentProcessing = textFragmentProcessing
       .then(async () => {
         await flushTextFragments(entry);
       })
-      .catch(() => undefined);
+      .catch(logQueueFailure("text fragment"));
     await textFragmentProcessing;
   };
 
@@ -904,7 +912,7 @@ export const registerTelegramHandlers = ({
           .then(async () => {
             await flushTextFragments(existing);
           })
-          .catch(() => undefined);
+          .catch(logQueueFailure("text fragment"));
         await textFragmentProcessing;
       }
 
@@ -934,7 +942,7 @@ export const registerTelegramHandlers = ({
             .then(async () => {
               await processMediaGroup(existing);
             })
-            .catch(() => undefined);
+            .catch(logQueueFailure("media group"));
           await mediaGroupProcessing;
         }, mediaGroupTimeoutMs);
       } else {
@@ -946,7 +954,7 @@ export const registerTelegramHandlers = ({
               .then(async () => {
                 await processMediaGroup(entry);
               })
-              .catch(() => undefined);
+              .catch(logQueueFailure("media group"));
             await mediaGroupProcessing;
           }, mediaGroupTimeoutMs),
         };
