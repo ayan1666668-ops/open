@@ -15,7 +15,7 @@ vi.mock("../utils/fetch-timeout.js", () => ({
   fetchWithTimeout: (...args: unknown[]) => fetchWithTimeoutMock(...args),
 }));
 
-import { signalRpcRequest } from "./client.js";
+import { isSignalConnectFailure, signalRpcRequest } from "./client.js";
 
 function rpcResponse(body: unknown, status = 200): Response {
   if (typeof body === "string") {
@@ -63,5 +63,70 @@ describe("signalRpcRequest", () => {
         baseUrl: "http://127.0.0.1:8080",
       }),
     ).rejects.toThrow("Signal RPC returned invalid response envelope (status 200)");
+  });
+
+  it("retries when the daemon connection is refused, then succeeds", async () => {
+    const refused = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8080"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+    fetchWithTimeoutMock
+      .mockRejectedValueOnce(refused)
+      .mockResolvedValueOnce(
+        rpcResponse({ jsonrpc: "2.0", result: { timestamp: 123 }, id: "test-id" }),
+      );
+
+    const result = await signalRpcRequest<{ timestamp: number }>(
+      "send",
+      { message: "hi" },
+      { baseUrl: "http://127.0.0.1:8080" },
+    );
+
+    expect(result).toEqual({ timestamp: 123 });
+    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry timeouts (daemon may have processed the send)", async () => {
+    const timeoutErr = Object.assign(new Error("Request timed out"), { code: "ETIMEDOUT" });
+    fetchWithTimeoutMock.mockRejectedValueOnce(timeoutErr);
+
+    await expect(
+      signalRpcRequest("send", { message: "hi" }, { baseUrl: "http://127.0.0.1:8080" }),
+    ).rejects.toBe(timeoutErr);
+    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after exhausting connection retries", async () => {
+    const refused = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+    });
+    fetchWithTimeoutMock.mockRejectedValue(refused);
+
+    await expect(
+      signalRpcRequest("send", { message: "hi" }, { baseUrl: "http://127.0.0.1:8080" }),
+    ).rejects.toBe(refused);
+    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("isSignalConnectFailure", () => {
+  it("detects nested and aggregate connection failures", () => {
+    const direct = Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+    const nested = new TypeError("fetch failed", { cause: direct });
+    const aggregate = new TypeError("fetch failed", {
+      cause: { errors: [new Error("other"), direct] },
+    });
+    expect(isSignalConnectFailure(direct)).toBe(true);
+    expect(isSignalConnectFailure(nested)).toBe(true);
+    expect(isSignalConnectFailure(aggregate)).toBe(true);
+  });
+
+  it("rejects non-connection failures", () => {
+    expect(isSignalConnectFailure(new Error("boom"))).toBe(false);
+    expect(isSignalConnectFailure(Object.assign(new Error("t"), { code: "ETIMEDOUT" }))).toBe(
+      false,
+    );
+    expect(isSignalConnectFailure(undefined)).toBe(false);
   });
 });

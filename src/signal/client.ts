@@ -1,4 +1,5 @@
 import { resolveFetch } from "../infra/fetch.js";
+import { retryAsync } from "../infra/retry.js";
 import { generateSecureUuid } from "../infra/secure-random.js";
 import { fetchWithTimeout } from "../utils/fetch-timeout.js";
 
@@ -27,6 +28,41 @@ export type SignalSseEvent = {
 };
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+// Retry only connection-establishment failures: the request never reached the
+// daemon, so a retry cannot double-send. Timeouts and RPC errors are ambiguous
+// (the daemon may have processed the request) and must not be retried.
+const CONNECT_FAILURE_CODES = new Set(["ECONNREFUSED", "EAI_AGAIN"]);
+const CONNECT_RETRY_OPTIONS = {
+  attempts: 3,
+  minDelayMs: 250,
+  maxDelayMs: 1_000,
+  jitter: 0.1,
+};
+
+export function isSignalConnectFailure(err: unknown): boolean {
+  const seen = new Set<object>();
+  let current: unknown = err;
+  while (current && typeof current === "object") {
+    if (seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+    const { code, errors, cause } = current as {
+      code?: unknown;
+      errors?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === "string" && CONNECT_FAILURE_CODES.has(code)) {
+      return true;
+    }
+    if (Array.isArray(errors) && errors.some((entry) => isSignalConnectFailure(entry))) {
+      return true;
+    }
+    current = cause;
+  }
+  return false;
+}
 
 function normalizeBaseUrl(url: string): string {
   const trimmed = url.trim();
@@ -80,15 +116,23 @@ export async function signalRpcRequest<T = unknown>(
     params,
     id,
   });
-  const res = await fetchWithTimeout(
-    `${baseUrl}/api/v1/rpc`,
+  const res = await retryAsync(
+    () =>
+      fetchWithTimeout(
+        `${baseUrl}/api/v1/rpc`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        },
+        opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        getRequiredFetch(),
+      ),
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
+      ...CONNECT_RETRY_OPTIONS,
+      label: `signal rpc ${method}`,
+      shouldRetry: isSignalConnectFailure,
     },
-    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    getRequiredFetch(),
   );
   if (res.status === 201) {
     return undefined as T;
