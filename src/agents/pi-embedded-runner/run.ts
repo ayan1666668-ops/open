@@ -237,7 +237,6 @@ export async function runEmbeddedPiAgent(
           `[workspace-fallback] caller=runEmbeddedPiAgent reason=${workspaceResolution.fallbackReason} run=${params.runId} session=${redactedSessionId} sessionKey=${redactedSessionKey} agent=${workspaceResolution.agentId} workspace=${redactedWorkspace}`,
         );
       }
-      const prevCwd = process.cwd();
 
       let provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
       let modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -1312,7 +1311,6 @@ export async function runEmbeddedPiAgent(
         }
       } finally {
         stopCopilotRefreshTimer();
-        process.chdir(prevCwd);
       }
     }),
   );

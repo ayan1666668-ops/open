@@ -163,10 +163,9 @@ function formatFileOperations(readFiles: string[], modifiedFiles: string[]): str
  * Extracts "Session Startup" and "Red Lines" from AGENTS.md.
  * Limited to 2000 chars to avoid bloating the summary.
  */
-async function readWorkspaceContextForSummary(): Promise<string> {
+async function readWorkspaceContextForSummary(workspaceDir?: string): Promise<string> {
   const MAX_SUMMARY_CONTEXT_CHARS = 2000;
-  const workspaceDir = process.cwd();
-  const agentsPath = path.join(workspaceDir, "AGENTS.md");
+  const agentsPath = path.join(workspaceDir ?? process.cwd(), "AGENTS.md");
 
   try {
     if (!fs.existsSync(agentsPath)) {
@@ -363,7 +362,7 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       summary += fileOpsSummary;
 
       // Append workspace critical context (Session Startup + Red Lines from AGENTS.md)
-      const workspaceContext = await readWorkspaceContextForSummary();
+      const workspaceContext = await readWorkspaceContextForSummary(runtime?.workspaceDir);
       if (workspaceContext) {
         summary += workspaceContext;
       }

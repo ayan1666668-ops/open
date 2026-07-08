@@ -486,7 +486,6 @@ export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
-  const prevCwd = process.cwd();
   const runAbortController = new AbortController();
 
   log.debug(
@@ -508,8 +507,10 @@ export async function runEmbeddedAttempt(
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
+  // Never chdir here: cwd is process-global and command lanes (main/cron/
+  // subagent/nested) run concurrently, so the workspace path must be passed
+  // explicitly to everything that needs it (tools, SDK session, prompts).
   let restoreSkillEnv: (() => void) | undefined;
-  process.chdir(effectiveWorkspace);
   try {
     const shouldLoadSkillEntries = !params.skillsSnapshot || !params.skillsSnapshot.resolvedSkills;
     const skillEntries = shouldLoadSkillEntries
@@ -683,7 +684,7 @@ export async function runEmbeddedAttempt(
       config: params.config,
       agentId: sessionAgentId,
       workspaceDir: effectiveWorkspace,
-      cwd: process.cwd(),
+      cwd: effectiveWorkspace,
       runtime: {
         host: machineName,
         os: `${os.type()} ${os.release()}`,
@@ -702,7 +703,7 @@ export async function runEmbeddedAttempt(
     const docsPath = await resolveOpenClawDocsPath({
       workspaceDir: effectiveWorkspace,
       argv1: process.argv[1],
-      cwd: process.cwd(),
+      cwd: effectiveWorkspace,
       moduleUrl: import.meta.url,
     });
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
@@ -822,6 +823,7 @@ export async function runEmbeddedAttempt(
         provider: params.provider,
         modelId: params.modelId,
         model: params.model,
+        workspaceDir: effectiveWorkspace,
       });
       // Only create an explicit resource loader when there are extension factories
       // to register; otherwise let createAgentSession use its built-in default.
@@ -1652,6 +1654,5 @@ export async function runEmbeddedAttempt(
     }
   } finally {
     restoreSkillEnv?.();
-    process.chdir(prevCwd);
   }
 }

@@ -254,7 +254,6 @@ export async function compactEmbeddedPiSessionDirect(
   const maxAttempts = params.maxAttempts ?? 1;
   const runId = params.runId ?? params.sessionId;
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
-  const prevCwd = process.cwd();
 
   const provider = (params.provider ?? DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER;
   const modelId = (params.model ?? DEFAULT_MODEL).trim() || DEFAULT_MODEL;
@@ -330,8 +329,10 @@ export async function compactEmbeddedPiSessionDirect(
     cwd: effectiveWorkspace,
   });
 
+  // Never chdir here: cwd is process-global and command lanes (main/cron/
+  // subagent/nested) run concurrently, so the workspace path must be passed
+  // explicitly to everything that needs it (tools, SDK session, prompts).
   let restoreSkillEnv: (() => void) | undefined;
-  process.chdir(effectiveWorkspace);
   try {
     const shouldLoadSkillEntries = !params.skillsSnapshot || !params.skillsSnapshot.resolvedSkills;
     const skillEntries = shouldLoadSkillEntries
@@ -477,7 +478,7 @@ export async function compactEmbeddedPiSessionDirect(
     const docsPath = await resolveOpenClawDocsPath({
       workspaceDir: effectiveWorkspace,
       argv1: process.argv[1],
-      cwd: process.cwd(),
+      cwd: effectiveWorkspace,
       moduleUrl: import.meta.url,
     });
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
@@ -550,6 +551,7 @@ export async function compactEmbeddedPiSessionDirect(
         provider,
         modelId,
         model,
+        workspaceDir: effectiveWorkspace,
       });
       // Only create an explicit resource loader when there are extension factories
       // to register; otherwise let createAgentSession use its built-in default.
@@ -739,7 +741,6 @@ export async function compactEmbeddedPiSessionDirect(
     return fail(reason);
   } finally {
     restoreSkillEnv?.();
-    process.chdir(prevCwd);
   }
 }
 

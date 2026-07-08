@@ -13,6 +13,11 @@ export type CompactionSafeguardRuntimeValue = {
    * (extensionRunner.initialize() is never called in that path).
    */
   model?: Model<Api>;
+  /**
+   * Workspace dir for reading AGENTS.md summary context. Passed explicitly
+   * because process.cwd() is not workspace-scoped (lanes run concurrently).
+   */
+  workspaceDir?: string;
 };
 
 const registry = createSessionManagerRuntimeRegistry<CompactionSafeguardRuntimeValue>();

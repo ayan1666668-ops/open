@@ -67,6 +67,7 @@ export function buildEmbeddedExtensionFactories(params: {
   provider: string;
   modelId: string;
   model: Model<Api> | undefined;
+  workspaceDir?: string;
 }): ExtensionFactory[] {
   const factories: ExtensionFactory[] = [];
   if (resolveCompactionMode(params.cfg) === "safeguard") {
@@ -84,6 +85,7 @@ export function buildEmbeddedExtensionFactories(params: {
       identifierPolicy: compactionCfg?.identifierPolicy,
       identifierInstructions: compactionCfg?.identifierInstructions,
       model: params.model,
+      workspaceDir: params.workspaceDir,
     });
     factories.push(compactionSafeguardExtension);
   }
