@@ -234,7 +234,7 @@ type ChannelManagerOptions = {
   isClosing?: () => boolean;
 };
 
-export type StopChannelOptions = {
+type StopChannelOptions = {
   manual?: boolean;
   routeHandoff?: boolean;
   /** Report unfinished cleanup to the caller after the bounded stop attempt. */
