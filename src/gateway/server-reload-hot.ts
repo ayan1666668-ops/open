@@ -527,7 +527,174 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
             );
           },
         });
-        pluginReloadAborted = isPluginReloadAborted();
+      const rollbackStoppedPluginTargets = async (reason: string): Promise<string[]> => [
+        ...(await restartStoppedPluginAccounts(reason)),
+        ...(await restartStoppedPluginChannels(reason)),
+      ];
+      const failPluginChannelRollback = (reason: string, failures: string[]): never => {
+        const error = new Error(
+          `plugin reload cancellation rollback failed for: ${failures.join(", ")}`,
+        );
+        scheduleRecoveryRestart(`plugin channel rollback after ${reason}`, error);
+        throw error;
+      };
+      const stopChannelsBeforePluginReplace = async (
+        channels: ReadonlySet<ChannelKind>,
+        accounts: ReadonlyMap<ChannelKind, ReadonlySet<string>> = new Map(),
+      ) => {
+        for (const channel of channels) {
+          channelsToRestart.add(channel);
+        }
+        for (const [channel, accountIds] of accounts) {
+          if (channelsToRestart.has(channel)) {
+            continue;
+          }
+          let restartAccountIds = restartChannelAccounts.get(channel);
+          if (!restartAccountIds) {
+            restartAccountIds = new Set();
+            restartChannelAccounts.set(channel, restartAccountIds);
+          }
+          for (const accountId of accountIds) {
+            restartAccountIds.add(accountId);
+          }
+        }
+        const targets = channelReloadTargets();
+        if (targets.size === 0 || shouldSkipChannelRestart) {
+          return;
+        }
+        if (await waitForActiveWorkBeforeChannelReload(targets, isTransactionCurrent)) {
+          params.logChannels.info(
+            "channel reload before plugin replace cancelled by config supersession or restart",
+          );
+          pluginReloadAborted = true;
+          return;
+        }
+        const accountStopFailures: string[] = [];
+        for (const [channel, accountIds] of accounts) {
+          if (channelsToRestart.has(channel)) {
+            continue;
+          }
+          for (const accountId of accountIds) {
+            if (isPluginReloadAborted()) {
+              pluginReloadAborted = true;
+              break;
+            }
+            let stoppedAccountIds = accountsStoppedBeforePluginReload.get(channel);
+            if (!stoppedAccountIds) {
+              stoppedAccountIds = new Set();
+              accountsStoppedBeforePluginReload.set(channel, stoppedAccountIds);
+            }
+            if (stoppedAccountIds.has(accountId)) {
+              continue;
+            }
+            stoppedAccountIds.add(accountId);
+            try {
+              params.logChannels.info(
+                `stopping ${channel} account ${accountId} before plugin reload`,
+              );
+              await params.stopChannel(channel, accountId, { manual: false });
+              if (isPluginReloadAborted()) {
+                pluginReloadAborted = true;
+              }
+            } catch (err) {
+              accountStopFailures.push(`${channel}[${accountId}]`);
+              params.logChannels.error(
+                `failed to stop ${channel} account ${accountId} before plugin reload: ${formatErrorMessage(err)}`,
+              );
+            }
+          }
+        }
+        const channelStopFailures = await collectChannelOperationFailures({
+          channels: channelsToRestart,
+          run: async (channel) => {
+            if (isPluginReloadAborted()) {
+              pluginReloadAborted = true;
+              return;
+            }
+            if (channelsStoppedBeforePluginReload.has(channel)) {
+              return;
+            }
+            params.logChannels.info(`stopping ${channel} channel before plugin reload`);
+            channelsStoppedBeforePluginReload.add(channel);
+            const stopOptions = getChannelAutostartSuppression()
+              ? { manual: false, restartPending: false }
+              : { manual: false };
+            await params.stopChannel(channel, undefined, stopOptions);
+            if (isPluginReloadAborted()) {
+              pluginReloadAborted = true;
+            }
+          },
+          onFailure: (channel, err) => {
+            params.logChannels.error(
+              `failed to stop ${channel} channel before plugin reload: ${formatErrorMessage(err)}`,
+            );
+          },
+        });
+        if (isPluginReloadAborted()) {
+          pluginReloadAborted = true;
+        }
+        if (pluginReloadAborted) {
+          if (isLifecycleReloadAborted()) {
+            return;
+          }
+          const rollbackFailures = await rollbackStoppedPluginTargets(
+            "cancelled plugin reload pre-stop",
+          );
+          if (rollbackFailures.length > 0) {
+            failPluginChannelRollback("cancelled plugin reload pre-stop", rollbackFailures);
+          }
+          return;
+        }
+        const stopFailures = [...accountStopFailures, ...channelStopFailures];
+        if (stopFailures.length > 0) {
+          const rollbackFailures = await rollbackStoppedPluginTargets(
+            "failed plugin reload pre-stop",
+          );
+          if (rollbackFailures.length > 0) {
+            failPluginChannelRollback("failed plugin reload pre-stop", rollbackFailures);
+          }
+          throw new Error(
+            `failed to stop channels before plugin reload: ${stopFailures.join(", ")}`,
+          );
+        }
+      };
+      if (!pluginReloadAborted) {
+        let pluginReloadResult: GatewayPluginReloadResult;
+        try {
+          pluginReloadResult = await params.reloadPlugins({
+            nextConfig,
+            changedPaths: plan.changedPaths,
+            beforeReplace: stopChannelsBeforePluginReplace,
+            commitRuntime,
+            env: publication?.runtimeEnv ?? process.env,
+            isAborted: isPluginReloadAborted,
+          });
+        } catch (err) {
+          if (!runtimeCommitted) {
+            const rollbackFailures = await rollbackStoppedPluginTargets(
+              "failed plugin runtime publication",
+            );
+            if (rollbackFailures.length > 0) {
+              failPluginChannelRollback("failed plugin runtime publication", rollbackFailures);
+            }
+            throw err;
+          }
+          scheduleRecoveryRestart("plugin runtime reload", err);
+          return;
+        }
+        if (pluginReloadResult.cancelled) {
+          pluginReloadAborted = true;
+          if (!isLifecycleReloadAborted()) {
+            const rollbackFailures = await rollbackStoppedPluginTargets(
+              "cancelled plugin runtime publication",
+            );
+            if (rollbackFailures.length > 0) {
+              failPluginChannelRollback("cancelled plugin runtime publication", rollbackFailures);
+            }
+          }
+        }
+        // beforeReplace may have set pluginReloadAborted inside reloadPlugins;
+        // skip metadata/runtime updates when the reload was cancelled mid-flight.
         if (!pluginReloadAborted) {
           pluginRuntimeApplication = result.runtime;
           activePluginChannelsAfterReload = result.activeChannels;

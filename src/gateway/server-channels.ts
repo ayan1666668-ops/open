@@ -236,9 +236,13 @@ type ChannelManagerOptions = {
 
 type StopChannelOptions = {
   manual?: boolean;
-  routeHandoff?: boolean;
-  /** Report unfinished cleanup to the caller after the bounded stop attempt. */
-  strict?: boolean;
+  /**
+   * Whether this stop should surface as pending restart/recovery in runtime state.
+   * Non-manual stops still defer task-owned auto-restart to the caller; this
+   * only controls whether health/recovery surfaces should treat the stopped
+   * account as awaiting a queued replacement start.
+   */
+  restartPending?: boolean;
 };
 
 type ChannelAccountStopOutcome = { status: "fulfilled" } | { status: "rejected"; error: unknown };
@@ -1238,8 +1242,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     optsLocal: StopChannelOptions = {},
   ) => {
     const manual = optsLocal.manual ?? true;
-    const retainCleanupOwner = manual || !optsLocal.routeHandoff;
-    const plugin = getLoadedChannelPluginEntryById(channelId, registry)?.plugin;
+    const markRestartPending = optsLocal.restartPending ?? !manual;
+    const plugin = getChannelPlugin(channelId);
     const store = getStore(channelId);
     if (retainCleanupOwner) {
       releaseChannelRouteHandoffs(channelId, accountId);
@@ -1418,7 +1422,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           }
           if (!stoppedCleanly && retainCleanupOwner) {
             const stoppedPatch = {
-              restartPending: !manual,
+              restartPending: markRestartPending,
               lastError: `channel stop timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
             };
             if (manual) {
@@ -1429,6 +1433,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               });
             } else {
               setStoppedRuntime(channelId, id, stoppedPatch);
+            }
+            if (!manual && markRestartPending) {
               restartDeferredToCaller.delete(rKey);
               recoveryStopTimedOut.add(rKey);
             }
@@ -1453,7 +1459,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             }
           }
           setStoppedRuntime(channelId, id, {
-            restartPending: !manual,
+            restartPending: markRestartPending,
             lastStopAt: Date.now(),
             ...(outcome.status === "rejected"
               ? { lastError: formatErrorMessage(outcome.error) }

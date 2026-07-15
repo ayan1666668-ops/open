@@ -140,6 +140,39 @@ export async function restartGatewayChannels(options: {
             throw new Error(`${channel}[${id}] replacement not admitted: ${outcome.reason}`);
           }
         }
+        const stopFailures = await collectChannelOperationFailures({
+          channels: channelsToRestart,
+          run: async (channel) => {
+            if (plan.reloadPlugins && activePluginChannelsAfterReload?.has(channel) === false) {
+              return;
+            }
+            if (channelsStoppedBeforePluginReload.has(channel)) {
+              return;
+            }
+            params.logChannels.info(`stopping ${channel} channel before suppressed hot reload`);
+            await params.stopChannel(channel, undefined, {
+              manual: false,
+              restartPending: false,
+            });
+          },
+          onFailure: (channel, err) => {
+            params.logChannels.error(
+              `failed to stop ${channel} channel during suppressed hot reload: ${formatErrorMessage(
+                err,
+              )}`,
+            );
+          },
+        });
+        const allStopFailures = [...accountStopFailures, ...stopFailures];
+        if (allStopFailures.length > 0) {
+          scheduleRecoveryRestart(`channel stop (${allStopFailures.join(", ")})`);
+        }
+        logSuppressedChannelRestart(channelReloadTargets(), "channel restart during hot reload");
+      }
+    } else {
+      const cancelledByRestart = pluginReloadAborted;
+      if (cancelledByRestart) {
+        params.logChannels.info("channel restart cancelled by in-process restart");
       } else {
         const accountRestarts = collectChannelAccountTargets();
         const accountRestartFailures: string[] = [];
