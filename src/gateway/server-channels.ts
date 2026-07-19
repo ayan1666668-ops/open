@@ -699,8 +699,16 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           }
         }
 
-        const startGate = createDeferredCore();
-        store.starting.set(id, startGate.promise);
+        const shouldPreserveCallerDeferredRestart = () =>
+          restartDeferredToCaller.has(rKey) &&
+          !manuallyStopped.has(rKey) &&
+          getRuntime(channelId, id).restartPending === true;
+
+        let resolveStart: (() => void) | undefined;
+        const startGate = new Promise<void>((resolve) => {
+          resolveStart = resolve;
+        });
+        store.starting.set(id, startGate);
 
         // Reserve the account before the first await so overlapping start calls
         // cannot race into duplicate provider boots for the same account.
@@ -858,7 +866,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
 
           if (abort.signal.aborted || manuallyStopped.has(rKey)) {
             setStoppedRuntime(channelId, id, {
-              restartPending: false,
+              restartPending: shouldPreserveCallerDeferredRestart(),
               lastStopAt: Date.now(),
             });
             startOutcomes.set(id, { status: "skipped", reason: "manual-stop" });
@@ -1171,7 +1179,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         } catch (error) {
           if (!handedOffTask && capabilityLease.isActive()) {
             setStoppedRuntime(channelId, id, {
-              restartPending: false,
+              ...(error instanceof SecretSurfaceUnavailableError ? { configured: true } : {}),
+              restartPending: abort.signal.aborted && shouldPreserveCallerDeferredRestart(),
               lastError: formatErrorMessage(error),
             });
           }
