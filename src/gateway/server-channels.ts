@@ -683,47 +683,20 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             startOutcomes.set(id, { status: "retry", reason: "stop-in-flight" });
             return;
           }
-          if (store.tasks.has(id)) {
-            let clearedTimedOutRecoveryTask = false;
-            if (recoveryStopTimedOut.has(rKey)) {
-              if (manuallyStopped.has(rKey)) {
-                startOutcomes.set(id, { status: "skipped", reason: "manual-stop" });
-                return;
-              }
-              // When a previous stop timed out and the health monitor is
-              // requesting recovery again, clean up the stuck task so the
-              // channel can actually restart instead of staying in limbo.
-              if (recoveryStartRequested.has(rKey)) {
-                recoveryStopTimedOut.delete(rKey);
-                recoveryStartRequested.delete(rKey);
-                restarts.delete(rKey);
-                store.lifetimes.get(id)?.capabilityLease.revoke();
-                store.lifetimes.delete(id);
-                store.tasks.delete(id);
-                clearedTimedOutRecoveryTask = true;
-                setRuntime(channelId, id, {
-                  accountId: id,
-                  restartPending: false,
-                  reconnectAttempts: 0,
-                });
-              } else {
-                recoveryStartRequested.add(rKey);
-                setRuntime(channelId, id, { accountId: id, restartPending: true });
-                startOutcomes.set(id, { status: "retry", reason: "task-owned" });
-                return;
-              }
-            }
-            if (!clearedTimedOutRecoveryTask) {
-              startOutcomes.set(id, { status: "retry", reason: "task-owned" });
-              return;
-            }
-          }
-          const existingStart = store.starting.get(id);
-          if (!existingStart) {
-            break;
-          }
+        }
+        const existingStart = store.starting.get(id);
+        if (existingStart) {
+          const shouldRetryAfterDeferredStart =
+            includeKnownAccounts && getRuntime(channelId, id).restartPending === true;
           await existingStart;
-          assertStartCurrent();
+          if (
+            !shouldRetryAfterDeferredStart ||
+            store.tasks.has(id) ||
+            store.starting.has(id) ||
+            manuallyStopped.has(rKey)
+          ) {
+            return;
+          }
         }
 
         const startGate = createDeferredCore();
