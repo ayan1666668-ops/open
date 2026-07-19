@@ -1227,9 +1227,17 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
       ...store.stops.keys(),
       ...store.tasks.keys(),
     ]);
-    // Preserve no-enumeration channel-wide idle stops. An explicit account stop
-    // must still commit manual intent before health monitoring can restart it.
-    if (!accountId && lifecycleIds.size === 0) {
+    // A completed hot-reload stop can leave only restartPending as the handoff
+    // marker until the paired start runs; manual stops must still be able to
+    // cancel that queued restart.
+    const hasRestartPendingRuntime = Array.from(store.runtimes.values()).some(
+      (snapshot) => snapshot.restartPending === true,
+    );
+    if (!accountId && lifecycleIds.size === 0 && !hasRestartPendingRuntime) {
+      return;
+    }
+    // Fast path: nothing running and no explicit plugin shutdown hook to run.
+    if (!plugin?.gateway?.stopAccount && lifecycleIds.size === 0 && !hasRestartPendingRuntime) {
       return;
     }
     const cfg = getRuntimeConfig();
@@ -1248,8 +1256,13 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
       Array.from(knownIds.values()).map(async (id): Promise<ChannelAccountStopOutcome> => {
         const initialAbort = store.aborts.get(id);
         const initialTask = store.tasks.get(id);
+        const runtimeSnapshot = store.runtimes.get(id);
         const hadLiveState = Boolean(
-          initialAbort || initialTask || store.starting.has(id) || store.runtimes.get(id)?.running,
+          initialAbort ||
+            initialTask ||
+            store.starting.has(id) ||
+            runtimeSnapshot?.running ||
+            runtimeSnapshot?.restartPending,
         );
         if (!hadLiveState && !plugin?.gateway?.stopAccount) {
           return { status: "fulfilled" };
