@@ -8481,6 +8481,186 @@ describe("deferred channel reload abort generation", () => {
       await reloadRejected;
 
       expect(channels.start).not.toHaveBeenCalled();
+      expect(logChannels.info).toHaveBeenCalledWith(
+        "channel restart cancelled by config supersession or restart",
+      );
+    } finally {
+      vi.useRealTimers();
+      hoisted.activeTaskBlockers.length = 0;
+    }
+  });
+
+  it("leaves plugin-prestopped channels down when lifecycle restart aborts", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => abortPendingChannelReloads()),
+    };
+    const reloadPlugins: NonNullable<ReloadHandlerParams["reloadPlugins"]> = async (params) => {
+      await params.beforeReplace(new Set(["whatsapp"]));
+      return makePluginReloadResult({
+        cancelled: params.isAborted?.() === true,
+      });
+    };
+    const { applyHotReload } = createTestHandlers(logChannels, channels, { reloadPlugins });
+
+    await expect(applyHotReload(createPluginReloadPlan(), {})).rejects.toThrow(
+      "config hot reload cancelled by config supersession or in-process restart",
+    );
+
+    expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, { manual: false });
+    expect(channels.start).not.toHaveBeenCalled();
+  });
+
+  it("preserves known accounts when plugin cancellation rollback coalesces with candidate account edits", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    };
+    const reloadPlugins: NonNullable<ReloadHandlerParams["reloadPlugins"]> = async (params) => {
+      await params.beforeReplace(new Set(["whatsapp"]));
+      return {
+        restartChannels: new Set(),
+        activeChannels: new Set(),
+        cancelled: true,
+      };
+    };
+    const { applyHotReload } = createTestHandlers(logChannels, channels, { reloadPlugins });
+    const plan = createPluginReloadPlan();
+    plan.changedPaths = ["plugins.enabled", "channels.whatsapp.accounts.primary.enabled"];
+    plan.hotReasons = plan.changedPaths;
+
+    await expect(applyHotReload(plan, {})).rejects.toThrow(
+      "config hot reload cancelled by config supersession or in-process restart",
+    );
+
+    expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, { manual: false });
+    expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
+      includeKnownAccounts: true,
+    });
+  });
+
+  it("preserves known accounts when plugin pre-stop rollback coalesces with candidate account edits", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {
+        throw new Error("stop failed during drain");
+      }),
+    };
+    const reloadPlugins: NonNullable<ReloadHandlerParams["reloadPlugins"]> = async (params) => {
+      await params.beforeReplace(new Set(["whatsapp"]));
+      return {
+        restartChannels: new Set(),
+        activeChannels: new Set(),
+      };
+    };
+    const { applyHotReload } = createTestHandlers(logChannels, channels, { reloadPlugins });
+    const plan = createPluginReloadPlan();
+    plan.changedPaths = ["plugins.enabled", "channels.whatsapp.accounts.primary.enabled"];
+    plan.hotReasons = plan.changedPaths;
+
+    await expect(applyHotReload(plan, {})).rejects.toThrow(
+      "failed to stop channels before plugin reload: whatsapp",
+    );
+
+    expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, { manual: false });
+    expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
+      includeKnownAccounts: true,
+    });
+  });
+
+  it("does not roll back a failed plugin pre-stop after lifecycle restart aborts", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {
+        abortPendingChannelReloads();
+        throw new Error("stop failed during drain");
+      }),
+    };
+    const reloadPlugins: NonNullable<ReloadHandlerParams["reloadPlugins"]> = async (params) => {
+      await params.beforeReplace(new Set(["whatsapp"]));
+      return makePluginReloadResult({
+        cancelled: params.isAborted?.() === true,
+      });
+    };
+    const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
+    const { applyHotReload } = createTestHandlers(logChannels, channels, {
+      reloadPlugins,
+      requestRecoveryRestart,
+    });
+
+    await expect(applyHotReload(createPluginReloadPlan(), {})).rejects.toThrow(
+      "config hot reload cancelled by config supersession or in-process restart",
+    );
+
+    expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, { manual: false });
+    expect(channels.start).not.toHaveBeenCalled();
+    expect(requestRecoveryRestart).not.toHaveBeenCalled();
+  });
+
+  it("schedules recovery when plugin cancellation rollback cannot restart a channel", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {
+        throw new Error("channel restart failed");
+      }),
+      stop: vi.fn(async () => {}),
+    };
+    const reloadPlugins: NonNullable<ReloadHandlerParams["reloadPlugins"]> = async (params) => {
+      await params.beforeReplace(new Set(["whatsapp"]));
+      return makePluginReloadResult({
+        cancelled: true,
+      });
+    };
+    const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
+    const { applyHotReload } = createTestHandlers(logChannels, channels, {
+      reloadPlugins,
+      requestRecoveryRestart,
+    });
+
+    await expect(applyHotReload(createPluginReloadPlan(), {})).rejects.toThrow(
+      "plugin reload cancellation rollback failed for: whatsapp",
+    );
+
+    expect(requestRecoveryRestart).toHaveBeenCalledWith(
+      expect.stringContaining("hot reload recovery: plugin channel rollback"),
+    );
+  });
+
+  it("cancels active-work deferral when its config transaction is superseded", async () => {
+    const logChannels = { info: vi.fn(), error: vi.fn() };
+    const channels = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    };
+    const { applyHotReload } = createTestHandlers(logChannels, channels);
+    hoisted.activeTaskBlockers.push(
+      makeActiveTaskBlocker({ taskId: "task-blocking-superseded-reload" }),
+    );
+    let transactionCurrent = true;
+    vi.useFakeTimers();
+
+    try {
+      const reloadPromise = applyHotReload(
+        abortChannelReloadPlan,
+        {},
+        {
+          isCurrent: () => transactionCurrent,
+          publish: async (commit) => await commit(),
+        },
+      );
+      const reloadRejected = expect(reloadPromise).rejects.toThrow(
+        "config hot reload cancelled by config supersession or in-process restart",
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      transactionCurrent = false;
+      await vi.advanceTimersByTimeAsync(500);
+      await reloadRejected;
+
       expect(channels.stop).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
