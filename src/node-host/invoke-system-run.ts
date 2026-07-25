@@ -547,6 +547,8 @@ async function evaluateSystemRunPolicyPhase(
     requireSocket: opts.preferMacAppExecHost,
   });
   const { agentExec, globalExec, approvals } = effectivePolicy;
+  // Opt-in symlink tolerance: agent-level override wins, then the global exec config.
+  const allowSymlinkPath = agentExec?.allowSymlinkPath ?? globalExec?.allowSymlinkPath === true;
   const currentPolicySnapshot = createExecApprovalPolicySnapshot({
     file: approvals.file,
     agentId: parsed.agentId,
@@ -857,6 +859,7 @@ async function evaluateSystemRunPolicyPhase(
     argv: parsed.argv,
     shellCommand: parsed.shellPayload,
     cwd: parsed.cwd,
+    allowSymlinkPath,
   });
   if (!hardenedPaths.ok) {
     await sendSystemRunDenied(opts, parsed.execution, {
@@ -868,7 +871,10 @@ async function evaluateSystemRunPolicyPhase(
   let executionCwd = hardenedPaths.cwd;
   let approvedCwdSnapshot = approvalContextBound ? hardenedPaths.approvedCwdSnapshot : undefined;
   if (security === "allowlist" && !approvedCwdSnapshot) {
-    const capturedCwd = captureApprovedCwdSnapshotSync(executionCwd ?? process.cwd());
+    const capturedCwd = captureApprovedCwdSnapshotSync(
+      executionCwd ?? process.cwd(),
+      allowSymlinkPath,
+    );
     if (!capturedCwd.ok) {
       await sendSystemRunDenied(opts, parsed.execution, {
         reason: "approval-required",
