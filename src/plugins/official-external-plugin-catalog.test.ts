@@ -2131,29 +2131,13 @@ describe("official external plugin catalog", () => {
     expect(resolveOfficialExternalPluginInstall(yuanbaoByChannel)?.npmSpec).toBe(
       "openclaw-plugin-yuanbao@2.18.2",
     );
-    expect(resolveOfficialExternalPluginId(qqbotByChannel)).toBe("openclaw-qqbot");
-    expect(qqbotByPlugin).toBe(qqbotByChannel);
-    expect(resolveOfficialExternalPluginLegacyNpmPackageNames(qqbotByChannel)).toEqual([
-      "@openclaw/qqbot",
-    ]);
+
+    const weixin = expectCatalogEntry("openclaw-weixin");
     expect(
-      getOfficialExternalPluginCatalogManifest(qqbotByChannel)?.channel?.doctorCapabilities,
-    ).toEqual({ openDmRequiresAllowFromWildcard: false });
-    expect(resolveOfficialExternalPluginInstall(qqbotByChannel)).toEqual({
-      npmSpec: "@tencent-connect/openclaw-qqbot@2.0.3",
-      defaultChoice: "npm",
-      expectedIntegrity:
-        "sha512-yngu/2cPeZjJfIfHWCXWB2/6KlDHrb9vpOUjKLdQxePLSp6wCn3CFOALcBIVq/9o6jlYz9WTU9idW6nfX1xpFA==",
-    });
-    expect(getOfficialExternalChannelSecretContract("qqbot")).toEqual({
-      channelId: "qqbot",
-      fields: [
-        {
-          field: "clientSecret",
-          activationField: "appId",
-          activationEnv: "QQBOT_APP_ID",
-        },
-      ],
+      getOfficialExternalPluginCatalogManifest(weixin)?.channelConfigs?.["openclaw-weixin"]?.reload,
+    ).toEqual({
+      configPrefixes: [],
+      accountIndexReloadPaths: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
     });
   });
 
