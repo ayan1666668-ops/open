@@ -728,18 +728,63 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         if (explicitlyDisabled) {
           releaseRouteHandoff(store, id);
         }
-        // Record start intent before waiting; a later stop must survive cancelled preparation.
-        if (!preserveManualStop && !store.stops.has(id)) {
-          manuallyStopped.delete(rKey);
-        }
-        // A stopped preparation may never publish a task. Reacquire its slot only
-        // after cleanup, rechecking ownership when other starts were also waiting.
-        for (;;) {
-          // An in-flight or failed plugin teardown may still own resources. Only
-          // the last queued attempt or a later successful stop clears this gate.
-          if (store.stops.has(id)) {
-            startOutcomes.set(id, { status: "retry", reason: "stop-in-flight" });
-            return;
+        const existingTask = store.tasks.get(id);
+        if (existingTask) {
+          let clearedTimedOutRecoveryTask = false;
+          const abortedTask = store.aborts.get(id)?.signal.aborted === true;
+          const shouldRetryAfterCallerDeferredTask =
+            includeKnownAccounts && abortedTask && restartDeferredToCaller.has(rKey);
+          if (shouldRetryAfterCallerDeferredTask) {
+            const stoppedCleanly = await waitForChannelStopGracefully(
+              existingTask,
+              CHANNEL_STOP_ABORT_TIMEOUT_MS,
+            );
+            if (!stoppedCleanly) {
+              recoveryStopTimedOut.add(rKey);
+              setRuntime(channelId, id, {
+                accountId: id,
+                restartPending: true,
+                lastError: `channel stop timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
+              });
+              throw new Error(
+                `channel stop timed out before restarting ${channelId} account ${id}`,
+              );
+            }
+            if (store.tasks.has(id) || store.starting.has(id) || manuallyStopped.has(rKey)) {
+              return;
+            }
+          } else {
+            if (recoveryStopTimedOut.has(rKey)) {
+              if (!preserveManualStop) {
+                manuallyStopped.delete(rKey);
+              }
+              if (manuallyStopped.has(rKey)) {
+                return;
+              }
+              // When a previous stop timed out and the health monitor is
+              // requesting recovery again, clean up the stuck task so the
+              // channel can actually restart instead of staying in limbo.
+              if (recoveryStartRequested.has(rKey)) {
+                recoveryStopTimedOut.delete(rKey);
+                recoveryStartRequested.delete(rKey);
+                restarts.delete(rKey);
+                store.aborts.delete(id);
+                store.tasks.delete(id);
+                clearedTimedOutRecoveryTask = true;
+                setRuntime(channelId, id, {
+                  accountId: id,
+                  restartPending: false,
+                  reconnectAttempts: 0,
+                });
+              } else {
+                recoveryStartRequested.add(rKey);
+                setRuntime(channelId, id, { accountId: id, restartPending: true });
+                return;
+              }
+            }
+            if (!clearedTimedOutRecoveryTask) {
+              return;
+            }
           }
         }
         const existingStart = store.starting.get(id);
