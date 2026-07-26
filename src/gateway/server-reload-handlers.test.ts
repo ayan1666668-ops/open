@@ -225,6 +225,28 @@ function createTestCronState(overrides: Partial<GatewayCronState> = {}): Gateway
   };
 }
 
+async function withWeixinAccountIndexReloadPath(run: () => Promise<void>) {
+  const registry = createTestRegistry([
+    {
+      pluginId: "openclaw-weixin",
+      plugin: {
+        ...createChannelTestPluginBase({ id: "openclaw-weixin" }),
+        reload: {
+          configPrefixes: [],
+          accountIndexReloadPaths: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
+        },
+      },
+      source: "test",
+    },
+  ]);
+  pinActivePluginChannelRegistry(registry);
+  try {
+    await run();
+  } finally {
+    releasePinnedPluginChannelRegistry(registry);
+  }
+}
+
 function startManagedGatewayConfigReloader(params: ManagedReloaderTestParams) {
   let state = createDefaultGatewayReloadState();
   return startManagedGatewayConfigReloaderImpl({
@@ -7927,24 +7949,26 @@ describe("gateway plugin hot reload handlers", () => {
     });
 
     try {
-      await applyHotReload(
-        {
-          changedPaths: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
-          restartGateway: false,
-          restartReasons: [],
-          hotReasons: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
-          reloadHooks: false,
-          restartGmailWatcher: false,
-          restartCron: false,
-          restartHeartbeat: false,
-          restartHealthMonitor: false,
-          reloadPlugins: false,
-          restartChannels: new Set(["openclaw-weixin"]),
-          disposeMcpRuntimes: false,
-          noopPaths: [],
-        },
-        { channels: { "openclaw-weixin": { channelConfigUpdatedAt: "2026-05-16T00:00:00Z" } } },
-      );
+      await withWeixinAccountIndexReloadPath(async () => {
+        await applyHotReload(
+          {
+            changedPaths: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
+            restartGateway: false,
+            restartReasons: [],
+            hotReasons: ["channels.openclaw-weixin.channelConfigUpdatedAt"],
+            reloadHooks: false,
+            restartGmailWatcher: false,
+            restartCron: false,
+            restartHeartbeat: false,
+            restartHealthMonitor: false,
+            reloadPlugins: false,
+            restartChannels: new Set(["openclaw-weixin"]),
+            disposeMcpRuntimes: false,
+            noopPaths: [],
+          },
+          { channels: { "openclaw-weixin": { channelConfigUpdatedAt: "2026-05-16T00:00:00Z" } } },
+        );
+      });
     } finally {
       if (previousSkipChannels === undefined) {
         delete process.env.OPENCLAW_SKIP_CHANNELS;
@@ -8007,37 +8031,39 @@ describe("gateway plugin hot reload handlers", () => {
     });
 
     try {
-      await applyHotReload(
-        {
-          changedPaths: [
-            "channels.openclaw-weixin.channelConfigUpdatedAt",
-            "channels.openclaw-weixin.accounts.primary.enabled",
-          ],
-          restartGateway: false,
-          restartReasons: [],
-          hotReasons: [
-            "channels.openclaw-weixin.channelConfigUpdatedAt",
-            "channels.openclaw-weixin.accounts.primary.enabled",
-          ],
-          reloadHooks: false,
-          restartGmailWatcher: false,
-          restartCron: false,
-          restartHeartbeat: false,
-          restartHealthMonitor: false,
-          reloadPlugins: false,
-          restartChannels: new Set(["openclaw-weixin"]),
-          disposeMcpRuntimes: false,
-          noopPaths: [],
-        },
-        {
-          channels: {
-            "openclaw-weixin": {
-              channelConfigUpdatedAt: "2026-05-16T00:00:00Z",
-              accounts: { primary: { enabled: false } },
+      await withWeixinAccountIndexReloadPath(async () => {
+        await applyHotReload(
+          {
+            changedPaths: [
+              "channels.openclaw-weixin.channelConfigUpdatedAt",
+              "channels.openclaw-weixin.accounts.primary.enabled",
+            ],
+            restartGateway: false,
+            restartReasons: [],
+            hotReasons: [
+              "channels.openclaw-weixin.channelConfigUpdatedAt",
+              "channels.openclaw-weixin.accounts.primary.enabled",
+            ],
+            reloadHooks: false,
+            restartGmailWatcher: false,
+            restartCron: false,
+            restartHeartbeat: false,
+            restartHealthMonitor: false,
+            reloadPlugins: false,
+            restartChannels: new Set(["openclaw-weixin"]),
+            disposeMcpRuntimes: false,
+            noopPaths: [],
+          },
+          {
+            channels: {
+              "openclaw-weixin": {
+                channelConfigUpdatedAt: "2026-05-16T00:00:00Z",
+                accounts: { primary: { enabled: false } },
+              },
             },
           },
-        },
-      );
+        );
+      });
     } finally {
       if (previousSkipChannels === undefined) {
         delete process.env.OPENCLAW_SKIP_CHANNELS;
@@ -8099,30 +8125,32 @@ describe("gateway plugin hot reload handlers", () => {
     });
 
     try {
-      await applyHotReload(
-        {
-          changedPaths: [
-            "channels.openclaw-weixin.channelConfigUpdatedAt",
-            "channels.openclaw-weixin.enabled",
-          ],
-          restartGateway: false,
-          restartReasons: [],
-          hotReasons: [
-            "channels.openclaw-weixin.channelConfigUpdatedAt",
-            "channels.openclaw-weixin.enabled",
-          ],
-          reloadHooks: false,
-          restartGmailWatcher: false,
-          restartCron: false,
-          restartHeartbeat: false,
-          restartHealthMonitor: false,
-          reloadPlugins: false,
-          restartChannels: new Set(["openclaw-weixin"]),
-          disposeMcpRuntimes: false,
-          noopPaths: [],
-        },
-        { channels: { "openclaw-weixin": { channelConfigUpdatedAt: "2026-05-16T00:00:00Z" } } },
-      );
+      await withWeixinAccountIndexReloadPath(async () => {
+        await applyHotReload(
+          {
+            changedPaths: [
+              "channels.openclaw-weixin.channelConfigUpdatedAt",
+              "channels.openclaw-weixin.enabled",
+            ],
+            restartGateway: false,
+            restartReasons: [],
+            hotReasons: [
+              "channels.openclaw-weixin.channelConfigUpdatedAt",
+              "channels.openclaw-weixin.enabled",
+            ],
+            reloadHooks: false,
+            restartGmailWatcher: false,
+            restartCron: false,
+            restartHeartbeat: false,
+            restartHealthMonitor: false,
+            reloadPlugins: false,
+            restartChannels: new Set(["openclaw-weixin"]),
+            disposeMcpRuntimes: false,
+            noopPaths: [],
+          },
+          { channels: { "openclaw-weixin": { channelConfigUpdatedAt: "2026-05-16T00:00:00Z" } } },
+        );
+      });
     } finally {
       if (previousSkipChannels === undefined) {
         delete process.env.OPENCLAW_SKIP_CHANNELS;
@@ -8184,24 +8212,26 @@ describe("gateway plugin hot reload handlers", () => {
     });
 
     try {
-      await applyHotReload(
-        {
-          changedPaths: ["channels.openclaw-weixin.accounts.primary.enabled"],
-          restartGateway: false,
-          restartReasons: [],
-          hotReasons: ["channels.openclaw-weixin.accounts.primary.enabled"],
-          reloadHooks: false,
-          restartGmailWatcher: false,
-          restartCron: false,
-          restartHeartbeat: false,
-          restartHealthMonitor: false,
-          reloadPlugins: false,
-          restartChannels: new Set(["openclaw-weixin"]),
-          disposeMcpRuntimes: false,
-          noopPaths: [],
-        },
-        { channels: { "openclaw-weixin": { accounts: { primary: { enabled: false } } } } },
-      );
+      await withWeixinAccountIndexReloadPath(async () => {
+        await applyHotReload(
+          {
+            changedPaths: ["channels.openclaw-weixin.accounts.primary.enabled"],
+            restartGateway: false,
+            restartReasons: [],
+            hotReasons: ["channels.openclaw-weixin.accounts.primary.enabled"],
+            reloadHooks: false,
+            restartGmailWatcher: false,
+            restartCron: false,
+            restartHeartbeat: false,
+            restartHealthMonitor: false,
+            reloadPlugins: false,
+            restartChannels: new Set(["openclaw-weixin"]),
+            disposeMcpRuntimes: false,
+            noopPaths: [],
+          },
+          { channels: { "openclaw-weixin": { accounts: { primary: { enabled: false } } } } },
+        );
+      });
     } finally {
       if (previousSkipChannels === undefined) {
         delete process.env.OPENCLAW_SKIP_CHANNELS;

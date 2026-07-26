@@ -110,13 +110,75 @@ const SHARED_CHANNEL_PREFIXES = [
   "diagnostics.flags",
 ];
 
-function matchesReloadPrefix(path: string, prefix: string): boolean {
-  if (prefix.includes("*")) {
-    const segments = path.split(".");
-    return prefix
-      .split(".")
-      .every((segment, index) =>
-        segment === "*" ? Boolean(segments[index]) : segment === segments[index],
+const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
+  { prefix: "meta", kind: "none" },
+  { prefix: "identity", kind: "none" },
+  { prefix: "wizard", kind: "none" },
+  { prefix: "logging", kind: "none" },
+  { prefix: "agents", kind: "none" },
+  { prefix: "tools", kind: "hot" },
+  { prefix: "bindings", kind: "none" },
+  { prefix: "audio", kind: "none" },
+  { prefix: "agent", kind: "none" },
+  { prefix: "routing", kind: "none" },
+  { prefix: "messages", kind: "none" },
+  { prefix: "session", kind: "none" },
+  { prefix: "talk", kind: "none" },
+  { prefix: "skills", kind: "none" },
+  { prefix: "secrets", kind: "none" },
+  { prefix: "plugins", kind: "hot", actions: ["reload-plugins", "dispose-mcp-runtimes"] },
+  { prefix: "tui", kind: "none" },
+  { prefix: "ui", kind: "none" },
+  { prefix: "gateway", kind: "restart" },
+  { prefix: "discovery", kind: "restart" },
+];
+
+let cachedReloadRules: ReloadRule[] | null = null;
+let cachedRegistry: ReturnType<typeof getActivePluginHttpRouteRegistry> | null = null;
+let cachedGatewayRegistryVersion = -1;
+
+function listReloadRules(): ReloadRule[] {
+  // Reload metadata is gateway policy owned by the process-root registry.
+  const registry = getActivePluginHttpRouteRegistry();
+  const gatewayRegistryVersion = getActivePluginHttpRouteRegistryVersion();
+  // Plugin/channel reload rules are process-stable until the root registry
+  // version changes; cache them to keep every config diff cheap.
+  if (registry !== cachedRegistry || gatewayRegistryVersion !== cachedGatewayRegistryVersion) {
+    cachedReloadRules = null;
+    cachedRegistry = registry;
+    cachedGatewayRegistryVersion = gatewayRegistryVersion;
+  }
+  if (cachedReloadRules) {
+    return cachedReloadRules;
+  }
+  // Channel docking: plugins contribute hot reload/no-op prefixes here.
+  const channelReloadRules: ReloadRule[] = listChannelPlugins().flatMap((plugin) => {
+    const restartAction = plugin.reload?.accountScopedRestart
+      ? (`restart-channel-account:${plugin.id}` as ReloadAction)
+      : (`restart-channel:${plugin.id}` as ReloadAction);
+    const hotPrefixes = [
+      ...(plugin.reload?.configPrefixes ?? []),
+      ...(plugin.reload?.accountIndexReloadPaths ?? []),
+    ];
+    return hotPrefixes
+      .map((prefix): ReloadRule => {
+        const rule: ReloadRule = {
+          prefix,
+          kind: "hot",
+          actions: [restartAction],
+        };
+        if (plugin.reload?.accountScopedRestart) {
+          rule.accountScopedPlugin = plugin;
+        }
+        return rule;
+      })
+      .concat(
+        (plugin.reload?.noopPrefixes ?? []).map(
+          (prefix): ReloadRule => ({
+            prefix,
+            kind: "none",
+          }),
+        ),
       );
   }
   return path === prefix || path.startsWith(`${prefix}.`);

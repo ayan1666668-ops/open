@@ -451,6 +451,7 @@ describe("buildGatewayReloadPlan", () => {
     reload: {
       configPrefixes: ["web", "channels.whatsapp.accounts", "channels.whatsapp.selfChatMode"],
       noopPrefixes: ["channels.whatsapp"],
+      accountIndexReloadPaths: ["channels.whatsapp.channelConfigUpdatedAt"],
     },
   };
   const mattermostPlugin: ChannelPlugin = {
@@ -1570,12 +1571,20 @@ describe("buildGatewayReloadPlan", () => {
     expect(plan.noopPaths).toEqual([path]);
   });
 
-  it.each(sharedChannelSettings)(
-    "refreshes $path fanout when the channel registry changes",
-    ({ path }) => {
-      const channelOnlyRegistry = createTestRegistry([
-        { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
-      ]);
+  it("uses plugin-declared account-index reload paths as channel hot reloads", () => {
+    const path = "channels.whatsapp.channelConfigUpdatedAt";
+    const plan = buildGatewayReloadPlan([path]);
+
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartChannels).toEqual(new Set(["whatsapp"]));
+    expect(plan.hotReasons).toEqual([path]);
+    expect(plan.noopPaths).toStrictEqual([]);
+  });
+
+  it("refreshes channel rules when the tracked channel registry changes", () => {
+    const channelOnlyRegistry = createTestRegistry([
+      { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
+    ]);
 
       setActivePluginRegistry(emptyRegistry);
       expect(buildGatewayReloadPlan([path])).toMatchObject({
