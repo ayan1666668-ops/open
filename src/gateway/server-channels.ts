@@ -547,6 +547,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     const addKnownLifecycleId = (id: string) => {
       const rKey = restartKey(channelId, id);
       const snapshot = store.runtimes.get(id);
+      if (!includeKnownAccountHandoffs && knownAccountDeferredToCaller.has(rKey)) {
+        return;
+      }
       if (
         recoveryStopTimedOut.has(rKey) &&
         snapshot?.restartPending !== true &&
@@ -568,10 +571,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     for (const [id, snapshot] of store.runtimes.entries()) {
       // `connected` can be stale after a clean stop. Treat only active or
       // explicitly handoff-pending accounts as known-live restart candidates.
+      const rKey = restartKey(channelId, id);
+      if (!includeKnownAccountHandoffs && knownAccountDeferredToCaller.has(rKey)) {
+        continue;
+      }
       if (
         snapshot.running ||
         snapshot.restartPending ||
-        (includeKnownAccountHandoffs && knownAccountDeferredToCaller.has(restartKey(channelId, id)))
+        (includeKnownAccountHandoffs && knownAccountDeferredToCaller.has(rKey))
       ) {
         known.add(id);
       }
