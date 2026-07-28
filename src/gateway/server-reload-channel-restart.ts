@@ -193,7 +193,9 @@ export async function restartGatewayChannels(options: {
             if (isLifecycleReloadAborted()) {
               continue;
             }
-            await startGatewayChannelFromActiveRegistry(params, channel, accountId);
+            await runOutsideGatewayRootWorkAdmission(() =>
+              params.startChannel(channel, accountId, { preserveManualStop: true }),
+            );
           } catch (err) {
             accountRestartFailures.push(`${channel}[${accountId}]`);
             params.logChannels.error(
@@ -236,7 +238,9 @@ export async function restartGatewayChannels(options: {
               }),
             );
           } else {
-            await runOutsideGatewayRootWorkAdmission(() => params.startChannel(name));
+            await runOutsideGatewayRootWorkAdmission(() =>
+              params.startChannel(name, undefined, { preserveManualStop: true }),
+            );
           }
         };
         const restartFailures = await collectChannelOperationFailures({
