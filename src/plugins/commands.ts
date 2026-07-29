@@ -231,6 +231,7 @@ export async function executePluginCommand(params: {
   command: RegisteredPluginCommand;
   args?: string;
   senderId?: string;
+  senderLanguage?: PluginCommandContext["senderLanguage"];
   channel: string;
   channelId?: PluginCommandContext["channelId"];
   isAuthorizedSender: boolean;
@@ -257,6 +258,7 @@ export async function executePluginCommand(params: {
 
   const ctx: PluginCommandContext = {
     senderId,
+    senderLanguage: params.senderLanguage,
     channel,
     channelId: params.channelId,
     isAuthorizedSender,

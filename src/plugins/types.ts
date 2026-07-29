@@ -144,6 +144,13 @@ export type OpenClawPluginGatewayMethod = {
 export type PluginCommandContext = {
   /** The sender's identifier (e.g., Telegram user ID) */
   senderId?: string;
+  /**
+   * Sender's client/app UI language when the channel reports one (BCP-47-ish,
+   * e.g. "ru", "pt-br"). Telegram supplies it on every message; most channels
+   * leave it undefined. Useful as a greeting default for commands that run
+   * before the sender has written anything.
+   */
+  senderLanguage?: string;
   /** The channel/surface (e.g., "telegram", "discord") */
   channel: string;
   /** Provider channel id (e.g., "telegram") */

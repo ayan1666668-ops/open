@@ -124,6 +124,13 @@ export type MsgContext = {
   SenderUsername?: string;
   SenderTag?: string;
   SenderE164?: string;
+  /**
+   * Sender's client/app UI language as reported by the channel (BCP-47-ish tag,
+   * e.g. "ru", "pt-br"). Telegram reports it on every message; most channels do
+   * not. It reflects the app's language setting, not the language of this
+   * message — treat it as a default, never as a signal that overrides the text.
+   */
+  SenderLanguage?: string;
   Timestamp?: number;
   /** Provider label (e.g. whatsapp, telegram). */
   Provider?: string;
