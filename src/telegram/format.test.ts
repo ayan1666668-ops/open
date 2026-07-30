@@ -113,3 +113,34 @@ describe("markdownToTelegramHtml", () => {
     expect(res).toContain("trailing ||");
   });
 });
+
+describe("telegram reasoning rendering", () => {
+  it("wraps reasoning payloads in an expandable blockquote via renderTelegramHtmlText", async () => {
+    const { renderTelegramHtmlText } = await import("./format.js");
+    const res = renderTelegramHtmlText("Reasoning:\n_step one_\n_step two_");
+    expect(res.startsWith("<blockquote expandable>")).toBe(true);
+    expect(res.endsWith("</blockquote>")).toBe(true);
+    expect(res).toContain("Thinking…");
+    expect(res).toContain("<i>step one</i>");
+  });
+
+  it("leaves non-reasoning text untouched", async () => {
+    const { renderTelegramHtmlText, telegramReasoningMessageBody } = await import("./format.js");
+    expect(renderTelegramHtmlText("Reasoning: on")).not.toContain("<blockquote");
+    expect(telegramReasoningMessageBody("plain answer")).toBeNull();
+    expect(telegramReasoningMessageBody("Reasoning:\n")).toBeNull();
+  });
+
+  it("flattens nested blockquotes inside reasoning bodies (Telegram forbids nesting)", async () => {
+    const { renderTelegramHtmlText } = await import("./format.js");
+    const res = renderTelegramHtmlText("Reasoning:\n> quoted thought");
+    expect(res.match(/<blockquote/g)?.length).toBe(1);
+    expect(res).toContain("quoted thought");
+  });
+
+  it("wraps every chunk when wrapTelegramReasoningHtml is applied to chunked bodies", async () => {
+    const { wrapTelegramReasoningHtml } = await import("./format.js");
+    const res = wrapTelegramReasoningHtml("<i>tail</i>");
+    expect(res).toBe("<blockquote expandable>🤔 <b>Thinking…</b>\n<i>tail</i></blockquote>");
+  });
+});

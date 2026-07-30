@@ -252,6 +252,8 @@ curl "https://api.telegram.org/bot<bot_token>/getUpdates"
     - `/reasoning stream` sends reasoning to the live preview while generating
     - final answer is sent without reasoning text
 
+    Reasoning display: on Telegram, reasoning messages (`/reasoning on` or `/reasoning stream`) render as a collapsed expandable quote labeled "Thinking…" — tap to expand the full reasoning. The answer message is unaffected.
+
   </Accordion>
 
   <Accordion title="Formatting and HTML fallback">

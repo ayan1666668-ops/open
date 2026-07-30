@@ -228,6 +228,32 @@ export function wrapFileReferencesInHtml(html: string): string {
   return result;
 }
 
+// Reasoning payloads carry a "Reasoning:\n" prefix (see formatReasoningMessage). On
+// Telegram they render as a native expandable blockquote: the chat shows a short
+// collapsed "Thinking…" quote and the full reasoning only expands on tap.
+const REASONING_MESSAGE_PREFIX = "Reasoning:\n";
+const TELEGRAM_REASONING_HEADER_HTML = "🤔 <b>Thinking…</b>";
+/** Chars reserved for the expandable-quote wrapper + header when chunking reasoning bodies. */
+export const TELEGRAM_REASONING_WRAP_OVERHEAD = 96;
+
+/** Returns the reasoning body when `text` is a reasoning message payload, else null. */
+export function telegramReasoningMessageBody(text: string): string | null {
+  if (!text.startsWith(REASONING_MESSAGE_PREFIX)) {
+    return null;
+  }
+  const body = text.slice(REASONING_MESSAGE_PREFIX.length).trim();
+  return body.length > 0 ? body : null;
+}
+
+/** Telegram rejects nested <blockquote>; flatten any quote tags before wrapping. */
+function stripBlockquoteTags(html: string): string {
+  return html.replace(/<\/?blockquote(\s+expandable)?\s*>/gi, "");
+}
+
+export function wrapTelegramReasoningHtml(bodyHtml: string): string {
+  return `<blockquote expandable>${TELEGRAM_REASONING_HEADER_HTML}\n${stripBlockquoteTags(bodyHtml)}</blockquote>`;
+}
+
 export function renderTelegramHtmlText(
   text: string,
   options: { textMode?: "markdown" | "html"; tableMode?: MarkdownTableMode } = {},
@@ -236,6 +262,12 @@ export function renderTelegramHtmlText(
   if (textMode === "html") {
     // For HTML mode, trust caller markup - don't modify
     return text;
+  }
+  const reasoningBody = telegramReasoningMessageBody(text);
+  if (reasoningBody !== null) {
+    return wrapTelegramReasoningHtml(
+      markdownToTelegramHtml(reasoningBody, { tableMode: options.tableMode }),
+    );
   }
   // markdownToTelegramHtml already wraps file references by default
   return markdownToTelegramHtml(text, { tableMode: options.tableMode });

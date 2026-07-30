@@ -16,7 +16,10 @@ import {
   markdownToTelegramChunks,
   markdownToTelegramHtml,
   renderTelegramHtmlText,
+  TELEGRAM_REASONING_WRAP_OVERHEAD,
+  telegramReasoningMessageBody,
   wrapFileReferencesInHtml,
+  wrapTelegramReasoningHtml,
 } from "../format.js";
 import { buildInlineKeyboard } from "../send.js";
 import { resolveTelegramVoiceSend } from "../voice.js";
@@ -42,14 +45,14 @@ function buildChunkTextResolver(params: {
   chunkMode: ChunkMode;
   tableMode?: MarkdownTableMode;
 }): ChunkTextFn {
-  return (markdown: string) => {
+  const chunkMarkdown = (markdown: string, textLimit: number) => {
     const markdownChunks =
       params.chunkMode === "newline"
-        ? chunkMarkdownTextWithMode(markdown, params.textLimit, params.chunkMode)
+        ? chunkMarkdownTextWithMode(markdown, textLimit, params.chunkMode)
         : [markdown];
     const chunks: ReturnType<typeof markdownToTelegramChunks> = [];
     for (const chunk of markdownChunks) {
-      const nested = markdownToTelegramChunks(chunk, params.textLimit, {
+      const nested = markdownToTelegramChunks(chunk, textLimit, {
         tableMode: params.tableMode,
       });
       if (!nested.length && chunk) {
@@ -64,6 +67,19 @@ function buildChunkTextResolver(params: {
       chunks.push(...nested);
     }
     return chunks;
+  };
+  return (markdown: string) => {
+    // Reasoning payloads render inside an expandable "Thinking…" blockquote;
+    // chunk the body with headroom for the wrapper, then wrap every chunk.
+    const reasoningBody = telegramReasoningMessageBody(markdown);
+    if (reasoningBody !== null) {
+      const bodyLimit = Math.max(512, params.textLimit - TELEGRAM_REASONING_WRAP_OVERHEAD);
+      return chunkMarkdown(reasoningBody, bodyLimit).map((chunk) => ({
+        html: wrapTelegramReasoningHtml(chunk.html),
+        text: chunk.text,
+      }));
+    }
+    return chunkMarkdown(markdown, params.textLimit);
   };
 }
 
