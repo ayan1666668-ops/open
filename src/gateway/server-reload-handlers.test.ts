@@ -42,14 +42,10 @@ import {
   setGatewaySigusr1RestartPolicy,
   setPreRestartDeferralCheck,
 } from "../infra/restart.js";
-import { PluginRuntimeApplicationError } from "../plugins/lifecycle.js";
 import {
-  captureActivePluginRegistrySnapshot,
-  requireActivePluginChannelRegistry,
+  getActivePluginRegistry,
   resetPluginRuntimeStateForTest,
-  restoreActivePluginRegistrySnapshot,
   setActivePluginRegistry,
-  stageActivePluginRegistry,
 } from "../plugins/runtime.js";
 import {
   enqueueCommandInLane,
@@ -239,11 +235,16 @@ async function withWeixinAccountIndexReloadPath(run: () => Promise<void>) {
       source: "test",
     },
   ]);
-  pinActivePluginChannelRegistry(registry);
+  const previousRegistry = getActivePluginRegistry();
+  setActivePluginRegistry(registry);
   try {
     await run();
   } finally {
-    releasePinnedPluginChannelRegistry(registry);
+    if (previousRegistry) {
+      setActivePluginRegistry(previousRegistry);
+    } else {
+      resetPluginRuntimeStateForTest();
+    }
   }
 }
 
