@@ -11,7 +11,8 @@ import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db-cach
 import type { PluginPackageInstall } from "./manifest.js";
 import { createSqliteHostedOfficialExternalPluginCatalogSnapshotStore } from "./official-external-plugin-catalog-snapshot-store.js";
 import {
-  getOfficialExternalChannelSecretContract,
+  type HostedOfficialExternalPluginCatalogSnapshot,
+  type HostedOfficialExternalPluginCatalogSnapshotStore,
   type OfficialExternalPluginCatalogEntry,
   type OfficialExternalPluginCatalogFeed,
   getOfficialExternalPluginCatalogEntry,
@@ -2130,6 +2131,11 @@ describe("official external plugin catalog", () => {
     expect(resolveOfficialExternalPluginId(yuanbaoByChannel)).toBe("openclaw-plugin-yuanbao");
     expect(resolveOfficialExternalPluginInstall(yuanbaoByChannel)?.npmSpec).toBe(
       "openclaw-plugin-yuanbao@2.18.2",
+    );
+    expect(resolveOfficialExternalPluginId(qqbotByChannel)).toBe("openclaw-qqbot");
+    expect(resolveOfficialExternalPluginId(qqbotByPlugin)).toBe("openclaw-qqbot");
+    expect(resolveOfficialExternalPluginInstall(qqbotByChannel)?.npmSpec).toBe(
+      "@tencent-connect/openclaw-qqbot@2.0.1",
     );
 
     const weixin = expectCatalogEntry("openclaw-weixin");
