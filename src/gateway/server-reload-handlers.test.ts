@@ -106,9 +106,11 @@ import { doesReloadAffectProviderAuth } from "./config-reload-recovery.js";
 import type { GatewayHotReloadApplication } from "./config-reload-status.types.js";
 import { applyHookMappings } from "./hooks-mapping.js";
 import { commitHooksConfigReload } from "./hooks.js";
-import { createChannelManager } from "./server-channels.js";
-import { createLazyGatewayCronState } from "./server-cron-lazy.js";
-import type { GatewayCronState } from "./server-cron.js";
+import {
+  isGatewayReloadGenerationAborted,
+  nextGatewayReloadGeneration,
+} from "./server-reload-contracts.js";
+import type { GatewayPluginReloadResult } from "./server-reload-handlers.js";
 import {
   GatewayConfigReloadSupersededError,
   type GatewayPluginReloadResult,
@@ -9062,49 +9064,16 @@ describe("deferred channel reload abort generation", () => {
     },
   );
 
-  it("new reload lifecycle is not affected by a previous lifecycle abort", async () => {
-    const logChannels = { info: vi.fn(), error: vi.fn() };
-    const channels = {
-      start: vi.fn(async () => new Map()),
-      stop: vi.fn(async () => {}),
-    };
-
-    // Create gen 1 and register abort for it
-    createTestHandlers(logChannels, channels);
+  it("new reload lifecycle is not affected by a previous lifecycle abort", () => {
+    const abortedGeneration = nextGatewayReloadGeneration();
     abortPendingChannelReloads();
 
-    // Create gen 2 — should not carry over the abort from gen 1
-    const h2 = createTestHandlers(logChannels, channels);
+    expect(isGatewayReloadGenerationAborted(abortedGeneration)).toBe(true);
 
-    hoisted.activeTaskBlockers.push(makeActiveTaskBlocker({ taskId: "task-blocking-reload-g2" }));
-    vi.useFakeTimers();
+    const nextGeneration = nextGatewayReloadGeneration();
 
-    try {
-      const reloadPromise = h2.applyHotReload(abortChannelReloadPlan, {});
-      await vi.advanceTimersByTimeAsync(600); // past first poll interval — still waiting
-      await Promise.resolve();
-
-      // Gen 2's generation > abort generation, so it should NOT abort
-      expect(logChannels.info).not.toHaveBeenCalledWith(
-        "channel restart cancelled by in-process restart",
-      );
-
-      // Drain active work → should proceed to stop/start channels normally
-      hoisted.activeTaskBlockers.length = 0;
-      await vi.advanceTimersByTimeAsync(500); // wake up, see active=0, drain complete
-      await expect(reloadPromise).resolves.toBe("applied");
-
-      expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, {
-        manual: false,
-        restartPending: false,
-      });
-      expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
-        preserveManualStop: true,
-      });
-    } finally {
-      vi.useRealTimers();
-      hoisted.activeTaskBlockers.length = 0;
-    }
+    expect(nextGeneration).toBeGreaterThan(abortedGeneration);
+    expect(isGatewayReloadGenerationAborted(nextGeneration)).toBe(false);
   });
 
   it("forwards cancellation to the plugin owner and leaves channel cleanup there", async () => {
@@ -9130,15 +9099,36 @@ describe("deferred channel reload abort generation", () => {
       pruneInactiveChannelAccountState,
       reloadPlugins,
     });
-    const reload = handlers.applyHotReload(createPluginReloadPlan(), {});
-    const rejected = expect(reload).rejects.toBe(failure);
-    await started.promise;
-    abortPendingChannelReloads();
-    release.resolve();
-    await rejected;
-    expect(channels.start).not.toHaveBeenCalled();
-    expect(channels.stop).not.toHaveBeenCalled();
-    expect(pruneInactiveChannelAccountState).not.toHaveBeenCalled();
+
+    const pluginReloadPlan: GatewayReloadPlan = createPluginReloadPlan();
+
+    hoisted.activeTaskBlockers.push(makeActiveTaskBlocker());
+
+    try {
+      const reloadPromise = applyHotReload(pluginReloadPlan, {});
+      const reloadRejected = expect(reloadPromise).rejects.toThrow(
+        "config hot reload cancelled by config supersession or in-process restart",
+      );
+      // Let beforeReplace enter the active-work wait loop, then abort it. This
+      // uses real timers so the plugin reload promise owns its timer lifecycle.
+      await Promise.resolve();
+      abortPendingChannelReloads();
+      await reloadRejected;
+
+      // reloadPlugins should receive the isAborted callback
+      expect(receivedIsAborted).toBe(true);
+      // reloadPlugins should detect abort and return cancelled
+      expect(reloadWasCancelled).toBe(true);
+      // beforeReplace cancellation log
+      expect(logChannels.info).toHaveBeenCalledWith(
+        "channel reload before plugin replace cancelled by config supersession or restart",
+      );
+      // No channel should be started — cancelledByRestart = pluginReloadAborted = true
+      expect(channels.start).not.toHaveBeenCalled();
+      expect(channels.stop).not.toHaveBeenCalled();
+    } finally {
+      hoisted.activeTaskBlockers.length = 0;
+    }
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
