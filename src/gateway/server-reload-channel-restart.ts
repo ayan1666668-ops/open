@@ -78,6 +78,7 @@ export async function restartStoppedPluginAccounts(options: {
           `restarting ${channel} account ${accountId} after ${options.reason}`,
         );
         await startGatewayChannelFromActiveRegistry(options.params, channel, accountId, {
+          includeKnownAccounts: true,
           preserveManualStop: true,
         });
         accountIds.delete(accountId);
