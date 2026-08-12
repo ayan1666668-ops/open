@@ -42,11 +42,20 @@ import {
   setGatewaySigusr1RestartPolicy,
   setPreRestartDeferralCheck,
 } from "../infra/restart.js";
+import { registerPluginCommandInRegistry } from "../plugins/command-registration.js";
 import {
+  createPluginCommandRuntime,
+  type PluginCommandCatalogDecision,
+} from "../plugins/plugin-command-runtime.js";
+import {
+  captureActivePluginRegistrySnapshot,
   getActivePluginRegistry,
   resetPluginRuntimeStateForTest,
+  restoreActivePluginRegistrySnapshot,
   setActivePluginRegistry,
+  stageActivePluginRegistry,
 } from "../plugins/runtime.js";
+import { withPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import {
   enqueueCommandInLane,
   getCommandLaneSnapshot,
@@ -4520,6 +4529,7 @@ describe("gateway restart deferral preflight", () => {
     const previousSkipProviders = process.env.OPENCLAW_SKIP_PROVIDERS;
     delete process.env.OPENCLAW_SKIP_CHANNELS;
     delete process.env.OPENCLAW_SKIP_PROVIDERS;
+    const restoreChannelReloadEnv = enableChannelReloadsForTest();
     const startChannel = vi.fn(async () => {});
     const stopChannel = vi.fn(async () => {});
     const logReload = { info: vi.fn(), warn: vi.fn() };
@@ -4556,6 +4566,16 @@ describe("gateway restart deferral preflight", () => {
       await vi.advanceTimersByTimeAsync(500).catch(() => {});
       vi.useRealTimers();
       await reloadPromise.catch(() => {});
+      if (previousSkipChannels === undefined) {
+        delete process.env.OPENCLAW_SKIP_CHANNELS;
+      } else {
+        process.env.OPENCLAW_SKIP_CHANNELS = previousSkipChannels;
+      }
+      if (previousSkipProviders === undefined) {
+        delete process.env.OPENCLAW_SKIP_PROVIDERS;
+      } else {
+        process.env.OPENCLAW_SKIP_PROVIDERS = previousSkipProviders;
+      }
       restoreChannelReloadEnv();
     }
 
@@ -7056,6 +7076,24 @@ describe("gateway plugin hot reload handlers", () => {
     } finally {
       await reloader.stop();
     }
+
+    listener(
+      createConfigWriteNotification(nextConfig, "hot-env", 1, "runtime-hot-env", "source-hot-env", {
+        preparedCandidate: { runtimeConfig: nextConfig, compareConfig, runtimeEnv },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(events).toContain("channel:candidate"));
+
+    expect(events).toEqual([
+      "cron-build:candidate:old",
+      "lookup:candidate:old",
+      "cron:candidate",
+      "plugin:candidate",
+      "channel:candidate",
+    ]);
+    expect(targetEnv[envKey]).toBe("candidate");
+    await reloader.stop();
   });
 
   it("keeps mixed reload state old until the plugin replacement commit", async () => {
