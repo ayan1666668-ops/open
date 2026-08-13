@@ -1555,6 +1555,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           abort?.abort();
           const log = ensureChannelLog(channelId);
           let outcome: ChannelAccountStopOutcome = { status: "fulfilled" };
+          let stopAccountAlreadySatisfied = false;
           const existingStopAccountFence = store.stopAccountFences.get(id);
           if (existingStopAccountFence) {
             const stopAccountSettled = await waitForChannelStopGracefully(
@@ -1568,14 +1569,17 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 if (store.stopAccountFences.get(id) === existingStopAccountFence) {
                   store.stopAccountFences.delete(id);
                 }
-              } else if (store.stopAccountFences.get(id) === existingStopAccountFence) {
-                store.stopAccountFences.delete(id);
-                const currentStopAfterFence = store.stops.get(id);
-                if (
-                  currentStopAfterFence?.status === "rejected" &&
-                  currentStopAfterFence.error === existingStopAccountFence.timeoutError
-                ) {
-                  store.stops.delete(id);
+              } else {
+                stopAccountAlreadySatisfied = true;
+                if (store.stopAccountFences.get(id) === existingStopAccountFence) {
+                  store.stopAccountFences.delete(id);
+                  const currentStopAfterFence = store.stops.get(id);
+                  if (
+                    currentStopAfterFence?.status === "rejected" &&
+                    currentStopAfterFence.error === existingStopAccountFence.timeoutError
+                  ) {
+                    store.stops.delete(id);
+                  }
                 }
               }
             } else {
@@ -1585,7 +1589,11 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               };
             }
           }
-          if (outcome.status !== "rejected" && plugin?.gateway?.stopAccount) {
+          if (
+            !stopAccountAlreadySatisfied &&
+            outcome.status !== "rejected" &&
+            plugin?.gateway?.stopAccount
+          ) {
             try {
               const account = plugin.config.resolveAccount(cfg, id);
               // A plugin stopAccount that never settles must not wedge every
