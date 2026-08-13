@@ -100,14 +100,9 @@ function waitForChannelStartupHandoff(): Promise<void> {
   });
 }
 
-type ChannelAccountLifetime = {
-  plugin: ChannelPlugin;
-  abort: AbortController;
-  capabilityLease: PluginRuntimeCapabilityLease;
-  teardown?: {
-    context: Omit<ChannelGatewayContext, "setStatus">;
-    run: NonNullable<NonNullable<ChannelPlugin["gateway"]>["stopAccount"]>;
-  };
+type StopAccountFence = {
+  settled: Promise<void>;
+  getLateError: () => unknown;
 };
 
 type ChannelRuntimeStore = {
@@ -131,7 +126,7 @@ type ChannelRuntimeStore = {
   stops: Map<string, ChannelAccountStopState>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
-  stopAccountFences: Map<string, Promise<void>>;
+  stopAccountFences: Map<string, StopAccountFence>;
 };
 
 function sanitizeAbortedTaskStatusPatch(
@@ -737,7 +732,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         const stopAccountFence = store.stopAccountFences.get(id);
         if (stopAccountFence) {
           const stopAccountSettled = await waitForChannelStopGracefully(
-            stopAccountFence,
+            stopAccountFence.settled,
             CHANNEL_STOP_ABORT_TIMEOUT_MS,
           );
           if (!stopAccountSettled) {
@@ -747,6 +742,24 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               lastError: `stopAccount timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
             });
             throw new Error(`stopAccount timed out before restarting ${channelId} account ${id}`);
+          }
+          const lateStopAccountError = stopAccountFence.getLateError();
+          if (lateStopAccountError !== undefined) {
+            if (store.stopAccountFences.get(id) === stopAccountFence) {
+              store.stopAccountFences.delete(id);
+            }
+            store.stops.set(id, { status: "rejected", error: lateStopAccountError });
+            restartDeferredToCaller.delete(rKey);
+            knownAccountDeferredToCaller.delete(rKey);
+            recoveryStopTimedOut.delete(rKey);
+            recoveryStartRequested.delete(rKey);
+            setRuntime(channelId, id, {
+              accountId: id,
+              running: true,
+              restartPending: false,
+              lastError: formatErrorMessage(lateStopAccountError),
+            });
+            throw lateStopAccountError;
           }
           if (store.stopAccountFences.get(id) === stopAccountFence) {
             store.stopAccountFences.delete(id);
@@ -1510,11 +1523,17 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           const existingStopAccountFence = store.stopAccountFences.get(id);
           if (existingStopAccountFence) {
             const stopAccountSettled = await waitForChannelStopGracefully(
-              existingStopAccountFence,
+              existingStopAccountFence.settled,
               CHANNEL_STOP_ABORT_TIMEOUT_MS,
             );
             if (stopAccountSettled) {
-              if (store.stopAccountFences.get(id) === existingStopAccountFence) {
+              const lateStopAccountError = existingStopAccountFence.getLateError();
+              if (lateStopAccountError !== undefined) {
+                outcome = { status: "rejected", error: lateStopAccountError };
+                if (store.stopAccountFences.get(id) === existingStopAccountFence) {
+                  store.stopAccountFences.delete(id);
+                }
+              } else if (store.stopAccountFences.get(id) === existingStopAccountFence) {
                 store.stopAccountFences.delete(id);
               }
             } else {
@@ -1529,15 +1548,41 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               const account = plugin.config.resolveAccount(cfg, id);
               // A plugin stopAccount that never settles must not wedge every
               // stop-driven flow (health monitor sweeps, thaw recovery, reload).
-              // Ordinary recovery retains the timed-out owner; explicit handoff
-              // retires its slots after revoking OpenClaw runtime authority.
-              const runStopAccount = () =>
-                run({
-                  ...context,
-                  setStatus: (next) =>
-                    stopLease.isActive()
-                      ? setRuntime(channelId, id, next)
-                      : getRuntime(channelId, id),
+              // Bound it like the task teardown below; the timed-out path flows
+              // into the existing recoveryStopTimedOut two-call restart contract.
+              let stopAttemptAbandoned = false;
+              let lateStopAccountError: unknown;
+              const stopAccountAttempt = plugin.gateway
+                .stopAccount({
+                  cfg,
+                  accountId: id,
+                  account,
+                  runtime,
+                  abortSignal: abort?.signal ?? new AbortController().signal,
+                  log,
+                  getStatus: () => getRuntime(channelId, id),
+                  setStatus: (next) => {
+                    // A stop we abandoned may settle after a replacement started;
+                    // its late writes must not repaint or tear down that account.
+                    setRuntime(
+                      channelId,
+                      id,
+                      stopAttemptAbandoned
+                        ? sanitizeAbortedTaskStatusPatch(next, getRuntime(channelId, id))
+                        : next,
+                    );
+                  },
+                })
+                .catch((error: unknown) => {
+                  if (stopAttemptAbandoned) {
+                    log.warn?.(
+                      `[${id}] abandoned stopAccount failed late: ${formatErrorMessage(error)}`,
+                    );
+                    lateStopAccountError = error;
+                    return;
+                  }
+                  outcome = { status: "rejected", error };
+                  log.warn?.(`[${id}] stopAccount failed: ${formatErrorMessage(error)}`);
                 });
               const stopAccountAttempt = withPluginHttpRouteRegistry(
                 registry,
@@ -1559,8 +1604,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               );
               if (!stopAccountSettled) {
                 stopAttemptAbandoned = true;
-                const stopAccountFence = stopAccountAttempt.finally(() => {
-                  if (store.stopAccountFences.get(id) === stopAccountFence) {
+                const stopAccountFence: StopAccountFence = {
+                  settled: stopAccountAttempt,
+                  getLateError: () => lateStopAccountError,
+                };
+                stopAccountFence.settled.finally(() => {
+                  if (
+                    lateStopAccountError === undefined &&
+                    store.stopAccountFences.get(id) === stopAccountFence
+                  ) {
                     store.stopAccountFences.delete(id);
                   }
                 });
