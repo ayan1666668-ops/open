@@ -131,6 +131,7 @@ type ChannelRuntimeStore = {
   stops: Map<string, ChannelAccountStopState>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
+  stopAccountFences: Map<string, Promise<void>>;
 };
 
 function sanitizeAbortedTaskStatusPatch(
@@ -192,6 +193,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
     stops: new Map(),
     tasks: new Map(),
     runtimes: new Map(),
+    stopAccountFences: new Map(),
   };
 }
 
@@ -604,7 +606,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         store.lifetimes.has(id) ||
         store.starting.has(id) ||
         store.stops.has(id) ||
-        store.tasks.has(id)
+        store.tasks.has(id) ||
+        store.stopAccountFences.has(id)
       ) {
         continue;
       }
@@ -730,6 +733,26 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         const currentStop = store.stops.get(id);
         if (currentStop?.status === "stopping") {
           return;
+        }
+        const stopAccountFence = store.stopAccountFences.get(id);
+        if (stopAccountFence) {
+          const stopAccountSettled = await waitForChannelStopGracefully(
+            stopAccountFence,
+            CHANNEL_STOP_ABORT_TIMEOUT_MS,
+          );
+          if (!stopAccountSettled) {
+            setRuntime(channelId, id, {
+              accountId: id,
+              restartPending: true,
+              lastError: `stopAccount timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
+            });
+            throw new Error(
+              `stopAccount timed out before restarting ${channelId} account ${id}`,
+            );
+          }
+          if (store.stopAccountFences.get(id) === stopAccountFence) {
+            store.stopAccountFences.delete(id);
+          }
         }
         const existingTask = store.tasks.get(id);
         const existingAbort = store.aborts.get(id);
@@ -1486,32 +1509,26 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           abort?.abort();
           const log = ensureChannelLog(channelId);
           let outcome: ChannelAccountStopOutcome = { status: "fulfilled" };
-          let capabilityLease: PluginRuntimeCapabilityLease | undefined;
-          let stopAccountSettled = true;
-          try {
-            // Running and failed-stop accounts belong to their admitted plugin and config,
-            // even after publication removes the account or replaces its registration.
-            let teardown = lifetime?.teardown;
-            if (fallbackStop && plugin) {
-              const { gateway, stopAccount } = fallbackStop;
-              teardown = {
-                context: createAccountContext(
-                  channelId,
-                  id,
-                  cfg,
-                  runPluginCleanup(plugin, () => plugin.config.resolveAccount(cfg, id)),
-                  new AbortController().signal,
-                ),
-                run: (context) =>
-                  runPluginCleanup(stopAccount, () => stopAccount.call(gateway, context)),
+          const existingStopAccountFence = store.stopAccountFences.get(id);
+          if (existingStopAccountFence) {
+            const stopAccountSettled = await waitForChannelStopGracefully(
+              existingStopAccountFence,
+              CHANNEL_STOP_ABORT_TIMEOUT_MS,
+            );
+            if (stopAccountSettled) {
+              if (store.stopAccountFences.get(id) === existingStopAccountFence) {
+                store.stopAccountFences.delete(id);
+              }
+            } else {
+              outcome = {
+                status: "rejected",
+                error: new Error(`stopAccount timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`),
               };
             }
-            if (teardown) {
-              const { context, run } = teardown;
-              // Teardown can outlive the start task. Its own lease permits route and status
-              // writes only until this stop attempt completes or times out.
-              const stopLease = createPluginRuntimeCapabilityLease("channel account stop");
-              capabilityLease = stopLease;
+          }
+          if (outcome.status !== "rejected" && plugin?.gateway?.stopAccount) {
+            try {
+              const account = plugin.config.resolveAccount(cfg, id);
               // A plugin stopAccount that never settles must not wedge every
               // stop-driven flow (health monitor sweeps, thaw recovery, reload).
               // Ordinary recovery retains the timed-out owner; explicit handoff
@@ -1543,8 +1560,22 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 CHANNEL_STOP_ABORT_TIMEOUT_MS,
               );
               if (!stopAccountSettled) {
+                stopAttemptAbandoned = true;
+                let stopAccountFence: Promise<void>;
+                stopAccountFence = stopAccountAttempt.finally(() => {
+                  if (store.stopAccountFences.get(id) === stopAccountFence) {
+                    store.stopAccountFences.delete(id);
+                  }
+                });
+                store.stopAccountFences.set(id, stopAccountFence);
+                outcome = {
+                  status: "rejected",
+                  error: new Error(
+                    `stopAccount timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
+                  ),
+                };
                 log.warn?.(
-                  `[${id}] stopAccount exceeded ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms; continuing stop`,
+                  `[${id}] stopAccount exceeded ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms; deferring replacement`,
                 );
               }
             }
