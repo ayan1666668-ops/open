@@ -1695,6 +1695,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                   timeoutError: stopAccountTimeoutError,
                   getLateError: () => lateStopAccountError,
                 };
+                const resolveCurrentFenceRestartPending = () => {
+                  if (restartDeferredToCaller.has(rKey)) {
+                    return restartPendingDeferredToCaller.has(rKey);
+                  }
+                  if (manuallyStopped.has(rKey)) {
+                    return false;
+                  }
+                  return accountRestartPending;
+                };
                 void stopAccountFence.settled.finally(() => {
                   if (
                     lateStopAccountError === undefined &&
@@ -1717,7 +1726,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                         recoveryStartRequested.delete(rKey);
                         clearPluginCommandCatalogOwner(store, id);
                         setStoppedRuntime(channelId, id, {
-                          restartPending: accountRestartPending,
+                          restartPending: resolveCurrentFenceRestartPending(),
                           lastStopAt: Date.now(),
                         });
                       }
