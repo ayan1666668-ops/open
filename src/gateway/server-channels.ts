@@ -258,7 +258,9 @@ type StopChannelOptions = {
   preserveKnownAccount?: boolean;
 };
 
-type ChannelAccountStopOutcome = { status: "fulfilled" } | { status: "rejected"; error: unknown };
+type ChannelAccountStopOutcome =
+  | { status: "fulfilled"; stopAccountFenceSatisfied?: boolean }
+  | { status: "rejected"; error: unknown };
 
 type ChannelAccountStopState =
   | { status: "stopping"; attempt: Promise<ChannelAccountStopOutcome> }
@@ -1556,6 +1558,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           knownAccountDeferredToCaller.delete(rKey);
         }
 
+        const currentStop = store.stops.get(id);
         const runStopAttempt = async (
           previousOutcome: ChannelAccountStopOutcome,
         ): Promise<ChannelAccountStopOutcome> => {
@@ -1586,8 +1589,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           }
           abort?.abort();
           const log = ensureChannelLog(channelId);
-          let outcome: ChannelAccountStopOutcome = { status: "fulfilled" };
-          let stopAccountAlreadySatisfied = false;
+          const runtime = ensureChannelRuntime(channelId);
+          const previousStopAccountFenceSatisfied =
+            previousOutcome.status === "fulfilled" &&
+            previousOutcome.stopAccountFenceSatisfied === true;
+          let outcome: ChannelAccountStopOutcome = previousStopAccountFenceSatisfied
+            ? { status: "fulfilled", stopAccountFenceSatisfied: true }
+            : { status: "fulfilled" };
+          let stopAccountAlreadySatisfied = previousStopAccountFenceSatisfied;
           const existingStopAccountFence = store.stopAccountFences.get(id);
           if (existingStopAccountFence) {
             const stopAccountSettled = await waitForChannelStopGracefully(
@@ -1603,6 +1612,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 }
               } else {
                 stopAccountAlreadySatisfied = true;
+                outcome = { status: "fulfilled", stopAccountFenceSatisfied: true };
                 if (store.stopAccountFences.get(id) === existingStopAccountFence) {
                   store.stopAccountFences.delete(id);
                   const currentStopAfterFence = store.stops.get(id);
@@ -1830,7 +1840,6 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           return outcome;
         };
 
-        const currentStop = store.stops.get(id);
         const previousStop =
           currentStop?.status === "stopping"
             ? currentStop.attempt
