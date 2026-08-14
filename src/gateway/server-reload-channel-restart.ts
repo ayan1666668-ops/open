@@ -1,7 +1,10 @@
+import { getChannelPlugin } from "../channels/plugins/index.js";
 import { getLoadedChannelPluginEntryById } from "../channels/plugins/registry-loaded.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { ChannelKind } from "./config-reload-plan.js";
+import type { GatewayReloadPlan } from "./config-reload.js";
+import { listChannelPluginConfigTargetIds } from "./plugin-channel-reload-targets.js";
 import type { GatewayReloadHandlerParams } from "./server-reload-contracts.js";
 import { collectChannelOperationFailures } from "./server-reload-utils.js";
 
@@ -19,12 +22,38 @@ function isChannelPath(path: string, channel: ChannelKind): boolean {
   return path === channelPrefix || path.startsWith(`${channelPrefix}.`);
 }
 
+function getChannelPluginEntryConfigTargetIds(channel: ChannelKind): ReadonlySet<string> {
+  const plugin = getChannelPlugin(channel);
+  return listChannelPluginConfigTargetIds({
+    channelId: channel,
+    pluginId: getLoadedChannelPluginEntryById(channel)?.pluginId,
+    aliases: plugin?.meta.aliases,
+  });
+}
+
+function isPluginEntryConfigPath(path: string, targetId: string): boolean {
+  const configPrefix = `plugins.entries.${targetId}.config`;
+  return path === configPrefix || path.startsWith(`${configPrefix}.`);
+}
+
+function hasCompetingPluginEntryConfigChange(
+  changedPaths: readonly string[],
+  channel: ChannelKind,
+): boolean {
+  const targetIds = getChannelPluginEntryConfigTargetIds(channel);
+  return changedPaths.some((path) =>
+    [...targetIds].some((targetId) => isPluginEntryConfigPath(path, targetId)),
+  );
+}
+
 function hasCompetingChannelConfigChange(
   changedPaths: readonly string[],
   channel: ChannelKind,
 ): boolean {
-  return changedPaths.some(
-    (path) => isChannelPath(path, channel) && !isChannelAccountIndexReloadPath(path, channel),
+  return (
+    changedPaths.some(
+      (path) => isChannelPath(path, channel) && !isChannelAccountIndexReloadPath(path, channel),
+    ) || hasCompetingPluginEntryConfigChange(changedPaths, channel)
   );
 }
 
