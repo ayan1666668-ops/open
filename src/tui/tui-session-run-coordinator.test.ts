@@ -6,10 +6,12 @@ import type { ChatEvent, TuiHistoryLoadResult, TuiStateAccess } from "./tui-type
 
 const completedHistory = {
   loaded: true,
+  displayedAssistantRunIds: [],
   runOutcome: { state: "completed" },
 } as const;
 const activeHistory = (runId: string): TuiHistoryLoadResult => ({
   loaded: true,
+  displayedAssistantRunIds: [],
   runOutcome: { state: "active", runId },
 });
 

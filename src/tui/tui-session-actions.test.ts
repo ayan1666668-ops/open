@@ -1098,6 +1098,35 @@ describe("tui session actions", () => {
     expect(rendered).toContain("Current branch reply");
   });
 
+  it("reports the assistant runs a history rebuild actually displayed", async () => {
+    const chatLog = new ChatLog();
+    const state = createBaseState({ currentSessionId: "session-main" });
+    const { loadHistory } = createTestSessionActions({
+      client: makeTuiBackend({
+        listSessions: vi.fn(),
+        loadHistory: vi.fn().mockResolvedValue({
+          sessionId: "session-main",
+          sessionInfo: { key: "agent:main:main", sessionId: "session-main" },
+          messages: [
+            { role: "user", content: "ask", __openclaw: { id: "u-1", seq: 1 } },
+            {
+              role: "assistant",
+              content: "reply",
+              __openclaw: { id: "a-1", seq: 2, idempotencyKey: "run-persisted" },
+            },
+          ],
+        }),
+      }),
+      chatLog,
+      state,
+    });
+
+    await expect(loadHistory()).resolves.toMatchObject({
+      loaded: true,
+      displayedAssistantRunIds: ["run-persisted"],
+    });
+  });
+
   it("keeps native and separately imported users with the same provider-local ID distinct", async () => {
     const chatLog = new ChatLog();
     const state = createBaseState({ currentSessionId: "session-main" });
@@ -3047,6 +3076,7 @@ describe("tui session actions", () => {
     expect(chatLog.finalizeAssistant).toHaveBeenCalledWith("reply");
     expect(result).toEqual({
       loaded: true,
+      displayedAssistantRunIds: [],
       runOutcome: { state: "completed" },
     });
   });
@@ -3074,7 +3104,11 @@ describe("tui session actions", () => {
       }),
     });
 
-    await expect(loadHistory()).resolves.toEqual({ loaded: true, runOutcome });
+    await expect(loadHistory()).resolves.toEqual({
+      loaded: true,
+      displayedAssistantRunIds: [],
+      runOutcome,
+    });
   });
 
   it.each([
