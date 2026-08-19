@@ -332,6 +332,47 @@ function entryMatches(
   );
 }
 
+function readComparableMessageContent(message: unknown): string | null {
+  if (typeof message === "string") {
+    return message.trim() ? `${message.trim()} ` : null;
+  }
+  const record = readRecord(message);
+  if (!record) {
+    return null;
+  }
+  const content = record.content;
+  let text: string | null = null;
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((block) => {
+        const entry = readRecord(block);
+        if (entry) {
+          return entry.type === "text" ? (readNonemptyString(entry.text) ?? "") : "";
+        }
+        return typeof block === "string" ? block : "";
+      })
+      .join("\n");
+  }
+  const media = readRecord(record["__openclaw"])?.media;
+  let mediaKey = "";
+  if (Array.isArray(media) && media.length > 0) {
+    try {
+      mediaKey = JSON.stringify(media);
+    } catch {
+      return null;
+    }
+  }
+  const key = `${(text ?? "").trim()} ${mediaKey}`;
+  return key === " " ? null : key;
+}
+
+function sameVisibleMessageContent(left: unknown, right: unknown): boolean {
+  const key = readComparableMessageContent(left);
+  return key !== null && key === readComparableMessageContent(right);
+}
+
 function withEntries(
   state: SessionProjectionState,
   entries: readonly SessionProjectionEntry[],
@@ -460,11 +501,19 @@ export function reconcileSessionProjectionSnapshot(
     const uniqueMatch = matches.length === 1 ? matches[0] : undefined;
     const run = current.identity?.runId ? runs[current.identity.runId] : undefined;
     const terminalMatch = findUniqueSnapshotTerminalMatch(current, matches, run, entries);
+    // One match is an adoption via uniqueMatch/terminalMatch above. Several
+    // matches happen when a multi-message run promotes by runId alone (a run
+    // owns messages, not one row): re-inserting there replays the whole run as
+    // a duplicate block, so a same-content match proves the row is already
+    // represented and only content-less ambiguity — a possibly unpersisted
+    // newer final — survives the snapshot.
     if (
       (uniqueMatch &&
         (sameAssistantPersistenceReceipt(uniqueMatch.identity, current.identity) ||
           !isUnsequencedLiveTerminal(current, run))) ||
-      terminalMatch
+      terminalMatch ||
+      (matches.length > 1 &&
+        matches.some((entry) => sameVisibleMessageContent(entry.message, current.message)))
     ) {
       if (
         terminalMatch?.inferred &&
