@@ -12,6 +12,7 @@ import {
 import {
   hasDisplayableSessionMessage,
   isSessionProjectionErrorMessage,
+  sameVisibleMessageContent,
 } from "./session-projection-message-content.js";
 import {
   isLocallyOptimisticSessionMessage,
@@ -330,47 +331,6 @@ function entryMatches(
       authoritative.identity.sequence === null ||
       pending.identity.sequence === authoritative.identity.sequence),
   );
-}
-
-function readComparableMessageContent(message: unknown): string | null {
-  if (typeof message === "string") {
-    return message.trim() ? `${message.trim()} ` : null;
-  }
-  const record = readRecord(message);
-  if (!record) {
-    return null;
-  }
-  const content = record.content;
-  let text: string | null = null;
-  if (typeof content === "string") {
-    text = content;
-  } else if (Array.isArray(content)) {
-    text = content
-      .map((block) => {
-        const entry = readRecord(block);
-        if (entry) {
-          return entry.type === "text" ? (readNonemptyString(entry.text) ?? "") : "";
-        }
-        return typeof block === "string" ? block : "";
-      })
-      .join("\n");
-  }
-  const media = readRecord(record["__openclaw"])?.media;
-  let mediaKey = "";
-  if (Array.isArray(media) && media.length > 0) {
-    try {
-      mediaKey = JSON.stringify(media);
-    } catch {
-      return null;
-    }
-  }
-  const key = `${(text ?? "").trim()} ${mediaKey}`;
-  return key === " " ? null : key;
-}
-
-function sameVisibleMessageContent(left: unknown, right: unknown): boolean {
-  const key = readComparableMessageContent(left);
-  return key !== null && key === readComparableMessageContent(right);
 }
 
 function withEntries(

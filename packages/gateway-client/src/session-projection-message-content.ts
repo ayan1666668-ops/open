@@ -50,6 +50,48 @@ function normalizeChatErrorComparisonText(text: string): string {
     .trim();
 }
 
+function readComparableMessageContent(message: unknown): string | null {
+  if (typeof message === "string") {
+    return message.trim() ? `${message.trim()}\x00` : null;
+  }
+  const record = readRecord(message);
+  if (!record) {
+    return null;
+  }
+  const content = record.content;
+  let text: string | null = null;
+  if (typeof content === "string") {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((block) => {
+        const entry = readRecord(block);
+        if (entry) {
+          return entry.type === "text" ? (readNonemptyString(entry.text) ?? "") : "";
+        }
+        return typeof block === "string" ? block : "";
+      })
+      .join("\n");
+  }
+  const media = readRecord(record["__openclaw"])?.media;
+  let mediaKey = "";
+  if (Array.isArray(media) && media.length > 0) {
+    try {
+      mediaKey = JSON.stringify(media);
+    } catch {
+      return null;
+    }
+  }
+  const key = `${(text ?? "").trim()}\x00${mediaKey}`;
+  return key === "\x00" ? null : key;
+}
+
+/** Compares two projected messages' visible content, ignoring identity/timing fields. */
+export function sameVisibleMessageContent(left: unknown, right: unknown): boolean {
+  const key = readComparableMessageContent(left);
+  return key !== null && key === readComparableMessageContent(right);
+}
+
 /** Diagnostic-only error projections can be retired when their run resumes. */
 export function isSessionProjectionErrorMessage(message: unknown, errorMessage?: string): boolean {
   const role = readRecord(message)?.role;
