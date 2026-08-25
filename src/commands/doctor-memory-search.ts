@@ -3,14 +3,13 @@ import {
   findNormalizedProviderValue,
   normalizeProviderId,
 } from "@openclaw/model-catalog-core/provider-id";
-import { formatByteSize } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { note } from "../../packages/terminal-core/src/note.js";
 import {
   listAgentIds,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
-  resolveDefaultAgentId,
+  tryResolveDefaultAgentId,
 } from "../agents/agent-scope.js";
 import {
   hasAnyAuthProfileStoreSource,
@@ -19,7 +18,7 @@ import {
 } from "../agents/auth-profiles.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import {
-  resolveApiKeyForProvider,
+  resolveApiKeyForProviderCore,
   resolveEnvApiKey,
   resolveUsableCustomProviderApiKey,
 } from "../agents/model-auth.js";
@@ -28,9 +27,9 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { DoctorMemoryEmbeddingRuntimePayload } from "../gateway/server-methods/doctor.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
-  checkQmdBinaryAvailability,
-  resolveQmdBinaryUnavailableReason,
-} from "../memory-host-sdk/engine-qmd.js";
+  resolveMemoryDreamingConfig,
+  resolveMemoryDreamingPluginConfig,
+} from "../memory-host-sdk/dreaming.js";
 import { resolveRememberAcrossConversations } from "../memory-host-sdk/host/config-utils.js";
 import { hasConfiguredMemorySecretInput } from "../memory-host-sdk/secret.js";
 import {
@@ -43,7 +42,7 @@ import {
 } from "../plugin-sdk/memory-core-bundled-runtime.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import {
-  getActiveMemorySearchManager,
+  getActiveMemorySearchManagerCore,
   resolveActiveMemoryBackendConfig,
 } from "../plugins/memory-runtime.js";
 import { defaultSlotIdForKey } from "../plugins/slots.js";
@@ -55,9 +54,6 @@ import { isRecord } from "./doctor/shared/legacy-config-record-shared.js";
 
 type RuntimeMemoryAuditContext = {
   workspaceDir?: string;
-  backend?: string;
-  dbPath?: string;
-  qmdCollections?: number;
 };
 
 type MemoryDoctorAgentScope = {
@@ -85,37 +81,27 @@ type MemoryEmbeddingProviderDoctorMetadata = {
   autoSelectPriority?: number;
 };
 
-function formatRuntimeBytes(bytes: number): string {
-  return formatByteSize(bytes, {
-    style: "legacy-binary",
-    maxUnit: "tera",
-    separator: " ",
-    fractionDigits: (value, unit) => (unit === "byte" ? null : value >= 10 ? 0 : 1),
-  });
-}
-
 function formatLocalRuntimeDoctorNote(facts: DoctorMemoryEmbeddingRuntimePayload): string {
   const backend = facts.backend ?? "unknown";
-  const build = facts.buildType ? `, ${facts.buildType}` : "";
-  const devices = facts.deviceNames?.length ? `\nDevices: ${facts.deviceNames.join(", ")}` : "";
-  const memory = facts.memory
-    ? `\nVRAM snapshot: ${formatRuntimeBytes(facts.memory.usedBytes)} used, ${formatRuntimeBytes(facts.memory.freeBytes)} free, ${formatRuntimeBytes(facts.memory.totalBytes)} total${
-        facts.memory.unifiedBytes > 0
-          ? `, ${formatRuntimeBytes(facts.memory.unifiedBytes)} unified`
-          : ""
-      } (${new Date(facts.memory.observedAtMs).toISOString()})`
+  const build = facts.buildInfo ? `, ${facts.buildInfo}` : "";
+  const model = facts.model?.id
+    ? `\nModel: ${facts.model.id}${facts.model.path ? ` (${facts.model.path})` : ""}`
     : "";
-  const offload =
-    typeof facts.offload?.offloadedLayers === "number" &&
-    typeof facts.offload.totalLayers === "number"
-      ? `\nGPU offload: ${facts.offload.offloadedLayers}/${facts.offload.totalLayers} layers`
-      : facts.offload
-        ? `\nGPU offload: ${facts.offload.supported ? "supported" : "unsupported"}`
-        : "";
-  const context = facts.context ? `\nRequested context: ${facts.context.requestedSize} tokens` : "";
+  const capabilities = facts.capabilities
+    ? `\nCapabilities: ${
+        [facts.capabilities.vision ? "vision" : null, facts.capabilities.draft ? "draft" : null]
+          .filter(Boolean)
+          .join(", ") || "text only"
+      }`
+    : "";
+  const endpoints = facts.endpoints
+    ? `\nEndpoints: ${Object.entries(facts.endpoints)
+        .map(([name, status]) => `${name}=${status}`)
+        .join(" ")}`
+    : "";
   const loadError = facts.loadError ? `\nLoad error: ${facts.loadError}` : "";
   const state = facts.state === "ready" ? "" : ` (${facts.state})`;
-  return `llama.cpp runtime: ${backend}${build}${state}${devices}${memory}${offload}${context}${loadError}`;
+  return `llama.cpp server: ${backend}${build}${state}${model}${capabilities}${endpoints}${loadError}`;
 }
 
 const BUNDLED_MEMORY_EMBEDDING_PROVIDER_DOCTOR_METADATA: MemoryEmbeddingProviderDoctorMetadata[] = [
@@ -261,7 +247,7 @@ async function resolveRuntimeMemoryAuditContext(
   cfg: OpenClawConfig,
   agentId: string,
 ): Promise<RuntimeMemoryAuditContext | null> {
-  const result = await getActiveMemorySearchManager({
+  const result = await getActiveMemorySearchManagerCore({
     cfg,
     agentId,
     purpose: "status",
@@ -272,14 +258,8 @@ async function resolveRuntimeMemoryAuditContext(
   }
   try {
     const status = manager.status();
-    const customQmd =
-      isRecord(status.custom) && isRecord(status.custom.qmd) ? status.custom.qmd : null;
     return {
       workspaceDir: status.workspaceDir?.trim(),
-      backend: status.backend,
-      dbPath: status.dbPath,
-      qmdCollections:
-        typeof customQmd?.collections === "number" ? customQmd.collections : undefined,
     };
   } finally {
     await manager.close?.().catch(() => undefined);
@@ -322,6 +302,10 @@ function buildDreamingArtifactIssueNote(audit: DreamingArtifactsAuditSummary): s
 export async function noteMemoryRecallHealth(cfg: OpenClawConfig): Promise<void> {
   const scopes = resolveMemoryDoctorAgentScopes(cfg);
   const labelAgents = scopes.length > 1;
+  const dreaming = resolveMemoryDreamingConfig({
+    cfg,
+    pluginConfig: resolveMemoryDreamingPluginConfig(cfg),
+  });
   for (const scope of scopes) {
     try {
       const context = await resolveRuntimeMemoryAuditContext(cfg, scope.agentId);
@@ -329,16 +313,7 @@ export async function noteMemoryRecallHealth(cfg: OpenClawConfig): Promise<void>
       if (!workspaceDir) {
         continue;
       }
-      const audit = await auditShortTermPromotionArtifacts({
-        workspaceDir,
-        qmd:
-          context?.backend === "qmd"
-            ? {
-                dbPath: context.dbPath,
-                collections: context.qmdCollections,
-              }
-            : undefined,
-      });
+      const audit = await auditShortTermPromotionArtifacts({ workspaceDir });
       const message = buildMemoryRecallIssueNote(audit);
       if (message) {
         note(formatAgentMessage(scope.agentId, labelAgents, message), "Memory search");
@@ -354,6 +329,15 @@ export async function noteMemoryRecallHealth(cfg: OpenClawConfig): Promise<void>
           scope.agentId,
           labelAgents,
           `Memory recall audit could not be completed: ${formatErrorMessage(err)}`,
+        ),
+        "Memory search",
+      );
+    } finally {
+      note(
+        formatAgentMessage(
+          scope.agentId,
+          labelAgents,
+          `Dreaming: ${dreaming.enabled ? "enabled" : "disabled"} (cadence ${dreaming.frequency}).`,
         ),
         "Memory search",
       );
@@ -382,23 +366,14 @@ export async function maybeRepairMemoryRecallHealth(params: {
       if (!workspaceDir) {
         continue;
       }
-      const audit = await auditShortTermPromotionArtifacts({
-        workspaceDir,
-        qmd:
-          context?.backend === "qmd"
-            ? {
-                dbPath: context.dbPath,
-                collections: context.qmdCollections,
-              }
-            : undefined,
-      });
+      const audit = await auditShortTermPromotionArtifacts({ workspaceDir });
       const hasFixableRecallIssue = audit.issues.some((issue) => issue.fixable);
       if (hasFixableRecallIssue) {
         const approved = await params.prompter.confirmRuntimeRepair({
           message: formatAgentMessage(
             scope.agentId,
             labelAgents,
-            "Normalize memory recall artifacts and remove stale promotion locks?",
+            "Remove dangling memory recalls, normalize recall artifacts, and remove stale promotion locks?",
           ),
           initialValue: true,
         });
@@ -409,6 +384,9 @@ export async function maybeRepairMemoryRecallHealth(params: {
             const details = [
               repair.removedInvalidEntries > 0
                 ? `-${repair.removedInvalidEntries} invalid entries`
+                : null,
+              (repair.removedDanglingEntries ?? 0) > 0
+                ? `-${repair.removedDanglingEntries} dangling entries`
                 : null,
               removedOverflowEntries > 0 ? `-${removedOverflowEntries} overflow entries` : null,
             ]
@@ -547,18 +525,18 @@ function noteRememberAcrossConversationsHealth(params: {
   const conversationRecallSupport = resolveActiveMemoryConversationRecallSupport(params.cfg);
   if (!activeMemoryAvailable) {
     params.noteFn(
-      `Remember across conversations is effectively enabled for agent "${params.agentId}", but the Active Memory plugin is disabled. Enable the plugin or set memorySearch.rememberAcrossConversations to false.`,
+      `Remember across conversations is effectively enabled for agent "${params.agentId}", but the Active Memory plugin is disabled. Enable the plugin or set memory.search.rememberAcrossConversations to false.`,
       "Memory search",
     );
   }
   if (activeMemoryAvailable && !conversationRecallSupport.providerSupported) {
     params.noteFn(
-      `Remember across conversations is effectively enabled for agent "${params.agentId}", but the current memory provider does not support protected private transcript recall. Set memorySearch.rememberAcrossConversations to false or use that provider's own recall path; advanced Active Memory can still use its recall tools.`,
+      `Remember across conversations is effectively enabled for agent "${params.agentId}", but the current memory provider does not support protected private transcript recall. Set memory.search.rememberAcrossConversations to false or use that provider's own recall path; advanced Active Memory can still use its recall tools.`,
       "Memory search",
     );
   } else if (activeMemoryAvailable && !conversationRecallSupport.memorySearchAllowed) {
     params.noteFn(
-      `Remember across conversations is effectively enabled for agent "${params.agentId}", but Active Memory does not allow memory_search. Add memory_search to the plugin toolsAllow list or set memorySearch.rememberAcrossConversations to false.`,
+      `Remember across conversations is effectively enabled for agent "${params.agentId}", but Active Memory does not allow memory_search. Add memory_search to the plugin toolsAllow list or set memory.search.rememberAcrossConversations to false.`,
       "Memory search",
     );
   }
@@ -567,9 +545,7 @@ function noteRememberAcrossConversationsHealth(params: {
 
 /**
  * Check whether memory search has a usable embedding provider.
- * Runs as part of `openclaw doctor` — config-only checks where possible;
- * may spawn a short-lived probe process when `memory.backend=qmd` to verify
- * the configured `qmd` binary is available.
+ * Runs as part of `openclaw doctor` using config-only checks where possible.
  */
 type MemorySearchHealthOptions = {
   gatewayMemoryProbe?: {
@@ -581,7 +557,6 @@ type MemorySearchHealthOptions = {
   };
   noteFn?: typeof note;
   includeWorkspaceMemoryHealth?: boolean;
-  skipQmdBinaryProbe?: boolean;
   skipAuthProfileResolution?: boolean;
 };
 
@@ -590,7 +565,7 @@ export async function noteMemorySearchHealth(
   opts?: MemorySearchHealthOptions,
 ): Promise<void> {
   const scopes = resolveMemoryDoctorAgentScopes(cfg);
-  const defaultAgentId = resolveDefaultAgentId(cfg);
+  const defaultAgentId = tryResolveDefaultAgentId(cfg);
   const labelAgents = scopes.length > 1;
   for (const scope of scopes) {
     if (opts?.includeWorkspaceMemoryHealth !== false) {
@@ -607,7 +582,10 @@ export async function noteMemorySearchHealth(
       ...opts,
       noteFn,
       includeWorkspaceMemoryHealth: false,
-      gatewayMemoryProbe: scope.agentId === defaultAgentId ? opts?.gatewayMemoryProbe : undefined,
+      gatewayMemoryProbe:
+        scope.agentId === defaultAgentId || opts?.gatewayMemoryProbe?.skipped
+          ? opts?.gatewayMemoryProbe
+          : undefined,
     });
   }
 }
@@ -617,7 +595,7 @@ async function noteMemorySearchHealthForAgent(
   scope: MemoryDoctorAgentScope,
   opts: MemorySearchHealthOptions,
 ): Promise<void> {
-  const { agentId, agentDir, workspaceDir } = scope;
+  const { agentId, agentDir } = scope;
   const noteFn = opts.noteFn ?? note;
   const recallHealth = noteRememberAcrossConversationsHealth({
     cfg,
@@ -630,7 +608,7 @@ async function noteMemorySearchHealthForAgent(
   if (!resolved) {
     noteFn(
       recallHealth.enabled
-        ? `Remember across conversations is effectively enabled for agent "${agentId}", but memory search is disabled. Enable memory search or set memorySearch.rememberAcrossConversations to false.`
+        ? `Remember across conversations is effectively enabled for agent "${agentId}", but memory search is disabled. Enable memory search or set memory.search.rememberAcrossConversations to false.`
         : "Memory search is explicitly disabled (enabled: false).",
       "Memory search",
     );
@@ -639,8 +617,6 @@ async function noteMemorySearchHealthForAgent(
   const provider =
     resolved.provider === "auto" ? DEFAULT_MEMORY_EMBEDDING_PROVIDER : resolved.provider;
 
-  // QMD backend handles embeddings internally (e.g. embeddinggemma) — no
-  // separate embedding provider is needed. Skip the provider check entirely.
   const backendConfig = resolveActiveMemoryBackendConfig({ cfg, agentId });
   if (!backendConfig) {
     if (opts?.gatewayMemoryProbe?.checked && opts.gatewayMemoryProbe.ready) {
@@ -652,66 +628,6 @@ async function noteMemorySearchHealthForAgent(
     noteFn("No active memory plugin is registered for the current config.", "Memory search");
     return;
   }
-  if (backendConfig.backend === "qmd") {
-    if (opts?.skipQmdBinaryProbe !== true) {
-      const qmdCheck = await checkQmdBinaryAvailability({
-        command: backendConfig.qmd?.command ?? "qmd",
-        env: process.env,
-        cwd: workspaceDir,
-      });
-      if (!qmdCheck.available) {
-        const workspaceProbeFailed =
-          resolveQmdBinaryUnavailableReason(qmdCheck) === "workspace-cwd";
-        const probeError = qmdCheck.error.trim();
-        noteFn(
-          [
-            workspaceProbeFailed
-              ? "QMD memory backend is configured, but the agent workspace directory could not be used for the QMD startup probe."
-              : `QMD memory backend is configured, but the qmd binary could not be started (${backendConfig.qmd?.command ?? "qmd"}).`,
-            probeError ? `Probe error: ${probeError}` : null,
-            "",
-            "Fix (pick one):",
-            workspaceProbeFailed
-              ? "- Create the missing workspace directory or update the agent workspace path to an existing directory."
-              : "- Install the supported QMD package: npm install -g @tobilu/qmd (or bun install -g @tobilu/qmd)",
-            workspaceProbeFailed
-              ? "- Verify the resolved workspace path for the affected agent before retrying."
-              : `- Set an explicit binary path: ${formatCliCommand("openclaw config set memory.qmd.command /absolute/path/to/qmd")}`,
-            `- Or switch back to builtin memory: ${formatCliCommand("openclaw config set memory.backend builtin")}`,
-            "",
-            `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          "Memory search",
-        );
-      }
-    }
-    if (
-      resolved.sources?.includes("sessions") &&
-      !resolved.rememberAcrossConversations &&
-      cfg.memory?.qmd?.sessions?.enabled !== true
-    ) {
-      noteFn(
-        [
-          "QMD memory backend is configured and the default agent resolves memorySearch.sources with sessions,",
-          "but QMD session transcript export is not enabled (memory.qmd.sessions.enabled is not true).",
-          "Session transcript hits will not appear in QMD-backed memory search until QMD session export is enabled.",
-          "",
-          "Fix (pick one):",
-          `- Enable QMD session export: ${formatCliCommand(
-            "openclaw config set memory.qmd.sessions.enabled true",
-          )}`,
-          "- Or remove sessions from the default agent's memorySearch.sources if QMD session recall is not intended.",
-          "",
-          `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
-        ].join("\n"),
-        "Memory search",
-      );
-    }
-    return;
-  }
-
   if (provider === "none") {
     return;
   }
@@ -746,7 +662,7 @@ async function noteMemorySearchHealthForAgent(
         `- Install the llama.cpp provider plugin: ${formatCliCommand("openclaw plugins install @openclaw/llama-cpp-provider")}`,
         `- Set a local GGUF model path in config`,
         suggestedRemoteProvider
-          ? `- Switch to a remote provider: ${formatCliCommand(`openclaw config set agents.defaults.memorySearch.provider ${suggestedRemoteProvider}`)}`
+          ? `- Switch to a remote provider: ${formatCliCommand(`openclaw config set memory.search.provider ${suggestedRemoteProvider}`)}`
           : `- Switch to a remote embedding provider in config`,
         "",
         `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
@@ -765,10 +681,10 @@ async function noteMemorySearchHealthForAgent(
     noteFn(
       [
         `Memory search provider is set to "${provider}" but no OpenAI-compatible embeddings endpoint was configured.`,
-        "Set agents.defaults.memorySearch.remote.baseUrl to the /v1 endpoint for your embeddings server.",
+        "Set memory.search.remote.baseUrl to the /v1 endpoint for your embeddings server.",
         "",
         "Fix:",
-        `- ${formatCliCommand("openclaw config set agents.defaults.memorySearch.remote.baseUrl http://127.0.0.1:1234/v1")}`,
+        `- ${formatCliCommand("openclaw config set memory.search.remote.baseUrl http://127.0.0.1:1234/v1")}`,
         "",
         `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
       ].join("\n"),
@@ -781,10 +697,10 @@ async function noteMemorySearchHealthForAgent(
     noteFn(
       [
         `Memory search provider is set to "${provider}" but no OpenAI-compatible embedding model was configured.`,
-        "Set agents.defaults.memorySearch.model to the embedding model id your server expects.",
+        "Set memory.search.model to the embedding model id your server expects.",
         "",
         "Fix:",
-        `- ${formatCliCommand("openclaw config set agents.defaults.memorySearch.model text-embedding-bge-m3")}`,
+        `- ${formatCliCommand("openclaw config set memory.search.model text-embedding-bge-m3")}`,
         "",
         `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
       ].join("\n"),
@@ -856,7 +772,7 @@ async function noteMemorySearchHealthForAgent(
       "Fix (pick one):",
       `- Set ${envVar} in your environment`,
       `- Configure credentials: ${formatCliCommand("openclaw configure --section model")}`,
-      `- To disable: ${formatCliCommand("openclaw config set agents.defaults.memorySearch.enabled false")}`,
+      `- To disable: ${formatCliCommand("openclaw config set memory.search.enabled false")}`,
       "",
       `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
     ].join("\n"),
@@ -916,7 +832,7 @@ async function hasApiKeyForProvider(
     return false;
   }
   try {
-    await resolveApiKeyForProvider({
+    await resolveApiKeyForProviderCore({
       provider: authProviderId,
       cfg,
       agentDir,

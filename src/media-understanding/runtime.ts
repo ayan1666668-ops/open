@@ -96,14 +96,12 @@ function buildFileContext(params: {
     (remoteRef && params.capability ? `${params.capability}/*` : undefined);
   if (remoteRef) {
     return {
-      MediaUrl: remoteRef,
-      MediaType: mediaType,
+      media: [{ url: remoteRef, contentType: mediaType }],
       ...scopeFields,
     };
   }
   return {
-    MediaPath: params.filePath,
-    MediaType: mediaType,
+    media: [{ path: params.filePath, contentType: mediaType }],
     ...scopeFields,
   };
 }
@@ -149,9 +147,9 @@ export async function runMediaUnderstandingFile(
     params.timeoutMs > 0
       ? Math.ceil(params.timeoutMs / 1000)
       : undefined;
-  const cfg =
+  const cfg: OpenClawConfig =
     requestPrompt || requestTimeoutSeconds !== undefined
-      ? {
+      ? ({
           ...params.cfg,
           tools: {
             ...params.cfg.tools,
@@ -171,7 +169,7 @@ export async function runMediaUnderstandingFile(
               },
             },
           },
-        }
+        } as OpenClawConfig)
       : params.cfg;
   const ctx = buildFileContext({
     ...params,
@@ -179,10 +177,19 @@ export async function runMediaUnderstandingFile(
     scopeContext: params.scopeContext,
   });
   const attachments = normalizeMediaAttachments(ctx);
+  const decisionBase = {
+    capability: params.capability,
+    attachments: [],
+    ...(params.capability === "image" ? { nativeVisionActive: false } : {}),
+  };
   if (attachments.length === 0) {
     return {
       text: undefined,
-      decision: { capability: params.capability, outcome: "no-attachment", attachments: [] },
+      decision: {
+        ...decisionBase,
+        outcome: "no-attachment",
+        attachmentDispositions: {},
+      },
     };
   }
   const config = cfg.tools?.media?.[params.capability];
@@ -192,10 +199,18 @@ export async function runMediaUnderstandingFile(
       provider: undefined,
       model: undefined,
       output: undefined,
-      decision: { capability: params.capability, outcome: "disabled", attachments: [] },
+      decision: {
+        ...decisionBase,
+        outcome: "disabled",
+        attachmentDispositions: Object.fromEntries(
+          attachments.map((attachment) => [
+            attachment.index,
+            { kind: "capability-disabled" as const },
+          ]),
+        ),
+      },
     };
   }
-
   const providerRegistry = buildProviderRegistry(undefined, cfg);
   const agentDir =
     params.agentDir ?? (params.agentId ? resolveAgentDir(cfg, params.agentId) : undefined);
@@ -396,9 +411,9 @@ export async function describeVideoFile(
 export async function transcribeAudioFile(
   params: TranscribeAudioFileParams,
 ): Promise<RunMediaUnderstandingFileResult> {
-  const cfg =
+  const cfg: OpenClawConfig =
     params.language || params.prompt
-      ? {
+      ? ({
           ...params.cfg,
           tools: {
             ...params.cfg.tools,
@@ -413,7 +428,7 @@ export async function transcribeAudioFile(
               },
             },
           },
-        }
+        } as OpenClawConfig)
       : params.cfg;
   const result = await runMediaUnderstandingFile({ ...params, cfg, capability: "audio" });
   return result;

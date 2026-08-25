@@ -6,6 +6,7 @@ import { createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
   listControlUiPluginTabAuthGrants,
   listControlUiPluginTabs,
+  listControlUiPluginWidgetKinds,
 } from "./control-ui-plugin-tabs.js";
 
 function tabDescriptor(
@@ -51,13 +52,19 @@ describe("listControlUiPluginTabs", () => {
 
   it("projects only tab descriptors", () => {
     activateDescriptors([
-      { pluginId: "logbook", descriptor: tabDescriptor() },
+      {
+        pluginId: "workboard",
+        descriptor: tabDescriptor({ placement: "route:workboard" }),
+      },
       { pluginId: "other", descriptor: tabDescriptor({ id: "run-panel", surface: "run" }) },
     ]);
 
     const tabs = listControlUiPluginTabs(["operator.admin"]);
     expect(tabs.map((tab) => tab.id)).toEqual(["logbook"]);
-    expect(expectDefined(tabs[0], "tabs[0] test invariant").pluginId).toBe("logbook");
+    expect(expectDefined(tabs[0], "tabs[0] test invariant")).toMatchObject({
+      placement: "route:workboard",
+      pluginId: "workboard",
+    });
   });
 
   it("hides tabs whose required scopes are not granted", () => {
@@ -92,6 +99,36 @@ describe("listControlUiPluginTabs", () => {
     ]);
 
     expect(listControlUiPluginTabs([]).map((tab) => tab.id)).toEqual(["beta", "zed", "alpha"]);
+  });
+
+  it("merges the read-scoped core kind into deterministic plugin ordering", () => {
+    activateDescriptors([
+      {
+        pluginId: "workboard",
+        descriptor: tabDescriptor({
+          id: "card",
+          surface: "widget",
+          label: "Workboard card",
+          requiredScopes: ["operator.read"],
+        }),
+      },
+      {
+        pluginId: "workboard",
+        descriptor: tabDescriptor({
+          id: "mini",
+          surface: "widget",
+          label: "Workboard summary",
+          requiredScopes: ["operator.read"],
+        }),
+      },
+    ]);
+
+    expect(listControlUiPluginWidgetKinds([])).toEqual([]);
+    expect(listControlUiPluginWidgetKinds(["operator.read"])).toEqual([
+      { pluginId: "session", kind: "session:progress", label: "Session progress" },
+      { pluginId: "workboard", kind: "workboard:card", label: "Workboard card" },
+      { pluginId: "workboard", kind: "workboard:mini", label: "Workboard summary" },
+    ]);
   });
 
   it("grants only same-plugin gateway routes with least-privilege scopes", () => {

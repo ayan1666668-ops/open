@@ -4,6 +4,7 @@ import SwiftUI
 
 struct RootSidebar: View {
     @Environment(NodeAppModel.self) private var appModel
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
     @Bindable var model: RootSidebarModel
     @State private var searchText = ""
@@ -15,9 +16,8 @@ struct RootSidebar: View {
 
     let selectedDestination: RootTabs.SidebarDestination
     let isDrawerLayout: Bool
-    let showsDismissButton: Bool
+    let isDismissButtonEnabled: Bool
     let selectDestination: (RootTabs.SidebarDestination) -> Void
-    let selectSettingsRoute: (SettingsRoute) -> Void
     let hideSidebar: () -> Void
 
     var body: some View {
@@ -43,7 +43,8 @@ struct RootSidebar: View {
         .background(OpenClawSidebarPalette.background)
         .sheet(isPresented: self.$showsPagesEditor) {
             RootSidebarPagesEditor(
-                pinnedPages: self.pinnedPages,
+                destinations: RootTabs.pinnableSidebarPages.filter(self.isDestinationAvailable),
+                pinnedPages: self.storedPinnedPages,
                 onSelect: { destination in
                     self.showsPagesEditor = false
                     self.selectSidebarDestination(destination)
@@ -52,12 +53,20 @@ struct RootSidebar: View {
         }
     }
 
-    private var pinnedPages: [RootTabs.SidebarDestination] {
+    private var storedPinnedPages: [RootTabs.SidebarDestination] {
         RootTabs.pinnedSidebarPages(from: self.pinnedPagesStorage)
     }
 
+    private var pinnedPages: [RootTabs.SidebarDestination] {
+        self.storedPinnedPages.filter(self.isDestinationAvailable)
+    }
+
+    private func isDestinationAvailable(_ destination: RootTabs.SidebarDestination) -> Bool {
+        destination != .desktop || self.appModel.isDesktopObserveAvailable
+    }
+
     private func togglePinnedPage(_ destination: RootTabs.SidebarDestination) {
-        var pages = self.pinnedPages
+        var pages = self.storedPinnedPages
         if let index = pages.firstIndex(of: destination) {
             pages.remove(at: index)
         } else {
@@ -102,18 +111,12 @@ struct RootSidebar: View {
             {
                 self.selectSidebarDestination(.settings)
             }
+            .accessibilityIdentifier("RootTabs.Sidebar.Destination.settings")
 
-            if self.isDrawerLayout, self.showsDismissButton {
-                Button(action: self.dismissSidebar) {
-                    Image(systemName: "xmark")
-                        .font(OpenClawType.subheadSemiBold)
-                        .frame(width: 40, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(OpenClawSidebarPalette.accent)
-                .accessibilityLabel(String(localized: "Hide Sidebar"))
-                .accessibilityIdentifier(RootTabs.sidebarHideButtonAccessibilityIdentifier)
+            if self.isDrawerLayout {
+                OpenClawSidebarControlButton(action: self.dismissAction)
+                    .allowsHitTesting(self.isDismissButtonEnabled)
+                    .accessibilityHidden(!self.isDismissButtonEnabled)
             }
         }
         .padding(.leading, 8)
@@ -121,6 +124,16 @@ struct RootSidebar: View {
         .padding(.vertical, 8)
         .background(OpenClawSidebarPalette.background)
         .overlay(alignment: .bottom) { self.separator }
+    }
+
+    private var dismissAction: OpenClawSidebarHeaderAction {
+        OpenClawSidebarHeaderAction(
+            systemName: "xmark",
+            accessibilityLabel: .localized("Hide Sidebar"),
+            accessibilityIdentifier: self.isDismissButtonEnabled
+                ? RootTabs.sidebarHideButtonAccessibilityIdentifier
+                : nil,
+            action: self.dismissSidebar)
     }
 
     /// Prototype-style agent roster: up to `visibleAgentCount` rows inline
@@ -170,14 +183,7 @@ struct RootSidebar: View {
         } label: {
             HStack(spacing: 9) {
                 ZStack(alignment: .bottomTrailing) {
-                    ZStack {
-                        Circle()
-                            .fill(OpenClawSidebarPalette.elevated)
-                        Text(verbatim: Self.agentBadge(name: Self.agentDisplayName(agent), identity: agent.identity))
-                            .font(OpenClawType.caption2Bold)
-                            .foregroundStyle(OpenClawSidebarPalette.textStrong)
-                    }
-                    .frame(width: 28, height: 28)
+                    self.agentAvatarBadge(agent, size: 28)
                     if isSelected {
                         Circle()
                             .fill(OpenClawBrand.ok)
@@ -219,9 +225,15 @@ struct RootSidebar: View {
                 Button {
                     self.appModel.setSelectedAgentId(agent.id)
                 } label: {
-                    Text(verbatim: Self.agentDisplayName(agent))
-                        .font(OpenClawType.subheadSemiBold)
+                    Label {
+                        Text(verbatim: Self.agentDisplayName(agent))
+                            .font(OpenClawType.subheadSemiBold)
+                    } icon: {
+                        self.agentMenuAvatarImage(agent)
+                            .renderingMode(.original)
+                    }
                 }
+                .accessibilityLabel(Self.agentDisplayName(agent))
             }
         } label: {
             HStack(spacing: 9) {
@@ -282,18 +294,34 @@ struct RootSidebar: View {
     }
 
     static func agentBadge(name: String, identity: [String: AnyCodable]?) -> String {
-        if let emoji = (identity?["emoji"]?.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !emoji.isEmpty
-        {
-            return emoji
+        AgentIdentityPresentation.badge(
+            avatarText: identity?["emoji"]?.value as? String,
+            displayName: name)
+    }
+
+    private func agentAvatarBadge(_ agent: AgentSummary, size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(OpenClawSidebarPalette.elevated)
+            Text(verbatim: Self.agentBadge(name: Self.agentDisplayName(agent), identity: agent.identity))
+                .font(OpenClawType.caption2Bold)
+                .foregroundStyle(OpenClawSidebarPalette.textStrong)
+                .minimumScaleFactor(0.65)
+                .lineLimit(1)
         }
-        let initials = name
-            .split(whereSeparator: { $0.isWhitespace || $0 == "-" || $0 == "_" })
-            .prefix(2)
-            .compactMap(\.first)
-            .map(String.init)
-            .joined()
-        return initials.isEmpty ? "OC" : initials.uppercased()
+        .frame(width: size, height: size)
+        .overlay(Circle().strokeBorder(OpenClawSidebarPalette.hairline, lineWidth: 1))
+        .accessibilityHidden(true)
+    }
+
+    private func agentMenuAvatarImage(_ agent: AgentSummary) -> Image {
+        let renderer = ImageRenderer(content: self.agentAvatarBadge(agent, size: 24)
+            .environment(\.colorScheme, self.colorScheme))
+        renderer.scale = self.displayScale
+        guard let image = renderer.uiImage else {
+            return Image(systemName: "person.crop.circle")
+        }
+        return Image(uiImage: image)
     }
 
     private var searchField: some View {
@@ -466,6 +494,7 @@ struct RootSidebar: View {
         .background(isSelected ? OpenClawSidebarPalette.selection : Color.clear, in: RoundedRectangle(
             cornerRadius: OpenClawProMetric.controlRadius,
             style: .continuous))
+        .accessibilityIdentifier("RootTabs.Sidebar.Destination.chat")
         .accessibilityValue(mainSession?.unread == true ? String(localized: "Unread") : "")
     }
 
@@ -503,6 +532,7 @@ struct RootSidebar: View {
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 8)
+        .fixedSize(horizontal: false, vertical: true)
         .background(OpenClawSidebarPalette.background)
     }
 
@@ -598,8 +628,11 @@ struct RootSidebar: View {
                         .lineLimit(1)
                     // Web-parity subtitle: the work line (repo/branch) names the
                     // session; recency moves to the trailing metadata slot.
-                    if let workSubtitle = ChatSessionSidebarModel.workSubtitle(for: session) {
-                        Text(verbatim: workSubtitle)
+                    if let subtitle = ChatSessionSidebarModel.subtitle(
+                        for: session,
+                        workSubtitle: ChatSessionSidebarModel.workSubtitle(for: session))
+                    {
+                        Text(verbatim: subtitle)
                             .font(OpenClawType.caption2Medium)
                             .foregroundStyle(OpenClawSidebarPalette.muted)
                             .lineLimit(1)
@@ -688,6 +721,7 @@ struct RootSidebar: View {
         .background(isSelected ? OpenClawSidebarPalette.selection : Color.clear, in: RoundedRectangle(
             cornerRadius: OpenClawProMetric.controlRadius,
             style: .continuous))
+        .accessibilityIdentifier("RootTabs.Sidebar.Destination.\(destination.rawValue)")
     }
 
     /// Attention lives on the rows that act on it (prototype parity): pending
@@ -782,6 +816,7 @@ struct RootSidebar: View {
             do {
                 try await self.appModel.makeChatTransport().patchSession(
                     key: session.key,
+                    expectedSessionID: archived == nil ? nil : session.sessionId,
                     label: label,
                     category: category,
                     pinned: pinned,
@@ -814,7 +849,9 @@ struct RootSidebar: View {
     private func forkSession(_ session: OpenClawChatSessionEntry) {
         Task {
             do {
-                let key = try await self.appModel.makeChatTransport().forkSession(parentKey: session.key)
+                let key = try await self.appModel.makeChatTransport().forkSession(
+                    parentKey: session.key,
+                    fromLastCompleted: session.hasActiveRun == true)
                 self.appModel.openChat(sessionKey: key)
                 self.selectSidebarDestination(.chat)
                 await self.model.refreshSessions(appModel: self.appModel)
@@ -838,6 +875,7 @@ struct RootSidebar: View {
 /// Web-parity Pages editor (the pen menu): navigate to any page, pin/unpin
 /// which ones stay in the sidebar. Home is fixed and not listed.
 struct RootSidebarPagesEditor: View {
+    let destinations: [RootTabs.SidebarDestination]
     let pinnedPages: [RootTabs.SidebarDestination]
     let onSelect: (RootTabs.SidebarDestination) -> Void
     let onTogglePin: (RootTabs.SidebarDestination) -> Void
@@ -848,7 +886,7 @@ struct RootSidebarPagesEditor: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(RootTabs.pinnableSidebarPages) { destination in
+                    ForEach(self.destinations) { destination in
                         self.pageRow(destination)
                     }
                 } footer: {

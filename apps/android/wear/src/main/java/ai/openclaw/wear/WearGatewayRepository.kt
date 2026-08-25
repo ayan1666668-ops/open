@@ -11,17 +11,76 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.util.UUID
 
 internal data class WearProxyStatus(
   val connected: Boolean,
-  val detail: String,
   val activeAgentId: String?,
   val activeSessionKey: String?,
   val selectedModelRef: String?,
   val capabilities: Set<WearProxyCapability>,
+  val eventSequence: Long?,
+  val phoneNodeId: String,
+  val eventStreamId: String? = null,
+)
+
+internal enum class WearAgentPulseTaskState {
+  Ready,
+  Unavailable,
+}
+
+internal data class WearAgentPulseTasks(
+  val state: WearAgentPulseTaskState,
+  val queued: Int? = null,
+  val running: Int? = null,
+  val completed: Int? = null,
+  val failed: Int? = null,
+  val activeAtLimit: Boolean? = null,
+  val recentAtLimit: Boolean? = null,
+)
+
+internal enum class WearAgentPulseSwarmState {
+  Active,
+  Idle,
+  Unavailable,
+}
+
+internal data class WearAgentPulsePhase(
+  val queued: Int,
+  val running: Int,
+  val done: Int,
+  val failed: Int,
+  val hidden: Int,
+)
+
+internal data class WearAgentPulseSwarm(
+  val state: WearAgentPulseSwarmState,
+  val groups: Int? = null,
+  val running: Int? = null,
+  val done: Int? = null,
+  val failed: Int? = null,
+  val phases: List<WearAgentPulsePhase> = emptyList(),
+  val morePhases: Boolean? = null,
+)
+
+internal enum class WearAgentPulseApprovalsState {
+  Ready,
+  Refreshing,
+  Unavailable,
+}
+
+internal data class WearAgentPulseApprovals(
+  val state: WearAgentPulseApprovalsState,
+  val pending: Int? = null,
+)
+
+internal data class WearAgentPulseSnapshot(
+  val tasks: WearAgentPulseTasks,
+  val swarm: WearAgentPulseSwarm,
+  val approvals: WearAgentPulseApprovals,
   val eventSequence: Long?,
   val phoneNodeId: String,
   val eventStreamId: String? = null,
@@ -43,7 +102,7 @@ internal data class WearAgentList(
 
 internal data class WearSession(
   val key: String,
-  val title: String,
+  val title: String?,
   val updatedAt: Long?,
   val hasActiveRun: Boolean,
   val phoneNodeId: String,
@@ -58,6 +117,8 @@ internal data class WearSessionList(
   val eventStreamId: String? = null,
   val activeAgentId: String? = null,
   val selectedSessionValid: Boolean = false,
+  val hasMore: Boolean = false,
+  val nextOffset: Int? = null,
 )
 
 internal data class WearModel(
@@ -149,11 +210,36 @@ internal class WearGatewayRepository(
     val result = response.payload.asObject("proxy.status")
     return WearProxyStatus(
       connected = result.boolean("connected") ?: false,
-      detail = result.string("status") ?: "Phone gateway unavailable",
       activeAgentId = result.string("activeAgentId"),
       activeSessionKey = result.string("activeSessionKey"),
       selectedModelRef = result.string("selectedModelRef"),
       capabilities = result.proxyCapabilities(),
+      eventStreamId = response.eventStreamId,
+      eventSequence = response.eventSequence,
+      phoneNodeId = response.sourceNodeId,
+    )
+  }
+
+  suspend fun agentPulse(
+    expectedNodeId: String,
+    capabilities: Set<WearProxyCapability>,
+    selectedSessionKey: String? = null,
+  ): WearAgentPulseSnapshot {
+    capabilities.require(WearProxyCapability.AgentPulse)
+    val response =
+      requester.request(
+        WearRpcMethod.AgentPulse,
+        buildJsonObject {
+          selectedSessionKey?.takeIf(String::isNotBlank)?.let { put("sessionKey", it) }
+        },
+        expectedNodeId,
+        requirePreferredNode = true,
+      )
+    val result = response.payload.asObject("agent.pulse")
+    return WearAgentPulseSnapshot(
+      tasks = parseAgentPulseTasks(result["tasks"]),
+      swarm = parseAgentPulseSwarm(result["swarm"]),
+      approvals = parseAgentPulseApprovals(result["approvals"]),
       eventStreamId = response.eventStreamId,
       eventSequence = response.eventSequence,
       phoneNodeId = response.sourceNodeId,
@@ -202,6 +288,7 @@ internal class WearGatewayRepository(
     expectedNodeId: String,
     capabilities: Set<WearProxyCapability>,
     selectedModelRef: String? = null,
+    query: String? = null,
   ): WearModelList {
     capabilities.require(WearProxyCapability.ModelControls)
     val response =
@@ -209,6 +296,9 @@ internal class WearGatewayRepository(
         WearRpcMethod.ModelsList,
         buildJsonObject {
           selectedModelRef?.let { put("selectedModelRef", it) }
+          if (WearProxyCapability.ModelCatalogSearch in capabilities) {
+            query?.takeIf(String::isNotBlank)?.let { put("query", it) }
+          }
         },
         expectedNodeId,
         requirePreferredNode = true,
@@ -272,7 +362,6 @@ internal class WearGatewayRepository(
     val result = response.payload.asObject(if (enabled) "gateway.connect" else "gateway.disconnect")
     return WearProxyStatus(
       connected = result.boolean("connected") ?: false,
-      detail = result.string("status") ?: if (enabled) "Connecting" else "Offline",
       activeAgentId = result.string("activeAgentId"),
       activeSessionKey = result.string("activeSessionKey"),
       selectedModelRef = result.string("selectedModelRef"),
@@ -287,13 +376,20 @@ internal class WearGatewayRepository(
     expectedNodeId: String? = null,
     selectedSessionKey: String? = null,
     capabilities: Set<WearProxyCapability> = emptySet(),
+    limit: Int = 30,
+    offset: Int? = null,
+    search: String? = null,
   ): WearSessionList {
     val response =
       requester
         .request(
           WearRpcMethod.SessionsList,
           buildJsonObject {
-            put("limit", 30)
+            put("limit", limit)
+            if (WearProxyCapability.SessionSearchPagination in capabilities) {
+              offset?.let { put("offset", it) }
+              search?.takeIf(String::isNotBlank)?.let { put("search", it) }
+            }
             if (WearProxyCapability.SessionSelectionLookup in capabilities) {
               selectedSessionKey?.takeIf(String::isNotBlank)?.let { put("selectedSessionKey", it) }
             }
@@ -311,6 +407,8 @@ internal class WearGatewayRepository(
       phoneNodeId = response.sourceNodeId,
       activeAgentId = result.string("activeAgentId"),
       selectedSessionValid = result.boolean("selectedSessionValid") ?: false,
+      hasMore = result.boolean("hasMore") ?: false,
+      nextOffset = result.long("nextOffset")?.toInt(),
     )
   }
 
@@ -380,6 +478,7 @@ internal class WearGatewayRepository(
     attemptId: String,
     language: String?,
     phoneNodeId: String,
+    attemptScopedAudio: Boolean,
   ): WearRealtimeTalkSnapshot {
     val response =
       requester.request(
@@ -388,6 +487,7 @@ internal class WearGatewayRepository(
           put("sessionKey", sessionKey)
           put("attemptId", attemptId)
           language?.let { put("language", it) }
+          if (attemptScopedAudio) put("attemptScopedAudio", true)
         },
         phoneNodeId,
         requirePreferredNode = true,
@@ -423,6 +523,88 @@ internal fun parseWearChatEvent(payload: JsonElement?): WearChatEvent? {
     message = parseChatMessage(source["message"]),
   )
 }
+
+private fun parseAgentPulseTasks(element: JsonElement?): WearAgentPulseTasks {
+  val source = element as? JsonObject ?: invalidAgentPulse()
+  return when (source.string("state")) {
+    "ready" -> {
+      if (source.string("scope") != "bounded") invalidAgentPulse()
+      WearAgentPulseTasks(
+        state = WearAgentPulseTaskState.Ready,
+        queued = source.nonNegativeInt("queued"),
+        running = source.nonNegativeInt("running"),
+        completed = source.nonNegativeInt("completed"),
+        failed = source.nonNegativeInt("failed"),
+        activeAtLimit = source.requiredBoolean("activeAtLimit"),
+        recentAtLimit = source.requiredBoolean("recentAtLimit"),
+      )
+    }
+    "unavailable" -> WearAgentPulseTasks(state = WearAgentPulseTaskState.Unavailable)
+    else -> invalidAgentPulse()
+  }
+}
+
+private fun parseAgentPulseSwarm(element: JsonElement?): WearAgentPulseSwarm {
+  val source = element as? JsonObject ?: invalidAgentPulse()
+  return when (source.string("state")) {
+    "active" -> {
+      if (source.string("scope") != "selected-session") invalidAgentPulse()
+      val phases = source["phases"] as? JsonArray ?: invalidAgentPulse()
+      if (phases.size > MAX_AGENT_PULSE_PHASES) invalidAgentPulse()
+      WearAgentPulseSwarm(
+        state = WearAgentPulseSwarmState.Active,
+        groups = source.nonNegativeInt("groups"),
+        running = source.nonNegativeInt("running"),
+        done = source.nonNegativeInt("done"),
+        failed = source.nonNegativeInt("failed"),
+        phases = phases.map(::parseAgentPulsePhase),
+        morePhases = source.requiredBoolean("morePhases"),
+      )
+    }
+    "idle" -> {
+      if (source.string("scope") != "selected-session") invalidAgentPulse()
+      WearAgentPulseSwarm(state = WearAgentPulseSwarmState.Idle)
+    }
+    "unavailable" -> WearAgentPulseSwarm(state = WearAgentPulseSwarmState.Unavailable)
+    else -> invalidAgentPulse()
+  }
+}
+
+private fun parseAgentPulsePhase(element: JsonElement): WearAgentPulsePhase {
+  val source = element as? JsonObject ?: invalidAgentPulse()
+  return WearAgentPulsePhase(
+    queued = source.nonNegativeInt("queued"),
+    running = source.nonNegativeInt("running"),
+    done = source.nonNegativeInt("done"),
+    failed = source.nonNegativeInt("failed"),
+    hidden = source.nonNegativeInt("hidden"),
+  )
+}
+
+private fun parseAgentPulseApprovals(element: JsonElement?): WearAgentPulseApprovals {
+  val source = element as? JsonObject ?: invalidAgentPulse()
+  return when (source.string("state")) {
+    "ready" ->
+      WearAgentPulseApprovals(
+        state = WearAgentPulseApprovalsState.Ready,
+        pending = source.nonNegativeInt("pending"),
+      )
+    "refreshing" -> WearAgentPulseApprovals(state = WearAgentPulseApprovalsState.Refreshing)
+    "unavailable" -> WearAgentPulseApprovals(state = WearAgentPulseApprovalsState.Unavailable)
+    else -> invalidAgentPulse()
+  }
+}
+
+private fun JsonObject.nonNegativeInt(name: String): Int {
+  val value = (this[name] as? JsonPrimitive)?.takeUnless(JsonPrimitive::isString)?.intOrNull
+  return value?.takeIf { it >= 0 } ?: invalidAgentPulse()
+}
+
+private fun JsonObject.requiredBoolean(name: String): Boolean = boolean(name) ?: invalidAgentPulse()
+
+private fun invalidAgentPulse(): Nothing = throw WearProxyException("invalid_response", "agent.pulse returned invalid data")
+
+private const val MAX_AGENT_PULSE_PHASES = 8
 
 private fun parseSession(
   element: JsonElement,

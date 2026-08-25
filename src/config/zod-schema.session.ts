@@ -10,11 +10,8 @@ import {
   InboundDebounceSchema,
   NativeCommandsSettingSchema,
   QueueSchema,
-  TypingModeSchema,
-  TtsConfigSchema,
   VisibleRepliesSchema,
 } from "./zod-schema.core.js";
-import { sensitive } from "./zod-schema.sensitive.js";
 
 const SessionResetConfigSchema = z
   .object({
@@ -43,22 +40,17 @@ const PositiveDurationSchema = z.union([z.string(), z.number()]).superRefine((va
   }
 });
 
-export const SessionSendPolicySchema = createAllowDenyChannelRulesSchema();
+const SessionSendPolicySchema = createAllowDenyChannelRulesSchema();
 
 export const SessionSchema = z
   .object({
     scope: z.union([z.literal("per-sender"), z.literal("global")]).optional(),
     dmScope: z
-      .union([
-        z.literal("main"),
-        z.literal("per-peer"),
-        z.literal("per-channel-peer"),
-        z.literal("per-account-channel-peer"),
-      ])
+      .enum(["main", "per-peer", "per-channel-peer", "per-account-channel-peer"])
       .optional(),
+    groupScope: z.enum(["main", "per-group"]).optional(),
     identityLinks: z.record(z.string(), z.array(z.string())).optional(),
     resetTriggers: z.array(z.string()).optional(),
-    idleMinutes: z.number().int().positive().optional(),
     reset: SessionResetConfigSchema.optional(),
     resetByType: z
       .object({
@@ -70,7 +62,6 @@ export const SessionSchema = z
       .optional(),
     resetByChannel: z.record(z.string(), SessionResetConfigSchema).optional(),
     store: z.string().optional(),
-    typingMode: TypingModeSchema.optional(),
     mainKey: z.string().optional(),
     sendPolicy: SessionSendPolicySchema.optional(),
     threadBindings: z
@@ -83,11 +74,23 @@ export const SessionSchema = z
       })
       .strict()
       .optional(),
+    sharing: z
+      .object({
+        readOnly: z.boolean().optional(),
+        suggest: z.boolean().optional(),
+        drafts: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     maintenance: z
       .object({
         mode: z.enum(["enforce", "warn"]).optional(),
         pruneAfter: PositiveDurationSchema.optional(),
+        archiveDashboardAfter: z
+          .union([PositiveDurationSchema, z.literal(false), z.literal(0)])
+          .optional(),
         maxEntries: z.number().int().positive().optional(),
+        preserveRecent: z.union([PositiveDurationSchema, z.literal(false)]).optional(),
         resetArchiveRetention: z.union([PositiveDurationSchema, z.literal(false)]).optional(),
         maxDiskBytes: z.union([z.string(), z.number(), z.literal(false)]).optional(),
         highWaterBytes: z.union([z.string(), z.number()]).optional(),
@@ -143,33 +146,13 @@ export const MessagesSchema = z
     ackReactionScope: z
       .enum(["group-mentions", "group-all", "direct", "all", "off", "none"])
       .optional(),
-    removeAckAfterReply: z.boolean().optional(),
     statusReactions: z
       .object({
         enabled: z.boolean().optional(),
-        emojis: z
-          .object({
-            queued: z.string().optional(),
-            thinking: z.string().optional(),
-            tool: z.string().optional(),
-            coding: z.string().optional(),
-            web: z.string().optional(),
-            deploy: z.string().optional(),
-            build: z.string().optional(),
-            concierge: z.string().optional(),
-            done: z.string().optional(),
-            error: z.string().optional(),
-            stallSoft: z.string().optional(),
-            stallHard: z.string().optional(),
-            compacting: z.string().optional(),
-          })
-          .strict()
-          .optional(),
       })
       .strict()
       .optional(),
     suppressToolErrors: z.boolean().optional(),
-    tts: TtsConfigSchema,
   })
   .strict()
   .optional();
@@ -186,10 +169,7 @@ export const CommandsSchema = z
     plugins: z.boolean().optional(),
     debug: z.boolean().optional(),
     restart: z.boolean().optional().default(true),
-    useAccessGroups: z.boolean().optional(),
     ownerAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
-    ownerDisplay: z.enum(["raw", "hash"]).optional().default("raw"),
-    ownerDisplaySecret: z.string().optional().register(sensitive),
     allowFrom: ElevatedAllowFromSchema.optional(),
   })
   .strict()
@@ -200,6 +180,5 @@ export const CommandsSchema = z
         native: "auto",
         nativeSkills: "auto",
         restart: true,
-        ownerDisplay: "raw",
       }) as const,
   );

@@ -2,7 +2,9 @@ import { createHmac, randomBytes } from "node:crypto";
 import { safeEqualSecret } from "../security/secret-equal.js";
 
 export const BOARD_HTTP_PATH_PREFIX = "/__openclaw__/board/";
-export const BOARD_VIEW_TICKET_TTL_MS = 2 * 60_000;
+// Bounds residual bearer access after the originating client loses its view authority.
+// Each load rechecks grant state; content changes invalidate through revision and generation.
+export const BOARD_VIEW_TICKET_TTL_MS = 20 * 60_000;
 
 const BOARD_VIEW_TICKET_SCOPE = "board-widget-view";
 const BOARD_VIEW_TICKET_MAX_LENGTH = 2_048;
@@ -15,11 +17,16 @@ type BoardViewTicket = {
 
 type BoardViewTicketClaims = {
   sessionKey: string;
+  agentId?: string;
   name: string;
   revision: number;
   viewGeneration: string;
   expiresAtMs: number;
   nonce: string;
+  pluginFrame?: {
+    pluginKind: string;
+    scopedHostUrl: string;
+  };
 };
 
 function signTicketPayload(payload: string, secret: Buffer): string {
@@ -37,6 +44,10 @@ function isValidClaims(value: unknown): value is BoardViewTicketClaims {
     typeof claims.sessionKey === "string" &&
     claims.sessionKey.length > 0 &&
     claims.sessionKey.length <= 512 &&
+    (claims.agentId === undefined ||
+      (typeof claims.agentId === "string" &&
+        claims.agentId.length > 0 &&
+        claims.agentId.length <= 64)) &&
     typeof claims.name === "string" &&
     claims.name.length > 0 &&
     claims.name.length <= 64 &&
@@ -46,25 +57,35 @@ function isValidClaims(value: unknown): value is BoardViewTicketClaims {
     /^[a-f0-9]{32}$/u.test(claims.viewGeneration) &&
     Number.isSafeInteger(claims.expiresAtMs) &&
     typeof claims.nonce === "string" &&
-    /^[A-Za-z0-9_-]{32}$/u.test(claims.nonce)
+    /^[A-Za-z0-9_-]{32}$/u.test(claims.nonce) &&
+    (claims.pluginFrame === undefined ||
+      (typeof claims.pluginFrame === "object" &&
+        typeof claims.pluginFrame.pluginKind === "string" &&
+        claims.pluginFrame.pluginKind.length <= 128 &&
+        typeof claims.pluginFrame.scopedHostUrl === "string" &&
+        claims.pluginFrame.scopedHostUrl.length <= 1024))
   );
 }
 
 export function createBoardViewTicket(params: {
   sessionKey: string;
+  agentId?: string;
   name: string;
   revision: number;
   viewGeneration: string;
   nowMs?: number;
+  pluginFrame?: BoardViewTicketClaims["pluginFrame"];
 }): BoardViewTicket {
   const nowMs = params.nowMs ?? Date.now();
   const claims: BoardViewTicketClaims = {
     sessionKey: params.sessionKey,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     name: params.name,
     revision: params.revision,
     viewGeneration: params.viewGeneration,
     expiresAtMs: nowMs + BOARD_VIEW_TICKET_TTL_MS,
     nonce: randomBytes(24).toString("base64url"),
+    ...(params.pluginFrame ? { pluginFrame: params.pluginFrame } : {}),
   };
   if (!Number.isSafeInteger(nowMs) || !isValidClaims(claims)) {
     throw new Error("invalid board view ticket binding");

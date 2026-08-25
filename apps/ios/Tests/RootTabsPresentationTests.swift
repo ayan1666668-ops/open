@@ -80,6 +80,43 @@ struct RootTabsPresentationTests {
         #expect(unknown.isPartial)
     }
 
+    @Test func `usage list shows the latest fourteen days newest first`() {
+        let days = (1...20).map { day in
+            CostUsageDailyEntryLite(
+                date: String(format: "2026-07-%02d", day),
+                totalTokens: day,
+                totalCost: Double(day))
+        }
+
+        let displayed = AgentProTab.displayedUsageDays(days)
+
+        #expect(displayed.map(\.date) == (7...20).reversed().map {
+            String(format: "2026-07-%02d", $0)
+        })
+    }
+
+    @Test func `iOS usage requests device calendar days`() throws {
+        let cases: [(timeZoneID: String, timestamp: TimeInterval, expectedOffset: String)] = [
+            ("America/Los_Angeles", 1_769_000_000, "UTC-8"),
+            ("America/Los_Angeles", 1_785_000_000, "UTC-7"),
+            ("Asia/Kathmandu", 1_785_000_000, "UTC+5:45"),
+        ]
+
+        for testCase in cases {
+            let timeZone = try #require(TimeZone(identifier: testCase.timeZoneID))
+            let paramsJSON = CostUsageRequest.monthParamsJSON(
+                timeZone: timeZone,
+                date: Date(timeIntervalSince1970: testCase.timestamp))
+            let data = try #require(paramsJSON.data(using: .utf8))
+            let params = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+            #expect(params["days"] as? Int == 31)
+            #expect(params["mode"] as? String == "specific")
+            #expect(params["timeZone"] as? String == testCase.timeZoneID)
+            #expect(params["utcOffset"] as? String == testCase.expectedOffset)
+        }
+    }
+
     @Test func `failed cron attention ignores disabled jobs`() {
         #expect(RootSidebarModel.isFailedCronJob(Self.cronJob(enabled: true, status: "error")))
         #expect(!RootSidebarModel.isFailedCronJob(Self.cronJob(enabled: false, status: "error")))
@@ -177,6 +214,7 @@ struct RootTabsPresentationTests {
             .instances,
             .files,
             .dreaming,
+            .desktop,
             .terminal,
             .docs,
         ])
@@ -193,6 +231,7 @@ struct RootTabsPresentationTests {
             "dreaming",
             "usage",
             "cron",
+            "desktop",
             "terminal",
             "docs",
             "settings",
@@ -248,6 +287,33 @@ struct RootTabsPresentationTests {
         #expect(IPadSkillWorkshopScreen.shouldEnableProposalMutation(canWrite: true, hasOperatorAdminScope: true))
         #expect(!IPadSkillWorkshopScreen.shouldEnableProposalMutation(canWrite: true, hasOperatorAdminScope: false))
         #expect(!IPadSkillWorkshopScreen.shouldEnableProposalMutation(canWrite: false, hasOperatorAdminScope: true))
+    }
+
+    @Test func `skill workshop actions carry the reviewed revision hash`() throws {
+        let revisionHash = String(repeating: "a", count: 64)
+        let proposal = Self.skillWorkshopProposal(revisionHash: revisionHash)
+        let apply = try #require(IPadSkillProposalAction(kind: .apply, proposal: proposal))
+        let reject = try #require(IPadSkillProposalAction(kind: .reject, proposal: proposal))
+
+        for (action, method) in [
+            (apply, "skills.proposals.apply"),
+            (reject, "skills.proposals.reject"),
+        ] {
+            let encoded = try #require(
+                JSONSerialization.jsonObject(
+                    with: JSONEncoder().encode(action.params(agentID: "main"))) as? [String: Any])
+
+            #expect(action.method == method)
+            #expect(encoded["agentId"] as? String == "main")
+            #expect(encoded["proposalId"] as? String == proposal.id)
+            #expect(encoded["expectedRevisionHash"] as? String == revisionHash)
+        }
+    }
+
+    @Test func `skill workshop actions require an inspected revision hash`() {
+        #expect(IPadSkillProposalAction(
+            kind: .apply,
+            proposal: Self.skillWorkshopProposal(revisionHash: nil)) == nil)
     }
 
     @Test func `skill workshop held filter includes quarantined and stale`() {
@@ -508,6 +574,21 @@ struct RootTabsPresentationTests {
         #expect(!RootTabs.preferredSidebarVisibility(layoutMode: mode))
     }
 
+    @Test func `keyboard contracted content uses portrait window for sidebar layout`() {
+        let size = RootTabs.sidebarLayoutContainerSize(
+            contentSize: CGSize(width: 1032, height: 973),
+            windowSize: CGSize(width: 1032, height: 1376))
+
+        #expect(size == CGSize(width: 1032, height: 1376))
+        #expect(RootTabs.sidebarLayoutMode(containerSize: size) == .drawer)
+    }
+
+    @Test func `sidebar layout container falls back to content size without a window`() {
+        let contentSize = CGSize(width: 900, height: 600)
+
+        #expect(RootTabs.sidebarLayoutContainerSize(contentSize: contentSize, windowSize: nil) == contentSize)
+    }
+
     @Test func `i pad wide landscape uses visible split sidebar`() {
         let mode = RootTabs.sidebarLayoutMode(containerSize: CGSize(width: 1366, height: 1024))
 
@@ -520,25 +601,6 @@ struct RootTabsPresentationTests {
 
         #expect(width >= RootTabs.sidebarSplitIdealWidth)
         #expect(width <= RootTabs.sidebarSplitMaximumWidth)
-    }
-
-    @Test func `i pad collapsed split sidebar uses header reveal without reserved rail`() {
-        #expect(
-            RootTabs.shouldShowSidebarRevealInDestinationHeader(
-                isSidebarVisible: false,
-                layoutMode: .split))
-        #expect(
-            RootTabs.shouldShowSidebarRevealInDestinationHeader(
-                isSidebarVisible: true,
-                layoutMode: .split))
-        #expect(
-            RootTabs.shouldShowSidebarRevealInDestinationHeader(
-                isSidebarVisible: false,
-                layoutMode: .drawer))
-        #expect(
-            !RootTabs.shouldShowSidebarRevealInDestinationHeader(
-                isSidebarVisible: true,
-                layoutMode: .drawer))
     }
 
     @Test func `initial sidebar visibility parses launch argument`() {
@@ -574,12 +636,26 @@ struct RootTabsPresentationTests {
         #expect(width <= RootTabs.sidebarDrawerMaximumWidth)
     }
 
+    @Test func `phone drawer uses the wider cap when space allows`() {
+        #expect(RootTabs.sidebarWidth(containerWidth: 402, isDrawerLayout: true) == 340)
+    }
+
     @Test func `sidebar shows configured agent rows with sane clamping`() {
         #expect(RootSidebar.shownAgentCount(configured: 1, total: 5) == 1)
         #expect(RootSidebar.shownAgentCount(configured: 3, total: 5) == 3)
         #expect(RootSidebar.shownAgentCount(configured: 0, total: 5) == 1)
         #expect(RootSidebar.shownAgentCount(configured: 3, total: 2) == 2)
         #expect(RootSidebar.shownAgentCount(configured: 1, total: 0) == 1)
+    }
+
+    @Test func `sidebar agent badges use canonical identity fallback`() {
+        #expect(RootSidebar.agentBadge(
+            name: "Research Agent",
+            identity: ["emoji": AnyCodable(" 🦞 ")]) == "🦞")
+        #expect(RootSidebar.agentBadge(
+            name: "Research Agent",
+            identity: ["emoji": AnyCodable("?")]) == "RA")
+        #expect(RootSidebar.agentBadge(name: "Research Agent", identity: nil) == "RA")
     }
 
     @Test func `session work subtitle mirrors the web repo and branch line`() {
@@ -594,6 +670,277 @@ struct RootTabsPresentationTests {
             for: entry(repoRoot: "/Users/dev/openclaw", branch: nil)) == "openclaw")
         #expect(ChatSessionSidebarModel.workSubtitle(for: entry(repoRoot: nil, branch: "main")) == nil)
         #expect(ChatSessionSidebarModel.workSubtitle(for: Self.sessionEntry(key: "plain")) == nil)
+    }
+
+    @Test func `sidebar subtitle keeps an unread final observer digest above work metadata`() {
+        let digest = OpenClawChatSessionObserverDigest(
+            revision: 4,
+            updatedAt: 2000,
+            headline: "Finished with warnings",
+            health: "done")
+        let unread = Self.sessionEntry(
+            key: "agent:main:work",
+            lastReadAt: 1999,
+            observerDigest: digest)
+        let read = Self.sessionEntry(
+            key: "agent:main:work",
+            lastReadAt: 2000,
+            observerDigest: digest)
+
+        #expect(ChatSessionSidebarModel.subtitle(
+            for: unread,
+            workSubtitle: "openclaw \u{2387} observer") == "Finished with warnings")
+        #expect(ChatSessionSidebarModel.subtitle(
+            for: read,
+            workSubtitle: "openclaw \u{2387} observer") == "openclaw \u{2387} observer")
+    }
+
+    @Test func `sidebar registers event stream before subscription request`() async {
+        var order: [String] = []
+        let (stream, continuation) = AsyncStream<EventFrame>.makeStream()
+
+        await RootSidebarModel.consumeSubscribedSessionEvents(
+            makeStream: {
+                order.append("stream")
+                return stream
+            },
+            subscribe: {
+                order.append("subscribe")
+                continuation.yield(EventFrame(type: "event", event: "tick"))
+                continuation.finish()
+            },
+            onEvent: { frame in
+                order.append("event:\(frame.event)")
+                return false
+            },
+            retryDelays: [.zero],
+            sleep: { _ in
+                throw CancellationError()
+            })
+
+        #expect(order == ["stream", "subscribe", "event:tick"])
+    }
+
+    @Test func `sidebar retries failed subscribe and resubscribes after stream completion`() async {
+        enum TestError: Error { case transient }
+
+        func sessionsChangedEvent(reason: String) -> EventFrame {
+            EventFrame(
+                type: "event",
+                event: "sessions.changed",
+                payload: AnyCodable([
+                    "sessionKey": AnyCodable("agent:main:work"),
+                    "reason": AnyCodable(reason),
+                    "updatedAt": AnyCodable(200),
+                ]))
+        }
+
+        var streamCount = 0
+        var subscribeAttempts = 0
+        var events: [String] = []
+
+        await RootSidebarModel.consumeSubscribedSessionEvents(
+            makeStream: {
+                streamCount += 1
+                return AsyncStream { continuation in
+                    if streamCount == 2 {
+                        continuation.yield(sessionsChangedEvent(reason: "patch"))
+                    } else if streamCount == 3 {
+                        continuation.yield(sessionsChangedEvent(reason: "message"))
+                    }
+                    continuation.finish()
+                }
+            },
+            subscribe: {
+                subscribeAttempts += 1
+                if subscribeAttempts == 1 {
+                    throw TestError.transient
+                }
+            },
+            onEvent: { frame in
+                guard case let .sessionsChanged(change) = OpenClawChatGatewayPayloadCodec.event(from: frame)
+                else { return false }
+                events.append(change.reason)
+                return false
+            },
+            retryDelays: [.zero],
+            sleep: { _ in
+                if subscribeAttempts >= 3 {
+                    throw CancellationError()
+                }
+            })
+
+        #expect(streamCount == 3)
+        #expect(subscribeAttempts == 3)
+        #expect(events == ["patch", "message"])
+    }
+
+    @Test func `sidebar replays actual observer visibility after each reconnect`() async {
+        var isVisible = true
+        var subscribeAttempts = 0
+        var declarations: [Bool] = []
+
+        await RootSidebarModel.consumeSubscribedSessionEvents(
+            makeStream: {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            },
+            subscribe: {
+                subscribeAttempts += 1
+            },
+            onEvent: { _ in false },
+            observerVisibility: { isVisible },
+            declareObserverVisibility: { visible in
+                declarations.append(visible)
+            },
+            retryDelays: [.zero],
+            sleep: { _ in
+                guard subscribeAttempts == 1 else {
+                    throw CancellationError()
+                }
+                isVisible = false
+            })
+
+        #expect(subscribeAttempts == 2)
+        #expect(declarations == [true, false])
+    }
+
+    @Test func `sidebar invalidates a confirmed same-route observer after resubscription`() async {
+        let route = "same-operator-route"
+        var subscribeAttempts = 0
+        var confirmation: (route: String, visible: Bool)? = (route, true)
+        var declarations: [Bool] = []
+
+        await RootSidebarModel.consumeSubscribedSessionEvents(
+            makeStream: {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            },
+            subscribe: {
+                subscribeAttempts += 1
+            },
+            onEvent: { _ in false },
+            invalidateObserverDeclaration: {
+                confirmation = nil
+            },
+            observerVisibility: { true },
+            declareObserverVisibility: { visible in
+                guard confirmation?.route != route || confirmation?.visible != visible else { return }
+                declarations.append(visible)
+                confirmation = (route, visible)
+            },
+            retryDelays: [.zero],
+            sleep: { _ in
+                guard subscribeAttempts == 1 else {
+                    throw CancellationError()
+                }
+            })
+
+        #expect(subscribeAttempts == 2)
+        #expect(declarations == [true, true])
+        #expect(confirmation?.route == route)
+        #expect(confirmation?.visible == true)
+    }
+
+    @Test func `sidebar rejects an old visibility acknowledgement after same-route resubscription`() async {
+        let route = "same-operator-route"
+        var subscribeAttempts = 0
+        var generation: UInt64 = 0
+        var confirmation: RootSidebarModel.SessionObserverDeclaration<String>?
+        var firstAcknowledgementGeneration: UInt64?
+        var rejectedOldAcknowledgement = false
+        var declarations: [Bool] = []
+
+        await RootSidebarModel.consumeSubscribedSessionEvents(
+            makeStream: {
+                AsyncStream { continuation in
+                    continuation.finish()
+                }
+            },
+            subscribe: {
+                subscribeAttempts += 1
+            },
+            onEvent: { _ in false },
+            invalidateObserverDeclaration: {
+                generation &+= 1
+                confirmation = nil
+
+                if let firstAcknowledgementGeneration {
+                    let oldAcknowledgement = RootSidebarModel.confirmedSessionObserverDeclaration(
+                        route: route,
+                        visible: true,
+                        generation: firstAcknowledgementGeneration,
+                        currentGeneration: generation,
+                        currentVisibility: true)
+                    rejectedOldAcknowledgement = oldAcknowledgement == nil
+                    if let oldAcknowledgement {
+                        confirmation = oldAcknowledgement
+                    }
+                }
+            },
+            observerVisibility: { true },
+            declareObserverVisibility: { visible in
+                let declaration = RootSidebarModel.SessionObserverDeclaration(
+                    route: route,
+                    visible: visible,
+                    generation: generation)
+                guard confirmation != declaration else { return }
+                declarations.append(visible)
+
+                if subscribeAttempts == 1 {
+                    firstAcknowledgementGeneration = generation
+                } else {
+                    confirmation = RootSidebarModel.confirmedSessionObserverDeclaration(
+                        route: route,
+                        visible: visible,
+                        generation: generation,
+                        currentGeneration: generation,
+                        currentVisibility: true)
+                }
+            },
+            retryDelays: [.zero],
+            sleep: { _ in
+                guard subscribeAttempts == 1 else {
+                    throw CancellationError()
+                }
+            })
+
+        #expect(subscribeAttempts == 2)
+        #expect(rejectedOldAcknowledgement)
+        #expect(declarations == [true, true])
+        #expect(confirmation?.route == route)
+        #expect(confirmation?.visible == true)
+        #expect(confirmation?.generation == 2)
+    }
+
+    @Test func `sidebar observer identity restarts for foreground and background transitions`() {
+        let foreground = RootTabs.SessionObserverTaskIdentity(
+            sidebarRefreshID: "gateway:main",
+            isSceneActive: true,
+            isSidebarVisible: true)
+        let background = RootTabs.SessionObserverTaskIdentity(
+            sidebarRefreshID: "gateway:main",
+            isSceneActive: false,
+            isSidebarVisible: true)
+        let foregroundAgain = RootTabs.SessionObserverTaskIdentity(
+            sidebarRefreshID: "gateway:main",
+            isSceneActive: true,
+            isSidebarVisible: true)
+        let hidden = RootTabs.SessionObserverTaskIdentity(
+            sidebarRefreshID: "gateway:main",
+            isSceneActive: true,
+            isSidebarVisible: false)
+
+        #expect(foreground != background)
+        #expect(background != foregroundAgain)
+        #expect(foreground == foregroundAgain)
+        #expect(foreground != hidden)
+        #expect(foreground.isObserverVisible)
+        #expect(!background.isObserverVisible)
+        #expect(foregroundAgain.isObserverVisible)
+        #expect(!hidden.isObserverVisible)
     }
 
     @Test func `pinned pages storage round trips and preserves pin order`() {
@@ -669,19 +1016,6 @@ struct RootTabsPresentationTests {
         #expect(!RootTabs.preferredSidebarVisibility(layoutMode: mode))
     }
 
-    @Test func `drawer selection collapses sidebar but split selection does not`() {
-        #expect(RootTabs.shouldCollapseSidebarAfterSelection(layoutMode: .drawer))
-        #expect(!RootTabs.shouldCollapseSidebarAfterSelection(layoutMode: .split))
-    }
-
-    @Test func `hidden sidebar shows reveal control`() {
-        #expect(RootTabs.shouldShowSidebarRevealControl(isSidebarVisible: false))
-    }
-
-    @Test func `sidebar reveal controls hide when sidebar is visible`() {
-        #expect(!RootTabs.shouldShowSidebarRevealControl(isSidebarVisible: true))
-    }
-
     @Test func `i pad split prefers integrated visible sidebar`() {
         #expect(RootTabs.preferredSidebarVisibility(layoutMode: .split))
         #expect(!RootTabs.shouldCollapseSidebarAfterSelection(layoutMode: .split))
@@ -744,6 +1078,8 @@ struct RootTabsPresentationTests {
         totalTokens: Int? = nil,
         totalTokensFresh: Bool? = nil,
         contextTokens: Int? = nil,
+        lastReadAt: Double? = nil,
+        observerDigest: OpenClawChatSessionObserverDigest? = nil,
         worktree: OpenClawChatSessionWorktree? = nil) -> OpenClawChatSessionEntry
     {
         OpenClawChatSessionEntry(
@@ -768,6 +1104,8 @@ struct RootTabsPresentationTests {
             model: nil,
             contextTokens: contextTokens,
             archived: archived,
+            observerDigest: observerDigest,
+            lastReadAt: lastReadAt,
             worktree: worktree)
     }
 
@@ -784,5 +1122,23 @@ struct RootTabsPresentationTests {
             payload: AnyCodable(["kind": AnyCodable("agentTurn")]),
             state: [:],
             lastrunstatus: AnyCodable(status))
+    }
+
+    private static func skillWorkshopProposal(revisionHash: String?) -> IPadSkillProposal {
+        IPadSkillProposal(
+            inspect: IPadSkillProposalInspectResponse(
+                record: IPadSkillProposalRecord(
+                    id: "proposal-1",
+                    status: "pending",
+                    title: "Reviewed proposal",
+                    description: "A reviewed Skill Workshop proposal.",
+                    updatedAt: "2026-08-18T12:00:00Z",
+                    target: IPadSkillProposalTarget(
+                        skillName: "reviewed-skill",
+                        skillKey: "reviewed-skill")),
+                revisionHash: revisionHash,
+                content: "# Reviewed skill",
+                supportFiles: nil),
+            previous: nil)
     }
 }

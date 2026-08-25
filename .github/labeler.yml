@@ -4,6 +4,11 @@
           - "extensions/azure-speech/**"
           - "docs/providers/azure-speech.md"
           - "docs/tools/tts.md"
+"plugin: geolocation":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/geolocation/**"
+          - "docs/plugins/geolocation.md"
 "plugin: file-transfer":
   - changed-files:
       - any-glob-to-any-file:
@@ -17,6 +22,10 @@
           - "docs/nodes/camera.md"
           - "docs/nodes/location-command.md"
           - "docs/platforms/linux.md"
+"plugin: cua-computer":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/cua-computer/**"
 "plugin: pixverse":
   - changed-files:
       - any-glob-to-any-file:
@@ -40,7 +49,6 @@
 "channel: feishu":
   - changed-files:
       - any-glob-to-any-file:
-          - "src/feishu/**"
           - "extensions/feishu/**"
           - "docs/channels/feishu.md"
 "channel: googlechat":
@@ -76,6 +84,12 @@
           - "extensions/workboard/**"
           - "docs/plugins/workboard.md"
           - "docs/plugins/reference/workboard.md"
+"plugin: beam":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/beam/**"
+          - "docs/plugins/beam.md"
+          - "docs/plugins/reference/beam.md"
 "plugin: migrate-hermes":
   - changed-files:
       - any-glob-to-any-file:
@@ -131,10 +145,14 @@
       - any-glob-to-any-file:
           - "extensions/nostr/**"
           - "docs/channels/nostr.md"
+"channel: buzz":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/buzz/**"
+          - "docs/channels/buzz.md"
 "channel: qqbot":
   - changed-files:
       - any-glob-to-any-file:
-          - "extensions/qqbot/**"
           - "docs/channels/qqbot.md"
 "channel: raft":
   - changed-files:
@@ -240,7 +258,6 @@
       - any-glob-to-any-file:
           - "apps/linux/**"
           - "docs/platforms/linux.md"
-          - "extensions/linux-canvas/**"
 "app: web-ui":
   - changed-files:
       - any-glob-to-any-file:
@@ -272,6 +289,16 @@
       - any-glob-to-any-file:
           - "docs/**"
 
+"r: skill":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "custodian-skills/**"
+          - "skills/**"
+          - "src/skills/**"
+          - "docs/tools/custodian-skills.md"
+          - "docs/tools/skills-config.md"
+          - "docs/tools/skills.md"
+
 "cli":
   - changed-files:
       - any-glob-to-any-file:
@@ -291,7 +318,6 @@
   - changed-files:
       - any-glob-to-any-file:
           - "Dockerfile"
-          - "Dockerfile.*"
           - "docker-compose.yml"
           - ".dockerignore"
           - "deploy/fly.private.toml"
@@ -310,6 +336,12 @@
           - "docs/gateway/sandbox*.md"
           - "docs/install/docker.md"
           - "docs/tools/multi-agent-sandbox-tools.md"
+
+"deploy: cloudflare":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/cloudflare/**"
+          - "docs/install/cloudflare.md"
 
 "agents":
   - changed-files:
@@ -353,6 +385,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/llama-cpp/**"
+"extensions: active-memory":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/active-memory/**"
 "extensions: memory-core":
   - changed-files:
       - any-glob-to-any-file:
@@ -374,10 +410,6 @@
       - any-glob-to-any-file:
           - "extensions/policy/**"
           - "docs/cli/policy.md"
-"extensions: open-prose":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "extensions/open-prose/**"
 "extensions: tokenjuice":
   - changed-files:
       - any-glob-to-any-file:
@@ -398,10 +430,20 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/webhooks/**"
+"extensions: web-readability":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/web-readability/**"
+          - "docs/plugins/reference/web-readability.md"
 "extensions: device-pair":
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/device-pair/**"
+"extensions: document-extract":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/document-extract/**"
+          - "docs/plugins/reference/document-extract.md"
 "extensions: duckduckgo":
   - changed-files:
       - any-glob-to-any-file:
@@ -433,6 +475,12 @@
       - any-glob-to-any-file:
           - "extensions/clawrouter/**"
           - "docs/providers/clawrouter.md"
+"extensions: clickclack":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/clickclack/**"
+          - "docs/plugins/reference/clickclack.md"
+          - "docs/channels/clickclack.md"
 "extensions: crabbox":
   - changed-files:
       - any-glob-to-any-file:
@@ -441,6 +489,12 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/deepseek/**"
+"extensions: deepgram":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/deepgram/**"
+          - "docs/providers/deepgram.md"
+          - "docs/plugins/reference/deepgram.md"
 "extensions: deepinfra":
   - changed-files:
       - any-glob-to-any-file:
@@ -474,10 +528,18 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/cloudflare-ai-gateway/**"
-"extensions: minimax-portal-auth":
+"extensions: cohere":
   - changed-files:
       - any-glob-to-any-file:
-          - "extensions/minimax-portal-auth/**"
+          - "extensions/cohere/**"
+          - "docs/providers/cohere.md"
+          - "docs/plugins/reference/cohere.md"
+"extensions: comfy":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/comfy/**"
+          - "docs/providers/comfy.md"
+          - "docs/plugins/reference/comfy.md"
 "extensions: huggingface":
   - changed-files:
       - any-glob-to-any-file:
@@ -487,6 +549,16 @@
       - any-glob-to-any-file:
           - "extensions/inworld/**"
           - "docs/providers/inworld.md"
+"extensions: image-generation-core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/image-generation-core/**"
+"extensions: fish-audio":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/fish-audio-speech/**"
+          - "docs/providers/fish-audio.md"
+          - "docs/tools/tts.md"
 "extensions: kilocode":
   - changed-files:
       - any-glob-to-any-file:
@@ -536,10 +608,6 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/minimax/**"
-"extensions: modelstudio":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "extensions/modelstudio/**"
 "extensions: moonshot":
   - changed-files:
       - any-glob-to-any-file:
@@ -553,14 +621,27 @@
       - any-glob-to-any-file:
           - "extensions/novita/**"
           - "docs/providers/novita.md"
-"extensions: phone-control":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "extensions/phone-control/**"
 "extensions: qianfan":
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/qianfan/**"
+"extensions: qwen":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/qwen/**"
+          - "docs/providers/qwen.md"
+          - "docs/plugins/reference/qwen.md"
+"extensions: runway":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/runway/**"
+          - "docs/providers/runway.md"
+          - "docs/plugins/reference/runway.md"
+"extensions: searxng":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/searxng/**"
+          - "docs/plugins/reference/searxng.md"
 "extensions: senseaudio":
   - changed-files:
       - any-glob-to-any-file:
@@ -599,6 +680,17 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/volcengine/**"
+"extensions: voyage":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/voyage/**"
+          - "docs/plugins/reference/voyage.md"
+"extensions: vydra":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/vydra/**"
+          - "docs/providers/vydra.md"
+          - "docs/plugins/reference/vydra.md"
 "extensions: xiaomi":
   - changed-files:
       - any-glob-to-any-file:
@@ -611,10 +703,27 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/gradium/**"
+"extensions: groq":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/groq/**"
+          - "docs/providers/groq.md"
+          - "docs/plugins/reference/groq.md"
+"extensions: alibaba":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/alibaba/**"
+          - "docs/providers/alibaba.md"
+          - "docs/plugins/reference/alibaba.md"
 "extensions: amazon-bedrock":
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/amazon-bedrock/**"
+"extensions: amazon-bedrock-mantle":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/amazon-bedrock-mantle/**"
+          - "docs/plugins/reference/amazon-bedrock-mantle.md"
 "extensions: anthropic-vertex":
   - changed-files:
       - any-glob-to-any-file:
@@ -623,6 +732,16 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/brave/**"
+"extensions: browser":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/browser/**"
+          - "docs/plugins/reference/browser.md"
+"extensions: canvas":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/canvas/**"
+          - "docs/plugins/reference/canvas.md"
 "extensions: chutes":
   - changed-files:
       - any-glob-to-any-file:
@@ -636,10 +755,21 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/elevenlabs/**"
+"extensions: exa":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/exa/**"
+          - "docs/plugins/reference/exa.md"
 "extensions: firecrawl":
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/firecrawl/**"
+"extensions: fireworks":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/fireworks/**"
+          - "docs/providers/fireworks.md"
+          - "docs/plugins/reference/fireworks.md"
 "extensions: github-copilot":
   - changed-files:
       - any-glob-to-any-file:
@@ -652,6 +782,11 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/microsoft/**"
+"extensions: microsoft-foundry":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/microsoft-foundry/**"
+          - "docs/plugins/reference/microsoft-foundry.md"
 "extensions: mistral":
   - changed-files:
       - any-glob-to-any-file:
@@ -688,10 +823,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/sglang/**"
-"extensions: thread-ownership":
+"extensions: test-support":
   - changed-files:
       - any-glob-to-any-file:
-          - "extensions/thread-ownership/**"
+          - "extensions/test-support/**"
 "extensions: vllm":
   - changed-files:
       - any-glob-to-any-file:

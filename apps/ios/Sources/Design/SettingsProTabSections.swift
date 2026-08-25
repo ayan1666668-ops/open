@@ -159,6 +159,12 @@ extension SettingsProTab {
     @ViewBuilder var settingsListSection: some View {
         Section {
             self.settingsListRow(
+                icon: "sparkles.square.filled.on.square",
+                iconColor: OpenClawBrand.accent,
+                title: "OpenClaw",
+                route: .systemAgent)
+                .accessibilityIdentifier("settings-system-agent-row")
+            self.settingsListRow(
                 icon: "checkmark.shield.fill",
                 iconColor: self.pendingApproval == nil ? .green : .orange,
                 title: "Approvals",
@@ -245,6 +251,8 @@ extension SettingsProTab {
     @ViewBuilder
     func destination(for route: SettingsRoute) -> some View {
         switch route {
+        case .systemAgent:
+            SettingsSystemAgentChatScreen(model: self.systemAgentChatStore.model(for: self.appModel))
         case .channels:
             SettingsChannelsDestination()
                 .navigationTitle(title(for: route))
@@ -258,6 +266,8 @@ extension SettingsProTab {
                 switch route {
                 case .gateway:
                     self.gatewayDestination
+                case .systemAgent:
+                    EmptyView()
                 case .appleWatch:
                     self.appleWatchDestination
                 case .approvals:
@@ -337,6 +347,8 @@ extension SettingsProTab {
                         .font(OpenClawType.body)
                 }
                 .disabled(self.isRefreshingGateway)
+            } footer: {
+                self.gatewayActionStatusView
             }
 
             self.gatewaySetupCard
@@ -821,6 +833,17 @@ extension SettingsProTab {
             {
                 Task { await self.runDiagnostics() }
             }
+
+            self.gatewayActionStatusView
+        }
+    }
+
+    @ViewBuilder
+    var gatewayActionStatusView: some View {
+        if let gatewayActionStatusText {
+            Text(verbatim: gatewayActionStatusText)
+                .font(OpenClawType.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1006,8 +1029,19 @@ extension SettingsProTab {
                    let accessLevelText = self.locationSettingsPresentation.accessLevelText
                 {
                     Divider()
-                    Button {
-                        self.showLocationAccessDialog = true
+                    Menu {
+                        Button {
+                            self.selectLocationAccessLevel(.whileUsing)
+                        } label: {
+                            Text("While Using the App")
+                                .font(OpenClawType.subheadSemiBold)
+                        }
+                        Button {
+                            self.selectLocationAccessLevel(.always)
+                        } label: {
+                            Text("Always")
+                                .font(OpenClawType.subheadSemiBold)
+                        }
                     } label: {
                         HStack(alignment: .firstTextBaseline) {
                             Text("Access Level")
@@ -1313,6 +1347,7 @@ extension SettingsProTab {
             get: { self.manualGatewayTransport.effectiveTLS },
             set: { enabled in
                 guard !self.manualGatewayTransport.requiresTLS else { return }
+                self.manualGatewayContextPath = nil
                 self.manualGatewayTLS = enabled
             })
     }
@@ -1480,7 +1515,6 @@ extension SettingsProTab {
             self.settingsToggle("Discovery Debug Logs", isOn: self.$discoveryDebugLogsEnabled) { enabled in
                 self.gatewayController.setDiscoveryDebugLoggingEnabled(enabled)
             }
-            self.settingsToggle("Debug Screen Status", isOn: self.$canvasDebugStatusEnabled)
             NavigationLink {
                 GatewayDiscoveryDebugLogView()
             } label: {

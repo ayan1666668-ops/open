@@ -1,9 +1,9 @@
 // Msteams tests cover message handler.authz plugin behavior.
-import { createInboundDebouncer } from "openclaw/plugin-sdk/channel-inbound-debounce";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, PluginRuntime } from "../../runtime-api.js";
 import type { GraphThreadMessage } from "../graph-thread.js";
-import "./message-handler-mock-support.test-support.js";
+// Preserve module setup before modules that consume it.
+// oxfmt-ignore
 import { getRuntimeApiMockState } from "./message-handler-mock-support.test-support.js";
 import { createMSTeamsMessageHandler } from "./message-handler.js";
 import { createMessageHandlerDeps } from "./message-handler.test-support.js";
@@ -642,6 +642,44 @@ describe("msteams monitor handler authz", () => {
     ).toBe("19:group@thread.tacv2");
   });
 
+  it.each([
+    {
+      name: "missing",
+      accessGroups: undefined,
+    },
+    {
+      name: "unsupported",
+      accessGroups: {
+        operators: {
+          type: "discord.channelAudience" as const,
+          guildId: "guild-1",
+          channelId: "channel-1",
+        },
+      },
+    },
+  ])("fails closed when a group sender access group is $name", async ({ accessGroups }) => {
+    resetThreadMocks();
+    const { conversationStore, deps } = createDeps({
+      accessGroups,
+      channels: {
+        msteams: {
+          groupPolicy: "allowlist",
+          groupAllowFrom: ["accessGroup:operators"],
+          requireMention: false,
+        },
+      },
+    } as OpenClawConfig);
+
+    const handler = createMSTeamsMessageHandler(deps);
+    await handler(createAttackerGroupActivity());
+
+    expect(conversationStore.upsert).not.toHaveBeenCalled();
+    expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    expect(logMeta(deps.log.info, "dropping group message (not in groupAllowFrom)").sender).toBe(
+      "attacker-aad",
+    );
+  });
+
   it("blocks unauthorized text control commands through shared ingress", async () => {
     resetThreadMocks();
     const hasControlCommand = vi.fn(() => true);
@@ -694,45 +732,6 @@ describe("msteams monitor handler authz", () => {
     const ctxPayload = recordFromMockCall(dispatched.ctxPayload);
     expect(ctxPayload.BodyForAgent).toBe("hello /status");
     expect(ctxPayload.CommandAuthorized).toBe(false);
-  });
-
-  it("flushes pending group text before authorizing a bare abort without a mention", async () => {
-    resetThreadMocks();
-    const isBareAbort = vi.fn((text?: string) =>
-      ["abort", "stop"].includes(text?.trim().toLowerCase() ?? ""),
-    );
-    const { deps } = createDeps(
-      {
-        commands: { useAccessGroups: false },
-        messages: { inbound: { debounceMs: 60_000 } },
-        channels: {
-          msteams: {
-            groupPolicy: "open",
-            requireMention: true,
-          },
-        },
-      } as OpenClawConfig,
-      {
-        hasControlCommand: vi.fn(() => false),
-        isControlCommandMessage: isBareAbort,
-        shouldComputeCommandAuthorized: isBareAbort,
-        shouldHandleTextCommands: vi.fn(() => true),
-        createInboundDebouncer,
-        resolveInboundDebounceMs: vi.fn(() => 60_000),
-      },
-    );
-
-    const handler = createMSTeamsMessageHandler(deps);
-    await handler(createAttackerGroupActivity({ text: "pending text" }));
-    expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-
-    await handler(createAttackerGroupActivity({ text: "abort" }));
-
-    expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalledTimes(1);
-    const dispatched = firstSettledDispatch();
-    const ctxPayload = recordFromMockCall(dispatched.ctxPayload);
-    expect(ctxPayload.BodyForAgent).toBe("abort");
-    expect(ctxPayload.CommandAuthorized).toBe(true);
   });
 
   it("marks skipped channel message system events as non-owner without duplicating body text", async () => {
@@ -1071,6 +1070,8 @@ describe("msteams monitor handler authz", () => {
       }),
     );
     const ctx = recordFromMockCall(firstSettledDispatch().ctxPayload);
+    expect(ctx.To).toBe("user:user-aad");
+    expect(ctx.OriginatingTo).toBe("conversation:19:dm@thread.v2");
     expect(ctx.ReplyToId).toBe("message-1");
     expect(ctx.ReplyToBody).toBe("complete quoted message");
     expect(ctx.ReplyToSender).toBe("Bot");

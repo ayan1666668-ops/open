@@ -19,9 +19,13 @@ The anchored compact chat panel from the menu bar keeps the compact single-colum
 ## Multiple Gateway windows
 
 Open **Settings → Gateways** to add or remove reusable Gateway profiles. Each
-profile contains a `ws://` or `wss://` endpoint and its optional token or
-password; credentials are stored in the macOS Keychain. Removing a profile
-also closes its open windows and shuts down its secondary connection.
+profile contains a private-network `ws://` or secure `wss://` endpoint and its
+optional token or password; credentials are stored in the macOS Keychain.
+Secure profiles maintain their own system-trust-gated first-use certificate pin
+and do not inherit `gateway.remote.tlsFingerprint` from the primary Gateway.
+Dashboard windows enforce that same saved-profile pinning policy.
+Removing a profile also closes its open windows and shuts down its secondary
+connection.
 
 Choose **File → New Gateway Window…** or press Cmd-N, then select one of those
 saved profiles. The picker remembers the most recently used profile. Every
@@ -38,13 +42,24 @@ capabilities and Talk Mode. Additional Gateway windows are operator-only, so a
 second Gateway cannot silently retarget global microphone or device controls.
 Listen/TTS and normal chat actions use the window's own Gateway connection.
 
+### Gateway picker
+
+The dashboard header shows a Gateway picker when the Mac app has at least two
+configured Gateways. Choose a Gateway to replace the current dashboard in the
+same window, or Option-click it to open a separate dashboard window. **Set as
+primary…** makes the viewed token-authenticated profile the Mac app's primary
+Gateway after confirmation; this resets Talk Mode, the widget panel, and chat
+connections. While connected, the sidebar footer also shows the current Gateway
+and marks it when it is primary. Password-only profiles can be viewed but cannot
+be made primary.
+
 ## Quick Chat bar
 
 Press Option-Space (⌥Space) or choose **Quick Chat** from the menu bar menu to open a floating composer for the main session. Change the global shortcut with the recorder in **Settings → General → Quick Chat shortcut**.
 
 Quick Chat shows the targeted agent (avatar or emoji, with the agent's name as the placeholder) and sends to that agent's main session. After Return accepts a send, the bar stays open and expands downward with the streamed Markdown reply and recent transcript. The bar input remains the composer. Press Command-Return to send and open the same target in the full chat window, Shift-Return for a newline, or Escape to dismiss the whole bar and reply area. Clicking outside also dismisses it. When relevant macOS permissions are missing, an attached strip offers **Grant** and **Not now** actions.
 
-Use the microphone button to dictate into the composer. Partial speech results replace the dictated span live while preserving text that was already in the composer. Press the button again, Return, or Escape to stop; sending, hiding, or unfocusing Quick Chat also releases the microphone. The first use asks for macOS Microphone and Speech Recognition access.
+Use the microphone button to dictate into the composer. Partial speech results replace the dictated span live while preserving text that was already in the composer. Press the button again, Return, or Escape to stop; sending, hiding, or unfocusing Quick Chat also releases the microphone. The first use asks for macOS Microphone and Speech Recognition access. Quick Chat uses Apple Speech and may use its network services; only passive Voice Wake requires on-device recognition.
 
 The compact model control shows the target session's current model and reasoning level. A model choice updates that session and therefore persists there, while a reasoning choice applies only to each message sent from the current Quick Chat presentation. Local choices reset when the bar hides. Switching agents or choosing a recent session keeps explicit choices but reloads the newly targeted session's underlying model state.
 
@@ -61,7 +76,7 @@ After a reply finishes, choose **Paste to &lt;app&gt;** to copy its visible assi
 Disable the feature entirely with **Settings → General → Quick Chat**; the same section hosts the shortcut recorder.
 
 - **Local mode**: connects directly to the local Gateway WebSocket.
-- **Remote mode**: forwards the Gateway control port over SSH and uses that tunnel as the data plane.
+- **Remote mode**: uses the configured direct `ws://`/`wss://` route or the app-managed SSH tunnel as the data plane.
 
 ## Launch and debugging
 
@@ -81,7 +96,7 @@ Disable the feature entirely with **Settings → General → Quick Chat**; the s
 - Data plane: Gateway WS methods `chat.history`, `chat.message.get`, `chat.send`, `chat.abort`, `chat.inject`, plus `question.list` and `question.resolve`, and events `chat`, `agent`, `presence`, `tick`, `health`; question cards follow `question.requested` and `question.resolved` events and refresh from `question.list` after reconnects.
 - `chat.history` returns a display-normalized transcript: inline directive tags are stripped from visible text, plain-text tool-call XML payloads (`<tool_call>`, `<function_call>`, `<tool_calls>`, `<function_calls>`, including truncated blocks) and leaked model control tokens are stripped, pure silent-token assistant rows such as exact `NO_REPLY`/`no_reply` are omitted, and oversized rows can be replaced with a truncated placeholder.
 - Session: defaults to the primary session as above; the UI can switch between sessions.
-- Session groups: `sessions.groups.list`, `sessions.groups.put`, `sessions.groups.rename`, and `sessions.groups.delete` own the group catalog. Membership is the session `category` updated through `sessions.patch`.
+- Session groups: `sessions.groups.list`, `sessions.groups.put`, `sessions.groups.rename`, and `sessions.groups.delete` own the path-free group catalog. Write-scoped `sessions.groups.defaults` and `sessions.groups.update` own optional New Session folder/worktree defaults. Membership is the session `category` updated through `sessions.patch` or assigned during `sessions.create`.
 - Unread state: after a session activates and its live history loads successfully, the app clears that session's unread marker. Failed history loads do not clear it; a transient patch failure retries on the next activation.
 - Onboarding uses a dedicated session to keep first-run setup separate.
 - Offline cache: the app keeps a small read-only cache of recent chat sessions and transcripts per gateway (`~/Library/Application Support/OpenClaw/chat-cache.sqlite`): cold opens paint the last known transcript immediately and refresh once the Gateway responds, and recent chats stay browsable while disconnected (sending stays disabled until the connection is back).

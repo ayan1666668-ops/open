@@ -1,11 +1,36 @@
 import type {
   AgentMessage,
-  EmbeddedRunAttemptParams,
+  EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { projectAgentHarnessTranscriptMessageForDisplay } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { AssistantMessage } from "openclaw/plugin-sdk/llm";
 import { asDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
+import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { attachCodexMirrorIdentity } from "./upstream-prompt-provenance.js";
 import { promptSnapshot } from "./user-prompt-message.js";
+
+type TurnTaintMetadata = { resultContentSource?: "network"; turnTainted?: true };
+const CODEX_META_KEY = "__openclaw";
+
+function readTurnTaintMetadata(message: AgentMessage): TurnTaintMetadata | undefined {
+  const metadata = CODEX_META_KEY in message ? message[CODEX_META_KEY] : undefined;
+  return asOptionalRecord(metadata) as TurnTaintMetadata | undefined;
+}
+
+function applyStickyTurnTaint(messages: readonly AgentMessage[]): AgentMessage[] {
+  let tainted = false;
+  return messages.map((message) => {
+    if (message.role === "user") {
+      tainted = false;
+      return message;
+    }
+    const metadata = readTurnTaintMetadata(message);
+    tainted ||= metadata?.turnTainted === true || metadata?.resultContentSource === "network";
+    return message.role === "assistant" && tainted
+      ? ({ ...message, __openclaw: { ...metadata, turnTainted: true } } as AgentMessage)
+      : message;
+  });
+}
 
 export function buildCodexMessagesSnapshot(params: {
   runParams: EmbeddedRunAttemptParams;
@@ -13,6 +38,7 @@ export function buildCodexMessagesSnapshot(params: {
   upstreamUserText: string | undefined;
   reasoningText: string | undefined;
   planText: string | undefined;
+  asyncMessages: ReadonlyArray<{ itemId: string; message: AssistantMessage }>;
   commentaryMessages: ReadonlyArray<{ itemId: string; message: AssistantMessage }>;
   toolMessages: readonly AgentMessage[];
   lastAssistant: AssistantMessage | undefined;
@@ -41,7 +67,14 @@ export function buildCodexMessagesSnapshot(params: {
       : params.commentaryMessages.map(({ itemId, message }) =>
           attachCodexMirrorIdentity(message, `${params.turnId}:commentary:${itemId}`),
         );
-  const visibleWorkMessages = [...commentaryMessages, ...params.toolMessages].toSorted(
+  const asyncMessages = params.asyncMessages.map(({ itemId, message }) =>
+    attachCodexMirrorIdentity(message, `${params.turnId}:async:${itemId}`),
+  );
+  const visibleWorkMessages = [
+    ...commentaryMessages,
+    ...asyncMessages,
+    ...params.toolMessages,
+  ].toSorted(
     (left, right) =>
       (asDateTimestampMs(left.timestamp) ?? 0) - (asDateTimestampMs(right.timestamp) ?? 0),
   );
@@ -49,5 +82,10 @@ export function buildCodexMessagesSnapshot(params: {
   if (params.lastAssistant) {
     messages.push(attachCodexMirrorIdentity(params.lastAssistant, `${params.turnId}:assistant`));
   }
-  return messages;
+  return applyStickyTurnTaint(messages).map((message) =>
+    projectAgentHarnessTranscriptMessageForDisplay({
+      hidden: params.runParams.trigger === "memory",
+      message,
+    }),
+  );
 }

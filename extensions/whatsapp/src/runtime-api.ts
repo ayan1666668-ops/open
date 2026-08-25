@@ -1,4 +1,6 @@
 // Whatsapp API module exposes the plugin public contract.
+import type { OpenClawConfig as RuntimeOpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { loadWhatsAppChannelRuntime } from "./channel-runtime-loader.js";
 export { getChatChannelMeta, type ChannelPlugin } from "openclaw/plugin-sdk/core";
 export { buildChannelConfigSchema, WhatsAppConfigSchema } from "../config-api.js";
 export { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
@@ -16,18 +18,13 @@ export {
 } from "openclaw/plugin-sdk/channel-actions";
 export { normalizeE164 } from "openclaw/plugin-sdk/account-resolution";
 export type { DmPolicy, GroupPolicy } from "openclaw/plugin-sdk/config-contracts";
-import type { OpenClawConfig as RuntimeOpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { loadWhatsAppChannelRuntime } from "./channel-runtime-loader.js";
 
 export { type ChannelMessageActionName } from "openclaw/plugin-sdk/channel-contract";
 export {
   resolveWhatsAppGroupRequireMention,
   resolveWhatsAppGroupToolPolicy,
 } from "./group-policy.js";
-export {
-  resolveWhatsAppGroupIntroHint,
-  resolveWhatsAppMentionStripRegexes,
-} from "./group-intro.js";
+export { resolveWhatsAppMentionStripRegexes } from "./group-intro.js";
 export { createWhatsAppOutboundBase } from "./outbound-base.js";
 export {
   isWhatsAppGroupJid,

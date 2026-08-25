@@ -11,12 +11,16 @@ import android.content.ContentResolver
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.LruCache
 import androidx.core.graphics.scale
+import androidx.exifinterface.media.ExifInterface
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -24,6 +28,8 @@ private const val CHAT_ATTACHMENT_MAX_WIDTH = 1600
 private const val CHAT_ATTACHMENT_START_QUALITY = 85
 private const val CHAT_DECODE_MAX_DIMENSION = 1600
 private const val CHAT_IMAGE_CACHE_BYTES = 16 * 1024 * 1024
+private const val VIDEO_THUMBNAIL_MAX_DIMENSION = 192
+private const val VIDEO_THUMBNAIL_QUALITY = 72
 
 private val decodedBitmapCache =
   object : LruCache<String, Bitmap>(CHAT_IMAGE_CACHE_BYTES) {
@@ -33,7 +39,7 @@ private val decodedBitmapCache =
     ): Int = value.byteCount.coerceAtLeast(1)
   }
 
-internal fun loadPickedAudioOrDocumentAttachment(
+internal fun loadPickedMediaOrDocumentAttachment(
   resolver: ContentResolver,
   uri: Uri,
 ): PendingAttachment {
@@ -65,8 +71,54 @@ internal fun loadSharedAttachment(
     fileName = sharedAttachmentFileName(resolver, attachment.uri),
     mimeType = mimeType,
     base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+    videoThumbnailBase64 =
+      if (kind == SharedAttachmentKind.Video) loadVideoThumbnailBase64(resolver, attachment.uri) else null,
   )
 }
+
+/** Thumbnail extraction is presentation-only; an unsupported container still stages as a video. */
+private fun loadVideoThumbnailBase64(
+  resolver: ContentResolver,
+  uri: Uri,
+): String? =
+  runCatching {
+    val retriever = MediaMetadataRetriever()
+    try {
+      resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+        if (descriptor.declaredLength >= 0L) {
+          retriever.setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.declaredLength)
+        } else {
+          retriever.setDataSource(descriptor.fileDescriptor)
+        }
+      } ?: return@runCatching null
+      val frame = retriever.getFrameAtTime(-1L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@runCatching null
+      try {
+        val longestEdge = max(frame.width, frame.height)
+        val preview =
+          if (longestEdge <= VIDEO_THUMBNAIL_MAX_DIMENSION) {
+            frame
+          } else {
+            val scale = VIDEO_THUMBNAIL_MAX_DIMENSION.toDouble() / longestEdge.toDouble()
+            frame.scale(
+              max(1, (frame.width * scale).roundToInt()),
+              max(1, (frame.height * scale).roundToInt()),
+              true,
+            )
+          }
+        try {
+          val output = ByteArrayOutputStream()
+          if (!preview.compress(Bitmap.CompressFormat.JPEG, VIDEO_THUMBNAIL_QUALITY, output)) return@runCatching null
+          Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        } finally {
+          if (preview !== frame) preview.recycle()
+        }
+      } finally {
+        frame.recycle()
+      }
+    } finally {
+      retriever.release()
+    }
+  }.getOrNull()
 
 private fun readBoundedAttachmentBytes(
   resolver: ContentResolver,
@@ -171,11 +223,18 @@ internal fun decodeBase64Bitmap(
   maxDimension: Int = CHAT_DECODE_MAX_DIMENSION,
 ): Bitmap? {
   if (base64.length > CHAT_IMAGE_MAX_BASE64_CHARS) return null
-  val cacheKey = "$maxDimension:${base64.length}:${base64.hashCode()}"
-  decodedBitmapCache.get(cacheKey)?.let { return it }
-
   val bytes = Base64.decode(base64, Base64.DEFAULT)
-  if (bytes.isEmpty()) return null
+  return decodeImageBytes(bytes, maxDimension)
+}
+
+/** Decodes already-authorized image bytes without base64 expansion. */
+internal fun decodeImageBytes(
+  bytes: ByteArray,
+  maxDimension: Int = CHAT_DECODE_MAX_DIMENSION,
+): Bitmap? {
+  if (bytes.isEmpty() || bytes.size > 12 * 1024 * 1024) return null
+  val cacheKey = "$maxDimension:${bytes.size}:${bytes.contentHashCode()}"
+  decodedBitmapCache.get(cacheKey)?.let { return it }
 
   val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
   BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -192,8 +251,9 @@ internal fun decodeBase64Bitmap(
       },
     ) ?: return null
 
-  decodedBitmapCache.put(cacheKey, bitmap)
-  return bitmap
+  val oriented = JpegSizeLimiter.normalizeOrientation(bitmap, imageOrientation { ByteArrayInputStream(bytes) })
+  decodedBitmapCache.put(cacheKey, oriented)
+  return oriented
 }
 
 /** Computes Android's power-of-two bitmap sampling size for bounded decode. */
@@ -246,15 +306,25 @@ private fun decodeScaledBitmap(
       )
     } ?: return null
 
-  val longestEdge = max(decoded.width, decoded.height)
-  if (longestEdge <= maxDimension) return decoded
+  val oriented = JpegSizeLimiter.normalizeOrientation(decoded, imageOrientation { resolver.openInputStream(uri) })
+  val longestEdge = max(oriented.width, oriented.height)
+  if (longestEdge <= maxDimension) return oriented
 
   val scale = maxDimension.toDouble() / longestEdge.toDouble()
-  val targetWidth = max(1, (decoded.width * scale).roundToInt())
-  val targetHeight = max(1, (decoded.height * scale).roundToInt())
-  val scaled = decoded.scale(targetWidth, targetHeight, true)
-  if (scaled !== decoded) {
-    decoded.recycle()
+  val targetWidth = max(1, (oriented.width * scale).roundToInt())
+  val targetHeight = max(1, (oriented.height * scale).roundToInt())
+  val scaled = oriented.scale(targetWidth, targetHeight, true)
+  if (scaled !== oriented) {
+    oriented.recycle()
   }
   return scaled
 }
+
+private fun imageOrientation(open: () -> InputStream?): Int =
+  try {
+    open()?.use { stream ->
+      ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    } ?: ExifInterface.ORIENTATION_NORMAL
+  } catch (_: Exception) {
+    ExifInterface.ORIENTATION_NORMAL
+  }

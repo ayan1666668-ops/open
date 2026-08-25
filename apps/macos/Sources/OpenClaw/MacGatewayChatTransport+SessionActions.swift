@@ -76,11 +76,12 @@ extension MacGatewayChatTransport {
         guard await self.currentOutboxGatewayMatchesConnection() else { return nil }
         let transport = self
         return OpenClawChatSessionMutationRouteLease(
-            patchSession: { key, label, category, pinned, archived, unread in
+            patchSession: { key, expectedSessionID, label, category, pinned, archived, unread in
                 let target = transport.sessionTarget(for: key)
                 let request = OpenClawChatGatewayRequests.patchSession(
                     sessionKey: target.sessionKey,
                     agentID: target.agentID,
+                    expectedSessionID: expectedSessionID,
                     label: label,
                     category: category,
                     pinned: pinned,
@@ -118,10 +119,15 @@ extension MacGatewayChatTransport {
     }
 
     func forkSession(parentKey: String) async throws -> String {
+        try await self.forkSession(parentKey: parentKey, fromLastCompleted: false)
+    }
+
+    func forkSession(parentKey: String, fromLastCompleted: Bool) async throws -> String {
         let target = self.sessionTarget(for: parentKey)
         let request = OpenClawChatGatewayRequests.forkSession(
             parentSessionKey: target.sessionKey,
-            agentID: target.agentID)
+            agentID: target.agentID,
+            fromLastCompleted: fromLastCompleted)
         let data = try await self.requestSessionAction(request)
         return try JSONDecoder().decode(OpenClawChatCreateSessionResponse.self, from: data).key
     }
@@ -150,6 +156,27 @@ extension MacGatewayChatTransport {
             entryId: entryId)
         let data = try await self.requestSessionAction(request)
         return try JSONDecoder().decode(OpenClawChatForkAtMessageResponse.self, from: data)
+    }
+
+    func listSessionBranches(
+        sessionKey: String,
+        agentID: String?) async throws -> OpenClawChatSessionBranchesResponse
+    {
+        let target = self.sessionTarget(for: sessionKey, overrideAgentID: agentID)
+        let request = OpenClawChatGatewayRequests.listSessionBranches(
+            sessionKey: target.sessionKey,
+            agentID: target.agentID)
+        let data = try await self.requestSessionAction(request)
+        return try JSONDecoder().decode(OpenClawChatSessionBranchesResponse.self, from: data)
+    }
+
+    func switchSessionBranch(sessionKey: String, agentID: String?, leafEntryId: String) async throws {
+        let target = self.sessionTarget(for: sessionKey)
+        let request = OpenClawChatGatewayRequests.switchSessionBranch(
+            sessionKey: target.sessionKey,
+            agentID: agentID ?? target.agentID,
+            leafEntryId: leafEntryId)
+        _ = try await self.requestSessionAction(request)
     }
 
     static func rewindSessionRequest(

@@ -4,6 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  consumeAdjustedParamsForToolCall,
   type HookContext,
   wrapToolWithBeforeToolCallHook,
 } from "../agents/agent-tools.before-tool-call.js";
@@ -256,6 +257,7 @@ describe("plugin tools MCP server", () => {
     expect(new Set(toolCallIds).size).toBe(toolCallIds.length);
     for (const toolCallId of toolCallIds) {
       expect(consumeTrackedToolExecutionStarted(toolCallId)).toBeUndefined();
+      expect(consumeAdjustedParamsForToolCall(toolCallId)).toBeUndefined();
     }
   });
 
@@ -368,6 +370,34 @@ describe("plugin tools MCP server", () => {
     ]);
   });
 
+  it.each([
+    ["failed status", { status: "failed", error: "backend unavailable" }, true],
+    ["blocked status", { status: "blocked" }, true],
+    ["timeout flag", { timedOut: true }, true],
+    ["explicit failure", { ok: false }, true],
+    ["successful status", { status: "success" }, undefined],
+    ["completed nonzero shell exit", { status: "completed", exitCode: 23 }, undefined],
+  ])(
+    "projects a resolved %s through the canonical error contract",
+    async (_label, details, isError) => {
+      const content = [{ type: "text", text: "original tool result" }];
+      const execute = vi.fn().mockResolvedValue({ content, details });
+      const handlers = createPluginToolsMcpHandlers([
+        {
+          name: "result_probe",
+          description: "Return a structured result",
+          parameters: { type: "object", properties: {} },
+          execute,
+        } as unknown as AnyAgentTool,
+      ]);
+
+      const result = await handlers.callTool({ name: "result_probe", arguments: {} });
+
+      expect(result.content).toEqual(content);
+      expect(result.isError).toBe(isError);
+    },
+  );
+
   it("returns MCP errors for unknown tools and thrown tool errors", async () => {
     const failingTool = {
       name: "memory_forget",
@@ -390,6 +420,39 @@ describe("plugin tools MCP server", () => {
     });
     expect(failed.isError).toBe(true);
     expect(failed.content).toEqual([{ type: "text", text: "Tool error: boom" }]);
+  });
+
+  it("releases run-scoped adjusted arguments after a pre-wrapped direct MCP call", async () => {
+    const runId = "run-direct-mcp";
+    const execute = vi.fn().mockResolvedValue({ content: "Stored." });
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_tool_call",
+          handler: async () => ({ params: { text: "adjusted" } }),
+        },
+      ]),
+    );
+    const tool = wrapToolWithBeforeToolCallHook(
+      {
+        name: "memory_store",
+        description: "Store memory",
+        parameters: { type: "object", properties: {} },
+        execute,
+      } as unknown as AnyAgentTool,
+      { runId, sessionKey: "session-direct-mcp" },
+    );
+
+    const handlers = createPluginToolsMcpHandlers([tool]);
+    await handlers.callTool({
+      name: "memory_store",
+      arguments: { text: "original" },
+    });
+
+    const executeCall = requireFirstMockCall(execute.mock.calls, "plugin tool execute");
+    const toolCallId = String(executeCall[0]);
+    expect(executeCall[1]).toEqual({ text: "adjusted" });
+    expect(consumeAdjustedParamsForToolCall(toolCallId, runId)).toBeUndefined();
   });
 
   it("reports approval requirements without opening plugin approvals on the MCP bridge", async () => {

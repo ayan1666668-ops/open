@@ -3,12 +3,14 @@ import {
   buildChannelInboundMediaPayload,
   formatInboundMediaUnavailableText,
   formatMediaPlaceholderText,
-  toInboundMediaFacts,
+  toInboundMediaFactsWithMetadata,
+  type ChannelInboundMediaInput,
   type ChannelInboundMediaPayload,
+  type InboundMediaFacts,
   type MediaPlaceholderTextFact,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { pruneMapToMaxSize } from "openclaw/plugin-sdk/collection-runtime";
-import type { MediaKind } from "openclaw/plugin-sdk/media-runtime";
+import type { MediaKind, SavedRemoteMedia } from "openclaw/plugin-sdk/media-runtime";
 import {
   asDateTimestampMs,
   resolveExpiresAtMsFromDurationMs,
@@ -26,12 +28,15 @@ import {
 } from "./client.js";
 import { buildButtonProps, type MattermostInteractionResponse } from "./interactions.js";
 
-type MattermostMediaInfo = Omit<MediaPlaceholderTextFact, "kind" | "url"> & { kind: MediaKind };
+type MattermostMediaInfo = Pick<ChannelInboundMediaInput, "contentType" | "fileName" | "path"> & {
+  kind: MediaKind;
+};
 
-export function buildMattermostInboundMediaPayload(
+export async function buildMattermostInboundMediaPayload(
   media: readonly MattermostMediaInfo[],
-): ChannelInboundMediaPayload {
-  return buildChannelInboundMediaPayload(toInboundMediaFacts(media));
+): Promise<ChannelInboundMediaPayload & { media: InboundMediaFacts[] }> {
+  const facts = await toInboundMediaFactsWithMetadata(media);
+  return { ...buildChannelInboundMediaPayload(facts), media: facts };
 }
 
 export function formatMattermostPendingMediaText(params: {
@@ -74,7 +79,7 @@ type SaveRemoteMedia = (params: {
   ssrfPolicy?: { allowedHostnames?: string[] };
   responseHeaderTimeoutMs?: number;
   readIdleTimeoutMs?: number;
-}) => Promise<{ path: string; contentType?: string | null }>;
+}) => Promise<Pick<SavedRemoteMedia, "contentType" | "fileName" | "path">>;
 
 export function createMattermostMonitorResources(params: {
   accountId: string;
@@ -169,6 +174,7 @@ export function createMattermostMonitorResources(params: {
         out.push({
           path: saved.path,
           contentType,
+          ...(saved.fileName ? { fileName: saved.fileName } : {}),
           kind: mediaKindFromMime(contentType) ?? "unknown",
         });
       } catch (err) {

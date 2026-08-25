@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import type { webhook } from "@line/bot-sdk";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
-import { testing as sessionBindingTesting } from "openclaw/plugin-sdk/conversation-runtime";
+import {
+  getSessionBindingService,
+  testing as sessionBindingTesting,
+} from "openclaw/plugin-sdk/conversation-runtime";
 import {
   createTestRegistry,
   setActivePluginRegistry,
@@ -16,6 +18,16 @@ import { buildLineMessageContext, buildLinePostbackContext } from "./bot-message
 import type { ResolvedLineAccount } from "./types.js";
 
 const logVerboseMock = vi.hoisted(() => vi.fn());
+const toInboundMediaFactsWithMetadataMock = vi.hoisted(() => vi.fn());
+
+vi.mock("openclaw/plugin-sdk/channel-inbound", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/channel-inbound")>();
+  toInboundMediaFactsWithMetadataMock.mockImplementation(actual.toInboundMediaFactsWithMetadata);
+  return {
+    ...actual,
+    toInboundMediaFactsWithMetadata: toInboundMediaFactsWithMetadataMock,
+  };
+});
 
 vi.mock("openclaw/plugin-sdk/runtime-env", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/runtime-env")>(
@@ -87,6 +99,7 @@ describe("buildLineMessageContext", () => {
 
   beforeEach(async () => {
     logVerboseMock.mockClear();
+    toInboundMediaFactsWithMetadataMock.mockClear();
     setActivePluginRegistry(
       createTestRegistry([
         {
@@ -125,6 +138,21 @@ describe("buildLineMessageContext", () => {
 
     expect(context?.ctxPayload.OriginatingTo).toBe("line:group:group-1");
     expect(context?.ctxPayload.To).toBe("line:group:group-1");
+  });
+
+  it("skips media metadata projection for text-only messages", async () => {
+    const event = createMessageEvent({ type: "user", userId: "user-1" });
+
+    const context = await buildLineMessageContext({
+      event,
+      allMedia: [],
+      cfg,
+      account,
+      commandAuthorized: true,
+    });
+
+    expect(context?.ctxPayload.media).toEqual([]);
+    expect(toInboundMediaFactsWithMetadataMock).not.toHaveBeenCalled();
   });
 
   it("passes the caller-provided inbound history through to the context payload", async () => {
@@ -206,8 +234,10 @@ describe("buildLineMessageContext", () => {
     expect(context?.ctxPayload.RawBody).toBe("");
     expect(context?.ctxPayload.CommandBody).toBe("");
     expect(context?.ctxPayload.BodyForAgent).toBe("[line attachment unavailable]");
-    expect(context?.ctxPayload.MediaPath).toBeUndefined();
-    expect(context?.ctxPayload.MediaType).toBe("image");
+    expect(context?.ctxPayload.media?.[0]).toMatchObject({
+      path: undefined,
+      kind: "image",
+    });
   });
 
   it("keeps materialized media-only text empty and projects structured media facts", async () => {
@@ -230,8 +260,11 @@ describe("buildLineMessageContext", () => {
     expect(context?.ctxPayload.RawBody).toBe("");
     expect(context?.ctxPayload.CommandBody).toBe("");
     expect(context?.ctxPayload.BodyForAgent).toBe("");
-    expect(context?.ctxPayload.MediaPath).toBe("/tmp/line-image.png");
-    expect(context?.ctxPayload.MediaType).toBe("image/png");
+    expect(context?.ctxPayload.media?.[0]).toMatchObject({
+      path: "/tmp/line-image.png",
+      contentType: "image/png",
+      kind: "image",
+    });
   });
 
   it("routes group postback replies to the group id", async () => {

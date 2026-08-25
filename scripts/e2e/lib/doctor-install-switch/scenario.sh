@@ -25,7 +25,11 @@ tar -xzf "$package_tgz" -C "$git_root" --strip-components=1
 node scripts/e2e/lib/package-git-fixture.mjs prepare "$git_root"
 (
   cd "$git_root"
-  openclaw_e2e_maybe_timeout "${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}" npm install --omit=optional --no-fund --no-audit >/tmp/openclaw-git-install.log 2>&1
+  # Git-style fixtures still need optional native prebuilds; omit only development dependencies.
+  if ! openclaw_e2e_maybe_timeout "${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}" npm install --omit=dev --no-fund --no-audit >/tmp/openclaw-git-install.log 2>&1; then
+    openclaw_e2e_print_log /tmp/openclaw-git-install.log >&2
+    exit 1
+  fi
   git init -q
   git config user.email "docker-e2e@openclaw.local"
   git config user.name "OpenClaw Docker E2E"
@@ -59,6 +63,25 @@ update_doctor_env+=" OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE=1"
 update_doctor_env+=" OPENCLAW_UPDATE_PARENT_SUPPORTS_GATEWAY_RESTART=1"
 update_doctor_env+=" OPENCLAW_UPDATE_PARENT_ALLOWS_GATEWAY_SERVICE_REPAIR=1"
 update_doctor_env+=" OPENCLAW_UPDATE_PARENT_ALLOWS_GATEWAY_ACTIVATION=0"
+
+use_default_service_identity() {
+  local account_home
+  account_home="$(node -p 'require("node:os").userInfo().homedir')"
+
+  # Service mutation is intentionally restricted to the OS account home. Keep
+  # these disposable-container flows isolated without pretending a temp HOME owns it.
+  rm -rf \
+    "$account_home/.openclaw" \
+    "$account_home/.config/systemd/user/openclaw-gateway.service" \
+    "$account_home/.config/fish" \
+    "$account_home/.config/powershell" \
+    "$account_home/.local/bin/openclaw-wrapper" \
+    "$account_home/openclaw-wrapper-argv.log"
+  export HOME="$account_home"
+  export USERPROFILE="$account_home"
+  unset OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH
+}
+
 is_legacy_package_acceptance_compat() {
   [ "$(node scripts/e2e/lib/package-compat.mjs "$1")" = "1" ]
 }
@@ -139,6 +162,7 @@ run_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
+  use_default_service_identity
   export USER="testuser"
 
   if ! openclaw_e2e_maybe_timeout "$command_timeout" bash -c "$install_cmd" >"$install_log" 2>&1; then
@@ -263,6 +287,7 @@ run_proxy_env_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
+  use_default_service_identity
   export USER="testuser"
 
   unit_path="$HOME/.config/systemd/user/openclaw-gateway.service"
@@ -309,6 +334,7 @@ run_wrapper_flow() {
 
   echo "== Flow: $name =="
   openclaw_test_state_create "switch-${name}" empty
+  use_default_service_identity
   export USER="testuser"
   mkdir -p "$HOME/.local/bin"
   local wrapper="$HOME/.local/bin/openclaw-wrapper"

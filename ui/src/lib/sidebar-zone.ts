@@ -4,6 +4,7 @@ import {
   type SidebarNavRoute,
   type SidebarZoneEntry,
 } from "../app-navigation.ts";
+import type { SidebarWorkboardBoard } from "../components/app-sidebar-workboard.ts";
 
 type SidebarPinnedSession = { key: string };
 
@@ -20,9 +21,14 @@ export function reconcileSidebarZone(
   pinnedSessions: readonly SidebarPinnedSession[],
   validRoutes: readonly SidebarNavRoute[],
   knownUnpinnedKeys: ReadonlySet<string> = new Set(),
+  workboardBoards: readonly SidebarWorkboardBoard[] = [],
+  workboardEnabled = false,
+  workboardBoardsReady = false,
+  workboardParentVisible = false,
 ): { entries: SidebarZoneEntry[]; sidebarEntries: string[] } {
   const pinnedKeys = new Set(pinnedSessions.map((session) => session.key));
   const validRouteSet = new Set(validRoutes);
+  const validBoardIds = new Set(workboardBoards.map((board) => board.id));
   const seen = new Set<string>();
   const entries: SidebarZoneEntry[] = [];
   const canonical: string[] = [];
@@ -37,12 +43,37 @@ export function reconcileSidebarZone(
       continue;
     }
     if (entry.type === "route") {
+      if (entry.route === "workboard") {
+        seen.add(canonicalKey);
+        canonical.push(canonicalKey);
+        if (workboardParentVisible) {
+          entries.push(entry);
+        }
+        continue;
+      }
       if (!validRouteSet.has(entry.route)) {
         continue;
       }
       seen.add(canonicalKey);
       entries.push(entry);
       canonical.push(canonicalKey);
+      continue;
+    }
+    if (entry.type === "workboard") {
+      seen.add(canonicalKey);
+      canonical.push(canonicalKey);
+      // Disabled reads exactly like startup: the runtime config snapshot is
+      // unloaded until the gateway answers, so a zone write in that window
+      // would erase every persisted pin. Preserve the slot, render nothing;
+      // only a loaded catalog that positively lacks the id deletes below.
+      if (!workboardEnabled || !workboardBoardsReady) {
+        continue;
+      }
+      if (!validBoardIds.has(entry.boardId)) {
+        canonical.pop();
+        continue;
+      }
+      entries.push(entry);
       continue;
     }
     if (pinnedKeys.has(entry.key)) {

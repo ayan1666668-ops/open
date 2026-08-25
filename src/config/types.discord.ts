@@ -112,6 +112,11 @@ export type DiscordActionConfig = {
 };
 
 export type DiscordIntentsConfig = {
+  /**
+   * Request the privileged Message Content intent. Disable only for mention-only guild operation;
+   * Discord still includes content in DMs and messages that explicitly mention the bot. Default: true.
+   */
+  messageContent?: boolean;
   /** Enable Guild Presences privileged intent (requires Portal opt-in). Default: false. */
   presence?: boolean;
   /** Enable Guild Members privileged intent (requires Portal opt-in). Default: false. */
@@ -125,6 +130,8 @@ export type DiscordVoiceAutoJoinConfig = {
   guildId: string;
   /** Voice channel ID to join. */
   channelId: string;
+  /** Join and remain connected only while at least one human is in the channel. Default: false. */
+  whenOccupied?: boolean;
 };
 
 export type DiscordVoiceAllowedChannelConfig = {
@@ -191,7 +198,7 @@ export type DiscordVoiceConfig = {
   model?: string;
   /** Realtime provider settings for agent-proxy or bidi modes. */
   realtime?: DiscordVoiceRealtimeConfig;
-  /** Voice channels to auto-join on startup. */
+  /** Voice channels to join automatically, optionally only while occupied. */
   autoJoin?: DiscordVoiceAutoJoinConfig[];
   /** If false, configured followUsers are ignored without removing the saved user list. */
   followUsersEnabled?: boolean;
@@ -228,41 +235,16 @@ export type DiscordAgentComponentsConfig = {
   ttlMs?: number;
 };
 
-export type DiscordUiComponentsConfig = {
-  /** Accent color used by Discord component containers (hex). */
-  accentColor?: string;
-};
-
-export type DiscordUiConfig = {
-  components?: DiscordUiComponentsConfig;
-};
-
 export type DiscordThreadBindingsConfig = {
-  /**
-   * Enable Discord thread binding features (/focus, thread-bound delivery, and
-   * thread-bound subagent session flows). Overrides session.threadBindings.enabled
-   * when set.
-   */
+  /** Enable Discord thread binding features. Overrides session.threadBindings.enabled. */
   enabled?: boolean;
-  /**
-   * Inactivity window for thread-bound sessions in hours.
-   * Session auto-unfocuses after this amount of idle time. Set to 0 to disable. Default: 24.
-   */
+  /** Inactivity window in hours. Set 0 to disable. Default: 24. */
   idleHours?: number;
-  /**
-   * Optional hard max age for thread-bound sessions in hours.
-   * Session auto-unfocuses once this age is reached even if active. Set to 0 to disable. Default: 0.
-   */
+  /** Hard max age in hours. Set 0 to disable. Default: 0. */
   maxAgeHours?: number;
-  /**
-   * Allow session spawns to auto-create + bind Discord threads.
-   * Applies to native subagent and ACP thread spawns. Default: true.
-   */
+  /** Allow session spawns to create and bind Discord threads. Default: true. */
   spawnSessions?: boolean;
-  /**
-   * Default context mode for native subagents spawned into a bound Discord thread.
-   * Default: "fork".
-   */
+  /** Default context mode for native subagents. Default: fork. */
   defaultSpawnContext?: "isolated" | "fork";
 };
 
@@ -284,10 +266,9 @@ export type DiscordAutoPresenceConfig = {
   /** Minimum spacing between actual gateway presence updates (ms). Default: 15000. */
   minUpdateIntervalMs?: number;
   /** Optional custom status text while runtime is healthy; supports plain text. */
-  healthyText?: string;
   /** Optional custom status text while runtime/quota state is degraded or unknown. */
-  degradedText?: string;
   /** Optional custom status text while runtime detects quota/token exhaustion. */
+  /** @deprecated Doctor-only legacy input. */
   exhaustedText?: string;
 };
 
@@ -333,12 +314,12 @@ export type DiscordAccountConfig = Omit<
     /** Agent-controlled interactive components (buttons, select menus). */
     agentComponents?: DiscordAgentComponentsConfig;
     /** Discord UI customization (components, modals, etc.). */
-    ui?: DiscordUiConfig;
     /** Slash command configuration. */
     slashCommand?: DiscordSlashCommandConfig;
-    /** Thread binding lifecycle settings (focus/subagent thread sessions). */
+    /** Thread binding lifecycle settings. */
     threadBindings?: DiscordThreadBindingsConfig;
     /** Show subagent count reactions and typing on the source message. Default: false. */
+    /** @deprecated Doctor-only legacy input. */
     subagentProgress?: boolean;
     /** Privileged Gateway Intents (must also be enabled in Discord Developer Portal). */
     intents?: DiscordIntentsConfig;

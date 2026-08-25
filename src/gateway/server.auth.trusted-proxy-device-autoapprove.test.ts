@@ -256,10 +256,33 @@ describe("trusted-proxy browser device auto-approval", () => {
     const paired = await getPairedDevice(identity.deviceId);
     expect(paired?.approvedScopes).toEqual([
       "operator.approvals",
+      "operator.questions",
       "operator.read",
       "operator.write",
     ]);
     expect(paired?.approvedVia).toBe("trusted-proxy");
+  });
+
+  test("issues an opaque recovery scope without a device token", async () => {
+    await writeGatewayAuthConfig({
+      mode: "trusted-proxy",
+      deviceAutoApprove: { enabled: true },
+    });
+    const identityPath = deviceIdentityPath("trusted-proxy-recovery-scope");
+
+    await withGatewayServer(async ({ port }) => {
+      const res = await connectBrowser({
+        port,
+        identityPath,
+        scopes: ["operator.read"],
+      });
+      const auth = (res.payload as { auth?: Record<string, unknown> } | undefined)?.auth;
+      expect(res.ok).toBe(true);
+      expect(auth?.deviceToken).toBeUndefined();
+      expect(auth?.recoveryMigrationAllowed).toBeUndefined();
+      expect(auth?.recoveryScope).toMatch(/^[A-Za-z0-9_-]+$/u);
+      expect(JSON.stringify(auth)).not.toContain("operator@example.com");
+    });
   });
 
   test("caps requested scopes to the configured intersection", async () => {

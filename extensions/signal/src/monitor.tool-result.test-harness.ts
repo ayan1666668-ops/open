@@ -27,6 +27,7 @@ type SignalToolResultTestMocks = {
   streamMock: MockFn;
   signalCheckMock: MockFn;
   signalRpcRequestMock: MockFn;
+  assertSignalDaemonEndpointAvailableMock: MockFn;
   spawnSignalDaemonMock: MockFn;
 };
 
@@ -40,6 +41,7 @@ const upsertPairingRequestMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
 const streamMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
 const signalCheckMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
 const signalRpcRequestMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
+const assertSignalDaemonEndpointAvailableMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
 const spawnSignalDaemonMock = vi.hoisted(() => vi.fn()) as unknown as MockFn;
 const signalToolResultSessionStore = vi.hoisted(() => ({ path: "" }));
 let signalToolResultStateDir: string | undefined;
@@ -82,6 +84,7 @@ export function getSignalToolResultTestMocks(): SignalToolResultTestMocks {
     streamMock,
     signalCheckMock,
     signalRpcRequestMock,
+    assertSignalDaemonEndpointAvailableMock,
     spawnSignalDaemonMock,
   };
 }
@@ -98,16 +101,42 @@ export function createSignalToolResultConfig(
   const base = config as { channels?: Record<string, unknown> };
   const channels = base.channels ?? {};
   const signal = (channels.signal ?? {}) as Record<string, unknown>;
+  const {
+    autoStart,
+    cliPath,
+    configPath,
+    httpHost,
+    httpPort,
+    startupTimeoutMs,
+    receiveMode,
+    ignoreAttachments,
+    ignoreStories,
+    ...accountOverrides
+  } = overrides;
+  const transport =
+    autoStart === false
+      ? { kind: "external-native", url: "http://127.0.0.1:8080" }
+      : {
+          kind: "managed-native",
+          ...(typeof cliPath === "string" ? { cliPath } : {}),
+          ...(typeof configPath === "string" ? { configPath } : {}),
+          ...(typeof httpHost === "string" ? { httpHost } : {}),
+          ...(typeof httpPort === "number" ? { httpPort } : {}),
+          ...(typeof startupTimeoutMs === "number" ? { startupTimeoutMs } : {}),
+          ...(receiveMode === "on-start" || receiveMode === "manual" ? { receiveMode } : {}),
+          ...(typeof ignoreStories === "boolean" ? { ignoreStories } : {}),
+        };
   return {
     ...base,
     channels: {
       ...channels,
       signal: {
         ...signal,
-        autoStart: true,
+        transport,
+        ...(typeof ignoreAttachments === "boolean" ? { ignoreAttachments } : {}),
         dmPolicy: "open",
         allowFrom: ["*"],
-        ...overrides,
+        ...accountOverrides,
       },
     },
   };
@@ -233,6 +262,8 @@ vi.mock("./daemon.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./daemon.js")>();
   return {
     ...actual,
+    assertSignalDaemonEndpointAvailable: (...args: unknown[]) =>
+      assertSignalDaemonEndpointAvailableMock(...args),
     spawnSignalDaemon: (...args: unknown[]) => spawnSignalDaemonMock(...args),
   };
 });
@@ -299,7 +330,11 @@ export function installSignalToolResultTestHooks() {
       messages: { responsePrefix: "PFX" },
       session: { store: signalToolResultSessionStore.path },
       channels: {
-        signal: { autoStart: false, dmPolicy: "open", allowFrom: ["*"] },
+        signal: {
+          transport: { kind: "external-native", url: "http://127.0.0.1:8080" },
+          dmPolicy: "open",
+          allowFrom: ["*"],
+        },
       },
     };
 
@@ -309,6 +344,7 @@ export function installSignalToolResultTestHooks() {
     streamMock.mockReset();
     signalCheckMock.mockReset().mockResolvedValue({ ok: true });
     signalRpcRequestMock.mockReset().mockResolvedValue({});
+    assertSignalDaemonEndpointAvailableMock.mockReset().mockResolvedValue(undefined);
     spawnSignalDaemonMock.mockReset().mockReturnValue(createMockSignalDaemonHandle());
     readAllowFromStoreMock.mockReset().mockResolvedValue([]);
     upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });

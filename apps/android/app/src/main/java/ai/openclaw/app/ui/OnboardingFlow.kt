@@ -15,6 +15,7 @@ import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.i18n.nativeText
 import ai.openclaw.app.i18n.resolveNativeTextResource
 import ai.openclaw.app.i18n.verbatimText
+import ai.openclaw.app.locationModeAfterBackgroundSettings
 import ai.openclaw.app.node.DeviceNotificationListenerService
 import ai.openclaw.app.photoReadPermissionsForRequest
 import ai.openclaw.app.ui.design.ClawDesignTheme
@@ -410,8 +411,9 @@ fun OnboardingFlow(
   modifier: Modifier = Modifier,
 ) {
   val appearanceThemeMode by viewModel.appearanceThemeMode.collectAsState()
+  val gatewayAccentArgb by viewModel.gatewayAccentArgb.collectAsState()
   val onboardingDark = appearanceThemeMode.isDark(systemDark = isSystemInDarkTheme())
-  ClawDesignTheme(dark = onboardingDark) {
+  ClawDesignTheme(dark = onboardingDark, accentArgb = gatewayAccentArgb) {
     val context = LocalContext.current
     val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
     val statusText = gatewayConnectionDisplay.statusText
@@ -1070,24 +1072,30 @@ fun OnboardingFlow(
 }
 
 @Composable
-private fun WelcomeScreen(
+internal fun WelcomeScreen(
   mascotMood: MascotMood,
   onConnect: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   ClawScaffold(modifier = modifier, contentPadding = onboardingContentPadding()) {
-    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-      OnboardingHeroTopSpacer(afterHeader = false)
-      OnboardingIntroHero(
-        title = nativeString("Welcome to OpenClaw"),
-        subtitle = nativeString("Turn this device into a secure OpenClaw node for chat, voice, camera, and device tools."),
-        mark = { WelcomeLogo(mood = mascotMood, announceLogo = true) },
-      )
-      Spacer(modifier = Modifier.height(24.dp))
-      WelcomeChecklist()
-      Spacer(modifier = Modifier.height(16.dp))
-      SecurityNotice()
-      Spacer(modifier = Modifier.weight(1f))
+    Column(modifier = Modifier.fillMaxSize()) {
+      // Keep actions outside the scroller so font scaling cannot push them out of reach.
+      Column(
+        modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        OnboardingHeroTopSpacer(afterHeader = false)
+        OnboardingIntroHero(
+          title = nativeString("Welcome to OpenClaw"),
+          subtitle = nativeString("Turn this device into a secure OpenClaw node for chat, voice, camera, and device tools."),
+          mark = { WelcomeLogo(mood = mascotMood, announceLogo = true) },
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        WelcomeChecklist()
+        Spacer(modifier = Modifier.height(16.dp))
+        SecurityNotice()
+        Spacer(modifier = Modifier.height(24.dp))
+      }
       OnboardingActions {
         ClawPrimaryButton(text = nativeString("Continue"), onClick = onConnect, modifier = Modifier.onboardingActionButton())
       }
@@ -1222,7 +1230,7 @@ private fun SoftPanel(
 }
 
 @Composable
-private fun GatewaySetupScreen(
+internal fun GatewaySetupScreen(
   nearbyGateway: GatewayEndpoint?,
   onBack: () -> Unit,
   onSetupCode: () -> Unit,
@@ -1234,8 +1242,12 @@ private fun GatewaySetupScreen(
   ClawScaffold(modifier = modifier, contentPadding = onboardingContentPadding()) {
     Column(modifier = Modifier.fillMaxSize()) {
       OnboardingHeader(title = nativeText(""), onBack = onBack)
-      OnboardingHeroTopSpacer(afterHeader = true)
-      Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+      // Keep actions outside the scroller so font scaling cannot push them out of reach.
+      Column(
+        modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        OnboardingHeroTopSpacer(afterHeader = true)
         OnboardingIntroHero(
           title = nativeString("Connect Gateway"),
           subtitle = nativeString("Scan a QR code or use the setup code from your OpenClaw Gateway."),
@@ -1251,8 +1263,8 @@ private fun GatewaySetupScreen(
             }
           },
         )
+        Spacer(modifier = Modifier.height(24.dp))
       }
-      Spacer(modifier = Modifier.weight(1f))
       OnboardingActions {
         ClawPrimaryButton(
           text = nativeString("Scan QR or setup code"),
@@ -3211,6 +3223,7 @@ private fun rememberPermissionState(
         }
       motionGranted = permissions[Manifest.permission.ACTIVITY_RECOGNITION] ?: motionGranted
       smsGranted =
+        !smsAvailable ||
         mergedRequiredPermissionGrantState(
           permissions = permissions,
           requiredPermissions = listOf(Manifest.permission.SEND_SMS, Manifest.permission.READ_SMS),
@@ -3298,6 +3311,16 @@ private fun rememberPermissionState(
       },
     )
 
+  val requestedLocationMode =
+    locationModeAfterBackgroundSettings(
+      previousMode = currentLocationMode.takeUnless { it == LocationMode.Off } ?: LocationMode.WhileUsing,
+      foregroundGranted = locationGranted,
+      backgroundGranted =
+        currentLocationMode == LocationMode.Always &&
+          SensitiveFeatureConfig.backgroundLocationEnabled &&
+          hasPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+    )
+
   return PermissionState(
     rows = rows,
     requiresNodeApprovalAfterApply =
@@ -3305,13 +3328,13 @@ private fun rememberPermissionState(
         currentCameraEnabled = currentCameraEnabled,
         requestedCameraEnabled = cameraGranted,
         currentLocationMode = currentLocationMode,
-        requestedLocationMode = if (locationGranted) LocationMode.WhileUsing else LocationMode.Off,
+        requestedLocationMode = requestedLocationMode,
         currentSmsGranted = currentSmsGranted,
         requestedSmsGranted = smsGranted,
       ),
     applyToViewModel = {
       viewModel.setCameraEnabled(cameraGranted)
-      viewModel.setLocationMode(if (locationGranted) LocationMode.WhileUsing else LocationMode.Off)
+      viewModel.setLocationMode(requestedLocationMode)
       viewModel.setNotificationForwardingEnabled(notificationListenerGranted)
     },
   )

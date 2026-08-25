@@ -171,23 +171,44 @@ describe("sqlite hot query plans", () => {
     });
     expectPlanUsesIndex({
       db: database.db,
-      indexName: "idx_agent_session_entries_session_updated",
+      indexName: "idx_agent_session_nodes_current_session_id",
       params: ["session-1"],
       sql: `
         SELECT session_key
-          FROM session_entries
-         WHERE session_id = ?
+          FROM session_nodes
+         WHERE current_session_id = ?
          ORDER BY updated_at DESC, session_key ASC
+        LIMIT 1
+      `,
+    });
+    const latestWindowPlan = explainQueryPlan(
+      database.db,
+      `
+        SELECT session_id, updated_at
+          FROM session_windows
+         WHERE session_key = ?
+         ORDER BY updated_at DESC, session_id ASC
          LIMIT 1
       `,
+      ["agent:worker-1:main"],
+    );
+    expect(latestWindowPlan).toContain("idx_agent_session_windows_session_key");
+    expect(latestWindowPlan).not.toContain("SCAN session_windows");
+    expect(latestWindowPlan).not.toContain("USE TEMP B-TREE FOR ORDER BY");
+
+    expectPlanUsesIndex({
+      db: database.db,
+      indexName: "idx_agent_session_windows_session_key",
+      params: ["agent:worker-1:main"],
+      sql: "DELETE FROM session_nodes WHERE session_key = ?",
     });
     expectPlanUsesIndex({
       db: database.db,
-      indexName: "idx_agent_session_entries_status",
+      indexName: "idx_agent_session_nodes_status",
       params: ["running"],
       sql: `
         SELECT session_key, entry_json
-          FROM session_entries
+          FROM session_nodes
          WHERE status = ?
       `,
     });
@@ -209,13 +230,47 @@ describe("sqlite hot query plans", () => {
     );
     expect(latestMessagePlan).not.toContain("USE TEMP B-TREE FOR ORDER BY");
 
+    const mirrorIdentityPlan = explainQueryPlan(
+      database.db,
+      `
+        SELECT identity.message_idempotency_key, event.event_json
+          FROM transcript_event_identities AS identity
+          JOIN transcript_events AS event
+            ON event.session_id = identity.session_id AND event.seq = identity.seq
+         WHERE identity.session_id = ?
+           AND identity.message_idempotency_key IN (?, ?)
+         ORDER BY identity.seq ASC
+      `,
+      ["session-1", "prompt-key", "assistant-key"],
+    );
+    expect(mirrorIdentityPlan).toContain("idx_agent_transcript_message_idempotency");
+    expect(mirrorIdentityPlan).toContain("sqlite_autoindex_transcript_events_1");
+    expect(mirrorIdentityPlan).not.toContain("SCAN transcript_events");
+
+    expectPlanUsesIndex({
+      db: database.db,
+      indexName: "idx_agent_transcript_event_sequence",
+      params: ["session-1", "message"],
+      sql: `
+        SELECT COUNT(seq)
+          FROM transcript_event_identities
+         WHERE session_id = ? AND event_type = ?
+      `,
+    });
+    expectPlanUsesIndex({
+      db: database.db,
+      indexName: "idx_agent_transcript_event_identity_sequence",
+      params: ["session-1", 1],
+      sql: "DELETE FROM transcript_events WHERE session_id = ? AND seq = ?",
+    });
+
     expectPlanIncludes({
       db: database.db,
-      expected: "sqlite_autoindex_session_transcript_generations_1",
+      expected: "sqlite_autoindex_transcript_rewrite_watermarks_1",
       params: ["session-1"],
       sql: `
         SELECT generation
-          FROM session_transcript_generations
+          FROM transcript_rewrite_watermarks
          WHERE session_id = ?
       `,
     });
@@ -313,7 +368,7 @@ describe("sqlite hot query plans", () => {
     expect(visibleDeltaPayloadPlan).toContain(
       "sqlite_autoindex_session_transcript_active_events_1",
     );
-    expect(visibleDeltaPayloadPlan).toContain("idx_agent_transcript_event_sequence");
+    expect(visibleDeltaPayloadPlan).toContain("idx_agent_transcript_event_identity_sequence");
     expect(visibleDeltaPayloadPlan).not.toContain("USE TEMP B-TREE FOR ORDER BY");
 
     const historyAnchorPlan = explainQueryPlan(

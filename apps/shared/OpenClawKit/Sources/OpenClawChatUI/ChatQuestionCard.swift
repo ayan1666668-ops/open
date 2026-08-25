@@ -57,6 +57,7 @@ public final class OpenClawQuestionCardModel: Identifiable {
             questions: record.questions,
             agentid: record.agentid,
             sessionkey: record.sessionkey,
+            runid: record.runid,
             createdatms: record.createdatms,
             expiresatms: record.expiresatms,
             status: record.status,
@@ -161,6 +162,7 @@ public final class OpenClawQuestionCardModel: Identifiable {
             questions: self.record.questions,
             agentid: self.record.agentid,
             sessionkey: self.record.sessionkey,
+            runid: self.record.runid,
             createdatms: self.record.createdatms,
             expiresatms: self.record.expiresatms,
             status: .answered,
@@ -178,6 +180,7 @@ public final class OpenClawQuestionCardModel: Identifiable {
             questions: self.record.questions,
             agentid: self.record.agentid,
             sessionkey: self.record.sessionkey,
+            runid: self.record.runid,
             createdatms: self.record.createdatms,
             expiresatms: self.record.expiresatms,
             status: .cancelled,
@@ -195,6 +198,7 @@ public final class OpenClawQuestionCardModel: Identifiable {
             questions: self.record.questions,
             agentid: self.record.agentid,
             sessionkey: self.record.sessionkey,
+            runid: self.record.runid,
             createdatms: self.record.createdatms,
             expiresatms: self.record.expiresatms,
             status: .answered,
@@ -222,6 +226,7 @@ public final class OpenClawQuestionCardModel: Identifiable {
             questions: self.record.questions,
             agentid: self.record.agentid,
             sessionkey: self.record.sessionkey,
+            runid: self.record.runid,
             createdatms: self.record.createdatms,
             expiresatms: self.record.expiresatms,
             status: resolved.status,
@@ -548,6 +553,17 @@ extension OpenClawChatViewModel {
     private func refreshQuestions(generation refreshGeneration: UInt64, retryIndex: Int) async {
         guard refreshGeneration == self.questionRefreshGeneration else { return }
         let stateRevision = self.questionStateRevision
+        // Released 2026.7.x gateways predate question.list and reject it with
+        // "missing scope: operator.admin" (authorization runs before dispatch),
+        // so an unadvertised method must resolve as unavailable without a call.
+        if await self.transport.gatewayAdvertisesMethod("question.list") == false {
+            guard self.questionRefreshSnapshotIsCurrent(
+                generation: refreshGeneration,
+                stateRevision: stateRevision)
+            else { return }
+            self.clearPendingQuestionsForUnavailableList()
+            return
+        }
         do {
             let records = try await self.transport.listQuestions()
             guard self.questionRefreshSnapshotIsCurrent(

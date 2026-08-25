@@ -30,6 +30,13 @@ primary_region = 'iad'
   min_machines_running = 1
   processes = ['app']
 
+[[http_service.checks]]
+grace_period = "2m"
+interval = "15s"
+method = "GET"
+timeout = "5s"
+path = "/startupz"
+
 [[vm]]
   size = 'shared-cpu-2x'
   memory = '2048mb'

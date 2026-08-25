@@ -6,6 +6,8 @@ import {
   validateApprovalHistoryResult,
   validateApprovalPresentation,
   validateApprovalResolveParams,
+  validateExecApprovalResolveParams,
+  validatePluginApprovalResolveParams,
   validateApprovalResolveResult,
 } from "./index.js";
 
@@ -61,6 +63,13 @@ describe("unified approval protocol validators", () => {
     expect(validateApprovalPresentation(execPresentation)).toBe(true);
     expect(validateApprovalPresentation(pluginPresentation)).toBe(true);
     expect(validateApprovalPresentation(systemAgentPresentation)).toBe(true);
+    expect(validateApprovalPresentation({ ...pluginPresentation, detail: "full tool input" })).toBe(
+      true,
+    );
+    expect(validateApprovalPresentation({ ...pluginPresentation, detail: "" })).toBe(false);
+    expect(
+      validateApprovalPresentation({ ...pluginPresentation, detail: "x".repeat(16_385) }),
+    ).toBe(false);
 
     for (const forbiddenField of ["cwd", "env", "systemRunBinding", "systemRunPlan"] as const) {
       expect(
@@ -91,6 +100,32 @@ describe("unified approval protocol validators", () => {
     expect(validateApprovalResolveParams({ id: execRecord.id, decision: "deny" })).toBe(false);
     expect(
       validateApprovalResolveParams({ id: execRecord.id, kind: "exec", decision: "accept" }),
+    ).toBe(false);
+  });
+
+  it("accepts only complete channel reviewer facts on every resolve surface", () => {
+    const reviewer = { channel: "telegram", accountId: "ops", senderId: "owner" };
+    expect(
+      validateApprovalResolveParams({
+        id: execRecord.id,
+        kind: "exec",
+        decision: "deny",
+        reviewer,
+      }),
+    ).toBe(true);
+    expect(
+      validateExecApprovalResolveParams({ id: execRecord.id, decision: "deny", reviewer }),
+    ).toBe(true);
+    expect(
+      validatePluginApprovalResolveParams({ id: pluginRecord.id, decision: "deny", reviewer }),
+    ).toBe(true);
+    expect(
+      validateApprovalResolveParams({
+        id: execRecord.id,
+        kind: "exec",
+        decision: "deny",
+        reviewer: { channel: "telegram", accountId: "ops" },
+      }),
     ).toBe(false);
   });
 

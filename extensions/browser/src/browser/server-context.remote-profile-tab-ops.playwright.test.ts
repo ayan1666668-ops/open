@@ -33,7 +33,6 @@ async function expectBlockedCdpEndpoint(promise: Promise<unknown>) {
 const permissiveRemoteCdpPolicy = {
   allowPrivateNetwork: true,
   allowedHostnames: ["1.1.1.1"],
-  hostnameAllowlist: ["1.1.1.1"],
 };
 
 describe("browser remote profile tab ops via Playwright", () => {
@@ -406,6 +405,41 @@ describe("browser remote profile tab ops via Playwright", () => {
     });
   });
 
+  it("does not open a blank tab when page target identities are unavailable", async () => {
+    const listPagesViaPlaywright = vi.fn(async () => {
+      throw new Error("Playwright page target identities are temporarily unavailable.");
+    });
+    const createPageViaPlaywright = vi.fn(async () => page("WRONG", "about:blank"));
+    vi.spyOn(deps.pwAiModule, "getPwAiModule").mockResolvedValue({
+      listPagesViaPlaywright,
+      createPageViaPlaywright,
+    } as unknown as Awaited<ReturnType<typeof deps.pwAiModule.getPwAiModule>>);
+
+    const { remote } = deps.createRemoteRouteHarness();
+
+    await expect(remote.ensureTabAvailable()).rejects.toThrow(/target identities.*unavailable/i);
+    expect(createPageViaPlaywright).not.toHaveBeenCalled();
+  });
+
+  it("preserves the last complete list when a later enumeration is unavailable", async () => {
+    const complete = [page("A", "https://a.example"), page("B", "https://b.example")];
+    const listPagesViaPlaywright = vi
+      .fn<() => Promise<typeof complete>>()
+      .mockResolvedValueOnce(complete)
+      .mockRejectedValueOnce(
+        new Error("Playwright page target identities are temporarily unavailable."),
+      );
+    const createPageViaPlaywright = vi.fn(async () => page("WRONG", "about:blank"));
+    vi.spyOn(deps.pwAiModule, "getPwAiModule").mockResolvedValue({
+      listPagesViaPlaywright,
+      createPageViaPlaywright,
+    } as unknown as Awaited<ReturnType<typeof deps.pwAiModule.getPwAiModule>>);
+    const { remote } = deps.createRemoteRouteHarness();
+
+    await expect(remote.ensureTabAvailable("B")).resolves.toMatchObject({ targetId: "B" });
+    expect(createPageViaPlaywright).not.toHaveBeenCalled();
+  });
+
   it("rejects stale targetId for remote profiles even when only one tab remains", async () => {
     const responses = Array.from({ length: 2 }, () => [page("T1", "https://example.com")]);
     const listPagesViaPlaywright = vi.fn(deps.createSequentialPageLister(responses));
@@ -469,7 +503,7 @@ describe("browser remote profile tab ops via Playwright", () => {
     const state = deps.makeState("remote");
     state.resolved.ssrfPolicy = {
       dangerouslyAllowPrivateNetwork: false,
-      hostnameAllowlist: ["browserless.example.com"],
+      allowedHostnames: ["browserless.example.com"],
     };
     const remoteProfile = expectDefined(state.resolved.profiles.remote, "remote browser profile");
     state.resolved.profiles.remote = {

@@ -42,6 +42,8 @@ type GatewayTestHoistedState = {
       name?: string;
       provider: string;
       contextWindow?: number;
+      contextWindows?: Array<{ id: string; label: string; contextWindow: number }>;
+      contextWindowDefault?: string;
       reasoning?: boolean;
       input?: string[];
     }>;
@@ -51,7 +53,6 @@ type GatewayTestHoistedState = {
   runBtwSideQuestion: Mock<RunBtwSideQuestionFn>;
   dispatchInboundMessage: Mock<DispatchInboundMessageFn>;
   testIsNixMode: { value: boolean };
-  sessionStoreSaveDelayMs: { value: number };
   embeddedRunMock: {
     activeIds: Set<string>;
     abortCalls: string[];
@@ -75,6 +76,7 @@ type GatewayTestHoistedState = {
     allowFrom: string[] | undefined;
     cronStorePath: string | undefined;
     cronEnabled: boolean | undefined;
+    cronTriggersEnabled: boolean | undefined;
     gatewayBind: "auto" | "lan" | "tailnet" | "loopback" | undefined;
     gatewayAuth: Record<string, unknown> | undefined;
     gatewayControlUi: Record<string, unknown> | undefined;
@@ -104,7 +106,6 @@ const gatewayTestHoisted = vi.hoisted(() => {
     runBtwSideQuestion: vi.fn().mockResolvedValue(undefined),
     dispatchInboundMessage: vi.fn(),
     testIsNixMode: { value: false },
-    sessionStoreSaveDelayMs: { value: 0 },
     embeddedRunMock: {
       activeIds: new Set<string>(),
       abortCalls: [],
@@ -137,6 +138,7 @@ const gatewayTestHoisted = vi.hoisted(() => {
       allowFrom: undefined,
       cronStorePath: undefined,
       cronEnabled: false,
+      cronTriggersEnabled: undefined,
       gatewayBind: undefined,
       gatewayAuth: undefined,
       gatewayControlUi: undefined,
@@ -160,16 +162,15 @@ export const testTailnetIPv4 = gatewayTestHoisted.testTailnetIPv4;
 export const testTailscaleWhois = gatewayTestHoisted.testTailscaleWhois;
 export const agentDiscoveryMock = gatewayTestHoisted.agentDiscoveryMock;
 export const cronIsolatedRun = gatewayTestHoisted.cronIsolatedRun;
-export const agentCommand = gatewayTestHoisted.agentCommand;
+export const agentCommandMock = gatewayTestHoisted.agentCommand;
 export const dispatchInboundMessageMock = gatewayTestHoisted.dispatchInboundMessage;
-export const getReplyFromConfig = gatewayTestHoisted.getReplyFromConfig;
+export const gatewayReplyMock = gatewayTestHoisted.getReplyFromConfig;
 export const mockGetReplyFromConfigOnce = (impl: GetReplyFromConfigFn) => {
-  getReplyFromConfig.mockImplementationOnce(impl);
+  gatewayReplyMock.mockImplementationOnce(impl);
 };
 export const sendWhatsAppMock = gatewayTestHoisted.sendWhatsAppMock;
 export const testState = gatewayTestHoisted.testState;
 export const testIsNixMode = gatewayTestHoisted.testIsNixMode;
-export const sessionStoreSaveDelayMs = gatewayTestHoisted.sessionStoreSaveDelayMs;
 export const embeddedRunMock = gatewayTestHoisted.embeddedRunMock;
 
 export const testConfigRoot = resolveGlobalSingleton(GATEWAY_TEST_CONFIG_ROOT_KEY, () => ({

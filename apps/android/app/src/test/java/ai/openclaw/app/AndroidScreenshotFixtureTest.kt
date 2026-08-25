@@ -68,13 +68,42 @@ class AndroidScreenshotFixtureTest {
   }
 
   @Test
+  fun providesSwarmChildRosterForSwarmScene() {
+    AndroidScreenshotFixture.configure(AndroidScreenshotScene.Swarm)
+    try {
+      val params = "{\"spawnedBy\":\"${AndroidScreenshotFixture.mainSessionKey}\"}"
+      val sessions =
+        json
+          .parseToJsonElement(AndroidScreenshotFixture.request("sessions.list", params))
+          .jsonObject["sessions"]
+          ?.jsonArray
+          .orEmpty()
+      val metadata =
+        json
+          .parseToJsonElement(AndroidScreenshotFixture.request("chat.metadata", null))
+          .jsonObject
+      assertEquals("true", metadata["swarmEnabled"]?.jsonPrimitive?.content)
+      assertEquals(5, sessions.size)
+      assertEquals(
+        "swarm:${AndroidScreenshotFixture.mainSessionKey}:research",
+        sessions
+          .first()
+          .jsonObject["swarmGroupId"]
+          ?.jsonPrimitive
+          ?.content,
+      )
+    } finally {
+      AndroidScreenshotFixture.configure(AndroidScreenshotScene.Home)
+    }
+  }
+
+  @Test
   fun providesDeterministicChatHistory() {
-    val messages =
+    val history =
       json
         .parseToJsonElement(AndroidScreenshotFixture.request("chat.history", null))
-        .jsonObject["messages"]
-        ?.jsonArray
-        .orEmpty()
+        .jsonObject
+    val messages = history["messages"]?.jsonArray.orEmpty()
 
     assertEquals(
       listOf(
@@ -85,13 +114,17 @@ class AndroidScreenshotFixtureTest {
             "Once those land, the changelog draft is ready for review and the tag can go out.",
           "1783555080000",
         ),
+        listOf("user", "[System] Continue the interrupted turn.", "1783555100000"),
+        listOf("user", "[System] Gateway restarted during the Android release update.", "1783555120000"),
         listOf("user", "Summarize the open review feedback for me.", "1783555140000"),
         listOf(
           "assistant",
-          "The main thread asks for a regression test around session restore, and the second one wants the new " +
-            "config key documented before merge. Both are small; I can draft patches for each if you want.",
+          "The release check is ready:\n\n```kotlin\nval ready = lint && tests\n```\n\n" +
+            "Review https://openclaw.ai before tagging.",
           "1783555200000",
         ),
+        listOf("system", "Compaction", "1783555220000"),
+        listOf("system", "Reset", "1783555240000"),
         listOf("user", "Draft a short status update for the team.", "1783555260000"),
         listOf(
           "assistant",
@@ -108,6 +141,57 @@ class AndroidScreenshotFixtureTest {
           fields["timestamp"]?.jsonPrimitive?.content,
         )
       },
+    )
+
+    val restartRecovery = messages[2].jsonObject["provenance"]?.jsonObject
+    assertEquals("internal_system", restartRecovery?.get("kind")?.jsonPrimitive?.content)
+    assertEquals("main_session_restart_recovery", restartRecovery?.get("sourceTool")?.jsonPrimitive?.content)
+    val gatewayRestarted = messages[3].jsonObject["provenance"]?.jsonObject
+    assertEquals("restart-sentinel", gatewayRestarted?.get("sourceTool")?.jsonPrimitive?.content)
+    val compaction = messages[6].jsonObject["__openclaw"]?.jsonObject
+    assertEquals("compaction", compaction?.get("kind")?.jsonPrimitive?.content)
+    assertEquals("android-screenshot-compaction", compaction?.get("id")?.jsonPrimitive?.content)
+    assertEquals("900000", compaction?.get("tokensBefore")?.jsonPrimitive?.content)
+    assertEquals("24700", compaction?.get("tokensAfter")?.jsonPrimitive?.content)
+    val reset = messages[7].jsonObject["__openclaw"]?.jsonObject
+    assertEquals("reset", reset?.get("kind")?.jsonPrimitive?.content)
+    assertEquals("android-screenshot-reset", reset?.get("id")?.jsonPrimitive?.content)
+    val inFlightRun = history["inFlightRun"]?.jsonObject
+    assertEquals("android-screenshot-active-run", inFlightRun?.get("runId")?.jsonPrimitive?.content)
+    assertEquals("", inFlightRun?.get("text")?.jsonPrimitive?.content)
+  }
+
+  @Test
+  fun providesDeterministicSystemAgentConversation() {
+    val greeting =
+      json
+        .parseToJsonElement(
+          AndroidScreenshotFixture.request(
+            "openclaw.chat",
+            """{"sessionId":"android-settings-openclaw-test"}""",
+          ),
+        ).jsonObject
+    val response =
+      json
+        .parseToJsonElement(
+          AndroidScreenshotFixture.request(
+            "openclaw.chat",
+            """{"sessionId":"android-settings-openclaw-test","message":"Check status"}""",
+          ),
+        ).jsonObject
+
+    assertEquals("android-screenshot-openclaw", greeting["sessionId"]?.jsonPrimitive?.content)
+    assertEquals(
+      "What should we look at first?",
+      greeting["question"]
+        ?.jsonObject
+        ?.get("question")
+        ?.jsonPrimitive
+        ?.content,
+    )
+    assertEquals(
+      "I’ll keep this conversation separate from ordinary agent chat.",
+      response["reply"]?.jsonPrimitive?.content,
     )
   }
 

@@ -44,6 +44,28 @@ function responseFromText(text: string): Response {
   );
 }
 
+function responseFromSseFrames(frames: unknown[]): Response {
+  const encoder = new TextEncoder();
+  const chunks = frames.map((frame) => encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
+  const reader = {
+    read: vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      const value = chunks.shift();
+      return value ? { done: false, value } : { done: true, value: undefined };
+    }),
+    cancel: vi.fn(async () => undefined),
+    releaseLock: vi.fn(),
+  } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+
+  return {
+    ok: true,
+    status: 200,
+    body: { getReader: () => reader },
+  } as Response;
+}
+
 function responseFromReaderText(text: string, releaseLock: () => void): Response {
   const chunks: Array<ReadableStreamReadResult<Uint8Array>> = [
     { done: false, value: new TextEncoder().encode(text) },
@@ -157,6 +179,74 @@ describe("streamProxy", () => {
     ]);
     await expect(stream.result()).resolves.toMatchObject({
       content: [{ type: "text", text: "Working...", textSignature: contentSignature }],
+    });
+  });
+
+  it("delays tool argument previews while preserving exact terminal arguments", async () => {
+    const initialContent = "a".repeat(128);
+    const checkpointContent = "b".repeat(400);
+    const deltas = [`{"content":"${initialContent}`, checkpointContent, `","terminal":"exact"}`];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        responseFromSseFrames([
+          { type: "toolcall_start", contentIndex: 0, id: "call-1", toolName: "write" },
+          ...deltas.map((delta) => ({ type: "toolcall_delta", contentIndex: 0, delta })),
+          { type: "toolcall_end", contentIndex: 0 },
+          { type: "done", reason: "toolUse", usage },
+        ]),
+      ),
+    );
+
+    const stream = streamProxy(model, context, {
+      authToken: "token",
+      proxyUrl: "https://proxy.example",
+    });
+    const argumentSnapshots: Array<Record<string, unknown>> = [];
+    let terminalArguments: Record<string, unknown> | undefined;
+    for await (const event of stream) {
+      if (event.type === "toolcall_delta") {
+        const content = event.partial.content[event.contentIndex];
+        if (content?.type === "toolCall") {
+          argumentSnapshots.push(structuredClone(content.arguments));
+        }
+      } else if (event.type === "toolcall_end") {
+        terminalArguments = structuredClone(event.toolCall.arguments);
+      }
+    }
+
+    const checkpointPreview = { content: initialContent + checkpointContent };
+    expect(argumentSnapshots).toEqual([{}, checkpointPreview, checkpointPreview]);
+    const exactArguments = {
+      content: initialContent + checkpointContent,
+      terminal: "exact",
+    };
+    expect(terminalArguments).toEqual(exactArguments);
+    await expect(stream.result()).resolves.toMatchObject({
+      content: [{ type: "toolCall", arguments: exactArguments }],
+    });
+  });
+
+  it("preserves empty arguments for terminal-only tool calls", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        responseFromSseFrames([
+          { type: "toolcall_start", contentIndex: 0, id: "call-1", toolName: "list" },
+          { type: "toolcall_end", contentIndex: 0 },
+          { type: "done", reason: "toolUse", usage },
+        ]),
+      ),
+    );
+
+    const stream = streamProxy(model, context, {
+      authToken: "token",
+      proxyUrl: "https://proxy.example",
+    });
+
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "call-1", name: "list", arguments: {} }],
     });
   });
 
@@ -662,6 +752,81 @@ describe("streamProxy loopback /api/stream", () => {
     }
     return address.port;
   }
+
+  async function listenProxyErrorBody(bytes: Buffer, splitAt: number) {
+    const request: {
+      method?: string;
+      path?: string;
+      authorization?: string;
+    } = {};
+
+    server = http.createServer((req, res) => {
+      request.method = req.method;
+      request.path = req.url;
+      request.authorization = req.headers.authorization;
+      if (req.method !== "POST" || req.url !== "/api/stream") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+
+      res.writeHead(502, "Bad Gateway", { "Content-Type": "application/json" });
+      res.write(bytes.subarray(0, splitAt));
+      res.end(bytes.subarray(splitAt));
+    });
+    server.on("clientError", (_err, socket) => socket.destroy());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected loopback server address");
+    }
+    return { port: address.port, request };
+  }
+
+  it("falls back to the HTTP status for malformed UTF-8 proxy errors", async () => {
+    const prefix = Buffer.from('{"error":"corrupted ');
+    const bytes = Buffer.concat([prefix, Buffer.from([0xff]), Buffer.from(' upstream"}')]);
+    const { port, request } = await listenProxyErrorBody(bytes, prefix.length);
+
+    const result = await streamProxy(model, context, {
+      authToken: "token",
+      proxyUrl: `http://127.0.0.1:${port}`,
+      timeoutMs: 3_000,
+    }).result();
+
+    expect(request).toEqual({
+      method: "POST",
+      path: "/api/stream",
+      authorization: "Bearer token",
+    });
+    expect(result).toMatchObject({
+      stopReason: "error",
+      errorMessage: "Proxy error: 502 Bad Gateway",
+    });
+  });
+
+  it("preserves a valid replacement character in proxy error responses", async () => {
+    const error = "upstream legitimately contains \uFFFD";
+    const bytes = Buffer.from(JSON.stringify({ error }));
+    const { port, request } = await listenProxyErrorBody(bytes, bytes.indexOf(0xef) + 1);
+
+    const result = await streamProxy(model, context, {
+      authToken: "token",
+      proxyUrl: `http://127.0.0.1:${port}`,
+      timeoutMs: 3_000,
+    }).result();
+
+    expect(request).toEqual({
+      method: "POST",
+      path: "/api/stream",
+      authorization: "Bearer token",
+    });
+    expect(result).toMatchObject({
+      stopReason: "error",
+      errorMessage: `Proxy error: ${error}`,
+    });
+  });
 
   it("cancels a dripping native SSE body when the outer abort signal fires", async () => {
     const port = await listenDripProxy();

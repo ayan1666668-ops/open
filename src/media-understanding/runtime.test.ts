@@ -135,7 +135,13 @@ describe("media-understanding runtime", () => {
       provider: undefined,
       model: undefined,
       output: undefined,
-      decision: { capability: "image", outcome: "disabled", attachments: [] },
+      decision: {
+        capability: "image",
+        outcome: "disabled",
+        attachments: [],
+        attachmentDispositions: { 0: { kind: "capability-disabled" } },
+        nativeVisionActive: false,
+      },
     });
 
     expect(mocks.buildProviderRegistry).not.toHaveBeenCalled();
@@ -261,13 +267,11 @@ describe("media-understanding runtime", () => {
     });
 
     expect(mocks.normalizeMediaAttachments).toHaveBeenCalledWith({
-      MediaUrl: "https://httpbin.org/image/png",
-      MediaType: "image/*",
+      media: [{ url: "https://httpbin.org/image/png", contentType: "image/*" }],
     });
     expect(requireRunCapabilityRequest()).toMatchObject({
       ctx: {
-        MediaUrl: "https://httpbin.org/image/png",
-        MediaType: "image/*",
+        media: [{ url: "https://httpbin.org/image/png", contentType: "image/*" }],
       },
     });
   });
@@ -293,12 +297,11 @@ describe("media-understanding runtime", () => {
     });
 
     expect(mocks.normalizeMediaAttachments).toHaveBeenCalledWith({
-      MediaUrl: mediaUrl,
-      MediaType: "video/mp4",
+      media: [{ url: mediaUrl, contentType: "video/mp4" }],
     });
     expect(requireRunCapabilityRequest()).toMatchObject({
       capability: "image",
-      ctx: { MediaUrl: mediaUrl, MediaType: "video/mp4" },
+      ctx: { media: [{ url: mediaUrl, contentType: "video/mp4" }] },
       media,
     });
   });
@@ -359,8 +362,7 @@ describe("media-understanding runtime", () => {
     });
 
     expect(mocks.normalizeMediaAttachments).toHaveBeenCalledWith({
-      MediaPath: "/tmp/sample.jpg",
-      MediaType: "image/jpeg",
+      media: [{ path: "/tmp/sample.jpg", contentType: "image/jpeg" }],
       SessionKey: "agent:main:telegram:dm:123",
       Provider: "telegram",
       Surface: "telegram",
@@ -396,11 +398,12 @@ describe("media-understanding runtime", () => {
     });
 
     expect(mocks.normalizeMediaAttachments).toHaveBeenCalledWith({
-      MediaUrl: "https://example.com/photo.png",
-      MediaType: "image/png",
+      media: [{ url: "https://example.com/photo.png", contentType: "image/png" }],
     });
     expect(requireRunCapabilityRequest()).toMatchObject({
-      ctx: { MediaUrl: "https://example.com/photo.png", MediaType: "image/png" },
+      ctx: {
+        media: [{ url: "https://example.com/photo.png", contentType: "image/png" }],
+      },
       media,
     });
   });
@@ -504,8 +507,7 @@ describe("media-understanding runtime", () => {
         },
       },
       ctx: {
-        MediaPath: "/tmp/sample.jpg",
-        MediaType: "image/jpeg",
+        media: [{ path: "/tmp/sample.jpg", contentType: "image/jpeg" }],
       },
       attachments: cache,
       media,
@@ -573,28 +575,47 @@ describe("media-understanding runtime", () => {
     );
   });
 
-  it("normalizes local HEIC explicit image descriptions before provider execution", async () => {
-    mocks.readLocalFileSafely.mockResolvedValue({ buffer: Buffer.from("heic-source") });
-
-    await describeImageFileWithModel({
-      filePath: "/tmp/sample.bin",
+  it.each([
+    {
+      name: "HEIC",
       mime: "image/heic; charset=binary",
-      provider: "zai",
-      model: "glm-4.6v",
-      prompt: "Describe it",
-      cfg: {} as OpenClawConfig,
-      agentDir: "/tmp/agent",
-    });
+      bytes: Buffer.from("heic-source"),
+    },
+    {
+      name: "HEIC sequence",
+      mime: "image/heic-sequence",
+      bytes: Buffer.from("000000186674797068657663000000000000000000000000", "hex"),
+    },
+    {
+      name: "HEIF sequence",
+      mime: "image/heif-sequence",
+      bytes: Buffer.from("00000018667479706d736631000000000000000000000000", "hex"),
+    },
+  ])(
+    "normalizes local $name explicit image descriptions before provider execution",
+    async (testCase) => {
+      mocks.readLocalFileSafely.mockResolvedValue({ buffer: testCase.bytes });
 
-    expect(mocks.convertHeicToJpeg).toHaveBeenCalledWith(Buffer.from("heic-source"));
-    expect(mocks.describeImageWithModel).toHaveBeenCalledWith(
-      expect.objectContaining({
-        buffer: Buffer.from("jpeg-normalized"),
-        fileName: "sample.bin",
-        mime: "image/jpeg",
-      }),
-    );
-  });
+      await describeImageFileWithModel({
+        filePath: "/tmp/sample.bin",
+        mime: testCase.mime,
+        provider: "zai",
+        model: "glm-4.6v",
+        prompt: "Describe it",
+        cfg: {} as OpenClawConfig,
+        agentDir: "/tmp/agent",
+      });
+
+      expect(mocks.convertHeicToJpeg).toHaveBeenCalledWith(testCase.bytes);
+      expect(mocks.describeImageWithModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          buffer: Buffer.from("jpeg-normalized"),
+          fileName: "sample.bin",
+          mime: "image/jpeg",
+        }),
+      );
+    },
+  );
 
   it("preserves fetched metadata for explicit model URL inputs", async () => {
     await describeImageFileWithModel({
@@ -674,8 +695,7 @@ describe("media-understanding runtime", () => {
 
     expect(mocks.readLocalFileSafely).not.toHaveBeenCalled();
     expect(mocks.normalizeMediaAttachments).toHaveBeenCalledWith({
-      MediaUrl: "https://httpbin.org/image/png",
-      MediaType: "image/*",
+      media: [{ url: "https://httpbin.org/image/png", contentType: "image/*" }],
     });
     expect(mocks.createMediaAttachmentCache).toHaveBeenCalledWith(
       [{ index: 0, url: "https://httpbin.org/image/png", mime: "image/png" }],

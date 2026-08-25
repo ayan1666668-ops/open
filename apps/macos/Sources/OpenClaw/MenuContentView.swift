@@ -14,6 +14,7 @@ struct MenuContent: View {
     private let healthStore = HealthStore.shared
     private let heartbeatStore = HeartbeatStore.shared
     private let controlChannel = ControlChannel.shared
+    private let dashboardManager = DashboardManager.shared
     private let activityStore = WorkActivityStore.shared
     private let nodesStore = NodesStore.shared
     @Bindable private var pairingPrompter = NodePairingApprovalPrompter.shared
@@ -23,9 +24,12 @@ struct MenuContent: View {
     @State private var micObserver = AudioInputDeviceObserver()
     @State private var micRefreshTask: Task<Void, Never>?
     @State private var browserControlEnabled = true
-    @AppStorage(cameraEnabledKey) private var cameraEnabled: Bool = false
-    @AppStorage(appLogLevelKey) private var appLogLevelRaw: String = Logger.Level.info.rawValue
-    @AppStorage(debugFileLogEnabledKey) private var appFileLoggingEnabled: Bool = false
+    @State private var testNotificationPending = false
+    @AppStorage(cameraEnabledKey, store: AppDefaults.standard) private var cameraEnabled: Bool = false
+    @AppStorage(appLogLevelKey, store: AppDefaults.standard)
+    private var appLogLevelRaw: String = Logger.Level.info.rawValue
+    @AppStorage(debugFileLogEnabledKey, store: AppDefaults.standard)
+    private var appFileLoggingEnabled: Bool = false
 
     init(state: AppState, updater: UpdaterProviding?) {
         self._state = Bindable(wrappedValue: state)
@@ -127,6 +131,11 @@ struct MenuContent: View {
             if self.showVoiceWakeMicPicker {
                 self.voiceWakeMicMenu
             }
+            Button {
+                self.open(tab: .voiceWake)
+            } label: {
+                Label("Voice & Talk Settings…", systemImage: "slider.horizontal.3")
+            }
             Divider()
             Button {
                 AppNavigationActions.openDashboard()
@@ -180,6 +189,9 @@ struct MenuContent: View {
         .task {
             VoicePushToTalkHotkey.shared.setEnabled(voiceWakeSupported && self.state.voicePushToTalkEnabled)
         }
+        .task {
+            await self.nodesStore.prepareLocalNodeIdentity()
+        }
         .onChange(of: self.state.voicePushToTalkEnabled) { _, enabled in
             VoicePushToTalkHotkey.shared.setEnabled(voiceWakeSupported && enabled)
         }
@@ -201,14 +213,10 @@ struct MenuContent: View {
     }
 
     private var connectionLabel: String {
-        switch self.state.connectionMode {
-        case .unconfigured:
-            "OpenClaw Not Configured"
-        case .remote:
-            "Remote OpenClaw Active"
-        case .local:
-            "OpenClaw Active"
-        }
+        DashboardGatewayMenuModel.connectionLabel(
+            mode: self.state.connectionMode,
+            controlState: self.controlChannel.state,
+            entries: self.dashboardManager.gatewayEntries)
     }
 
     private func loadBrowserControlEnabled() async {
@@ -323,10 +331,11 @@ struct MenuContent: View {
                     Label("Send Debug Voice Text", systemImage: "waveform.circle")
                 }
                 Button {
-                    Task { await DebugActions.sendTestNotification() }
+                    Task { await self.sendTestNotification() }
                 } label: {
                     Label("Send Test Notification", systemImage: "bell")
                 }
+                .disabled(self.testNotificationPending)
                 Divider()
                 if self.state.connectionMode == .local {
                     Button {
@@ -357,12 +366,15 @@ struct MenuContent: View {
         guard self.state.connectionMode != .unconfigured else { return nil }
         guard case .connected = self.controlChannel.state else { return nil }
 
-        guard let identity = DeviceIdentityStore.loadOrCreatePersisted(
-            profile: MacNodeModeCoordinator.nodeIdentityProfile)
-        else {
+        let deviceId: String
+        switch self.nodesStore.localNodeIdentityState {
+        case .loading:
+            return nil
+        case let .available(id):
+            deviceId = id
+        case .unavailable:
             return ("Mac identity unavailable", .red)
         }
-        let deviceId = identity.deviceId
         if let entry = self.nodesStore.nodes.first(where: { $0.nodeId == deviceId }) {
             guard entry.isConnected else {
                 return ("Mac capabilities offline", .orange)
@@ -384,6 +396,23 @@ struct MenuContent: View {
     }
 
     private var healthStatus: (label: String, color: Color) {
+        if self.state.connectionMode == .local,
+           let failure = GatewayProcessManager.shared.lastFailureReason
+        {
+            return (failure, .red)
+        }
+        if self.state.connectionMode == .remote {
+            let live = GatewayConnectionPresentation(state: self.controlChannel.state)
+            switch live.tone {
+            case .healthy:
+                break
+            case .transient:
+                return (live.generalSubtitle, .orange)
+            case .attention:
+                return (live.generalSubtitle, .red)
+            }
+        }
+
         if let activity = self.activityStore.current {
             let color: Color = activity.role == .main ? .accentColor : .gray
             let roleLabel = activity.role == .main ? "Main" : "Other"
@@ -567,6 +596,27 @@ struct MenuContent: View {
             alert.alertStyle = .informational
         case let .failure(error):
             alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+        }
+        alert.runModal()
+    }
+
+    @MainActor
+    private func sendTestNotification() async {
+        guard !self.testNotificationPending else { return }
+        self.testNotificationPending = true
+        let outcome = await DebugActions.sendTestNotification()
+        self.testNotificationPending = false
+        let alert = NSAlert()
+        alert.messageText = "Test Notification"
+        switch outcome {
+        case .pending:
+            return
+        case .sent:
+            alert.informativeText = "The notification request was queued."
+            alert.alertStyle = .informational
+        case let .error(message):
+            alert.informativeText = message
             alert.alertStyle = .warning
         }
         alert.runModal()

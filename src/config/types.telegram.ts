@@ -93,7 +93,7 @@ export type TelegramAccountConfig = CommonChannelMessagingConfig<
     /** Per-DM configuration for Telegram DM topics (key is chat ID). */
     direct?: Record<string, TelegramDirectConfig>;
     /**
-     * Use Telegram Bot API 10.1 rich messages for text sends and edits.
+     * Use Telegram Bot API 10.2 rich messages for text sends and edits.
      * When false (default), falls back to HTML/plain text formatting via sendMessage.
      * Set to true to enable native tables, details, and rich media via sendRichMessage.
      * Note: Some Telegram clients (Web, Desktop, older mobile) do NOT support
@@ -139,7 +139,7 @@ export type TelegramAccountConfig = CommonChannelMessagingConfig<
     /**
      * Per-channel outbound response prefix override.
      *
-     * When set, this takes precedence over the global `messages.responsePrefix`.
+     * Account values take precedence over the channel-level value.
      * Use `""` to explicitly disable a global prefix for this channel.
      * Use `"auto"` to derive `[{identity.name}]` from the routed agent.
      */

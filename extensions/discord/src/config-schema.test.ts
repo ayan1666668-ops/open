@@ -39,12 +39,77 @@ describe("discord config schema", () => {
     expect(issues[0]?.path.join(".")).toBe("allowFrom");
   });
 
-  it("rejects legacy nested DM access keys", () => {
-    const issues = expectInvalidDiscordConfig({
-      dm: { policy: "open", allowFrom: [] },
+  it('rejects dmPolicy="allowlist" without allowFrom', () => {
+    const issues = expectInvalidDiscordConfig({ dmPolicy: "allowlist" });
+    expect(issues.some((issue) => issue.path.includes("allowFrom"))).toBe(true);
+  });
+
+  it("accepts account allowlist policy inherited from the channel", () => {
+    expectValidDiscordConfig({
+      allowFrom: ["123456789"],
+      accounts: { work: { dmPolicy: "allowlist" } },
+    });
+  });
+
+  it("accepts progress commentary in streaming config", () => {
+    expectValidDiscordConfig({
+      streaming: {
+        mode: "progress",
+        progress: { commentary: true },
+      },
+    });
+  });
+
+  it("rejects retired subagent progress config", () => {
+    expectInvalidDiscordConfig({ subagentProgress: true });
+    expectInvalidDiscordConfig({ subagentProgress: { enabled: true } });
+  });
+
+  it("validates mention aliases at channel and account scope", () => {
+    expectValidDiscordConfig({
+      mentionAliases: { opslead: "123456789012345678" },
+      accounts: {
+        work: { mentionAliases: { vladislava: "234567890123456789" } },
+      },
+    });
+    expectInvalidDiscordConfig({ mentionAliases: { opslead: "not-a-user-id" } });
+  });
+
+  it("normalizes shipped nested DM access keys at root and account scope", () => {
+    const cfg = expectValidDiscordConfig({
+      dmPolicy: "pairing",
+      allowFrom: ["canonical-root"],
+      dm: { enabled: false, policy: "open", allowFrom: ["legacy-root"] },
+      accounts: {
+        work: {
+          dmPolicy: "allowlist",
+          allowFrom: ["canonical-account"],
+          dm: { groupEnabled: true, policy: "disabled", allowFrom: ["legacy-account"] },
+        },
+        personal: {
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
+        },
+      },
     });
 
-    expect(issues[0]?.path.join(".")).toBe("dm");
+    expect(cfg).toMatchObject({
+      dmPolicy: "pairing",
+      allowFrom: ["canonical-root"],
+      dm: { enabled: false },
+      accounts: {
+        work: {
+          dmPolicy: "allowlist",
+          allowFrom: ["canonical-account"],
+          dm: { groupEnabled: true },
+        },
+        personal: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+          dm: { enabled: true },
+        },
+      },
+    });
+    expectInvalidDiscordConfig({ dm: { enabled: false, unexpected: true } });
   });
 
   it("accepts textChunkLimit without reviving legacy message limits", () => {
@@ -277,6 +342,16 @@ describe("discord config schema", () => {
     expect(cfg.voice?.allowedChannels).toEqual([{ guildId: "123", channelId: "456" }]);
   });
 
+  it("accepts occupancy-managed Discord voice auto-join channels", () => {
+    const cfg = expectValidDiscordConfig({
+      voice: {
+        autoJoin: [{ guildId: "123", channelId: "456", whenOccupied: true }],
+      },
+    });
+
+    expect(cfg.voice?.autoJoin).toEqual([{ guildId: "123", channelId: "456", whenOccupied: true }]);
+  });
+
   it("rejects invalid Discord voice allowed channels", () => {
     for (const voice of [
       { allowedChannels: [{ guildId: "", channelId: "456" }] },
@@ -361,7 +436,6 @@ describe("discord config schema", () => {
           enabled: true,
           intervalMs: 30000,
           minUpdateIntervalMs: 15000,
-          exhaustedText: "token exhausted",
         },
       },
     },
@@ -385,6 +459,14 @@ describe("discord config schema", () => {
     expect(cfg.guilds?.["123456789012345678"]?.presenceEvents?.channelId).toBe(
       "234567890123456789",
     );
+  });
+
+  it("accepts mention-only gateway intent mode", () => {
+    const cfg = expectValidDiscordConfig({
+      intents: { messageContent: false },
+    });
+
+    expect(cfg.intents?.messageContent).toBe(false);
   });
 
   it("accepts online-presence throttling knobs", () => {

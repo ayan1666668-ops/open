@@ -1,4 +1,6 @@
+import type { ControlUiEnvironment } from "../gateway/control-ui-bootstrap-contract.js";
 // Defines gateway runtime and networking configuration types.
+import type { OperatorScope } from "../gateway/operator-scopes.js";
 import type { SecretInput } from "./types.secrets.js";
 
 /** Gateway bind-address policy for local server startup. */
@@ -18,8 +20,6 @@ export type GatewayTlsConfig = {
 };
 
 export type WideAreaDiscoveryConfig = {
-  /** Enable DNS-SD style wide-area discovery. */
-  enabled?: boolean;
   /** Optional unicast DNS-SD domain (e.g. "openclaw.internal"). */
   domain?: string;
 };
@@ -90,6 +90,8 @@ export type ResolvedTalkConfig = {
 };
 
 export type TalkConfig = {
+  /** Agent that owns Talk sessions created without an agent-scoped session key. */
+  agentId?: string;
   /** Active Talk TTS provider (for example "acme-speech"). */
   provider?: string;
   /** Provider-specific Talk config keyed by provider id. */
@@ -109,7 +111,7 @@ export type TalkConfig = {
     | "ultra";
   /** Optional fast mode override for the agent run behind Talk realtime consults. */
   consultFastMode?: boolean;
-  /** BCP 47 locale id used for Talk speech recognition on device nodes. */
+  /** BCP 47 locale id used for Talk speech recognition on device nodes and the iOS system-voice fallback. */
   speechLocale?: string;
   /** Stop speaking when user starts talking (default: true). */
   interruptOnSpeech?: boolean;
@@ -123,18 +125,31 @@ export type TalkConfigResponse = TalkConfig & {
 };
 
 export type GatewayControlUiConfig = {
+  /** @deprecated Doctor-only legacy input. */
+  chatMessageMaxWidth?: string;
+  /**
+   * @deprecated Upgrade-only transport input. Retained so releases that shipped
+   * this break-glass flag can migrate an unpaired browser safely.
+   */
+  dangerouslyDisableDeviceAuth?: boolean;
   /** If false, the Gateway will not serve the Control UI (default /). */
   enabled?: boolean;
   /** Optional base path prefix for the Control UI (e.g. "/openclaw"). */
   basePath?: string;
   /** Optional filesystem root for Control UI assets (defaults to dist/control-ui). */
   root?: string;
+  /** Optional visual label and named color distinguishing this Gateway environment. */
+  environment?: ControlUiEnvironment;
+  /** Optional service credential used only for Control UI GitHub previews and discovery. */
+  github?: { token?: SecretInput };
   /**
    * Opt-in AI purpose titles for tool calls in Control UI chat (default false).
    * When enabled, chat.toolTitles generates short titles through standard
    * utility-model routing and caches them per agent.
    */
   toolTitles?: boolean;
+  /** Produce utility-model session status digests for subscribed Control UI clients (default true). */
+  sessionObserver?: boolean;
   /**
    * Embed sandbox mode for hosted Control UI previews.
    * - strict: no script execution inside embeds
@@ -147,8 +162,9 @@ export type GatewayControlUiConfig = {
    * Default off; prefer hosted /__openclaw__/canvas or /__openclaw__/a2ui content.
    */
   allowExternalEmbedUrls?: boolean;
+  /** Fetch public-site favicons through the Gateway for Control UI links (default true). */
+  automaticallyFetchFavicons?: boolean;
   /** Optional max-width for grouped Control UI chat messages (default: min(900px, 68%)). */
-  chatMessageMaxWidth?: string;
   /** Allowed browser origins for Control UI/WebChat websocket connections. */
   allowedOrigins?: string[];
   /**
@@ -156,14 +172,6 @@ export type GatewayControlUiConfig = {
    * Supported long-term for deployments that intentionally rely on this policy.
    */
   dangerouslyAllowHostHeaderOriginFallback?: boolean;
-  /**
-   * Insecure-auth toggle.
-   * Control UI still requires secure context + device identity unless
-   * dangerouslyDisableDeviceAuth is enabled.
-   */
-  allowInsecureAuth?: boolean;
-  /** DANGEROUS: Disable device identity checks for the Control UI (default: false). */
-  dangerouslyDisableDeviceAuth?: boolean;
 };
 
 /** Gateway authentication strategy for WebSocket and HTTP clients. */
@@ -225,6 +233,8 @@ export type GatewayAuthConfig = {
   password?: SecretInput;
   /** Allow Tailscale identity headers when serve mode is enabled. */
   allowTailscale?: boolean;
+  /** Operator scopes granted to verified trusted-proxy or Tailscale identities. */
+  identityScopes?: Record<string, OperatorScope[]>;
   /** Rate-limit configuration for failed authentication attempts. */
   rateLimit?: GatewayAuthRateLimitConfig;
   /**
@@ -251,15 +261,11 @@ export type GatewayTailscaleMode = "off" | "serve" | "funnel";
 export type GatewayTailscaleConfig = {
   /** Tailscale exposure mode for the Gateway control UI. */
   mode?: GatewayTailscaleMode;
-  /** Reset serve/funnel configuration on shutdown. */
-  resetOnExit?: boolean;
-  /** Optional Tailscale Service name, such as `svc:openclaw`, for Serve mode. */
-  serviceName?: string;
   /**
-   * When `mode="serve"` and an externally configured Tailscale Funnel route
-   * already covers the gateway port, skip re-applying `tailscale serve` on
-   * startup. Lets operators manage Funnel exposure outside OpenClaw without
-   * losing it across gateway restarts.
+   * Detect an external Funnel route left on the ordinary Gateway listener and
+   * leave exposure unchanged with migration guidance. Gateway-authenticated
+   * routes reject that ingress; plugin-authenticated webhooks keep their owner auth.
+   * @deprecated Migrate to `mode="funnel"`, which uses managed ingress.
    */
   preserveFunnel?: boolean;
 };
@@ -267,21 +273,23 @@ export type GatewayTailscaleConfig = {
 export type GatewayRemoteConfig = {
   /** Remote Gateway WebSocket URL (ws:// or wss://). */
   url?: string;
-  /** Transport for macOS remote connections (ssh tunnel or direct WS). */
+  /** macOS app-only transport (SSH tunnel or direct WS); core validates/preserves but does not read it. */
   transport?: "ssh" | "direct";
-  /** Gateway port on the remote SSH host. Defaults to 18789. */
+  /** macOS app-only remote SSH port (default 18789); core validates/preserves but does not read it. */
   remotePort?: number;
   /** Token for remote auth (when the gateway requires token auth). */
   token?: SecretInput;
   /** Password for remote auth (when the gateway requires password auth). */
   password?: SecretInput;
+  /** Headers presented to an identity-aware proxy in front of the Gateway (values are secrets). */
+  edgeAuth?: Record<string, SecretInput>;
   /** Expected TLS certificate fingerprint (sha256) for remote gateways. */
   tlsFingerprint?: string;
   /** SSH target for tunneling remote Gateway (user@host). */
   sshTarget?: string;
   /** SSH identity file path for tunneling remote Gateway. */
   sshIdentity?: string;
-  /** macOS SSH host-key policy. Defaults to strict; openssh delegates to effective SSH config. */
+  /** macOS app-only; core validates/preserves but does not read it. Defaults to strict; see docs/platforms/mac/remote.md. */
   sshHostKeyPolicy?: "strict" | "openssh";
 };
 
@@ -296,7 +304,7 @@ export type GatewayRemoteConfig = {
  * host terminal is allowed.
  */
 export type GatewayTerminalConfig = {
-  /** Master switch for the operator terminal. Default: false. */
+  /** Master switch for the operator terminal. Default: true; set false to opt out. */
   enabled?: boolean;
   /**
    * Shell executable to launch. When unset the host login shell is used
@@ -309,6 +317,12 @@ export type GatewayTerminalConfig = {
    * immediately. Default: 300.
    */
   detachedSessionTimeoutSeconds?: number;
+};
+
+/** Labs-gated external CLI session targets in the Control UI. */
+export type GatewayCliAgentsConfig = {
+  /** Show catalog-backed CLI agents in the new-session model picker. Default: false. */
+  enabled?: boolean;
 };
 
 /** Gateway config reload strategy for managed installs. */
@@ -456,6 +470,12 @@ export type GatewayPushConfig = {
 
 export type GatewayNodePairingConfig = {
   /**
+   * Silently approve trusted local device pairing and access upgrades.
+   * Set false to require explicit approval; metadata refreshes remain automatic.
+   * Default: true.
+   */
+  autoApproveLocal?: boolean;
+  /**
    * Opt-in CIDR/IP allowlist for auto-approving first-time node-role pairing.
    * Only applies to fresh node pairing requests with no requested scopes.
    * Default: unset/disabled.
@@ -484,6 +504,12 @@ export type GatewayNodePairingConfig = {
 };
 
 export type GatewayNodesConfig = {
+  /** @deprecated Doctor-only legacy input. */
+  skills?: { enabled?: boolean };
+  /** @deprecated Doctor-only legacy input. */
+  allowCommands?: string[];
+  /** @deprecated Doctor-only legacy input. */
+  denyCommands?: string[];
   /** Browser routing policy for node-hosted browser proxies. */
   browser?: {
     /** Routing mode (default: auto). */
@@ -498,15 +524,14 @@ export type GatewayNodesConfig = {
     /** Accept node-published plugin tool descriptors (default: true). */
     enabled?: boolean;
   };
-  /** Controls whether paired nodes may publish agent-visible skills (default: true). */
-  skills?: {
-    /** Accept node-published skill descriptors (default: true). */
-    enabled?: boolean;
+  /** Accept node-published skill descriptors (default: true). */
+  allowSkills?: boolean;
+  commands?: {
+    /** Additional node.invoke commands to allow on the gateway. */
+    allow?: string[];
+    /** Commands to deny even if they appear in the defaults or node claims. */
+    deny?: string[];
   };
-  /** Additional node.invoke commands to allow on the gateway. */
-  allowCommands?: string[];
-  /** Commands to deny even if they appear in the defaults or node claims. */
-  denyCommands?: string[];
 };
 
 export type GatewayToolsConfig = {
@@ -514,6 +539,26 @@ export type GatewayToolsConfig = {
   deny?: string[];
   /** Tools to explicitly allow (removes from default deny list). */
   allow?: string[];
+};
+
+/** Closed session, agent, and operator-scope policy for one named team role. */
+export type GatewayOperatorRoleDefinition = {
+  sessions: {
+    /** Maximum access to another person's sessions without explicit membership. */
+    others: "none" | "view" | "suggest" | "write";
+  };
+  /** Agent IDs available for session creation and runs, or all agents when set to "*". */
+  agents: "*" | string[];
+  /** Ceiling applied to the authenticated profile's granted operator scopes. */
+  scopes: OperatorScope[];
+};
+
+/** Optional named operator-role policies for Gateway deployments shared by a team. */
+export type GatewayOperatorRolesConfig = {
+  /** Required validated default for profiles without a valid assigned role. */
+  default?: string;
+  /** Closed capability bundles indexed by administrator-selected role names. */
+  definitions: Record<string, GatewayOperatorRoleDefinition>;
 };
 
 export type GatewayConfig = {
@@ -537,9 +582,14 @@ export type GatewayConfig = {
   bind?: GatewayBindMode;
   /** Custom IPv4 address for bind="custom" mode. IPv6-only BYOH requires an IPv4 sidecar or proxy. */
   customBindHost?: string;
+  /** Externally reachable HTTPS origin for Gateway callback routes; HTTP only on loopback. */
+  publicOrigin?: string;
   controlUi?: GatewayControlUiConfig;
+  cliAgents?: GatewayCliAgentsConfig;
   terminal?: GatewayTerminalConfig;
   auth?: GatewayAuthConfig;
+  /** Optional profile-bound operator roles; omitted preserves legacy authorization. */
+  roles?: GatewayOperatorRolesConfig;
   tailscale?: GatewayTailscaleConfig;
   remote?: GatewayRemoteConfig;
   reload?: GatewayReloadConfig;

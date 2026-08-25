@@ -9,6 +9,7 @@ export type TypingMode = "never" | "instant" | "thinking" | "message";
 export type SessionScope = "per-sender" | "global";
 /** DM session-key granularity across peers, channels, and accounts. */
 export type DmScope = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
+export type GroupScope = "main" | "per-group";
 /** Which source messages outbound replies should thread or quote against. */
 export type ReplyToMode = "off" | "first" | "all" | "batched";
 /** Group-chat admission policy for channels with allowlists. */
@@ -62,11 +63,9 @@ export type ChannelStreamingProgressConfig = {
   maxLines?: number;
   /** Maximum characters per compact progress line before truncation. Default: 120. */
   maxLineChars?: number;
-  /** Progress draft renderer. "text" is the portable fallback; "rich" lets supported channels use structured UI. */
-  render?: "text" | "rich";
   /** Include compact tool/task progress in the draft. Default: true. */
   toolProgress?: boolean;
-  /** Command/exec progress detail in the draft. "raw" preserves released behavior; "status" shows only the tool label. Default: "raw". */
+  /** Command/exec progress detail in the draft. "raw" opts into command text; "status" shows only the tool label. Default: "status". */
   commandText?: ChannelStreamingCommandTextMode;
   /** Include assistant commentary/preamble text in the progress draft. Default: false. */
   commentary?: boolean;
@@ -87,7 +86,7 @@ export type ChannelStreamingPreviewConfig = {
    * Default: true.
    */
   toolProgress?: boolean;
-  /** Command/exec progress detail in the preview. "raw" preserves released behavior; "status" shows only the tool label. Default: "raw". */
+  /** Command/exec progress detail in the preview. "raw" opts into command text; "status" shows only the tool label. Default: "status". */
   commandText?: ChannelStreamingCommandTextMode;
 };
 
@@ -98,7 +97,9 @@ export type ChannelStreamingBlockConfig = {
   coalesce?: BlockStreamingCoalesceConfig;
 };
 
-export type ChannelStreamingConfig = {
+export type ChannelStreamingConfig<
+  TProgress extends ChannelStreamingProgressConfig = ChannelStreamingProgressConfig,
+> = {
   /**
    * Preview streaming mode:
    * - "off": disable preview updates
@@ -109,13 +110,10 @@ export type ChannelStreamingConfig = {
   mode?: StreamingMode;
   /** Chunking mode for outbound text delivery. */
   chunkMode?: TextChunkMode;
-  /**
-   * Channel-specific native transport streaming toggle.
-   * Used today by Slack's native stream API.
-   */
+  /** Prefer a channel's native streaming transport over its portable draft path. */
   nativeTransport?: boolean;
   preview?: ChannelStreamingPreviewConfig;
-  progress?: ChannelStreamingProgressConfig;
+  progress?: TProgress;
   block?: ChannelStreamingBlockConfig;
 };
 
@@ -213,24 +211,35 @@ export type SessionThreadBindingsConfig = {
   defaultSpawnContext?: "isolated" | "fork";
 };
 
+export type SessionSharingConfig = {
+  /** Allow owners/admins to set sessions read-only. Default: true. */
+  readOnly?: boolean;
+  /** Allow owners/admins to select suggest mode. Default: true. */
+  suggest?: boolean;
+  /** Allow owners/admins to hide draft sessions from other operators. Default: true. */
+  drafts?: boolean;
+};
+
 export type SessionConfig = {
   scope?: SessionScope;
   /** DM session scoping (default: "main"). */
   dmScope?: DmScope;
+  /** Group/channel session scoping (default: "per-group"). */
+  groupScope?: GroupScope;
   /** Map platform-prefixed identities (e.g. "telegram:123") to canonical DM peers. */
   identityLinks?: Record<string, string[]>;
   resetTriggers?: string[];
-  idleMinutes?: number;
   reset?: SessionResetConfig;
   resetByType?: SessionResetByTypeConfig;
   /** Channel-specific reset overrides (e.g. { discord: { mode: "idle", idleMinutes: 10080 } }). */
   resetByChannel?: Record<string, SessionResetConfig>;
   store?: string;
-  typingMode?: TypingMode;
   mainKey?: string;
   sendPolicy?: SessionSendPolicyConfig;
   /** Shared defaults for thread-bound session routing across channels/providers. */
   threadBindings?: SessionThreadBindingsConfig;
+  /** Collaboration modes owners and administrators may select. */
+  sharing?: SessionSharingConfig;
   /** Automatic session store maintenance (pruning, capping, archive retention, disk budget). */
   maintenance?: SessionMaintenanceConfig;
 };
@@ -243,8 +252,12 @@ export type SessionMaintenanceConfig = {
   mode?: SessionMaintenanceMode;
   /** Remove session entries older than this duration (e.g. "30d", "12h"). Default: "30d". */
   pruneAfter?: string | number;
-  /** Maximum number of session entries to keep. Default: 500. */
+  /** Archive inactive dashboard sessions after this duration. Default: "7d"; false or 0 disables. */
+  archiveDashboardAfter?: string | number | false;
+  /** Maximum total session entries to keep when protection permits. Default: 500. */
   maxEntries?: number;
+  /** Protect interactive sessions active within this duration. Default and false: disabled. */
+  preserveRecent?: string | number | false;
   /**
    * Age-based retention for archived transcripts (`*.reset.<timestamp>` and
    * `*.deleted.<timestamp>`). Default and `false`: keep archives until the
@@ -254,12 +267,13 @@ export type SessionMaintenanceConfig = {
   /**
    * Per-agent sessions-directory disk budget (e.g. "500mb"). Default: "10gb".
    * When exceeded, warn (mode=warn) or enforce oldest-first cleanup
-   * (mode=enforce). Set `false` to disable the budget entirely.
+   * (mode=enforce). Set `false`, `0`, or `"0"` to disable the budget entirely.
    */
   maxDiskBytes?: number | string | false;
   /**
    * Target size after disk-budget cleanup (high-water mark), e.g. "400mb".
-   * Default: 80% of maxDiskBytes.
+   * Default: 80% of maxDiskBytes. A value that resolves to zero falls back to
+   * the default instead of clearing history; negative values are invalid.
    */
   highWaterBytes?: number | string;
 };
@@ -270,11 +284,12 @@ export type LoggingConfig = {
   /** Maximum size of a single log file in bytes before rotation. Default: 100 MB. */
   maxFileBytes?: number;
   consoleLevel?: "silent" | "fatal" | "error" | "warn" | "info" | "debug" | "trace";
-  consoleStyle?: "pretty" | "compact" | "json";
+  consoleStyle?: "pretty" | "json";
   /** Redact sensitive tokens in log sinks and persisted transcript text. Default: "tools". Safety-boundary UI/tool/diagnostic payloads may still redact when this is "off". */
-  redactSensitive?: "off" | "tools";
   /** Regex patterns used to redact sensitive tokens from logs and transcripts. */
   redactPatterns?: string[];
+  /** Metadata-only agent activity audit ledger settings. */
+  audit?: AuditConfig;
 };
 
 export type DiagnosticsOtelConfig = {
@@ -283,9 +298,11 @@ export type DiagnosticsOtelConfig = {
   tracesEndpoint?: string;
   metricsEndpoint?: string;
   logsEndpoint?: string;
-  protocol?: "http/protobuf" | "grpc";
+  protocol?: "http/protobuf";
   headers?: Record<string, string>;
   serviceName?: string;
+  /** Replacement prefix for OpenClaw-owned metric names. Empty removes the prefix; defaults to "openclaw.". */
+  metricNamePrefix?: string;
   traces?: boolean;
   metrics?: boolean;
   logs?: boolean;
@@ -295,35 +312,13 @@ export type DiagnosticsOtelConfig = {
   sampleRate?: number;
   /** Metric export interval (ms). */
   flushIntervalMs?: number;
-  /**
-   * Opt-in raw content capture for OTEL span attributes.
-   * Boolean `true` captures non-system message/tool content; the object form
-   * can enable each content class explicitly.
-   */
-  captureContent?:
-    | boolean
-    | {
-        enabled?: boolean;
-        inputMessages?: boolean;
-        outputMessages?: boolean;
-        toolInputs?: boolean;
-        toolOutputs?: boolean;
-        systemPrompt?: boolean;
-        toolDefinitions?: boolean;
-      };
+  /** Opt in to raw non-system message/tool content in OTEL span attributes. */
+  captureContent?: boolean;
 };
 
 export type DiagnosticsCacheTraceConfig = {
   /** Write prompt-cache trace artifacts for debugging deterministic cache input. */
   enabled?: boolean;
-  /** Optional output path for cache trace artifacts. */
-  filePath?: string;
-  /** Include normalized messages in cache trace output. */
-  includeMessages?: boolean;
-  /** Include prompt payload text in cache trace output. */
-  includePrompt?: boolean;
-  /** Include system-message content in cache trace output. */
-  includeSystem?: boolean;
 };
 
 export type AuditConfig = {
@@ -334,6 +329,11 @@ export type AuditConfig = {
    * records stay readable until they expire.
    */
   enabled?: boolean;
+  /**
+   * Retain bounded execution-identity attribution for exact-run inspection.
+   * Default: false. Requires the audit ledger and takes effect after Gateway restart.
+   */
+  executionIdentity?: boolean;
   /**
    * Record content-free message lifecycle metadata. `direct` records only
    * known direct conversations; `all` also records group, channel, and
@@ -348,11 +348,6 @@ export type DiagnosticsConfig = {
   flags?: string[];
   otel?: DiagnosticsOtelConfig;
   cacheTrace?: DiagnosticsCacheTraceConfig;
-};
-
-export type WebConfig = {
-  /** If false, do not start the WhatsApp web provider. Default: true. */
-  enabled?: boolean;
 };
 
 // Provider docking: allowlists keyed by provider id (and internal "webchat").

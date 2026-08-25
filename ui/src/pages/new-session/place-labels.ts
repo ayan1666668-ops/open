@@ -1,5 +1,3 @@
-import type { DraftNode } from "./discovery.ts";
-
 export function disambiguate<T>(
   items: readonly T[],
   label: (item: T) => string,
@@ -32,11 +30,4 @@ export function disambiguate<T>(
     }
   }
   return suffixes;
-}
-
-export function nodeTooltip(node: DraftNode): string | undefined {
-  const facts = [node.platform, node.modelIdentifier, node.remoteIp].filter(
-    (fact): fact is string => fact !== undefined,
-  );
-  return facts.length > 0 ? facts.join(" · ") : undefined;
 }

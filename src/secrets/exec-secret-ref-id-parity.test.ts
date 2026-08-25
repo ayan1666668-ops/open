@@ -192,6 +192,9 @@ describe("exec SecretRef id parity", () => {
     if (id.startsWith("messages.")) {
       return "messages";
     }
+    if (id.startsWith("memory.search.")) {
+      return "memory";
+    }
     if (id.startsWith("models.providers.") && id.includes(".headers.")) {
       return "models.headers";
     }
@@ -206,6 +209,9 @@ describe("exec SecretRef id parity", () => {
     }
     if (id.startsWith("talk.")) {
       return "talk";
+    }
+    if (id.startsWith("tts.providers.")) {
+      return "tts";
     }
     if (id.startsWith("tools.web.fetch.")) {
       return "tools.web.fetch";
@@ -270,7 +276,7 @@ describe("exec SecretRef id parity", () => {
 
   function planAcceptsExecRefForSample(params: {
     type: string;
-    configFile: "openclaw.json" | "auth-profiles.json";
+    configFile: "openclaw.json" | "auth-profile-store";
     pathSegments: string[];
     id: string;
   }): boolean {
@@ -285,7 +291,7 @@ describe("exec SecretRef id parity", () => {
           path: params.pathSegments.join("."),
           pathSegments: params.pathSegments,
           ref: { source: "exec", provider: "vault", id: params.id },
-          ...(params.configFile === "auth-profiles.json" ? { agentId: "main" } : {}),
+          ...(params.configFile === "auth-profile-store" ? { agentId: "main" } : {}),
         },
       ],
     });

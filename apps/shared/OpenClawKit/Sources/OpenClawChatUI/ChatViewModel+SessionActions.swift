@@ -6,6 +6,21 @@ private let chatSessionActionsLogger = Logger(
     category: "OpenClawChat")
 
 extension OpenClawChatViewModel {
+    struct SessionBranchSwitchActivity: Equatable {
+        let session: SessionSnapshot
+        let generation: UInt64
+    }
+
+    var isSwitchingSessionBranch: Bool {
+        self.sessionBranchSwitchActivity != nil
+    }
+
+    private enum SessionBranchesRefreshPurpose {
+        case readOnly
+        case reconcile
+        case finalizeMutation
+    }
+
     public func refreshSessions(limit: Int? = nil) {
         let context = self.currentSessionSnapshot()
         Task { await self.fetchSessions(limit: limit, sessionSnapshot: context) }
@@ -20,11 +35,10 @@ extension OpenClawChatViewModel {
         worktreeBaseRef: String? = nil,
         routeLease: OpenClawChatNewSessionRouteLease? = nil) async -> Bool
     {
-        guard !self.blocksAttachmentOwnerChange else {
-            self.errorText = String(
-                localized: "Remove attachments or wait for delivery to resolve before starting a new chat.")
-            return false
-        }
+        guard !self.isCreatingSession, self.canCreateSessionForImmediateSwitch() else { return false }
+        self.isCreatingSession = true
+        defer { self.isCreatingSession = false }
+        let initiatingSession = self.currentSessionSnapshot()
         let normalizedAgentID = agentID?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -62,6 +76,7 @@ extension OpenClawChatViewModel {
             let createdKey = created.key.trimmingCharacters(in: .whitespacesAndNewlines)
             next = createdKey.isEmpty ? requested : createdKey
         } catch {
+            guard self.isCurrentSession(initiatingSession) else { return false }
             if Self.isUnsupportedCreateSessionError(error) {
                 // Reset only mimics a plain new chat; agent/worktree selections were
                 // not honored, so advanced requests surface the error instead of
@@ -71,17 +86,17 @@ extension OpenClawChatViewModel {
                     self.errorText = error.localizedDescription
                     return false
                 }
+                guard self.canCreateSessionForImmediateSwitch() else { return false }
                 chatUILogger.info("sessions.create unsupported; falling back to sessions.reset")
                 await self.performReset()
-                return true
+                return self.isCurrentSession(initiatingSession)
             }
             chatUILogger.error("sessions.create failed \(error.localizedDescription, privacy: .public)")
             self.errorText = error.localizedDescription
             return false
         }
-        guard !self.blocksAttachmentOwnerChange else {
-            self.errorText = String(
-                localized: "Remove attachments or wait for delivery to resolve before starting a new chat.")
+        guard self.isCurrentSession(initiatingSession), self.canCreateSessionForImmediateSwitch() else {
+            if !self.sessions.contains(where: { $0.key == next }) { self.refreshSessions() }
             return false
         }
         self.adoptCreatedSession(next)
@@ -265,8 +280,15 @@ extension OpenClawChatViewModel {
                     archived: nil,
                     unread: nil)
             case .archive:
+                guard let expectedSessionID = entries[key]?.sessionId?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !expectedSessionID.isEmpty
+                else {
+                    throw ChatSessionBatchValidationError.cannotArchive
+                }
                 try await routeLease.patchSession(
                     key: key,
+                    expectedSessionID: expectedSessionID,
                     label: nil,
                     category: nil,
                     pinned: nil,
@@ -337,6 +359,7 @@ extension OpenClawChatViewModel {
             do {
                 try await self.transport.patchSession(
                     key: key,
+                    expectedSessionID: nil,
                     label: .some(nextLabel),
                     category: nil,
                     pinned: nil,
@@ -352,11 +375,15 @@ extension OpenClawChatViewModel {
         }
     }
 
-    public func forkSession(key: String) async {
+    public func forkSession(key: String, fromLastCompleted: Bool? = nil) async {
         guard self.canCreateSessionForImmediateSwitch() else { return }
         let initiatingSession = self.currentSessionSnapshot()
         do {
-            let createdKey = try await self.transport.forkSession(parentKey: key)
+            let stableBoundary = fromLastCompleted ??
+                (self.sessions.first(where: { $0.key == key })?.hasActiveRun == true)
+            let createdKey = try await self.transport.forkSession(
+                parentKey: key,
+                fromLastCompleted: stableBoundary)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !createdKey.isEmpty else { return }
             guard self.isCurrentSession(initiatingSession), self.canCreateSessionForImmediateSwitch() else {
@@ -373,23 +400,238 @@ extension OpenClawChatViewModel {
 
     public func rewindToMessage(_ message: OpenClawChatMessage) async {
         guard let entryID = Self.sessionMutationEntryID(for: message) else { return }
-        guard !self.hasBlockingRunActivity, !self.isSending, !self.isAborting else { return }
+        guard self.canPerformMessageSessionAction else { return }
         let initiatingSession = self.currentSessionSnapshot()
+        guard await self.beginOutboxSessionMutation(initiatingSession) else { return }
+        guard self.isCurrentSession(initiatingSession) else {
+            await self.cancelOutboxSessionMutation(initiatingSession)
+            return
+        }
         do {
             let result = try await self.transport.rewindSession(
                 sessionKey: initiatingSession.key,
                 entryId: entryID)
-            guard self.isCurrentSession(initiatingSession) else { return }
+            guard self.isCurrentSession(initiatingSession) else {
+                await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                    initiatingSession,
+                    branchingUnsupported: false)
+                return
+            }
             self.replyTarget = nil
             self.runMessageScopesByRunID.removeAll()
             self.provisionalFinalMessagesByID.removeAll()
             self.input = result.editorText ?? ""
+            self.restoreEditorAttachments(result.editorAttachments)
             let historyRequest = self.beginHistoryRequest(for: initiatingSession)
             _ = await self.refreshHistoryAfterRun(historyRequest: historyRequest)
+            guard self.isCurrentSession(initiatingSession) else {
+                await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                    initiatingSession,
+                    branchingUnsupported: false)
+                return
+            }
+            await self.refreshSessionBranches(confirmingBranchChange: true)
         } catch {
+            await self.cancelOutboxSessionMutation(initiatingSession)
             self.errorText = error.localizedDescription
             chatSessionActionsLogger.error(
                 "sessions.rewind failed \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    @discardableResult
+    public func refreshSessionBranches(confirmingBranchChange: Bool = false) async -> Bool {
+        let session = self.currentSessionSnapshot()
+        let refreshGeneration = self.beginSessionBranchesRefresh()
+        let previousState = await self.captureOutboxBranchState(for: session)
+        return await self.performSessionBranchesRefresh(
+            for: session,
+            refreshGeneration: refreshGeneration,
+            previousState: previousState,
+            purpose: confirmingBranchChange ? .finalizeMutation : .readOnly)
+    }
+
+    func refreshSessionBranches(
+        for session: SessionSnapshot,
+        preBootstrapBranchState: OpenClawChatOutboxBranchState?) async -> Bool
+    {
+        let refreshGeneration = self.beginSessionBranchesRefresh()
+        return await self.performSessionBranchesRefresh(
+            for: session,
+            refreshGeneration: refreshGeneration,
+            previousState: preBootstrapBranchState,
+            purpose: .reconcile)
+    }
+
+    private func beginSessionBranchesRefresh() -> UInt64 {
+        self.sessionBranchesRefreshGeneration &+= 1
+        self.isLoadingSessionBranches = true
+        return self.sessionBranchesRefreshGeneration
+    }
+
+    private func performSessionBranchesRefresh(
+        for session: SessionSnapshot,
+        refreshGeneration: UInt64,
+        previousState: OpenClawChatOutboxBranchState?,
+        purpose: SessionBranchesRefreshPurpose) async -> Bool
+    {
+        let connectionGeneration = self.outboxBranchConnectionGeneration
+        defer {
+            if self.isCurrentSession(session),
+               refreshGeneration == self.sessionBranchesRefreshGeneration
+            {
+                self.isLoadingSessionBranches = false
+            }
+        }
+        do {
+            let response = try await self.requestSessionBranchListing(
+                sessionKey: session.key,
+                agentID: self.outboxAgentID(for: session))
+            guard self.isCurrentSession(session),
+                  refreshGeneration == self.sessionBranchesRefreshGeneration,
+                  connectionGeneration == self.outboxBranchConnectionGeneration
+            else {
+                if case .finalizeMutation = purpose {
+                    await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                        session,
+                        branchingUnsupported: false)
+                }
+                return false
+            }
+            switch purpose {
+            case .readOnly:
+                if let outbox = self.outbox,
+                   let scope = self.outboxBranchScope(for: session),
+                   let expectedEpoch = previousState?.epoch,
+                   let activeLeafEntryID = Self.activeBranchLeafEntryID(in: response.branches)
+                {
+                    _ = await outbox.updateLastActiveLeafEntryID(
+                        activeLeafEntryID,
+                        expectedEpoch: expectedEpoch,
+                        for: scope)
+                }
+            case .reconcile:
+                guard await self.reconcileOutboxBranchScope(
+                    session,
+                    branches: response.branches,
+                    previousState: previousState,
+                    connectionGeneration: connectionGeneration)
+                else {
+                    self.pauseOutboxBranchScope(session)
+                    return false
+                }
+            case .finalizeMutation:
+                guard let activeLeafEntryID = Self.activeBranchLeafEntryID(in: response.branches),
+                      await self.confirmOutboxBranchChange(
+                          session,
+                          activeLeafEntryID: activeLeafEntryID)
+                else {
+                    await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                        session,
+                        branchingUnsupported: false)
+                    return false
+                }
+            }
+            guard self.isCurrentSession(session),
+                  refreshGeneration == self.sessionBranchesRefreshGeneration
+            else { return false }
+            self.sessionBranches = response.branches
+            self.flushOutboxIfNeeded()
+            return true
+        } catch {
+            guard self.isCurrentSession(session),
+                  refreshGeneration == self.sessionBranchesRefreshGeneration,
+                  connectionGeneration == self.outboxBranchConnectionGeneration
+            else {
+                if case .finalizeMutation = purpose {
+                    await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                        session,
+                        branchingUnsupported: false)
+                }
+                return false
+            }
+            chatSessionActionsLogger.debug(
+                "sessions.branches.list failed \(error.localizedDescription, privacy: .public)")
+            let branchingUnsupported = Self.branchListingIsUnsupported(error)
+            switch purpose {
+            case .readOnly:
+                break
+            case .reconcile where branchingUnsupported:
+                self.allowOutboxReplayWithoutBranching(session)
+            case .reconcile:
+                self.pauseOutboxBranchScope(session)
+            case .finalizeMutation:
+                await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                    session,
+                    branchingUnsupported: branchingUnsupported)
+            }
+            return false
+        }
+    }
+
+    func refreshSessionBranchesForMenuPresentation() async {
+        await self.refreshSessionBranches()
+    }
+
+    var canSwitchSessionBranch: Bool {
+        !self.hasBlockingRunActivity &&
+            !self.isSending &&
+            !self.isAborting &&
+            !self.hasUnresolvedOutboxCommandsForCurrentSession
+    }
+
+    var canPerformMessageSessionAction: Bool {
+        !self.hasBlockingRunActivity &&
+            !self.isSending &&
+            !self.isAborting &&
+            !self.hasPendingOutboxCommandsForCurrentSession
+    }
+
+    public func switchToBranch(_ leafEntryId: String) async {
+        let normalizedLeafEntryID = leafEntryId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedLeafEntryID.isEmpty else { return }
+        guard self.canSwitchSessionBranch else { return }
+        guard !self.sessionBranches.contains(where: {
+            $0.leafEntryId == normalizedLeafEntryID && $0.active
+        }) else { return }
+        let initiatingSession = self.currentSessionSnapshot()
+        let switchActivity = self.beginSessionBranchSwitchActivity(for: initiatingSession)
+        defer { self.endSessionBranchSwitchActivity(switchActivity) }
+        guard await self.beginOutboxSessionMutation(initiatingSession) else {
+            return
+        }
+        guard self.isCurrentSessionBranchSwitchActivity(switchActivity) else {
+            await self.cancelOutboxSessionMutation(initiatingSession)
+            return
+        }
+        do {
+            try await self.transport.switchSessionBranch(
+                sessionKey: initiatingSession.key,
+                agentID: self.outboxAgentID(for: initiatingSession),
+                leafEntryId: normalizedLeafEntryID)
+            guard self.isCurrentSessionBranchSwitchActivity(switchActivity) else {
+                if await self.confirmOutboxBranchChange(
+                    initiatingSession,
+                    activeLeafEntryID: normalizedLeafEntryID) == false
+                {
+                    await self.recoverOutboxAfterSessionMutationRefreshFailure(
+                        initiatingSession,
+                        branchingUnsupported: false)
+                }
+                return
+            }
+            self.replyTarget = nil
+            self.runMessageScopesByRunID.removeAll()
+            self.provisionalFinalMessagesByID.removeAll()
+            await self.reconcileSessionBranchChange(
+                switchActivity,
+                confirmedLeafEntryID: normalizedLeafEntryID)
+        } catch {
+            await self.cancelOutboxSessionMutation(initiatingSession)
+            guard self.isCurrentSessionBranchSwitchActivity(switchActivity) else { return }
+            self.errorText = error.localizedDescription
+            chatSessionActionsLogger.error(
+                "sessions.branches.switch failed \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -398,13 +640,21 @@ extension OpenClawChatViewModel {
     /// which does not expose fork/rewind and would widen the lease API for no sibling.
     public func forkAtMessage(_ message: OpenClawChatMessage) async {
         guard let entryID = Self.sessionMutationEntryID(for: message) else { return }
-        guard !self.hasBlockingRunActivity, !self.isSending, !self.isAborting else { return }
+        guard self.canPerformMessageSessionAction else { return }
         guard self.canCreateSessionForImmediateSwitch() else { return }
         let initiatingSession = self.currentSessionSnapshot()
+        guard await self.beginOutboxSessionMutation(initiatingSession) else { return }
+        guard self.isCurrentSession(initiatingSession), self.canCreateSessionForImmediateSwitch() else {
+            await self.cancelOutboxSessionMutation(initiatingSession)
+            return
+        }
         do {
             let result = try await self.transport.forkSessionAtMessage(
                 sessionKey: initiatingSession.key,
                 entryId: entryID)
+            // Fork leaves the source transcript unchanged, so its lease is only an entry gate.
+            // Rewind repoints the source scope and confirms an epoch change instead.
+            await self.cancelOutboxSessionMutation(initiatingSession)
             let createdKey = result.sessionKey.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !createdKey.isEmpty else { return }
             guard self.isCurrentSession(initiatingSession),
@@ -419,7 +669,9 @@ extension OpenClawChatViewModel {
             self.switchSession(to: createdKey)
             guard self.sessionKey == createdKey else { return }
             self.input = result.editorText ?? ""
+            self.restoreEditorAttachments(result.editorAttachments)
         } catch {
+            await self.cancelOutboxSessionMutation(initiatingSession)
             self.errorText = error.localizedDescription
             chatSessionActionsLogger.error(
                 "sessions.fork failed \(error.localizedDescription, privacy: .public)")
@@ -485,6 +737,7 @@ extension OpenClawChatViewModel {
             do {
                 try await self.transport.patchSession(
                     key: key,
+                    expectedSessionID: nil,
                     label: nil,
                     category: nil,
                     pinned: pinned,
@@ -500,9 +753,17 @@ extension OpenClawChatViewModel {
         }
     }
 
-    public func setSessionArchived(key: String, archived: Bool) {
+    public func setSessionArchived(_ session: OpenClawChatSessionEntry, archived: Bool) {
+        let key = session.key
         guard archived else {
-            Task { await self.restoreSession(key: key) }
+            Task { await self.restoreSession(session) }
+            return
+        }
+        guard let expectedSessionID = session.sessionId?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !expectedSessionID.isEmpty
+        else {
+            self.errorText = "Session lifecycle action requires a durable session identity."
             return
         }
         let previous = self.sessions
@@ -511,6 +772,7 @@ extension OpenClawChatViewModel {
             do {
                 try await self.transport.patchSession(
                     key: key,
+                    expectedSessionID: expectedSessionID,
                     label: nil,
                     category: nil,
                     pinned: nil,
@@ -534,10 +796,18 @@ extension OpenClawChatViewModel {
     /// Restores an archived session. Returns false (with `errorText` set) on
     /// failure so open-flows can avoid switching into a still-archived session.
     @discardableResult
-    public func restoreSession(key: String) async -> Bool {
+    public func restoreSession(_ session: OpenClawChatSessionEntry) async -> Bool {
+        guard let expectedSessionID = session.sessionId?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !expectedSessionID.isEmpty
+        else {
+            self.errorText = "Session lifecycle action requires a durable session identity."
+            return false
+        }
         do {
             try await self.transport.patchSession(
-                key: key,
+                key: session.key,
+                expectedSessionID: expectedSessionID,
                 label: nil,
                 category: nil,
                 pinned: nil,
