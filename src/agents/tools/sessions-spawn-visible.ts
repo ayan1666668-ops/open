@@ -57,6 +57,12 @@ export const VISIBLE_SESSIONS_SPAWN_SCHEMA = {
         "Custom sidebar group for a visible session; a new name creates the group. Omit or pass an empty string to leave it ungrouped.",
     }),
   ),
+  inheritParentGroup: Type.Optional(
+    Type.Boolean({
+      description:
+        "Copy the parent session's sidebar group once when creating a visible session with group omitted; an explicit group, including blank, wins, and later parent and child group changes are independent.",
+    }),
+  ),
   projectId: Type.Optional(
     Type.String({
       description:
@@ -120,11 +126,14 @@ export async function maybeSpawnVisibleSession(params: {
   const worktreeName = readToolStringParam(params.raw, "worktreeName");
   const worktreeBaseRef = readToolStringParam(params.raw, "worktreeBaseRef");
   const group = readToolStringParam(params.raw, "group");
+  const inheritParentGroup = params.raw.inheritParentGroup === true;
+  const shouldInheritParentGroup = inheritParentGroup && !Object.hasOwn(params.raw, "group");
   const projectId = readToolStringParam(params.raw, "projectId");
   const projectGitUrl = readToolStringParam(params.raw, "projectGitUrl");
   if (params.raw.visible !== true) {
     const visibleOnlyParams = [
       ["group", group],
+      ["inheritParentGroup", inheritParentGroup],
       ["projectId", projectId],
       ["projectGitUrl", projectGitUrl],
       ["worktree", worktree],
@@ -271,7 +280,8 @@ export async function maybeSpawnVisibleSession(params: {
   const spawnModelAutoSelection =
     initialSessionPatch.modelOverrideSource === "auto"
       ? {
-          model: resolvedModelRef,
+          ...(shouldInheritParentGroup ? { inheritParentGroup: true } : {}),
+        model: resolvedModelRef,
           hasFallbackOrigin: initialSessionPatch.modelOverrideFallbackOriginModel !== undefined,
         }
       : undefined;
