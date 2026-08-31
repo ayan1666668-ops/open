@@ -191,7 +191,7 @@ type HttpContinuationEntry =
       sessionId: string;
       state: ResponsesContinuationState;
       idleTimer: ReturnType<typeof setTimeout>;
-      readyAtMs: number;
+      readySequence: number;
     }
   | { kind: "claimed"; sessionId: string };
 
@@ -203,6 +203,14 @@ function deleteHttpContinuationIfOwned(key: string, entry: HttpContinuationEntry
   }
 }
 
+// Monotonic counter for ready-entry commit order: Date.now() is not a unique
+// completion order (two commits can land in the same millisecond, e.g. a
+// reclaimed session key completing alongside another), so an eviction based
+// on wall-clock time can pick a newer entry over an older one that happens
+// to share a timestamp. A strictly incrementing sequence makes "oldest"
+// unambiguous regardless of timing.
+let nextHttpContinuationReadySequence = 1;
+
 // Deterministic capacity policy for MAX_HTTP_CONTINUATION_READY_ENTRIES:
 // evict the least-recently-committed ready entry, since that's the one
 // least likely to be reused before its own idle TTL would have expired it
@@ -211,14 +219,14 @@ function deleteHttpContinuationIfOwned(key: string, entry: HttpContinuationEntry
 function evictOldestReadyEntryAtCapacity(): void {
   let readyCount = 0;
   let oldestKey: string | undefined;
-  let oldestReadyAtMs = Infinity;
+  let oldestReadySequence = Infinity;
   for (const [key, entry] of httpContinuationEntries) {
     if (entry.kind !== "ready") {
       continue;
     }
     readyCount += 1;
-    if (entry.readyAtMs < oldestReadyAtMs) {
-      oldestReadyAtMs = entry.readyAtMs;
+    if (entry.readySequence < oldestReadySequence) {
+      oldestReadySequence = entry.readySequence;
       oldestKey = key;
     }
   }
@@ -298,7 +306,7 @@ export function claimOpenAIResponsesHttpContinuation(
             () => deleteHttpContinuationIfOwned(key, ready),
             HTTP_CONTINUATION_IDLE_TTL_MS,
           ),
-          readyAtMs: Date.now(),
+          readySequence: nextHttpContinuationReadySequence++,
         } satisfies Extract<HttpContinuationEntry, { kind: "ready" }>;
         ready.idleTimer.unref?.();
         evictOldestReadyEntryAtCapacity();
