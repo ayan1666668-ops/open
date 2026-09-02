@@ -79,6 +79,8 @@ export type RunEmbeddedAgentParams = {
   sessionPersistence?: "durable" | "detached";
   /** Storage-neutral transcript/session target. Defaults to sessionId/sessionKey/agentId. */
   sessionTarget?: AgentRunSessionTarget;
+  /** Host-owned receiver for session_compact tool requests; absent means the tool is not offered. */
+  onRequestSessionCompaction?: (request: { focus?: string }) => void;
   /** Provider prompt-cache affinity key; distinct from transcript/session identity. */
   promptCacheKey?: string;
   /** Session-like key for sandbox and tool-policy resolution. Defaults to sessionKey. */

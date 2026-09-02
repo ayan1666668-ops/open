@@ -54,6 +54,7 @@ export async function runEmbeddedFallbackCandidate(
   maintenanceAuthProfile?: CompletedAgentAuthSelection;
   compactionRequestBudget?: CompactionRequestBudget;
   bootstrapPromptWarningSignaturesSeen: string[];
+  sessionCompactionRequest?: { focus?: string };
 }> {
   const turn = params.turn;
   let maintenanceAuthProfile: CompletedAgentAuthSelection | undefined;
@@ -103,6 +104,7 @@ export async function runEmbeddedFallbackCandidate(
   let attemptCompactionCount = 0;
   let postCompactionModelAttempted = false;
   let compactionAccounting: CompactionAccountingFact | undefined;
+  let sessionCompactionRequest: { focus?: string } | undefined;
   const lifecycleBackstop = createAgentLifecycleTerminalBackstop({
     runId: params.runId,
     sessionKey: turn.sessionKey,
@@ -128,6 +130,15 @@ export async function runEmbeddedFallbackCandidate(
         lifecycleGeneration: params.getLifecycleGeneration(),
         allowGatewaySubagentBinding: true,
         trigger: turn.isHeartbeat ? "heartbeat" : "user",
+        // Heartbeat turns never execute agent-requested compaction; withhold
+        // the receiver so the model is not promised a no-op "scheduled".
+        ...(turn.isHeartbeat
+          ? {}
+          : {
+              onRequestSessionCompaction: (request: { focus?: string }) => {
+                sessionCompactionRequest = request;
+              },
+            }),
         cronCreatorAuthorityCapability: turn.opts?.cronCreatorAuthorityCapability,
         cronCreatorAuthorityUnavailableReason:
           turn.opts?.turnAdoptionLifecycle?.cronCreatorAuthorityUnavailable,
@@ -371,6 +382,7 @@ export async function runEmbeddedFallbackCandidate(
       bootstrapPromptWarningSignaturesSeen: resolveBootstrapWarningSignaturesSeen(
         result.meta?.systemPromptReport,
       ),
+      sessionCompactionRequest,
     };
   } finally {
     // Runtime event/result counts are observable, but cannot prove a durable write target.

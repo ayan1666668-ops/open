@@ -341,6 +341,7 @@ export async function prepareEmbeddedAttemptToolBase(params: {
             skillUsagePaths: params.skillUsagePaths,
             conversationCapabilityProfile: runtimeCapabilityProfile,
             onYield: params.onYield,
+            onRequestSessionCompaction: attempt.onRequestSessionCompaction,
           };
           const allTools = createOpenClawCodingToolsInternal(
             codingToolOptions,

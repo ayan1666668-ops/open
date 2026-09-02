@@ -145,6 +145,8 @@ export type OpenClawCodingToolsOptions = {
   trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
   /** Trusted server-stamped authority for an explicitly capped scheduled run. */
   scheduledToolPolicy?: ScheduledToolPolicyContext;
+  /** Runtime-owned receiver for session_compact requests; when absent the tool is not offered. */
+  onRequestSessionCompaction?: (request: { focus?: string }) => void;
 } & OpenClawSharedToolsOptions &
   AgentRunClientContext &
   AgentRunMessageContext &

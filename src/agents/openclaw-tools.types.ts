@@ -164,6 +164,8 @@ export type OpenClawToolsOptions = {
   requesterSenderId?: string | null;
   /** Prepared exec/process isolation key for this run. */
   processScopeKey?: string;
+  /** Runtime-owned receiver for session_compact requests; when absent the tool is not offered. */
+  onRequestSessionCompaction?: (request: { focus?: string }) => void;
 } & OpenClawSharedToolsOptions &
   AgentRunClientContext &
   AgentRunMessageContext &
