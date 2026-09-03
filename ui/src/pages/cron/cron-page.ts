@@ -1,5 +1,5 @@
 import { consume } from "@lit/context";
-import type { ConversationListResult } from "@openclaw/gateway-protocol";
+import type { ConversationListItem, ConversationListResult } from "@openclaw/gateway-protocol";
 import { html, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { AgentsListResult, CronJob, CronScratchGetResult } from "../../api/types.ts";
@@ -62,7 +62,8 @@ class CronPage extends OpenClawLightDomElement {
   @state() private agentsList: AgentsListResult | null = null;
   @state() private cronModelSuggestions: string[] = [];
   @state() private modelSuggestionsError: string | null = null;
-  @state() private deliveryTargets: string[] = [];
+  @state() private deliveryConversations: ConversationListItem[] = [];
+  @state() private deliveryConversationsError: string | null = null;
   @state() private listTab: CronListTab = "tasks";
   @state() private detailTab: CronDetailTab = "settings";
   @state() private heartbeatScratch = "";
@@ -94,6 +95,9 @@ class CronPage extends OpenClawLightDomElement {
         this.resetGatewayState(change.snapshot);
       } else if (!readGatewayOperatorAccess(change.snapshot).canAdmin) {
         this.clearHeartbeatScratch();
+        this.deliveryConversationsRequest += 1;
+        this.deliveryConversations = [];
+        this.deliveryConversationsError = null;
       }
     },
     ensureInitialData: () => this.ensureInitialData(),
@@ -190,7 +194,8 @@ class CronPage extends OpenClawLightDomElement {
     this.modelSuggestionsError = null;
     this.modelSuggestionsRequest = null;
     this.deliveryConversationsRequest += 1;
-    this.deliveryTargets = [];
+    this.deliveryConversations = [];
+    this.deliveryConversationsError = null;
   }
 
   private syncAgentsState() {
@@ -368,7 +373,36 @@ class CronPage extends OpenClawLightDomElement {
     if (!this.canManageCron) {
       return;
     }
-    this.cron.cronForm = normalizeCronFormState({ ...this.cron.cronForm, ...patch }, patch);
+    let resolvedPatch = patch;
+    if (typeof patch.deliveryTo === "string") {
+      const target = patch.deliveryTo.trim();
+      const requestedAccountId = (
+        typeof patch.deliveryAccountId === "string"
+          ? patch.deliveryAccountId
+          : this.cron.cronForm.deliveryAccountId
+      ).trim();
+      const matches = this.deliveryConversations.filter(
+        (conversation) =>
+          conversation.target === target &&
+          (!requestedAccountId || conversation.accountId === requestedAccountId),
+      );
+      const routes = new Map(
+        matches.map((conversation) => [
+          `${conversation.accountId}\u0000${conversation.threadId ?? ""}`,
+          conversation,
+        ]),
+      );
+      const selected = routes.size === 1 ? routes.values().next().value : undefined;
+      resolvedPatch = {
+        ...patch,
+        ...(selected ? { deliveryAccountId: selected.accountId } : {}),
+        deliveryThreadId: selected?.threadId,
+      };
+    }
+    this.cron.cronForm = normalizeCronFormState(
+      { ...this.cron.cronForm, ...resolvedPatch },
+      resolvedPatch,
+    );
     this.cron.cronFieldErrors = validateCronForm(this.cron.cronForm);
     if (
       "deliveryMode" in patch ||
@@ -383,22 +417,24 @@ class CronPage extends OpenClawLightDomElement {
 
   private async loadDeliveryConversations(cronState: CronState = this.cron) {
     const requestId = ++this.deliveryConversationsRequest;
+    this.deliveryConversations = [];
+    this.deliveryConversationsError = null;
+    this.requestCronUpdate(cronState);
     const client = cronState.client;
     const mode = cronState.cronForm.deliveryMode;
     const channel = cronState.cronForm.deliveryChannel.trim();
     const agentId = cronState.cronForm.agentId.trim() || cronState.cronAgentId?.trim() || "";
     if (!this.canManageCron || !client || mode !== "announce" || !agentId || channel === "last") {
-      this.deliveryTargets = [];
       return;
     }
     const connectionScope = this.gateway.capture();
     if (!connectionScope) {
-      this.deliveryTargets = [];
       return;
     }
     const isCurrent = () =>
       requestId === this.deliveryConversationsRequest &&
       this.cron === cronState &&
+      this.canManageCron &&
       this.gateway.isCurrent(connectionScope);
     try {
       const result = await client.request<ConversationListResult>("conversations.list", {
@@ -407,18 +443,31 @@ class CronPage extends OpenClawLightDomElement {
         limit: 100,
       });
       if (isCurrent()) {
-        const accountId =
-          cronState.cronForm.deliveryAccountId.trim() ||
-          this.context.channels.state.channelsSnapshot?.channelDefaultAccountId?.[channel] ||
-          "default";
-        this.deliveryTargets = result.conversations
-          .filter((conversation) => conversation.accountId === accountId)
-          .map((conversation) => conversation.target);
+        const accountId = cronState.cronForm.deliveryAccountId.trim();
+        const eligible = result.conversations.filter(
+          (conversation) => !accountId || conversation.accountId === accountId,
+        );
+        const routesByTarget = new Map<string, ConversationListItem[]>();
+        for (const conversation of eligible) {
+          const routes = routesByTarget.get(conversation.target) ?? [];
+          routes.push(conversation);
+          routesByTarget.set(conversation.target, routes);
+        }
+        this.deliveryConversations = eligible.filter((conversation) => {
+          const routes = new Set(
+            (routesByTarget.get(conversation.target) ?? []).map(
+              (candidate) => `${candidate.accountId}\u0000${candidate.threadId ?? ""}`,
+            ),
+          );
+          return routes.size === 1;
+        });
+        this.deliveryConversationsError = null;
+        this.requestCronUpdate(cronState);
       }
     } catch (error) {
       if (isCurrent()) {
-        this.deliveryTargets = [];
-        cronState.cronError = `Could not load recipient suggestions: ${formatUiError(error)}`;
+        this.deliveryConversations = [];
+        this.deliveryConversationsError = `Could not load recipient suggestions: ${formatUiError(error)}`;
         this.requestCronUpdate(cronState);
       }
     }
@@ -612,7 +661,7 @@ class CronPage extends OpenClawLightDomElement {
       cron: this.cron,
       agentsList: this.agentsList,
       modelSuggestions: this.cronModelSuggestions,
-      conversationTargets: this.deliveryTargets,
+      conversationTargets: this.deliveryConversations.map((conversation) => conversation.target),
     });
     const canManage = this.canManageCron;
     return html`
@@ -663,7 +712,11 @@ class CronPage extends OpenClawLightDomElement {
           createOpen: this.cron.cronCreateOpen,
           listTab: this.listTab,
           detailTab: this.detailTab,
-          error: this.cron.cronError ?? this.cron.cronRunsError ?? this.modelSuggestionsError,
+          error:
+            this.deliveryConversationsError ??
+            this.cron.cronError ??
+            this.cron.cronRunsError ??
+            this.modelSuggestionsError,
           busy: this.cron.cronBusy,
           form: this.cron.cronForm,
           heartbeatScratch: canManage ? this.heartbeatScratch : "",
