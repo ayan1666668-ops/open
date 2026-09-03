@@ -713,6 +713,63 @@ struct DeviceIdentityStoreTests {
     }
 
     @Test
+    func `canonical SQLite identity retires a matching interrupted native claim`() throws {
+        let fixture = DeviceIdentityMigrationFixture()
+        try Self.seedCanonicalSchema(fixture.databaseURL)
+        try Self.execute(fixture.databaseURL, """
+        INSERT INTO device_identities (
+          identity_key, device_id, public_key_pem, private_key_pem, created_at_ms, updated_at_ms
+        ) VALUES (
+          'primary', '\(Self.fixtureDeviceID)', '\(Self.sql(Self.fixturePublicKeyPEM))',
+          '\(Self.sql(Self.fixturePrivateKeyPEM))', 1800000000000, 1800000000123
+        )
+        """)
+        let source = try fixture.source()
+        let claimURL = fixture.claimURL(for: source)
+        try FileManager.default.moveItem(at: source.identityURL, to: claimURL)
+
+        let identity = try fixture.load(sources: [source])
+
+        #expect(identity.deviceId == Self.fixtureDeviceID)
+        #expect(try Self.scalarInt(
+            fixture.databaseURL,
+            "SELECT updated_at_ms FROM device_identities WHERE identity_key = 'primary'") == 1_800_000_000_123)
+        #expect(!FileManager.default.fileExists(atPath: claimURL.path))
+    }
+
+    @Test
+    func `canonical SQLite identity preserves a conflicting interrupted native claim`() throws {
+        let fixture = DeviceIdentityMigrationFixture()
+        try Self.seedCanonicalSchema(fixture.databaseURL)
+        try Self.execute(fixture.databaseURL, """
+        INSERT INTO device_identities (
+          identity_key, device_id, public_key_pem, private_key_pem, created_at_ms, updated_at_ms
+        ) VALUES (
+          'primary', '\(Self.fixtureDeviceID)', '\(Self.sql(Self.fixturePublicKeyPEM))',
+          '\(Self.sql(Self.fixturePrivateKeyPEM))', 1800000000000, 1800000000123
+        )
+        """)
+        let conflictingMaterial = DeviceIdentityStore.generateMaterial()
+        let conflictingJSON = try String(decoding: JSONEncoder().encode(conflictingMaterial.identity), as: UTF8.self)
+        let source = try fixture.source(contents: conflictingJSON)
+        let claimURL = fixture.claimURL(for: source)
+        try FileManager.default.moveItem(at: source.identityURL, to: claimURL)
+
+        for _ in 0..<2 {
+            do {
+                _ = try fixture.load(sources: [source])
+                Issue.record("Expected conflicting interrupted native claim to throw")
+            } catch let error as NSError {
+                #expect(error.localizedDescription ==
+                    "Legacy device identity conflicts with SQLite identity key primary; source preserved")
+            }
+
+            #expect(!FileManager.default.fileExists(atPath: source.identityURL.path))
+            #expect(FileManager.default.fileExists(atPath: claimURL.path))
+        }
+    }
+
+    @Test
     func `matching recreated source parks stale native claim`() throws {
         let fixture = DeviceIdentityMigrationFixture()
         let source = try fixture.source(

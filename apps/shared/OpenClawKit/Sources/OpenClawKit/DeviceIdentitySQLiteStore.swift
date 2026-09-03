@@ -37,6 +37,7 @@ enum DeviceIdentitySQLiteStore {
         let data: Data
         let snapshot: LegacyFileSnapshot
         let material: DeviceIdentityMaterial
+        let restoreOnFailure: Bool
     }
 
     private struct LegacyFileSnapshot: Equatable {
@@ -158,20 +159,27 @@ enum DeviceIdentitySQLiteStore {
         beforeLegacyClaim: ((DeviceIdentityPaths.LegacyIdentitySource) throws -> Void)?,
         afterLegacyCommit: (() throws -> Void)?) throws -> DeviceIdentity
     {
-        // SQLite owns an existing profile; leave any downgrade-recreated legacy source for Doctor.
-        if self.pathMayExist(databaseURL),
-           let existing = try self.loadExisting(
-               databaseURL: databaseURL,
-               destinationStateDirURL: destinationStateDirURL,
-               profile: profile)
-        {
-            return existing
-        }
         var claims: [LegacyClaim] = []
         do {
-            for source in legacySources {
-                if let claim = try self.claimLegacyIdentity(source, beforeClaim: beforeLegacyClaim) {
-                    claims.append(claim)
+            // SQLite owns an existing profile. Leave any downgrade-recreated legacy source for
+            // Doctor, but finish a native import that already claimed its source before committing.
+            if self.pathMayExist(databaseURL),
+               let existing = try self.loadExisting(
+                   databaseURL: databaseURL,
+                   destinationStateDirURL: destinationStateDirURL,
+                   profile: profile)
+            {
+                for source in legacySources {
+                    if let claim = try self.loadInterruptedNativeClaim(source) {
+                        claims.append(claim)
+                    }
+                }
+                if claims.isEmpty { return existing }
+            } else {
+                for source in legacySources {
+                    if let claim = try self.claimLegacyIdentity(source, beforeClaim: beforeLegacyClaim) {
+                        claims.append(claim)
+                    }
                 }
             }
             return try self.loadOrCreate(
@@ -182,7 +190,7 @@ enum DeviceIdentitySQLiteStore {
                 afterLegacyCommit: afterLegacyCommit)
         } catch {
             do {
-                try self.restoreClaimedLegacyIdentities(claims)
+                try self.restoreClaimedLegacyIdentities(claims.filter(\.restoreOnFailure))
             } catch let restoreError {
                 throw DeviceIdentityStore.storageError(
                     "Device identity migration failed: \(error.localizedDescription); " +
@@ -632,15 +640,10 @@ enum DeviceIdentitySQLiteStore {
         }
 
         do {
-            let claimed = try self.readLegacyIdentity(
-                nativeClaimURL,
-                beneath: source.stateDirURL)
-            return LegacyClaim(
+            return try self.readLegacyClaim(
                 source: source,
                 identityURL: nativeClaimURL,
-                data: claimed.data,
-                snapshot: claimed.snapshot,
-                material: claimed.material)
+                restoreOnFailure: true)
         } catch {
             do {
                 try self.restoreClaimedLegacyIdentity(
@@ -653,6 +656,41 @@ enum DeviceIdentitySQLiteStore {
             }
             throw error
         }
+    }
+
+    private static func loadInterruptedNativeClaim(
+        _ source: DeviceIdentityPaths.LegacyIdentitySource) throws -> LegacyClaim?
+    {
+        let nativeClaimURL = self.claimURL(source.identityURL, suffix: self.nativeClaimSuffix)
+        guard self.pathMayExist(nativeClaimURL) else { return nil }
+        let doctorClaimURL = self.claimURL(source.identityURL, suffix: self.doctorClaimSuffix)
+        guard !self.pathMayExist(doctorClaimURL) else {
+            throw DeviceIdentityStore.storageError(
+                "Device identity Doctor import is pending; run openclaw doctor --fix before starting the app")
+        }
+        guard !self.pathMayExist(source.identityURL) else {
+            throw DeviceIdentityStore.storageError(
+                "Legacy device identity source and interrupted native claim both exist")
+        }
+        return try self.readLegacyClaim(
+            source: source,
+            identityURL: nativeClaimURL,
+            restoreOnFailure: false)
+    }
+
+    private static func readLegacyClaim(
+        source: DeviceIdentityPaths.LegacyIdentitySource,
+        identityURL: URL,
+        restoreOnFailure: Bool) throws -> LegacyClaim
+    {
+        let claimed = try self.readLegacyIdentity(identityURL, beneath: source.stateDirURL)
+        return LegacyClaim(
+            source: source,
+            identityURL: identityURL,
+            data: claimed.data,
+            snapshot: claimed.snapshot,
+            material: claimed.material,
+            restoreOnFailure: restoreOnFailure)
     }
 
     private static func readLegacyIdentity(
