@@ -49,6 +49,7 @@ import {
   type IMessageService,
 } from "../targets.js";
 import type { IMessageDmHistoryContext } from "./dm-history.js";
+import type { SentMessageCache } from "./echo-cache.js";
 import {
   type IMessageReactionContext,
   resolveIMessageReactionContext,
@@ -253,13 +254,7 @@ export function rememberIMessageSkippedFromMeForSelfChatDedupe(params: {
 }
 
 async function hasIMessageEchoMatch(params: {
-  echoCache: {
-    has: (
-      scope: string,
-      lookup: { text?: string; media?: MediaPlaceholderTextFact; messageId?: string },
-      options?: boolean | { skipIdShortCircuit?: boolean; includePendingText?: boolean },
-    ) => boolean | Promise<boolean>;
-  };
+  echoCache: Pick<SentMessageCache, "has">;
   scope: string | readonly string[];
   text?: string;
   media?: MediaPlaceholderTextFact;
@@ -419,13 +414,7 @@ export async function resolveIMessageInboundDecision(params: {
   storeAllowFrom: string[];
   historyLimit: number;
   groupHistories: Map<string, HistoryEntry[]>;
-  echoCache?: {
-    has: (
-      scope: string,
-      lookup: { text?: string; media?: MediaPlaceholderTextFact; messageId?: string },
-      options?: boolean | { skipIdShortCircuit?: boolean; includePendingText?: boolean },
-    ) => boolean | Promise<boolean>;
-  };
+  echoCache?: Pick<SentMessageCache, "has">;
   selfChatCache?: SelfChatCache;
   reactionNotifications?: IMessageReactionNotificationMode;
   isKnownFromMeMessageId?: (
@@ -505,6 +494,7 @@ export async function resolveIMessageInboundDecision(params: {
   let skipSelfChatHasCheck = false;
   const inboundMessageIds = resolveInboundEchoMessageIds(params.message);
   const inboundMessageId = inboundMessageIds[0];
+  const replyToGuid = normalizeReplyField(params.message.reply_to_guid);
   const hasInboundGuid = Boolean(normalizeReplyField(params.message.guid));
 
   if (params.message.is_from_me) {
@@ -721,6 +711,7 @@ export async function resolveIMessageInboundDecision(params: {
   // Echo detection: check if the received message matches a recently sent message.
   // Scope by conversation so same text in different chats is not conflated.
   if (params.echoCache && (messageText || inboundMessageId || mediaFacts.length > 0)) {
+    const echoCache = params.echoCache;
     const echoScope = buildIMessageEchoScope({
       accountId: params.accountId,
       isGroup,
@@ -729,15 +720,30 @@ export async function resolveIMessageInboundDecision(params: {
       chatIdentifier,
       sender,
     });
+    const hasReplyToEcho =
+      replyToGuid && bodyText
+        ? (
+            await Promise.all(
+              echoScope.map((scope) =>
+                echoCache.has(
+                  scope,
+                  { text: bodyText, messageId: replyToGuid },
+                  { requireMessageIdTextMatch: true },
+                ),
+              ),
+            )
+          ).some(Boolean)
+        : false;
     if (
-      await hasIMessageEchoMatch({
+      hasReplyToEcho ||
+      (await hasIMessageEchoMatch({
         echoCache: params.echoCache,
         scope: echoScope,
         text: bodyText || undefined,
         media: mediaFacts[0],
         messageIds: inboundMessageIds,
         includePendingText: isSelfChat,
-      })
+      }))
     ) {
       params.logVerbose?.(
         describeIMessageEchoDropLog({ messageText: bodyText, messageId: inboundMessageId }),
