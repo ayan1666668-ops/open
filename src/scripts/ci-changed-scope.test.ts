@@ -522,6 +522,7 @@ describe("detectChangedScope", () => {
     expect(detectChangedScope(["scripts/ci-changed-scope.mjs"])).toEqual(
       expectedNodeAndChangedSmokeScope,
     );
+
   });
 
   it("runs changed-smoke for Docker-covered core runtime surfaces", () => {
