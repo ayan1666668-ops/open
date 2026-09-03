@@ -721,7 +721,7 @@ export async function resolveIMessageInboundDecision(params: {
       sender,
     });
     const hasReplyToEcho =
-      replyToGuid && bodyText
+      isSelfChat && replyToGuid && bodyText
         ? (
             await Promise.all(
               echoScope.map((scope) =>
