@@ -721,7 +721,7 @@ export async function resolveIMessageInboundDecision(params: {
       sender,
     });
     const hasReplyToEcho =
-      isSelfChat && replyToGuid && bodyText
+      params.message.is_from_me === false && isSelfChat && replyToGuid && bodyText
         ? (
             await Promise.all(
               echoScope.map((scope) =>
