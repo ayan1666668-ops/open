@@ -51,6 +51,7 @@ import {
   isShellWrapperInvocation,
   resolveShellWrapperTransportArgv,
 } from "../infra/exec-wrapper-resolution.js";
+import { sameFileIdentity } from "../infra/fs-safe-advanced.js";
 import {
   inspectHostExecEnvOverrides,
   sanitizeSystemRunEnvOverrides,
@@ -891,6 +892,25 @@ async function evaluateSystemRunPolicyPhase(
       message: APPROVAL_CWD_DRIFT_DENIED_MESSAGE,
     });
     return null;
+  }
+  // Reject rebinding: when replaying a stored approval plan, the captured
+  // snapshot must resolve to the same filesystem identity as the plan's
+  // canonical cwd. An attacker who replaces the approved directory with a
+  // symlink to a different target would produce a new snapshot that matches
+  // itself in revalidation, but whose inode differs from the original.
+  const approvalPlan = parsed.approvalPlan ?? null;
+  if (approvedCwdSnapshot && approvalPlan?.cwd) {
+    const planCwdCapture = captureApprovedCwdSnapshotSync(approvalPlan.cwd, allowSymlinkPath);
+    if (
+      !planCwdCapture.ok ||
+      !sameFileIdentity(approvedCwdSnapshot.stat, planCwdCapture.snapshot.stat)
+    ) {
+      await sendSystemRunDenied(opts, parsed.execution, {
+        reason: "approval-required",
+        message: "SYSTEM_RUN_DENIED: approved cwd rebound since approval",
+      });
+      return null;
+    }
   }
 
   const plannedAllowlistArgv = resolvePlannedAllowlistArgv({
