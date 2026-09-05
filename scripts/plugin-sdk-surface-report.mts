@@ -376,7 +376,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +13: runtime-neutral WebSocket client/server, stream, data, and option contracts.
       // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +1: approved shared native-command argument-menu applicability predicate.
-      4482,
+      // +1: canonical subagent target policy so plugin-owned delegation scopes cannot
+      //     drift from the policy sessions_spawn enforces.
+      4483,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -516,7 +518,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +4: runtime-neutral WebSocket client/server and stream constructors.
       // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +1: approved shared native-command argument-menu applicability predicate.
-      2646,
+      // +1: canonical subagent target policy shared with plugin-owned delegation scopes.
+      2647,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
