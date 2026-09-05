@@ -185,9 +185,16 @@ export function createMatrixDraftStream(params: {
     loop.resetPending();
     loop.resetThrottleWindow();
   };
-  const reset = (): void => {
-    // A new block consumes the first-only reply reference; retraction does not.
-    replyToId = params.preserveReplyId ? params.replyToId : undefined;
+  const reset = (options?: { keepReplyTarget?: boolean }): void => {
+    // Clear reply context unless preserveReplyId is set (replyToMode "all"),
+    // in which case subsequent blocks should keep replying to the original.
+    // keepReplyTarget overrides both: the caller is starting a fresh draft
+    // message for the same in-flight target, not a new logical block.
+    replyToId = options?.keepReplyTarget
+      ? replyToId
+      : params.preserveReplyId
+        ? params.replyToId
+        : undefined;
     streamState.stopped = false;
     streamState.final = false;
     resetCurrentMessage();
