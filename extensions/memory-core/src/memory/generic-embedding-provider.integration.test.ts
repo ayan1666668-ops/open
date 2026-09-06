@@ -67,7 +67,13 @@ async function startEmbeddingServer(options?: {
             object: "list",
             data: texts.map((text, index) => ({
               object: "embedding",
-              embedding: [String(text).length, index + 0.5, 3],
+              embedding: [
+                String(text).startsWith("item-")
+                  ? Number.parseInt(String(text).slice(5), 10)
+                  : String(text).length,
+                index + 0.5,
+                3,
+              ],
               index,
             })),
             model: body.model,
@@ -245,12 +251,13 @@ describe("memory-core generic embedding provider contract", () => {
   });
 });
 
-// Zhipu BigModel embedding-3 caps `input` at 64 items and rejects a larger array
-// with HTTP 400 code 1214. Memory batches are byte-budgeted, not item-counted, so
-// short chunks pack far more than 64 items into one request (issue #139040).
-const ZHIPU_INPUT_ARRAY_LIMIT = 64;
+// Exercise the explicit item cap recognized for DashScope-style provider errors.
+const PROVIDER_INPUT_ARRAY_LIMIT = 10;
 const ZHIPU_REJECTION_BODY = JSON.stringify({
-  error: { code: "1214", message: "input array max 64" },
+  error: {
+    code: "InvalidParameter",
+    message: "batch size is invalid, it should not be larger than 10",
+  },
 });
 
 // Keep batching, splitting, retry classification, and timeout ownership real.
@@ -329,10 +336,10 @@ function distinctCandidates(
 }
 
 describe("memory-core embedding batch recovery over real transport", () => {
-  it("halves an oversized batch until the provider input array limit is met", async () => {
+  it("uses an explicit provider item cap after the first rejected request", async () => {
     const server = await startEmbeddingServer({
       reject: (inputCount) =>
-        inputCount > ZHIPU_INPUT_ARRAY_LIMIT
+        inputCount > PROVIDER_INPUT_ARRAY_LIMIT
           ? { status: 400, body: ZHIPU_REJECTION_BODY }
           : undefined,
     });
@@ -342,13 +349,13 @@ describe("memory-core embedding batch recovery over real transport", () => {
         server.baseUrl,
         database,
       );
-      const embeddings = await owner.embedChunksInBatches(distinctCandidates(100), generation);
+      const embeddings = await owner.embedChunksInBatches(distinctCandidates(33), generation);
 
       expect(server.requests.map((request) => (request.body.input as unknown[]).length)).toEqual([
-        100, 50, 50,
+        33, 10, 10, 10, 3,
       ]);
       expect(embeddings).toEqual(
-        Array.from({ length: 100 }, (_, index) => [index + 1, (index % 50) + 0.5, 3]),
+        Array.from({ length: 33 }, (_, index) => [index + 1, (index % 10) + 0.5, 3]),
       );
     } finally {
       database.close();
