@@ -108,6 +108,7 @@ export async function repairMissingConfiguredPluginInstalls(params: {
   onCapabilityConsent?: PluginCapabilityConsentHandler;
   onWarning?: (warning: PluginInstallRepairWarning) => void;
   beforePersistentEffect?: () => void | Promise<void>;
+  signal?: AbortSignal;
   /**
    * Optional pre-seeded records. When provided, this map is used instead of
    * the disk-loaded install-record snapshot. Pass the in-memory records
@@ -130,6 +131,7 @@ export async function repairMissingConfiguredPluginInstalls(params: {
       onWarning: params.onWarning,
       ...(params.onCapabilityConsent ? { onCapabilityConsent: params.onCapabilityConsent } : {}),
       beforePersistentEffect: params.beforePersistentEffect,
+      ...(params.signal ? { signal: params.signal } : {}),
       ...(params.baselineRecords ? { baselineRecords: params.baselineRecords } : {}),
     }),
   );
@@ -148,6 +150,7 @@ export async function repairMissingPluginInstallsForIds(params: {
   onCapabilityConsent?: PluginCapabilityConsentHandler;
   onWarning?: (warning: PluginInstallRepairWarning) => void;
   beforePersistentEffect?: () => void | Promise<void>;
+  signal?: AbortSignal;
 }): Promise<RepairMissingPluginInstallsResult> {
   return repairMissingPluginInstalls(
     copyPluginInstallTransactionRequest(params, {
@@ -171,6 +174,7 @@ export async function repairMissingPluginInstallsForIds(params: {
       ...(params.onCapabilityConsent ? { onCapabilityConsent: params.onCapabilityConsent } : {}),
       onWarning: params.onWarning,
       beforePersistentEffect: params.beforePersistentEffect,
+      ...(params.signal ? { signal: params.signal } : {}),
       ...(params.baselineRecords ? { baselineRecords: params.baselineRecords } : {}),
     }),
   );
@@ -189,11 +193,15 @@ async function repairMissingPluginInstalls(params: {
   onCapabilityConsent?: PluginCapabilityConsentHandler;
   onWarning?: (warning: PluginInstallRepairWarning) => void;
   beforePersistentEffect?: () => void | Promise<void>;
+  signal?: AbortSignal;
 }): Promise<RepairMissingPluginInstallsResult> {
   // Baseline, awaited review, package publication, and the index write share one generation.
   return await withPluginLifecycleLease({ env: params.env }, (lease) =>
     withPluginInstallTransactions(
-      params,
+      copyPluginInstallTransactionRequest(params, {
+        ...params,
+        signal: params.signal ? AbortSignal.any([params.signal, lease.signal]) : lease.signal,
+      }),
       () => lease.assertOwned(),
       async (owned, assertCurrent) => {
         const dependencyRepairMarkers = new Map<string, string>();
@@ -247,6 +255,7 @@ async function repairMissingPluginInstallsWithLease(
   dependencyRepairMarkers: Map<string, string>,
   assertCurrent: () => void,
 ): Promise<RepairMissingPluginInstallsResult> {
+  params.signal?.throwIfAborted();
   const env = params.env ?? process.env;
   const {
     knownIds,
@@ -357,6 +366,7 @@ async function repairMissingPluginInstallsWithLease(
   };
 
   for (const [pluginId, record] of Object.entries(records)) {
+    params.signal?.throwIfAborted();
     const bundled = bundledPluginsById.get(pluginId);
     if (
       operatorManagedPluginIds.has(pluginId) ||
@@ -494,6 +504,7 @@ async function repairMissingPluginInstallsWithLease(
         },
         ...(params.onCapabilityConsent ? { onCapabilityConsent: params.onCapabilityConsent } : {}),
         beforePersistentEffect: params.beforePersistentEffect,
+        ...(params.signal ? { signal: params.signal } : {}),
       }),
     );
     for (const outcome of updateResult.outcomes) {
@@ -568,6 +579,7 @@ async function repairMissingPluginInstallsWithLease(
       ...operatorManagedPluginIds,
     ]),
   })) {
+    params.signal?.throwIfAborted();
     const repair = resolveConfiguredPluginCandidateRepair({
       candidate,
       records: nextRecords,
@@ -609,6 +621,7 @@ async function repairMissingPluginInstallsWithLease(
         repairReason,
         ...(params.onCapabilityConsent ? { onCapabilityConsent: params.onCapabilityConsent } : {}),
         beforePersistentEffect: params.beforePersistentEffect,
+        ...(params.signal ? { signal: params.signal } : {}),
       }),
     );
     if (shouldReplaceBrokenOfficialInstall) {

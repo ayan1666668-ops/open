@@ -79,6 +79,7 @@ const loadCronRepair = createLazyRuntimeModule(() => import("./doctor/cron/legac
 export async function runDoctorConfigPreflight(
   options: DoctorConfigPreflightOptions = {},
 ): Promise<DoctorConfigPreflightResult> {
+  options.signal?.throwIfAborted();
   return await withDoctorConfigPreflightWorkerScope(options, () =>
     runDoctorConfigPreflightOperation(options),
   );
@@ -101,7 +102,7 @@ async function runDoctorConfigPreflightOperation(
   }
   await noteStaleUpdateRuns(options);
   const measurePreflightStep = <T>(name: string, run: () => T | Promise<T>) =>
-    measureDoctorConfigPreflightStep(name, run, options.measure);
+    measureDoctorConfigPreflightStep(name, run, options.measure, undefined, options.signal);
   const migrationCheckpointRequired =
     gatewayStartupCheckpointRequired || options.requireStateMigrationCheckpoint === true;
   let migrationCheckpoint = migrationCheckpointRequired
@@ -181,6 +182,7 @@ async function runDoctorConfigPreflightOperation(
     }
     startupMigrationLease = await migrationCheckpoint.acquireStartupMigrationLeaseWithWait({
       env: startupMigrationEnv,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     // Database admission can outlast the lease TTL; renew throughout the awaited reread.
     startupMigrationHeartbeat = setInterval(() => {
@@ -435,6 +437,7 @@ async function runDoctorConfigPreflightOperation(
         snapshotRead: { ...configSnapshotRead, snapshot },
         readRefreshedSnapshot: () => readConfigSnapshotForPreflight(false),
         beforeStateMigrations: options.beforeStateMigrations,
+        ...(options.signal ? { signal: options.signal } : {}),
         onWarnings: (warnings) => startupMigrationWarnings.push(...warnings),
         onDeferredPlugins: (pending, inspection) =>
           pluginMigrations.converged(

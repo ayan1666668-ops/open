@@ -40,7 +40,6 @@ import {
   resolveOfficialExternalPluginInstall,
 } from "./official-external-plugin-catalog.js";
 import { satisfiesPluginApiRange, resolvePackagePluginApiRange } from "./package-compat.js";
-
 /** Logger surface used by plugin update flows. */
 export type PluginUpdateLogger = {
   info?: (message: string) => void;
@@ -102,6 +101,7 @@ export type PluginUpdateIntegrityDriftParams = {
 };
 
 export type UpdateInstalledPluginsParams = {
+  signal?: AbortSignal;
   config: OpenClawConfig;
   logger?: PluginUpdateLogger;
   pluginIds?: string[];
@@ -267,7 +267,9 @@ export async function resolveNewerExactPinnedNpmDefaultLine(params: {
   probeNpmVersion: string | undefined;
   updateChannel?: UpdateChannel;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<{ packageName: string; registryLine: "beta" | "latest"; version: string } | undefined> {
+  params.signal?.throwIfAborted();
   if (!params.currentVersion || !params.probeNpmVersion || !params.recordedSpec) {
     return undefined;
   }
@@ -354,6 +356,7 @@ export async function resolveTrustedOfficialPrereleaseFallbackMetadataForUpdate(
   metadata: NpmSpecResolution;
   spec: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<
   | {
       kind: "stable" | "prerelease-only";
@@ -376,6 +379,7 @@ export async function resolveTrustedOfficialPrereleaseFallbackMetadataForUpdate(
   const versions = await loadNpmPackageVersions({
     packageName: parsedSpec.name,
     timeoutMs: params.timeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   const stableVersion = versions
     ?.filter((value) => !isPrereleaseSemverVersion(value))
@@ -385,6 +389,7 @@ export async function resolveTrustedOfficialPrereleaseFallbackMetadataForUpdate(
     const stableMetadata = await resolveNpmSpecMetadata({
       spec: `${parsedSpec.name}@${stableVersion}`,
       timeoutMs: params.timeoutMs,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
     return stableMetadata.ok ? { kind: "stable", metadata: stableMetadata.metadata } : undefined;
   }
@@ -402,6 +407,7 @@ export async function resolveTrustedOfficialPrereleaseFallbackMetadataForUpdate(
   const prereleaseMetadata = await resolveNpmSpecMetadata({
     spec: `${parsedSpec.name}@${prereleaseVersion}`,
     timeoutMs: params.timeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
   });
   return prereleaseMetadata.ok
     ? { kind: "prerelease-only", metadata: prereleaseMetadata.metadata }

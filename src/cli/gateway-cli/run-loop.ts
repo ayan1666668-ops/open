@@ -38,6 +38,7 @@ import {
 import { runWithProcessCleanupBudget } from "../../process/supervisor/cleanup-budget.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { sleep } from "../../utils/sleep.js";
 import { formatCliCommand } from "../command-format.js";
 import { createGatewayHostLifecycle } from "./host-lifecycle.js";
 import * as loopLogs from "./run-loop-log-flush.js";
@@ -85,7 +86,11 @@ export async function runGatewayLoop(params: {
   beginBoot?: (startedAtMs: number) => void | Promise<void>;
   completeBoot?: (completion: GatewayBootLifecycleCompletion) => void;
   onRestartStartupFailure?: (error: unknown, signal: AbortSignal) => Promise<void>;
+  /** Signal owned by CLI preflight until this loop installs its process handlers. */
+  startupSignal?: AbortSignal;
+  releaseStartupSignalOwner?: () => void;
 }) {
+  params.startupSignal?.throwIfAborted();
   // macOS/BSD process inspection reports process.title instead of the original
   // argv. Give the long-running Gateway a verifiable identity for lock readers.
   if (process.title === "openclaw") {
@@ -107,6 +112,7 @@ export async function runGatewayLoop(params: {
   // here pulls the lifecycle re-export graph into memory, immune to later disk
   // rotation.
   const eagerLifecycleRuntime = await gatewayLifecycleRuntimeLoader.load();
+  params.startupSignal?.throwIfAborted();
   const supervisor = eagerLifecycleRuntime.detectGatewayRespawnSupervisorIdentity(
     process.env,
     process.platform,
@@ -114,18 +120,12 @@ export async function runGatewayLoop(params: {
   );
   const supervisorMode = supervisor?.kind ?? null;
   const restartDecision = eagerLifecycleRuntime.resolveGatewayRestartDecision();
-  let lock = await acquireGatewayLock({
-    port: params.lockPort,
-    listenerMode: supervisorMode ? "supervised" : "foreground",
-    supervisor,
-    ...(params.lifecycleLockDeadlineMs !== undefined
-      ? { lifecycleDeadlineMs: params.lifecycleLockDeadlineMs }
-      : {}),
-  });
+
   // Process-owned signal handling must survive gaps with no listening server.
   // Node's signal listeners and pending promises do not retain the event loop.
   const processLifetime = params.ownsProcessLifecycle ? new MessageChannel() : undefined;
   processLifetime?.port1.ref();
+  let lock: Awaited<ReturnType<typeof acquireGatewayLock>> = null;
   let server: Awaited<ReturnType<typeof startGatewayServer>> | null = null;
   let hostLifecycle: ReturnType<typeof createGatewayHostLifecycle> | undefined;
   let startupOperations = createGatewayStartupOperations();
@@ -164,8 +164,9 @@ export async function runGatewayLoop(params: {
   const getManagedUpdateOwner = () =>
     (pendingStartupRequest ?? activeRestartRequest)?.restartIntent?.successorOwner;
 
+  let releaseInstallationObserver: (() => void) | undefined;
   const cleanupSignals = () => {
-    releaseInstallationObserver();
+    releaseInstallationObserver?.();
     process.removeListener("SIGTERM", onSigterm);
     process.removeListener("SIGINT", onSigint);
     process.removeListener("SIGUSR2", onRestartSignal);
@@ -1270,22 +1271,39 @@ export async function runGatewayLoop(params: {
     });
   };
 
-  process.on("SIGTERM", onSigterm);
-  process.on("SIGINT", onSigint);
-  // SIGUSR1 belongs to Node's on-demand inspector; never register a listener for it.
-  process.on("SIGUSR2", onRestartSignal);
-  const releaseInstallationObserver = registerGatewayInstallationReplacementHandler((fact) => {
-    installationReplacement = fact;
-    gatewayLog.warn(fact.message);
-    if (!supervisorMode) {
-      gatewayLog.error(
-        `The foreground Gateway must stop after its installation was replaced. Restart it with: ${formatCliCommand("openclaw gateway run")}`,
-      );
-    }
-    request("restart", "SIGUSR2", fact.reason);
-  });
-
   try {
+    // Acquisition belongs to cleanup so cancellation cannot strand the lock.
+    lock = await acquireGatewayLock({
+      port: params.lockPort,
+      ...(params.startupSignal
+        ? { sleep: async (ms: number) => await sleep(ms, params.startupSignal) }
+        : {}),
+      listenerMode: supervisorMode ? "supervised" : "foreground",
+      supervisor,
+      ...(params.lifecycleLockDeadlineMs !== undefined
+        ? { lifecycleDeadlineMs: params.lifecycleLockDeadlineMs }
+        : {}),
+    });
+    params.startupSignal?.throwIfAborted();
+
+    process.on("SIGTERM", onSigterm);
+    process.on("SIGINT", onSigint);
+    // SIGUSR1 belongs to Node's on-demand inspector; never register a listener for it.
+    process.on("SIGUSR2", onRestartSignal);
+    releaseInstallationObserver = registerGatewayInstallationReplacementHandler((fact) => {
+      installationReplacement = fact;
+      gatewayLog.warn(fact.message);
+      if (!supervisorMode) {
+        gatewayLog.error(
+          `The foreground Gateway must stop after its installation was replaced. Restart it with: ${formatCliCommand("openclaw gateway run")}`,
+        );
+      }
+      request("restart", "SIGUSR2", fact.reason);
+    });
+    // Install normal handlers before releasing preflight signal ownership.
+    params.releaseStartupSignalOwner?.();
+    params.startupSignal?.throwIfAborted();
+
     // Keep process alive; SIGUSR2 triggers an in-process restart (no supervisor required).
     // SIGTERM/SIGINT still exit after a graceful shutdown.
     let isFirstIteration = true;

@@ -105,6 +105,7 @@ async function runInstalledPluginUpdate(
   params: UpdateInstalledPluginsParams,
   assertCurrent?: () => void,
 ): Promise<PluginUpdateSummary> {
+  params.signal?.throwIfAborted();
   const logger = params.logger ?? {};
   const retainOnUnavailable = params.retainOnUnavailable === true;
   const consentCallbacks = capturePluginCapabilityConsentHandlerErrors(params.onCapabilityConsent);
@@ -154,6 +155,7 @@ async function runInstalledPluginUpdate(
   const completedCanonicalUpdates = new Set<string>();
 
   for (const pluginId of targets) {
+    params.signal?.throwIfAborted();
     if (params.skipIds?.has(pluginId)) {
       recordSkippedOutcome(pluginId, `Skipping "${pluginId}" (already updated).`);
       continue;
@@ -416,6 +418,7 @@ async function runInstalledPluginUpdate(
         : await resolveNpmSpecMetadata({
             spec: effectiveSpec!,
             timeoutMs: params.timeoutMs,
+            ...(params.signal ? { signal: params.signal } : {}),
           });
       if (metadataResult.ok) {
         const bypassTrustedOfficialUnchangedNpmCheck = shouldBypassTrustedOfficialUnchangedNpmCheck(
@@ -430,21 +433,22 @@ async function runInstalledPluginUpdate(
               metadata: metadataResult.metadata,
               spec: effectiveSpec!,
               timeoutMs: params.timeoutMs,
+              ...(params.signal ? { signal: params.signal } : {}),
             })
           : undefined;
-        const expectedIntegrityMetadata =
-          trustedPrereleaseFallback?.metadata ?? metadataResult.metadata;
+        params.signal?.throwIfAborted();
+        const expectedMetadata = trustedPrereleaseFallback?.metadata ?? metadataResult.metadata;
         expectedIntegrity =
           catalogExpectedIntegrity ??
           expectedIntegrityForNpmUpdate({
             effectiveSpec,
-            metadata: expectedIntegrityMetadata,
+            metadata: expectedMetadata,
             record,
             trustedSourceLinkedOfficialInstall,
           });
         if (
           !catalogExpectedIntegrity &&
-          (!isNpmMetadataCompatibleWithCurrentHost(expectedIntegrityMetadata) ||
+          (!isNpmMetadataCompatibleWithCurrentHost(expectedMetadata) ||
             (bypassTrustedOfficialUnchangedNpmCheck && !trustedPrereleaseFallback))
         ) {
           expectedIntegrity = undefined;
@@ -472,6 +476,7 @@ async function runInstalledPluginUpdate(
             resolution: metadataResult.metadata,
             updateChannel,
             timeoutMs: params.timeoutMs,
+            ...(params.signal ? { signal: params.signal } : {}),
             hasSpecOverride: Boolean(npmSpecOverride),
             syncOfficialInstall: Boolean(
               params.syncOfficialPluginInstalls && trustedSourceLinkedOfficialInstall,
@@ -528,6 +533,7 @@ async function runInstalledPluginUpdate(
           installNpmSpecForUpdate,
           logger,
           onIntegrityDrift: params.onIntegrityDrift,
+          ...(params.signal ? { signal: params.signal } : {}),
         }),
       );
     const attempt = await runPluginUpdateWithClawHubLease({
@@ -536,7 +542,9 @@ async function runInstalledPluginUpdate(
       dryRun: params.dryRun === true,
       run: runAttempt,
       beforePersistentEffect: assertCurrent,
+      ...(params.signal ? { signal: params.signal } : {}),
     });
+    params.signal?.throwIfAborted();
     consentCallbacks.rethrowCallbackError();
     if (attempt.kind === "exception") {
       const error = attempt.error;
@@ -624,6 +632,7 @@ async function runInstalledPluginUpdate(
           hasSpecOverride: Boolean(npmSpecOverride),
           updateChannel,
           timeoutMs: params.timeoutMs,
+          ...(params.signal ? { signal: params.signal } : {}),
           channelFallbackSuffix,
           checkNewerExactPinnedClawHubDefaultLine:
             Boolean(trustedOfficialClawHubInstall) && recordSpec === record.spec,
