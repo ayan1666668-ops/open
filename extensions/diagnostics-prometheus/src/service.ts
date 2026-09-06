@@ -28,6 +28,29 @@ import {
   type PrometheusMetricStore,
 } from "./prometheus-metric-store.js";
 
+type ProviderUsageMetricsSnapshot = Readonly<{
+  generation: number;
+  providers: readonly Readonly<{
+    provider: string;
+    windows: readonly Readonly<{
+      window: string;
+      usedRatio: number;
+      resetTimestampSeconds?: number;
+    }>[];
+    lastAttemptTimestampSeconds?: number;
+    lastSuccessTimestampSeconds?: number;
+    refreshSuccess: boolean;
+    refreshOutcome:
+      | "success"
+      | "timeout"
+      | "auth"
+      | "rate_limit"
+      | "billing"
+      | "format"
+      | "unknown";
+  }>[];
+}>;
+
 const TOKEN_BUCKETS = [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576];
 const BYTE_BUCKETS = [
   1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864, 268435456, 1073741824,

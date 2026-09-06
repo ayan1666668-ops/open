@@ -58,6 +58,7 @@ import {
   type GatewayPostReadySidecarHandle,
 } from "./server-startup-sidecar-scheduler.js";
 import { measureStartup, type GatewayStartupTrace } from "./server-startup-trace.js";
+import { observeGatewayProviderUsageMetrics } from "./provider-usage-metrics-observer.js";
 import { createDeferredGatewayUpdateCheck } from "./server-startup-update-check.js";
 import type { ReadinessChecker } from "./server/readiness.js";
 import {
