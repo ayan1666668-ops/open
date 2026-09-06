@@ -78,6 +78,7 @@ struct OpenClawChatComposer: View {
     @Environment(\.openClawChatDesktopLayout) private var isDesktopLayout
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var viewModel: OpenClawChatViewModel
     let style: OpenClawChatView.Style
     let showsSessionSwitcher: Bool
@@ -88,6 +89,7 @@ struct OpenClawChatComposer: View {
     let composerChrome: OpenClawChatView.ComposerChrome
     let isComposerEnabled: Bool
     let isAttachmentInputEnabled: Bool
+    var enablesTasteMotion = false
     let messagePlaceholder: String?
     let talkControl: OpenClawChatTalkControl?
     let dictationControl: OpenClawChatDictationControl?
@@ -723,6 +725,9 @@ struct OpenClawChatComposer: View {
             .padding(.vertical, self.isDesktopLayout ? 0 : 2)
         #endif
         .modifier(CleanChatComposerSurface(cornerRadius: self.cleanCornerRadius))
+        #if os(iOS)
+        .animation(self.composerHeightAnimation, value: self.composerGrowthToken)
+        #endif
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat-composer-surface")
     }
@@ -792,23 +797,29 @@ struct OpenClawChatComposer: View {
     /// draft is empty, swapping to the send button once the user types.
     @ViewBuilder
     var cleanTrailingControl: some View {
-        if Self.showsCompactTalkControl(
-            hasDraftToSend: self.viewModel.hasDraftToSend,
-            hasBlockingRunActivity: self.viewModel.hasBlockingRunActivity,
-            isLocalVoiceCaptureActive: self.isLocalVoiceCaptureActive),
-            let talkControl
-        {
-            ChatTalkButton(
-                control: talkControl,
-                sessionKey: self.viewModel.sessionKey,
-                helpText: self.talkHelpText(talkControl),
-                style: .compact(
-                    controlHeight: self.cleanControlHeight,
-                    iconControlSize: self.cleanIconControlSize))
-        } else {
-            sendButton
-                .frame(width: cleanControlHeight, height: cleanControlHeight)
+        Group {
+            if Self.showsCompactTalkControl(
+                hasDraftToSend: self.viewModel.hasDraftToSend,
+                hasBlockingRunActivity: self.viewModel.hasBlockingRunActivity,
+                isLocalVoiceCaptureActive: self.isLocalVoiceCaptureActive),
+                let talkControl
+            {
+                ChatTalkButton(
+                    control: talkControl,
+                    sessionKey: self.viewModel.sessionKey,
+                    helpText: self.talkHelpText(talkControl),
+                    style: .compact(
+                        controlHeight: self.cleanControlHeight,
+                        iconControlSize: self.cleanIconControlSize))
+            } else {
+                sendButton
+                    .frame(width: cleanControlHeight, height: cleanControlHeight)
+            }
         }
+        #if os(iOS)
+        .modifier(ChatTasteSymbolReplaceModifier(enabled: self.tasteSymbolReplaceEnabled))
+        .animation(self.composerControlAnimation, value: self.showsCompactTalkControl)
+        #endif
     }
 
     private var isLocalVoiceCaptureActive: Bool {
@@ -1215,6 +1226,7 @@ extension OpenClawChatComposer {
                 } else {
                     Image(systemName: "stop.fill")
                         .font(OpenClawChatTypography.display(size: 17, weight: .semibold, relativeTo: .body))
+                        .modifier(ChatTasteSymbolReplaceModifier(enabled: self.tasteSymbolReplaceEnabled))
                 }
             }
             .buttonStyle(.plain)
@@ -1236,6 +1248,7 @@ extension OpenClawChatComposer {
                 } else {
                     Image(systemName: "arrow.up")
                         .font(OpenClawChatTypography.display(size: 18, weight: .semibold, relativeTo: .body))
+                        .modifier(ChatTasteSymbolReplaceModifier(enabled: self.tasteSymbolReplaceEnabled))
                 }
             }
             .buttonStyle(.plain)
@@ -1285,6 +1298,45 @@ extension OpenClawChatComposer {
 
     private var editorPadding: CGFloat {
         self.style == .onboarding ? 5 : (self.composerChrome == .clean ? 4 : 6)
+    }
+
+    private var tasteSymbolReplaceEnabled: Bool {
+        #if os(iOS)
+        chatTasteAllowsSymbolReplace(
+            tasteMotionEnabled: self.enablesTasteMotion,
+            reduceMotion: self.reduceMotion)
+        #else
+        false
+        #endif
+    }
+
+    private var composerHeightAnimation: Animation? {
+        #if os(iOS)
+        chatTasteAllowsHeightAnimation(
+            tasteMotionEnabled: self.enablesTasteMotion,
+            reduceMotion: self.reduceMotion) ? .easeOut(duration: 0.18) : nil
+        #else
+        nil
+        #endif
+    }
+
+    private var composerControlAnimation: Animation? {
+        self.tasteSymbolReplaceEnabled ? .easeOut(duration: 0.16) : nil
+    }
+
+    private var showsCompactTalkControl: Bool {
+        Self.showsCompactTalkControl(
+            hasDraftToSend: self.viewModel.hasDraftToSend,
+            hasBlockingRunActivity: self.viewModel.hasBlockingRunActivity,
+            isLocalVoiceCaptureActive: self.isLocalVoiceCaptureActive)
+    }
+
+    private var composerGrowthToken: Int {
+        var token = self.viewModel.attachments.count
+        token &+= self.viewModel.replyTarget == nil ? 0 : 1
+        token &+= self.voiceNoteControl?.recorder.isRecording == true ? 2 : 0
+        token &+= self.viewModel.input.split(whereSeparator: \.isNewline).count
+        return token
     }
 
     var textMinHeight: CGFloat {

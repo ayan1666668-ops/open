@@ -367,6 +367,7 @@ extension OpenClawChatComposer {
                 isComposerEnabled: self.isComposerEnabled,
                 isAttachmentInputEnabled: self.isAttachmentInputEnabled,
                 controlSize: self.cleanControlHeight,
+                enablesTasteMotion: self.enablesTasteMotion,
                 onCancelDictation: {
                     ChatDictationActions.cancel(task: self.$dictationTask, control: self.dictationControl)
                 },

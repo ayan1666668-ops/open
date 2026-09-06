@@ -129,6 +129,7 @@ public struct OpenClawChatView: View {
     private let viewModel: OpenClawChatViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openClawChatDesktopLayout) private var isDesktopLayout
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollerBottomID = UUID()
     @State private var scrollPosition: UUID?
     @State private var hasPerformedInitialScroll = false
@@ -165,6 +166,7 @@ public struct OpenClawChatView: View {
     private let isComposerEnabled: Bool
     private let isAttachmentInputEnabled: Bool
     private let hostConnectionStatus: ChatHostConnectionStatus
+    private let enablesTasteMotion: Bool
     private let messagePlaceholder: String?
     private let emptyAssistantIntro: String?
     private let emptyAssistantPrompts: [StarterPrompt]
@@ -238,6 +240,7 @@ public struct OpenClawChatView: View {
         isComposerEnabled: Bool = true,
         isAttachmentInputEnabled: Bool? = nil,
         hostConnectionStatus: ChatHostConnectionStatus = .unmanaged,
+        enablesTasteMotion: Bool = false,
         messagePlaceholder: String? = nil,
         emptyAssistantIntro: String? = nil,
         emptyAssistantPrompts: [StarterPrompt] = [],
@@ -262,6 +265,7 @@ public struct OpenClawChatView: View {
         self.isComposerEnabled = isComposerEnabled
         self.isAttachmentInputEnabled = isAttachmentInputEnabled ?? isComposerEnabled
         self.hostConnectionStatus = hostConnectionStatus
+        self.enablesTasteMotion = enablesTasteMotion
         self.messagePlaceholder = messagePlaceholder
         self.emptyAssistantIntro = emptyAssistantIntro
         self.emptyAssistantPrompts = emptyAssistantPrompts
@@ -363,6 +367,8 @@ public struct OpenClawChatView: View {
             ChatProgressCard(
                 steps: progressCard.steps ?? [],
                 markdown: progressCard.markdown)
+                .modifier(ChatTasteInsertModifier(style: self.workingAppearStyle))
+                .animation(self.workingAppearAnimation, value: progressCard.steps.count)
         }
     }
 
@@ -388,6 +394,7 @@ public struct OpenClawChatView: View {
                 && !self.viewModel.isSendingAttachmentDraft,
             isAttachmentInputEnabled: self.isAttachmentInputEnabled
                 && !self.viewModel.isSendingAttachmentDraft,
+            enablesTasteMotion: self.enablesTasteMotion,
             messagePlaceholder: self.messagePlaceholder,
             talkControl: self.talkControl,
             dictationControl: self.dictationControl,
@@ -424,6 +431,8 @@ public struct OpenClawChatView: View {
                 }
                 // Use scroll targets for stable auto-scroll without ScrollViewReader relayout glitches.
                 .scrollTargetLayout()
+                .animation(self.rowInsertionAnimation, value: self.viewModel.timelineRevision)
+                .animation(self.workingAppearAnimation, value: self.showsWorkingIndicator)
                 .padding(.top, self.isDesktopLayout ? 24 : Layout.messageListPaddingTop)
                 .frame(maxWidth: self.readingColumnWidth)
                 .padding(.horizontal, self.isDesktopLayout ? 16 : Layout.messageListPaddingHorizontal)
@@ -570,9 +579,11 @@ public struct OpenClawChatView: View {
                             .strokeBorder(
                                 OpenClawChatTheme.accent.opacity(self.searchMessageID == message.id ? 0.55 : 0),
                                 lineWidth: 1))
+                    .modifier(ChatTasteInsertModifier(style: self.rowInsertionStyle))
             case let .systemNotice(notice):
                 ChatSystemNoticeRow(notice: notice)
                     .frame(maxWidth: .infinity)
+                    .modifier(ChatTasteInsertModifier(style: self.rowInsertionStyle))
             case let .historyDivider(divider):
                 ChatHistoryDividerRow(divider: divider)
                     .frame(maxWidth: .infinity)
@@ -596,6 +607,7 @@ public struct OpenClawChatView: View {
                 runIdentity: self.viewModel.workingIndicatorIdentity,
                 outputTokens: self.viewModel.liveRunOutputTokens)
                 .equatable()
+                .modifier(ChatTasteInsertModifier(style: self.workingAppearStyle))
         }
 
         if self.displayOptions.contains(.toolActivity), !self.viewModel.subagentActivities.isEmpty {
@@ -1033,6 +1045,36 @@ public struct OpenClawChatView: View {
             !self.viewModel.hasBlockingRunActivity &&
             self.viewModel.subagentActivities.isEmpty &&
             self.viewModel.pendingToolCalls.isEmpty
+    }
+
+    private var rowInsertionStyle: ChatTasteRowInsertion {
+        #if os(iOS)
+        chatTasteRowInsertion(
+            tasteMotionEnabled: self.enablesTasteMotion,
+            composerChromeIsClean: self.composerChrome == .clean,
+            reduceMotion: self.reduceMotion,
+            transcriptHasSettled: self.hasPerformedInitialScroll)
+        #else
+        .none
+        #endif
+    }
+
+    private var workingAppearStyle: ChatTasteRowInsertion {
+        #if os(iOS)
+        chatTasteWorkingAppear(
+            tasteMotionEnabled: self.enablesTasteMotion,
+            reduceMotion: self.reduceMotion)
+        #else
+        .none
+        #endif
+    }
+
+    private var rowInsertionAnimation: Animation? {
+        chatTasteRowAnimation(self.rowInsertionStyle)
+    }
+
+    private var workingAppearAnimation: Animation? {
+        chatTasteRowAnimation(self.workingAppearStyle)
     }
 
     private var emptyStateTitle: String {

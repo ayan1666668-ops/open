@@ -294,6 +294,8 @@ struct OpenClawChatMicButton: View {
         case cancel
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let dictationControl: OpenClawChatDictationControl?
     let voiceNoteControl: OpenClawChatVoiceNoteControl?
     let isDictationPending: Bool
@@ -301,6 +303,7 @@ struct OpenClawChatMicButton: View {
     let isComposerEnabled: Bool
     let isAttachmentInputEnabled: Bool
     var controlSize: CGFloat = CleanChatComposerMetrics.controlTouchSize
+    var enablesTasteMotion = false
     let onCancelDictation: @MainActor () -> Void
     let onStartDictation: @MainActor () -> Void
 
@@ -351,6 +354,17 @@ struct OpenClawChatMicButton: View {
             .foregroundStyle(showsStop ? OpenClawChatTheme.accent : .secondary)
             .frame(width: self.controlSize, height: self.controlSize)
             .contentShape(Rectangle())
+            .modifier(ChatTasteSymbolReplaceModifier(enabled: self.tasteSymbolReplaceEnabled))
+    }
+
+    private var tasteSymbolReplaceEnabled: Bool {
+        #if os(iOS)
+        chatTasteAllowsSymbolReplace(
+            tasteMotionEnabled: self.enablesTasteMotion,
+            reduceMotion: self.reduceMotion)
+        #else
+        false
+        #endif
     }
 
     private func performDictationAction() {
