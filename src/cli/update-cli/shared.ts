@@ -24,6 +24,7 @@ import {
   createGlobalInstallEnv,
   detectGlobalInstallManagerByPresence,
   detectGlobalInstallManagerForRoot,
+  isHomebrewInstallRoot,
   type GlobalInstallManager,
 } from "../../infra/update-global.js";
 import type { UpdateRequesterAuthority } from "../../infra/update-requester-authority.js";
@@ -451,6 +452,11 @@ export async function resolveGlobalManager(params: {
     params.pkgOwnership ?? createFreeBsdPkgOwnershipInspection(params.timeoutMs)
   ).assertUnowned(params.root);
   if (params.installKind === "package") {
+    if (isHomebrewInstallRoot(params.root)) {
+      throw new Error(
+        "This OpenClaw installation is managed by Homebrew. To update OpenClaw, run:\n\n  brew upgrade openclaw-cli\n\nThen restart the gateway:\n\n  openclaw gateway restart",
+      );
+    }
     const diagnostics: string[] = [];
     const detected = await detectGlobalInstallManagerForRoot(
       runCommandWithTimeout,

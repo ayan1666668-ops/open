@@ -1251,6 +1251,11 @@ async function inspectNpmGlobalOwner(
   );
 }
 
+export function isHomebrewInstallRoot(pkgRoot: string): boolean {
+  const normalized = path.resolve(pkgRoot);
+  return /[/\\](?:Cellar|opt)[/\\]openclaw-cli[/\\]/i.test(normalized);
+}
+
 /** Identifies a global owner from command probes and installed layout evidence. */
 export async function detectGlobalInstallManagerForRoot(
   runCommand: CommandRunner,
