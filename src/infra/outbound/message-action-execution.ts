@@ -34,6 +34,7 @@ import { stripUnsupportedCitationControlMarkers } from "../../shared/text/citati
 import { formatErrorMessage } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
 import { assertOutboundHandoffCurrent, OutboundHandoffRejectedError } from "./deliver-handoff.js";
+import { normalizeChannelMessageSendResult } from "./deliver-types.js";
 import {
   resolveMessageActionOutcome,
   type MessageActionGateway,
@@ -532,6 +533,7 @@ export async function executeMessagePoll(ctx: ResolvedActionContext): Promise<Me
         sessionId: input.sessionId,
         inboundEventKind: input.inboundEventKind,
         toolContext: input.toolContext,
+        ...(input.onDeliveryResult ? { onDeliveryResult: input.onDeliveryResult } : {}),
       },
       silent: silent ?? undefined,
     },
@@ -688,6 +690,13 @@ export async function executeMessagePlugin(
     messageActionAuthorization: authorization,
     assertDirectAdapterHandoff: input.assertDirectAdapterHandoff,
     dryRun,
+    ...(input.onDeliveryResult
+      ? {
+          onDeliveryResult: async (result) => {
+            await input.onDeliveryResult?.(normalizeChannelMessageSendResult(channel, result));
+          },
+        }
+      : {}),
   });
   if (!handled) {
     throw new Error(`Message action ${action} not supported for channel ${channel}.`);

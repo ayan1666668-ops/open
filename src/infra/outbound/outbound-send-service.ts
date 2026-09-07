@@ -23,6 +23,7 @@ import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capabili
 import { extractToolPayload } from "../../plugin-sdk/tool-payload.js";
 import { formatErrorMessage } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
+import { normalizeChannelMessageSendResult } from "./deliver-types.js";
 import type { NormalizedOutboundPayload } from "./deliver.js";
 import type { ResolvedActionContext } from "./message-action-contracts.js";
 import { collectActionMediaSourceHints } from "./message-action-params.js";
@@ -250,6 +251,16 @@ function createChannelActionContext(params: {
           onPlatformSendDispatch: params.ctx.input.onPlatformSendDispatch,
           assertDirectAdapterHandoff: params.ctx.input.assertDirectAdapterHandoff,
           skipQueue: params.ctx.input.skipQueue,
+        }
+      : {}),
+    ...(params.ctx.onSendAccepted || params.ctx.input.onDeliveryResult
+      ? {
+          onDeliveryResult: async (evidence) => {
+            await params.ctx.onSendAccepted?.();
+            await params.ctx.input.onDeliveryResult?.(
+              normalizeChannelMessageSendResult(params.ctx.channel, evidence),
+            );
+          },
         }
       : {}),
   };
@@ -487,6 +498,10 @@ export async function executePollAction(params: {
     preparedPlugin: params.ctx.channelPlugin,
     sessionKey: params.ctx.input.sessionKey,
     inboundEventKind: params.ctx.input.inboundEventKind,
+    onDeliveryResult: async (evidence) => {
+      await params.ctx.onSendAccepted?.();
+      await params.ctx.input.onDeliveryResult?.(evidence);
+    },
   });
 
   return {
