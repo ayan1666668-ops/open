@@ -286,7 +286,9 @@ export async function resolveNewerExactPinnedNpmDefaultLine(params: {
     spec: packageName,
     updateChannel: params.updateChannel,
     timeoutMs: params.timeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
   }).catch(() => undefined);
+  params.signal?.throwIfAborted();
   if (!specs) {
     return undefined;
   }
@@ -549,6 +551,7 @@ export function resolveNpmUpdateTarget(params: {
   coreVersion?: string;
   versionBoundToCore?: boolean;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }) {
   const official = params.trustedOfficialInstall;
   const specOverride =
@@ -577,6 +580,7 @@ export function resolveNpmUpdateTarget(params: {
           coreVersion: params.coreVersion,
           versionBoundToCore: params.versionBoundToCore,
           timeoutMs: params.timeoutMs,
+          ...(params.signal ? { signal: params.signal } : {}),
         }
       : undefined,
   };
