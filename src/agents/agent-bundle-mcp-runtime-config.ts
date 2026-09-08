@@ -5,6 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logWarn } from "../logger.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { assignSafeServerNames } from "./agent-bundle-mcp-names.js";
+import type { CreateSessionMcpRuntime } from "./agent-bundle-mcp-runtime-shared.js";
 import { loadEmbeddedAgentMcpConfig } from "./embedded-agent-mcp.js";
 import {
   partitionMcpServersByConnectionScope,
@@ -200,4 +201,31 @@ export function resolveStaticSessionMcpServerNames(params: {
   });
   const { staticServers } = partitionMcpServersByConnectionScope(loaded.mcpServers);
   return Object.keys(staticServers).toSorted((left, right) => left.localeCompare(right));
+}
+
+/** Prepare declarations through the shared policy and naming owner. */
+export function loadSessionMcpRuntimeConfig(params: Parameters<CreateSessionMcpRuntime>[0]) {
+  const declared = loadSessionMcpConfig({
+    ...params,
+    ...(params.executorOwned
+      ? {
+          loaded: {
+            mcpServers: params.executorOwned.mcpServers,
+            diagnostics: [],
+            prepareDataDirsByServer: {},
+          },
+        }
+      : {}),
+    includeServerNames: undefined,
+    excludeServerNames: undefined,
+    logDiagnostics: true,
+  });
+  const config = loadSessionMcpConfig({
+    ...params,
+    loaded: declared.loaded,
+    safeServerNamesByServer: declared.safeServerNamesByServer,
+    logDiagnostics: false,
+  });
+  const safeNames = declared.safeServerNamesByServer;
+  return { declared, config, safeNames };
 }

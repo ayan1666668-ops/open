@@ -14,9 +14,10 @@ import type { OpenClawConfig } from "../../../config/types.js";
 import { clearMemoryPluginState } from "../../../plugins/memory-state.test-fixtures.js";
 import { createUserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
+import { createSandboxTestContext } from "../../sandbox/test-fixtures.js";
 import { makeAgentAssistantMessage } from "../../test-helpers/agent-message-fixtures.js";
 import { sumToolResultTextChars } from "../tool-result-context-guard.test-support.js";
-import type { AttemptContextEngine } from "./attempt-context-engine-helpers.js";
+import { createTestContextEngine } from "./attempt-context-engine.test-support.js";
 import {
   cleanupTempPaths,
   createDefaultEmbeddedSession,
@@ -95,23 +96,6 @@ function expectFields(actual: Record<string, unknown>, expected: Record<string, 
   for (const [key, value] of Object.entries(expected)) {
     expect(actual[key], key).toEqual(value);
   }
-}
-
-function createTestContextEngine(params: Partial<AttemptContextEngine>): AttemptContextEngine {
-  return {
-    info: {
-      id: "test-context-engine",
-      name: "Test Context Engine",
-      version: "0.0.1",
-    },
-    ingest: async () => ({ ingested: true }),
-    compact: async () => ({
-      ok: false,
-      compacted: false,
-      reason: "not used in this test",
-    }),
-    ...params,
-  } as AttemptContextEngine;
 }
 
 describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
@@ -1018,11 +1002,16 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
   it("rebuilds skill prompt inputs from the sandbox workspace for non-rw sandbox runs", async () => {
     const sandboxWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sandbox-skills-"));
     tempPaths.push(sandboxWorkspace);
-    hoisted.resolveSandboxContextMock.mockResolvedValue({
-      enabled: true,
-      workspaceAccess: "ro",
-      workspaceDir: sandboxWorkspace,
-    });
+    hoisted.resolveSandboxContextMock.mockResolvedValue(
+      createSandboxTestContext({
+        overrides: {
+          workspaceAccess: "ro",
+          workspaceDir: sandboxWorkspace,
+          agentWorkspaceDir: sandboxWorkspace,
+          containerWorkdir: sandboxWorkspace,
+        },
+      }),
+    );
 
     await createContextEngineAttemptRunner({
       contextEngine: createContextEngineBootstrapAndAssemble(),

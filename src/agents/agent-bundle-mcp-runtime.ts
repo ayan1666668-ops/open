@@ -20,7 +20,10 @@ import {
   getSessionMcpRuntimeManagerForTesting,
 } from "./agent-bundle-mcp-manager-api.js";
 import { getSessionMcpRequestSignal } from "./agent-bundle-mcp-request-context.js";
-import { loadSessionMcpConfig } from "./agent-bundle-mcp-runtime-config.js";
+import {
+  loadSessionMcpConfig,
+  loadSessionMcpRuntimeConfig,
+} from "./agent-bundle-mcp-runtime-config.js";
 import { sessionMcpRuntimeOwners } from "./agent-bundle-mcp-runtime-owner.js";
 import type { CreateSessionMcpRuntime } from "./agent-bundle-mcp-runtime-shared.js";
 import type {
@@ -209,19 +212,7 @@ export function createSessionMcpRuntime(
   params: Parameters<CreateSessionMcpRuntime>[0],
   previous = new Map<string, ServerMcpRuntime>(),
 ): SessionMcpRuntime {
-  const declared = loadSessionMcpConfig({
-    ...params,
-    includeServerNames: undefined,
-    excludeServerNames: undefined,
-    logDiagnostics: true,
-  });
-  const config = loadSessionMcpConfig({
-    ...params,
-    loaded: declared.loaded,
-    safeServerNamesByServer: declared.safeServerNamesByServer,
-    logDiagnostics: false,
-  });
-  const safeNames = declared.safeServerNamesByServer;
+  const { declared, config, safeNames } = loadSessionMcpRuntimeConfig(params);
   const configForServer = (serverName: string, nextParams = params, loaded = config.loaded) => {
     const connection = nextParams.connectionOverrides?.get(serverName);
     const serverConfig = loadSessionMcpConfig({
@@ -240,6 +231,9 @@ export function createSessionMcpRuntime(
         ),
       },
     });
+    if (nextParams.executorOwned) {
+      serverConfig.fingerprint += `:${nextParams.executorOwned.fingerprint}`;
+    }
     if (connection) {
       serverConfig.fingerprint += `:${hashMcpResolvedConnections(new Map([[serverName, connection]]))}`;
     }
@@ -550,6 +544,7 @@ function createServerMcpRuntime(
       client: session.client,
       transport: session.transport,
       timeoutMs: connectionTimeoutMs,
+      signal: params.executorOwned ? lifecycleAbortController.signal : undefined,
     })
       .catch((error: unknown) => {
         if (error instanceof McpClientConnectTimeoutError) {
@@ -719,12 +714,14 @@ function createServerMcpRuntime(
       const transportSource = override
         ? applyMcpConnectionOverride(rawServer, override)
         : rawServer;
-      const resolved = resolveMcpTransport(serverName, transportSource, {
-        cfg: params.cfg,
-        agentDir: params.agentDir,
-        prepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,
-        requesterScope: params.requesterScope,
-      });
+      const resolved = params.executorOwned
+        ? await params.executorOwned.resolveTransport(serverName, transportSource)
+        : resolveMcpTransport(serverName, transportSource, {
+            cfg: params.cfg,
+            agentDir: params.agentDir,
+            prepareDataDir: loaded.prepareDataDirsByServer?.[serverName]?.dataDir,
+            requesterScope: params.requesterScope,
+          });
       if (!resolved) {
         return { version: 1, generatedAt: Date.now(), servers: {}, tools: [] };
       }
