@@ -970,6 +970,7 @@ export function createDiagnosticsPrometheusExporter() {
   const store = createPrometheusMetricStore();
   let unsubscribe: (() => void) | undefined;
   let internalDiagnostics: TrustedExporterDiagnosticsBridge | undefined;
+  let lifecycleGeneration = 0;
   const reportExporterHealth = (update: PrometheusExporterHealthUpdate) => {
     try {
       internalDiagnostics?.reportExporterHealth?.(update);
@@ -980,7 +981,9 @@ export function createDiagnosticsPrometheusExporter() {
 
   const service = {
     id: "diagnostics-prometheus",
-    start(ctx) {
+    reload: { configPrefixes: ["diagnostics.enabled"] },
+    async start(ctx) {
+      const generation = ++lifecycleGeneration;
       const subscribe = ctx.internalDiagnostics?.onEvent;
       if (!subscribe) {
         ctx.logger.error("diagnostics-prometheus: internal diagnostics capability unavailable");
@@ -1017,7 +1020,10 @@ export function createDiagnosticsPrometheusExporter() {
       );
       internalDiagnostics = ctx.internalDiagnostics as unknown as TrustedExporterDiagnosticsBridge;
       if (isDiagnosticsEnabled(ctx.config) && internalDiagnostics.observeProviderUsage) {
-        unsubscribeProviderUsage = await internalDiagnostics.observeProviderUsage((snapshot) => {
+        const releaseProviderUsage = await internalDiagnostics.observeProviderUsage((snapshot) => {
+          if (generation !== lifecycleGeneration) {
+            return;
+          }
           try {
             recordProviderUsageSnapshot(store, snapshot);
           } catch (err) {
@@ -1026,6 +1032,11 @@ export function createDiagnosticsPrometheusExporter() {
             );
           }
         });
+        if (generation !== lifecycleGeneration) {
+          releaseProviderUsage();
+          return;
+        }
+        unsubscribeProviderUsage = releaseProviderUsage;
       }
       reportExporterHealth({
         signal: "metrics",
@@ -1042,6 +1053,7 @@ export function createDiagnosticsPrometheusExporter() {
       });
     },
     stop() {
+      lifecycleGeneration += 1;
       unsubscribe?.();
       unsubscribe = undefined;
       reportExporterHealth({
