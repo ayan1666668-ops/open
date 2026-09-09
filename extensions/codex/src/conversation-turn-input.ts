@@ -20,6 +20,7 @@ const AUDIO_EXTENSIONS = new Set([
   ".webm",
   ".wma",
 ]);
+const CODEX_LOCAL_AUDIO_EXTENSIONS = new Set([".m4a", ".mp3", ".ogg", ".wav", ".webm"]);
 export type CodexConversationAudioAttachment = {
   path?: string;
   url?: string;
@@ -33,11 +34,16 @@ export type CodexConversationAudioAttachment = {
 export function buildCodexConversationTurnInput(params: {
   prompt: string;
   event: PluginHookInboundClaimEvent;
+  audioInputAttachmentIndexes?: readonly number[];
 }): CodexUserInput[] {
+  const media = params.event.media ?? [];
   return [
     { type: "text", text: params.prompt, text_elements: [] },
-    ...(params.event.media ?? [])
-      .map(toCodexImageInput)
+    ...media.map((entry) => toCodexMediaInput(entry, false)).filter(isCodexUserInput),
+    ...(params.audioInputAttachmentIndexes ?? [])
+      .map((index) => media[index])
+      .filter((entry): entry is PluginHookMediaFact => entry !== undefined && isAudioMedia(entry))
+      .map((entry) => toCodexMediaInput(entry, true))
       .filter((item): item is CodexUserInput => item !== undefined),
   ];
 }
@@ -49,6 +55,7 @@ export function hasCodexConversationTurnMedia(event: PluginHookInboundClaimEvent
 export function hasUsableCodexConversationTurnInput(params: {
   prompt: string;
   event: PluginHookInboundClaimEvent;
+  audioInputAttachmentIndexes?: readonly number[];
 }): boolean {
   return buildCodexConversationTurnInput(params).some(
     (input) => input.type !== "text" || Boolean(input.text.trim()),
@@ -67,7 +74,10 @@ export function listCodexConversationAudioAttachments(
     }
     const localPath = entry.path ?? readLocalMediaPath(entry.url);
     const normalizedLocalPath = localPath ? normalizeFileUrl(localPath) : undefined;
-    const remoteMediaUrl = entry.url && /^https?:\/\//iu.test(entry.url) ? entry.url : undefined;
+    const remoteMediaUrl =
+      entry.url && (/^https?:\/\//iu.test(entry.url) || /^data:audio\//iu.test(entry.url))
+        ? entry.url
+        : undefined;
     const filePath = normalizedLocalPath ?? remoteMediaUrl;
     if (!filePath) {
       return [];
@@ -75,7 +85,8 @@ export function listCodexConversationAudioAttachments(
     return [
       {
         index,
-        ...(normalizedLocalPath ? { path: normalizedLocalPath } : { url: remoteMediaUrl }),
+        ...(normalizedLocalPath ? { path: normalizedLocalPath } : {}),
+        ...(remoteMediaUrl ? { url: remoteMediaUrl } : {}),
         ...(entry.contentType ? { mime: entry.contentType } : {}),
         kind: "audio" as const,
         ...(entry.transcribed === true || transcriptCoversSingleAudio
@@ -87,7 +98,14 @@ export function listCodexConversationAudioAttachments(
   });
 }
 
-function toCodexImageInput(media: PluginHookMediaFact): CodexUserInput | undefined {
+function isCodexUserInput(item: CodexUserInput | undefined): item is CodexUserInput {
+  return item !== undefined;
+}
+
+function toCodexMediaInput(
+  media: PluginHookMediaFact,
+  includeAudio: boolean,
+): CodexUserInput | undefined {
   const localPath = media.path ?? readLocalMediaPath(media.url);
   if (localPath) {
     const normalized = normalizeFileUrl(localPath);
@@ -97,15 +115,32 @@ function toCodexImageInput(media: PluginHookMediaFact): CodexUserInput | undefin
     if (isImageMedia(media)) {
       return { type: "localImage", path: normalized };
     }
+    if (includeAudio && isAudioMedia(media) && isCodexLocalAudioPath(normalized)) {
+      return { type: "localAudio", path: normalized };
+    }
+    if (includeAudio && isAudioMedia(media) && isDataAudioUrl(media.url)) {
+      return { type: "audio", url: media.url };
+    }
     return undefined;
   }
-  return isImageMedia(media) && media.url ? { type: "image", url: media.url } : undefined;
+  if (isImageMedia(media)) {
+    return media.url ? { type: "image", url: media.url } : undefined;
+  }
+  if (includeAudio && isAudioMedia(media) && isDataAudioUrl(media.url)) {
+    return { type: "audio", url: media.url };
+  }
+  return undefined;
 }
 
 function isImageMedia(media: PluginHookMediaFact): boolean {
   const kind = media.kind?.trim().toLowerCase();
   if (kind && kind !== "unknown") {
-    return kind === "image" || kind === "sticker";
+    if (kind === "image") {
+      return true;
+    }
+    if (kind !== "sticker") {
+      return false;
+    }
   }
   const mimeType = media.contentType?.trim().toLowerCase();
   if (mimeType) {
@@ -140,6 +175,14 @@ function isAudioMedia(media: PluginHookMediaFact): boolean {
     return false;
   }
   return AUDIO_EXTENSIONS.has(path.extname(candidate.split(/[?#]/, 1)[0] ?? "").toLowerCase());
+}
+
+function isCodexLocalAudioPath(value: string): boolean {
+  return CODEX_LOCAL_AUDIO_EXTENSIONS.has(path.extname(value).toLowerCase());
+}
+
+function isDataAudioUrl(value: string | undefined): value is string {
+  return value?.toLowerCase().startsWith("data:audio/") === true;
 }
 
 function normalizeFileUrl(value: string): string | undefined {
