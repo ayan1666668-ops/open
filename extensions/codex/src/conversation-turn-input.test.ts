@@ -44,6 +44,46 @@ function buildInput(event: PluginHookInboundClaimEvent) {
 const textInput = { type: "text", text: "look", text_elements: [] };
 
 describe("codex conversation turn input", () => {
+  it("forwards canonical inbound audio attachments to Codex app-server", () => {
+    expect(
+      buildCodexConversationTurnInput({
+        prompt: "Please answer the attached voice note.",
+        event: projectInboundEvent([
+          {
+            path: "/tmp/voice.ogg",
+            url: "/tmp/voice.ogg",
+            contentType: "audio/ogg",
+            kind: "audio",
+          },
+        ]),
+      }),
+    ).toEqual([
+      {
+        type: "text",
+        text: "Please answer the attached voice note.",
+        text_elements: [],
+      },
+      { type: "localAudio", path: "/tmp/voice.ogg" },
+    ]);
+  });
+
+  it("does not forward local audio formats unsupported by Codex app-server", () => {
+    expect(
+      buildCodexConversationTurnInput({
+        prompt: '[Audio transcript (machine-generated, untrusted)]: "decoded"',
+        event: projectInboundEvent([
+          { path: "/tmp/voice.flac", contentType: "audio/flac", kind: "audio" },
+        ]),
+      }),
+    ).toEqual([
+      {
+        type: "text",
+        text: '[Audio transcript (machine-generated, untrusted)]: "decoded"',
+        text_elements: [],
+      },
+    ]);
+  });
+
   it("forwards a projected image once despite scalar and plural metadata aliases", () => {
     const event = projectInboundEvent([
       {
