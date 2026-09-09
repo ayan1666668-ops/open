@@ -25,6 +25,7 @@ import { applyAppendOnlyStreamUpdate } from "../../stream-mode.js";
 import { appendSlackStream } from "../../streaming.js";
 import {
   resolveExplicitSlackProgressTitle,
+  resolveSlackProgressReasoningMode,
   resolveSlackProgressStyle,
 } from "./dispatch-helpers.js";
 import {
@@ -32,6 +33,10 @@ import {
   formatSlackProgressDraftLine,
 } from "./dispatch-progress-card.js";
 import { createSlackNativeProgressTransport } from "./dispatch-progress-native.js";
+import {
+  createSlackReasoningCardsRuntime,
+  withSlackReasoningCardsWindow,
+} from "./dispatch-progress-reasoning.js";
 import {
   combineProgressHeadlineAndExplanation,
   resolveNativeProgressLines,
@@ -134,6 +139,19 @@ export function createSlackProgressRuntime(runtimeParams: {
   const useDraftProgressCard =
     Boolean(draftStream) && isProgressMode && slackProgressStyle === "card";
   const explicitProgressTitle = resolveExplicitSlackProgressTitle(account.config);
+  // Reasoning cards are task rows, so they need the detailed native card; the
+  // quiet card keeps one summary row and leaves reasoning in the narration text.
+  const useReasoningCards =
+    useNativeProgressStreaming &&
+    previewToolProgressEnabled &&
+    resolveSlackProgressReasoningMode(account.config) === "cards";
+  const progressCompositorEntry = useReasoningCards
+    ? withSlackReasoningCardsWindow(account.config)
+    : account.config;
+  const reasoningCards = createSlackReasoningCardsRuntime({
+    enabled: useReasoningCards,
+    compositor: () => progressDraft,
+  });
   const progressDraftMaxLineChars = resolveChannelProgressDraftMaxLineChars(account.config);
   const progressCard = createSlackDraftProgressCardRuntime({
     setup: { account, cfg, ctx, prepared, slackClient },
@@ -192,6 +210,18 @@ export function createSlackProgressRuntime(runtimeParams: {
       explicitProgressTitle ?? snapshot.statusHeadline,
       snapshot.planExplanation,
     );
+
+  // The finished card summarizes the think instead of keeping the running
+  // headline; an explicit progress title still wins.
+  const resolveNativeProgressCompletionTitle = (
+    snapshot: ChannelProgressDraftCompositorSnapshot,
+  ) =>
+    explicitProgressTitle !== undefined
+      ? resolveNativeProgressTitle(snapshot)
+      : combineProgressHeadlineAndExplanation(
+          reasoningCards.summaryTitle() ?? snapshot.statusHeadline,
+          snapshot.planExplanation,
+        );
 
   const normalizeProgressText = (text: string | undefined) =>
     text?.replace(/\s+/gu, " ").trim() ?? "";
@@ -338,12 +368,13 @@ export function createSlackProgressRuntime(runtimeParams: {
 
   const resetProgressTurnState = () => {
     progressWorkCounter.reset();
+    reasoningCards.reset();
     nativeNarrationRenderedText = "";
     nativeNarrationSourceText = "";
   };
 
   const progressDraft = createChannelProgressDraftCompositor({
-    entry: account.config,
+    entry: progressCompositorEntry,
     mode: slackStreaming.mode,
     active: progressDraftActive,
     seed: progressSeed,
@@ -452,7 +483,7 @@ export function createSlackProgressRuntime(runtimeParams: {
       finalStatus: finalInProgressStatus,
       chunks: buildSlackProgressStreamChunks({
         title:
-          resolveNativeProgressTitle(snapshot) ??
+          resolveNativeProgressCompletionTitle(snapshot) ??
           (lines.length === 0 && !snapshot.plan?.length ? "Working" : undefined),
         lines,
         plan: snapshot.plan,
@@ -553,6 +584,12 @@ export function createSlackProgressRuntime(runtimeParams: {
       // Tool admission closes reasoning bursts; restore this still-open preview lane.
       progressDraft.mergeReasoningProgress(normalized, { snapshot: true });
       return visible;
+    }
+    if (reasoningCards.enabled) {
+      return await reasoningCards.push({
+        text: payload.text,
+        isReasoningSnapshot: payload.isReasoningSnapshot,
+      });
     }
     return await progressDraft.pushReasoningProgress(payload.text, {
       snapshot: payload.isReasoningSnapshot === true,
@@ -689,6 +726,8 @@ export function createSlackProgressRuntime(runtimeParams: {
     onQueuedFollowupSettled,
     pushPlanProgress,
     pushReasoningProgress,
+    noteReasoningToolCall: reasoningCards.noteToolCall,
+    sealReasoningCards: reasoningCards.seal,
     updateDraftFromPartial,
     setShouldYieldDraftProgress: (value: () => boolean) => {
       shouldYieldDraftProgress = value;
