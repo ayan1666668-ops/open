@@ -29,6 +29,15 @@ const sharedClientMocks = vi.hoisted(() => ({
   clearSharedCodexAppServerClientIfCurrent: vi.fn((_client: unknown) => false),
 }));
 
+const selectMediaAttachments = (async ({ attachments }) => ({
+  selected: attachments.filter((attachment) => !attachment.alreadyTranscribed),
+  droppedAttachmentIndexes: [],
+})) satisfies NonNullable<
+  Parameters<
+    typeof import("./conversation-audio.js").prepareCodexConversationAudioPrompt
+  >[0]["selectMediaAttachments"]
+>;
+
 const publicBindingMocks = vi.hoisted(() => ({
   resolveByConversation: vi.fn((_conversation: unknown): { bindingId: string } | null => ({
     bindingId: "binding-1",
@@ -4491,7 +4500,7 @@ describe("codex conversation binding", () => {
     });
   });
 
-  it("transcribes a voice-only bound message and preserves its audio turn input", async () => {
+  it("transcribes a voice-only bound message before starting the turn", async () => {
     const sessionFile = path.join(tempDir, "voice-session.jsonl");
     await writeTestConversationBinding(sessionFile, {
       threadId: "thread-1",
@@ -4551,6 +4560,7 @@ describe("codex conversation binding", () => {
       {
         config: { tools: { media: { audio: { enabled: true } } } },
         runMediaUnderstandingFile,
+        selectMediaAttachments,
         timeoutMs: 50,
       },
     );
@@ -4559,6 +4569,7 @@ describe("codex conversation binding", () => {
     expect(runMediaUnderstandingFile).toHaveBeenCalledWith(
       expect.objectContaining({
         capability: "audio",
+        kind: "audio",
         filePath: "/tmp/voice.ogg",
         workspaceDir: tempDir,
         mime: "audio/ogg",
@@ -4575,7 +4586,6 @@ describe("codex conversation binding", () => {
         text: '[Audio transcript (machine-generated, untrusted)]: "ship the fix"',
         text_elements: [],
       },
-      { type: "localAudio", path: "/tmp/voice.ogg" },
     ]);
   });
 
@@ -4599,11 +4609,42 @@ describe("codex conversation binding", () => {
           runMediaUnderstandingFile: async () => {
             throw new Error("transcriber unavailable");
           },
+          selectMediaAttachments,
         },
       ),
     ).resolves.toEqual({
       handled: true,
       reply: { text: "Codex app-server turn failed: transcriber unavailable" },
+    });
+    expect(sharedClientMocks.getSharedCodexAppServerClient).not.toHaveBeenCalled();
+  });
+
+  it("does not start an empty turn when audio transcription has no text", async () => {
+    const sessionFile = path.join(tempDir, "voice-empty-stt.jsonl");
+    await writeTestConversationBinding(sessionFile, {
+      threadId: "thread-1",
+      cwd: tempDir,
+    });
+    const { event, ctx } = boundConversationClaim(sessionFile);
+
+    await expect(
+      handleCodexConversationInboundClaim(
+        {
+          ...event,
+          content: "",
+          bodyForAgent: "",
+          media: [{ path: "/tmp/silence.ogg", contentType: "audio/ogg", kind: "audio" }],
+        },
+        ctx,
+        {
+          config: { tools: { media: { audio: { enabled: true } } } },
+          runMediaUnderstandingFile: async () => ({ text: undefined }),
+          selectMediaAttachments,
+        },
+      ),
+    ).resolves.toEqual({
+      handled: true,
+      reply: { text: "Codex could not find usable input for this message." },
     });
     expect(sharedClientMocks.getSharedCodexAppServerClient).not.toHaveBeenCalled();
   });

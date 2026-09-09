@@ -19,7 +19,10 @@ import {
   readCodexConversationBindingData,
   readCodexConversationBindingDataRecord,
 } from "./conversation-binding-data.js";
-import { hasCodexConversationTurnMedia } from "./conversation-turn-input.js";
+import {
+  hasCodexConversationTurnMedia,
+  hasUsableCodexConversationTurnInput,
+} from "./conversation-turn-input.js";
 import { isIncognitoSessionKey } from "./incognito-session.js";
 import type { resumeCodexCliSessionOnNode } from "./node-cli-sessions.js";
 
@@ -34,6 +37,9 @@ type CodexConversationRunOptions = {
   runMediaUnderstandingFile?: Parameters<
     typeof prepareCodexConversationAudioPrompt
   >[0]["runMediaUnderstandingFile"];
+  selectMediaAttachments?: Parameters<
+    typeof prepareCodexConversationAudioPrompt
+  >[0]["selectMediaAttachments"];
 };
 
 const getNodeConversationState = defineCodexBuildState(
@@ -181,7 +187,11 @@ export async function handleCodexConversationInboundClaim(
         workspaceDir: data.workspaceDir,
         sessionKey,
         runMediaUnderstandingFile: options.runMediaUnderstandingFile,
+        selectMediaAttachments: options.selectMediaAttachments,
       });
+      if (!hasUsableCodexConversationTurnInput({ prompt: preparedPrompt, event })) {
+        return { reply: { text: "Codex could not find usable input for this message." } };
+      }
       return await runBoundTurnWithMissingThreadRecovery({
         bindingStore: options.bindingStore,
         data,
