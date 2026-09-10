@@ -3,6 +3,7 @@ import type { ChatCompletionChunk } from "openai/resources/chat/completions.js";
 import { describe, expect, it, vi } from "vitest";
 import { configureAiTransportHost, getAiTransportHost } from "../host.js";
 import type { Model } from "../types.js";
+import { isContextOverflow } from "../utils/overflow.js";
 import { processCompletionsStream } from "./openai-completions-stream.js";
 import { createOpenAICompletionsTransportStreamFn } from "./openai-completions-transport.js";
 import {
@@ -50,6 +51,44 @@ async function captureTransportRequest(model: Model<"openai-completions">) {
 }
 
 describe("openai completions transport", () => {
+  it.each([
+    ["max_tokens", 10_000],
+    ["max_completion_tokens", 10_001],
+  ] as const)(
+    "reports exhausted %s context budgets before sending a doomed request",
+    async (maxTokensField, contextWindow) => {
+      const previousHost = getAiTransportHost();
+      const fetch = vi.fn(
+        async () =>
+          new Response(
+            `data: ${JSON.stringify(makeCompletionsChunk({ reasoning_content: "The" }, "length"))}\n\ndata: [DONE]\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+      );
+      configureAiTransportHost({ ...previousHost, buildModelFetch: () => fetch });
+      try {
+        const model = makeCompletionsModel({
+          provider: "vllm",
+          baseUrl: "http://localhost:8000/v1",
+          contextWindow,
+          maxTokens: 4_096,
+          compat: { maxTokensField },
+        });
+        const stream = await createOpenAICompletionsTransportStreamFn()(
+          model,
+          { messages: [{ role: "user", content: "x".repeat(32_000), timestamp: 1 }] },
+          { apiKey: "test-key" },
+        );
+        const result = await stream.result();
+        expect(fetch).not.toHaveBeenCalled();
+        expect(result.stopReason).toBe("error");
+        expect(isContextOverflow(result, model.contextWindow)).toBe(true);
+      } finally {
+        configureAiTransportHost(previousHost);
+      }
+    },
+  );
+
   it("passes provider request timeouts to OpenAI SDK per-request options", () => {
     const signal = new AbortController().signal;
     const model = {

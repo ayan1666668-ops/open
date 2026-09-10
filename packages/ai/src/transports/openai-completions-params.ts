@@ -109,7 +109,7 @@ const MIN_USEFUL_OUTPUT_TOKENS = 16;
 // Used only to bound `max_completion_tokens` below the effective context cap
 // for strict OpenAI-compatible servers (e.g. vLLM, StepFun). The CJK-aware
 // helper avoids undercounting non-Latin prompts enough to trigger server-side
-// context rejections; wrong-high here just trims output a little. Estimate the
+// context rejections. Estimate the
 // final shaped payload, not the raw context, so compat transforms and dropped
 // replay turns are reflected in the output cap.
 function estimateOpenAICompletionsInputTokens(payload: {
@@ -516,7 +516,16 @@ export function buildOpenAICompletionsRequest(
       effectiveContextTokens !== undefined
     ) {
       const estimatedInputTokens = estimateOpenAICompletionsInputTokens(params);
-      const remainingBudget = Math.max(1, effectiveContextTokens - estimatedInputTokens - 1);
+      const remainingBudget = effectiveContextTokens - estimatedInputTokens - 1;
+      // A synthetic one-token allowance hides exhausted context behind a length
+      // stop. Surface overflow before dispatch so the owner can compact and resume
+      // from completed tool results instead of attempting another empty finalizer.
+      if (remainingBudget <= 0) {
+        throw new Error(
+          `Context length exceeded: estimated input ${estimatedInputTokens} tokens leaves no output budget ` +
+            `within the ${effectiveContextTokens}-token context window. Compact the context and retry.`,
+        );
+      }
       if (clampedMaxTokens > remainingBudget) {
         clampedMaxTokens = remainingBudget;
         emitModelTransportDebug(
