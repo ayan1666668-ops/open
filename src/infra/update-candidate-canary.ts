@@ -11,6 +11,7 @@ import {
   redactSupportDiagnosticLine,
   redactSupportString,
 } from "../logging/diagnostic-support-redaction.js";
+import { isChildProcessTreeAlive, signalChildProcessTree } from "../process/child-process-tree.js";
 import { signalProcessTree } from "../process/kill-tree.js";
 import {
   parseOpenClawSchemaVersions,
@@ -23,6 +24,7 @@ import { resolveSqliteInspectionBudget } from "./sqlite-readonly-worker.js";
 import { waitForUpdateCandidateReadiness } from "./update-candidate-canary-readiness.js";
 import {
   prepareUpdateCandidateRehearsal,
+  UpdateCandidateRehearsalInUseError,
   type UpdateCandidateRehearsal,
 } from "./update-candidate-rehearsal.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
@@ -98,6 +100,20 @@ async function waitBounded<T>(
   }
 }
 
+async function waitForCanaryProcessTreeExit(
+  child: ChildProcess,
+  deadline: number,
+): Promise<boolean> {
+  while (isChildProcessTreeAlive(child)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return false;
+    }
+    await sleep(Math.min(25, remaining));
+  }
+  return true;
+}
+
 async function terminateCanary(
   child: ChildProcess,
   closed: Promise<unknown>,
@@ -106,20 +122,41 @@ async function terminateCanary(
   if (!child.pid) {
     return;
   }
+  const pid = child.pid;
+  // Validation may exhaust its deadline while unwinding. Teardown still needs
+  // a bounded scheduling window to observe forced exit and adopted-child reaping.
+  const cleanupDeadline = Math.max(deadline, Date.now() + 1_000);
   const options = { detached: process.platform !== "win32" };
   const signal = (kind: "SIGTERM" | "SIGKILL") =>
     new Promise<void>((resolve) => {
-      signalProcessTree(child.pid!, kind, { ...options, onComplete: resolve });
+      if (options.detached) {
+        signalChildProcessTree(child, kind);
+        resolve();
+      } else {
+        signalProcessTree(pid, kind, { ...options, onComplete: resolve });
+      }
     });
+  // Reserve time for forced termination even when little of the common budget remains.
+  const remaining = Math.max(0, cleanupDeadline - Date.now());
+  const termDeadline = Date.now() + Math.min(1_000, options.detached ? remaining / 2 : remaining);
   await waitBounded(
     Promise.all([signal("SIGTERM"), closed]),
-    Math.min(1_000, Math.max(0, deadline - Date.now())),
+    Math.max(0, termDeadline - Date.now()),
   );
   // A reaped group leader does not prove its descendants have exited.
+  if (options.detached && (await waitForCanaryProcessTreeExit(child, termDeadline))) {
+    return;
+  }
+  const killDeadline = Math.min(cleanupDeadline, Date.now() + 1_000);
   await waitBounded(
     Promise.all([signal("SIGKILL"), closed]),
-    Math.min(1_000, Math.max(0, deadline - Date.now())),
+    Math.max(0, killDeadline - Date.now()),
   );
+  // Unix requires group extinction; Windows can at least refuse a still-live root
+  // after taskkill's callback or the bounded wait. Neither signal delivery nor timeout proves exit.
+  if (!(await waitForCanaryProcessTreeExit(child, killDeadline))) {
+    throw new Error("Candidate process tree did not exit before cleanup deadline");
+  }
 }
 
 /** Rehearse the exact candidate against private SQLite snapshots while the serving generation stays up. */
@@ -163,13 +200,24 @@ export async function validateUpdateCandidateCanary(params: {
   };
   const launch = (entry: string, args: string[]) => {
     params.assertCurrent?.();
-    const child = spawn(params.nodeRunner ?? process.execPath, [entry, ...args], {
-      cwd: params.root,
-      env,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    if (!rehearsal) {
+      throw new Error("Candidate rehearsal is unavailable");
+    }
+    const releaseProcess = rehearsal.retainProcess();
+    const child = (() => {
+      try {
+        return spawn(params.nodeRunner ?? process.execPath, [entry, ...args], {
+          cwd: params.root,
+          env,
+          detached: process.platform !== "win32",
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      } catch (error) {
+        releaseProcess();
+        throw error;
+      }
+    })();
     let stdout = "";
     let firstStderrLine: string | undefined;
     let stdoutBytes = 0;
@@ -254,6 +302,7 @@ export async function validateUpdateCandidateCanary(params: {
     return {
       child,
       closed,
+      releaseProcess,
       hasExited: () => exited,
       stdout: () => stdout,
       firstStderrLine: () => firstStderrLine,
@@ -410,6 +459,7 @@ export async function validateUpdateCandidateCanary(params: {
         timedOut = outcome.status === "deadline";
       } finally {
         await terminateCanary(running.child, running.closed, deadline);
+        running.releaseProcess();
         if (doctorResultPath) {
           doctorReceipt = await consumeUpdatePostInstallDoctorResult(
             doctorResultPath,
@@ -603,6 +653,7 @@ export async function validateUpdateCandidateCanary(params: {
       params.onStep?.(step);
     } finally {
       await terminateCanary(running.child, running.closed, deadline);
+      running.releaseProcess();
     }
     return {
       status: "ok",
@@ -663,6 +714,7 @@ export async function validateUpdateCandidateCanary(params: {
     };
   } finally {
     if (!params.rehearsal && rehearsal) {
+      const ownedRehearsal = rehearsal;
       for (const directory of rehearsal.cleanupDirectories) {
         await cleanupUpdateTemporaryDirectory({
           directory,
@@ -671,6 +723,17 @@ export async function validateUpdateCandidateCanary(params: {
             directory === rehearsal.stateDir
               ? "candidate rehearsal cleanup"
               : "candidate inventory cleanup",
+          cleanup: async () => {
+            try {
+              await ownedRehearsal.cleanup(directory);
+            } catch (error) {
+              if (!(error instanceof UpdateCandidateRehearsalInUseError)) {
+                throw error;
+              }
+              // Live writers retain custody; do not recommend removing their state.
+              capture(error.message);
+            }
+          },
           onWarning: (step) => {
             steps.push(step);
             params.onStep?.(step);

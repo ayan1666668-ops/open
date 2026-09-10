@@ -13,7 +13,7 @@ import {
   FakeChild,
   stubHealthyGateway,
 } from "./update-candidate-canary.test-support.js";
-import { prepareUpdateCandidateRehearsal } from "./update-candidate-rehearsal.js";
+import { prepareUpdateCandidateRehearsal, UpdateCandidateRehearsalInUseError } from "./update-candidate-rehearsal.js";
 import { CONTROL_PLANE_UPDATE_SENTINEL_META_ENV } from "./update-control-plane-sentinel.js";
 import {
   createDeferredConfiguredPluginRepairDoctorResult,
@@ -26,7 +26,12 @@ import {
 } from "./update-post-core-context.js";
 import { updateRunStepsFromResultStep, updateRunWarningMessages } from "./update-run-step.js";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), snapshot: vi.fn(), signal: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  snapshot: vi.fn(),
+  signal: vi.fn(),
+  reap: vi.fn(),
+}));
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: mocks.spawn,
@@ -39,6 +44,8 @@ vi.mock("../process/kill-tree.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/kill-tree.js")>()),
   signalProcessTree: mocks.signal,
 }));
+
+vi.mock("../process/scoped-child-reaper.js", () => ({ scheduleAdoptedChildZombieReapAfterExit: mocks.reap }));
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let root: string;
@@ -59,6 +66,9 @@ function canaryStateOptions() {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.spyOn(process, "kill").mockImplementation(() => {
+    throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+  });
   pluginErrors = false;
   pluginInventory = undefined;
   runtimeError = false;
@@ -104,6 +114,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   children.clear();
 });
 
@@ -514,6 +525,131 @@ describe("update candidate canary", () => {
       }
     }
   });
+  it.each([
+    { exitAfter: "TERM", callerOwned: false, windows: false, expired: false },
+    { exitAfter: "KILL", callerOwned: false, windows: false, expired: false },
+    { exitAfter: "survives", callerOwned: false, windows: false, expired: false },
+    { exitAfter: "survives", callerOwned: true, windows: false, expired: false },
+    { exitAfter: "EPERM", callerOwned: false, windows: false, expired: false },
+    { exitAfter: "EPERM", callerOwned: true, windows: false, expired: false },
+    { exitAfter: "survives", callerOwned: false, windows: true, expired: false },
+    { exitAfter: "KILL", callerOwned: false, windows: false, expired: true },
+    { exitAfter: "TERM", callerOwned: false, windows: true, expired: false },
+  ] as const)(
+    "confirms process cleanup ($exitAfter, callerOwned=$callerOwned, windows=$windows, expired=$expired)",
+    async ({ exitAfter, callerOwned, windows, expired }) => {
+      const actualNow = Date.now;
+      let clockAdvance = 0;
+      if (expired) {
+        vi.spyOn(Date, "now").mockImplementation(() => actualNow() + clockAdvance);
+      }
+      let gatewayPid: number | undefined;
+      let groupAlive = true;
+      let statePresentAtExit = false;
+      let exitTimer: ReturnType<typeof setTimeout> | undefined;
+      const probe = vi.fn((pid: number, signal: number) => {
+        expect(signal).toBe(0);
+        if (pid === Number(gatewayPid) * (windows ? 1 : -1) && groupAlive) {
+          if (exitAfter === "EPERM") {
+            throw Object.assign(new Error("Permission denied"), { code: "EPERM" });
+          }
+          return true;
+        }
+        throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+      });
+      vi.stubGlobal("process", { ...process, platform: windows ? "win32" : "linux", kill: probe });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: unknown) => {
+          gatewayPid = [...children.keys()].at(-1);
+          if (expired && String(url).endsWith("/readyz")) {
+            clockAdvance = 5_000;
+          }
+          return Response.json({ status: "started", ready: true });
+        }),
+      );
+      mocks.signal.mockImplementation(
+        (pid: number, signal: string, options: { onComplete?: () => void }) => {
+          if (!windows) {
+            children.get(pid)?.emit("close", 0);
+          }
+          options.onComplete?.();
+          if (pid === gatewayPid && signal === `SIG${exitAfter}`) {
+            exitTimer = setTimeout(() => {
+              void fs.access(childEnv.OPENCLAW_STATE_DIR!).then(
+                () => {
+                  statePresentAtExit = true;
+                  groupAlive = false;
+                },
+                () => {
+                  groupAlive = false;
+                },
+              );
+            }, 25);
+          }
+        },
+      );
+      const rehearsal = callerOwned
+        ? await prepareUpdateCandidateRehearsal({
+            candidateRoot: root,
+            stateDir: root,
+            config: {},
+            env: {},
+          })
+        : undefined;
+      try {
+        const result = await validateUpdateCandidateCanary({
+          root,
+          stateDir: root,
+          config: {},
+          env: {},
+          timeoutMs: 500,
+          rehearsal,
+        });
+        expect(gatewayPid).toBeDefined();
+        if (exitAfter === "survives" || exitAfter === "EPERM") {
+          expect(result).toMatchObject({ status: "error", phase: "readiness" });
+          expect(result.logTail.join("\n")).toContain("process tree did not exit");
+          expect(result.steps.some((step) => step.advisory)).toBe(false);
+          if (rehearsal) {
+            await expect(rehearsal.cleanup()).rejects.toBeInstanceOf(
+              UpdateCandidateRehearsalInUseError,
+            );
+            const spawnCount = mocks.spawn.mock.calls.length;
+            const retry = await validateUpdateCandidateCanary({
+              root,
+              stateDir: root,
+              config: {},
+              env: {},
+              rehearsal,
+            });
+            expect(retry.status).toBe("error");
+            expect(mocks.spawn).toHaveBeenCalledTimes(spawnCount);
+          }
+          await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).resolves.toBeUndefined();
+        } else {
+          expect(result.status, result.logTail.join("\n")).toBe("ok");
+          expect(groupAlive).toBe(false);
+          expect(statePresentAtExit).toBe(true);
+          await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        }
+        expect(probe).toHaveBeenCalledWith(Number(gatewayPid) * (windows ? 1 : -1), 0);
+        expect(
+          mocks.signal.mock.calls.filter(([pid]) => pid === gatewayPid).map(([, signal]) => signal),
+        ).toEqual(exitAfter === "TERM" && !windows ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"]);
+        if (!windows) {
+          expect(mocks.reap).toHaveBeenCalledWith(children.get(Number(gatewayPid)), true);
+        }
+      } finally {
+        clearTimeout(exitTimer);
+        // No real child was launched; only the fixture may remove retained test state.
+        await fs.rm(childEnv.OPENCLAW_STATE_DIR!, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([undefined, "unknown-owned-v2"])(
     "keeps unsupported checkpoint capability out of admission (%s)",
     async (candidateMutation) => {
@@ -676,7 +812,7 @@ describe("update candidate canary", () => {
     const gatewayPid = [...children.keys()].at(-1)!;
     expect(
       mocks.signal.mock.calls.filter(([pid]) => pid === gatewayPid).map(([, signal]) => signal),
-    ).toEqual(["SIGTERM", "SIGKILL"]);
+    ).toEqual(process.platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"]);
     expect(result.logTail.join("\n")).toContain("startupz: started");
     await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -896,7 +1032,9 @@ describe("update candidate canary", () => {
     });
     expect(result.status).toBe("error");
     expect(mocks.spawn).toHaveBeenCalledOnce();
-    expect(mocks.signal.mock.calls.map(([, signal]) => signal)).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(mocks.signal.mock.calls.map(([, signal]) => signal)).toEqual(
+      process.platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"],
+    );
     await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
