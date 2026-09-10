@@ -909,8 +909,8 @@ describe("model-selection", () => {
           provider: "anthropic",
           id: "claude-fable-5-1",
         });
-        expect(entry.contextWindows).toEqual(inherits ? contextWindows : undefined);
-        expect(entry.contextWindowDefault).toBe(inherits ? "1m" : undefined);
+        expect(entry?.contextWindows).toEqual(inherits ? contextWindows : undefined);
+        expect(entry?.contextWindowDefault).toBe(inherits ? "1m" : undefined);
       },
     );
 
