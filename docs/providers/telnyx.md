@@ -53,7 +53,7 @@ openclaw onboard --auth-choice telnyx-api-key
 ```
 
 ```bash Direct flag
-openclaw onboard --non-interactive \
+openclaw onboard --non-interactive --accept-risk \
   --auth-choice telnyx-api-key \
   --telnyx-api-key "$TELNYX_API_KEY"
 ```
@@ -64,7 +64,7 @@ export TELNYX_API_KEY=...
 
     </CodeGroup>
 
-    In an interactive run, pick the **Telnyx API key** choice.
+    In an interactive run, pick the **Telnyx API key** choice. For non-interactive setup, read the [security guidance](/security) first; `--accept-risk` acknowledges that setup can write credentials and daemon configuration without prompting.
 
   </Step>
   <Step title="Verify the live catalog">
