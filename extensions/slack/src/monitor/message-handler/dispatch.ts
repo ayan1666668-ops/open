@@ -651,6 +651,7 @@ async function dispatchSlackMessageWithSetup(
     }
   }
 
+  await progress.drainNativeProgressBeforeClose();
   const completionChunks =
     progress.useNativeProgressStreaming && !progress.nativeProgressCompletionSent
       ? progress.buildNativeProgressCompletionChunks(
