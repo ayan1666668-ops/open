@@ -77,6 +77,7 @@ type RegisterTelegramNativeCommandsParams = {
 };
 
 export type TelegramNativeCommandRegistration = {
+  nativeCommandNames: ReadonlyMap<string, string>;
   nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;
   pluginNativeCommandNames: ReadonlySet<string>;
 };
@@ -95,10 +96,7 @@ export const registerTelegramNativeCommands = ({
   shouldSkipUpdate,
   telegramDeps = defaultTelegramNativeCommandDeps,
   opts,
-}: RegisterTelegramNativeCommandsParams): {
-  nativeCommandNames: ReadonlyMap<string, string>;
-  nativeCommandCallbackDispatcher?: TelegramNativeCommandCallbackDispatcher;
-} => {
+}: RegisterTelegramNativeCommandsParams): TelegramNativeCommandRegistration => {
   const boundRoute =
     nativeEnabled && nativeSkillsEnabled
       ? resolveAgentRoute({ cfg, channel: "telegram", accountId })
@@ -353,7 +351,7 @@ export const registerTelegramNativeCommands = ({
   }
 
   if (!handleLoginCallback) {
-    return { nativeCommandNames };
+    return { nativeCommandNames, pluginNativeCommandNames };
   }
   const nativeCommandCallbackDispatcher: TelegramNativeCommandCallbackDispatcher = async ({
     botUser,
@@ -391,5 +389,5 @@ export const registerTelegramNativeCommands = ({
     );
     return { handled: true, clearButtons: result === "handled-clear-buttons" };
   };
-  return { nativeCommandNames, nativeCommandCallbackDispatcher };
+  return { nativeCommandNames, nativeCommandCallbackDispatcher, pluginNativeCommandNames };
 };

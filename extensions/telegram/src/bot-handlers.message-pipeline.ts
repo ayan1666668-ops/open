@@ -99,6 +99,7 @@ export function createTelegramMessagePipeline({
   processMessage,
   logger,
   telegramDeps,
+  pluginNativeCommandNames,
 }: RegisterTelegramHandlerParams) {
   const { token } = opts;
   const mediaRuntimeOptions = resolveTelegramMediaRuntimeOptions({

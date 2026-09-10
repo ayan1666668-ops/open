@@ -134,6 +134,22 @@ describe("telegram bot message admission", () => {
     expect(dispatchTelegramMessage).not.toHaveBeenCalled();
   });
 
+  it("revalidates buffered cancellation before returning a null message context", async () => {
+    const shouldSkipBeforeDispatch = vi.fn(async () => true);
+    buildTelegramMessageContext.mockResolvedValue(null);
+
+    const processMessage = createTelegramMessageProcessor(baseDeps);
+    await expect(
+      processSampleMessage(processMessage, {
+        shouldSkipBeforeDispatch,
+        deferCancelledBeforeDispatchSettlement: true,
+      }),
+    ).resolves.toEqual({ kind: "skipped", reason: "cancelled-before-dispatch" });
+
+    expect(shouldSkipBeforeDispatch).toHaveBeenCalledOnce();
+    expect(dispatchTelegramMessage).not.toHaveBeenCalled();
+  });
+
   it("rejects a cancelled classic dispatch before committing its dedupe owner", async () => {
     const sendTyping = vi.fn().mockResolvedValue(undefined);
     const startInitialFeedback = vi.fn();

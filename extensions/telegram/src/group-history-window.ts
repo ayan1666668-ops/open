@@ -222,6 +222,20 @@ export function recordTelegramGroupHistoryEntry(params: {
   }
 }
 
+export function resolveTelegramGroupHistorySourceMessageIds(params: {
+  bufferedMessages?: readonly { message_id: number }[];
+  media?: readonly { sourceMessageId?: string }[];
+}): string[] {
+  return [
+    ...new Set([
+      ...(params.bufferedMessages ?? []).map((message) => String(message.message_id)),
+      ...(params.media ?? []).flatMap((media) =>
+        media.sourceMessageId ? [media.sourceMessageId] : [],
+      ),
+    ]),
+  ];
+}
+
 export function removeTelegramGroupHistoryEntry(params: {
   historyMap: Map<string, HistoryEntry[]>;
   historyKey?: string;
