@@ -80,7 +80,7 @@ function resolveOpenAICompletionsReasoningEffort(options: OpenAICompletionsOptio
 
 function resolveOpenAICompletionsMaxTokens(
   model: OpenAIModeModel,
-  options: OpenAICompletionsOptions | undefined,
+  options: Pick<OpenAICompletionsOptions, "maxTokens"> | undefined,
 ): { maxTokens: number | undefined; clampToModelMaxTokens: boolean } {
   if (options?.maxTokens) {
     return { maxTokens: options.maxTokens, clampToModelMaxTokens: true };
@@ -212,7 +212,7 @@ function resolveOpenAICompletionsEffectiveContextTokens(
 export function isOpenAICompletionsContextBudgetLimitedToOne(
   model: OpenAIModeModel,
   params: Record<string, unknown>,
-  options: OpenAICompletionsOptions | undefined,
+  options: Pick<OpenAICompletionsOptions, "maxTokens"> | undefined,
 ): boolean {
   const caps = [params.max_tokens, params.max_completion_tokens].filter(
     (value) => value !== undefined,

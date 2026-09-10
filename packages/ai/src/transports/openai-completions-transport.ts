@@ -270,9 +270,9 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         // A hook may introduce its own one-token cap. Recovery requires that
         // context budgeting already imposed it before the hook ran.
         const contextBudgetWasLimitedToOne = isOpenAICompletionsContextBudgetLimitedToOne(
-          model as OpenAIModeModel,
+          model,
           params,
-          options as OpenAICompletionsOptions | undefined,
+          options,
         );
         const nextParams = await options?.onPayload?.(params, model);
         if (nextParams !== undefined) {
@@ -297,11 +297,7 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         }
         const contextBudgetLimitedToOne =
           contextBudgetWasLimitedToOne &&
-          isOpenAICompletionsContextBudgetLimitedToOne(
-            model as OpenAIModeModel,
-            params,
-            options as OpenAICompletionsOptions | undefined,
-          );
+          isOpenAICompletionsContextBudgetLimitedToOne(model, params, options);
         let bufferedChars = 0;
         const pendingEvents: AssistantMessageEvent[] | undefined = contextBudgetLimitedToOne
           ? []
