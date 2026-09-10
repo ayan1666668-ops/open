@@ -1,3 +1,4 @@
+import { getRuntimeConfig } from "../../config/config.js";
 /**
  * Agent harness lifecycle diagnostics wrapper.
  *
@@ -18,6 +19,7 @@ import {
   type DiagnosticHarnessRunErrorEvent,
   type DiagnosticHarnessRunOutcome,
 } from "../../infra/diagnostic-events.js";
+import { resolveDiagnosticModelContentCapturePolicy } from "../../infra/diagnostic-llm-content.js";
 import {
   createChildDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
@@ -229,10 +231,16 @@ function emitAgentHarnessRunStarted(
   params: AgentHarnessAttemptParams,
   trace?: DiagnosticTraceContext,
 ): void {
-  emitTrustedDiagnosticEvent({
-    type: "harness.run.started",
-    ...agentHarnessDiagnosticBase(harness, params, trace),
-  });
+  const contentPolicy = resolveDiagnosticModelContentCapturePolicy(getRuntimeConfig());
+  const harnessContent: { userPrompt?: string; finalResponse?: string } | undefined =
+    contentPolicy.inputMessages && params.prompt ? { userPrompt: params.prompt } : undefined;
+  emitTrustedDiagnosticEventWithPrivateData(
+    {
+      type: "harness.run.started",
+      ...agentHarnessDiagnosticBase(harness, params, trace),
+    },
+    harnessContent ? { harnessContent } : undefined,
+  );
 }
 
 function emitAgentHarnessRunCompleted(params: {
@@ -249,6 +257,14 @@ function emitAgentHarnessRunCompleted(params: {
   // forward the message so the error span shows more than a bare category.
   const errorMessage =
     outcome === "error" ? diagnosticErrorMessage(terminal.promptError) : undefined;
+  const contentPolicy = resolveDiagnosticModelContentCapturePolicy(getRuntimeConfig());
+  const finalResponse =
+    contentPolicy.outputMessages && result.assistantTexts.length > 0
+      ? result.assistantTexts.filter(Boolean).join("\n") || undefined
+      : undefined;
+  const harnessContent: { userPrompt?: string; finalResponse?: string } | undefined = finalResponse
+    ? { finalResponse }
+    : undefined;
   emitTrustedDiagnosticEventWithPrivateData(
     {
       type: "harness.run.completed",
@@ -261,7 +277,10 @@ function emitAgentHarnessRunCompleted(params: {
       ...(typeof result.yieldDetected === "boolean" ? { yieldDetected: result.yieldDetected } : {}),
       itemLifecycle: { ...result.itemLifecycle },
     },
-    errorMessage ? { errorMessage } : undefined,
+    {
+      ...(errorMessage ? { errorMessage } : {}),
+      ...(harnessContent ? { harnessContent } : {}),
+    },
   );
 }
 

@@ -24,6 +24,10 @@ export type DispatchProcessedOutcome = "completed" | "skipped" | "error";
 export type DispatchProcessedOptions = {
   reason?: string;
   error?: string;
+  // Message I/O for OTEL message.processed span capture (gated by
+  // captureContent policy in logMessageProcessed, not here).
+  userPrompt?: string;
+  finalResponse?: string;
 };
 
 function resolveCompletedInboundAuditReason(

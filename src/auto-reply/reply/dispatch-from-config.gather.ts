@@ -162,6 +162,9 @@ export async function gatherDispatchRequest(
     initialSessionStoreEntry.sessionKey === sessionKey
       ? initialSessionStoreEntry.entry?.sessionId
       : undefined;
+  // Resolve the user's inbound message text for OTEL message.processed
+  // I/O capture (passed through recordProcessed to the lifecycle).
+  const inboundText = ctx.Body ?? ctx.RawBody ?? "";
   const messageLifecycle = createDiagnosticMessageLifecycle({
     enabled: diagnosticsEnabled,
     channel,
@@ -173,6 +176,7 @@ export async function gatherDispatchRequest(
     processingReason: "message_start",
     startedAtMs: startTime,
     trackSessionState: canTrackSession,
+    userPrompt: typeof inboundText === "string" ? inboundText : undefined,
   });
   const traceAttributes = {
     surface: channel,
