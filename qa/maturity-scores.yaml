@@ -1459,7 +1459,7 @@ surfaces:
           reason: none
           human_override: false
   - id: app-sdk
-    name: OpenClaw App SDK
+    name: External apps and interoperability
     family: core
     level:
       id: alpha
@@ -1467,10 +1467,10 @@ surfaces:
       label: Alpha
     scores:
       quality:
-        score: 54
+        score: 53
         label: Alpha
       completeness:
-        score: 53
+        score: 51
         label: Alpha
     lts:
       status: none
@@ -1496,10 +1496,10 @@ surfaces:
           human_override: false
       - name: Gateway Access
         quality:
-          score: 53
+          score: 50
           label: Alpha
         completeness:
-          score: 54
+          score: 50
           label: Alpha
         lts:
           supported: false
@@ -1540,10 +1540,10 @@ surfaces:
           human_override: false
       - name: Compatibility
         quality:
-          score: 54
+          score: 50
           label: Alpha
         completeness:
-          score: 55
+          score: 50
           label: Alpha
         lts:
           supported: false

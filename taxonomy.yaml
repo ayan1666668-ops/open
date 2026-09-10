@@ -4997,11 +4997,11 @@ surfaces:
       source_ref: null
       process_version: 3
   - id: app-sdk
-    name: OpenClaw App SDK
+    name: External apps and interoperability
     family: core
     level: alpha
     level_code: M2
-    rationale: OpenClaw App SDK is a distinct external app contract separate from Gateway runtime and Plugin SDK. Current scoring shows a real `@openclaw/sdk` path with gaps around public packaging, auto-discovery, approvals, helpers, and compatibility.
+    rationale: External apps can use the public SDK, attach to sessions, or interoperate through ACP/ACPX, MCP, and A2A. These paths are real but still have uneven packaging, discovery, transport, approval, and compatibility guarantees.
     completeness_instructions: references/completeness/openclaw-app-sdk.md
     categories:
       - name: Client API
@@ -5047,10 +5047,17 @@ surfaces:
           - name: Scopes and redaction
             coverageIds: [app-sdk.scopes-and-redaction]
             description: Token scopes, secret-forwarding defaults, and redaction boundaries.
+          - name: External app grants and session attachment
+            coverageIds: [app-sdk.external-app-grants-and-session-attachment]
+            description: Explicit external-app access grants and attachment to existing Gateway sessions without private runtime coupling.
+          - name: Session URLs and cross-client continuity
+            coverageIds: [app-sdk.session-urls-and-cross-client-continuity]
+            description: Stable session references that preserve focus and continuity across CLI, browser, IDE, and external clients.
         docs:
           - docs/gateway/external-apps.md
           - docs/gateway/protocol.md
           - docs/gateway/security/index.md
+          - docs/cli/attach.md
         search_anchors:
           - Connect to a Gateway
           - explicit URL/token handling
@@ -5058,6 +5065,8 @@ surfaces:
           - gateway auto
           - Security model
           - token scopes
+          - external app grants and session attachment
+          - session URLs and cross-client continuity
         category_note: gateway-access.md
         human_lts_override: false
       - name: Agent Conversations
@@ -5173,10 +5182,26 @@ surfaces:
           - name: Public package contract
             coverageIds: [app-sdk.public-package-contract]
             description: Package publication and reusable-client expectations tracked explicitly.
+          - name: ACP and ACPX harness sessions
+            coverageIds: [app-sdk.acp-acpx-harness-sessions]
+            description: Persistent and one-shot harness sessions across the ACP bridge, ACPX clients, IDEs, and configured coding agents.
+          - name: MCP server exposure
+            coverageIds: [app-sdk.mcp-server-exposure]
+            description: Deliberate exposure of OpenClaw tools and resources through supported MCP server transports.
+          - name: MCP client registry, transport, OAuth, and apps
+            coverageIds: [app-sdk.mcp-client-registry-transport-oauth-apps]
+            description: Registered MCP clients with bounded transports, authentication, app surfaces, and operator diagnostics.
+          - name: A2A discovery, tasks, and peers
+            coverageIds: [app-sdk.a2a-discovery-tasks-and-peers]
+            description: A2A 1.0 Agent Card discovery, inbound and outbound task lifecycle, polling, peer configuration, and session isolation.
         docs:
           - docs/gateway/external-apps.md
           - docs/concepts/typebox.md
           - docs/gateway/protocol.md
+          - docs/cli/acp.md
+          - docs/cli/mcp.md
+          - docs/tools/mcp.md
+          - docs/channels/a2a.md
         search_anchors:
           - Generated client strategy
           - Gateway schemas
@@ -5184,6 +5209,9 @@ surfaces:
           - Explicitly unsupported today
           - unsupported environment mutations
           - future per-run overrides
+          - ACP ACPX harness sessions
+          - MCP server client registry transport OAuth apps
+          - A2A discovery tasks outbound peers
         category_note: compatibility.md
         human_lts_override: false
     last_score_run:
