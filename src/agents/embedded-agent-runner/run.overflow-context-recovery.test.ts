@@ -8,12 +8,9 @@ import { classifyFailoverSignal } from "../failover/classify.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { createZeroUsageFixture } from "../test-helpers/usage-fixtures.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
-import { recoverEmbeddedRunAttempt } from "./run/attempt-recovery.js";
+import { createSettledOverflowAttemptRecovery } from "./run.overflow-context-recovery.test-support.js";
 import { createEmbeddedRunContextRecoveryState } from "./run/context-recovery-state.js";
-import type { RunEmbeddedAgentParamsWithSessionFile } from "./run/internal-params.js";
 import { recoverEmbeddedRunOverflow } from "./run/overflow-context-recovery.js";
-import { createEmbeddedRunSessionPromptState } from "./run/session-prompt-state.js";
-import { resolveEmbeddedRunAttemptTerminalState } from "./run/terminal-outcome.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 import type { ToolResultPromptProjectionState } from "./session-prompt-state.js";
 import { createUsageAccumulator } from "./usage-accumulator.js";
@@ -290,85 +287,7 @@ function makeSettledOverflowFixture(
         : {}),
     },
   });
-  const sessionManager = SessionManager.inMemory(input.workspaceDir);
-  const runParams: RunEmbeddedAgentParamsWithSessionFile = {
-    ...input.runParams,
-    agentId: input.sessionAgentId,
-    sessionPersistence: "detached",
-    prompt: user.content,
-    sessionFile: "/tmp/session-1.jsonl",
-    sessionManager,
-  };
-  input.runParams = runParams;
-  const sessionPromptState = createEmbeddedRunSessionPromptState({
-    runParams,
-    sessionAgentId: input.sessionAgentId,
-    resolvedSessionKey: input.resolvedSessionKey,
-    lifecycleGeneration: "overflow-test-generation",
-  });
-  sessionPromptState.onUserMessagePersisted(user);
-  const failoverRetryController = {
-    maybeRetryTransient: vi.fn(async () => false),
-    advanceAuthProfile: vi.fn(),
-    maybeMarkAuthProfileFailure: vi.fn(),
-  };
-  const recover = () =>
-    recoverEmbeddedRunAttempt({
-      runInput: {
-        runParams,
-        resolvedSessionKey: input.resolvedSessionKey,
-        workspaceDir: input.workspaceDir,
-        agentDir: input.agentDir,
-        startedAtMs: Date.now(),
-        laneController: { throwIfAborted: vi.fn() },
-      },
-      preparedRuntime: {
-        provider: input.provider,
-        modelId: input.modelId,
-        model: { id: input.modelId },
-        genericCompactionRecoveryAllowed: input.genericCompactionRecoveryAllowed,
-        snapshot: () => ({
-          contextTokenBudget: input.contextTokenBudget,
-          thinkLevel: "off",
-          agentHarness: { id: "openclaw" },
-          outerContextTokenMeta: {},
-        }),
-      },
-      normalizedAttempt: {
-        attempt: input.attempt,
-        sessionIdUsed: input.attempt.sessionIdUsed,
-        attemptAssistant: assistant,
-        currentAttemptAssistant: assistant,
-        currentAttemptCompletedAssistant: assistant,
-        assistantErrorText: assistant.errorMessage,
-        terminalState: resolveEmbeddedRunAttemptTerminalState({
-          attempt: input.attempt,
-          assistant,
-        }),
-        setTerminalLifecycleMeta: vi.fn(),
-        attemptCompactionCount: input.attemptCompactionCount,
-        activeErrorContext: { provider: input.provider, model: input.modelId },
-        resolveReplayInvalidForAttempt: () => true,
-        canRestartForLiveSwitch: false,
-      },
-      runtimePlan: { auth: input.runtimeAuthPlan },
-      sessionPromptState,
-      failoverRetryController,
-      compactionRuntime: input,
-      contextEngine: input.contextEngine,
-      contextRecoveryState: input.state,
-      resolveContextEnginePluginId: input.resolveContextEnginePluginId,
-      buildRuntimeSettings: input.buildRuntimeSettings,
-      armPostCompactionGuard: input.armPostCompactionGuard,
-      usageAccumulator: input.usageAccumulator,
-      runtimeAuthRetry: false,
-      codexAppServerRecoveryRetryAvailable: false,
-      codexAppServerRecoveryRetries: 0,
-      lastRetryFailoverReason: null,
-      traceAttempts: [],
-      sessionAgentId: input.sessionAgentId,
-    } as never);
-  return { input, recover, sessionPromptState, failoverRetryController };
+  return createSettledOverflowAttemptRecovery(input, user, assistant);
 }
 
 describe("recoverEmbeddedRunOverflow", () => {
