@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Context, Model, StreamFn } from "@openclaw/llm-core";
+import type { AssistantMessageEvent, Context, Model, StreamFn } from "@openclaw/llm-core";
 import OpenAI from "openai";
 import { getEnvApiKey } from "../env-api-keys.js";
 import {
@@ -17,7 +17,10 @@ import {
 import { buildGuardedModelFetch } from "./host-policy.js";
 import { hasOpenAICompatibleConversationTurn } from "./openai-compatible-conversation-turn.js";
 import { isAzureOpenAICompatibleHost } from "./openai-completions-host.js";
-import { buildOpenAICompletionsParams } from "./openai-completions-params.js";
+import {
+  buildOpenAICompletionsParams,
+  isOpenAICompletionsContextBudgetLimitedToOne,
+} from "./openai-completions-params.js";
 import {
   processCompletionsStream,
   shouldEmitOpenAICompletionsReasoning,
@@ -66,6 +69,8 @@ function assertOpenAICompletionsPayloadHasConversationTurn(
 
 const SSE_DONE_LINE_RE = /^data:[ \t]*\[DONE\][ \t]*$/i;
 const SSE_DONE_MAX_LINE_CHARS = 1_024;
+const ONE_TOKEN_RESPONSE_MAX_BUFFERED_EVENTS = 256;
+const ONE_TOKEN_RESPONSE_MAX_BUFFERED_CHARS = 262_144;
 
 function createSseDoneDetector() {
   const decoder = new TextDecoder();
@@ -204,6 +209,7 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         timestamp: Date.now(),
       };
       let firstEventAbort: ReturnType<typeof createFirstStreamEventAbortController> | undefined;
+      let bufferedEvents: AssistantMessageEvent[] | undefined;
       try {
         const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
         const turnState = resolveProviderTransportTurnState(model, {
@@ -261,6 +267,13 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
           context,
           options as OpenAICompletionsOptions | undefined,
         );
+        // A hook may introduce its own one-token cap. Recovery requires that
+        // context budgeting already imposed it before the hook ran.
+        const contextBudgetWasLimitedToOne = isOpenAICompletionsContextBudgetLimitedToOne(
+          model as OpenAIModeModel,
+          params,
+          options as OpenAICompletionsOptions | undefined,
+        );
         const nextParams = await options?.onPayload?.(params, model);
         if (nextParams !== undefined) {
           params = nextParams as typeof params;
@@ -282,6 +295,49 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
         if (compat.requiresNonEmptyUserOrAssistantMessage) {
           assertOpenAICompletionsPayloadHasConversationTurn(params, model);
         }
+        const contextBudgetLimitedToOne =
+          contextBudgetWasLimitedToOne &&
+          isOpenAICompletionsContextBudgetLimitedToOne(
+            model as OpenAIModeModel,
+            params,
+            options as OpenAICompletionsOptions | undefined,
+          );
+        let bufferedChars = 0;
+        const pendingEvents: AssistantMessageEvent[] | undefined = contextBudgetLimitedToOne
+          ? []
+          : undefined;
+        bufferedEvents = pendingEvents;
+        // A length response must not publish partial text or admit async tools
+        // before recovery. Snapshot even start: partial points at mutable output.
+        const responseEvents = pendingEvents
+          ? {
+              push(event: AssistantMessageEvent) {
+                options?.signal?.throwIfAborted();
+                if (!bufferedEvents) {
+                  stream.push(event);
+                  return;
+                }
+                const eventChars = JSON.stringify(event).length;
+                if (
+                  pendingEvents.length >= ONE_TOKEN_RESPONSE_MAX_BUFFERED_EVENTS ||
+                  bufferedChars + eventChars > ONE_TOKEN_RESPONSE_MAX_BUFFERED_CHARS
+                ) {
+                  // The bound limits this recovery heuristic, not valid provider
+                  // output. Once events escape, never reclassify this response.
+                  bufferedEvents = undefined;
+                  for (const pendingEvent of pendingEvents) {
+                    stream.push(pendingEvent);
+                  }
+                  pendingEvents.length = 0;
+                  bufferedChars = 0;
+                  stream.push(event);
+                  return;
+                }
+                bufferedChars += eventChars;
+                pendingEvents.push(structuredClone(event));
+              },
+            }
+          : stream;
         const emitReasoning = shouldEmitOpenAICompletionsReasoning(
           model as OpenAIModeModel,
           options as OpenAICompletionsOptions | undefined,
@@ -300,9 +356,9 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
           signal: firstEventAbort.signal,
           abort: firstEventAbort.abort,
           hook: createOpenAIProviderAcceptanceHook(options, response, model),
-          onReady: () => stream.push({ type: "start", partial: output }),
+          onReady: () => responseEvents.push({ type: "start", partial: output }),
         });
-        await processCompletionsStream(hookedResponseStream, output, model, stream, {
+        await processCompletionsStream(hookedResponseStream, output, model, responseEvents, {
           signal: options?.signal,
           emitReasoning,
           strictReasoningTags: reasoningTagTextPolicy.isStrict(options),
@@ -311,8 +367,29 @@ export function createOpenAICompletionsTransportStreamFn(): StreamFn {
           onFirstEventTimeout: getFirstStreamEventTimeoutHandler(options),
           sawStreamDONE: doneDetector.sawDone,
         });
+        if (
+          bufferedEvents &&
+          !options?.signal?.aborted &&
+          output.stopReason !== "error" &&
+          output.stopReason !== "aborted"
+        ) {
+          if (output.stopReason === "length") {
+            throw new Error(
+              "Context length exceeded: the provider reached the one-token output limit imposed by the context budget. Compact the context and retry.",
+            );
+          }
+          for (const event of bufferedEvents) {
+            stream.push(event);
+          }
+          bufferedEvents = undefined;
+        }
         finalizeTransportStream({ stream, output, signal: options?.signal });
       } catch (error) {
+        if (bufferedEvents) {
+          // Keep real usage and the failure classification, never this attempt's
+          // unpublished candidate content. Completed transcript tools are elsewhere.
+          output.content = [];
+        }
         failTransportStream({
           stream,
           output,

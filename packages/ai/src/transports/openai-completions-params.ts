@@ -208,6 +208,35 @@ function resolveOpenAICompletionsEffectiveContextTokens(
     : undefined;
 }
 
+/** Recheck the final payload after hooks; a conservative estimate alone is not an error. */
+export function isOpenAICompletionsContextBudgetLimitedToOne(
+  model: OpenAIModeModel,
+  params: Record<string, unknown>,
+  options: OpenAICompletionsOptions | undefined,
+): boolean {
+  const caps = [params.max_tokens, params.max_completion_tokens].filter(
+    (value) => value !== undefined,
+  );
+  if (caps.length === 0 || caps.some((value) => value !== 1)) {
+    return false;
+  }
+  const budget = resolveOpenAICompletionsMaxTokens(model, options);
+  const modelMaxTokens = resolveOpenAICompletionsModelMaxTokens(model);
+  if (
+    budget.maxTokens === undefined ||
+    !(budget.maxTokens > 1) ||
+    (budget.clampToModelMaxTokens && modelMaxTokens !== undefined && modelMaxTokens <= 1) ||
+    !detectOpenAICompletionsCompat(model).capabilities.usesExplicitProxyLikeEndpoint
+  ) {
+    return false;
+  }
+  const contextTokens = resolveOpenAICompletionsEffectiveContextTokens(model);
+  return (
+    contextTokens !== undefined &&
+    contextTokens - estimateOpenAICompletionsInputTokens(params) - 1 <= 1
+  );
+}
+
 function isQwenOpenAICompletionsThinkingFormat(format: string): boolean {
   return format === "qwen" || format === "qwen-chat-template";
 }
@@ -516,16 +545,7 @@ export function buildOpenAICompletionsRequest(
       effectiveContextTokens !== undefined
     ) {
       const estimatedInputTokens = estimateOpenAICompletionsInputTokens(params);
-      const remainingBudget = effectiveContextTokens - estimatedInputTokens - 1;
-      // A synthetic one-token allowance hides exhausted context behind a length
-      // stop. Surface overflow before dispatch so the owner can compact and resume
-      // from completed tool results instead of attempting another empty finalizer.
-      if (remainingBudget <= 0) {
-        throw new Error(
-          `Context length exceeded: estimated input ${estimatedInputTokens} tokens leaves no output budget ` +
-            `within the ${effectiveContextTokens}-token context window. Compact the context and retry.`,
-        );
-      }
+      const remainingBudget = Math.max(1, effectiveContextTokens - estimatedInputTokens - 1);
       if (clampedMaxTokens > remainingBudget) {
         clampedMaxTokens = remainingBudget;
         emitModelTransportDebug(
