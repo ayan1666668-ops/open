@@ -849,6 +849,48 @@ describe("model-selection", () => {
   );
 
   describe("buildConfiguredModelCatalog", () => {
+    it("inherits session-selectable context windows from the captured catalog row", () => {
+      const contextWindows = [
+        { id: "200k", label: "200K", contextWindow: 200_000 },
+        { id: "1m", label: "1M", contextWindow: 1_000_000 },
+      ];
+      const cfg = createConfiguredModelRefConfig({
+        providers: {
+          anthropic: {
+            models: [
+              {
+                id: "claude-fable-5-1",
+                name: "Claude Fable 5.1",
+                api: "anthropic-messages",
+                contextWindow: 1_000_000,
+              },
+            ],
+          },
+        },
+      });
+
+      const [entry] = buildConfiguredModelCatalog({
+        cfg,
+        catalog: [
+          {
+            provider: "anthropic",
+            id: "claude-fable-5-1",
+            name: "Claude Fable 5.1",
+            contextWindow: 1_000_000,
+            contextWindows,
+            contextWindowDefault: "1m",
+          },
+        ],
+      });
+
+      expect(entry).toMatchObject({
+        provider: "anthropic",
+        id: "claude-fable-5-1",
+        contextWindows,
+        contextWindowDefault: "1m",
+      });
+    });
+
     it.each([
       {
         name: "emits canonical Google Gemini 3.1 provider model ids",
