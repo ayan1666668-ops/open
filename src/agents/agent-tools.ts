@@ -320,6 +320,9 @@ export function createOpenClawCodingToolsInternal(
   });
   const processToolAvailabilityRef: NonNullable<ExecToolDefaults["processToolAvailabilityRef"]> =
     {};
+  const fileWriteToolAvailabilityRef: NonNullable<
+    ExecToolDefaults["fileWriteToolAvailabilityRef"]
+  > = {};
   const coreTools = createCoreCodingTools({
     abortSignal: options?.abortSignal,
     attachmentReadRoot,
@@ -358,6 +361,7 @@ export function createOpenClawCodingToolsInternal(
       agentId,
       cleanupMs: options?.exec?.cleanupMs ?? execConfig.cleanupMs,
       processToolAvailabilityRef,
+      fileWriteToolAvailabilityRef,
       scopeKey,
       sessionKey: options?.sessionKey,
       runId: options?.runId,
@@ -745,6 +749,9 @@ export function createOpenClawCodingToolsInternal(
   );
   authorizedTools.forEach(bindAssembledAgentToolActionDescriptor);
   processToolAvailabilityRef.value = authorizedTools.some((tool) => tool.name === "process");
+  fileWriteToolAvailabilityRef.value = authorizedTools.some(
+    (tool) => tool.name === "write" || tool.name === "edit" || tool.name === "apply_patch",
+  );
   if (shouldInheritEffectiveToolAllowlist) {
     // Snapshot exporter only: this copies authorizedTools for descendants and
     // never filters the mandatory structured_output tool from this turn.
