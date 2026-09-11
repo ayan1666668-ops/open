@@ -20,6 +20,7 @@ import {
   listControlUiPluginTabAuthGrants,
   listControlUiPluginWidgetKinds,
 } from "./control-ui-plugin-tabs.js";
+import { setControlUiPluginAuthCookieForRequest } from "./http-auth-utils.js";
 import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import {
   AUTH_NONE,
@@ -276,20 +277,16 @@ describe("native Control UI browser assets", () => {
           { host: "localhost:18789", remoteAddress: "127.0.0.1", tls: true, secure: true },
           { host: "localhost:18789", remoteAddress: "192.0.2.1", secure: true },
           { host: "gateway.example:18789", remoteAddress: "127.0.0.1", secure: true },
-          ...["forwarded", "x-forwarded-for", "x-forwarded-proto", "x-real-ip"].map((header) => ({
+          {
             host: "localhost:18789",
             remoteAddress: "127.0.0.1",
             headers: {
               "x-forwarded-for": "192.0.2.2",
-              [header]:
-                header === "x-forwarded-proto"
-                  ? "https"
-                  : header === "forwarded"
-                    ? "for=192.0.2.2;proto=https"
-                    : "192.0.2.2",
+              "x-forwarded-proto": "https",
+              "x-forwarded-host": "gateway.example",
             },
             secure: true,
-          })),
+          },
         ];
         for (const scenario of cases) {
           const request = createRequest({
@@ -326,6 +323,81 @@ describe("native Control UI browser assets", () => {
       },
     });
   });
+
+  it("keeps native asset cookies Secure for each independently present forwarded header", async () => {
+    await withTempConfig({
+      cfg: { gateway: { controlUi: { basePath: "/openclaw" } } },
+      run: async () => {
+        activateFixture();
+        // Exercise the post-authentication issuer, not an earlier proxy-attribution
+        // denial. Each header must prevent the HTTP exception on its own.
+        for (const header of [
+          "forwarded",
+          "x-real-ip",
+          "x-forwarded-for",
+          "x-forwarded-proto",
+          "x-forwarded-host",
+          "x-forwarded-prefix",
+        ]) {
+          for (const headerValue of ["present", ""]) {
+            const request = createRequest({
+              path: "/openclaw/control-ui-config.json",
+              host: "localhost:18789",
+              remoteAddress: "127.0.0.1",
+              headers: { [header]: headerValue },
+            });
+            try {
+              const response = createResponse();
+              setControlUiPluginAuthCookieForRequest(
+                request,
+                response.res,
+                "token",
+                false,
+                resolveSharedGatewaySessionGeneration(AUTH_TOKEN),
+                ["operator.read"],
+              );
+              const cookies = response.setHeader.mock.calls
+                .filter(([name]) => name === "Set-Cookie")
+                .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
+              expect(cookies, `${header}=${headerValue}`).toEqual([
+                expect.stringContaining("; Secure; SameSite=Strict;"),
+              ]);
+            } finally {
+              request.destroy();
+            }
+          }
+        }
+      },
+    });
+  });
+
+  it.each(["", "/openclaw"])(
+    "keeps opaque iframe grants Secure when native HTTP grants are allowed at %j",
+    (basePath) => {
+      const response = createResponse();
+      const nativePath = `${basePath}/__openclaw__/plugins/control-ui/native-ui/`;
+      const framePath = `${basePath}/plugin-frame/`;
+      setControlUiPluginAuthCookie(
+        response.res,
+        [
+          { pluginId: "native-ui", path: nativePath, match: "prefix", scopes: ["operator.read"] },
+          { pluginId: "native-ui", path: framePath, match: "prefix", scopes: ["operator.read"] },
+        ],
+        {
+          generation: resolveSharedGatewaySessionGeneration(AUTH_TOKEN),
+          basePath,
+          allowInsecureNativeAssets: true,
+        },
+      );
+      const cookies = response.setHeader.mock.calls
+        .filter(([name]) => name === "Set-Cookie")
+        .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
+      expect(cookies).toEqual([
+        expect.stringContaining(`Path=${nativePath}; HttpOnly; SameSite=Strict;`),
+        expect.stringContaining(`Path=${framePath}; HttpOnly; Secure; SameSite=None;`),
+      ]);
+    },
+  );
 
   it("serves authenticated immutable builds and preserves the last working revision on failure", async () => {
     const fixture = activateFixture();
