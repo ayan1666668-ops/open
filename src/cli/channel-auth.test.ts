@@ -919,6 +919,32 @@ describe("channel-auth", () => {
     expect(action).not.toHaveBeenCalled();
   });
 
+  it.each(
+    [
+      { channel: "", label: "empty" },
+      { channel: "   ", label: "whitespace" },
+    ].flatMap((channelCase) => [
+      { ...channelCase, mode: "login" as const },
+      { ...channelCase, mode: "logout" as const },
+    ]),
+  )("rejects a $label --channel instead of inferring one for $mode", async ({ channel, mode }) => {
+    // Auto-enable changes make channel inference persist config, so a late guard is visible.
+    mocks.applyPluginAutoEnable.mockReturnValue({
+      config: { channels: { whatsapp: {} }, plugins: { allow: ["whatsapp"] } },
+      changes: ["whatsapp"],
+    });
+    const run = mode === "login" ? runChannelLogin : runChannelLogout;
+
+    await expect(run({ channel }, runtime)).rejects.toThrow("--channel must not be blank");
+
+    expect(mocks.listChannelPlugins).not.toHaveBeenCalled();
+    expect(mocks.commitConfigWithPendingPluginInstalls).not.toHaveBeenCalled();
+    expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
+    expect(mocks.callGateway).not.toHaveBeenCalled();
+    expect(mocks.login).not.toHaveBeenCalled();
+    expect(mocks.logoutAccount).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["login", runChannelLogin, mocks.login],
     ["logout", runChannelLogout, mocks.logoutAccount],
