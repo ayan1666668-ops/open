@@ -623,6 +623,7 @@ type DiagnosticRunBaseEvent = DiagnosticBaseEvent & {
   runId: string;
   sessionKey?: string;
   sessionId?: string;
+  agentId?: string;
   provider?: string;
   model?: string;
   trigger?: string;
@@ -649,6 +650,7 @@ type DiagnosticHarnessRunBaseEvent = DiagnosticBaseEvent & {
   runId: string;
   sessionKey?: string;
   sessionId?: string;
+  agentId?: string;
   provider?: string;
   model?: string;
   trigger?: string;

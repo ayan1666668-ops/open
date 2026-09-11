@@ -209,7 +209,7 @@ export function createDiagnosticsEventHandler(params: {
           recordToolExecutionBlocked(evt, metadata);
           return;
         case "skill.used":
-          recordSkillUsed(evt, metadata);
+          recordSkillUsed(evt, metadata, privateData.skillUsage);
           return;
         case "exec.process.completed":
           recordExecProcessCompleted(evt, metadata);

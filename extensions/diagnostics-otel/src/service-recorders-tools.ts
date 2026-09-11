@@ -12,6 +12,7 @@ import {
 } from "./service-genai-content.js";
 import type { OtelToolCallContent } from "./service-genai-content.js";
 import type { DiagnosticsRecorderRuntime } from "./service-recorder-runtime.js";
+import { computeOtelSkillVersion } from "./service-skill-version.js";
 import type { TelemetryExporterDiagnosticEvent } from "./service-types.js";
 
 export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime) {
@@ -42,6 +43,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     addRunAttrs,
     paramsSummaryAttrs,
     contentCapturePolicy,
+    skillContentHash,
     tracesEnabled,
   } = runtime;
 
@@ -81,6 +83,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
   const recordSkillUsed = (
     evt: Extract<DiagnosticEventPayload, { type: "skill.used" }>,
     metadata: DiagnosticEventMetadata,
+    privateData?: { skillFile: string },
   ) => {
     if (!metadata.trusted) {
       return;
@@ -91,6 +94,12 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
       return;
     }
     const spanAttrs: Record<string, string | number | boolean> = { ...attrs };
+    if (skillContentHash && privateData) {
+      const version = computeOtelSkillVersion(privateData.skillFile);
+      if (version) {
+        spanAttrs["openclaw.skill.version"] = version;
+      }
+    }
     addRunAttrs(spanAttrs, evt);
     const span = spanWithDuration("openclaw.skill.used", spanAttrs, 0, {
       parentContext: activeTrustedParentContext(evt, metadata),

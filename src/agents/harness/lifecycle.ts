@@ -94,6 +94,7 @@ function agentHarnessDiagnosticBase(
   return {
     runId: params.runId,
     sessionId: params.sessionId,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     provider: params.provider,
     model: params.modelId,
     harnessId: harness.id,
@@ -178,6 +179,7 @@ function agentRunDiagnosticBase(params: AgentHarnessAttemptParams, trace: Diagno
     runId: params.runId,
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     provider: params.provider,
     model: params.modelId,
     ...(params.trigger ? { trigger: params.trigger } : {}),
