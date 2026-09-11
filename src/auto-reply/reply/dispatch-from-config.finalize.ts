@@ -42,6 +42,7 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
     deferFinalTtsText,
     deliveryChannel,
     deliberateSilentTerminalReply,
+    diagnosticResponse,
     dispatcher,
     emptyFinalAllowedAsSilent,
     getDispatchAbortSignal,
@@ -530,7 +531,11 @@ export async function finalizeDispatchAndAudit(state: ExecuteDispatchReadyState)
   );
   state.recordProcessed(dispatchOutcome, {
     reason: dispatchReason,
-    ...(replyTextParts.length > 0 ? { finalResponse: replyTextParts.join("\n") } : {}),
+    ...(diagnosticResponse !== undefined
+      ? { finalResponse: diagnosticResponse }
+      : replyTextParts.length > 0
+        ? { finalResponse: replyTextParts.join("\n") }
+        : {}),
   });
   state.markIdle(
     dispatchOutcome === "error"

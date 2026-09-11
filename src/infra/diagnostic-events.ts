@@ -687,6 +687,7 @@ export type DiagnosticHarnessRunErrorEvent = DiagnosticHarnessRunBaseEvent & {
 type DiagnosticModelCallBaseEvent = DiagnosticBaseEvent & {
   type: "model.call.started" | "model.call.completed" | "model.call.error";
   runId: string;
+  agentId?: string;
   callId: string;
   sessionKey?: string;
   sessionId?: string;
@@ -946,6 +947,8 @@ export type DiagnosticToolCallContent = Readonly<{
 
 export type DiagnosticSkillUsagePrivateData = Readonly<{
   skillFile: string;
+  /** Immutable identity of the instructions or verified bundle loaded by the runtime. */
+  contentHash?: string;
 }>;
 
 export type DiagnosticEventPrivateData = Readonly<{

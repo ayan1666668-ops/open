@@ -4514,11 +4514,11 @@ describe("diagnostics-otel service", () => {
     expect(JSON.stringify(skillSpanCall)).not.toContain("session-should-not-export");
   });
 
-  test("hashes skill content only when skillContentHash is enabled", async () => {
+  test("exports the loaded skill fingerprint even when the file changes before drain", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "openclaw-otel-skill-span-"));
     try {
       const skillFile = path.join(root, "SKILL.md");
-      writeFileSync(skillFile, "# Traced skill\n");
+      writeFileSync(skillFile, "# Loaded skill\n");
       await startServiceFixture(["traces"], (ctx) => {
         if (ctx.config.diagnostics?.otel) {
           ctx.config.diagnostics.otel.skillContentHash = true;
@@ -4530,12 +4530,13 @@ describe("diagnostics-otel service", () => {
           skillName: "traced-skill",
           trace: createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID),
         }),
-        { skillUsage: { skillFile } },
+        { skillUsage: { skillFile, contentHash: "a".repeat(64) } },
       );
+      writeFileSync(skillFile, "# Changed after use\n");
       await waitForDiagnosticEventsDrained();
 
       const skillSpan = startedSpanOptions("openclaw.skill.used");
-      expect(skillSpan?.attributes?.["openclaw.skill.version"]).toMatch(/^sha256:[a-f0-9]{16}$/);
+      expect(skillSpan?.attributes?.["openclaw.skill.version"]).toBe(`sha256:${"a".repeat(16)}`);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

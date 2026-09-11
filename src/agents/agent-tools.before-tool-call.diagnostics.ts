@@ -297,6 +297,7 @@ export function resolveToolDiagnosticIdentity(tool: AnyAgentTool): ToolDiagnosti
 
 type SkillUsageMatch = {
   skillFile?: string;
+  contentHash?: string;
   skillName: string;
   skillSource: SkillTelemetrySource;
   activation: "command" | "read";
@@ -318,6 +319,7 @@ function resolvedSkillUsageMatch(params: {
     skillName: params.skill.name.trim(),
     skillSource: resolveSkillTelemetrySource(params.skill),
     activation: params.activation,
+    ...(params.skill.contentHash ? { contentHash: params.skill.contentHash } : {}),
     ...(skillFile ? { skillFile } : {}),
   };
 }
@@ -407,6 +409,7 @@ export function findSkillUsageMatch(params: {
         skillName: command.skillName,
         skillSource,
         activation: "command",
+        ...(snapshotMatch?.contentHash ? { contentHash: snapshotMatch.contentHash } : {}),
         ...(skillFile ? { skillFile } : {}),
       };
     }
@@ -428,6 +431,7 @@ export function findSkillUsageMatch(params: {
   return match
     ? {
         skillFile: match.skillFile,
+        ...(match.contentHash ? { contentHash: match.contentHash } : {}),
         skillName: match.skillName,
         skillSource: match.skillSource,
         activation: "read",
@@ -460,7 +464,14 @@ export function emitSkillUsedDiagnostic(params: {
       toolName: params.toolName,
       ...(params.toolCallId && { toolCallId: params.toolCallId }),
     },
-    params.match.skillFile ? { skillUsage: { skillFile: params.match.skillFile } } : undefined,
+    params.match.skillFile
+      ? {
+          skillUsage: {
+            skillFile: params.match.skillFile,
+            ...(params.match.contentHash ? { contentHash: params.match.contentHash } : {}),
+          },
+        }
+      : undefined,
   );
 }
 

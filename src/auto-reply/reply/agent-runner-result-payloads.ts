@@ -21,6 +21,7 @@ import {
   freezeDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
+import { truncateUtf16Safe } from "../../utils.js";
 import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import {
   buildFallbackClearedNotice,
@@ -62,6 +63,23 @@ import { createReplyToModeFilterForChannel } from "./reply-threading.js";
 import { buildSessionsYieldAcknowledgmentPayload } from "./sessions-yield-acknowledgment.js";
 import { resolveStrandedReplyRecovery } from "./stranded-reply-recovery.js";
 type ReplyAgentAccounting = Awaited<ReturnType<typeof accountAgentTurn>>;
+
+const MAX_DIAGNOSTIC_RESPONSE_CHARS = 128 * 1024;
+
+function captureDiagnosticResponse(payloads: readonly ReplyPayload[]): string | undefined {
+  const response = payloads
+    .filter((payload) => payload.isReasoning !== true && payload.isCommentary !== true)
+    .flatMap((payload) =>
+      typeof payload.text === "string" && payload.text.trim() ? [payload.text] : [],
+    )
+    .join("\n");
+  if (!response) {
+    return undefined;
+  }
+  return response.length <= MAX_DIAGNOSTIC_RESPONSE_CHARS
+    ? response
+    : `${truncateUtf16Safe(response, MAX_DIAGNOSTIC_RESPONSE_CHARS - 14)}…[truncated]`;
+}
 
 export async function prepareReplyAgentPayloads(state: {
   context: FinalizeReplyAgentRunInput;
@@ -456,6 +474,10 @@ export async function prepareReplyAgentPayloads(state: {
       (payload.isReasoning !== true || opts?.reasoningPayloadsEnabled === true) &&
       (payload.isCommentary !== true || opts?.commentaryPayloadsEnabled === true),
   );
+  const diagnosticResponse = captureDiagnosticResponse(payloadCandidates);
+  if (diagnosticResponse !== undefined) {
+    opts?.onDiagnosticResponse?.(diagnosticResponse);
+  }
   const payloadResult = await buildFinalPayloads(payloadCandidates);
   let { replyPayloads } = payloadResult;
   didLogHeartbeatStrip = payloadResult.didLogHeartbeatStrip;
