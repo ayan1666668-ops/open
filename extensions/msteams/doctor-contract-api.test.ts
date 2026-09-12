@@ -441,6 +441,8 @@ describe("msteams doctor state migration", () => {
             ...ref,
             conversation: { id: 123 },
           },
+          "primitive-agent": { ...ref, agent: false, bot: { id: "shadowed-bot" } },
+          "array-agent": { ...ref, agent: [], bot: { id: "shadowed-bot" } },
         },
       })}\n`,
     );
