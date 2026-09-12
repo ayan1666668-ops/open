@@ -6,7 +6,7 @@ import { isSafeExecutableValue } from "../infra/exec-safety.js";
 import type { OpenRouterRouting, VercelGatewayRouting } from "../llm/types.js";
 import { normalizeExactAllowedHost } from "../secrets/exact-hostname.js";
 import { SECRET_PROVIDER_ALIAS_PATTERN } from "../secrets/ref-contract.js";
-import { isBuiltInModelProviderOverlayId } from "./model-provider-config.js";
+import { isBuiltInModelProviderOverlayId } from "./model-provider-overlay-ids.js";
 import type { ModelCompatConfig } from "./types.models.js";
 import { MODEL_APIS, MODEL_THINKING_FORMATS } from "./types.models.js";
 import { ENV_SECRET_REF_ID_RE } from "./types.secrets.js";
@@ -15,7 +15,6 @@ import { DmConfigSchema } from "./zod-schema.messages.js";
 import { SecretInputSchema } from "./zod-schema.secret-input.js";
 import { sensitive } from "./zod-schema.sensitive.js";
 
-export { isBuiltInModelProviderOverlayId } from "./model-provider-config.js";
 export {
   DmConfigSchema,
   GroupChatSchema,
