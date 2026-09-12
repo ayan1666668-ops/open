@@ -13,7 +13,10 @@ import { rotateAgentEventLifecycleGeneration } from "../../../infra/agent-events
 import type { ImageContent } from "../../../llm/types.js";
 import { finalizeRuntimePromptImages } from "../../../media/runtime-prompt-image-provenance.js";
 import { createNestedToolActivity } from "../../../sessions/nested-tool-activity.js";
-import { createUserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.js";
+import {
+  createUserTurnTranscriptRecorder,
+  type PersistedUserTurnMessage,
+} from "../../../sessions/user-turn-transcript.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
@@ -650,12 +653,13 @@ describe("interrupted canonical user replay", () => {
           () => {
             // This row and the nested activity share one omitted context link.
             if (boundary === "hidden-user") {
-              original.appendMessage({
+              const hiddenUser: PersistedUserTurnMessage = {
                 role: "user",
                 content: "A newer hidden user request",
                 excludeFromContext: true,
                 timestamp: 2,
-              });
+              };
+              original.appendMessage(hiddenUser);
             } else if (boundary === "unknown-activity") {
               original.appendMessage({
                 role: "custom",
