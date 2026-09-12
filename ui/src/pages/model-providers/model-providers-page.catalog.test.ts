@@ -639,13 +639,15 @@ describe("Models page catalog publication", () => {
   );
 
   it.each([false, true])(
-    "Models page shows a published failure without replacing accepted choices (returned rows: %s)",
+    "Models page adopts current partial inventory without changing saved choices (returned rows: %s)",
     async (hasRows) => {
       const { context, discover, readPublished, runtimeConfig, publishEvent } =
         createCatalogHarness();
       const page = appendPage(context);
       await waitForProviders(page, savedModelConfig);
-      const models = hasRows ? preparedCatalog.models : [];
+      const models = hasRows
+        ? [{ provider: "openai", id: "current", name: "Current returned model", available: true }]
+        : [];
       readPublished.mockReturnValue({ models, refreshFailed: true });
 
       publishEvent({ type: "event", event: "config.changed", payload: {} });
@@ -655,7 +657,7 @@ describe("Models page catalog publication", () => {
         ).toContain("More models could not be discovered."),
       );
       await openModelPicker(page);
-      expect(displayedCatalog(page)?.models).toEqual(preparedCatalog.models);
+      expect(displayedCatalog(page)?.models).toEqual(models);
       expect(
         modelPickers(page).map((picker) =>
           picker.querySelector('[role="option"][aria-selected="true"]')?.getAttribute("data-value"),

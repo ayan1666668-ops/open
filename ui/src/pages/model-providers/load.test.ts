@@ -8,7 +8,7 @@ import { loadModelProviderCost, loadModelProvidersData, loadModelProviderUsage }
 
 describe("loadModelProvidersData", () => {
   it.each([false, true])(
-    "reports an internal catalog failure without publishing failed rows (returned rows: %s)",
+    "publishes current partial inventory for display while reporting failure (returned rows: %s)",
     async (hasRows) => {
       const models = hasRows ? [{ provider: "fixture", id: "retained", name: "Retained" }] : [];
       const client = createTestGatewayClient(async (method) => {
@@ -19,6 +19,9 @@ describe("loadModelProvidersData", () => {
       });
       const result = await loadModelProvidersData(client, { agentId: "main" });
       expect(peekModelCatalog(client, { agentId: "main" })).toBeUndefined();
+      expect(peekModelCatalog(client, { agentId: "main" }, { allowStale: true })?.models).toEqual(
+        models,
+      );
       expect(result.catalogError).toBe("More models could not be discovered.");
       expect(result.error).toBeNull();
     },
@@ -107,6 +110,9 @@ describe("loadModelProvidersData", () => {
     const result = await loadModelProvidersData(client, { agentId: "main", refresh: true });
 
     expect(result.providerOutcomes).toEqual([{ provider: "ollama", status: "unavailable" }]);
+    expect(peekModelCatalog(client, { agentId: "main" }, { allowStale: true })?.models).toEqual([
+      { provider: "ollama", id: "retained", name: "Retained model", available: true },
+    ]);
     expect(result.catalogError).toBe("More models could not be discovered.");
     expect(peekModelCatalog(client, { agentId: "main" })).toBeUndefined();
     expect(result.error).toBeNull();

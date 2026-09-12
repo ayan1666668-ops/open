@@ -298,26 +298,83 @@ describe("model catalog display cache", () => {
     },
   );
 
-  it("keeps an explicit refresh authoritative while other projections fill the cache", async () => {
-    const refreshing = createDeferred<ModelCatalogResult>();
-    const request = createGatewayRequestMock()
-      .mockImplementationOnce(() => refreshing.promise)
-      .mockResolvedValue({ models: [prepared] });
-    const client = createTestGatewayClient(request);
-    const refresh = loadModelCatalog(client, {
-      agentId: "writer",
-      refresh: true,
-      timeoutMs: 30_000,
-    });
-    for (let index = 0; index < 64; index += 1) {
-      await loadModelCatalog(client, { agentId: "writer", sessionKey: `session:${index}` });
-    }
-    await loadModelCatalog(client, { agentId: "writer", timeoutMs: null });
-    expect(peekModelCatalog(client, { agentId: "writer" })?.models).toEqual([prepared]);
-    refreshing.resolve({ models: [published] });
-    expect(await refresh).toEqual({ models: [published] });
-    expect(peekModelCatalog(client, { agentId: "writer" })?.models).toEqual([published]);
-  });
+  it.each([false, true])(
+    "keeps other projections after an explicit refresh only when discovery fails: %s",
+    async (refreshFailed) => {
+      const refreshing = createDeferred<ModelCatalogResult>();
+      const request = createGatewayRequestMock()
+        .mockImplementationOnce(() => refreshing.promise)
+        .mockResolvedValue({ models: [prepared] });
+      const client = createTestGatewayClient(request);
+      const refresh = loadModelCatalog(client, {
+        agentId: "writer",
+        refresh: true,
+        timeoutMs: 30_000,
+      });
+      for (let index = 0; index < 64; index += 1) {
+        await loadModelCatalog(client, { agentId: "writer", sessionKey: `session:${index}` });
+      }
+      await loadModelCatalog(client, { agentId: "writer", timeoutMs: null });
+      expect(peekModelCatalog(client, { agentId: "writer" })?.models).toEqual([prepared]);
+      const result = { models: [published], refreshFailed };
+      refreshing.resolve(result);
+      expect(await refresh).toEqual(result);
+      expect(peekModelCatalog(client, { agentId: "writer" }, { allowStale: true })?.models).toEqual(
+        [published],
+      );
+      expect(
+        peekModelCatalog(client, { agentId: "writer", sessionKey: "session:63" })?.models,
+      ).toEqual(refreshFailed ? [prepared] : undefined);
+    },
+  );
+
+  it.each(["older ordinary", "newer ordinary", "explicit refresh"] as const)(
+    "Models route catalog publication keeps a concurrent %s read after partial failure",
+    async (kind) => {
+      const partial = createDeferred<ModelCatalogResult>();
+      const complete = createDeferred<ModelCatalogResult>();
+      const request = createGatewayRequestMock((_method, _params, options) =>
+        options?.timeoutMs === 30_000 ? complete.promise : partial.promise,
+      );
+      const client = createTestGatewayClient(request);
+      const startComplete = () =>
+        loadModelCatalog(client, {
+          agentId: "writer",
+          timeoutMs: 30_000,
+          ...(kind === "explicit refresh" ? { refresh: true } : {}),
+        });
+      const startPartial = () => loadModelCatalog(client, { agentId: "writer", timeoutMs: 5 });
+      let partialRead: Promise<ModelCatalogResult>;
+      let completeRead: Promise<ModelCatalogResult>;
+      if (kind === "newer ordinary") {
+        partialRead = startPartial();
+        completeRead = startComplete();
+      } else {
+        completeRead = startComplete();
+        partialRead = startPartial();
+      }
+      const partialResult: ModelCatalogResult = {
+        models: [
+          { ...prepared, available: false, unavailableReason: "cooldown", unavailableUntil: 1 },
+        ],
+        refreshFailed: true,
+      };
+      partial.resolve(partialResult);
+      expect(await partialRead).toEqual(partialResult);
+      expect(peekModelCatalog(client, { agentId: "writer" }, { allowStale: true })).toEqual(
+        partialResult,
+      );
+      const follower = loadModelCatalog(client, { agentId: "writer", timeoutMs: 30_000 });
+      expect(request).toHaveBeenCalledTimes(2);
+      const completeResult = { models: [published] };
+      complete.resolve(completeResult);
+      expect(await completeRead).toEqual(completeResult);
+      expect(await follower).toEqual(completeResult);
+      expect(peekModelCatalog(client, { agentId: "writer" }, { allowStale: true })).toEqual(
+        kind === "older ordinary" ? partialResult : completeResult,
+      );
+    },
+  );
 
   it("retries partial refreshes and transport failures, but retains successful empty catalogs", async () => {
     const request = createGatewayRequestMock()
@@ -327,7 +384,12 @@ describe("model catalog display cache", () => {
     const client = createTestGatewayClient(request);
     expect(await loadModelCatalog(client, {})).toEqual({ models: [prepared], refreshFailed: true });
     expect(peekModelCatalog(client, {})).toBeUndefined();
+    expect(peekModelCatalog(client, {}, { allowStale: true })).toEqual({
+      models: [prepared],
+      refreshFailed: true,
+    });
     await expect(loadModelCatalog(client, {})).rejects.toThrow("transport closed");
+    expect(peekModelCatalog(client, {}, { allowStale: true })?.models).toEqual([prepared]);
     expect(await loadModelCatalog(client, {})).toEqual({ models: [] });
     expect(await loadModelCatalog(client, {})).toEqual({ models: [] });
     expect(request).toHaveBeenCalledTimes(3);

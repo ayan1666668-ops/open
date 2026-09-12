@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright";
 import { beforeEach, afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { ModelCatalogResult } from "../api/types.ts";
 import type { ApplicationRouter } from "../app-routes.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
@@ -46,6 +47,169 @@ describeControlUiE2e("Control UI progressive Model Providers loading", () => {
     await browser?.close();
     await server?.close();
   });
+
+  it.each(["fresh", "populated", "empty"] as const)(
+    "adopts partial provider inventory on the Models route (%s cache)",
+    async (cacheState) => {
+      const context = await browser.newContext({ locale: "en-US", serviceWorkers: "block" });
+      const page = await context.newPage();
+      const initialConfig = { agents: { defaults: { model: "healthy/anchor" } } };
+      const savedConfig = { agents: { defaults: { model: "healthy/current" } } };
+      const snapshot = (config: typeof initialConfig, hash: string) => ({
+        config,
+        sourceConfig: config,
+        hash,
+        raw: JSON.stringify(config),
+        valid: true,
+      });
+      const partial: ModelCatalogResult = {
+        models:
+          cacheState === "empty"
+            ? []
+            : [
+                { provider: "healthy", id: "current", name: "Healthy current", available: true },
+                { provider: "broken", id: "returned", name: "Returned sibling", available: true },
+              ],
+        refreshFailed: true,
+        providerOutcomes: [
+          { provider: "healthy", status: "ready" },
+          { provider: "broken", status: "unavailable" },
+        ],
+        defaultModels: { automaticUtilityModel: cacheState === "empty" ? null : "healthy/current" },
+        pendingProviders: [],
+      };
+      const initialCatalog: ModelCatalogResult =
+        cacheState === "fresh"
+          ? partial
+          : {
+              models: [
+                { provider: "healthy", id: "retired", name: "Retired healthy", available: true },
+                { provider: "broken", id: "retired", name: "Retired sibling", available: true },
+              ],
+              defaultModels: { automaticUtilityModel: "healthy/retired" },
+            };
+      const gateway = await installMockGateway(page, {
+        defaultAgentId: "main",
+        models: initialCatalog.models,
+        methodResponses: {
+          "config.get": snapshot(initialConfig, "initial"),
+          "config.patch": { ok: true, config: savedConfig, hash: "saved" },
+          "models.list": initialCatalog,
+          "models.authStatus": {
+            ts: 1,
+            providers: ["healthy", "broken"].map((provider) => ({
+              provider,
+              profiles: [],
+              apiKey: { source: "config" },
+            })),
+          },
+        },
+      });
+      const capture = async (stage: string) => {
+        if (recordVisuals) {
+          await writeFile(
+            path.join(artifactDir, `partial-${cacheState}-${stage}.png`),
+            await takeControlUiViewportScreenshot(page, page.locator(".shell"), [
+              page.locator(".model-providers__defaults"),
+            ]),
+          );
+        }
+      };
+      try {
+        await page.goto(`${server.baseUrl}settings/model-providers`);
+        await waitForControlUiRoute(page, { routeId: "model-providers" });
+        const settings = page.locator("openclaw-model-providers-page");
+        const defaults = settings.locator(".model-providers__defaults");
+        const picker = defaults.locator("openclaw-select-picker").first();
+        const trigger = picker.locator(".picker-select__trigger");
+        await trigger.click();
+        if (cacheState !== "fresh") {
+          await picker.locator('[role="option"][data-value="healthy/retired"]').waitFor();
+          await gateway.setMethodResponse("models.list", partial);
+          await gateway.emitGatewayEvent("chat.metadata.changed", {});
+        }
+        const warning = settings.locator('.model-providers__catalog-progress[role="alert"]');
+        await expect
+          .poll(() => warning.textContent())
+          .toContain("More models could not be discovered.");
+        await expect
+          .poll(() =>
+            settings.locator('[data-provider-id="broken"] .model-providers__head').textContent(),
+          )
+          .toContain("Failed");
+        expect(
+          await settings
+            .locator('[data-provider-id="healthy"] .model-providers__head')
+            .textContent(),
+        ).not.toContain("Failed");
+        expect(await trigger.getAttribute("aria-expanded")).toBe("true");
+        await expect
+          .poll(() => picker.locator('[role="option"][data-value="healthy/retired"]').count())
+          .toBe(0);
+        expect(await picker.locator('[role="option"][data-value="broken/retired"]').count()).toBe(
+          0,
+        );
+        const utility = defaults.locator("#model-providers-utility-model");
+        if (cacheState === "empty") {
+          expect(
+            await picker.locator('[role="option"][data-value="healthy/current"]').count(),
+          ).toBe(0);
+          expect(await utility.textContent()).not.toContain("Retired healthy");
+          await capture("returned");
+          await trigger.click();
+        } else {
+          const current = picker.locator('[role="option"][data-value="healthy/current"]');
+          await current.waitFor({ state: "visible" });
+          expect(await current.getAttribute("aria-disabled")).not.toBe("true");
+          expect(
+            await picker.locator('[role="option"][data-value="broken/returned"]').isVisible(),
+          ).toBe(true);
+          expect(await utility.textContent()).toContain("Auto · Healthy current");
+          await capture("returned");
+          await gateway.setMethodResponse("config.get", snapshot(savedConfig, "saved"));
+          await current.click();
+          await gateway.waitForRequest("config.patch");
+          await expect
+            .poll(() => defaults.getByRole("status").textContent())
+            .toContain("Defaults saved.");
+          expect(await trigger.textContent()).toContain("Healthy current");
+        }
+        const recovered: ModelCatalogResult = {
+          models: [
+            { provider: "healthy", id: "recovered", name: "Healthy recovered", available: true },
+            { provider: "broken", id: "recovered", name: "Sibling recovered", available: true },
+          ],
+          providerOutcomes: [
+            { provider: "healthy", status: "ready" },
+            { provider: "broken", status: "ready" },
+          ],
+          defaultModels: { automaticUtilityModel: "healthy/recovered" },
+          pendingProviders: [],
+        };
+        await gateway.setMethodResponse("models.list", recovered);
+        await gateway.deferNext("models.list", { refresh: true });
+        const refreshes = (await gateway.getRequests("models.list", { refresh: true })).length;
+        await warning.getByRole("button", { name: "Retry", exact: true }).click();
+        await gateway.waitForRequest("models.list", { after: refreshes, match: { refresh: true } });
+        await trigger.click();
+        await gateway.resolveDeferred("models.list", recovered);
+        await picker
+          .locator('[role="option"][data-value="healthy/recovered"]')
+          .waitFor({ state: "visible" });
+        expect(await trigger.getAttribute("aria-expanded")).toBe("true");
+        await expect.poll(() => warning.count()).toBe(0);
+        expect(
+          await settings
+            .locator('[data-provider-id="broken"] .model-providers__head')
+            .textContent(),
+        ).not.toContain("Failed");
+        expect(await utility.textContent()).toContain("Auto · Healthy recovered");
+      } finally {
+        await capture("settled");
+        await context.close();
+      }
+    },
+  );
 
   it("keeps a Models route selection saved before the initial provider details arrive", async () => {
     const context = await browser.newContext({ locale: "en-US", serviceWorkers: "block" });

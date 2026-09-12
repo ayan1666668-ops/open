@@ -128,12 +128,7 @@ export function publishModelCatalogResult(
   result: ModelCatalogResult,
 ): boolean {
   const { cache, client } = read;
-  if (
-    modelCatalogCache.get(client) !== cache ||
-    !cache.reads.has(read) ||
-    read.signal?.aborted ||
-    result.refreshFailed
-  ) {
+  if (modelCatalogCache.get(client) !== cache || !cache.reads.has(read) || read.signal?.aborted) {
     return false;
   }
   const key = modelCatalogKey(modelCatalogParams(params));
@@ -150,9 +145,11 @@ export function publishModelCatalogResult(
   if (!params.refresh && (entry.publishedRead ?? 0) > read.order) {
     return false;
   }
-  // A winner retires same-projection readers, but cannot retire explicit discovery.
+  const discoverySucceeded = !result.refreshFailed;
+  // Partial inventory updates display without settling another reader's discovery.
   for (const pending of cache.reads) {
     if (
+      discoverySucceeded &&
       pending !== read &&
       pending.scope &&
       modelCatalogKey(modelCatalogParams(pending.scope)) === key &&
@@ -162,7 +159,7 @@ export function publishModelCatalogResult(
     }
   }
   cache.reads.delete(read);
-  if (params.refresh) {
+  if (params.refresh && discoverySucceeded) {
     for (const other of cache.entries.values()) {
       if (other !== entry) {
         invalidateModelCatalogEntry(other);
@@ -171,17 +168,19 @@ export function publishModelCatalogResult(
     cache.reads.clear();
   }
   entry.result = result;
-  entry.invalidated = false;
+  entry.invalidated = !discoverySucceeded;
   entry.publishedRead = read.order;
   // Cooldown expiry changes readiness without publishing a new Gateway generation.
-  entry.expiresAt = result.models.reduce(
-    (expiresAt, model) => Math.min(expiresAt, model.unavailableUntil ?? Infinity),
-    Infinity,
-  );
+  entry.expiresAt = discoverySucceeded
+    ? result.models.reduce(
+        (expiresAt, model) => Math.min(expiresAt, model.unavailableUntil ?? Infinity),
+        Infinity,
+      )
+    : undefined;
   cache.entries.delete(key);
   cache.entries.set(key, entry);
   for (const [budget, pending] of entry.pending) {
-    if (params.refresh || !pending.refresh) {
+    if (discoverySucceeded && (params.refresh || !pending.refresh)) {
       pending.resolve(result);
       entry.pending.delete(budget);
     }
