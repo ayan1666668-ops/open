@@ -674,6 +674,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     canApplyPrimarySnapshot: () => isPrimarySessionListQuery(lastListOptions),
     invalidateManagedLists,
     scheduleEvent(
+      this: void,
       options: { agentId?: string | null; primarySnapshotApplied?: boolean; event?: unknown } = {},
     ) {
       const matchesAgent = sessionListAgentMatcher(options.agentId);
