@@ -9,7 +9,7 @@ export type RequiredCompletionTerminalResult = {
 };
 
 const PROGRESS_ONLY_PATTERN =
-  /^(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m|i am|i(?:'|\u2019)m going to|i am going to|let me|i need to)\s+(?:now\s+)?(?:analyz(?:e|ing)|apply|check(?:ing)?|continue|debug(?:ging)?|follow(?:ing)?\s+up|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?(?:\s+into)?|map(?:ping)?|open(?:ing)?|read(?:ing)?|report(?:ing)?(?:\s+back)?|review(?:ing)?|run(?:ning)?|start(?:ing)?|test(?:ing)?|trace|trac(?:e|ing)|try(?:ing)?|update|verify(?:ing)?|work(?:ing)?)/i;
+  /^(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m|i am|i(?:'|\u2019)m going to|i am going to|let me|i need to)\s+(?:now\s+)?(?:analyz(?:e|ing)|apply|check(?:ing)?|confirm(?:ing)?|continue|debug(?:ging)?|figure(?:ing)?\s+out|find(?:ing)?\s+out|follow(?:ing)?\s+up|get(?:ting)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?(?:\s+into)?|map(?:ping)?|open(?:ing)?|read(?:ing)?|report(?:ing)?(?:\s+back)?|review(?:ing)?|run(?:ning)?|see(?:ing)?|start(?:ing)?|test(?:ing)?|trace|trac(?:e|ing)|try(?:ing)?|update|verify(?:ing)?|work(?:ing)?)/i;
 
 const BARE_PROGRESS_ONLY_PATTERN =
   /^(?:analyz(?:e|ing)|check(?:ing)?|debug(?:ging)?|inspect(?:ing)?|investigat(?:e|ing)|look(?:ing)?\s+into|map(?:ping)?|read(?:ing)?|report(?:ing)?\s+back|review(?:ing)?|run(?:ning)?|test(?:ing)?|trac(?:e|ing)|verify(?:ing)?|work(?:ing)?\s+on)\b/i;
@@ -20,15 +20,41 @@ const FOLLOW_UP_PLANNING_PREFIX_PATTERN =
 // A real final summary can open with progress narration ("I'll verify\u2026") yet
 // still carry the deliverable. The progress-only prefix check would block it,
 // and the sentence-boundary rescue misses comma-joined or progress-worded
-// result sentences. Treat any strong result/report/verification marker anywhere
-// in the text as proof the completion is not progress-only. Markers are kept
-// deliberately strong (section headers, past-tense completion verbs, explicit
-// pass outcomes, check glyphs) so genuine narration is not swallowed.
+// result sentences. A sentence carrying a strong result/report/verification
+// marker proves that sentence reports a delivered result — but a marker inside
+// a conditional clause ("I'll investigate whether the tests passed") is a
+// pending outcome, not a report, and future-tense narration delivers nothing.
+// Markers are therefore evaluated per sentence, with conditional clauses
+// stripped and future/pending framing rejected.
 const COMPLETION_RESULT_MARKER_PATTERN =
   /(?:(?:^|[\s([*_>\u2022-])(?:result|results|report|summary|outcome|conclusion|finding|findings|verification|verified|deliverable|proof|status|changes?|recommendation|backup|rollback|files?\s+changed)\s*[:\-\u2013\u2014])|\b(?:done|completed|finished|fixed|patched|resolved|deployed|landed|merged|implemented|confirmed)\b|\b(?:tests?|build|lint|checks?|syntax)\s+(?:passed|succeeded|green)\b|[\u2713\u2714\u2705]/i;
 
+const CONDITIONAL_CLAUSE_PATTERN = /\b(?:whether|if|unless)\b[^,.!?;:]*/gi;
+
+const FUTURE_OR_PENDING_PATTERN =
+  /\b(?:will|i(?:'|\u2019)ll|going\s+to|plan(?:s|ning)?\s+to|hop(?:e|ing)(?:\s+(?:to|that))?|about\s+to|try(?:ing)?\s+to|attempt(?:ing)?\s+to|need\s+to|let\s+me|pending|in\s+progress|not\s+yet)\b/i;
+
+function isCompletionResultSentence(sentence: string): boolean {
+  const stripped = sentence.replace(CONDITIONAL_CLAUSE_PATTERN, " ");
+  return (
+    COMPLETION_RESULT_MARKER_PATTERN.test(stripped) && !FUTURE_OR_PENDING_PATTERN.test(stripped)
+  );
+}
+
 function containsCompletionResultMarker(value: string): boolean {
-  return COMPLETION_RESULT_MARKER_PATTERN.test(value);
+  // Sentence scan: "I'll verify the fix. Verification: …" passes on the
+  // strength of its result sentence, while a future-only summary whose only
+  // marker sits inside a conditional clause stays progress-only.
+  const boundary = /(?:[.!?:;]|\s[-\u2013\u2014])\s+\S/g;
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(value)) !== null) {
+    if (isCompletionResultSentence(value.slice(start, match.index + 1))) {
+      return true;
+    }
+    start = match.index + match[0].length - 1;
+  }
+  return isCompletionResultSentence(value.slice(start));
 }
 
 function normalizeCompletionText(value: string | null | undefined): string {
@@ -65,7 +91,7 @@ function hasNonProgressFollowupSentence(value: string): boolean {
   return matchesProgressOnlyPrefix(firstSentence) && !isProgressOnlyCompletionText(rest);
 }
 
-export function isProgressOnlyCompletionText(value: string | null | undefined): boolean {
+function isProgressOnlyCompletionText(value: string | null | undefined): boolean {
   const normalized = normalizeCompletionText(value);
   if (!normalized) {
     return false;

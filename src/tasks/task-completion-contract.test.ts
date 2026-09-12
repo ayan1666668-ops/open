@@ -1,25 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
-  isProgressOnlyCompletionText,
   resolveRequiredCompletionDeliveryFailureTerminalResult,
   resolveRequiredCompletionTerminalResult,
 } from "./task-completion-contract.js";
 
-describe("isProgressOnlyCompletionText", () => {
+describe("resolveRequiredCompletionTerminalResult", () => {
+  it("blocks an empty required completion", () => {
+    expect(resolveRequiredCompletionTerminalResult("")).toEqual({
+      terminalOutcome: "blocked",
+      terminalSummary: "Required completion did not produce a final deliverable.",
+    });
+  });
+
   // Genuine narration with no deliverable must stay classified as progress-only
-  // so required completions still block on it.
+  // so required completions still block on it. A result marker inside a
+  // conditional clause ("whether the tests passed") is a pending outcome, not a
+  // delivered result.
   it.each([
     ["pure progress", "Let me run the tests"],
     ["narration that promises a later report", "I'll analyze the logs and report back"],
     ["future-tense verification", "I'm going to verify the fix"],
     ["conditional on whether tests pass", "I'll check whether the tests pass before continuing"],
+    ["future-only conditional result", "I'll investigate whether the tests passed"],
+    ["bare conditional result", "Investigating whether the tests passed"],
     ["bare progress verb", "Investigating the gateway logs"],
-  ])("treats %s as progress-only", (_label, text) => {
-    expect(isProgressOnlyCompletionText(text)).toBe(true);
+  ])("blocks %s as progress-only", (_label, text) => {
+    expect(resolveRequiredCompletionTerminalResult(text)).toEqual({
+      terminalOutcome: "blocked",
+      terminalSummary:
+        "Required completion ended with progress-only text, not a final deliverable.",
+    });
   });
 
   // A real final summary can open with progress narration but still carry a
-  // result/report/verification marker; those must not be misclassified.
+  // result/report/verification marker in a delivered-result sentence; those
+  // must not be misclassified.
   it.each([
     [
       "single-sentence narration that lands a result",
@@ -41,33 +56,12 @@ describe("isProgressOnlyCompletionText", () => {
       "narration followed by a Result: header",
       "I'll start running the suite. Result: 3 files changed, all checks passed.",
     ],
-  ])("does not treat %s as progress-only", (_label, text) => {
-    expect(isProgressOnlyCompletionText(text)).toBe(false);
-  });
-});
-
-describe("resolveRequiredCompletionTerminalResult", () => {
-  it("blocks an empty required completion", () => {
-    expect(resolveRequiredCompletionTerminalResult("")).toEqual({
-      terminalOutcome: "blocked",
-      terminalSummary: "Required completion did not produce a final deliverable.",
-    });
-  });
-
-  it("blocks a progress-only required completion", () => {
-    expect(resolveRequiredCompletionTerminalResult("I'm going to verify the fix")).toEqual({
-      terminalOutcome: "blocked",
-      terminalSummary:
-        "Required completion ended with progress-only text, not a final deliverable.",
-    });
-  });
-
-  it("accepts a narration-prefixed completion that carries a result marker", () => {
-    expect(
-      resolveRequiredCompletionTerminalResult(
-        "I'll verify the fix. Verification: all 62 tests passed, 2 files changed.",
-      ),
-    ).toEqual({});
+    [
+      "semicolon-split narration with a past-tense result sentence",
+      "Investigating the flake, I patched the handler; rollback notes in the PR.",
+    ],
+  ])("accepts %s as a final deliverable", (_label, text) => {
+    expect(resolveRequiredCompletionTerminalResult(text)).toEqual({});
   });
 });
 
