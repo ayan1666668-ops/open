@@ -90,7 +90,7 @@ Examples:
 
     A third-party channel plugin does not need its own adapter for
     current-conversation bindings. See
-    [Account-scoped conversation binding support](/plugins/sdk-channel-plugins#account-scoped-conversation-binding-support)
+    [Account-scoped conversation binding support](/plugins/sdk-channel-plugins/sessions-and-bindings#account-scoped-conversation-binding-support)
     for the plugin-side field and the `bindingStore: "adapter"` opt-out.
 
   </Accordion>
