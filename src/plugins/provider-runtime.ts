@@ -796,8 +796,8 @@ function* resolveSyntheticAuthProviders(
     params.modelApi,
   );
   const matchesSyntheticAuthProvider = (provider: ProviderPlugin) =>
-    Boolean(provider.resolveSyntheticAuth || provider.prepareSyntheticAuth) &&
-    matchesAnyProviderPluginRef(provider, providerRefs);
+    matchesAnyProviderPluginRef(provider, providerRefs) &&
+    Boolean(provider.resolveSyntheticAuth || provider.prepareSyntheticAuth);
   const discoveryPluginIds = [
     ...new Set(
       providerRefs.flatMap(
