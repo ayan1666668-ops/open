@@ -1,4 +1,5 @@
-import { expect, it, vi } from "vitest";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createRealtimePlaybackFixture } from "./realtime-playback.integration.test-support.js";
 
 function pcmTone(audioMs: number, amplitude = 4_000): Buffer {
@@ -102,39 +103,46 @@ it.each(["queued", "backlogged"] as const)(
   async (position) => {
     const fixture = createRealtimePlaybackFixture(undefined, { outputAudioMode: "continuous" });
     const lane = position === "queued" ? fixture.createLane() : fixture;
-    try {
-      if (position === "queued") {
-        fixture.callbacks.onAudio(pcmTone(500));
-      }
-      const consumed: Array<{ opusMs: number; pcmMs: number | undefined }> = [];
-      const recordProgress = () => {
-        const state = fixture.player.state;
-        if (state.status === fixture.voiceSdk.AudioPlayerStatus.Idle) {
-          throw new Error("expected continuous speech playback");
-        }
-        consumed.push({
-          opusMs: state.resource.playbackDuration,
-          pcmMs: lane.callbacks.getPlaybackState?.()[0]?.audioEndMs,
-        });
-      };
-      lane.callbacks.onAudio(pcmTone(100), { itemId: "speech" });
-      lane.callbacks.onMark?.("first", recordProgress);
-      lane.callbacks.onAudio(Buffer.alloc(500 * 48), { itemId: "speech" });
-      lane.callbacks.onAudio(pcmTone(100), { itemId: "speech" });
-      lane.callbacks.onMark?.("last", recordProgress);
-      expect(consumed).toEqual([]);
-      if (position === "queued") {
-        fixture.callbacks.onClearAudio();
-      }
-      await vi.waitFor(() => expect(consumed).toHaveLength(2));
-      expect(consumed).toEqual([
-        { opusMs: 100, pcmMs: 100 },
-        { opusMs: 700, pcmMs: 700 },
-      ]);
-      expect(lane.onTerminalError).not.toHaveBeenCalled();
-    } finally {
+    const playbackComplete = createDeferred<void>();
+    onTestFinished(() => {
+      fixture.player.off("error", playbackComplete.reject);
       fixture.close();
+    });
+    fixture.player.once("error", playbackComplete.reject);
+    fixture.onTerminalError.mockImplementation(playbackComplete.reject);
+    lane.onTerminalError.mockImplementation(playbackComplete.reject);
+    if (position === "queued") {
+      fixture.callbacks.onAudio(pcmTone(500));
     }
+    const consumed: Array<{ opusMs: number; pcmMs: number | undefined }> = [];
+    const recordProgress = () => {
+      const state = fixture.player.state;
+      if (state.status === fixture.voiceSdk.AudioPlayerStatus.Idle) {
+        throw new Error("expected continuous speech playback");
+      }
+      consumed.push({
+        opusMs: state.resource.playbackDuration,
+        pcmMs: lane.callbacks.getPlaybackState?.()[0]?.audioEndMs,
+      });
+    };
+    lane.callbacks.onAudio(pcmTone(100), { itemId: "speech" });
+    lane.callbacks.onMark?.("first", recordProgress);
+    lane.callbacks.onAudio(Buffer.alloc(500 * 48), { itemId: "speech" });
+    lane.callbacks.onAudio(pcmTone(100), { itemId: "speech" });
+    lane.callbacks.onMark?.("last", () => {
+      recordProgress();
+      playbackComplete.resolve();
+    });
+    expect(consumed).toEqual([]);
+    if (position === "queued") {
+      fixture.callbacks.onClearAudio();
+    }
+    await playbackComplete.promise;
+    expect(consumed).toEqual([
+      { opusMs: 100, pcmMs: 100 },
+      { opusMs: 700, pcmMs: 700 },
+    ]);
+    expect(lane.onTerminalError).not.toHaveBeenCalled();
   },
 );
 
