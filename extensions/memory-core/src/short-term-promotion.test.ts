@@ -355,6 +355,47 @@ describe("normalizeShortTermRecallStore numeric decoding", () => {
     expect(Object.keys(normalized.entries)).toEqual(["memory:memory/2026-09-01.md:16:20"]);
   });
 
+  // buildEntryKey appends `:${claimHash}` for grounded entries, so a range cannot be read
+  // by taking the last two colon-separated fields: an all-decimal hash would be mistaken
+  // for the end line, and a hex hash would fail to match and drop the row.
+  baseIt("recovers the range when the key carries a hex claim-hash suffix", () => {
+    const claimKey = "memory:memory/2026-09-01.md:16:20:abcdef012345";
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy(claimKey, { startLine: "0x10", endLine: "0x20" }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([claimKey]);
+    expect(normalized.entries[claimKey]?.startLine).toBe(16);
+    expect(normalized.entries[claimKey]?.endLine).toBe(20);
+  });
+
+  baseIt("does not mistake an all-decimal claim hash for the end line", () => {
+    const claimKey = "memory:memory/2026-09-01.md:16:20:123456";
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy(claimKey, { startLine: "0x10", endLine: "0x20" }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([claimKey]);
+    expect(normalized.entries[claimKey]?.startLine).toBe(16);
+    expect(normalized.entries[claimKey]?.endLine).toBe(20);
+  });
+
+  baseIt("does not recover a range from the daily claim key", () => {
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:claim:abcdef012345", { startLine: "0x10", endLine: "0x20" }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([]);
+  });
+
+  baseIt("does not recover a range from a key for a different path", () => {
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:memory/2026-09-02.md:16:20", { startLine: "0x10", endLine: "0x20" }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([]);
+  });
+
   baseIt("drops a row only when neither the fields nor the key carry a range", () => {
     const normalized = normalizeShortTermRecallStore(
       storeKeyedBy("k1", { startLine: "0x10", endLine: 20 }),

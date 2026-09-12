@@ -210,4 +210,52 @@ describe("recall store history preservation through the real read path", () => {
       }
     }
   });
+
+  // A grounded entry's key carries an optional `:${claimHash}` suffix
+  // (buildEntryKey). Reading the range from the last two colon-separated fields
+  // therefore breaks: a hex hash does not match and would drop the row, and an
+  // all-decimal hash would be mistaken for the end line and recover a wrong range.
+  // Both forms are driven through the real SQLite read-normalize-write cycle.
+  it.each([
+    ["hex claim hash", "memory:memory/2026-09-01.md:16:20:abcdef012345"],
+    ["all-decimal claim hash", "memory:memory/2026-09-01.md:16:20:123456"],
+  ])(
+    "keeps a claim-qualified row and its range through a write cycle (%s)",
+    async (_label, key) => {
+      const store = validStore() as unknown as RawRecallStore;
+      // The row an older permissive decoder accepted: range fields it had coerced.
+      store.entries = {
+        [key]: {
+          path: "memory/2026-09-01.md",
+          startLine: "0x10",
+          endLine: "0x20",
+          source: "memory",
+          snippet: "Grounded note with a claim hash.",
+          recallCount: 2,
+          dailyCount: 0,
+          groundedCount: 1,
+          totalScore: 1,
+          maxScore: 1,
+          claimHash: key.slice(key.lastIndexOf(":") + 1),
+          firstRecalledAt: NOW,
+          lastRecalledAt: NOW,
+        },
+      };
+
+      await testing.writeRawRecallStore(workspaceDir, structuredClone(store));
+      const read = await readStore(workspaceDir, NOW);
+
+      // The row survives, keyed as persisted, with the range recovered exactly.
+      expect(Object.keys(read.entries)).toStrictEqual([key]);
+      expect(read.entries[key]?.startLine).toBe(16);
+      expect(read.entries[key]?.endLine).toBe(20);
+
+      // And it survives a normal read -> write cycle, so history is not deleted.
+      await testing.writeRawRecallStore(workspaceDir, structuredClone(store));
+      const reread = await readStore(workspaceDir, NOW);
+      expect(Object.keys(reread.entries)).toStrictEqual([key]);
+      expect(reread.entries[key]?.startLine).toBe(16);
+      expect(reread.entries[key]?.endLine).toBe(20);
+    },
+  );
 });

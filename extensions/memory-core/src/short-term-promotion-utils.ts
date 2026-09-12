@@ -319,7 +319,7 @@ export function normalizeShortTermRecallStore(raw: unknown, nowIso: string): Sho
       const parsedEndLine = parseStrictNonNegativeInteger(entry.endLine);
       const recoveredRange =
         parsedStartLine === undefined || parsedEndLine === undefined
-          ? recoverEntryRangeFromKey(key)
+          ? recoverEntryRangeFromKey(key, entryPath)
           : undefined;
       const startLine = parsedStartLine ?? recoveredRange?.startLine;
       const endLine = parsedEndLine ?? recoveredRange?.endLine;
@@ -614,20 +614,42 @@ export function parseEntryRangeFromKey(
 }
 
 /**
- * Recovers a positive line range from an entry's map key of the form
- * `${source}:${path}:${startLine}:${endLine}` (see {@link buildEntryKey}).
+ * Recovers a positive line range from an entry's map key.
  *
- * Returns `undefined` when the key does not carry a usable range, so callers can
- * distinguish "recovered a faithful range" from "no identity available" instead of
- * falling back to a placeholder range that would misidentify the entry.
+ * {@link buildEntryKey} builds `${source}:${path}:${startLine}:${endLine}` and appends
+ * `:${claimHash}` for grounded entries. The trailing suffix means a range cannot be read
+ * by taking the last two colon-separated fields: an all-decimal claim hash would be
+ * mistaken for the end line, and a hex hash would fail to match at all and drop the row.
+ *
+ * The known path is therefore matched explicitly from the front, which also keeps a path
+ * containing colons (such as a drive letter) unambiguous.
+ *
+ * Returns `undefined` when the key carries no usable range, so callers can distinguish
+ * "recovered a faithful range" from "no identity available" instead of falling back to a
+ * placeholder range that would misidentify the entry.
  */
-function recoverEntryRangeFromKey(key: string): { startLine: number; endLine: number } | undefined {
-  const match = key.match(/:(\d+):(\d+)$/);
-  if (!match) {
+function recoverEntryRangeFromKey(
+  key: string,
+  entryPath: string,
+): { startLine: number; endLine: number } | undefined {
+  const prefix = `memory:${entryPath}:`;
+  if (!key.startsWith(prefix)) {
     return undefined;
   }
-  const startLine = toNonNegativeInt(match[1]);
-  const endLine = toNonNegativeInt(match[2]);
+  // Optional trailing `:${claimHash}`; the hash is opaque, so strip one suffix field
+  // only when what remains still ends in a start:end pair.
+  const remainder = key.slice(prefix.length);
+  const parts = remainder.split(":");
+  const candidate = parts.length > 2 ? parts.slice(0, 2) : parts;
+  if (candidate.length !== 2) {
+    return undefined;
+  }
+  const [rawStart, rawEnd] = candidate;
+  if (rawStart === undefined || rawEnd === undefined) {
+    return undefined;
+  }
+  const startLine = toNonNegativeInt(rawStart);
+  const endLine = toNonNegativeInt(rawEnd);
   if (startLine <= 0 || endLine <= 0) {
     return undefined;
   }
