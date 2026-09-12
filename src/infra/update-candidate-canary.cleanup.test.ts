@@ -128,7 +128,6 @@ describe("update candidate canary cleanup", () => {
         }
         throw Object.assign(new Error("No such process"), { code: "ESRCH" });
       });
-      vi.stubGlobal("process", { ...process, platform: windows ? "win32" : "linux", kill: probe });
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: unknown) => {
@@ -176,8 +175,18 @@ describe("update candidate canary cleanup", () => {
           env: {},
           timeoutMs: 500,
           rehearsal,
+          onStep: (step) => {
+            if (step.name === "candidate snapshot") {
+              // Prepare real directories on the host before simulating child-process semantics.
+              vi.stubGlobal("process", {
+                ...process,
+                platform: windows ? "win32" : "linux",
+                kill: probe,
+              });
+            }
+          },
         });
-        expect(gatewayPid).toBeDefined();
+        expect(gatewayPid, result.logTail.join("\n")).toBeDefined();
         if (exitAfter === "survives" || exitAfter === "EPERM") {
           expect(result).toMatchObject({ status: "error", phase: "readiness" });
           expect(result.logTail.join("\n")).toContain("process tree did not exit");
