@@ -22,6 +22,9 @@ afterEach(async () => {
 });
 
 it("resolves a Groq manifest model from a global external install during setup", async () => {
+  clearPluginMetadataLifecycleCaches();
+  resetPluginLoaderTestStateForTest();
+  clearLoadInstalledPluginIndexInstallRecordsCache();
   await withOpenClawTestState(
     {
       label: "groq-external-setup",
