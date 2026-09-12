@@ -1,7 +1,5 @@
 import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { z } from "zod";
-import { isCurrentUpdateRunContinuation } from "./update-run-activity.js";
-import { isRetainedStep } from "./update-run-codec.js";
 import type { UpdateRunRecordSchema } from "./update-run-schema.js";
 import type { UpdateStepResult } from "./update-runner-types.js";
 
@@ -26,43 +24,12 @@ export type UpdateRunRecord = z.infer<typeof UpdateRunRecordSchema>;
 export type UpdateRunPhase = UpdateRunRecord["phase"];
 export type UpdateRunStep = UpdateRunRecord["steps"][number];
 
-export function upsertUpdateRunStep(record: UpdateRunRecord, step: UpdateRunStep): void {
-  const index = record.steps.findIndex((existing) => existing.step === step.step);
-  if (index >= 0) {
-    record.steps[index] = { ...record.steps[index], ...step };
-  } else {
-    record.steps.push(step);
-  }
-  while (record.steps.length > 128) {
-    const disposable = record.steps.findIndex((entry) => !isRetainedStep(entry));
-    if (disposable < 0) {
-      throw new Error("Update run retained steps exceed the step limit");
-    }
-    record.steps.splice(disposable, 1);
-  }
-}
-
 export type FinishUpdateRunResult = {
   status: Exclude<UpdateRunRecord["status"], "running">;
   reason?: string;
   after?: UpdateRunRecord["after"];
   downtimeMs?: number;
 };
-
-export function continueUpdateRunRepairRecord(
-  record: UpdateRunRecord,
-  inheritedRunId: string | undefined,
-): void {
-  if (!isCurrentUpdateRunContinuation(record, inheritedRunId)) {
-    throw new Error(`Update ${record.runId} is no longer owned by this repair process.`);
-  }
-  upsertUpdateRunStep(record, {
-    step: "finalize:repair-continuation",
-    status: "completed",
-    endedAtMs: Date.now(),
-    detail: `Repair continued within the owning update by PID ${process.pid}.`,
-  });
-}
 
 export function finishUpdateRunRecord(
   record: UpdateRunRecord,
@@ -92,6 +59,37 @@ export function finishUpdateRunRecord(
   record.finishedAtMs = now;
   record.after = { ...record.after, ...result.after };
   record.downtimeMs = result.downtimeMs ?? record.downtimeMs;
+}
+
+export function recordUpdateRunVerificationRecord(
+  record: UpdateRunRecord,
+  verification: UpdateRunRecord["verification"],
+  options: { onlyIfRunning?: true } = {},
+): void {
+  // Startup observations cannot revise a terminal result, including one
+  // committed after the Gateway read the run but before this transaction.
+  if (options.onlyIfRunning && record.status !== "running") {
+    return;
+  }
+  record.verification = {
+    ...record.verification,
+    ...verification,
+    ...(verification.pluginErrors ? { pluginErrors: verification.pluginErrors.slice(-32) } : {}),
+  };
+  if (record.status === "running" && verification.serviceRunning === false) {
+    record.confirmedAtMs = null;
+  }
+  if (
+    record.verification.serviceRunning &&
+    record.verification.versionMatch &&
+    record.verification.settled === true &&
+    record.verification.readyz === true &&
+    record.verification.channelsReady === true &&
+    record.verification.pluginErrors?.length === 0 &&
+    record.confirmedAtMs === null
+  ) {
+    record.confirmedAtMs = Date.now();
+  }
 }
 
 export type UpdateFetchFailure = {
