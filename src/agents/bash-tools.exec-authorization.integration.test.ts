@@ -87,11 +87,13 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
   function tool(
     autoReviewer: ExecAutoReviewer,
     mode: "auto" | "ask" | "allowlist" | "full" = "auto",
+    pathPrepend?: string[],
   ) {
     return createExecTool({
       agentId: "main",
       host: "gateway",
       mode,
+      pathPrepend,
       safeBins: [],
       autoReviewer,
       cwd: root,
@@ -188,7 +190,6 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
       ).toBe("venv-package-loaded approved.txt");
       const earlierBin = path.join(root, "earlier-bin");
       fs.mkdirSync(earlierBin);
-      setTestEnvValue("PATH", `${earlierBin}:${path.dirname(interpreter)}:/usr/bin:/bin`);
       const review = reviewer();
       if (shadowed) {
         review.mockImplementation(async () => {
@@ -196,9 +197,11 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
           return { decision: "allow-once", risk: "low", rationale: "list fixture files" };
         });
       }
-      const result = await tool(review).execute("venv-review", {
-        command: "python probe.py *.txt",
-      });
+      // Gateway login-shell PATH is cached; select the fixture through its explicit exec setting.
+      const result = await tool(review, "auto", [earlierBin, path.dirname(interpreter)]).execute(
+        "venv-review",
+        { command: "python probe.py *.txt" },
+      );
       expect(review.mock.calls.length).toBe(1);
       if (shadowed) {
         expect(result.details.status).toBe("failed");

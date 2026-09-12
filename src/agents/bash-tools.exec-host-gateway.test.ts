@@ -59,6 +59,7 @@ import {
 } from "../process/gateway-work-admission.js";
 import { createProcessSupervisor } from "../process/supervisor/supervisor.js";
 import type { ProcessSupervisor } from "../process/supervisor/types.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -3460,7 +3461,7 @@ EOF`,
     "resolves a %s GitHub credential only after delayed approval",
     async (credentialState) => {
       buildExecApprovalFollowupTargetMock.mockImplementation((value) => value);
-      const followupDelivered = Promise.withResolvers<void>();
+      const followupDelivered = createDeferredCore();
       sendExecApprovalFollowupResultMock.mockImplementation(async () => {
         followupDelivered.resolve();
       });
