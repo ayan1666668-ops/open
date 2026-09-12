@@ -69,6 +69,22 @@ export default defineSingleProviderPluginEntry({
   provider: {
     label: "Groq",
     docsPath: "/providers/groq",
+    auth: [{
+      methodId: "api-key",
+      label: "Groq API key",
+      optionKey: "groqApiKey",
+      flagName: "--groq-api-key",
+      envVar: "GROQ_API_KEY",
+      promptMessage: "Enter Groq API key",
+      defaultModel: "groq/openai/gpt-oss-120b",
+      wizard: {
+        choiceId: "groq-api-key",
+        choiceLabel: "Groq API key",
+        groupId: "groq",
+        groupLabel: "Groq",
+        onboardingScopes: ["text-inference"],
+      },
+    }],
     catalog: { liveModelDiscovery: true, discoveryMode: "strict" },
   },
 });
