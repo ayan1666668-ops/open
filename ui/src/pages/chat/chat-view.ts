@@ -224,8 +224,11 @@ export function renderChat(props: ChatProps) {
   // placement initial turn, whose retry action belongs to startup.
   const defaultComposer = renderChatComposer({
     ...props,
-    queue: selectChatInputDisplay(props.messages, props.queue, pendingInputs?.page.items ?? [])
-      .queue,
+    displayQueue: selectChatInputDisplay(
+      props.messages,
+      props.queue,
+      pendingInputs?.page.items ?? [],
+    ).queue,
     anchoredNotices: renderChatComposerNotices(props),
     onRequestUpdate: requestUpdate,
     onToggleRealtimeTalk: props.suggestionComposer ? undefined : props.onToggleRealtimeTalk,

@@ -1675,27 +1675,36 @@ describe("retained input navigation", () => {
           ],
         });
       }
-      const queue = ["retained", "new"].map((id) => ({
+      const queue = ["before", "retained", "new"].map((id, index) => ({
         id,
         text: message.content,
-        createdAt: 100,
+        createdAt: 100 + index,
         sendRunId: `${id}-run`,
         sendState: "waiting-reconnect" as const,
       }));
       const onQueueRemove = vi.fn();
+      const onQueueMove = vi.fn();
       const container = renderChatView({
         historyState,
         messages: source === "transcript" ? [message] : [],
         queue,
         onQueueRemove,
+        onQueueMove,
       });
 
       const rows = container.querySelectorAll(".chat-queue__item");
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.textContent).toContain(message.content);
-      rows[0]?.querySelector<HTMLButtonElement>(".chat-queue__remove")?.click();
+      expect([...rows].map((row) => row.getAttribute("data-chat-queue-item"))).toEqual([
+        "before",
+        "new",
+      ]);
+      const grips = [...container.querySelectorAll<HTMLButtonElement>(".chat-queue__grip")];
+      expect(grips).toHaveLength(2);
+      expect(grips.every((grip) => grip.disabled)).toBe(true);
+      grips[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+      expect(onQueueMove).not.toHaveBeenCalled();
+      rows[1]?.querySelector<HTMLButtonElement>(".chat-queue__remove")?.click();
       expect(onQueueRemove).toHaveBeenCalledWith("new");
-      expect(queue).toHaveLength(2);
+      expect(queue).toHaveLength(3);
     },
   );
 
