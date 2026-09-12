@@ -206,6 +206,11 @@ export function getChatRunOwner(owner: object): string | undefined {
   return chatSessionProjections.get(owner)?.runId;
 }
 
+export function getChatRunOwnerSessionKey(owner: object): string | undefined {
+  const current = chatSessionProjections.get(owner);
+  return current?.runId ? current.projection?.scope.sessionKey : undefined;
+}
+
 export function setChatRunOwner(owner: object, runId: string | undefined): void {
   chatSessionProjections.set(owner, { ...chatSessionProjections.get(owner), runId });
 }
