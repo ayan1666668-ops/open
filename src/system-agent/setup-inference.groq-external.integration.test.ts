@@ -6,7 +6,6 @@ import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
 import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
-  readPersistedInstalledPluginIndexInstallRecords,
   writePersistedInstalledPluginIndexInstallRecords,
 } from "../plugins/installed-plugin-index-records.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
@@ -40,6 +39,29 @@ it("resolves a Groq manifest model from a global external install during setup",
     async (state) => {
       const pluginDir = state.statePath("extensions", "groq");
       await fs.cp(path.join(process.cwd(), "extensions", "groq"), pluginDir, { recursive: true });
+      // The changed-node job uses a sparse checkout, so untouched package files
+      // such as the runtime entry may not be present. Keep this external package
+      // fixture self-contained while retaining the real Groq manifest and
+      // provider-discovery entry under test.
+      await fs.writeFile(
+        path.join(pluginDir, "index.ts"),
+        `import { defineSingleProviderPluginEntry } from "openclaw/plugin-sdk/provider-entry";
+import manifest from "./openclaw.plugin.json" with { type: "json" };
+
+export default defineSingleProviderPluginEntry({
+  id: "groq",
+  name: "Groq Provider",
+  description: "Bundled Groq provider plugin",
+  manifest,
+  provider: {
+    label: "Groq",
+    docsPath: "/providers/groq",
+    catalog: { liveModelDiscovery: true, discoveryMode: "strict" },
+  },
+});
+`,
+        "utf8",
+      );
       const config = { plugins: { entries: { groq: { enabled: true } } } };
       await state.writeConfig(config);
       await writePersistedInstalledPluginIndexInstallRecords(
@@ -105,7 +127,7 @@ it("resolves a Groq manifest model from a global external install during setup",
           runtime: {
             log: () => {},
             error: (message) => {
-              runtimeErrors.push(message);
+              runtimeErrors.push(String(message));
             },
             exit: (code) => {
               throw new Error(`exit ${code}`);
@@ -113,41 +135,7 @@ it("resolves a Groq manifest model from a global external install during setup",
           },
         });
 
-        const persistedInstallRecords = readPersistedInstalledPluginIndexInstallRecords({
-          env: state.env,
-        });
-        const manifestChoices = (
-          await import("../plugins/provider-auth-choices.js")
-        ).resolveManifestProviderAuthChoices({
-          config,
-          workspaceDir: state.workspaceDir,
-          env: state.env,
-        });
-        const runtimeProviders = (await import("../plugins/providers.runtime.js"))
-          .resolvePluginProvidersCore({
-            config,
-            workspaceDir: state.workspaceDir,
-            env: state.env,
-            mode: "setup",
-            cache: false,
-            onlyPluginIds: ["groq"],
-          })
-          .map((provider) => ({
-            pluginId: provider.pluginId,
-            id: provider.id,
-            auth: provider.auth.map((method) => method.id),
-          }));
-        expect(
-          result,
-          JSON.stringify({
-            result,
-            runtimeErrors,
-            requests,
-            persistedInstallRecords,
-            manifestChoices,
-            runtimeProviders,
-          }),
-        ).toMatchObject({
+        expect(result, JSON.stringify({ result, runtimeErrors, requests })).toMatchObject({
           ok: true,
           modelRef: "groq/openai/gpt-oss-120b",
         });
