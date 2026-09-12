@@ -3,7 +3,11 @@
  * with OpenClaw sandbox policy checks before every bridge operation.
  */
 import { posix as pathPosix } from "node:path";
-import { resolveSandboxFilePolicyPath, type SandboxFsStat } from "openclaw/plugin-sdk/sandbox";
+import {
+  implementsSandboxFilePolicyPath,
+  resolveSandboxFilePolicyPath,
+  type SandboxFsStat,
+} from "openclaw/plugin-sdk/sandbox";
 import type { JsonObject, JsonValue } from "../protocol.js";
 import {
   assertFsSandboxAccess,
@@ -369,7 +373,13 @@ async function listDirectoryEntries(
   assertResolvedFsSandboxAccess(fsSandboxPolicy, [{ path: filePath, access: "read" }]);
   const readPath = await resolveCanonicalFsReadPath(execServer, fsSandboxPolicy, filePath);
   const expectedPolicyPath = expectedFsReadPolicyPath(fsSandboxPolicy, readPath);
-  if (execServer.fsBridge.readDirectory) {
+  // Direct bridge listing is selected only for bridges that map physical
+  // identity back into the policy namespace, because those bridges validate
+  // the listed identity against the authorized policy path. A non-adopting
+  // bridge resolves directory symlinks during listing without enforcing
+  // that identity, so it keeps the non-following listing below, which never
+  // follows a symlink supplied as the source root.
+  if (execServer.fsBridge.readDirectory && implementsSandboxFilePolicyPath(execServer.fsBridge)) {
     const entries = await execServer.fsBridge.readDirectory({
       filePath: readPath,
       ...(expectedPolicyPath ? { expectedPolicyPath } : {}),

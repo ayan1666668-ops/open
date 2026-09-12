@@ -26,6 +26,16 @@ function hasSandboxFilePolicyPath(bridge: SandboxFsBridge): bridge is SandboxFil
   return SANDBOX_FILE_POLICY_PATH in bridge;
 }
 
+/**
+ * Reports whether the bridge maps a file's physical identity back into the
+ * caller's policy namespace. Only adopting bridges can enforce the canonical
+ * read identity that directory listings and copies authorize; non-adopting
+ * bridges keep their pre-existing lexical behavior instead.
+ */
+export function implementsSandboxFilePolicyPath(bridge: SandboxFsBridge): boolean {
+  return hasSandboxFilePolicyPath(bridge);
+}
+
 export async function resolveSandboxFileIdentity(params: {
   bridge: SandboxFsBridge;
   filePath: string;

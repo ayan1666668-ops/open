@@ -246,6 +246,38 @@ describe("sandbox exec-server fs RPC through real bridges", () => {
           fs.stat(path.join(remoteCopyDestination, "denied-directory-alias", "secret.txt")),
         ).rejects.toMatchObject({ code: "ENOENT" });
 
+        // A physically denied source root reached through an allowed alias
+        // must expose no protected entries and copy no protected bytes.
+        // Non-adopting bridges keep the non-following directory listing, so
+        // a symlinked source root enumerates nothing instead of resolving
+        // into the denied directory it points at.
+        const remoteDeniedRoot = path.join(mountDir, "remote-denied-root");
+        await fs.mkdir(remoteDeniedRoot);
+        await fs.writeFile(path.join(remoteDeniedRoot, "secret.txt"), "root-alias-denied");
+        await fs.symlink(remoteDeniedRoot, path.join(mountDir, "remote-root-alias"));
+        const rootAliasPolicy = codexFsSandboxContext({
+          entries: [
+            { path: specialPath("project_roots"), access: "write" },
+            { path: specialPath("project_roots", "remote-denied-root"), access: "deny" },
+          ],
+        });
+        // SAFETY: the RPC helper resolves untyped JSON-RPC payloads; the
+        // readDirectory response shape is defined by the production handler.
+        const aliasListing = (await rpc(socket, "fs/readDirectory", {
+          path: "file:///workspace/remote-root-alias",
+          sandbox: rootAliasPolicy,
+        })) as { entries: unknown[] };
+        expect(aliasListing.entries).toEqual([]);
+        await rpc(socket, "fs/copy", {
+          sourcePath: "file:///workspace/remote-root-alias",
+          destinationPath: "file:///workspace/remote-root-copy",
+          recursive: true,
+          sandbox: rootAliasPolicy,
+        });
+        await expect(
+          fs.stat(path.join(mountDir, "remote-root-copy", "secret.txt")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+
         // A destination alias into the canonical source subtree is rejected
         // before mkdirp or any child copy can mutate the destination.
         const sourceSubdir = path.join(mountDir, "nested", "src-dir", "subdir");
@@ -281,27 +313,29 @@ describe("sandbox exec-server fs RPC through real bridges", () => {
           "dir-copy",
         );
 
-        // Canonical source I/O must not erase the lexical child namespace
-        // used by deny entries during recursive traversal.
-        const privateSource = path.join(mountDir, "private-source");
-        await fs.mkdir(privateSource);
-        await fs.writeFile(path.join(privateSource, "secret.txt"), "blocked");
-        await fs.symlink(privateSource, path.join(mountDir, "source-alias"));
+        // Lexical child namespace: real directory roots still enumerate
+        // lexical children whose child policy checks apply during recursive
+        // traversal. (Non-adopting bridges stop following a symlink supplied
+        // as the source root entirely, so alias roots cannot leak targets.)
+        const lexicalRoot = path.join(mountDir, "lexical-root");
+        await fs.mkdir(lexicalRoot);
+        await fs.writeFile(path.join(lexicalRoot, "secret.txt"), "blocked");
+        await fs.writeFile(path.join(lexicalRoot, "allowed.txt"), "kept");
         const lexicalChildPolicy = codexFsSandboxContext({
           entries: [
             { path: specialPath("project_roots"), access: "write" },
-            { path: globPath("source-alias/secret.txt"), access: "deny" },
+            { path: globPath("lexical-root/secret.txt"), access: "deny" },
           ],
         });
         await expect(
           rpc(socket, "fs/copy", {
-            sourcePath: "file:///workspace/source-alias",
+            sourcePath: "file:///workspace/lexical-root",
             destinationPath: "file:///workspace/blocked-copy",
             recursive: true,
             sandbox: lexicalChildPolicy,
           }),
         ).rejects.toThrow(
-          "Codex fs sandbox denied read access to /workspace/source-alias/secret.txt",
+          "Codex fs sandbox denied read access to /workspace/lexical-root/secret.txt",
         );
         await expect(
           fs.stat(path.join(mountDir, "blocked-copy", "secret.txt")),

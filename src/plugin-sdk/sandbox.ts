@@ -50,6 +50,7 @@ export {
   prepareSshSandboxExec,
   registerSandboxBackend,
   requireSandboxBackendFactory,
+  implementsSandboxFilePolicyPath,
   resolveSandboxRuntimeStatus,
   resolveSandboxFilePolicyPath,
   resolveWritableRenameTargets,
