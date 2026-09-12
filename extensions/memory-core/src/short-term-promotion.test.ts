@@ -396,6 +396,23 @@ describe("normalizeShortTermRecallStore numeric decoding", () => {
     expect(Object.keys(normalized.entries)).toEqual([]);
   });
 
+  // Recovery must use the same strict numeric parser as the entry fields. A lenient
+  // parse here would reintroduce `0x10` -> 16 at a second entry point. Surrounding
+  // whitespace is trimmed by the shared parser and stays accepted.
+  baseIt.each([["0x10:1e2"], ["0b101:9"], ["1.9:2"], ["1e2:9"], ["16.0:20"]])(
+    "does not coerce a non-canonical bound in the key (%s)",
+    (bounds) => {
+      const normalized = normalizeShortTermRecallStore(
+        storeKeyedBy(`memory:memory/2026-09-01.md:${bounds}`, {
+          startLine: "bad",
+          endLine: "bad",
+        }),
+        nowIso,
+      );
+      expect(Object.keys(normalized.entries)).toEqual([]);
+    },
+  );
+
   baseIt("drops a row only when neither the fields nor the key carry a range", () => {
     const normalized = normalizeShortTermRecallStore(
       storeKeyedBy("k1", { startLine: "0x10", endLine: 20 }),

@@ -648,9 +648,13 @@ function recoverEntryRangeFromKey(
   if (rawStart === undefined || rawEnd === undefined) {
     return undefined;
   }
-  const startLine = toNonNegativeInt(rawStart);
-  const endLine = toNonNegativeInt(rawEnd);
-  if (startLine <= 0 || endLine <= 0) {
+  // Use the same strict parser as the entry fields. A key is written by this codebase,
+  // but a hand-edited or externally-produced store can carry a non-canonical bound, and
+  // recovering it leniently would reintroduce exactly the coercion this decoding change
+  // removes (for example `0x10` -> 16) at a second entry point.
+  const startLine = parseStrictNonNegativeInteger(rawStart);
+  const endLine = parseStrictNonNegativeInteger(rawEnd);
+  if (startLine === undefined || endLine === undefined || startLine <= 0 || endLine <= 0) {
     return undefined;
   }
   return { startLine, endLine };

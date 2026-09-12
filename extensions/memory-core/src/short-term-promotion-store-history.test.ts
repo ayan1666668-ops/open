@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readStore } from "./short-term-promotion-store.js";
+import { readStore, writeStore } from "./short-term-promotion-store.js";
 import {
   configureMemoryCoreDreamingStateForTests,
   resetMemoryCoreDreamingStateForTests,
@@ -250,8 +250,9 @@ describe("recall store history preservation through the real read path", () => {
       expect(read.entries[key]?.startLine).toBe(16);
       expect(read.entries[key]?.endLine).toBe(20);
 
-      // And it survives a normal read -> write cycle, so history is not deleted.
-      await testing.writeRawRecallStore(workspaceDir, structuredClone(store));
+      // Persist the NORMALIZED store, as a runtime write path does, then read the row
+      // back. Writing the raw input again would prove nothing about the write cycle.
+      await writeStore(workspaceDir, read);
       const reread = await readStore(workspaceDir, NOW);
       expect(Object.keys(reread.entries)).toStrictEqual([key]);
       expect(reread.entries[key]?.startLine).toBe(16);
