@@ -1890,7 +1890,7 @@ export const en: TranslationMap & {
     rawDiscard: "Discard",
     reloadBlocked: "Finish saving or discard pending config changes before reloading.",
     rawDraftBlocksApply:
-      "Unsaved raw config edits — save or discard them in the Raw editor before restarting.",
+      "Unsaved raw config edits — save or discard them in the Raw editor before applying changes.",
     rawDraftPendingFormTitle:
       "Unsaved raw config edits — save or discard them before switching to Form.",
     rawDraftBlocksFormEdit:
@@ -2791,7 +2791,7 @@ export const en: TranslationMap & {
     operatorCommands: "MCP operator commands",
     operatorCommandsHint: "Status, diagnostics, auth, probing, and runtime reload.",
     runtimeHint:
-      "Edits save automatically; runtime changes apply after a gateway restart, and active agents rebuild MCP runtimes on next use.",
+      "Edits save automatically. With automatic reload enabled, they apply without a Gateway restart. Changed MCP connections rebuild on next use.",
     toolFilter: "tool filter",
     parallel: "parallel",
     tlsVerifyOff: "TLS verify off",
