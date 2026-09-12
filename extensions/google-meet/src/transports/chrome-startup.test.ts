@@ -30,14 +30,17 @@ describe("Google Meet startup ownership", () => {
 
   it.each(
     (["chrome", "chrome-node"] as const).flatMap((transport) =>
-      (["opened", "reused", "launch-disabled"] as const).map((ownership) => ({
-        transport,
-        ownership,
-      })),
+      (["opened", "reused", "launch-disabled"] as const).flatMap((ownership) =>
+        (["managed", "configured"] as const).map((inputSource) => ({
+          transport,
+          ownership,
+          inputSource,
+        })),
+      ),
     ),
   )(
-    "reclaims $transport audio after failed startup with an $ownership tab",
-    async ({ transport, ownership }) => {
+    "reclaims $transport $inputSource audio after failed startup with an $ownership tab",
+    async ({ transport, ownership, inputSource }) => {
       const events: string[] = [];
       const children: ReturnType<typeof testBridgeProcess>[] = [];
       const nodeStops: Array<{ action: string; bridgeId?: string }> = [];
@@ -116,19 +119,20 @@ describe("Google Meet startup ownership", () => {
           },
         },
       } as unknown as PluginRuntime;
+      const config = resolveGoogleMeetConfig({
+        chrome: {
+          ...(inputSource === "configured" ? { audioInputCommand: ["capture"] } : {}),
+          audioOutputCommand: ["play"],
+          waitForInCallMs: 1,
+          launch: ownership !== "launch-disabled",
+        },
+        realtime: { voiceProvider: "missing-meeting-test-provider" },
+      });
       const launch = transport === "chrome" ? launchChromeMeet : launchChromeMeetOnNode;
       await expect(
         launch({
           runtime,
-          config: resolveGoogleMeetConfig({
-            chrome: {
-              audioInputCommand: ["capture"],
-              audioOutputCommand: ["play"],
-              waitForInCallMs: 1,
-              launch: ownership !== "launch-disabled",
-            },
-            realtime: { voiceProvider: "missing-meeting-test-provider" },
-          }),
+          config,
           fullConfig: {},
           mode: "bidi",
           meetingSessionId: "startup-owner",
@@ -137,10 +141,14 @@ describe("Google Meet startup ownership", () => {
         }),
       ).rejects.toThrow(/provider/i);
 
-      expect(fixture.state.audioCaptureEvents).toEqual([
-        { action: "start", captureId: expect.any(String) },
-        { action: "stop", captureId: fixture.state.audioCaptureEvents[0]?.captureId },
-      ]);
+      expect(fixture.state.audioCaptureEvents).toEqual(
+        inputSource === "managed"
+          ? [
+              { action: "start", captureId: expect.any(String) },
+              { action: "stop", captureId: fixture.state.audioCaptureEvents[0]?.captureId },
+            ]
+          : [],
+      );
       expect(fixture.state.audioCaptureId).toBeUndefined();
 
       expect(events.filter((event) => event.startsWith("node:"))).toEqual(
@@ -152,7 +160,7 @@ describe("Google Meet startup ownership", () => {
         transport === "chrome-node" ? [{ action: "stop", bridgeId: "bridge-1" }] : [],
       );
       expect(events.filter((event) => event.startsWith("spawn:"))).toEqual(
-        transport === "chrome" ? ["spawn:play", "spawn:capture"] : [],
+        transport === "chrome" ? ["spawn:play", `spawn:${config.chrome.audioInputCommand[0]}`] : [],
       );
       expect(children.every((child) => child.kill.mock.calls.length === 1)).toBe(true);
       expect(events.filter((event) => event === "browser:/tabs")).toHaveLength(

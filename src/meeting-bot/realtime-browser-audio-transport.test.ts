@@ -48,6 +48,7 @@ function setup() {
     create: () =>
       createBrowserMeetingRealtimeAudioTransport({
         nativeTransport,
+        hasConfiguredInputCommand: false,
         callBrowser,
         buildCaptureScript: JSON.stringify,
         meetingSessionId: "session-1",

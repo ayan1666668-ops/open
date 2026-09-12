@@ -12,6 +12,7 @@ import type { MeetingRealtimeAudioTransport } from "./realtime-audio-transport.j
 
 export async function createBrowserMeetingRealtimeAudioTransport(params: {
   nativeTransport: MeetingRealtimeAudioTransport;
+  hasConfiguredInputCommand: boolean;
   callBrowser: MeetingBrowserRequestCaller;
   buildCaptureScript?: (request: MeetingBrowserAudioCaptureRequest) => string;
   meetingSessionId: string;
@@ -21,7 +22,7 @@ export async function createBrowserMeetingRealtimeAudioTransport(params: {
   logger: RuntimeLogger;
 }): Promise<MeetingRealtimeAudioTransport> {
   const { buildCaptureScript, targetId } = params;
-  if (!buildCaptureScript) {
+  if (params.hasConfiguredInputCommand || !buildCaptureScript) {
     return params.nativeTransport;
   }
   if (!targetId) {

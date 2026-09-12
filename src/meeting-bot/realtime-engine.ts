@@ -411,7 +411,7 @@ export async function startMeetingRealtimeEngine(params: {
     const requireIsolatedInput = () => {
       if (!params.transport.inputAudioIsolated) {
         throw new Error(
-          `${params.platform.displayName} native live voice requires isolated meeting audio input; remote browser audio capture must be available before connecting.`,
+          `${params.platform.displayName} native live voice requires isolated meeting audio input. Remove chrome.audioInputCommand to use managed browser capture, which must be available before connecting.`,
         );
       }
     };

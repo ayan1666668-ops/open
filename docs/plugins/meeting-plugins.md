@@ -136,12 +136,18 @@ Run the Gateway or paired node as the same desktop user that runs Chrome. A root
 
 The Gateway host still owns the OpenClaw agent and model credentials when Chrome runs on a paired node. Configure a realtime transcription provider and OpenClaw TTS for `agent` mode, or a realtime voice provider for `bidi` mode. The platform guides contain the provider and audio-command options.
 
-Managed Chrome sessions capture participant audio directly from browser
+Chrome sessions without an explicit `chrome.audioInputCommand` capture participant audio directly from browser
 playback and keep that playback off the virtual microphone. The native output
 command injects assistant speech into the microphone; the native input command
 verifies that injection. Isolated participant input remains open during both
 realtime speech and TTS. A capture failure stops the bridge with an error;
 mixed loopback audio is not used as a fallback for Live.
+
+Explicit input commands retain their existing provider-input behavior on both
+local and paired-node Chrome, including custom capture, filters, and mixers.
+They keep the existing echo protection. To select GPT-Live, remove the input
+override and use managed isolated capture; Live rejects a custom command path
+whose isolation cannot be verified instead of silently replacing it.
 
 ## Install or disable plugins
 

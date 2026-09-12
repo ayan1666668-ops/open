@@ -216,6 +216,7 @@ function createMeetingChromeTransportWithAudioPolicy<
       transport = await createBrowserMeetingRealtimeAudioTransport({
         ...params,
         nativeTransport: transport,
+        hasConfiguredInputCommand: params.config.chrome.audioInputCommandOverride !== undefined,
         buildCaptureScript: options.platform.browser.buildAudioCaptureScript?.bind(
           options.platform.browser,
         ),
@@ -495,6 +496,7 @@ function createMeetingChromeTransportWithAudioPolicy<
       transport = await createBrowserMeetingRealtimeAudioTransport({
         ...params,
         nativeTransport: transport,
+        hasConfiguredInputCommand: params.config.chrome.audioInputCommandOverride !== undefined,
         callBrowser,
         buildCaptureScript: options.platform.browser.buildAudioCaptureScript?.bind(
           options.platform.browser,

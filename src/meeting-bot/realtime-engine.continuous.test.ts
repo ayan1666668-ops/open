@@ -190,7 +190,7 @@ describe("meeting native continuous voice", () => {
   it("refuses mixed loopback input before connecting native voice", async () => {
     const connect = vi.fn(async () => {});
     await expect(createLiveFixture({ isolated: false, connect })).rejects.toThrow(
-      "isolated meeting audio input",
+      "Remove chrome.audioInputCommand",
     );
     expect(connect).not.toHaveBeenCalled();
   });
