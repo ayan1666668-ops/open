@@ -21,7 +21,13 @@ it("resolves a Groq manifest model from a global external install during setup",
   await withOpenClawTestState(
     {
       label: "groq-external-setup",
-      env: { OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" },
+      env: {
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+        OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS: "1",
+        OPENCLAW_BUNDLED_PLUGINS_DIR: undefined,
+        OPENCLAW_DEV_SOURCE_ROOT: undefined,
+        OPENCLAW_SKIP_PROVIDERS: undefined,
+      },
     },
     async (state) => {
       const pluginDir = state.statePath("extensions", "groq");
