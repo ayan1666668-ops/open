@@ -133,6 +133,7 @@ describe("recipient authority prompt-adoption fence", () => {
           text: "stale delegate result",
           idempotencyKeyBase: `transcript-race-${invalidation}`,
           recipientAuthorities: new Map([[sessionKey, recipientAuthority]]),
+          ownerAgentId: "main",
           stateDir: state.env.OPENCLAW_STATE_DIR,
         });
         const deliveryId = delivery.deliveryIds[0];
@@ -258,6 +259,7 @@ describe("recipient authority prompt-adoption fence", () => {
           text: "stale delegate result",
           idempotencyKeyBase: `final-race-${invalidation}`,
           recipientAuthorities: new Map([[sessionKey, recipientAuthority]]),
+          ownerAgentId: "main",
           stateDir: state.env.OPENCLAW_STATE_DIR,
         });
         const deliveryId = delivery.deliveryIds[0];
@@ -305,6 +307,7 @@ describe("recipient authority prompt-adoption fence", () => {
           text: `${agentId} delegate result`,
           idempotencyKeyBase: `multi-batch-${agentId}`,
           recipientAuthorities: new Map([[sessionKey, authority]]),
+          ownerAgentId: agentId,
           stateDir: state.env.OPENCLAW_STATE_DIR,
         });
         const deliveryId = delivery.deliveryIds[0];

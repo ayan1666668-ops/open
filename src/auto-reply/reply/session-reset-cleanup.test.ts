@@ -322,6 +322,7 @@ describe("clearSessionResetRuntimeState", () => {
               text: "[continuation:enrichment-return] accepted child completed",
               idempotencyKeyBase: `accepted-after-${reason}`,
               recipientAuthorities: new Map([[sessionKey, recipientAuthority]]),
+              ownerAgentId: "main",
             });
             expect(delivered).toMatchObject({ enqueued: 1, delivered: 1 });
             expect(peekSystemEvents(sessionKey)).toContain(

@@ -16,6 +16,7 @@ import {
 import {
   isSessionRecipientAuthorityCurrent,
   loadSessionEntry,
+  loadTranscriptEvents,
 } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildChannelSummary } from "../../infra/channel-summary.js";
@@ -29,7 +30,10 @@ import {
   isExecCompletionEvent,
   isHeartbeatDeliveryAwarenessEvent,
 } from "../../infra/heartbeat-events-filter.js";
-import { loadPendingSessionDelivery } from "../../infra/session-delivery-queue-storage.js";
+import {
+  ackSessionDelivery,
+  loadPendingSessionDelivery,
+} from "../../infra/session-delivery-queue-storage.js";
 // Records system-level session events for restarts, forks, and resets.
 import { selectAgentSystemEvents } from "../../infra/system-event-ownership.js";
 import {
@@ -43,10 +47,12 @@ import { decodeSessionStateNoticeContextKey } from "../../sessions/session-state
 import { resolveContinuationRuntimeConfig } from "../continuation/config.js";
 import {
   createPreparedSystemEventAuthorityOwner,
+  readAdoptedSystemEventDeliveryIds,
   readPreparedSystemEventAuthorityKey,
   resolveFinalSystemEventAdoption,
   settleStaleSystemEventAuthority,
   type PreparedFormattedSystemEvents,
+  type PreparedManagedSystemEventDelivery,
   type PreparedSystemEventBlock,
 } from "./session-system-event-adoption.js";
 
@@ -167,6 +173,7 @@ async function settleManagedDelivery(
         });
       }
     }
+    await ackSessionDelivery(settlement.id, settlement.stateDir);
     consumeSelectedSystemEventEntries(sessionKey, [settlement.event]);
   } catch (error) {
     defaultRuntime.log(
@@ -244,7 +251,22 @@ export async function prepareFormattedSystemEvents(params: {
   // crash between the transcript write and the queue ack leaves an ack id that
   // IS already adopted but whose row is still pending. Both kinds must consult
   // the transcript, or a plain adoption-scoped notice would be re-injected.
-  const adoptedDeliveryIds = new Set<string>();
+  const hasManagedDelivery = selected.some(
+    (event) =>
+      event.sessionDeliveryAckId &&
+      (event.delegateArtifactReceipt || event.sessionDeliveryAwaitsTurnAdoption),
+  );
+  const adoptedDeliveryIds =
+    currentSessionId && hasManagedDelivery
+      ? readAdoptedSystemEventDeliveryIds(
+          await loadTranscriptEvents({
+            agentId,
+            sessionId: currentSessionId,
+            sessionKey: params.sessionKey,
+            storePath,
+          }),
+        )
+      : new Set<string>();
   await removeStaleAuthorityEvents();
   const authorityOwner = createPreparedSystemEventAuthorityOwner({
     scope: authorityScope,
@@ -447,7 +469,9 @@ export async function prepareFormattedSystemEvents(params: {
   // Classify adoption-scoped deliveries BEFORE the prompt is assembled: an id
   // the persisted turn already adopted must be settled and excluded, not
   // re-injected.
+  const adoptionScopedDeliveries: PreparedManagedSystemEventDelivery[] = [];
   const seenAdoptionScopedIds = new Set<string>();
+  const alreadyAdoptedAckIds: { id: string; stateDir?: string }[] = [];
   // Keyed by ack id, not object identity: consumeSelectedSystemEventEntries
   // returns different instances than the peeked entries classified here.
   const excludedAdoptedAckIds = new Set<string>();
@@ -460,9 +484,33 @@ export async function prepareFormattedSystemEvents(params: {
       continue;
     }
     seenAdoptionScopedIds.add(id);
+    const stateDir = normalizeOptionalString(event.sessionDeliveryAckStateDir);
     if (adoptedDeliveryIds.has(id)) {
+      // The persisted turn already adopted this id; only the queue ack was lost.
+      // Settle it and keep it out of this prompt so a restart cannot surface the
+      // same outcome twice.
+      alreadyAdoptedAckIds.push({ id, ...(stateDir ? { stateDir } : {}) });
       excludedAdoptedAckIds.add(id);
       continue;
+    }
+    const authorityKey = readPreparedSystemEventAuthorityKey(event);
+    adoptionScopedDeliveries.push({
+      id,
+      acknowledge: async () => {
+        await ackSessionDelivery(id, stateDir);
+      },
+      ...(authorityKey ? { authorityKey } : {}),
+    });
+  }
+  for (const ack of alreadyAdoptedAckIds) {
+    try {
+      await ackSessionDelivery(ack.id, ack.stateDir);
+    } catch (error) {
+      defaultRuntime.log(
+        `[session-system-events] failed to settle already-adopted session delivery ${ack.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
   const queued = consumeSelectedSystemEventEntries(
@@ -478,6 +526,42 @@ export async function prepareFormattedSystemEvents(params: {
     .filter((event) => pendingManagedKeys.has(managedKey(event) ?? ""))
     .map(refreshManagedEvent);
   const promptEvents = [...deliverable, ...pendingManagedEvents];
+  const sessionDeliveryAcks = new Map<
+    string,
+    {
+      id: string;
+      stateDir?: string;
+    }
+  >();
+  // Adoption-scoped events are NOT acked here: prompt preparation is not
+  // adoption, and a crash or admission failure after this point would otherwise
+  // complete the durable row with nothing delivered. They were classified above
+  // and settle via settleManagedSystemEventsAfterTurnAdoption.
+  for (const event of selected.filter(
+    (entry) => !entry.delegateArtifactReceipt && !entry.sessionDeliveryAwaitsTurnAdoption,
+  )) {
+    const id = normalizeOptionalString(event.sessionDeliveryAckId);
+    if (!id) {
+      continue;
+    }
+    const stateDir = normalizeOptionalString(event.sessionDeliveryAckStateDir);
+    const dedupeKey = `${id}\u0000${stateDir ?? ""}`;
+    sessionDeliveryAcks.set(dedupeKey, {
+      id,
+      ...(stateDir ? { stateDir } : {}),
+    });
+  }
+  for (const ack of sessionDeliveryAcks.values()) {
+    try {
+      await ackSessionDelivery(ack.id, ack.stateDir);
+    } catch (error) {
+      defaultRuntime.log(
+        `[session-system-events] failed to ack consumed session delivery ${ack.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   const sessionStateTargets = promptEvents
     .map((event) =>
       event.contextKey ? decodeSessionStateNoticeContextKey(event.contextKey) : undefined,
@@ -539,7 +623,7 @@ export async function prepareFormattedSystemEvents(params: {
   });
   return {
     blocks,
-    managedDeliveries: pendingManagedDeliveries,
+    managedDeliveries: [...pendingManagedDeliveries, ...adoptionScopedDeliveries],
     ...(authorityOwner ? { authorityOwner } : {}),
   };
 }

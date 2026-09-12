@@ -556,6 +556,19 @@ export async function completeSessionDelivery(id: string, stateDir?: string): Pr
   }
 }
 
+/** Acknowledge a delivered row and retain its completed idempotency tombstone. */
+export async function ackSessionDelivery(id: string, stateDir?: string): Promise<void> {
+  const entry = await loadPendingSessionDelivery(id, stateDir);
+  if (!entry) {
+    if (getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir) === "completed") {
+      return;
+    }
+    throw new SessionDeliveryAcknowledgementFinalizeError(id);
+  }
+  await markSessionDeliverySettlement(entry, "recovered", stateDir);
+  await completeSessionDelivery(id, stateDir);
+}
+
 /** Record a failed delivery attempt and increment retry metadata. */
 export async function failSessionDelivery(
   id: string,

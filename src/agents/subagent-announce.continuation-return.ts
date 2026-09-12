@@ -238,6 +238,7 @@ export async function routeSubagentContinuationReturn(params: {
           : {}),
         ...(completionTrace.traceparent ? { traceparent: completionTrace.traceparent } : {}),
         recipientAgentIds,
+        ownerAgentId: params.childAgentId,
       });
     }
     defaultRuntime.log(

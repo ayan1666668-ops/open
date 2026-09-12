@@ -381,6 +381,7 @@ export async function observeReturnCovenantCase(params: {
     );
     await settleManagedSystemEventsAfterTurnAdoption({
       deliveries: adoption.managedDeliveries.values(),
+      persistedMessage: message,
     });
   }
   const channelDeliveries =

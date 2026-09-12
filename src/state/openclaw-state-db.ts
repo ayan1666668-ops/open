@@ -206,11 +206,15 @@ function repairStateSchema(
             `Migrated shared state session watch cursors → provenance column (${sessionWatchResult.migratedAmbientWatches} ambient, ${sessionWatchResult.removedLegacySentinels} sentinels removed)`,
           );
         }
+        const hasAuditEvents = tableExists(db, "audit_events");
         assertCanonicalStateSchemaShape(db, pathname);
         // Recognized schema-1 stores predate audit; Doctor must finish their schema
         // before its later read-only workspace and agent readers can consume it.
-        if (preAuditSchema || tableExists(db, "audit_events")) {
+        if (preAuditSchema || hasAuditEvents) {
           ensureAdditiveStateColumns(db);
+        }
+        assertCanonicalStateSchemaShape(db, pathname);
+        if (hasAuditEvents) {
           for (const migration of versionedStateMigrations) {
             if (migration.migrate(db, previousVersion)) {
               applied.push(migration.applied);

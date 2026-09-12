@@ -56,7 +56,10 @@ import {
   createSubagentRegistrySweeper,
   retireSupersededSubagentRun as retireSupersededSubagentRunForSweep,
 } from "./subagent-registry-sweeper.js";
-import type { SubagentRunRecord } from "./subagent-registry.types.js";
+import type {
+  SubagentAcceptedSteerDispatch,
+  SubagentRunRecord,
+} from "./subagent-registry.types.js";
 import {
   resolveSubagentRunOrphanReason,
   resolveSubagentSessionCompletion,
@@ -628,6 +631,23 @@ export function registerSubagentRun(
 }
 export const startQueuedSubagentRun = subagentRunManager.startQueuedSubagentRun;
 export const settleFailedQueuedSubagentLaunch = subagentRunManager.settleFailedQueuedSubagentLaunch;
+export const clearSubagentRunSteerRestart = subagentRunManager.clearSubagentRunSteerRestart;
+export function recordAcceptedSubagentSteerDispatch(
+  params: SubagentAcceptedSteerDispatch & {
+    runId: string;
+    expected: SubagentRunRecord;
+    expectedDispatch?: SubagentAcceptedSteerDispatch;
+  },
+) {
+  const owner = subagentRuns.get(params.runId.trim());
+  if (
+    params.expectedDispatch &&
+    (owner !== params.expected || owner.acceptedSteerDispatch !== params.expectedDispatch)
+  ) {
+    return { status: "rejected" as const };
+  }
+  return subagentRunManager.recordAcceptedSubagentSteerDispatch(params);
+}
 
 /**
  * Continues a `sessions_yield`-paused run under a new gateway runId.

@@ -1,6 +1,9 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isSessionRecipientAuthorityCurrent } from "../../config/sessions/session-accessor.js";
 import type { SessionRecipientAuthority } from "../../config/sessions/session-recipient-authority-types.js";
 import { toErrorObject } from "../../infra/errors.js";
+import { ackSessionDelivery } from "../../infra/session-delivery-queue-storage.js";
 import { consumeSelectedSystemEventEntries, type SystemEvent } from "../../infra/system-events.js";
 
 type PreparedAuthorityScope = { agentId: string; sessionKey: string; storePath: string };
@@ -31,11 +34,48 @@ export type PreparedFormattedSystemEvents = {
   authorityOwner?: PreparedSystemEventAuthorityOwner;
 };
 
+const MESSAGE_METADATA_KEY = "__openclaw";
+
+function readSessionDeliveryAckIds(message: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!isRecord(message)) {
+    return ids;
+  }
+  const metadata = message[MESSAGE_METADATA_KEY];
+  if (!isRecord(metadata) || !Array.isArray(metadata.sessionDeliveryAckIds)) {
+    return ids;
+  }
+  for (const id of metadata.sessionDeliveryAckIds) {
+    const normalized = normalizeOptionalString(id);
+    if (normalized) {
+      ids.add(normalized);
+    }
+  }
+  return ids;
+}
+
+export function readAdoptedSystemEventDeliveryIds(events: readonly unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (isRecord(event)) {
+      for (const id of readSessionDeliveryAckIds(event.message)) {
+        ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
 async function acknowledgePersistedManagedSystemEvents(params: {
   deliveries: Iterable<PreparedManagedSystemEventDelivery>;
+  persistedMessage: unknown;
 }): Promise<void> {
+  const adoptedIds = readSessionDeliveryAckIds(params.persistedMessage);
   let firstError: Error | undefined;
   for (const delivery of params.deliveries) {
+    if (!adoptedIds.has(delivery.id)) {
+      continue;
+    }
     try {
       await delivery.acknowledge();
     } catch (error) {
@@ -49,6 +89,7 @@ async function acknowledgePersistedManagedSystemEvents(params: {
 
 export async function settleManagedSystemEventsAfterTurnAdoption(params: {
   deliveries: Iterable<PreparedManagedSystemEventDelivery>;
+  persistedMessage: unknown;
   onTurnAdopted?: () => void | Promise<void>;
 }): Promise<void> {
   // Tombstone the ingress claim first. Delivery settlement can replay from the
@@ -61,6 +102,12 @@ export async function settleStaleSystemEventAuthority(params: {
   event: SystemEvent;
   sessionKey: string;
 }): Promise<void> {
+  if (params.event.sessionDeliveryAckId) {
+    await ackSessionDelivery(
+      params.event.sessionDeliveryAckId,
+      params.event.sessionDeliveryAckStateDir,
+    );
+  }
   consumeSelectedSystemEventEntries(params.sessionKey, [params.event]);
 }
 

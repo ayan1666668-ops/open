@@ -58,6 +58,19 @@ describe("normalizeReplyPayload CoT-frame suppression", () => {
     expect(reasons).toEqual(["silent"]);
   });
 
+  it.each(["analysis", "thinking", "thought", "private", "cot"])(
+    "suppresses the canonical %s frame as silent",
+    (label) => {
+      const reasons: NormalizeReplySkipReason[] = [];
+      const result = normalizeReplyPayload(
+        { text: `[${label}] private narration` },
+        { onSkip: collectSkip(reasons) },
+      );
+      expect(result).toBeNull();
+      expect(reasons).toEqual(["silent"]);
+    },
+  );
+
   it("suppresses zero-whitespace frames like [internal]leak as silent", () => {
     const reasons: NormalizeReplySkipReason[] = [];
     const result = normalizeReplyPayload(

@@ -360,7 +360,7 @@ function extractToolCards(message: unknown): ToolCard[] {
         name,
         args: redactedSummary === undefined ? rawArgs : undefined,
         inputText: redactedSummary ?? serializeToolInput(rawArgs),
-        ...(details !== undefined ? { details } : {}),
+        ...(redactedSummary === undefined && details !== undefined ? { details } : {}),
         ...(isLiveToolStream
           ? { live: true, completed: m["__openclawToolStreamResultReceived"] === true }
           : {}),

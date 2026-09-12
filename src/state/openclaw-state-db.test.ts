@@ -6638,11 +6638,11 @@ INSERT INTO macos_port_guardian_records VALUES (4242, 18789, '/usr/bin/ssh', 're
           expect(backup.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
           expect(backup.prepare("PRAGMA foreign_key_check").all()).toHaveLength(18);
           const row = backup.prepare(
-            "SELECT requester_origin_json,last_notified_event_at FROM task_delivery_state WHERE task_id = ?",
+            "SELECT hex(requester_origin_json) AS requester_origin_hex,last_notified_event_at FROM task_delivery_state WHERE task_id = ?",
           );
           row.setReadBigInts(true);
           expect(row.get("missing-task-0")).toEqual({
-            requester_origin_json: payload,
+            requester_origin_hex: Buffer.from(payload).toString("hex").toUpperCase(),
             last_notified_event_at: timestamp,
           });
         } finally {
@@ -6656,6 +6656,7 @@ INSERT INTO macos_port_guardian_records VALUES (4242, 18789, '/usr/bin/ssh', 're
         expect(exported).toHaveLength(18);
         expect(exported[0]).toMatchObject({
           requester_origin_json: payload,
+          requester_origin_json_base64: Buffer.from(payload).toString("base64"),
           last_notified_event_at: timestamp.toString(),
         });
         const repaired = openOpenClawStateDatabase(options);

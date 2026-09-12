@@ -20,6 +20,7 @@ import {
   stripSilentToken,
 } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
+import { hasCotFramePrefix } from "./cot-frame.js";
 import type {
   NormalizeReplyOutcome as PayloadNormalizationOutcome,
   NormalizeReplySkipReason,
@@ -37,7 +38,6 @@ const channelReplyTransformOwners = new WeakMap<
   (payload: ReplyPayload) => ReplyPayload | null,
   object
 >();
-
 export function bindNormalizeReplyTransformOwner<
   T extends (payload: ReplyPayload) => ReplyPayload | null,
 >(transform: T, owner: object): T {
@@ -90,6 +90,12 @@ export function normalizeReplyPayloadOutcome(
   let text = payload.text ?? undefined;
   // Monitoring already applied its configured acknowledgment and error-text policy.
   if (!getReplyPayloadMetadata(payload)?.heartbeatReply) {
+    if (text && hasCotFramePrefix(text)) {
+      if (!hasContent("")) {
+        return suppress("silent");
+      }
+      text = "";
+    }
     const silentToken = opts.silentToken ?? SILENT_REPLY_TOKEN;
     if (text && isSilentReplyPayloadText(text, silentToken)) {
       if (!hasContent("")) {

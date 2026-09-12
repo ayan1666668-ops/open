@@ -12,6 +12,7 @@ import {
 } from "../../infra/system-events.js";
 import { MESSAGE_TOOL_ONLY_DELIVERY_HINT } from "../../plugin-sdk/message-tool-delivery-hints.js";
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
+import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { hasControlCommand } from "../command-detection.js";
 import { runReplyAgent } from "./agent-runner.runtime.js";
@@ -36,7 +37,10 @@ import { REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS, createReplyOperation } from "./reply-
 import { getActiveReplyRunCount } from "./reply-run-registry.registry.js";
 import { testing as replyRunTesting } from "./reply-run-registry.test-support.js";
 import { routeReply } from "./route-reply.runtime.js";
-import { drainFormattedSystemEvents } from "./session-system-events.js";
+import {
+  drainFormattedSystemEvents,
+  prepareFormattedSystemEvents,
+} from "./session-system-events.js";
 import {
   createSourceReplyDeliveryRuntime,
   readSourceReplyDeliveryRuntime,
@@ -121,7 +125,7 @@ vi.mock("../../agents/subagents/spawn/subagent-capabilities.js", () => ({
   resolveSubagentCapabilityStore: vi.fn().mockReturnValue(undefined),
 }));
 
-const selectAgentHarnessMock = vi.hoisted(() =>
+const resolveAgentHarnessDeliveryDefaultsMock = vi.hoisted(() =>
   vi.fn(
     (params: {
       provider: string;
@@ -137,14 +141,14 @@ const selectAgentHarnessMock = vi.hoisted(() =>
         params.agentHarnessId ||
         params.agentHarnessRuntimeOverride
       ) {
-        preparedReplyMockState.unexpectedCalls.push("selectAgentHarness");
+        preparedReplyMockState.unexpectedCalls.push("resolveAgentHarnessDeliveryDefaults");
       }
-      return { id: "openclaw", deliveryDefaults: {} };
+      return {};
     },
   ),
 );
-vi.mock("../../agents/harness/selection.js", () => ({
-  selectAgentHarness: selectAgentHarnessMock,
+vi.mock("../../agents/harness/selection-decision.js", () => ({
+  resolveAgentHarnessDeliveryDefaults: resolveAgentHarnessDeliveryDefaultsMock,
 }));
 
 vi.mock("../../agents/model-selection.js", () => ({
@@ -332,9 +336,7 @@ vi.mock("./session-updates.runtime.js", () => ({
   })),
 }));
 
-vi.mock("./session-system-events.js", () => ({
-  drainFormattedSystemEvents: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("./session-system-events.js", () => sessionSystemEventsMocks);
 
 vi.mock("../../sessions/stored-model-overrides.js", () => ({
   resolveStoredModelOverride: vi.fn(
@@ -653,6 +655,24 @@ describe("runPreparedReply media-only handling", () => {
     loadSessionEntryMock.mockReset();
     updateAmbientTranscriptWatermarkMock.mockClear();
     vi.clearAllMocks();
+    sessionSystemEventsMocks.state.prepared = undefined;
+    sessionSystemEventsMocks.state.preparedQueue.length = 0;
+    sessionSystemEventsMocks.drainFormattedSystemEvents.mockResolvedValue(undefined);
+    vi.mocked(prepareFormattedSystemEvents).mockImplementation(async (params: unknown) => {
+      const queued = sessionSystemEventsMocks.state.preparedQueue.shift();
+      if (queued) {
+        return queued;
+      }
+      if (sessionSystemEventsMocks.state.prepared) {
+        return sessionSystemEventsMocks.state.prepared;
+      }
+      const text = await sessionSystemEventsMocks.drainFormattedSystemEvents(params);
+      return {
+        blocks: text ? [{ text }] : [],
+        managedDeliveries: [],
+      };
+    });
+    recipientAuthorityCurrentMock.mockReturnValue(true);
     vi.mocked(buildDirectChatContext).mockReturnValue("");
     vi.mocked(buildGroupIntro).mockReturnValue("");
     vi.mocked(buildGroupChatContext).mockReturnValue("");
@@ -3561,8 +3581,8 @@ describe("runPreparedReply media-only handling", () => {
     const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
       "./session-system-events.js",
     );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
+    vi.mocked(prepareFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.prepareFormattedSystemEvents,
     );
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
@@ -3618,8 +3638,8 @@ describe("runPreparedReply media-only handling", () => {
     const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
       "./session-system-events.js",
     );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
+    vi.mocked(prepareFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.prepareFormattedSystemEvents,
     );
     const queueSettings = await import("./queue/settings-runtime.js");
     vi.mocked(queueSettings.resolveQueueSettings).mockReturnValueOnce({ mode: "interrupt" });
@@ -4590,7 +4610,7 @@ describe("runPreparedReply media-only handling", () => {
 
   it("resolves origin-less sessions as internal for synthetic stable facts", async () => {
     vi.mocked(buildDirectChatContext).mockReturnValue("direct-context");
-    selectAgentHarnessMock.mockClear();
+    resolveAgentHarnessDeliveryDefaultsMock.mockClear();
     // An entry with no persisted delivery origin has only ever been driven
     // internally; its wake source must not leak into the
     // stable context as a non-internal surface or the fact diverges from
@@ -4623,7 +4643,7 @@ describe("runPreparedReply media-only handling", () => {
     const run = requireRunReplyAgentCall(0).followupRun.run;
     expect(run.cliSessionBindingFacts?.sourceReplyDeliveryMode).toBe("automatic");
     expect(
-      selectAgentHarnessMock.mock.calls.map(([params]) => ({
+      resolveAgentHarnessDeliveryDefaultsMock.mock.calls.map(([params]) => ({
         provider: params.provider,
         modelId: params.modelId,
       })),
@@ -5241,8 +5261,8 @@ describe("runPreparedReply media-only handling", () => {
       const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
         "./session-system-events.js",
       );
-      vi.mocked(drainFormattedSystemEvents).mockImplementation(
-        actualSystemEvents.drainFormattedSystemEvents,
+      vi.mocked(prepareFormattedSystemEvents).mockImplementation(
+        actualSystemEvents.prepareFormattedSystemEvents,
       );
       const queueKey = "agent:main:main:heartbeat:heartbeat";
       const runKey = "agent:main:main:heartbeat";
@@ -5315,8 +5335,8 @@ describe("runPreparedReply media-only handling", () => {
     const actualSystemEvents = await vi.importActual<typeof import("./session-system-events.js")>(
       "./session-system-events.js",
     );
-    vi.mocked(drainFormattedSystemEvents).mockImplementation(
-      actualSystemEvents.drainFormattedSystemEvents,
+    vi.mocked(prepareFormattedSystemEvents).mockImplementation(
+      actualSystemEvents.prepareFormattedSystemEvents,
     );
     enqueueSystemEvent("Slack reaction added: :eyes:", {
       sessionKey: "agent:main:slack:channel:c123",

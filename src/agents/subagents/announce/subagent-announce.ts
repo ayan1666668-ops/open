@@ -53,7 +53,11 @@ import {
   loadSessionEntryByKey,
 } from "./subagent-announce-delivery.js";
 import { loadSubagentContinuationRuntime, subagentAnnounceDeps } from "./subagent-announce-deps.js";
-import { runDescendantWake } from "./subagent-announce-descendant-wake.js";
+import {
+  isWakeContinuationRun,
+  stripWakeRunSuffixes,
+  wakeSubagentRunAfterDescendants,
+} from "./subagent-announce-descendant-wake.js";
 import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
 import {
   resolveAnnounceOrigin,
@@ -317,32 +321,39 @@ async function runSubagentAnnounceFlowBound(
       childRunId: params.childRunId,
     });
 
+    const childRunAlreadyWoken = isWakeContinuationRun(params.childRunId);
     if (
       params.wakeOnDescendantSettle === true &&
+      childSessionEffectsAllowed() &&
       childCompletionFindings?.trim() &&
-      subagentRegistryRuntime
+      subagentRegistryRuntime &&
+      !childRunAlreadyWoken
     ) {
-      const woke = await runDescendantWake({
-        runId: params.childRunId,
+      const wakeAnnounceId = buildAnnounceIdFromChildRun({
         childSessionKey: params.childSessionKey,
-        taskLabel: params.label || params.task || "task",
-        findings: childCompletionFindings,
-        announceId,
-        isChildSessionEffectsAllowed: () =>
-          childSessionEffectsAllowed() && completionDeliveryAllowed(),
-        hasUsableSessionEntry,
-        resolveGatewayContext: params.resolveGatewayContext,
-        deps: {
-          callGateway: subagentAnnounceDeps.callGateway,
-          dispatchGatewayMethodInProcess: subagentAnnounceDeps.dispatchGatewayMethodInProcess,
-          getRuntimeConfig: subagentAnnounceDeps.getRuntimeConfig,
-          replaceSubagentRunAfterSteer: subagentRegistryRuntime.replaceSubagentRunAfterSteer,
-        },
-        signal: params.signal,
+        childRunId: stripWakeRunSuffixes(params.childRunId),
       });
-      if (woke) {
+      const wake = await wakeSubagentRunAfterDescendants(
+        {
+          runId: params.childRunId,
+          childSessionKey: params.childSessionKey,
+          taskLabel: params.label || params.task || "task",
+          findings: childCompletionFindings,
+          announceId: wakeAnnounceId,
+          isChildSessionEffectsAllowed: () =>
+            childSessionEffectsAllowed() && completionDeliveryAllowed(),
+          resolveGatewayContext: params.resolveGatewayContext,
+          signal: params.signal,
+        },
+        subagentAnnounceDeps,
+      );
+      if (wake === "woke") {
         shouldDeleteChildSession = false;
         return "delivered";
+      }
+      if (wake === "termination-unconfirmed") {
+        shouldDeleteChildSession = false;
+        return "retryable";
       }
     }
 

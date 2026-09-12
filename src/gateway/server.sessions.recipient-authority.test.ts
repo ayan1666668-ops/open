@@ -49,6 +49,7 @@ test.each(["new", "reset"] as const)(
         text: "accepted delegate result",
         idempotencyKeyBase: `continuation-return:${reason}`,
         recipientAuthorities: new Map([[sessionKey, recipientAuthority]]),
+        ownerAgentId: "main",
         wakeRecipients: true,
       },
       {
