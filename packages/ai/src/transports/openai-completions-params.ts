@@ -209,32 +209,38 @@ function resolveOpenAICompletionsEffectiveContextTokens(
 }
 
 /** Recheck the final payload after hooks; a conservative estimate alone is not an error. */
-export function isOpenAICompletionsContextBudgetLimitedToOne(
+export function resolveOpenAICompletionsContextBudgetLimit(
   model: OpenAIModeModel,
   params: Record<string, unknown>,
   options: Pick<OpenAICompletionsOptions, "maxTokens"> | undefined,
-): boolean {
+): number | undefined {
   const caps = [params.max_tokens, params.max_completion_tokens].filter(
     (value) => value !== undefined,
   );
-  if (caps.length === 0 || caps.some((value) => value !== 1)) {
-    return false;
+  const cap = caps[0];
+  if (
+    typeof cap !== "number" ||
+    !Number.isSafeInteger(cap) ||
+    cap < 1 ||
+    caps.some((value) => value !== cap)
+  ) {
+    return undefined;
   }
   const budget = resolveOpenAICompletionsMaxTokens(model, options);
   const modelMaxTokens = resolveOpenAICompletionsModelMaxTokens(model);
   if (
     budget.maxTokens === undefined ||
-    !(budget.maxTokens > 1) ||
-    (budget.clampToModelMaxTokens && modelMaxTokens !== undefined && modelMaxTokens <= 1) ||
+    !(budget.maxTokens > cap) ||
+    (budget.clampToModelMaxTokens && modelMaxTokens !== undefined && modelMaxTokens <= cap) ||
     !detectOpenAICompletionsCompat(model).capabilities.usesExplicitProxyLikeEndpoint
   ) {
-    return false;
+    return undefined;
   }
   const contextTokens = resolveOpenAICompletionsEffectiveContextTokens(model);
-  return (
-    contextTokens !== undefined &&
-    contextTokens - estimateOpenAICompletionsInputTokens(params) - 1 <= 1
-  );
+  return contextTokens !== undefined &&
+    Math.max(1, contextTokens - estimateOpenAICompletionsInputTokens(params) - 1) === cap
+    ? cap
+    : undefined;
 }
 
 function isQwenOpenAICompletionsThinkingFormat(format: string): boolean {

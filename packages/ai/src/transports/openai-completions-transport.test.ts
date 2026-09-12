@@ -17,7 +17,7 @@ import {
 } from "./openai-completions.test-support.js";
 import { buildOpenAISdkRequestOptions } from "./openai-transport-params.js";
 
-async function runOneTokenResponse(params: {
+async function runBudgetResponse(params: {
   finishReason?: "stop" | "length" | "tool_calls" | null;
   model?: Partial<Model<"openai-completions">> & { params?: Record<string, unknown> };
   options?: Pick<OpenAICompletionsOptions, "maxTokens" | "onPayload" | "onResponse" | "signal">;
@@ -100,11 +100,96 @@ async function captureTransportRequest(model: Model<"openai-completions">) {
 }
 
 describe("openai completions transport", () => {
-  describe("one-token context budget compatibility", () => {
+  describe("automatic context budget compatibility", () => {
+    it.each([
+      [121, "max_tokens"],
+      [1563, "max_tokens"],
+      [121, "max_completion_tokens"],
+      [1563, "max_completion_tokens"],
+    ] as const)(
+      "recovers an automatically reduced %i-token %s response",
+      async (cap, maxTokensField) => {
+        const { result, request, events } = await runBudgetResponse({
+          model: { contextWindow: 10_001 + cap, compat: { maxTokensField } },
+          chunks: [
+            makeCompletionsChunk({ reasoning_content: "reasoning" }),
+            makeCompletionsChunk({ content: "unfinished answer" }, "length", {
+              usage: { prompt_tokens: 8_000, completion_tokens: cap, total_tokens: 8_000 + cap },
+            }),
+          ],
+        });
+        expect(request?.[maxTokensField]).toBe(cap);
+        expect(result.stopReason).toBe("error");
+        expect(isContextOverflow(result, 10_001 + cap)).toBe(true);
+        expect(result.usage.output).toBe(cap);
+        expect(result.content).toEqual([]);
+        expect(events.map((event) => event.type)).toEqual(["error"]);
+      },
+    );
+
+    it.each([121, 1563])(
+      "preserves normal stop at an automatically reduced %i-token cap",
+      async (cap) => {
+        const { result, request } = await runBudgetResponse({
+          model: { contextWindow: 10_001 + cap },
+          finishReason: "stop",
+        });
+        expect(request?.max_tokens).toBe(cap);
+        expect(result.stopReason).toBe("stop");
+        expect(result.content).toContainEqual(
+          expect.objectContaining({ type: "text", text: "OK" }),
+        );
+      },
+    );
+
+    it.each([
+      { name: "explicit options cap", options: { maxTokens: 121 } },
+      { name: "explicit model params cap", model: { params: { max_tokens: 121 } } },
+      { name: "model ceiling", model: { maxTokens: 121 }, options: { maxTokens: 4096 } },
+      {
+        name: "hook lowers cap and expands input",
+        options: {
+          onPayload: (payload: unknown) => ({
+            ...(payload as Record<string, unknown>),
+            max_tokens: 1,
+            messages: [{ role: "user", content: "x".repeat(64_000) }],
+          }),
+        },
+      },
+      {
+        name: "hook raises cap",
+        options: {
+          onPayload: (payload: unknown) => ({
+            ...(payload as Record<string, unknown>),
+            max_tokens: 122,
+          }),
+        },
+      },
+      {
+        name: "conflicting hook cap alias",
+        options: {
+          onPayload: (payload: unknown) => ({
+            ...(payload as Record<string, unknown>),
+            max_completion_tokens: 120,
+          }),
+        },
+      },
+    ])(
+      "preserves length for $name at a multi-token boundary",
+      async ({ name: _name, ...params }) => {
+        const { result } = await runBudgetResponse({
+          ...params,
+          model: { contextWindow: 10_122, ...params.model },
+        });
+        expect(result.stopReason).toBe("length");
+        expect(isContextOverflow(result, 10_122)).toBe(false);
+      },
+    );
+
     it.each(["max_tokens", "max_completion_tokens"] as const)(
       "preserves provider stop after estimated exhaustion clamps %s to one",
       async (maxTokensField) => {
-        const { result, request, events, fetch } = await runOneTokenResponse({
+        const { result, request, events, fetch } = await runBudgetResponse({
           finishReason: "stop",
           model: { compat: { maxTokensField } },
         });
@@ -129,7 +214,7 @@ describe("openai completions transport", () => {
     ] as const)(
       "recovers actual length at %s context=%i without exposing partials",
       async (maxTokensField, contextWindow) => {
-        const { result, request, events, fetch } = await runOneTokenResponse({
+        const { result, request, events, fetch } = await runBudgetResponse({
           model: { contextWindow, compat: { maxTokensField } },
           options: { onPayload: (payload) => payload },
           chunks: [
@@ -203,7 +288,7 @@ describe("openai completions transport", () => {
         },
       },
     ])("keeps $name length semantics", async ({ name: _name, ...params }) => {
-      const { result, fetch, events } = await runOneTokenResponse(params);
+      const { result, fetch, events } = await runBudgetResponse(params);
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(result.stopReason).toBe("length");
       expect(result.content).not.toEqual([]);
@@ -212,7 +297,7 @@ describe("openai completions transport", () => {
     });
 
     it("keeps incomplete stream errors ahead of budget recovery", async () => {
-      const { result, fetch } = await runOneTokenResponse({
+      const { result, fetch } = await runBudgetResponse({
         chunks: [makeCompletionsChunk({ content: "partial" })],
         done: false,
       });
@@ -224,7 +309,7 @@ describe("openai completions transport", () => {
 
     it("keeps cancellation ahead of budget recovery", async () => {
       const controller = new AbortController();
-      const { result } = await runOneTokenResponse({
+      const { result } = await runBudgetResponse({
         options: {
           signal: controller.signal,
           onResponse: () => controller.abort(),
@@ -235,7 +320,7 @@ describe("openai completions transport", () => {
     });
 
     it("releases successful tool calls only after the buffered start snapshot", async () => {
-      const { result, events } = await runOneTokenResponse({
+      const { result, events } = await runBudgetResponse({
         chunks: [
           makeCompletionsChunk(
             {
@@ -294,7 +379,7 @@ describe("openai completions transport", () => {
             }
           });
         try {
-          const { result, events } = await runOneTokenResponse({
+          const { result, events } = await runBudgetResponse({
             options: { signal: controller.signal },
           });
           expect(producer).toHaveBeenCalledTimes(1);
@@ -310,7 +395,7 @@ describe("openai completions transport", () => {
     );
 
     it("preserves malformed tool-call errors without releasing candidate events", async () => {
-      const { result, events } = await runOneTokenResponse({
+      const { result, events } = await runBudgetResponse({
         chunks: [
           makeCompletionsChunk(
             {
@@ -343,38 +428,41 @@ describe("openai completions transport", () => {
         name: "too many events",
         deltas: Array.from({ length: 300 }, (_, index) => `${index},`),
       },
-    ])(
-      "preserves stop and length after $name without reordering or replaying events",
-      async ({ deltas }) => {
-        for (const finishReason of ["stop", "length"] as const) {
-          const { result, events, request, fetch } = await runOneTokenResponse({
-            chunks: [
-              ...deltas.map((content) => makeCompletionsChunk({ content })),
-              makeCompletionsChunk({}, finishReason, {
-                usage: { prompt_tokens: 8_000, completion_tokens: 1, total_tokens: 8_001 },
-              }),
-            ],
-          });
-          expect(fetch).toHaveBeenCalledTimes(1);
-          expect(request?.max_tokens).toBe(1);
-          expect(result.stopReason).toBe(finishReason);
-          expect(result.errorMessage).toBeUndefined();
-          expect(result.usage.output).toBe(1);
-          expect(isContextOverflow(result, 10_000)).toBe(false);
-          expect(result.content).toContainEqual(
-            expect.objectContaining({ type: "text", text: deltas.join("") }),
-          );
-          expect(events[0]).toMatchObject({ type: "start", partial: { content: [] } });
-          expect(events.filter((event) => event.type === "start")).toHaveLength(1);
-          expect(
-            events.filter((event) => event.type === "text_delta").map((event) => event.delta),
-          ).toEqual(deltas);
-          expect(events.filter((event) => event.type === "done")).toHaveLength(1);
-          expect(events.at(-1)).toMatchObject({ type: "done", reason: finishReason });
-          expect(events.some((event) => event.type === "error")).toBe(false);
+    ])("preserves stop ordering and recovers length after $name", async ({ deltas }) => {
+      for (const finishReason of ["stop", "length"] as const) {
+        const { result, events, request, fetch } = await runBudgetResponse({
+          chunks: [
+            ...deltas.map((content) => makeCompletionsChunk({ content })),
+            makeCompletionsChunk({}, finishReason, {
+              usage: { prompt_tokens: 8_000, completion_tokens: 1, total_tokens: 8_001 },
+            }),
+          ],
+        });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(request?.max_tokens).toBe(1);
+        if (finishReason === "length") {
+          expect(result.stopReason).toBe("error");
+          expect(isContextOverflow(result, 10_000)).toBe(true);
+          expect(events.map((event) => event.type)).toEqual(["error"]);
+          continue;
         }
-      },
-    );
+        expect(result.stopReason).toBe(finishReason);
+        expect(result.errorMessage).toBeUndefined();
+        expect(result.usage.output).toBe(1);
+        expect(isContextOverflow(result, 10_000)).toBe(false);
+        expect(result.content).toContainEqual(
+          expect.objectContaining({ type: "text", text: deltas.join("") }),
+        );
+        expect(events[0]).toMatchObject({ type: "start", partial: { content: [] } });
+        expect(events.filter((event) => event.type === "start")).toHaveLength(1);
+        expect(
+          events.filter((event) => event.type === "text_delta").map((event) => event.delta),
+        ).toEqual(deltas);
+        expect(events.filter((event) => event.type === "done")).toHaveLength(1);
+        expect(events.at(-1)).toMatchObject({ type: "done", reason: finishReason });
+        expect(events.some((event) => event.type === "error")).toBe(false);
+      }
+    });
   });
 
   it("passes provider request timeouts to OpenAI SDK per-request options", () => {
