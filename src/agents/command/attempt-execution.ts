@@ -880,8 +880,13 @@ export function runAgentAttempt(params: {
     harnessRuntime: agentHarnessPolicy.runtime,
     allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
   });
+  // Explicit pins keep synchronous validation; automatic selection needs the admitted binding.
+  const cliAuthNeedsSessionBinding =
+    allowCliAuthProfileForwarding &&
+    !isRawModelRun &&
+    (!harnessAuthSelection.authProfileId || harnessAuthSelection.authProfileIdSource === "auto");
   const authProfileId =
-    isRawModelRun && allowCliAuthProfileForwarding
+    allowCliAuthProfileForwarding && !cliAuthNeedsSessionBinding
       ? resolveCliExecutionAuthProfileId({
           cliExecutionProvider,
           authProfileProvider: params.authProfileProvider,
@@ -929,7 +934,7 @@ export function runAgentAttempt(params: {
           }
         }
         const cliSessionBinding = getCliSessionBinding(params.sessionEntry, cliExecutionProvider);
-        const cliAuthProfileId = allowCliAuthProfileForwarding
+        const cliAuthProfileId = cliAuthNeedsSessionBinding
           ? resolveCliExecutionAuthProfileId({
               cliExecutionProvider,
               authProfileProvider: params.authProfileProvider,
@@ -938,7 +943,7 @@ export function runAgentAttempt(params: {
               selected: harnessAuthSelection,
               sessionBinding: cliSessionBinding,
             })
-          : undefined;
+          : authProfileId;
         const diagnosticOwner = params.deferredLifecycle?.handoffToCli();
         const cliProcessCwd = params.cwd ? resolveUserPath(params.cwd) : params.workspaceDir;
         const cliContinuationBody = params.opts.execApprovalContinuationPromptRange
