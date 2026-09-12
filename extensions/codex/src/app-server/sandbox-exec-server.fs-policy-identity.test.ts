@@ -93,4 +93,36 @@ describe("OpenClaw Codex sandbox exec-server filesystem policy identity", () => 
     expect(stat).not.toHaveBeenCalled();
     socket.close();
   });
+
+  it("uses the authorized physical identity for final read I/O", async () => {
+    const stat = vi.fn(async () => ({ type: "file" as const, size: 7, mtimeMs: 1 }));
+    const readFile = vi.fn(async () => Buffer.from("allowed"));
+    const sandbox = createSandboxContext({
+      readFile,
+      resolvePolicyPath: async ({ filePath }) =>
+        filePath.replace("/workspace/alias", "/workspace/physical"),
+      stat,
+    });
+    const client = createClient();
+    // SAFETY: createClient implements the app-server methods exercised by this test.
+    await ensureCodexSandboxExecServerEnvironment({ client: client as never, sandbox });
+    const socket = await openSocket(execServerUrlFromClient(client));
+    await rpc(socket, "initialize", { clientName: "test" });
+    const policy = codexFsSandboxContext({
+      entries: [{ path: specialPath("project_roots"), access: "read" }],
+    });
+
+    await expect(
+      rpc(socket, "fs/readFile", {
+        path: "file:///workspace/alias/note.txt",
+        sandbox: policy,
+      }),
+    ).resolves.toEqual({ dataBase64: Buffer.from("allowed").toString("base64") });
+    expect(stat).toHaveBeenCalledWith({ filePath: "/workspace/physical/note.txt" });
+    expect(readFile).toHaveBeenCalledWith({
+      filePath: "/workspace/physical/note.txt",
+      maxBytes: 512 * 1024 * 1024,
+    });
+    socket.close();
+  });
 });

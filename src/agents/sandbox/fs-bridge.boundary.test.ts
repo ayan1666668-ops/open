@@ -63,6 +63,28 @@ describe("sandbox fs bridge boundary validation", () => {
     });
   });
 
+  it("preserves a symlinked mount root while reading through the canonical policy path", async () => {
+    await withTempDir("openclaw-fs-policy-root-alias-", async (stateDir) => {
+      const realWorkspaceDir = path.join(stateDir, "real-workspace");
+      const workspaceDir = path.join(stateDir, "workspace-link");
+      await fs.mkdir(realWorkspaceDir, { recursive: true });
+      await fs.writeFile(path.join(realWorkspaceDir, "note.txt"), "allowed");
+      await fs.symlink(realWorkspaceDir, workspaceDir, "dir");
+      const bridge = createSandboxFsBridge({
+        sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+      });
+
+      const policyPath = await resolveSandboxFilePolicyPath({
+        bridge,
+        filePath: "/workspace/note.txt",
+      });
+      expect(policyPath).toBe("/workspace/note.txt");
+      await expect(bridge.readFile({ filePath: policyPath })).resolves.toEqual(
+        Buffer.from("allowed"),
+      );
+    });
+  });
+
   it.runIf(process.platform === "win32")(
     "maps differently cased host paths back to canonical policy paths",
     async () => {

@@ -10,6 +10,7 @@ import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/s
 import { readFileDescriptorBounded } from "../../infra/boundary-file-read.js";
 import { resolveIdentityPathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { parseDirectoryEntries, type DirectoryEntry } from "../../infra/directory-entries.js";
+import { isPathInside } from "../../infra/path-guards.js";
 import type {
   SandboxBackendCommandResult,
   SandboxFsBridgeContext,
@@ -86,7 +87,23 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
   [SANDBOX_FILE_POLICY_PATH](params: { filePath: string; cwd?: string }): string {
     const target = this.resolveResolvedPath(params);
     const identity = resolveIdentityPathViaExistingAncestorSync(target.hostPath);
-    return this.resolveResolvedPath({ filePath: identity }).containerPath;
+    const resolvedMount = this.mounts
+      .map((mount) => ({
+        mount,
+        canonicalHostRoot: resolveIdentityPathViaExistingAncestorSync(mount.hostRoot),
+      }))
+      .toSorted((left, right) => right.canonicalHostRoot.length - left.canonicalHostRoot.length)
+      .find(({ canonicalHostRoot }) => isPathInside(canonicalHostRoot, identity));
+    if (!resolvedMount) {
+      throw new Error(`Sandbox path escapes allowed mounts: ${target.containerPath}`);
+    }
+    const relativeHost = path.relative(resolvedMount.canonicalHostRoot, identity);
+    const relativePosix = relativeHost ? relativeHost.split(path.sep).join(path.posix.sep) : "";
+    return normalizeContainerPathCore(
+      relativePosix
+        ? path.posix.join(resolvedMount.mount.containerRoot, relativePosix)
+        : resolvedMount.mount.containerRoot,
+    );
   }
 
   async resolvePinnedMutationTarget(
