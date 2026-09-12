@@ -7,6 +7,7 @@ import type {
 import { onSessionIdentityMutation } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
+  emitAgentEventForRunContext,
   emitAgentEventIfCurrent,
   emitAgentEventForOwner,
   getAgentEventLifecycleGeneration,
@@ -15,7 +16,7 @@ import {
   claimAgentRunContext,
   getAgentRunContext,
   getAgentRunContextOwnership,
-  getAgentRunContextOwnerStatus,
+  getAgentRunContextOwnerStatus as getRunOwnerStatus,
   registerAgentRunContext,
   releaseAgentRunContext,
 } from "../../infra/agent-run-registry.js";
@@ -196,10 +197,7 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
     if (retainedWindow) {
       retainedWindow.target = prepared.target;
       for (const [runId, owned] of retainedWindow.activeRuns) {
-        if (
-          getAgentRunContextOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration) ===
-          "active"
-        ) {
+        if (getRunOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration) === "active") {
           registerAgentRunContext(
             runId,
             {
@@ -313,8 +311,7 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
             candidate.activeApplications > 0 ||
             [...candidate.activeRuns.entries()].some(
               ([runId, owned]) =>
-                getAgentRunContextOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration) ===
-                "active",
+                getRunOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration) === "active",
             );
           if (!busy) {
             clearWindow(candidate);
@@ -349,11 +346,7 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
 
   const pruneReleasedRuns = (window: LiveEventWindow): WorkerLiveEventFailure | undefined => {
     for (const [runId, owned] of window.activeRuns) {
-      const ownerStatus = getAgentRunContextOwnerStatus(
-        runId,
-        owned.claimId,
-        owned.lifecycleGeneration,
-      );
+      const ownerStatus = getRunOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration);
       if (ownerStatus === undefined) {
         clearWindow(window);
         return resyncRequired(0);
@@ -403,11 +396,7 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
     const owned = window.activeRuns.get(runId);
     if (owned) {
       const context = getAgentRunContext(runId);
-      const ownerStatus = getAgentRunContextOwnerStatus(
-        runId,
-        owned.claimId,
-        owned.lifecycleGeneration,
-      );
+      const ownerStatus = getRunOwnerStatus(runId, owned.claimId, owned.lifecycleGeneration);
       if (ownerStatus === undefined) {
         // A process sweep lost sequencing state; restart the transient cursor.
         clearWindow(window);
@@ -485,9 +474,15 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
     if (!claimId) {
       return invalidEvent();
     }
+    const context = getAgentRunContext(runId);
+    if (!context) {
+      releaseAgentRunContext(runId, claimId);
+      return invalidEvent();
+    }
     const claimed = {
       claimId,
       controlUiVisible,
+      context,
       emissionMode,
       lifecycleGeneration,
       trajectoryRecorder: createWorkerLiveTrajectoryRecorder({ runId, target: window.target }),
@@ -502,12 +497,17 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
     allowBufferedTerminalCapacity: boolean,
     recordDiagnostic: PendingLiveEvent["recordDiagnostic"],
   ): WorkerLiveEventFailure | undefined => {
+    const isModelEvent =
+      request.event.kind === "lifecycle" && request.event.payload.phase === "model";
+    // A model event cannot claim a run after its original worker owner was fenced.
+    if (isModelEvent && !window.activeRuns.has(request.runId)) {
+      return invalidEvent();
+    }
     const owned = claimRun(window, request.runId, allowBufferedTerminalCapacity);
     if ("ok" in owned) {
       return owned;
     }
-    const definitiveTerminal = isDefinitiveWorkerTerminalEvent(request.event);
-    if (definitiveTerminal) {
+    if (isDefinitiveWorkerTerminalEvent(request.event)) {
       // Emission runs synchronous listeners that can clear this claim reentrantly.
       // Fence first so terminal delivery cannot reopen the run ID.
       window.terminalRuns.set(request.runId, request.seq);
@@ -517,9 +517,21 @@ export function createWorkerLiveEventReceiver(options: WorkerLiveEventReceiverOp
       stream: request.event.kind,
       data: prepareWorkerLiveEventData(request.event),
     };
-    if (owned.emissionMode === "shared") {
+    if (isModelEvent) {
+      const ownerIsCurrent =
+        getRunOwnerStatus(request.runId, owned.claimId, owned.lifecycleGeneration) === "active" &&
+        getAgentRunContext(request.runId) === owned.context;
+      if (!ownerIsCurrent) {
+        return invalidEvent();
+      }
+      if (owned.emissionMode === "shared") {
+        emitAgentEventForRunContext(event, owned.context);
+      } else {
+        emitAgentEventForOwner(event, owned.claimId);
+      }
+    } else if (owned.emissionMode === "shared") {
       if (!emitAgentEventIfCurrent(event)) {
-        if (definitiveTerminal) {
+        if (isDefinitiveWorkerTerminalEvent(request.event)) {
           window.terminalRuns.delete(request.runId);
         }
         return invalidEvent();

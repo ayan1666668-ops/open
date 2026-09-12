@@ -177,6 +177,7 @@ describe("CodexAppServerEventProjector cyber notices", () => {
         reason: "other",
       }),
     );
-    expect(onAgentEvent.mock.calls.map(([event]) => event.stream)).toEqual(["fallback"]);
+    expect(onAgentEvent.mock.calls.some(([event]) => event.stream === "fallback")).toBe(true);
+    expect(onAgentEvent.mock.calls.some(([event]) => event.stream === "notice")).toBe(false);
   });
 });

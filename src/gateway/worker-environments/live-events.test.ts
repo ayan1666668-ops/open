@@ -30,6 +30,7 @@ import {
   clearAgentRunContext,
   getAgentRunContext,
   getAgentRunContextOwnership,
+  resolveProjectedAgentRunModel,
   resolveProjectedAgentRunProgressState,
   releaseAgentRunContext,
   sweepStaleRunContexts,
@@ -878,6 +879,20 @@ describe("worker live events", () => {
     releaseAgentRunContext(RUN, gatewayClaim);
   });
 
+  it("publishes model changes through an exclusive worker claim", async () => {
+    await ack(live(1, lifecycle({ phase: "start", startedAt: 100 })));
+    const claimId = getAgentRunContextOwnership(RUN)?.exclusiveClaimId;
+    expect(claimId).toBeDefined();
+
+    await ack(live(2, lifecycle({ phase: "model", provider: "worker", model: "remote" })));
+
+    expect(events.at(-1)).toMatchObject({
+      contextClaimId: claimId,
+      stream: "lifecycle",
+      data: { phase: "model", provider: "worker", model: "remote" },
+    });
+  });
+
   const farmIdentity = (n: number): Identity => ({
     ...ID,
     environmentId: `environment-farm-${n}`,
@@ -1021,6 +1036,28 @@ describe("worker live events", () => {
     expect(events).toEqual([]);
 
     releaseAgentRunContext(RUN, gatewayClaim);
+  });
+
+  it("rejects a late model event after its worker owner is replaced", async () => {
+    const lifecycleGeneration = getAgentEventLifecycleGeneration();
+    await ack(live(1, lifecycle({ phase: "start", startedAt: 100 })));
+    const workerClaim = [...(getAgentRunContextOwnership(RUN)?.claimIds ?? [])][0];
+    expect(workerClaim).toBeDefined();
+    releaseAgentRunContext(RUN, workerClaim);
+
+    const replacementClaim = claimAgentRunContext(
+      RUN,
+      { ...LOCAL, lifecycleGeneration },
+      { ownsContext: true, trackOwner: true },
+    );
+    expect(replacementClaim).toBeDefined();
+
+    const staleModel = lifecycle({ phase: "model", provider: "stale", model: "stale" });
+    await fail(live(2, staleModel), "resync-required");
+    await fail(live(1, staleModel), "invalid-event");
+    expect(resolveProjectedAgentRunModel(LOCAL)).toBeNull();
+
+    releaseAgentRunContext(RUN, replacementClaim);
   });
 
   it("rejects pre-registered gateway run contexts with mismatched identity", async () => {

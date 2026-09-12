@@ -1,4 +1,5 @@
 import type { WorkerLiveEvent } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
+import type { WorkerInferenceModelRef } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
 import {
   mergeAgentRunAttemptTerminal,
   normalizeAgentRunAttemptTerminal,
@@ -156,7 +157,10 @@ type WorkerLiveRuntime = {
   emitTerminal: () => Promise<void>;
 };
 
-export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRuntime {
+export function createWorkerLiveRuntime(
+  client: WorkerLiveClient,
+  modelRef: WorkerInferenceModelRef,
+): WorkerLiveRuntime {
   let previewEnabled = true;
   const enqueueLive = (event: WorkerLiveEvent) => {
     if (previewEnabled) {
@@ -195,6 +199,23 @@ export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRun
   let streamedPhase: AssistantPhase | undefined;
   let assistantMessageIndex = 0;
   let streamedThinking = "";
+  let publishedMessageModel: string | undefined;
+  const publishMessageModel = (message: AgentMessage, reset: boolean) => {
+    if (reset) {
+      publishedMessageModel = undefined;
+    }
+    if (message.role !== "assistant") {
+      return;
+    }
+    const provider = message.provider?.trim();
+    const model = message.responseModel?.trim() || message.model?.trim();
+    const identity = provider && model ? `${provider}\0${model}` : undefined;
+    if (!identity || identity === publishedMessageModel) {
+      return;
+    }
+    enqueueLive({ kind: "lifecycle", payload: { phase: "model", provider, model } });
+    publishedMessageModel = identity;
+  };
   const emitAssistantSnapshot = (message: AgentMessage) => {
     const { text, phase } = readAssistantSnapshot(message);
     if (text === streamedText && phase === streamedPhase) {
@@ -227,9 +248,14 @@ export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRun
     }
     if (event.type === "agent_start") {
       enqueueLive({ kind: "lifecycle", payload: { phase: "start", startedAt } });
+      enqueueLive({
+        kind: "lifecycle",
+        payload: { phase: "model", provider: modelRef.provider, model: modelRef.model },
+      });
       return;
     }
     if (event.type === "message_start" && event.message.role === "assistant") {
+      publishMessageModel(event.message, true);
       assistantMessageIndex += 1;
       streamedText = "";
       streamedPhase = undefined;
@@ -237,6 +263,7 @@ export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRun
       return;
     }
     if (event.type === "message_update") {
+      publishMessageModel(event.message, false);
       if (
         event.assistantMessageEvent.type === "text_delta" ||
         event.assistantMessageEvent.type === "text_end"
@@ -252,6 +279,7 @@ export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRun
       return;
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
+      publishMessageModel(event.message, false);
       emitAssistantSnapshot(event.message);
       const finalThinking = readAssistantThinking(event.message);
       if (finalThinking !== streamedThinking) {

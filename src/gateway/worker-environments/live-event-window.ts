@@ -1,5 +1,6 @@
 import type { WorkerLiveEventParams } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { releaseAgentRunContext } from "../../infra/agent-run-registry.js";
+import type { AgentRunContext } from "../../infra/agent-run-registry.types.js";
 import type { WorkerLiveTrajectoryRecorder } from "./live-event-projection.js";
 import type { LiveEventTarget } from "./live-event-session-binding.js";
 import type { captureWorkerTurnDiagnosticRecorder } from "./worker-turn-run-owner.js";
@@ -13,6 +14,7 @@ export type PendingLiveEvent = {
 export type OwnedLiveRun = {
   claimId: string;
   controlUiVisible: boolean;
+  context: AgentRunContext;
   emissionMode: "exclusive" | "shared";
   lifecycleGeneration: string;
   trajectoryRecorder: WorkerLiveTrajectoryRecorder;
