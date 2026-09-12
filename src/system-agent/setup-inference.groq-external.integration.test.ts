@@ -4,7 +4,10 @@ import http from "node:http";
 import path from "node:path";
 import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
-import { writePersistedInstalledPluginIndexInstallRecords } from "../plugins/installed-plugin-index-records.js";
+import {
+  clearLoadInstalledPluginIndexInstallRecordsCache,
+  writePersistedInstalledPluginIndexInstallRecords,
+} from "../plugins/installed-plugin-index-records.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -45,6 +48,7 @@ it("resolves a Groq manifest model from a global external install during setup",
         },
         { config, env: state.env },
       );
+      clearLoadInstalledPluginIndexInstallRecordsCache();
 
       const requests: Array<{ method?: string; url?: string }> = [];
       const runtimeErrors: string[] = [];
