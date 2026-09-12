@@ -235,10 +235,24 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     const appId = readMSTeamsSetupCredential(input, "appId");
     const appPassword = readMSTeamsSetupCredential(input, "appPassword");
     const tenantId = readMSTeamsSetupCredential(input, "tenantId");
+    const hasAnyExplicitCredential = Boolean(appId || appPassword || tenantId);
+    const hasCompleteExplicitCredentials = Boolean(
+      appId?.trim() && appPassword?.trim() && tenantId?.trim(),
+    );
     if (input.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
       return "MSTEAMS_* environment variables can only be used for the default account.";
     }
-    if (!input.useEnv && !(appId?.trim() && appPassword?.trim() && tenantId?.trim())) {
+    if (input.useEnv && hasAnyExplicitCredential && !hasCompleteExplicitCredentials) {
+      return "MS Teams requires appId, appPassword, and tenantId when replacing environment credentials.";
+    }
+    if (
+      input.useEnv &&
+      !hasCompleteExplicitCredentials &&
+      !resolveCredentialsForSetup(cfg, DEFAULT_ACCOUNT_ID)
+    ) {
+      return "MS Teams --use-env requires complete secret, certificate, or managed-identity environment credentials.";
+    }
+    if (!input.useEnv && !hasCompleteExplicitCredentials) {
       return "MS Teams requires appId, appPassword, and tenantId (or --use-env for the default account).";
     }
     if (
@@ -275,10 +289,16 @@ export const msteamsSetupAdapter: ChannelSetupAdapter<MSTeamsSetupInput> = {
     if (input.webhookPort !== undefined) {
       patch.webhook = { ...existing.webhook, port: input.webhookPort };
     }
+    const credentialPatch =
+      input.useEnv && !(appId?.trim() && appPassword?.trim() && tenantId?.trim())
+        ? patch
+        : applySecretAuthCredentials(patch, existing);
     return patchMSTeamsAccountConfig({
       cfg,
       accountId: resolvedAccountId,
-      patch: applySecretAuthCredentials(patch, existing),
+      // --use-env selects runtime credentials; do not replace a persisted
+      // federated mode unless the operator supplied a complete secret tuple.
+      patch: credentialPatch,
       scopeDefaultToAccounts: true,
     });
   },
@@ -306,8 +326,16 @@ export const msteamsSetupContract = defineChannelSetupContract({
     useEnv: {
       kind: "boolean",
       cli: { flags: "--use-env", description: "Use Microsoft Teams environment credentials" },
-      envVars: ["MSTEAMS_APP_ID", "MSTEAMS_APP_PASSWORD", "MSTEAMS_TENANT_ID"],
-      envVarMode: "all",
+      envVars: [
+        "MSTEAMS_APP_ID",
+        "MSTEAMS_APP_PASSWORD",
+        "MSTEAMS_TENANT_ID",
+        "MSTEAMS_AUTH_TYPE",
+        "MSTEAMS_CERTIFICATE_PATH",
+        "MSTEAMS_USE_MANAGED_IDENTITY",
+      ],
+      // Teams owns the authentication-aware combination check in validateInput.
+      envVarMode: "any",
     },
   },
   adapter: msteamsSetupAdapter,

@@ -107,9 +107,12 @@
             "envVars": [
               "MSTEAMS_APP_ID",
               "MSTEAMS_APP_PASSWORD",
-              "MSTEAMS_TENANT_ID"
+              "MSTEAMS_TENANT_ID",
+              "MSTEAMS_AUTH_TYPE",
+              "MSTEAMS_CERTIFICATE_PATH",
+              "MSTEAMS_USE_MANAGED_IDENTITY"
             ],
-            "envVarMode": "all"
+            "envVarMode": "any"
           }
         ]
       }
