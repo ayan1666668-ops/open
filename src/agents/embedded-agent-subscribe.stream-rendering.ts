@@ -367,6 +367,7 @@ export function createStreamRendering({
       final?: boolean;
       completeMarkdownChunk?: boolean;
       finalReply?: ReplyDirectiveParseResult;
+      sourceText?: string;
     },
   ) => {
     if (
@@ -537,6 +538,7 @@ export function createStreamRendering({
       },
       {
         assistantMessageIndex: options?.assistantMessageIndex ?? state.assistantMessageIndex,
+        blockSourceText: options?.sourceText ?? blockReplyText,
         consumePendingToolMedia:
           (options?.final === true &&
             options.deferPendingToolMedia !== true &&
@@ -569,18 +571,19 @@ export function createStreamRendering({
     if (isPromiseLike<void>(settlement)) {
       return Promise.resolve(settlement).then(() => flushBlockReplyBuffer(options));
     }
-    let pendingChunk: string | undefined;
+    let pendingChunk: { sourceText?: string; text: string } | undefined;
     if (blockChunker.hasBuffered()) {
       blockChunker.drain({
         force: true,
-        emit: (text) => {
+        emit: (text, chunkOptions) => {
           if (pendingChunk !== undefined) {
-            emitBlockChunk(pendingChunk, {
+            emitBlockChunk(pendingChunk.text, {
               assistantMessageIndex: options?.assistantMessageIndex,
               completeMarkdownChunk: true,
+              sourceText: pendingChunk.sourceText,
             });
           }
-          pendingChunk = text;
+          pendingChunk = { text, sourceText: chunkOptions?.sourceText };
         },
       });
       blockChunker.reset();
@@ -588,9 +591,10 @@ export function createStreamRendering({
     if (pendingChunk !== undefined || options?.final) {
       // Only the final chunk can select attachments or consume fallback tool
       // media. Intermediate chunks remain text-only until that selection exists.
-      emitBlockChunk(pendingChunk ?? "", {
+      emitBlockChunk(pendingChunk?.text ?? "", {
         ...options,
         completeMarkdownChunk: options?.final === true,
+        sourceText: pendingChunk?.sourceText,
       });
     }
     if (currentPendingBlockReplyTasks().length === 0) {

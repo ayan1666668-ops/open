@@ -20,6 +20,7 @@ import { isConfiguredHeartbeatAgent, isTargetedUnscheduledWake } from "./heartbe
 import {
   areHeartbeatsEnabled,
   HEARTBEAT_SKIP_NO_PENDING_EVENT,
+  hasTrustedContinuationHeartbeatWake,
   type HeartbeatRunResult,
   type HeartbeatWakeHandler,
   type HeartbeatWakeIntent,
@@ -268,6 +269,10 @@ export function startHeartbeatRunnerScheduled(opts: {
           reason,
           ...(scheduledEveryMs !== undefined ? { scheduledEveryMs } : {}),
           ...(targeted ? { sessionKey: requestedSessionKey } : {}),
+          ...(targeted && params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+          ...(targeted && hasTrustedContinuationHeartbeatWake(params)
+            ? { trustedContinuationRouting: true }
+            : {}),
           tasks: requestedTasks,
           deps: { runtime: state.runtime },
         });

@@ -12,6 +12,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { FsSafeError, type FsSafeErrorCode } from "../../../infra/fs-safe.js";
 import { privateFileStore } from "../../../infra/private-file-store.js";
 import {
+  DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS,
   MAX_INLINE_ATTACHMENT_BASENAME_BYTES,
   MAX_INLINE_ATTACHMENT_MIME_TYPE_BYTES,
   prepareInlineAttachmentSnapshots,
@@ -86,17 +87,26 @@ function resolveAttachmentLimits(config: OpenClawConfig): AttachmentLimits {
     maxTotalBytes:
       typeof attachmentsCfg?.maxTotalBytes === "number" &&
       Number.isFinite(attachmentsCfg.maxTotalBytes)
-        ? Math.max(0, Math.floor(attachmentsCfg.maxTotalBytes))
-        : 5 * 1024 * 1024,
+        ? Math.min(
+            DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxTotalBytes,
+            Math.max(0, Math.floor(attachmentsCfg.maxTotalBytes)),
+          )
+        : DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxTotalBytes,
     maxFiles:
       typeof attachmentsCfg?.maxFiles === "number" && Number.isFinite(attachmentsCfg.maxFiles)
-        ? Math.max(0, Math.floor(attachmentsCfg.maxFiles))
-        : 50,
+        ? Math.min(
+            DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxFiles,
+            Math.max(0, Math.floor(attachmentsCfg.maxFiles)),
+          )
+        : DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxFiles,
     maxFileBytes:
       typeof attachmentsCfg?.maxFileBytes === "number" &&
       Number.isFinite(attachmentsCfg.maxFileBytes)
-        ? Math.max(0, Math.floor(attachmentsCfg.maxFileBytes))
-        : 1 * 1024 * 1024,
+        ? Math.min(
+            DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxFileBytes,
+            Math.max(0, Math.floor(attachmentsCfg.maxFileBytes)),
+          )
+        : DEFAULT_INLINE_ATTACHMENT_SNAPSHOT_LIMITS.maxFileBytes,
     retainOnSessionKeep: attachmentsCfg?.retainOnSessionKeep === true,
   };
 }
@@ -306,6 +316,7 @@ export function resolveAcpSessionsSpawnImageAttachments(params: {
     const prepared = prepareSubagentAttachments({
       attachments: request.attachments,
       limits: request.limits,
+      nameUsage: "transport-only",
       requireImageMime: true,
     });
     return {

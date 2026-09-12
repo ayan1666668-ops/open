@@ -180,6 +180,8 @@ function createDispatchDeps(options?: {
 
 /** Delivery-time clock every `createDeliveryDeps()` mock reports. */
 const DELIVERY_NOW_MS = 1_700_000_000_000;
+const SOURCE_SESSION_ID = "session";
+const SOURCE_LIFECYCLE_REVISION = "lifecycle";
 
 function createQueuedEntry(
   overrides?: Partial<QueuedPostCompactionDelegateDelivery>,
@@ -188,6 +190,8 @@ function createQueuedEntry(
     id: "queue-1",
     kind: "postCompactionDelegate",
     sessionKey: "main",
+    sourceSessionId: SOURCE_SESSION_ID,
+    sourceLifecycleRevision: SOURCE_LIFECYCLE_REVISION,
     task: "queued delegate",
     // Armed at the delivery clock: an entry stamped at epoch 1 would be ~54
     // years old and would terminalize on the RFC §4.4 stale gate instead of
@@ -279,7 +283,15 @@ async function seedSessionStore(
 ): Promise<void> {
   await Promise.all(
     Object.entries(store).map(async ([sessionKey, entry]) => {
-      await sessionAccessorModule.upsertSessionEntryCore({ storePath, sessionKey }, entry);
+      await sessionAccessorModule.upsertSessionEntryCore(
+        { storePath, sessionKey },
+        {
+          ...(entry.sessionId === SOURCE_SESSION_ID && entry.lifecycleRevision === undefined
+            ? { lifecycleRevision: SOURCE_LIFECYCLE_REVISION }
+            : {}),
+          ...entry,
+        },
+      );
     }),
   );
 }

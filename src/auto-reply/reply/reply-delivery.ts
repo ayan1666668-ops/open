@@ -3,6 +3,7 @@ import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
 import { logVerbose } from "../../globals.js";
 import {
   copyReplyPayloadMetadata,
+  getReplyPayloadMetadata,
   isReplyPayloadTerminalContent,
   setReplyPayloadMetadata,
 } from "../reply-payload.js";
@@ -175,12 +176,14 @@ export function createBlockReplyDeliveryHandler(params: {
     if (normalized.isSilent) {
       mediaNormalizedPayload.text = undefined;
     }
+    const blockSourceText =
+      getReplyPayloadMetadata(payload)?.blockSourceText ?? payload.text?.trim();
     const blockPayload = copyReplyPayloadMetadata(
       payload,
       params.applyReplyToMode(mediaNormalizedPayload),
     );
     if (blockPayload.text?.trim() !== payload.text?.trim()) {
-      setReplyPayloadMetadata(blockPayload, { blockSourceText: undefined });
+      setReplyPayloadMetadata(blockPayload, { blockSourceText });
     }
     const blockHasNonTextContent = hasOutboundReplyContent({ ...blockPayload, text: undefined });
 

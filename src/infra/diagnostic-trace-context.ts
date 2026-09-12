@@ -79,8 +79,12 @@ function isDiagnosticTraceScopeState(value: unknown): value is DiagnosticTraceSc
   );
 }
 
+function getGlobalTraceScopeRecord(): Record<PropertyKey, unknown> {
+  return globalThis as Record<PropertyKey, unknown>;
+}
+
 function getDiagnosticTraceScopeState(): DiagnosticTraceScopeState {
-  const globalRecord = globalThis as Record<PropertyKey, unknown>;
+  const globalRecord = getGlobalTraceScopeRecord();
   const existing = globalRecord[DIAGNOSTIC_TRACE_SCOPE_STATE_KEY];
   if (isDiagnosticTraceScopeState(existing)) {
     return existing;
@@ -178,6 +182,15 @@ export function freezeDiagnosticTraceContext(
 /** Returns the trace context bound to the current async scope. */
 export function getActiveDiagnosticTraceContext(): DiagnosticTraceContext | undefined {
   return getDiagnosticTraceScopeState().storage.getStore();
+}
+
+export function resetDiagnosticTraceContextForTest(): void {
+  const globalRecord = getGlobalTraceScopeRecord();
+  const existing = globalRecord[DIAGNOSTIC_TRACE_SCOPE_STATE_KEY];
+  if (isDiagnosticTraceScopeState(existing)) {
+    existing.storage.disable();
+  }
+  delete globalRecord[DIAGNOSTIC_TRACE_SCOPE_STATE_KEY];
 }
 
 export function formatActiveDiagnosticTraceparent(): string | undefined {

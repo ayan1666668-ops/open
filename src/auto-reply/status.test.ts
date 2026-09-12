@@ -313,6 +313,7 @@ describe("buildStatusMessage", () => {
         },
       } as unknown as OpenClawConfig,
       agent: { model: "anthropic/pi:opus" },
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "pi:opus" }),
       sessionEntry: {
         sessionId: "abc",
         updatedAt: 0,
@@ -346,6 +347,7 @@ describe("buildStatusMessage", () => {
           },
         } as unknown as OpenClawConfig,
         agent: { model: "anthropic/pi:opus" },
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "pi:opus" }),
         sessionEntry: {
           sessionId: "abc",
           updatedAt: 0,
@@ -385,6 +387,7 @@ describe("buildStatusMessage", () => {
           },
         } as unknown as OpenClawConfig,
         agent: { model: "anthropic/pi:opus" },
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "pi:opus" }),
         sessionEntry: {
           sessionId: "abc",
           updatedAt: 0,
@@ -421,6 +424,7 @@ describe("buildStatusMessage", () => {
           },
         } as unknown as OpenClawConfig,
         agent: { model: "anthropic/pi:opus" },
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "pi:opus" }),
         sessionEntry: {
           sessionId: "abc",
           updatedAt: 0,
@@ -455,6 +459,7 @@ describe("buildStatusMessage", () => {
         },
       } as unknown as OpenClawConfig,
       agent: { model: "anthropic/pi:opus" },
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "pi:opus" }),
       sessionEntry: {
         sessionId: "abc",
         updatedAt: 0,

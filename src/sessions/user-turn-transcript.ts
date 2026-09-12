@@ -230,6 +230,58 @@ export function createUserTurnTranscriptRecorder(
   let confirmedSteerTargetRunId: string | undefined;
   let pendingInput: Awaited<ReturnType<typeof stageSessionPendingInput>>;
   let staging: Promise<boolean> | undefined;
+  const replacementSessionDeliveryAckIds = new Set<string>();
+  let hasReplacementSessionDeliveryAckIds = false;
+  const initialSessionDeliveryAckIds = message?.["__openclaw"]?.sessionDeliveryAckIds;
+  if (Array.isArray(initialSessionDeliveryAckIds)) {
+    hasReplacementSessionDeliveryAckIds = true;
+    for (const deliveryId of initialSessionDeliveryAckIds) {
+      if (typeof deliveryId === "string" && deliveryId.trim()) {
+        replacementSessionDeliveryAckIds.add(deliveryId.trim());
+      }
+    }
+  }
+
+  const replaceSessionDeliveryAckIds = (deliveryIds: readonly string[]): boolean => {
+    if (
+      pendingInput ||
+      staging ||
+      selfPersistencePromise ||
+      runtimePersistencePromise ||
+      runtimePersisted ||
+      persisted
+    ) {
+      return false;
+    }
+    hasReplacementSessionDeliveryAckIds = true;
+    replacementSessionDeliveryAckIds.clear();
+    for (const deliveryId of deliveryIds) {
+      const normalized = deliveryId.trim();
+      if (normalized) {
+        replacementSessionDeliveryAckIds.add(normalized);
+      }
+    }
+    return true;
+  };
+
+  const applyReplacementSessionDeliveryAckIds = (
+    candidate: PersistedUserTurnMessage | undefined,
+  ): PersistedUserTurnMessage | undefined => {
+    if (!candidate || !hasReplacementSessionDeliveryAckIds) {
+      return candidate;
+    }
+    const metadata = { ...candidate["__openclaw"] };
+    delete metadata.sessionDeliveryAckIds;
+    return {
+      ...candidate,
+      __openclaw: {
+        ...metadata,
+        ...(replacementSessionDeliveryAckIds.size > 0
+          ? { sessionDeliveryAckIds: [...replacementSessionDeliveryAckIds] }
+          : {}),
+      },
+    };
+  };
 
   const applyReplacementText = (
     candidate: PersistedUserTurnMessage | undefined,
@@ -248,7 +300,7 @@ export function createUserTurnTranscriptRecorder(
 
   const applyMessageOverrides = (candidate: PersistedUserTurnMessage | undefined) => {
     const next = rewritePersistedSteerTargetRunId(
-      applyReplacementText(candidate),
+      applyReplacementSessionDeliveryAckIds(applyReplacementText(candidate)),
       confirmedSteerTargetRunId,
     );
     // Native mirrors must reuse this admission even when no transport supplied a key.
@@ -570,6 +622,7 @@ export function createUserTurnTranscriptRecorder(
         }
       }
     },
+    replaceSessionDeliveryAckIds,
     replaceTextBeforePersistence: (text) => {
       if (pendingInput || persisted || runtimePersisted || sentToProvider) {
         return;

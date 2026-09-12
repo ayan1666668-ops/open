@@ -43,6 +43,48 @@ function insertEmptyAlias(params: {
   return database;
 }
 
+function assignLegacySessionOwner(params: {
+  agentId: string;
+  assignedAt: number;
+  assignedBy: { type: "agent" | "human"; id: string };
+  env: NodeJS.ProcessEnv;
+  owner: { type: "agent" | "human"; id: string };
+  sessionKey: string;
+  storePath: string;
+}) {
+  const database = openOpenClawAgentDatabase({
+    agentId: params.agentId,
+    env: params.env,
+    path: resolveSqliteTargetFromSessionStorePath(params.storePath, {
+      agentId: params.agentId,
+      env: params.env,
+    }).path,
+  });
+  database.db
+    .prepare(
+      `UPDATE session_nodes
+          SET owner_actor_type = ?,
+              owner_actor_id = ?,
+              owner_assigned_by_type = ?,
+              owner_assigned_by_id = ?,
+              owner_assigned_at = ?
+        WHERE session_key = ?`,
+    )
+    .run(
+      params.owner.type,
+      params.owner.id,
+      params.assignedBy.type,
+      params.assignedBy.id,
+      params.assignedAt,
+      params.sessionKey,
+    );
+  return {
+    actor: params.owner,
+    assignedBy: params.assignedBy,
+    assignedAt: params.assignedAt,
+  };
+}
+
 describe("doctor transcript owner repair", () => {
   it.each([
     { label: "same database orphan", sourceAgentId: "main", sourceEpoch: undefined },
@@ -429,14 +471,15 @@ describe("doctor transcript owner repair", () => {
           sessionKey: canonicalKey,
           storePath: destinationStore,
         });
-        assignSessionOwner(
-          { agentId: "main", env, sessionKey: canonicalKey, storePath: destinationStore },
-          {
-            owner: { type: "human", id: "profile-stale" },
-            assignedBy: { type: "human", id: "profile-stale-assigner" },
-            assignedAt: 10,
-          },
-        );
+        assignLegacySessionOwner({
+          agentId: "main",
+          env,
+          sessionKey: canonicalKey,
+          storePath: destinationStore,
+          owner: { type: "human", id: "profile-stale" },
+          assignedBy: { type: "human", id: "profile-stale-assigner" },
+          assignedAt: 10,
+        });
       }
 
       insertLegacySession({
@@ -447,14 +490,15 @@ describe("doctor transcript owner repair", () => {
         storePath: sourceStore,
       });
       const owner = winnerOwned
-        ? assignSessionOwner(
-            { agentId: sourceAgentId, env, sessionKey: winnerKey, storePath: sourceStore },
-            {
-              owner: { type: "human", id: "profile-winner" },
-              assignedBy: { type: "agent", id: "research" },
-              assignedAt: 1234,
-            },
-          )
+        ? assignLegacySessionOwner({
+            agentId: sourceAgentId,
+            env,
+            sessionKey: winnerKey,
+            storePath: sourceStore,
+            owner: { type: "human", id: "profile-winner" },
+            assignedBy: { type: "agent", id: "research" },
+            assignedAt: 1234,
+          })
         : undefined;
 
       if ("malformed" in fixture) {

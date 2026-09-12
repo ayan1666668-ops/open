@@ -243,7 +243,9 @@ export async function resolveHeartbeatWakeStage(opts: HeartbeatRunOptions) {
     cfg,
     agentId,
     heartbeat,
-    opts.sessionKey,
+    opts.trustedTargetSessionKey ?? opts.sessionKey,
+    process.env,
+    { allowSubagentSession: Boolean(opts.trustedTargetSessionKey) },
   );
   // Recovery can already have admitted its owner and cleared the abort flag;
   // automatic and sentinel wakes must honor that canonical lifecycle fence.

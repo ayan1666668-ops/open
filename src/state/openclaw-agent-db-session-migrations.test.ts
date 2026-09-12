@@ -5,6 +5,7 @@ import {
   backfillSessionConversations,
   ensureSessionAdditiveColumns,
   migrateConversationDeliveryTargetColumn,
+  migrateSessionRecipientAuthority,
 } from "./openclaw-agent-db-session-migrations.js";
 
 describe("agent DB conversation migration", () => {

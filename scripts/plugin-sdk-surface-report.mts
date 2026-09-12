@@ -372,7 +372,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: shared stored-account key selection and its plugin-owned policy type.
       // +1: shared per-connection webhook request ordering for channel listeners.
       // +17: continuation runtime, task-flow, trace, and channel-ingress contracts.
-      4478,
+      // +5: final continuation system-event and diagnostic runtime contracts.
+      4483,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -510,7 +511,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: shared stored-account key selection for channel readers and writers.
       // +1: shared per-connection webhook request ordering for channel listeners.
       // +5: callable continuation and channel-ingress runtime helpers.
-      2643,
+      // +2: plugin-safe system-event alias and diagnostic trace scope runner.
+      2645,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

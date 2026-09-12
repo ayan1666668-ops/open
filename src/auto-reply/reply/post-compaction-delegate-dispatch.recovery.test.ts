@@ -188,6 +188,8 @@ function createDispatchDeps(options?: {
 
 /** Delivery-time clock every `createDeliveryDeps()` mock reports. */
 const DELIVERY_NOW_MS = 1_700_000_000_000;
+const SOURCE_SESSION_ID = "session";
+const SOURCE_LIFECYCLE_REVISION = "lifecycle";
 
 function createQueuedEntry(
   overrides?: Partial<QueuedPostCompactionDelegateDelivery>,
@@ -196,6 +198,8 @@ function createQueuedEntry(
     id: "queue-1",
     kind: "postCompactionDelegate",
     sessionKey: "main",
+    sourceSessionId: SOURCE_SESSION_ID,
+    sourceLifecycleRevision: SOURCE_LIFECYCLE_REVISION,
     task: "queued delegate",
     // Armed at the delivery clock: an entry stamped at epoch 1 would be ~54
     // years old and would terminalize on the RFC §4.4 stale gate instead of
@@ -287,7 +291,15 @@ async function seedSessionStore(
 ): Promise<void> {
   await Promise.all(
     Object.entries(store).map(async ([sessionKey, entry]) => {
-      await sessionAccessorModule.upsertSessionEntryCore({ storePath, sessionKey }, entry);
+      await sessionAccessorModule.upsertSessionEntryCore(
+        { storePath, sessionKey },
+        {
+          ...(entry.sessionId === SOURCE_SESSION_ID && entry.lifecycleRevision === undefined
+            ? { lifecycleRevision: SOURCE_LIFECYCLE_REVISION }
+            : {}),
+          ...entry,
+        },
+      );
     }),
   );
 }
@@ -399,12 +411,22 @@ describe("post-compaction delegate dispatch extraction", () => {
     await withTestDir({ prefix: "openclaw-post-compaction-drain-" }, async (tempDir) => {
       const storePath = path.join(tempDir, "sessions.json");
       await seedSessionStore(storePath, {
-        main: { sessionId: "main-session", updatedAt: 1 },
-        other: { sessionId: "other-session", updatedAt: 1 },
+        main: {
+          sessionId: "main-session",
+          lifecycleRevision: "main-lifecycle",
+          updatedAt: 1,
+        },
+        other: {
+          sessionId: "other-session",
+          lifecycleRevision: "other-lifecycle",
+          updatedAt: 1,
+        },
       });
       const mainId = await enqueuePostCompactionDelegateDeliveryQueue(
         {
           sessionKey: "main",
+          sourceSessionId: "main-session",
+          sourceLifecycleRevision: "main-lifecycle",
           delegate: delegate("main retry", {
             createdAt: DELIVERY_NOW_MS,
             firstArmedAt: DELIVERY_NOW_MS,
@@ -417,6 +439,8 @@ describe("post-compaction delegate dispatch extraction", () => {
       const otherId = await enqueuePostCompactionDelegateDeliveryQueue(
         {
           sessionKey: "other",
+          sourceSessionId: "other-session",
+          sourceLifecycleRevision: "other-lifecycle",
           delegate: delegate("other untouched", {
             createdAt: DELIVERY_NOW_MS,
             firstArmedAt: DELIVERY_NOW_MS,
@@ -547,6 +571,11 @@ describe("post-compaction delegate dispatch extraction", () => {
           compactionCount: 1,
           followupRun: createFollowupRun(),
           postCompactionDelegatesToPreserve: preserve,
+          sessionEntry: {
+            sessionId: SOURCE_SESSION_ID,
+            lifecycleRevision: SOURCE_LIFECYCLE_REVISION,
+            updatedAt: 1,
+          },
           sessionKey: "main",
           storePath: "/tmp/post-compaction-persist-fail.json",
         },
@@ -590,6 +619,11 @@ describe("post-compaction delegate dispatch extraction", () => {
         compactionCount: 1,
         followupRun: createFollowupRun(),
         postCompactionDelegatesToPreserve: preserve,
+        sessionEntry: {
+          sessionId: SOURCE_SESSION_ID,
+          lifecycleRevision: SOURCE_LIFECYCLE_REVISION,
+          updatedAt: 1,
+        },
         sessionKey: "main",
       },
       deps,
@@ -624,6 +658,11 @@ describe("post-compaction delegate dispatch extraction", () => {
           compactionCount: 1,
           followupRun: createFollowupRun(),
           postCompactionDelegatesToPreserve: [],
+          sessionEntry: {
+            sessionId: SOURCE_SESSION_ID,
+            lifecycleRevision: SOURCE_LIFECYCLE_REVISION,
+            updatedAt: 1,
+          },
           sessionKey: "main",
         },
         deps,

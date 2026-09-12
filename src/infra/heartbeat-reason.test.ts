@@ -1,6 +1,11 @@
 // Tests heartbeat reason formatting and normalization.
 import { describe, expect, it } from "vitest";
-import { normalizeHeartbeatWakeReason } from "./heartbeat-reason.js";
+import {
+  isHeartbeatActionWakeReason,
+  isHeartbeatEventDrivenReason,
+  normalizeHeartbeatWakeReason,
+  resolveHeartbeatReasonKind,
+} from "./heartbeat-reason.js";
 
 describe("heartbeat-reason", () => {
   it.each([

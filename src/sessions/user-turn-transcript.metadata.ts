@@ -89,6 +89,9 @@ export function buildPersistedUserTurnMetadata(
         }
       : {}),
     ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.sessionDeliveryAckIds?.length
+      ? { sessionDeliveryAckIds: [...new Set(input.sessionDeliveryAckIds)] }
+      : {}),
     ...(normalizedMedia.length > 0 ? { media: normalizedMedia } : {}),
     ...(input.mediaImageLayout
       ? {
@@ -236,6 +239,10 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
       }
     : undefined;
   const originalTransport = originalMeta?.transport;
+  const originalSessionDeliveryAckIds = originalMeta?.sessionDeliveryAckIds;
+  const sessionDeliveryAckIds = Array.isArray(originalSessionDeliveryAckIds)
+    ? [...originalSessionDeliveryAckIds]
+    : undefined;
   const steerTargetRunId = normalizePersistedSteerTargetRunId(originalMeta?.steerTargetRunId);
   const lateMedia = originalMeta?.lateMedia === true;
   const originalMedia = originalMeta?.media;
@@ -267,6 +274,7 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
     ...(replyToId ? { replyToId } : {}),
     ...(replyToPreview ? { replyToPreview } : {}),
     ...(transport ? { transport } : {}),
+    ...(sessionDeliveryAckIds ? { sessionDeliveryAckIds } : {}),
     ...(lateMedia ? { lateMedia: true } : {}),
     ...(media === undefined ? {} : { media }),
     ...(mediaImageLayout === undefined ? {} : { mediaImageLayout }),

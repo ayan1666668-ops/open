@@ -48,7 +48,16 @@ export const TSGO_CORE_TEST_SHARDS = [
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.config-cli.json",
   },
-  { name: "messaging", group: "src", config: "test/tsconfig/tsconfig.core.test.messaging.json" },
+  {
+    name: "messaging-auto-reply",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.messaging-auto-reply.json",
+  },
+  {
+    name: "messaging-channels",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.messaging-channels.json",
+  },
   { name: "services", group: "src", config: "test/tsconfig/tsconfig.core.test.services.json" },
   { name: "other", group: "src", config: "test/tsconfig/tsconfig.core.test.other.json" },
   {

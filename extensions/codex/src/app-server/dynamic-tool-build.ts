@@ -385,12 +385,15 @@ export async function buildDynamicTools(
       }
       tools = createToolSurface(options, bindingOptions);
     }
-    if (!extraOpenClawCodingTools?.length) {
+    if (!dynamicToolBuildState.extraOpenClawCodingTools?.length) {
       return tools;
     }
     return [
       ...tools,
-      ...params.hostCapabilities.bindToolSurface(extraOpenClawCodingTools, bindingOptions),
+      ...params.hostCapabilities.bindToolSurface(
+        dynamicToolBuildState.extraOpenClawCodingTools,
+        bindingOptions,
+      ),
     ];
   };
   const allTools = input.resolveCronCreatorToolAuthority
