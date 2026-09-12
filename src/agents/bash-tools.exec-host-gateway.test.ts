@@ -195,7 +195,7 @@ const defaultExecAutoReviewerMock = vi.hoisted(() =>
     rationale: "allowed",
   })),
 );
-const commitExecAuthorizationMock = vi.hoisted(() => vi.fn(async () => undefined));
+const commitExecAuthorizationMock = vi.hoisted(() => vi.fn(async () => () => {}));
 const resolveApprovalDecisionOrUndefinedMock = vi.hoisted(() =>
   vi.fn(
     async (_params?: {
@@ -1079,6 +1079,7 @@ describe("processGatewayAllowlist", () => {
     expect(result!).toEqual({
       execCommandOverride: undefined,
       allowWithoutEnforcedCommand: true,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(captured.events).toHaveLength(2);
@@ -1119,6 +1120,7 @@ describe("processGatewayAllowlist", () => {
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(result!).toEqual({
       execCommandOverride: `${resolvedPath} ok`,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(captured.events).toHaveLength(1);
@@ -1131,7 +1133,7 @@ describe("processGatewayAllowlist", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "reviews an unquoted glob and semicolon chain and allows the original text once",
+    "reviews an unquoted glob and semicolon chain and pins its dispatches once",
     async () => {
       const command = "ls *.ts; echo complete";
       await configurePlanBackedCommand({ command });
@@ -1152,8 +1154,10 @@ describe("processGatewayAllowlist", () => {
           analysis: expect.objectContaining({ parsed: true, heredoc: false }),
         }),
       );
-      expect(result).not.toHaveProperty("execCommandOverride");
-      expect(result.allowWithoutEnforcedCommand).toBe(true);
+      expect(result.execCommandOverride).toMatch(
+        /^'\/[^']*\/ls' \*\.ts; '\/[^']*\/echo' complete$/,
+      );
+      expect(result.allowWithoutEnforcedCommand).toBeUndefined();
       await expect(result.revalidateBeforeExecution?.()).resolves.toBeUndefined();
       expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
       expect(commitExecAuthorizationMock).toHaveBeenCalledWith(
@@ -1210,7 +1214,7 @@ describe("processGatewayAllowlist", () => {
         });
         if (approval === "auto") {
           expect(defaultExecAutoReviewerMock).toHaveBeenCalledOnce();
-          expect(result.allowWithoutEnforcedCommand).toBe(true);
+          expect(result.execCommandOverride).toMatch(/^'\/[^']*\/ls' \*\.ts \| '\/[^']*\/head'$/);
           changed = true;
           const denied = await result.revalidateBeforeExecution?.();
           expect(denied?.content[0]).toMatchObject({
@@ -1725,7 +1729,7 @@ Command: ${command}`;
     });
 
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
-    expect(result).toEqual({ execCommandOverride: undefined });
+    expect(result).toEqual({ execCommandOverride: undefined, assertCurrent: expect.any(Function) });
   });
 
   it("auto-reviews strict inline-eval commands instead of forcing human approval", async () => {
@@ -1810,6 +1814,7 @@ Command: ${command}`;
 
     expect(result).toEqual({
       execCommandOverride: `${resolvedExecutable} -c 16`,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(commitExecAuthorizationMock).toHaveBeenCalledWith(
@@ -1870,6 +1875,7 @@ Command: ${command}`;
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       execCommandOverride: enforced.command,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(commitExecAuthorizationMock).toHaveBeenCalledWith(
@@ -1883,7 +1889,7 @@ Command: ${command}`;
     );
   });
 
-  it("reviews unrenderable allowlist plans before executing the original command", async () => {
+  it("reviews glob arguments before executing the pinned command", async () => {
     const command = "ls *.ts";
     await configurePlanBackedCommand({
       command,
@@ -1902,8 +1908,8 @@ Command: ${command}`;
       expect.objectContaining({ command, reason: "execution-plan-miss" }),
     );
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
-    expect(result.allowWithoutEnforcedCommand).toBe(true);
-    expect(result).not.toHaveProperty("execCommandOverride");
+    expect(result.allowWithoutEnforcedCommand).toBeUndefined();
+    expect(result.execCommandOverride).toMatch(/^'\/[^']*\/ls' \*\.ts$/);
     await expect(result.revalidateBeforeExecution?.()).resolves.toBeUndefined();
   });
 
@@ -2060,6 +2066,7 @@ Command: ${command}`;
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       execCommandOverride: undefined,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(commitExecAuthorizationMock).toHaveBeenCalledWith(
@@ -2714,6 +2721,7 @@ EOF`,
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       execCommandOverride: undefined,
+      assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
     expect(commitExecAuthorizationMock).toHaveBeenCalledWith(
@@ -3247,6 +3255,7 @@ EOF`,
     });
     commitExecAuthorizationMock.mockImplementation(async () => {
       expect(getActiveGatewayRootWorkCount()).toBe(1);
+      return () => {};
     });
     runExecProcessMock.mockImplementation(async () => {
       expect(getActiveGatewayRootWorkCount()).toBe(1);
@@ -3451,6 +3460,10 @@ EOF`,
     "resolves a %s GitHub credential only after delayed approval",
     async (credentialState) => {
       buildExecApprovalFollowupTargetMock.mockImplementation((value) => value);
+      const followupDelivered = Promise.withResolvers<void>();
+      sendExecApprovalFollowupResultMock.mockImplementation(async () => {
+        followupDelivered.resolve();
+      });
       createExecApprovalDecisionStateMock.mockReturnValue({
         baseDecision: { timedOut: false },
         approvedByAsk: false,
@@ -3509,7 +3522,8 @@ EOF`,
           fs.writeFileSync(hostsPath, "github.com:\n  oauth_token: synthetic-after-approval\n");
         }
         releaseApproval();
-        await vi.waitFor(() => expect(sendExecApprovalFollowupResultMock).toHaveBeenCalledOnce());
+        await followupDelivered.promise;
+        expect(sendExecApprovalFollowupResultMock.mock.calls.length).toBe(1);
         if (credentialState === "missing") {
           expect(requireSentFollowupText(0)).toContain(
             "GitHub Identity credential is unavailable or insecure. Reconnect or change GitHub Identity, then retry.",
