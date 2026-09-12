@@ -3,7 +3,7 @@
  * with OpenClaw sandbox policy checks before every bridge operation.
  */
 import { posix as pathPosix } from "node:path";
-import type { SandboxFsStat } from "openclaw/plugin-sdk/sandbox";
+import { resolveSandboxFilePolicyPath, type SandboxFsStat } from "openclaw/plugin-sdk/sandbox";
 import type { JsonObject, JsonValue } from "../protocol.js";
 import {
   assertFsSandboxAccess,
@@ -65,7 +65,8 @@ export async function openFile(
   }
 
   const filePath = resolveExecServerPath(requireString(record.path, "path"), "read path");
-  assertFsSandboxAccess(execServer, record, [{ path: filePath, access: "read" }]);
+  const fsSandboxPolicy = resolveFsSandboxPolicy(execServer, record);
+  assertResolvedFsSandboxAccess(fsSandboxPolicy, [{ path: filePath, access: "read" }]);
   const fsBridge = execServer.fsBridge;
   // Claim the handle before even stat so slow or cancelled stats cannot bypass
   // the connection's handle cap or lose their cancellation and ownership.
@@ -76,6 +77,12 @@ export async function openFile(
   };
   handles.set(handleId, handle);
   try {
+    await assertCanonicalFsReadAccess(
+      execServer,
+      fsSandboxPolicy,
+      filePath,
+      handle.abortController.signal,
+    );
     const stat = await fsBridge.stat({ filePath, signal: handle.abortController.signal });
     if (handles.get(handleId) !== handle || handle.closeRequested || handles.closed) {
       throw new JsonRpcProtocolError(
@@ -226,7 +233,9 @@ export async function readFile(
 ): Promise<JsonObject> {
   const record = requireObject(params, "fs/readFile params");
   const filePath = resolveExecServerPath(requireString(record.path, "path"), "read path");
-  assertFsSandboxAccess(execServer, record, [{ path: filePath, access: "read" }]);
+  const fsSandboxPolicy = resolveFsSandboxPolicy(execServer, record);
+  assertResolvedFsSandboxAccess(fsSandboxPolicy, [{ path: filePath, access: "read" }]);
+  await assertCanonicalFsReadAccess(execServer, fsSandboxPolicy, filePath);
   const fsBridge = execServer.fsBridge;
   const stat = await fsBridge.stat({ filePath });
   if (!stat) {
@@ -314,7 +323,9 @@ export async function getMetadata(
 ): Promise<JsonObject> {
   const record = requireObject(params, "fs/getMetadata params");
   const filePath = resolveExecServerPath(requireString(record.path, "path"), "metadata path");
-  assertFsSandboxAccess(execServer, record, [{ path: filePath, access: "read" }]);
+  const fsSandboxPolicy = resolveFsSandboxPolicy(execServer, record);
+  assertResolvedFsSandboxAccess(fsSandboxPolicy, [{ path: filePath, access: "read" }]);
+  await assertCanonicalFsReadAccess(execServer, fsSandboxPolicy, filePath);
   const stat = await execServer.fsBridge.stat({
     filePath,
   });
@@ -343,6 +354,7 @@ async function listDirectoryEntries(
   fsSandboxPolicy: ResolvedFsSandboxPolicy | undefined,
 ): Promise<DirectoryEntry[]> {
   assertResolvedFsSandboxAccess(fsSandboxPolicy, [{ path: filePath, access: "read" }]);
+  await assertCanonicalFsReadAccess(execServer, fsSandboxPolicy, filePath);
   const resolved = execServer.fsBridge.resolvePath({
     filePath,
   });
@@ -445,6 +457,7 @@ async function copySandboxPath(
     { path: params.sourcePath, access: "read" },
     { path: params.destinationPath, access: "write" },
   ]);
+  await assertCanonicalFsReadAccess(execServer, params.fsSandboxPolicy, params.sourcePath);
   const sourceStat = await fsBridge.stat({ filePath: params.sourcePath });
   if (!sourceStat) {
     throw new JsonRpcProtocolError(JSON_RPC_NOT_FOUND, "file not found");
@@ -541,6 +554,24 @@ function assertSandboxFileReadWithinLimit(stat: SandboxFsStat): void {
       `file is too large to read through Codex sandbox exec-server: ${stat.size} bytes`,
     );
   }
+}
+
+/** Re-checks read policy against the bridge's physical file identity. */
+async function assertCanonicalFsReadAccess(
+  execServer: OpenClawExecServer,
+  policy: ResolvedFsSandboxPolicy | undefined,
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!policy || policy.unrestricted) {
+    return;
+  }
+  const canonicalPolicyPath = await resolveSandboxFilePolicyPath({
+    bridge: execServer.fsBridge,
+    filePath,
+    signal,
+  });
+  assertResolvedFsSandboxAccess(policy, [{ path: canonicalPolicyPath, access: "read" }]);
 }
 
 function metadataResponse(stat: SandboxFsStat | null): JsonObject {
