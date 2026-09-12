@@ -51,7 +51,6 @@ import {
 } from "./update-run-reader.js";
 import {
   finishUpdateRunRecord,
-  recordUpdateRunVerificationRecord,
   type FinishUpdateRunResult,
   type UpdateRunRecord,
   type UpdateRunPhase,
@@ -59,6 +58,7 @@ import {
 } from "./update-run-record.js";
 import { isUpdateRecoveryPending } from "./update-run-recovery-schema.js";
 import { hasStoredUpdateRecovery, readRecoveries } from "./update-run-recovery-store.js";
+import { recordUpdateRunVerificationRecord } from "./update-run-verification.js";
 
 export {
   getLatestUpdateFetchFailure,
