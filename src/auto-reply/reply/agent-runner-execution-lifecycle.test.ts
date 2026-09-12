@@ -526,6 +526,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       state.runEmbeddedAgentMock.mockResolvedValueOnce({
         payloads: [{ text: "late reply" }],
         meta: {
+          contextManagement: { lastTurnCompactions: compactions },
           agentMeta: {
             sessionId: "session",
             provider: "anthropic",
@@ -641,6 +642,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
           return {
             payloads: [{ text: "done" }],
             meta: {
+              contextManagement: { lastTurnCompactions: fact ? 99 : index === 1 ? 2 : 0 },
               agentMeta: {
                 compactionCount: fact ? 99 : index === 1 ? 2 : 0,
                 lastCallUsage: { input: 777 },

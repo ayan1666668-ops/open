@@ -3,6 +3,7 @@ import { Box, Container, Spacer, Text, truncateToWidth } from "@earendil-works/p
 import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { formatToolDetail, resolveToolDisplay } from "../../agents/tool-display.js";
+import { resolveRedactedToolArgumentSummary } from "../../chat/tool-argument-redaction.js";
 import { markdownTheme, tuiTheme as theme } from "../theme/theme.js";
 import * as tuiFormatters from "../tui-formatters.js";
 import { extractTuiImageSources } from "../tui-images.js";
@@ -88,8 +89,12 @@ class ToolOutputComponent extends HyperlinkMarkdown {
   }
 }
 
-// Prefer curated display summaries, then fall back to sanitized JSON args.
-function formatArgs(detail: string | undefined, args: unknown): string {
+// Redact sensitive tools before consulting curated display summaries or JSON args.
+function formatArgs(toolName: string, detail: string | undefined, args: unknown): string {
+  const redactedFallback = resolveRedactedToolArgumentSummary(toolName);
+  if (redactedFallback) {
+    return redactedFallback;
+  }
   if (detail) {
     return tuiFormatters.sanitizeRenderableText(detail);
   }
@@ -171,7 +176,7 @@ export class ToolExecutionComponent extends Container {
     const display = resolveToolDisplay({ name: this.toolName, args });
     this.title = `${display.emoji} ${display.label}`;
     this.refreshTitle();
-    const argLine = formatArgs(formatToolDetail(display), args);
+    const argLine = formatArgs(this.toolName, formatToolDetail(display), args);
     this.argsLine.setText(argLine ? theme.dim(argLine) : theme.dim(" "));
   }
 

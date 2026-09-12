@@ -208,17 +208,123 @@ describe("subagent registry persistence resume", () => {
         requesterOrigin: { channel: "whatsapp", accountId: "acct-main" },
       });
       await settleSubagentRegistryPersistenceWork();
-      expect(
-        listFixtureAgentDatabases(listSeedAgentDatabases, stateDir),
+      expectFixtureAgentDatabaseCount(
+        listSeedAgentDatabases,
+        stateDir,
         "seed session write acquired an agent handle",
-      ).toHaveLength(1);
-      expect(
-        listFixtureAgentDatabases(
-          registryAgentDbModule.listOpenClawAgentDatabasesForTest,
-          stateDir,
-        ),
+        1,
+      );
+      expectFixtureAgentDatabaseCount(
+        registryAgentDbModule.listOpenClawAgentDatabasesForTest,
+        stateDir,
         "resumed completion timing acquired a post-reset agent handle",
-      ).toHaveLength(1);
+        1,
+      );
+    });
+  });
+
+  it("persists completion-time all-recipient authority selection on the authoritative run", async () => {
+    const stateDir = tempDirs.make("openclaw-subagent-");
+    await withRegistryState(stateDir, async () => {
+      const childSessionKey = "agent:main:subagent:all-authority";
+      await writeSubagentSessionEntry({
+        stateDir,
+        agentId: "main",
+        sessionKey: childSessionKey,
+        sessionId: "sess-all-authority",
+        defaultSessionId: "sess-all-authority",
+      });
+      mod.registerSubagentRun({
+        runId: "run-all-authority",
+        childSessionKey,
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "main",
+        task: "fan out at completion",
+        cleanup: "keep",
+        silentAnnounce: true,
+        continuationFanoutMode: "all",
+        continuationRecipientAuthorityBinding: {
+          version: 1,
+          selection: "pending",
+          fanoutMode: "all",
+        },
+      });
+
+      await vi.waitFor(
+        () =>
+          expect(
+            announceSpy.mock.calls.some(([params]) => params.childRunId === "run-all-authority"),
+          ).toBe(true),
+        { timeout: 5_000, interval: 10 },
+      );
+      const announceParams = announceSpy.mock.calls.find(
+        ([params]) => params.childRunId === "run-all-authority",
+      )?.[0];
+      expect(announceParams).toBeDefined();
+      const selectedBinding = {
+        version: 1 as const,
+        selection: "selected" as const,
+        recipients: [
+          {
+            sessionKey: "agent:main:main",
+            authority: {
+              state: "bound" as const,
+              epoch: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+        ],
+      };
+
+      expect(announceParams?.persistContinuationRecipientAuthorityBinding?.(selectedBinding)).toBe(
+        true,
+      );
+      expect(
+        loadSubagentRegistryFromSqlite().get("run-all-authority")
+          ?.continuationRecipientAuthorityBinding,
+      ).toEqual(selectedBinding);
+    });
+  });
+
+  it("prunes orphan runs before resuming an announce retry", async () => {
+    const stateDir = tempDirs.make("openclaw-subagent-");
+    await withRegistryState(stateDir, async () => {
+      const runId = "run-orphan-resume-guard";
+      const childSessionKey = "agent:main:subagent:ghost-resume";
+      const now = Date.now();
+
+      await writeSubagentSessionEntry({
+        stateDir,
+        agentId: "main",
+        sessionKey: childSessionKey,
+        sessionId: "sess-resume-guard",
+        updatedAt: now,
+        defaultSessionId: "sess-resume-guard",
+      });
+      mod.addSubagentRunForTests({
+        runId,
+        childSessionKey,
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "main",
+        task: "resume orphan guard",
+        cleanup: "keep",
+        createdAt: now - 50,
+        startedAt: now - 25,
+        endedAt: now,
+        suppressAnnounceReason: "steer-restart",
+        cleanupHandled: false,
+      });
+      await removeSubagentSessionEntry({
+        stateDir,
+        agentId: "main",
+        sessionKey: childSessionKey,
+      });
+
+      expect(mod.clearSubagentRunSteerRestart(runId)).toBe(true);
+      await Promise.all([Promise.resolve(), Promise.resolve()]);
+
+      expect(announceSpy).not.toHaveBeenCalled();
+      expect(mod.listSubagentRunsForRequester("agent:main:main")).toHaveLength(0);
+      expect(loadSubagentRegistryFromSqlite().has(runId)).toBe(false);
     });
   });
 

@@ -90,6 +90,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     params,
     runtimePolicySessionKey,
     isHeartbeat,
+    isContinuationWake,
     traceRunPhase,
     promptSessionCtx,
     inboundEventKind,
@@ -631,6 +632,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       typingMode,
       resetTriggered: effectiveResetTriggered,
       replyThreadingOverride,
+      isContinuationWake,
       replyOperation: providedReplyOperation,
     });
   // The scope surrounds the whole immediate turn, including provider fallbacks.

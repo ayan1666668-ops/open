@@ -1,8 +1,9 @@
 // Database-bound delivery queue serialization and mutations used by shared transactions.
 import type { DatabaseSync } from "node:sqlite";
-import type { Insertable, Selectable } from "kysely";
+import type { Insertable } from "kysely";
 import type { OpenClawStateDatabase } from "../state/openclaw-state-db-contract.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
+import type { DeliveryQueueSqliteRow } from "./delivery-queue-sqlite-codec.js";
 import type { DeliveryQueueEntryState } from "./delivery-queue-sqlite.types.js";
 import {
   executeSqliteQuerySync,
@@ -34,6 +35,7 @@ export type DeliveryQueueDatabase = Pick<OpenClawStateKyselyDatabase, "delivery_
 const deliveryQueueRowColumns = [
   "id",
   "entry_json",
+  "entry_kind",
   "enqueued_at",
   "retry_count",
   "last_attempt_at",
@@ -41,11 +43,6 @@ const deliveryQueueRowColumns = [
   "platform_send_started_at",
   "recovery_state",
 ] as const;
-
-type DeliveryQueueSqliteRow = Pick<
-  Selectable<DeliveryQueueTable>,
-  (typeof deliveryQueueRowColumns)[number]
->;
 
 type DeliveryQueueRowMetadata = {
   entryKind?: string;
@@ -110,6 +107,7 @@ export function terminalizeBoundDeliveryQueueEntry(
   failedEntry: DeliveryQueueEntryState | undefined,
   now: number,
   expectedStatus: "pending" | "failed" = "pending",
+  lastError?: string,
 ): boolean {
   const queueDb = getNodeSqliteKysely<DeliveryQueueDatabase>(db);
   const expected = { queue_name: queueName, id, status: expectedStatus, entry_json: expectedJson };
@@ -125,7 +123,7 @@ export function terminalizeBoundDeliveryQueueEntry(
           target: null,
           account_id: null,
           last_attempt_at: null,
-          last_error: null,
+          last_error: lastError ?? null,
           platform_send_started_at: null,
           recovery_state: failedEntry.recoveryState ?? null,
           entry_json: JSON.stringify(failedEntry),

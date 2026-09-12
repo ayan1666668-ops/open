@@ -32,6 +32,7 @@ import { VERSION } from "../version.js";
 import { ensureOpenClawAgentBoardSchemaInTransaction } from "./openclaw-agent-board-schema.js";
 import {
   AGENT_MEDIA_SCHEMA_VERSION,
+  AGENT_RECIPIENT_AUTHORITY_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
   type OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
@@ -62,6 +63,7 @@ import {
   migrateConversationDeliveryTargetColumn,
   migrateSessionCreatorNamespaces,
   migrateSessionEntryStatusProjection,
+  migrateSessionRecipientAuthority,
   readSqliteTableColumns,
 } from "./openclaw-agent-db-session-migrations.js";
 import { migrateSessionNodesAndWindows } from "./openclaw-agent-db-session-nodes-migration.js";
@@ -667,6 +669,12 @@ function ensureAgentSchema(
       }
       maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
       db.exec(schemaSql);
+      if (targetVersion >= AGENT_RECIPIENT_AUTHORITY_SCHEMA_VERSION) {
+        migrateSessionRecipientAuthority(db);
+        // Removing a legacy field fires the canonical entry-update trigger.
+        // Settle valid rows again while malformed Doctor-owned rows remain rejected.
+        ensureSessionEntryValidityProjection(db);
+      }
       migrateMemoryChunkMetadataSchema(db);
       if (previousVersion < targetVersion) {
         ensureOpenClawAgentBoardSchemaInTransaction(db);

@@ -364,22 +364,34 @@ export async function buildDynamicTools(
     cronCreatorToolAllowlistRef: input.cronCreatorToolAllowlistRef,
     cronCreatorToolAllowlistCaptureRef: input.cronCreatorToolAllowlistCaptureRef,
     cronCreatorAuthorityUnavailableReason: input.cronCreatorAuthorityUnavailableReason,
+    drainsContinuationDelegateQueue: params.drainsContinuationDelegateQueue,
+    continueWorkOpts: params.continueWorkOpts,
+    requestCompactionOpts: params.requestCompactionOpts,
   };
 
   input.onMessageToolTargetResolved?.(options.requireExplicitMessageTarget === true);
   const buildOpenClawCodingTools = () => {
     const bindingOptions = { cwd: input.effectiveCwd ?? input.effectiveWorkspace };
+    let tools: OpenClawDynamicTool[];
     if (injectedOpenClawCodingToolsFactory) {
-      return params.hostCapabilities.bindToolSurface(
+      tools = params.hostCapabilities.bindToolSurface(
         injectedOpenClawCodingToolsFactory(options),
         bindingOptions,
       );
+    } else {
+      const createToolSurface = params.hostCapabilities.createToolSurface;
+      if (!createToolSurface) {
+        throw new Error("Codex tool construction requires a current host capability");
+      }
+      tools = createToolSurface(options, bindingOptions);
     }
-    const createToolSurface = params.hostCapabilities.createToolSurface;
-    if (!createToolSurface) {
-      throw new Error("Codex tool construction requires a current host capability");
+    if (!extraOpenClawCodingTools?.length) {
+      return tools;
     }
-    return createToolSurface(options, bindingOptions);
+    return [
+      ...tools,
+      ...params.hostCapabilities.bindToolSurface(extraOpenClawCodingTools, bindingOptions),
+    ];
   };
   const allTools = input.resolveCronCreatorToolAuthority
     ? runWithCronCreatorAuthorityCapabilityResolver({

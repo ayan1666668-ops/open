@@ -397,7 +397,18 @@ export async function loadSubagentSpawnModuleForTest(params: {
     getSubagentDeliveryBacklogPressure: () => ({ suspended: 0, blocked: false }),
     listSwarmRunsForGroup: params.listSwarmRunsForGroup ?? vi.fn(() => []),
     registerSubagentRun:
-      params.registerSubagentRunMock ?? vi.fn((_record: Record<string, unknown>) => undefined),
+      params.registerSubagentRunMock ??
+      vi.fn((record: { runId: string; childSessionKey: string }) => ({
+        status: "new-row-committed",
+        attempted: {
+          runId: record.runId,
+          childSessionKey: record.childSessionKey,
+          generation: 1,
+          createdAt: Date.now(),
+        },
+      })),
+    recordAcceptedSubagentSpawnRollback: vi.fn(() => ({ status: "persisted" })),
+    rollbackSubagentRunRegistration: vi.fn(() => true),
     resetSubagentRegistryForTests,
     settleFailedQueuedSubagentLaunch:
       params.settleFailedQueuedSubagentLaunchMock ?? vi.fn(() => true),

@@ -530,9 +530,11 @@ export const loadPendingFinalDeliveryPayload = (
 ): PendingFinalDeliveryPayload => {
   return {
     requesterSessionKey: entry.delivery?.payload?.requesterSessionKey ?? entry.requesterSessionKey,
+    requesterAgentId: entry.delivery?.payload?.requesterAgentId ?? entry.requesterAgentId,
     requesterOrigin: entry.delivery?.payload?.requesterOrigin ?? entry.requesterOrigin,
     requesterDisplayKey: entry.delivery?.payload?.requesterDisplayKey ?? entry.requesterDisplayKey,
     childSessionKey: entry.delivery?.payload?.childSessionKey ?? entry.childSessionKey,
+    childAgentId: entry.delivery?.payload?.childAgentId ?? entry.agentId,
     childRunId: entry.delivery?.payload?.childRunId ?? entry.runId,
     task: entry.delivery?.payload?.task ?? entry.task,
     label: entry.delivery?.payload?.label ?? entry.label,

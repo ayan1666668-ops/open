@@ -1,7 +1,6 @@
 import { getGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import { defaultRuntime } from "../../../runtime.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
-import { resolveSubagentRequesterAgentId } from "../../subagent-requester-owner.js";
 import {
   ensureCompletionState,
   ensureDeliveryState,
@@ -545,9 +544,10 @@ export const startSubagentAnnounceCleanupFlow = (
 
   const announceParams: Parameters<RunSubagentAnnounceFlow>[0] = {
     childSessionKey: pendingPayload.childSessionKey,
+    childAgentId: pendingPayload.childAgentId,
     childRunId: pendingPayload.childRunId,
     requesterSessionKey: pendingPayload.requesterSessionKey,
-    requesterAgentId: resolveSubagentRequesterAgentId(params.getRuntimeConfig(), entry),
+    requesterAgentId: pendingPayload.requesterAgentId,
     requesterOrigin,
     requesterDisplayKey: pendingPayload.requesterDisplayKey,
     task: pendingPayload.task,

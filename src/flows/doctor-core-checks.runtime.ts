@@ -33,6 +33,7 @@ import {
   type RuntimeToolSchemaDiagnostic,
 } from "../agents/tool-schema-projection.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
+import { buildInventoryContinuationToolOpts } from "../agents/tools/continuation-inventory-opts.js";
 import { projectDoctorSecretRuntimeDegradations } from "../commands/doctor-secret-runtime-degradation.js";
 import { shouldManageGatewayService } from "../commands/doctor-service-repair-policy.js";
 import { collectUnavailableAgentSkills } from "../commands/doctor-skills-core.js";
@@ -990,6 +991,9 @@ async function collectAgentRuntimeToolSchemaFindings(params: {
       modelContextWindowTokens: params.model.contextWindow,
       allowGatewaySubagentBinding: true,
       emitBeforeToolCallDiagnostics: false,
+      ...buildInventoryContinuationToolOpts(
+        params.cfg.agents?.defaults?.continuation?.enabled === true,
+      ),
     });
   } catch (error) {
     return [agentRuntimeToolLoadFailureFinding({ agentId: params.agentId, error })];
@@ -1337,21 +1341,7 @@ export async function collectRuntimeToolSchemaFindings(
       }
     }
   } finally {
-    const cleanup = await Promise.allSettled(
-      [...bundleRuntimeByContext.values()].map(async (runtime) => await runtime.dispose()),
-    );
-    for (const outcome of cleanup) {
-      if (outcome.status === "rejected") {
-        findings.push({
-          checkId: "core/doctor/runtime-tool-schemas",
-          severity: "error",
-          message: "Configured MCP tool schema inspection could not confirm child-process cleanup.",
-          path: "mcp.servers",
-          requirement: formatErrorMessage(outcome.reason),
-          fixHint: "Inspect or stop the configured MCP server processes, then rerun doctor.",
-        });
-      }
-    }
+    await Promise.all([...bundleRuntimeByContext.values()].map((runtime) => runtime.dispose()));
   }
   return findings;
 }

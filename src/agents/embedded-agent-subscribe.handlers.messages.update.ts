@@ -52,7 +52,14 @@ const REASONING_TAG_RE = /<\s*\/?\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|
 export function handleMessageUpdate(
   ctx: EmbeddedAgentSubscribeContext,
   evt: AgentEvent & { message: AgentMessage; assistantMessageEvent?: unknown },
+  options?: { streamItemBoundaryReplayed?: boolean; deliveryGeneration?: number },
 ): Promise<void> | undefined {
+  if (
+    options?.deliveryGeneration !== undefined &&
+    options.deliveryGeneration !== ctx.getBlockReplyDeliveryGeneration()
+  ) {
+    return undefined;
+  }
   const msg = evt.message;
   if (msg?.role !== "assistant" || isSubscribeTranscriptOnlyOpenClawAssistantMessage(msg)) {
     return undefined;
@@ -242,16 +249,22 @@ export function handleMessageUpdate(
     accumulatedText: ctx.state.streamBlockText,
   });
   ctx.state.streamBlockText += chunk;
-  // Responses text_start snapshots may already contain text replayed by the first delta.
+  // Responses and Anthropic text_start snapshots may contain text replayed by the first delta.
   // Keep starts lifecycle-only so commentary and final-answer lanes consume each byte once.
-  if (evtType === "text_start" && isResponsesApiAssistantMessage(partialAssistant)) {
+  if (
+    evtType === "text_start" &&
+    (isResponsesApiAssistantMessage(partialAssistant) ||
+      isAnthropicAssistantMessage(partialAssistant))
+  ) {
     return undefined;
   }
   if (deliveryPhase === "commentary") {
     const isResponsesCommentary = isResponsesApiAssistantMessage(partialAssistant);
     const hadResponsesCommentaryText = isResponsesCommentary && Boolean(ctx.state.deltaBuffer);
-    if (isResponsesCommentary && chunk) {
-      // Keep cumulative end events monotonic without feeding commentary into reply buffers.
+    // Every commentary transport accumulates its raw chunks so continuation markers can
+    // span deltas and message_end can dedupe against the buffer. Only Responses displays
+    // from that buffer; other transports re-extract an already-cumulative snapshot.
+    if (chunk) {
       ctx.state.deltaBuffer += chunk;
       ctx.state.deltaBufferIsCommentary = true;
     }

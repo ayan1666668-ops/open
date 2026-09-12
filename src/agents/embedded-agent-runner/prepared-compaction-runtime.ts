@@ -26,11 +26,6 @@ import { createSkillInstructionDeliveryCache } from "../agent-tools.read.js";
 import { listActiveProcessSessionReferences } from "../bash-process-references.js";
 import { resolveProcessToolScopeKey } from "../bash-process-scope.js";
 import {
-  buildBootstrapBudgetState,
-  buildBootstrapInjectionStats,
-  buildBootstrapPromptWarningNotice,
-} from "../bootstrap-budget.js";
-import {
   makeBootstrapWarn,
   resolveBootstrapContextForRun,
   resolveContextInjectionMode,
@@ -171,9 +166,9 @@ export async function buildPreparedCompactionRuntime(
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const resolvedMessageProvider = params.messageChannel ?? params.messageProvider;
     const contextInjectionMode = resolveContextInjectionMode(params.config, sessionAgentId);
-    const { bootstrapFiles, contextFiles } =
+    const { contextFiles } =
       contextInjectionMode === "never"
-        ? { bootstrapFiles: [], contextFiles: [] }
+        ? { contextFiles: [] }
         : await resolveBootstrapContextForRun({
             workspaceDir: effectiveWorkspace,
             config: params.config,
@@ -186,22 +181,6 @@ export async function buildPreparedCompactionRuntime(
               warn: (message) => log.warn(message),
             }),
           });
-    // Mirror ordinary-turn bootstrap disclosure so compaction summaries do not
-    // silently omit later workspace files when the aggregate budget is spent.
-    // Resolved once per prepared attempt so thinking-level retries reuse the same
-    // admitted files and notice.
-    const bootstrapInjectionStats = buildBootstrapInjectionStats({
-      bootstrapFiles,
-      injectedFiles: contextFiles,
-    });
-    const bootstrapBudget = buildBootstrapBudgetState({
-      config: params.config,
-      agentId: sessionAgentId,
-      files: bootstrapInjectionStats,
-    });
-    const bootstrapTruncationNotice = buildBootstrapPromptWarningNotice(
-      bootstrapBudget.bootstrapPromptWarning.lines,
-    );
     // Apply contextTokens cap to model so session runtime's auto-compaction
     // threshold uses the effective limit, not the native context window.
     const runtimeModelWithContext = runtimeModel as ProviderRuntimeModel;
@@ -327,12 +306,19 @@ export async function buildPreparedCompactionRuntime(
           clientCaps: params.clientCaps,
           pinnedWidgetAuthoring: params.pinnedWidgetAuthoring,
           oneShotCliRun: params.oneShotCliRun,
+          senderIsOwner: params.senderIsOwner,
           allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
           webSearchEnabled: params.toolOverrides?.webSearch !== false,
           abortSignal: runAbortController.signal,
           sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
           modelHasVision: effectiveModel.input?.includes("image") ?? false,
           modelCompat: extractModelCompat(effectiveModel),
+          modelApi: effectiveModel.api,
+          modelContextWindowTokens: contextTokenBudget,
+          // Compaction is nested maintenance, not an active turn owner; it cannot
+          // schedule or drain continuation work without corrupting the parent turn.
+          disableContinuationTools: true,
+          skillsSnapshot: skillsSnapshotForRun,
           skillUsagePaths,
           skillInstructionDeliveryCache,
           conversationCapabilityProfile: runtimeCapabilityProfile,
@@ -567,7 +553,6 @@ export async function buildPreparedCompactionRuntime(
         userTimezone,
         userDate,
         contextFiles,
-        bootstrapTruncationNotice,
         activeProjectKeys,
         preparedMemoryPrompt,
         preparedWatchedSessions,

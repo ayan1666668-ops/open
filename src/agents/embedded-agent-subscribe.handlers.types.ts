@@ -163,6 +163,9 @@ export type EmbeddedAgentSubscribeState = {
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
   lastDeliveredBlockReplyText?: string;
+  deliveredBlockReplyTexts: string[];
+  attemptedBlockReplyTexts?: string[];
+  deferredBlockReplyTexts: string[];
   deferBlockReplyDelivery: boolean;
   deferredBlockReplies: BlockReplyPayload[];
   toolExecutionSinceLastBlockReply: boolean;
@@ -224,6 +227,14 @@ export type EmbeddedAgentSubscribeState = {
     BlockReplyPayload,
     "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
   >;
+  deferredAssistantReplyDirectives?: Pick<
+    BlockReplyPayload,
+    "mediaUrls" | "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
+  >;
+  lastDeliveredAssistantReplyDirectives?: Pick<
+    BlockReplyPayload,
+    "mediaUrls" | "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
+  >;
   deterministicApprovalPromptPending: boolean;
   deterministicApprovalPromptSent: boolean;
   lastAssistant?: AgentMessage;
@@ -255,34 +266,49 @@ export type EmbeddedAgentSubscribeContext = {
     options?: {
       sourceText?: string;
       assistantMessageIndex?: number;
+      deferPendingToolMedia?: boolean;
       final?: boolean;
       finalReply?: ReplyDirectiveParseResult;
     },
   ) => void;
   flushBlockReplyBuffer: (options?: {
     assistantMessageIndex?: number;
+    deferPendingToolMedia?: boolean;
     final?: boolean;
+    retryFailures?: boolean;
     finalReply?: ReplyDirectiveParseResult;
   }) => void | Promise<void>;
+  settleBlockReplyDeliveries?: (options?: { retryFailures?: boolean }) => void | Promise<void>;
   emitReasoningStream: (text: string | ThinkingContent, fallback?: string) => void;
   consumePartialReplyDirectives: (
     text: string,
     options?: { final?: boolean },
   ) => ReplyDirectiveParseResult | null;
+  consumeReplyDirectives: (
+    text: string,
+    options?: { final?: boolean },
+  ) => ReplyDirectiveParseResult | null;
   resetBlockReplyDirectives: () => void;
   resetPartialReplyDirectives: () => void;
-  resetAssistantMessageState: (nextAssistantTextBaseline: number) => void;
-  resetForCompactionRetry: () => void;
+  resetAssistantMessageState: (
+    nextAssistantTextBaseline: number,
+    options?: { preserveReplyDirectiveState?: boolean },
+  ) => void;
+  getBlockReplyDeliveryGeneration: () => number;
+  invalidateBlockReplyDeliveriesForCompactionRetry: () => number;
+  resetForCompactionRetry: (invalidatedDeliveryGeneration?: number) => void;
   finalizeAssistantTexts: (args: {
     text: string;
     addedDuringMessage: boolean;
     chunkerHasBuffered: boolean;
+    reconcileCurrentMessage?: boolean;
   }) => void;
   trimMessagingToolSent: () => void;
   consumeToolSendReceipt: (toolCallId: string) => unknown;
   ensureCompactionPromise: () => void;
-  noteCompactionRetry: () => void;
-  resolveCompactionRetry: () => void;
+  noteCompactionRetry: (deliveryGeneration?: number) => void;
+  noteCompactionReplacementActivity: (deliveryGeneration: number) => void;
+  resolveCompactionRetry: (deliveryGeneration?: number) => void;
   maybeResolveCompactionWait: () => void;
   captureModelEvent: (evt: AgentSessionEvent) => void;
   incrementCompactionCount: () => void;
@@ -301,6 +327,7 @@ export type EmbeddedAgentSubscribeContext = {
       assistantMessageIndex?: number;
       consumePendingToolMedia?: boolean;
       blockSourceText?: string;
+      onDelivered?: () => void;
     },
   ) => void;
   flushAssistantStream: () => void;
@@ -402,4 +429,5 @@ export type ToolHandlerContext = {
   emitToolOutput: (toolName?: string, meta?: string, output?: string, result?: unknown) => void;
   trimMessagingToolSent: () => void;
   consumeToolSendReceipt?: (toolCallId: string) => unknown;
+  getBlockReplyDeliveryGeneration: () => number;
 };

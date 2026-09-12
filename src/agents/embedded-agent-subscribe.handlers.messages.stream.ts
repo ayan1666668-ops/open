@@ -4,6 +4,7 @@
 import { asOptionalRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { createInlineCodeState } from "../../packages/markdown-core/src/code-spans.js";
+import { stripContinuationSignal } from "../auto-reply/continuation/signal.js";
 import {
   parseReplyDirectives,
   type ReplyDirectiveParseResult,
@@ -321,6 +322,16 @@ export function resolveAssistantTextChunk(params: {
   return "";
 }
 
+/** Removes a completed continuation signal from text bound for a display stream. */
+export function stripContinuationSignalFromDisplayText(text: string): string {
+  const stripped = stripContinuationSignal(text);
+  if (stripped.signal) {
+    return stripped.text;
+  }
+  const trailing = splitTrailingDirective(text);
+  return /^\s*(?:\[\[\s*)?CONT/iu.test(trailing.tail) ? trailing.text : text;
+}
+
 export function resolveStreamingReply(params: {
   evtType: "text_delta" | "text_start" | "text_end";
   next: string;
@@ -371,7 +382,7 @@ export function resolveStreamingReply(params: {
     const parsed = parseReplyDirectives(
       params.evtType === "text_end" ? params.next : splitTrailingDirective(params.next).text,
     );
-    text = parsed.text;
+    text = stripContinuationSignalFromDisplayText(parsed.text);
     if (replyDirectives) {
       // Reply targeting needs the same code context as visible text. Audio stays
       // scoped to its streaming chunk rather than replaying earlier voice tags.

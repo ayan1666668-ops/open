@@ -19,6 +19,10 @@ import {
   type UpsertDeliveryQueueEntryParams,
   upsertBoundDeliveryQueueEntryInDatabase,
 } from "./delivery-queue-sqlite-bound.js";
+import {
+  inflateDeliveryQueueEntryResult,
+  type DeliveryQueueEntryLoadResult,
+} from "./delivery-queue-sqlite-codec.js";
 import type { DeliveryQueueEntryState } from "./delivery-queue-sqlite.types.js";
 import {
   hasLiveDeliveryQueueClaim,
@@ -27,7 +31,11 @@ import {
   projectDeliveryQueueTerminalEntry,
 } from "./delivery-queue-sqlite.types.js";
 import { isGatewayExternallySupervised } from "./gateway-supervision.js";
-import { executeSqliteQuerySync, getNodeSqliteKysely } from "./kysely-sync.js";
+import {
+  executeSqliteQuerySync,
+  executeSqliteQueryTakeFirstSync,
+  getNodeSqliteKysely,
+} from "./kysely-sync.js";
 import { runSqliteImmediateTransactionSync } from "./sqlite-transaction.js";
 
 export type {
@@ -164,12 +172,24 @@ export function loadDeliveryQueueEntry(
   mode: DeliveryQueueReadMode = "pending",
   context?: DeliveryQueueStateContext,
 ): DeliveryQueueEntryState | null {
-  return loadDeliveryQueueEntryInDatabase(
-    openStateDatabase(stateDir, context),
-    queueName,
-    id,
-    mode,
+  const result = loadDeliveryQueueEntryResult(queueName, id, stateDir, mode, context);
+  return result?.status === "loaded" ? result.entry : null;
+}
+
+/** Load a row without discarding corrupt JSON or its exact persisted text. */
+export function loadDeliveryQueueEntryResult(
+  queueName: string,
+  id: string,
+  stateDir?: string,
+  mode: DeliveryQueueReadMode = "pending",
+  context?: DeliveryQueueStateContext,
+): DeliveryQueueEntryLoadResult | null {
+  const database = openStateDatabase(stateDir, context);
+  const row = executeSqliteQueryTakeFirstSync(
+    database.db,
+    deliveryQueueEntriesQuery(database, [queueName], mode).where("id", "=", id),
   );
+  return row ? inflateDeliveryQueueEntryResult(row) : null;
 }
 
 /** Read row status without hiding dead-lettered entries. */
@@ -281,6 +301,18 @@ export function loadDeliveryQueueEntries(
   mode: DeliveryQueueReadMode = "pending",
   context?: DeliveryQueueStateContext,
 ): DeliveryQueueEntryState[] {
+  return loadDeliveryQueueEntryResults(queueName, stateDir, mode, context).flatMap((result) =>
+    result.status === "loaded" ? [result.entry] : [],
+  );
+}
+
+/** Load rows in database order while retaining corrupt row identity and bytes. */
+export function loadDeliveryQueueEntryResults(
+  queueName: string,
+  stateDir?: string,
+  mode: DeliveryQueueReadMode = "pending",
+  context?: DeliveryQueueStateContext,
+): DeliveryQueueEntryLoadResult[] {
   const database = openStateDatabase(stateDir, context);
   const rows = executeSqliteQuerySync(
     database.db,
@@ -288,9 +320,7 @@ export function loadDeliveryQueueEntries(
       .orderBy("enqueued_at", "asc")
       .orderBy("id", "asc"),
   ).rows;
-  return rows
-    .map(inflateDeliveryQueueRow)
-    .filter((entry): entry is DeliveryQueueEntryState => entry != null);
+  return rows.map(inflateDeliveryQueueEntryResult);
 }
 
 /** Delete a pending delivery queue entry after successful delivery. */
@@ -498,11 +528,14 @@ export function countPendingDeliveryQueueEntries(
 }
 
 /** Physically expire age-bounded delivery queue tombstones. */
-export function pruneExpiredDeliveryQueueTombstones(stateDir?: string): void {
+export function pruneExpiredDeliveryQueueTombstones(
+  stateDir?: string,
+  now: number = Date.now(),
+): void {
   const database = openStateDatabase(stateDir);
   runSqliteImmediateTransactionSync(
     database.db,
-    () => pruneDeliveryQueueTombstoneAges(database.db, Date.now()),
+    () => pruneDeliveryQueueTombstoneAges(database.db, now),
     { databaseLabel: "openclaw-state", operationLabel: "expire delivery queue tombstones" },
   );
 }
@@ -513,14 +546,15 @@ export function moveDeliveryQueueEntryToFailed(
   id: string,
   stateDir?: string,
 ): void {
-  const current = loadDeliveryQueueEntry(queueName, id, stateDir);
-  if (!current) {
+  const current = loadDeliveryQueueEntryResult(queueName, id, stateDir);
+  if (!current || current.status !== "loaded") {
     throw enoent(queueName, id);
   }
   const result = terminalizePendingDeliveryQueueEntry({
     queueName,
     id,
-    entry: current,
+    entry: current.entry,
+    expectedEntryJson: current.entryJson,
     stateDir,
   });
   if (result.status !== "terminalized") {
@@ -533,6 +567,8 @@ type TerminalizePendingDeliveryQueueEntryParams = {
   id: string;
   entry: DeliveryQueueEntryState;
   expectedStatus?: "pending" | "failed";
+  expectedEntryJson?: string;
+  lastError?: string;
 };
 
 /** Validate and serialize terminal custody before a standalone call opens its database. */
@@ -543,7 +579,7 @@ export function prepareDeliveryQueueTerminalEntry(
     throw new Error(`Delivery queue entry id mismatch: ${params.entry.id} != ${params.id}`);
   }
   const now = Date.now();
-  const expectedJson = JSON.stringify(params.entry);
+  const expectedJson = params.expectedEntryJson ?? JSON.stringify(params.entry);
   const retention = inferDeliveryQueueFailureRetention(params.entry, params.id, params.queueName);
   const failedEntry = retention
     ? projectDeliveryQueueTerminalEntry(params.entry, now, "failed", retention)
@@ -552,6 +588,7 @@ export function prepareDeliveryQueueTerminalEntry(
     queueName: params.queueName,
     id: params.id,
     expectedStatus: params.expectedStatus,
+    lastError: params.lastError,
     now,
     expectedJson,
     retention,
@@ -575,7 +612,8 @@ export function terminalizePendingDeliveryQueueEntryInDatabase(
   database: OpenClawStateDatabase,
   prepared: ReturnType<typeof prepareDeliveryQueueTerminalEntry>,
 ): TerminalizePendingDeliveryQueueEntryResult {
-  const { queueName, id, expectedJson, failedEntry, now, expectedStatus, retention } = prepared;
+  const { queueName, id, expectedJson, failedEntry, now, expectedStatus, retention, lastError } =
+    prepared;
   if (
     !terminalizeBoundDeliveryQueueEntry(
       database.db,
@@ -585,6 +623,7 @@ export function terminalizePendingDeliveryQueueEntryInDatabase(
       failedEntry,
       now,
       expectedStatus,
+      lastError,
     )
   ) {
     return { status: "not_pending" };

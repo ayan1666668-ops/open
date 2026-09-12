@@ -64,9 +64,16 @@ export function handleAgentStart(ctx: EmbeddedAgentSubscribeContext) {
 export function handleAgentEnd(
   ctx: EmbeddedAgentSubscribeContext,
   evt?: Extract<AgentSessionEvent, { type: "agent_end" }>,
+  options?: { deliveryGeneration?: number },
 ): void | Promise<void> {
   ctx.state.liveEditDiffStateById.clear();
   type BeforeTerminalDeliveryDecision = void | { suppressTerminalDelivery?: boolean };
+  const isCurrentDeliveryGeneration = () =>
+    options?.deliveryGeneration === undefined ||
+    options.deliveryGeneration === ctx.getBlockReplyDeliveryGeneration();
+  if (!isCurrentDeliveryGeneration()) {
+    return;
+  }
   const lastAssistant = ctx.state.lastAssistant;
   const isError = isAssistantMessage(lastAssistant) && lastAssistant.stopReason === "error";
   let lifecycleErrorText: string | undefined;
@@ -260,23 +267,33 @@ export function handleAgentEnd(
     ctx.state.blockState.pendingFenceFragment = undefined;
 
     if (ctx.state.pendingCompactionRetry > 0) {
-      ctx.resolveCompactionRetry();
+      ctx.resolveCompactionRetry(options?.deliveryGeneration);
     } else {
       ctx.maybeResolveCompactionWait();
     }
   };
 
   const flushPendingMediaAndChannel = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return undefined;
+    }
     if (ctx.params.onBlockReply && !ctx.state.pendingToolMediaDeliveryFailed) {
       const pendingToolMediaReply = readPendingToolMediaReply(ctx.state);
       if (pendingToolMediaReply && hasAssistantVisibleReply(pendingToolMediaReply)) {
-        ctx.emitBlockReply(pendingToolMediaReply);
+        ctx.emitBlockReply(pendingToolMediaReply, {
+          onDelivered: () => {
+            ctx.state.hasToolMediaBlockReply = true;
+          },
+        });
       }
     }
 
-    const postMediaFlushResult = ctx.flushBlockReplyBuffer();
+    const postMediaFlushResult = ctx.flushBlockReplyBuffer({ retryFailures: true });
     if (isPromiseLike<void>(postMediaFlushResult)) {
       return postMediaFlushResult.then(() => {
+        if (!isCurrentDeliveryGeneration()) {
+          return undefined;
+        }
         const onBlockReplyFlushResult = ctx.params.onBlockReplyFlush?.({ reason: "terminal" });
         if (isPromiseLike<void>(onBlockReplyFlushResult)) {
           return onBlockReplyFlushResult;

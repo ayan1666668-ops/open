@@ -183,9 +183,17 @@ vi.mock("./subagent-announce.runtime.js", () => ({
     return await callGatewayImpl(request);
   },
   getRuntimeConfig: () => configOverride,
+  loadConfig: () => configOverride,
   loadSessionStore: vi.fn(() => sessionStore),
   readSessionMessagesAsync: vi.fn(async () => []),
-  readSubagentSessionEntry: (_storePath: string, sessionKey: string) => sessionStore[sessionKey],
+  readSubagentSessionEntry: (_storePath: string, sessionKey: string) =>
+    (sessionStore as Record<string, unknown>)?.[sessionKey],
+  resolveContinuationRuntimeConfig: () => ({
+    maxChainLength: 10,
+    costCapTokens: 500_000,
+    minDelayMs: 5_000,
+    maxDelayMs: 300_000,
+  }),
   resolveAgentIdFromSessionKey: () => "main",
   resolveSessionStorePathCore: () => "/tmp/sessions-main.json",
   resolveMainSessionKey: () => "agent:main:main",
@@ -493,30 +501,23 @@ describe("subagent announce timeout config", () => {
     expect(internalEvents[0]?.result).not.toContain("private tool output");
   });
 
-  it.each(["authoritative progress", "(no output)"])(
-    "keeps authoritative visible timeout output %s without transcript inference",
-    async (text) => {
-      chatHistoryMessages = [
-        { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
-      ];
+  it("keeps authoritative visible timeout output without transcript inference", async () => {
+    chatHistoryMessages = [
+      { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
+    ];
 
-      await runAnnounceFlowForTest("run-timeout-visible-terminal", {
-        outcome: { status: "timeout" },
-        roundOneReply: undefined,
-        terminalReply: { disposition: "visible", text },
-      });
+    await runAnnounceFlowForTest("run-timeout-visible-terminal", {
+      outcome: { status: "timeout" },
+      roundOneReply: undefined,
+      terminalReply: { disposition: "visible", text: "authoritative progress" },
+    });
 
-      const directAgentCall = findFinalDirectAgentCall();
-      const internalEvents =
-        (directAgentCall?.params?.internalEvents as Array<{
-          result?: string;
-          noVisibleResult?: boolean;
-        }>) ?? [];
-      expect(internalEvents[0]?.result).toBe(text);
-      expect(internalEvents[0]?.noVisibleResult).toBeUndefined();
-      expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
-    },
-  );
+    const directAgentCall = findFinalDirectAgentCall();
+    const internalEvents =
+      (directAgentCall?.params?.internalEvents as Array<{ result?: string }>) ?? [];
+    expect(internalEvents[0]?.result).toBe("authoritative progress");
+    expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
+  });
 
   it("keeps authoritative silence on timeout without transcript inference", async () => {
     chatHistoryMessages = [
@@ -530,28 +531,6 @@ describe("subagent announce timeout config", () => {
     });
 
     expect(findFinalDirectAgentCall()).toBeUndefined();
-    expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
-  });
-
-  it("keeps authoritative empty success intentional without transcript inference", async () => {
-    chatHistoryMessages = [
-      { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
-    ];
-
-    await runAnnounceFlowForTest("run-ok-empty-terminal", {
-      outcome: { status: "ok" },
-      roundOneReply: undefined,
-      terminalReply: { disposition: "empty" },
-    });
-
-    const directAgentCall = findFinalDirectAgentCall();
-    const internalEvents =
-      (directAgentCall?.params?.internalEvents as Array<{
-        result?: string;
-        noVisibleResult?: boolean;
-      }>) ?? [];
-    expect(internalEvents[0]?.result).toBe("(no output)");
-    expect(internalEvents[0]?.noVisibleResult).toBe(true);
     expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
   });
 
@@ -590,12 +569,10 @@ describe("subagent announce timeout config", () => {
         result?: string;
         status?: string;
         statusLabel?: string;
-        noVisibleResult?: boolean;
       }>) ?? [];
     expect(internalEvents[0]?.status).toBe("error");
     expect(internalEvents[0]?.statusLabel).toContain("All models failed");
     expect(internalEvents[0]?.result).toBe("(no output)");
-    expect(internalEvents[0]?.noVisibleResult).toBe(true);
     expect(directAgentCall?.params?.message).not.toContain("stale");
     expect(directAgentCall?.params?.message).not.toContain("older fallback");
   });

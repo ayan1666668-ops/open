@@ -414,7 +414,7 @@ export function bindPluginInstanceModuleLoader(params: {
           // SAFETY: Generated resolver requests always encode this request/options tuple.
           const [request, options] = JSON.parse(
             decodeURIComponent(specifier.slice(PLUGIN_SOURCE_RESOLVE_PREFIX.length)),
-          ) as [string, string | JitiResolveOptions];
+          ) as [string, string | JitiResolveOptions]; // SAFETY: this process creates the encoded resolver tuple.
           const query = typeof options === "string" ? { parentURL: options } : options;
           includeSources(artifact.prepareDependency(parentSource, request));
           let paths = pathResolvers.get(parentSource);
@@ -713,8 +713,11 @@ export function loadPluginPublicSurfaceModuleSync(
 ): object {
   const instance = resolvePublicSurfaceInstance(params);
   if (instance) {
-    // SAFETY: Public-surface entrypoints have object exports; the instance owns this exact source.
-    return instance.loadModule(params.modulePath) as object;
+    const loaded = instance.loadModule(params.modulePath);
+    if (!loaded || typeof loaded !== "object") {
+      throw new Error(`Plugin public surface is not an object: ${params.modulePath}`);
+    }
+    return loaded;
   }
   const { source, modulePath } = preparePluginModule(params);
   const cached = source.publicSurface?.exports;

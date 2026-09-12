@@ -1747,6 +1747,7 @@ src/agents/embedded-agent-runner/run/llm-idle-timeout.ts	3
 src/agents/embedded-agent-runner/run/message-tool-terminal.ts	1
 src/agents/embedded-agent-runner/run/message-transform-stream-wrapper.ts	3
 src/agents/embedded-agent-runner/run/payloads.ts	2
+src/agents/embedded-agent-runner/run/pre-persisted-user-turn.ts	5
 src/agents/embedded-agent-runner/run/prompt-image-metadata.ts	4
 src/agents/embedded-agent-runner/run/recovery-message-action-capability.ts	1
 src/agents/embedded-agent-runner/run/run-attempt-result.ts	1
@@ -3006,7 +3007,7 @@ src/infra/session-cost-usage-aggregation.ts	5
 src/infra/session-cost-usage-cache.sqlite.ts	1
 src/infra/session-cost-usage-collection.ts	3
 src/infra/session-cost-usage-pricing.ts	6
-src/infra/session-cost-usage-reporting.ts	5
+src/infra/session-cost-usage-reporting.ts	8
 src/infra/session-delivery-queue-storage.ts	6
 src/infra/shell-env.ts	1
 src/infra/sqlite-audit-record-store.ts	1

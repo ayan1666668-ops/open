@@ -2,6 +2,7 @@
  * Builds embedded-agent payload objects from attempt inputs and outcomes.
  */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { stripContinuationSignal } from "../../../auto-reply/continuation/signal.js";
 import type { SourceReplyDeliveryMode } from "../../../auto-reply/get-reply-options.types.js";
 import {
   createHeartbeatToolResponsePayload,
@@ -60,23 +61,79 @@ import { buildFailureWarning } from "./tool-error-warning.js";
 function isAssistantTextContentBlockType(value: unknown): boolean {
   return value === "text" || value === "input_text" || value === "output_text";
 }
-function resolveRawAssistantAnswerText(lastAssistant: AssistantMessage | undefined): string {
-  if (!lastAssistant) {
+
+type AssistantTextContentBlock = {
+  type?: unknown;
+  text?: unknown;
+  textSignature?: unknown;
+};
+
+function readAssistantTextContentBlock(value: unknown): AssistantTextContentBlock | null {
+  return value && typeof value === "object" ? (value as AssistantTextContentBlock) : null;
+}
+
+function sanitizeCanonicalAssistantItemText(
+  text: string,
+  sanitize: (value: string) => string,
+): string {
+  const sanitized = sanitize(text);
+  if (!sanitized) {
     return "";
+  }
+  const sanitizedIndex = text.indexOf(sanitized);
+  if (
+    sanitizedIndex >= 0 &&
+    text.slice(0, sanitizedIndex).trim().length === 0 &&
+    text.slice(sanitizedIndex + sanitized.length).trim().length === 0
+  ) {
+    return text;
+  }
+  return sanitized;
+}
+
+function resolveRawAssistantAnswerParts(lastAssistant: AssistantMessage | undefined): string[] {
+  if (!lastAssistant) {
+    return [];
   }
   const finalAnswerText = extractAssistantTextForPhase(lastAssistant, {
     phase: "final_answer",
-    sanitizeText: sanitizeAssistantFinalAnswerText,
+    sanitizeText: (text) =>
+      sanitizeCanonicalAssistantItemText(text, sanitizeAssistantFinalAnswerText),
   });
   if (finalAnswerText) {
-    return normalizeOptionalString(finalAnswerText) ?? "";
+    if (Array.isArray(lastAssistant.content)) {
+      const finalAnswerParts = lastAssistant.content
+        .map((block) => {
+          const record = readAssistantTextContentBlock(block);
+          if (!record) {
+            return null;
+          }
+          if (
+            !isAssistantTextContentBlockType(record.type) ||
+            typeof record.text !== "string" ||
+            parseAssistantTextSignature(record)?.phase !== "final_answer"
+          ) {
+            return null;
+          }
+          const text = sanitizeCanonicalAssistantItemText(
+            record.text,
+            sanitizeAssistantFinalAnswerText,
+          );
+          return text.trim() ? text : null;
+        })
+        .filter((value): value is string => typeof value === "string");
+      if (finalAnswerParts.length) {
+        return finalAnswerParts;
+      }
+    }
+    return [finalAnswerText];
   }
   if (Array.isArray(lastAssistant.content)) {
     const hasExplicitPhasedTextBlock = lastAssistant.content.some((block) => {
-      if (!block || typeof block !== "object") {
+      const record = readAssistantTextContentBlock(block);
+      if (!record) {
         return false;
       }
-      const record = block as { type?: unknown; textSignature?: unknown };
       return (
         isAssistantTextContentBlockType(record.type) &&
         Boolean(parseAssistantTextSignature(record)?.phase)
@@ -85,10 +142,10 @@ function resolveRawAssistantAnswerText(lastAssistant: AssistantMessage | undefin
     if (!hasExplicitPhasedTextBlock) {
       const signedUnphasedParts = lastAssistant.content
         .map((block) => {
-          if (!block || typeof block !== "object") {
+          const record = readAssistantTextContentBlock(block);
+          if (!record) {
             return null;
           }
-          const record = block as { type?: unknown; text?: unknown; textSignature?: unknown };
           const signature = parseAssistantTextSignature(record);
           if (
             !isAssistantTextContentBlockType(record.type) ||
@@ -98,22 +155,22 @@ function resolveRawAssistantAnswerText(lastAssistant: AssistantMessage | undefin
           ) {
             return null;
           }
-          const text = sanitizeAssistantFinalAnswerText(record.text);
+          const text = sanitizeCanonicalAssistantItemText(
+            record.text,
+            sanitizeAssistantFinalAnswerText,
+          );
           return text.trim() ? text : null;
         })
         .filter((value): value is string => typeof value === "string");
       if (signedUnphasedParts.length) {
-        return normalizeOptionalString(signedUnphasedParts.join("\n")) ?? "";
+        return signedUnphasedParts;
       }
     }
   }
-  return (
-    normalizeOptionalString(
-      extractAssistantTextForPhase(lastAssistant, {
-        sanitizeText: sanitizeAssistantVisibleText,
-      }),
-    ) ?? ""
-  );
+  const visibleText = extractAssistantTextForPhase(lastAssistant, {
+    sanitizeText: (text) => sanitizeCanonicalAssistantItemText(text, sanitizeAssistantVisibleText),
+  });
+  return visibleText ? [visibleText] : [];
 }
 
 /**
@@ -272,30 +329,38 @@ export function buildEmbeddedRunPayloads(params: {
     const fallbackAnswerText = assistantForPayload
       ? extractAssistantVisibleText(assistantForPayload)
       : "";
-    const fallbackRawAnswerText = resolveRawAssistantAnswerText(assistantForPayload);
+    const fallbackRawAnswerParts = resolveRawAssistantAnswerParts(assistantForPayload);
+    const fallbackRawAnswerText = normalizeOptionalString(fallbackRawAnswerParts.join("\n")) ?? "";
     const rawAnswerDirectiveState = fallbackRawAnswerText
       ? parseReplyDirectives(fallbackRawAnswerText)
       : null;
     const rawAnswerHasMedia =
       (rawAnswerDirectiveState?.mediaUrls?.length ?? 0) > 0 ||
       rawAnswerDirectiveState?.audioAsVoice;
+    const rawAnswerHasContinuation = fallbackRawAnswerParts.some(
+      (part) => stripContinuationSignal(part).signal !== null,
+    );
+    const rawAnswerHasEarlierContinuation = fallbackRawAnswerParts
+      .slice(0, -1)
+      .some((part) => stripContinuationSignal(part).signal !== null);
+    const assistantTextsHaveMedia = params.assistantTexts.some((text) => {
+      const parsed = parseReplyDirectives(text);
+      return (parsed.mediaUrls?.length ?? 0) > 0 || parsed.audioAsVoice;
+    });
     const normalizedAssistantTexts =
-      rawAnswerHasMedia &&
-      nonEmptyAssistantTexts.length > 0 &&
-      !params.assistantTexts.some((text) => {
-        const parsed = parseReplyDirectives(text);
-        return (parsed.mediaUrls?.length ?? 0) > 0 || parsed.audioAsVoice;
-      })
+      rawAnswerHasMedia && nonEmptyAssistantTexts.length > 0 && !assistantTextsHaveMedia
         ? normalizeTextForComparison(nonEmptyAssistantTexts.join("\n\n"))
         : "";
+    const normalizedRawAnswerText = normalizeTextForComparison(rawAnswerDirectiveState?.text ?? "");
     const shouldPreferRawAnswerText =
-      rawAnswerHasMedia &&
-      (!nonEmptyAssistantTexts.length ||
-        (normalizedAssistantTexts.length > 0 &&
-          normalizedAssistantTexts ===
-            normalizeTextForComparison(rawAnswerDirectiveState?.text ?? "")));
-    // When streamed text lost media directives but the canonical assistant answer
-    // still contains them, keep the raw answer so attachments are not dropped.
+      rawAnswerHasContinuation ||
+      (rawAnswerHasMedia &&
+        (!nonEmptyAssistantTexts.length ||
+          (!assistantTextsHaveMedia &&
+            normalizedAssistantTexts.length > 0 &&
+            normalizedAssistantTexts === normalizedRawAnswerText)));
+    // Keep raw canonical text when streamed delivery lost media directives or
+    // continuation markers that must remain available to the post-run extractor.
     const fallbackAnswerSourceText =
       shouldPreferRawAnswerText && fallbackRawAnswerText
         ? fallbackRawAnswerText
@@ -311,9 +376,15 @@ export function buildEmbeddedRunPayloads(params: {
       : "";
     const shouldUseCanonicalFinalAnswer =
       fallbackAnswerSourceText.length > 0 && normalizedFallbackAnswerSourceText.length > 0;
+    const canonicalFinalAnswerTexts =
+      rawAnswerHasEarlierContinuation && shouldPreferRawAnswerText
+        ? fallbackRawAnswerParts.filter((part) => part.trim().length > 0)
+        : [fallbackAnswerSourceText];
+    const preserveCanonicalItemWhitespace =
+      rawAnswerHasEarlierContinuation && shouldPreferRawAnswerText;
     const hasAssistantTextPayload = nonEmptyAssistantTexts.length > 0;
     const answerTexts = shouldUseCanonicalFinalAnswer
-      ? [fallbackAnswerSourceText]
+      ? canonicalFinalAnswerTexts
       : shouldPreferRawAnswerText && fallbackRawAnswerText
         ? [fallbackRawAnswerText]
         : hasAssistantTextPayload
@@ -322,7 +393,8 @@ export function buildEmbeddedRunPayloads(params: {
             ? [fallbackAnswerText]
             : [];
     const preparedAnswerDirectives =
-      shouldUseCanonicalFinalAnswer || shouldPreferRawAnswerText || !hasAssistantTextPayload
+      answerTexts.length === 1 &&
+      (shouldUseCanonicalFinalAnswer || shouldPreferRawAnswerText || !hasAssistantTextPayload)
         ? fallbackAnswerDirectiveState
         : null;
     for (const text of answerTexts) {
@@ -355,6 +427,7 @@ export function buildEmbeddedRunPayloads(params: {
         text: cleanedText,
         media: mediaUrls,
         ...delivery,
+        preserveTextWhitespace: preserveCanonicalItemWhitespace,
       };
       replyItems.push(
         ttsFacts ? setReplyPayloadMetadata(replyPayload, { tts: ttsFacts }) : replyPayload,
@@ -406,7 +479,11 @@ export function buildEmbeddedRunPayloads(params: {
   return replyItems
     .map((item) => {
       const payload: ReplyPayload = copyReplyPayloadMetadata(item, {
-        text: normalizeOptionalString(item.text),
+        text: item.preserveTextWhitespace
+          ? item.text.trim().length > 0
+            ? item.text
+            : undefined
+          : normalizeOptionalString(item.text),
       });
       const mediaUrl = item.mediaUrl ?? item.media?.[0];
       if (mediaUrl) {
