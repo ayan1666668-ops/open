@@ -20,6 +20,7 @@ import {
   createClient,
   createSandboxContext,
   execServerUrlFromClient,
+  globPath,
   openSocket,
   rpc,
   specialPath,
@@ -249,6 +250,34 @@ describe("sandbox exec-server fs RPC through real bridges", () => {
         await expect(fs.readFile(path.join(dirTarget, "child.txt"), "utf8")).resolves.toBe(
           "dir-copy",
         );
+
+        // Canonical source I/O must not erase the lexical child namespace
+        // used by deny entries during recursive traversal.
+        const privateSource = path.join(mountDir, "private-source");
+        await fs.mkdir(privateSource);
+        await fs.writeFile(path.join(privateSource, "secret.txt"), "blocked");
+        await fs.symlink(privateSource, path.join(mountDir, "source-alias"));
+        const lexicalChildPolicy = codexFsSandboxContext({
+          entries: [
+            { path: specialPath("project_roots"), access: "write" },
+            { path: globPath("source-alias/secret.txt"), access: "deny" },
+          ],
+        });
+        await expect(
+          rpc(socket, "fs/copy", {
+            sourcePath: "file:///workspace/source-alias",
+            destinationPath: "file:///workspace/blocked-copy",
+            recursive: true,
+            sandbox: lexicalChildPolicy,
+          }),
+        ).rejects.toThrow(
+          "Codex fs sandbox denied read access to /workspace/source-alias/secret.txt",
+        );
+        await expect(
+          fs.stat(path.join(mountDir, "blocked-copy", "secret.txt")),
+        ).rejects.toMatchObject({
+          code: "ENOENT",
+        });
         socket.close();
       } finally {
         await fs.rm(stateDir, { recursive: true, force: true });

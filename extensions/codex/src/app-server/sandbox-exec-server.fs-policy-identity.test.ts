@@ -118,9 +118,13 @@ describe("OpenClaw Codex sandbox exec-server filesystem policy identity", () => 
         sandbox: policy,
       }),
     ).resolves.toEqual({ dataBase64: Buffer.from("allowed").toString("base64") });
-    expect(stat).toHaveBeenCalledWith({ filePath: "/workspace/physical/note.txt" });
+    expect(stat).toHaveBeenCalledWith({
+      filePath: "/workspace/physical/note.txt",
+      expectedPolicyPath: "/workspace/physical/note.txt",
+    });
     expect(readFile).toHaveBeenCalledWith({
       filePath: "/workspace/physical/note.txt",
+      expectedPolicyPath: "/workspace/physical/note.txt",
       maxBytes: 512 * 1024 * 1024,
     });
     socket.close();
