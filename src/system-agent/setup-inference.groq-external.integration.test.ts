@@ -11,6 +11,7 @@ import {
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { resolvePluginProvidersCore } from "../plugins/providers.runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { activateSetupInference } from "./setup-inference-activate.js";
 
@@ -48,10 +49,24 @@ it("resolves a Groq manifest model from a global external install during setup",
         JSON.stringify({
           name: "@openclaw/groq-provider",
           version: "2026.9.4",
+          description: "OpenClaw Groq media-understanding provider.",
+          repository: {
+            type: "git",
+            url: "https://github.com/openclaw/openclaw",
+          },
           type: "module",
+          devDependencies: { "@openclaw/plugin-sdk": "workspace:*" },
           openclaw: {
             extensions: ["./index.ts"],
+            install: {
+              clawhubSpec: "clawhub:@openclaw/groq-provider",
+              npmSpec: "@openclaw/groq-provider",
+              defaultChoice: "npm",
+              minHostVersion: ">=2026.6.8",
+            },
+            compat: { pluginApi: ">=2026.9.4" },
             build: { bundledDist: false },
+            release: { publishToClawHub: true, publishToNpm: true },
           },
         }),
         "utf8",
@@ -104,6 +119,20 @@ export default defineSingleProviderPluginEntry({
         { config, env: state.env },
       );
       clearLoadInstalledPluginIndexInstallRecordsCache();
+
+      const runtimeProviders = resolvePluginProvidersCore({
+        config,
+        workspaceDir: state.workspaceDir,
+        env: state.env,
+        mode: "setup",
+        cache: false,
+        includeUntrustedWorkspacePlugins: false,
+        onlyPluginIds: ["groq"],
+      }).map((provider) => ({
+        id: provider.id,
+        pluginId: provider.pluginId,
+        auth: provider.auth.map((method) => ({ id: method.id, wizard: method.wizard })),
+      }));
 
       const requests: Array<{ method?: string; url?: string }> = [];
       const runtimeErrors: string[] = [];
@@ -164,7 +193,10 @@ export default defineSingleProviderPluginEntry({
           },
         });
 
-        expect(result, JSON.stringify({ result, runtimeErrors, requests })).toMatchObject({
+        expect(
+          result,
+          JSON.stringify({ result, runtimeErrors, requests, runtimeProviders }),
+        ).toMatchObject({
           ok: true,
           modelRef: "groq/openai/gpt-oss-120b",
         });
