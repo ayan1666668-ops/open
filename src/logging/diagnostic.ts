@@ -4,6 +4,7 @@ import { resolveCompactionTimeoutMs } from "../agents/embedded-agent-runner/comp
 import { resolveActiveEmbeddedRunRecoveryBlocker } from "../agents/embedded-agent-runner/run-state.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { truncateDiagnosticContent } from "../infra/diagnostic-content.js";
 import {
   areDiagnosticsEnabledForProcess,
   emitInternalDiagnosticEvent as emitDiagnosticEvent,
@@ -798,10 +799,10 @@ export function logMessageProcessed(params: {
     contentPolicy.inputMessages || contentPolicy.outputMessages
       ? {
           ...(contentPolicy.inputMessages && params.userPrompt !== undefined
-            ? { userPrompt: params.userPrompt }
+            ? { userPrompt: truncateDiagnosticContent(params.userPrompt) }
             : {}),
           ...(contentPolicy.outputMessages && params.finalResponse !== undefined
-            ? { finalResponse: params.finalResponse }
+            ? { finalResponse: truncateDiagnosticContent(params.finalResponse) }
             : {}),
         }
       : undefined;

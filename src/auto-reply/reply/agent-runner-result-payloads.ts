@@ -15,13 +15,13 @@ import {
 } from "../../agents/usage.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
+import { joinDiagnosticContent } from "../../infra/diagnostic-content.js";
 import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
   createChildDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
-import { truncateUtf16Safe } from "../../utils.js";
 import { estimateAggregateUsageCost } from "../../utils/usage-format.js";
 import {
   buildFallbackClearedNotice,
@@ -64,21 +64,13 @@ import { buildSessionsYieldAcknowledgmentPayload } from "./sessions-yield-acknow
 import { resolveStrandedReplyRecovery } from "./stranded-reply-recovery.js";
 type ReplyAgentAccounting = Awaited<ReturnType<typeof accountAgentTurn>>;
 
-const MAX_DIAGNOSTIC_RESPONSE_CHARS = 128 * 1024;
-
 function captureDiagnosticResponse(payloads: readonly ReplyPayload[]): string | undefined {
-  const response = payloads
+  const responseParts = payloads
     .filter((payload) => payload.isReasoning !== true && payload.isCommentary !== true)
     .flatMap((payload) =>
       typeof payload.text === "string" && payload.text.trim() ? [payload.text] : [],
-    )
-    .join("\n");
-  if (!response) {
-    return undefined;
-  }
-  return response.length <= MAX_DIAGNOSTIC_RESPONSE_CHARS
-    ? response
-    : `${truncateUtf16Safe(response, MAX_DIAGNOSTIC_RESPONSE_CHARS - 14)}…[truncated]`;
+    );
+  return joinDiagnosticContent(responseParts, "…[truncated]");
 }
 
 export async function prepareReplyAgentPayloads(state: {

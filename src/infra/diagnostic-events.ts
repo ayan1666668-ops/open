@@ -36,6 +36,8 @@ import {
 } from "./diagnostic-trace-propagation.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 
+export { MAX_DIAGNOSTIC_CONTENT_CHARS } from "./diagnostic-content.js";
+
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
 
 type DiagnosticBaseEvent = {

@@ -10,6 +10,10 @@ import {
   type ContextEngineHostSupport,
 } from "../../context-engine/host-compat.js";
 import {
+  joinDiagnosticContent,
+  truncateDiagnosticContent,
+} from "../../infra/diagnostic-content.js";
+import {
   diagnosticErrorCategory,
   diagnosticErrorMessage,
 } from "../../infra/diagnostic-error-metadata.js";
@@ -235,7 +239,9 @@ function emitAgentHarnessRunStarted(
 ): void {
   const contentPolicy = resolveDiagnosticModelContentCapturePolicy(getRuntimeConfig());
   const harnessContent: { userPrompt?: string; finalResponse?: string } | undefined =
-    contentPolicy.inputMessages && params.prompt ? { userPrompt: params.prompt } : undefined;
+    contentPolicy.inputMessages && params.prompt
+      ? { userPrompt: truncateDiagnosticContent(params.prompt) }
+      : undefined;
   emitTrustedDiagnosticEventWithPrivateData(
     {
       type: "harness.run.started",
@@ -262,7 +268,7 @@ function emitAgentHarnessRunCompleted(params: {
   const contentPolicy = resolveDiagnosticModelContentCapturePolicy(getRuntimeConfig());
   const finalResponse =
     contentPolicy.outputMessages && result.assistantTexts.length > 0
-      ? result.assistantTexts.filter(Boolean).join("\n") || undefined
+      ? joinDiagnosticContent(result.assistantTexts)
       : undefined;
   const harnessContent: { userPrompt?: string; finalResponse?: string } | undefined = finalResponse
     ? { finalResponse }
