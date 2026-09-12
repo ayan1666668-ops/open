@@ -8,6 +8,7 @@ import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
   writePersistedInstalledPluginIndexInstallRecords,
 } from "../plugins/installed-plugin-index-records.js";
+import { loadOpenClawPlugins } from "../plugins/loader-runtime-load.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -133,6 +134,21 @@ export default defineSingleProviderPluginEntry({
         pluginId: provider.pluginId,
         auth: provider.auth.map((method) => ({ id: method.id, wizard: method.wizard })),
       }));
+      const registryDiagnostics: string[] = [];
+      const runtimeRegistry = loadOpenClawPlugins({
+        config,
+        workspaceDir: state.workspaceDir,
+        env: state.env,
+        mode: "full",
+        cache: false,
+        activate: false,
+        onlyPluginIds: ["groq"],
+        logger: {
+          info: (message) => registryDiagnostics.push(`info:${String(message)}`),
+          warn: (message) => registryDiagnostics.push(`warn:${String(message)}`),
+          error: (message) => registryDiagnostics.push(`error:${String(message)}`),
+        },
+      });
 
       const requests: Array<{ method?: string; url?: string }> = [];
       const runtimeErrors: string[] = [];
@@ -195,7 +211,25 @@ export default defineSingleProviderPluginEntry({
 
         expect(
           result,
-          JSON.stringify({ result, runtimeErrors, requests, runtimeProviders }),
+          JSON.stringify({
+            result,
+            runtimeErrors,
+            requests,
+            runtimeProviders,
+            runtimeRegistry: {
+              plugins: runtimeRegistry.plugins.map((plugin) => ({
+                id: plugin.id,
+                source: plugin.source,
+                origin: plugin.origin,
+              })),
+              providers: runtimeRegistry.providers.map((provider) => ({
+                id: provider.id,
+                pluginId: provider.pluginId,
+              })),
+              diagnostics: runtimeRegistry.diagnostics,
+              registryDiagnostics,
+            },
+          }),
         ).toMatchObject({
           ok: true,
           modelRef: "groq/openai/gpt-oss-120b",
