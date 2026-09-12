@@ -6,6 +6,7 @@ import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
 import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
+  readPersistedInstalledPluginIndexInstallRecords,
   writePersistedInstalledPluginIndexInstallRecords,
 } from "../plugins/installed-plugin-index-records.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
@@ -112,7 +113,26 @@ it("resolves a Groq manifest model from a global external install during setup",
           },
         });
 
-        expect(result, JSON.stringify({ result, runtimeErrors, requests })).toMatchObject({
+        const persistedInstallRecords = readPersistedInstalledPluginIndexInstallRecords({
+          env: state.env,
+        });
+        const manifestChoices = (
+          await import("../plugins/provider-auth-choices.js")
+        ).resolveManifestProviderAuthChoices({
+          config,
+          workspaceDir: state.workspaceDir,
+          env: state.env,
+        });
+        expect(
+          result,
+          JSON.stringify({
+            result,
+            runtimeErrors,
+            requests,
+            persistedInstallRecords,
+            manifestChoices,
+          }),
+        ).toMatchObject({
           ok: true,
           modelRef: "groq/openai/gpt-oss-120b",
         });
