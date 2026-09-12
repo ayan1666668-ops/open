@@ -549,7 +549,12 @@ function createSharedMatrixClientLease(
 export async function acquireSharedMatrixClient(
   params: SharedMatrixClientParams = {},
 ): Promise<SharedMatrixClientLease> {
-  const taskSignal = getMatrixMonitorTaskSignal();
+  // Monitor leases back the long-lived channel connection. A channel restart can be scheduled
+  // from inside a detached monitor task (for example, a config write made during an inbound
+  // turn), and that task's signal aborts once the task settles. Scoping the replacement
+  // monitor to it makes every restart fail with "Matrix startup aborted" until the process
+  // is replaced, so only transient acquisitions inherit the ambient task signal.
+  const taskSignal = params.role === "monitor" ? undefined : getMatrixMonitorTaskSignal();
   const abortSignal =
     taskSignal && params.abortSignal
       ? AbortSignal.any([taskSignal, params.abortSignal])

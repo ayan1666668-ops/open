@@ -163,6 +163,42 @@ describe("shared Matrix monitor task ownership", () => {
     }
   });
 
+  it("admits a replacement monitor scheduled from a settled monitor task", async () => {
+    const client = createMockClient("main");
+    createMatrixClientMock.mockResolvedValue(client);
+    const auth = authFor("main");
+    const tasks = createMatrixMonitorTaskRunner({
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      logVerboseMessage: vi.fn(),
+    });
+    const resume = createDeferred<void>();
+    let retained: Promise<unknown> | undefined;
+    let replacement: Awaited<ReturnType<typeof acquireSharedMatrixClient>> | undefined;
+    // A config reload triggered during an inbound turn restarts the channel from this context.
+    await tasks.runDetachedTask("channel restart continuation", async () => {
+      retained = resume.promise.then(async () => {
+        try {
+          replacement = await acquireSharedMatrixClient({
+            auth,
+            role: "monitor",
+            startClient: false,
+          });
+          return null;
+        } catch (error) {
+          return error;
+        }
+      });
+    });
+    resume.resolve();
+    try {
+      await expect(retained).resolves.toBeNull();
+      expect(replacement?.client).toBe(client);
+    } finally {
+      await retained;
+      await replacement?.release();
+    }
+  });
+
   it.each(
     ["authentication", "client creation"].flatMap((phase) =>
       ["monitor", "caller"].map((abortOwner) => ({ phase, abortOwner })),
