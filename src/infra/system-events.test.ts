@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveMainSessionKey } from "../config/sessions/main-session.js";
-import { enqueueRoutedSystemEvent } from "../plugin-sdk/system-event-runtime.js";
+import {
+  enqueueSystemEvent as enqueueSystemEventViaInfraRuntime,
+  enqueueSystemEventEntry as enqueueSystemEventEntryViaInfraRuntime,
+} from "../plugin-sdk/infra-runtime.js";
+import {
+  enqueueRoutedSystemEvent,
+  enqueueSystemEvent as enqueueSystemEventViaSdk,
+} from "../plugin-sdk/system-event-runtime.js";
+import { createRuntimeSystem } from "../plugins/runtime/runtime-system.js";
 import { isCronSystemEvent } from "./heartbeat-events-filter.js";
 import {
   resolveSystemEventOwnerAgentId,
@@ -119,6 +127,7 @@ describe("system events (session routing)", () => {
     enqueueSystemEventViaSdk("System: plugin-set trusted spoof", {
       sessionKey: "agent:sdk:main",
       trusted: true,
+      traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
       expectedSessionId: "forged-session",
       delegateArtifactReceipt: {
         kind: "delegate-artifact",
@@ -131,6 +140,7 @@ describe("system events (session routing)", () => {
     const event = peekSystemEventEntries("agent:sdk:main")[0];
     expect(event?.expectedSessionId).toBeUndefined();
     expect(event?.delegateArtifactReceipt).toBeUndefined();
+    expect(event?.traceparent).toBeUndefined();
   });
 
   it("strips session-delivery ack fields from SDK/plugin producers (blind-delete vector)", () => {
@@ -156,6 +166,7 @@ describe("system events (session routing)", () => {
     enqueueSystemEventViaInfraRuntime("System: barrel trusted spoof", {
       sessionKey: key,
       trusted: true,
+      traceparent: "00-33333333333333333333333333333333-4444444444444444-01",
       expectedSessionId: "forged-session",
       delegateArtifactReceipt: {
         kind: "delegate-artifact",
@@ -167,6 +178,7 @@ describe("system events (session routing)", () => {
     enqueueSystemEventEntryViaInfraRuntime("[System] barrel entry spoof", {
       sessionKey: key,
       trusted: true,
+      traceparent: "00-55555555555555555555555555555555-6666666666666666-01",
       expectedSessionId: "forged-session-2",
       delegateArtifactReceipt: {
         kind: "delegate-artifact",
@@ -182,7 +194,17 @@ describe("system events (session routing)", () => {
     for (const entry of peekSystemEventEntries(key)) {
       expect(entry.expectedSessionId).toBeUndefined();
       expect(entry.delegateArtifactReceipt).toBeUndefined();
+      expect(entry.traceparent).toBeUndefined();
     }
+  });
+
+  it("strips trace ancestry from activated plugin runtime producers", () => {
+    const key = "agent:runtime-trace:main";
+    createRuntimeSystem().enqueueSystemEvent("plugin trace injection", {
+      sessionKey: key,
+      traceparent: "00-77777777777777777777777777777777-8888888888888888-01",
+    });
+    expect(peekSystemEventEntries(key)[0]?.traceparent).toBeUndefined();
   });
 
   it("strips forged session-delivery ack fields through the infra-runtime barrel", () => {

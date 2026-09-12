@@ -634,20 +634,23 @@ export async function runCodexAppServerSideQuestion(
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
       };
-      const { execution: toolCall } = startDynamicToolDiagnosticExecution(diagnosticContext, () =>
-        handleDynamicToolCallWithTimeout({
-          call,
-          toolBridge,
-          signal,
-          timeoutMs,
-          observeToolTerminal: sideRunParams.observeToolTerminal,
-        }),
+      const { trace, execution: toolCall } = startDynamicToolDiagnosticExecution(
+        diagnosticContext,
+        () =>
+          handleDynamicToolCallWithTimeout({
+            call,
+            toolBridge,
+            signal,
+            timeoutMs,
+            observeToolTerminal: sideRunParams.observeToolTerminal,
+          }),
       );
       activeDynamicToolCalls.add(toolCall);
       try {
         const response = await toolCall;
         emitDynamicToolTerminalDiagnostic({
           ...diagnosticContext,
+          trace,
           response,
           durationMs: Math.max(0, Date.now() - toolStartedAt),
         });
@@ -658,6 +661,7 @@ export async function runCodexAppServerSideQuestion(
       } catch (error) {
         emitDynamicToolErrorDiagnostic({
           ...diagnosticContext,
+          trace,
           durationMs: Math.max(0, Date.now() - toolStartedAt),
           terminalReason: signal.aborted ? resolveCodexToolAbortTerminalReason(signal) : "failed",
         });

@@ -37,6 +37,7 @@ function sanitizeSystemEventOptions(
   const {
     sessionDeliveryAckId: _ackId,
     sessionDeliveryAckStateDir: _ackStateDir,
+    traceparent: _traceparent,
     ...rest
   } = options ?? {};
   return { ...rest, trusted: false };
@@ -47,8 +48,8 @@ function sanitizeSystemEventOptions(
  * plugin cannot attach trusted-only session and delegate-artifact provenance.
  * Trusted internal producers use the direct `infra/system-events` import.
  *
- * Also strip the session-delivery ack fields (`sessionDeliveryAckId` /
- * `sessionDeliveryAckStateDir`): on drain they trigger a blind
+ * Also strip caller-supplied trace ancestry and the session-delivery ack fields
+ * (`sessionDeliveryAckId` / `sessionDeliveryAckStateDir`): on drain they trigger a blind
  * `deleteDeliveryQueueEntry` at the caller-supplied state dir, so a plugin must
  * never inject them via this boundary. The legitimate ack producer
  * (continuation-return) sets them through the direct `infra/system-events`

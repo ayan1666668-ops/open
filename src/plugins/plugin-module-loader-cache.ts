@@ -729,7 +729,11 @@ export function loadPluginPublicSurfaceModuleSync(
   source.disposeModule ??= () => clearPluginModuleRequireCache(modulePath, boundaryRoot);
   source.publicSurface = { exports: sentinel };
   try {
-    Object.assign(sentinel, params.loadModule(modulePath));
+    const loaded = params.loadModule(modulePath);
+    if (!loaded || typeof loaded !== "object") {
+      throw new Error(`Plugin public surface is not an object: ${params.modulePath}`);
+    }
+    Object.assign(sentinel, loaded);
     return sentinel;
   } catch (error) {
     delete source.publicSurface;

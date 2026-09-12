@@ -313,6 +313,7 @@ export function enqueueSystemEventEntry(
     trusted: false,
     sessionDeliveryAckId: undefined,
     sessionDeliveryAckStateDir: undefined,
+    traceparent: undefined,
   });
 }
 export * from "../infra/system-message.ts";

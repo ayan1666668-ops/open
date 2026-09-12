@@ -3602,6 +3602,8 @@ describe("runCodexAppServerSideQuestion", () => {
         toolCallId: "tool-1",
       },
     ]);
+    expect(toolDiagnosticEvents[0]?.trace?.spanId).toBeTruthy();
+    expect(toolDiagnosticEvents[1]?.trace).toEqual(toolDiagnosticEvents[0]?.trace);
     expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
   });
 

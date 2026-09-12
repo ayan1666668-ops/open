@@ -29,6 +29,7 @@ const enqueueSystemEvent: PluginRuntime["system"]["enqueueSystemEvent"] = (text,
   const {
     sessionDeliveryAckId: _ackId,
     sessionDeliveryAckStateDir: _ackStateDir,
+    traceparent: _traceparent,
     ...rest
   } = options ?? {};
   return enqueueSystemEventInternal(text, { ...rest, trusted: false });
