@@ -197,20 +197,16 @@ export function moveQueuedChatMessage(
   if (fromIndex < 0 || requestedIndex < 0 || fromIndex === requestedIndex) {
     return "noop";
   }
-  const crossedPeerEdit = offeredSegment!.some(
-    (row, index) =>
-      index >= Math.min(fromIndex, requestedIndex) &&
-      index <= Math.max(fromIndex, requestedIndex) &&
-      row.id !== id &&
-      isQueuedMessageBeingEdited(host, row.id),
-  );
+  const crossedPeerEdit = offeredSegment!
+    .slice(Math.min(fromIndex, requestedIndex), Math.max(fromIndex, requestedIndex) + 1)
+    .some((row) => isQueuedMessageBeingEdited(host, row.id));
   if (crossedPeerEdit) {
     setChatError(host, QUEUED_MESSAGE_REORDER_CONFLICT_ERROR);
     return "rejected";
   }
   const segment = chatQueueMovableSegments(
-    scope,
-    (row) => isMovableChatQueueItem(row) && !isQueuedMessageBeingEdited(host, row.id),
+    offeredSegment!,
+    (row) => !isQueuedMessageBeingEdited(host, row.id),
   ).find((rows) => rows.some((row) => row.id === id));
   const segmentTargetIndex = segment?.findIndex((row) => row.id === targetId) ?? -1;
   const moves = reorderChatQueueItems(segment ?? [], id, segmentTargetIndex);
