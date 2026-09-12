@@ -44,6 +44,19 @@ it("resolves a Groq manifest model from a global external install during setup",
       // fixture self-contained while retaining the real Groq manifest and
       // provider-discovery entry under test.
       await fs.writeFile(
+        path.join(pluginDir, "package.json"),
+        JSON.stringify({
+          name: "@openclaw/groq-provider",
+          version: "2026.9.4",
+          type: "module",
+          openclaw: {
+            extensions: ["./index.ts"],
+            build: { bundledDist: false },
+          },
+        }),
+        "utf8",
+      );
+      await fs.writeFile(
         path.join(pluginDir, "index.ts"),
         `import { defineSingleProviderPluginEntry } from "openclaw/plugin-sdk/provider-entry";
 import manifest from "./openclaw.plugin.json" with { type: "json" };
