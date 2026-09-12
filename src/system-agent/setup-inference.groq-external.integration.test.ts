@@ -123,6 +123,20 @@ it("resolves a Groq manifest model from a global external install during setup",
           workspaceDir: state.workspaceDir,
           env: state.env,
         });
+        const runtimeProviders = (await import("../plugins/providers.runtime.js"))
+          .resolvePluginProvidersCore({
+            config,
+            workspaceDir: state.workspaceDir,
+            env: state.env,
+            mode: "setup",
+            cache: false,
+            onlyPluginIds: ["groq"],
+          })
+          .map((provider) => ({
+            pluginId: provider.pluginId,
+            id: provider.id,
+            auth: provider.auth.map((method) => method.id),
+          }));
         expect(
           result,
           JSON.stringify({
@@ -131,6 +145,7 @@ it("resolves a Groq manifest model from a global external install during setup",
             requests,
             persistedInstallRecords,
             manifestChoices,
+            runtimeProviders,
           }),
         ).toMatchObject({
           ok: true,
