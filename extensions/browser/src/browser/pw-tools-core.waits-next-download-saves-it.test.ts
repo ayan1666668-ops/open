@@ -444,6 +444,7 @@ describe("pw-tools-core", () => {
       const harness = createDownloadEventHarness();
       const targetPath = path.join(tempDir, "metadata.bin");
       const saveAs = vi.fn(async () => {});
+      const cancel = vi.fn(async () => {});
       navigationGuardMocks.assertBrowserNavigationResultAllowed.mockRejectedValueOnce(
         new Error("browser navigation blocked by policy"),
       );
@@ -462,10 +463,12 @@ describe("pw-tools-core", () => {
         url: () => "http://169.254.169.254/latest/meta-data/",
         suggestedFilename: () => "metadata.bin",
         saveAs,
+        cancel,
       });
 
       await expect(pending).rejects.toThrow("browser navigation blocked by policy");
       expect(saveAs).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
       expect(navigationGuardMocks.assertBrowserNavigationResultAllowed).toHaveBeenCalledWith({
         url: "http://169.254.169.254/latest/meta-data/",
         ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
@@ -480,6 +483,7 @@ describe("pw-tools-core", () => {
       const harness = createDownloadEventHarness();
       const click = vi.fn(async () => {});
       const saveAs = vi.fn(async () => {});
+      const cancel = vi.fn(async () => {});
       setPwToolsCoreCurrentRefLocator({ click });
       navigationGuardMocks.assertBrowserNavigationResultAllowed.mockRejectedValueOnce(
         new Error("browser navigation blocked by policy"),
@@ -500,11 +504,13 @@ describe("pw-tools-core", () => {
         url: () => "http://169.254.169.254/latest/meta-data/",
         suggestedFilename: () => "metadata.bin",
         saveAs,
+        cancel,
       });
 
       await expect(pending).rejects.toThrow("browser navigation blocked by policy");
       expect(click).toHaveBeenCalledOnce();
       expect(saveAs).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
     });
   });
 

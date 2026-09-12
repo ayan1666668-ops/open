@@ -77,6 +77,7 @@ function createExplicitDownloadCapture(
     outputPath: params.outPath,
     outputRoot: params.rootDir,
     signal: params.signal,
+    cancelOnBeforeSaveError: () => params.state.armIdDownload === armId,
     beforeSave: async (download) => {
       if (params.state.armIdDownload !== armId) {
         throw new Error("Download was superseded by another waiter");
