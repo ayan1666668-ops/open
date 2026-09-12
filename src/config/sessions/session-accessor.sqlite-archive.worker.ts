@@ -513,7 +513,7 @@ async function runReclamationWorkerPort(
     result = await withOpenClawAgentDatabaseAdmission(
       data.plan.databaseOptions,
       withAdmission,
-      async (database) => {
+      async (openedDatabase) => {
         finalAdmission = true;
         let transactionDatabase: DatabaseSync | undefined;
         try {
@@ -537,7 +537,7 @@ async function runReclamationWorkerPort(
           }
           return reclaimSqliteSessionInTransaction(data.plan, { onCommit });
         } finally {
-          validation = getOpenClawAgentDatabaseValidation(database);
+          validation = getOpenClawAgentDatabaseValidation(openedDatabase);
           if (
             transactionDatabase &&
             (!transactionDatabase.isOpen || !transactionDatabase.isTransaction)

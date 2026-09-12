@@ -35,6 +35,7 @@ import {
   replaceSessionEntrySync,
 } from "./session-accessor.sqlite-entry.js";
 import { ensureSessionEntrySync } from "./session-accessor.sqlite-initial-entry.js";
+import { withWorkerSqliteIntegrityCounter } from "./session-accessor.sqlite-integrity-counter.test-support.js";
 import {
   createHistoryEvictionReclamationPlan,
   createLifecycleArtifactReclamationPlan,
@@ -64,40 +65,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
         filename: ConstructorParameters<typeof actual.Worker>[0],
         options?: ConstructorParameters<typeof actual.Worker>[1],
       ) {
-        const counts = hooks.integrityChecks;
-        const preload = `
-          import { DatabaseSync } from "node:sqlite";
-          import { workerData } from "node:worker_threads";
-          const prepare = DatabaseSync.prototype.prepare;
-          DatabaseSync.prototype.prepare = function(sql) {
-            const statement = prepare.call(this, sql);
-            if (this.location() === workerData.plan?.databaseOptions.path &&
-                /^PRAGMA integrity_check;?$/i.test(sql.trim())) {
-              for (const method of ["all", "get", "iterate", "run"]) {
-                const execute = statement[method].bind(statement);
-                statement[method] = (...args) => {
-                  Atomics.add(new Int32Array(workerData.integrityChecks), 0, 1);
-                  return execute(...args);
-                };
-              }
-            }
-            return statement;
-          };
-        `;
-        super(
-          filename,
-          counts
-            ? {
-                ...options,
-                execArgv: [
-                  ...(options?.execArgv ?? []),
-                  "--import",
-                  `data:text/javascript,${encodeURIComponent(preload)}`,
-                ],
-                workerData: { ...options?.workerData, integrityChecks: counts },
-              }
-            : options,
-        );
+        super(filename, withWorkerSqliteIntegrityCounter(options, hooks.integrityChecks));
       }
     },
   };
