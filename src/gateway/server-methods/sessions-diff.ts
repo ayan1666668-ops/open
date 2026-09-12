@@ -13,6 +13,11 @@ import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-ke
 import { applySessionDiffBaseline, loadCheckoutDiff } from "../../sessions/session-diff.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
+import {
+  authorizeSessionReadTarget,
+  revalidateSessionReadTarget,
+  type AdmittedSessionReadTarget,
+} from "./session-read-visibility-boundary.js";
 import { loadRepositoryArtifactDiff } from "./session-repository-artifacts.js";
 import { resolveRepositoryWorkspaceAccess } from "./session-repository-workspace-access.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
@@ -95,7 +100,7 @@ export async function loadSessionDiff(
 }
 
 export const sessionsDiffHandlers: GatewayRequestHandlers = {
-  "sessions.diff": async ({ params, respond, context }) => {
+  "sessions.diff": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsDiffParams, "sessions.diff", respond)) {
       return;
     }
@@ -120,15 +125,44 @@ export const sessionsDiffHandlers: GatewayRequestHandlers = {
       respond(false, undefined, requestedAgent.error);
       return;
     }
-    respond(
-      true,
-      await loadSessionDiff(
-        {
-          ...params,
-          ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
-        },
-        context,
-      ),
+    const target = loadGatewaySessionEntryReadOnly(params.sessionKey, {
+      ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
+    });
+    const admissionError = authorizeSessionReadTarget({
+      canonicalKey: target.canonicalKey,
+      cfg: context.getRuntimeConfig(),
+      client,
+      entry: target.entry,
+      sessionKey: params.sessionKey,
+    });
+    if (admissionError) {
+      respond(false, undefined, admissionError);
+      return;
+    }
+    const admitted: AdmittedSessionReadTarget = {
+      agentId: requestedAgent.agentId,
+      canonicalKey: target.canonicalKey,
+      sessionId: target.entry?.sessionId,
+      storePath: target.storePath,
+    };
+    const diff = await loadSessionDiff(
+      {
+        ...params,
+        ...(requestedAgent.agentId ? { agentId: requestedAgent.agentId } : {}),
+      },
+      context,
     );
+    const staleError = revalidateSessionReadTarget({
+      admitted,
+      client,
+      context,
+      ...(params.agentId ? { requestedAgentId: params.agentId } : {}),
+      sessionKey: params.sessionKey,
+    });
+    if (staleError) {
+      respond(false, undefined, staleError);
+      return;
+    }
+    respond(true, diff);
   },
 };

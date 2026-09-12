@@ -31,9 +31,19 @@ import {
   resolveOpenPathCommand,
   sanitizePathForLog,
 } from "./open-path.js";
+import {
+  authorizeSessionReadTarget,
+  revalidateSessionReadTarget,
+  type AdmittedSessionReadTarget,
+} from "./session-read-visibility-boundary.js";
 import { getRepositoryArtifact, listRepositoryArtifacts } from "./session-repository-artifacts.js";
 import { resolveRepositoryWorkspaceAccess } from "./session-repository-workspace-access.js";
-import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
+import type {
+  GatewayClient,
+  GatewayRequestContext,
+  GatewayRequestHandlers,
+  RespondFn,
+} from "./types.js";
 import { assertValidParams } from "./validation.js";
 import {
   getSessionWorkspaceFile,
@@ -293,17 +303,40 @@ export function resolveLocalSessionWorkspaceRoot(params: {
   return loaded.entry?.execNode ? undefined : loaded.root;
 }
 
-async function loadSessionFiles(params: {
+async function loadVisibleSessionFiles(params: {
   sessionKey: string;
-  agentId?: string;
+  agentId: string;
+  client: GatewayClient | null;
+  respond: RespondFn;
   context: GatewayRequestContext;
 }): Promise<
-  LoadedSessionFiles & { repository?: ReturnType<typeof resolveRepositoryWorkspaceAccess> }
+  | (LoadedSessionFiles & {
+      admitted: AdmittedSessionReadTarget;
+      repository?: ReturnType<typeof resolveRepositoryWorkspaceAccess>;
+    })
+  | undefined
 > {
   const loaded = loadSessionFileRoot(params);
   const { storePath, entry, canonicalKey, agentId } = loaded;
+  const admissionError = authorizeSessionReadTarget({
+    canonicalKey,
+    cfg: params.context.getRuntimeConfig(),
+    client: params.client,
+    entry,
+    sessionKey: params.sessionKey,
+  });
+  if (admissionError) {
+    params.respond(false, undefined, admissionError);
+    return undefined;
+  }
+  const admitted: AdmittedSessionReadTarget = {
+    agentId: params.agentId,
+    canonicalKey,
+    sessionId: entry?.sessionId,
+    storePath,
+  };
   if (!entry?.sessionId || !storePath || !agentId) {
-    return { files: [] };
+    return { admitted, files: [] };
   }
   const repository = resolveRepositoryWorkspaceAccess(loaded, params.context);
   const scope = {
@@ -321,6 +354,7 @@ async function loadSessionFiles(params: {
     `${agentId}\0${entry.sessionId}\0${target.storePath ?? ""}`,
   );
   return {
+    admitted,
     repository,
     root: loaded.root,
     fileRoot: loaded.fileRoot,
@@ -384,7 +418,7 @@ function requireSessionFilesAgentId(params: {
 
 /** Gateway handlers for session files and workspace browsing. */
 export const sessionsFilesHandlers: GatewayRequestHandlers = {
-  "sessions.files.list": async ({ params, respond, context }) => {
+  "sessions.files.list": async ({ params, respond, context, client }) => {
     if (
       !assertValidParams(params, validateSessionsFilesListParams, "sessions.files.list", respond)
     ) {
@@ -399,7 +433,10 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const loaded = await loadSessionFiles({ ...params, agentId, context });
+    const loaded = await loadVisibleSessionFiles({ ...params, agentId, client, respond, context });
+    if (!loaded) {
+      return;
+    }
     const request = { files: loaded.files, path: params.path, search: params.search };
     const result =
       loaded.repository?.kind === "stored"
@@ -407,13 +444,24 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
         : loaded.repository
           ? await loaded.repository.inspect("list", request)
           : await listSessionWorkspaceFiles({ ...loaded, ...request });
+    const staleError = revalidateSessionReadTarget({
+      admitted: loaded.admitted,
+      client,
+      context,
+      ...(params.agentId ? { requestedAgentId: params.agentId } : {}),
+      sessionKey: params.sessionKey,
+    });
+    if (staleError) {
+      respond(false, undefined, staleError);
+      return;
+    }
     respond(true, {
       sessionKey: params.sessionKey,
       ...result,
       ...(loaded.repository ? { root: undefined } : {}),
     });
   },
-  "sessions.files.get": async ({ params, respond, context }) => {
+  "sessions.files.get": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateSessionsFilesGetParams, "sessions.files.get", respond)) {
       return;
     }
@@ -426,7 +474,10 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
     if (!agentId) {
       return;
     }
-    const loaded = await loadSessionFiles({ ...params, agentId, context });
+    const loaded = await loadVisibleSessionFiles({ ...params, agentId, client, respond, context });
+    if (!loaded) {
+      return;
+    }
     const request = { files: loaded.files, path: params.path };
     const result =
       loaded.repository?.kind === "stored"
@@ -434,6 +485,17 @@ export const sessionsFilesHandlers: GatewayRequestHandlers = {
         : loaded.repository
           ? await loaded.repository.inspect("get", request)
           : await getSessionWorkspaceFile({ ...loaded, ...request });
+    const staleError = revalidateSessionReadTarget({
+      admitted: loaded.admitted,
+      client,
+      context,
+      ...(params.agentId ? { requestedAgentId: params.agentId } : {}),
+      sessionKey: params.sessionKey,
+    });
+    if (staleError) {
+      respond(false, undefined, staleError);
+      return;
+    }
     if (!result.file || result.file.missing) {
       respondSessionFileNotFound(respond, params.path);
       return;
