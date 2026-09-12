@@ -314,31 +314,31 @@ describe("normalizeShortTermRecallStore numeric decoding", () => {
 
   baseIt("recovers a range from the entry key when the field is not canonical", () => {
     // Old decoder wrote startLine "0x10" as 16 and keyed the row accordingly.
+    const recoveredKey = "memory:memory/2026-09-01.md:16:20";
     const normalized = normalizeShortTermRecallStore(
-      storeKeyedBy("memory:memory/2026-09-01.md:16:20", {
+      storeKeyedBy(recoveredKey, {
         startLine: "0x10",
         endLine: 20,
       }),
       nowIso,
     );
-    const keys = Object.keys(normalized.entries);
-    expect(keys).toEqual(["memory:memory/2026-09-01.md:16:20"]);
-    expect(normalized.entries[keys[0]]?.startLine).toBe(16);
-    expect(normalized.entries[keys[0]]?.endLine).toBe(20);
+    expect(Object.keys(normalized.entries)).toEqual([recoveredKey]);
+    expect(normalized.entries[recoveredKey]?.startLine).toBe(16);
+    expect(normalized.entries[recoveredKey]?.endLine).toBe(20);
   });
 
   baseIt("recovers both bounds when neither range field is usable", () => {
+    const recoveredKey = "memory:memory/2026-09-01.md:5:9";
     const normalized = normalizeShortTermRecallStore(
-      storeKeyedBy("memory:memory/2026-09-01.md:5:9", {
+      storeKeyedBy(recoveredKey, {
         startLine: "0b101",
         endLine: "not-a-number",
       }),
       nowIso,
     );
-    const keys = Object.keys(normalized.entries);
-    expect(keys).toEqual(["memory:memory/2026-09-01.md:5:9"]);
-    expect(normalized.entries[keys[0]]?.startLine).toBe(5);
-    expect(normalized.entries[keys[0]]?.endLine).toBe(9);
+    expect(Object.keys(normalized.entries)).toEqual([recoveredKey]);
+    expect(normalized.entries[recoveredKey]?.startLine).toBe(5);
+    expect(normalized.entries[recoveredKey]?.endLine).toBe(9);
   });
 
   baseIt("keeps the stored map key as identity even when the field parses", () => {
