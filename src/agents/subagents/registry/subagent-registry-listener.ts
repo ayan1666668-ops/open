@@ -88,15 +88,37 @@ export function createSubagentRegistryListener(config: {
           // Drop any grace timer from an earlier aborted/error terminal so it can't
           // later fire and settle this now-paused run with a false notice.
           pendingLifecycle.clear(evt.runId);
-          if (
-            markSubagentRunPausedAfterYield({
-              entry,
-              endedAt,
-              startedAt: startedAt ?? entry.execution.startedAt,
-            })
-          ) {
-            persist(entry.runId);
+          if (entry.collect !== true) {
+            if (
+              markSubagentRunPausedAfterYield({
+                entry,
+                endedAt,
+                startedAt: startedAt ?? entry.execution.startedAt,
+              })
+            ) {
+              persist(entry.runId);
+            }
+            return;
           }
+          // A collector result is read by an explicit wait and never delivered by
+          // a requester continuation, so nothing can resume a parked collector and
+          // its waiter blocks for good. The attempt's own terminal is the only
+          // result this run will ever have: settle it as the ordinary success it
+          // is, which freezes the collector completion the waiter reads.
+          await completeSubagentRunWithRecovery(
+            {
+              runId: evt.runId,
+              endedAt,
+              outcome: { status: "ok" as const },
+              reason: SUBAGENT_ENDED_REASON_COMPLETE,
+              sendFarewell: true,
+              accountId: entry.requesterOrigin?.accountId,
+              triggerCleanup: true,
+              startedAt,
+              terminalReply,
+            },
+            "lifecycle-collector-yield-event",
+          );
           return;
         }
         const terminalOutcome = buildAgentRunTerminalOutcomeFromLifecycleEvent({

@@ -3708,6 +3708,124 @@ describe("subagent registry seam flow", () => {
     expect(replacement?.requesterSettleWake).toBeUndefined();
   });
 
+  it("records collector completion when a collector yields with nothing to collect (#141474)", async () => {
+    mockPendingAgentWait();
+    const runId = "run-collector-yield-unowned";
+    const childSessionKey = "agent:main:subagent:collector-yield-unowned";
+    mocks.loadSessionStore.mockReturnValue(
+      createSessionStore({ lifecycleRevision: "revision-collector" }, childSessionKey),
+    );
+    mod.registerSubagentRun({
+      runId,
+      childSessionKey,
+      task: "collect structured output",
+      expectsCompletionMessage: false,
+      collect: true,
+      outputSchema: { type: "object" },
+      swarmRequesterSessionKey: "agent:main:main",
+    });
+
+    getLifecycleHandler()({
+      runId,
+      stream: "lifecycle",
+      data: { phase: "end", startedAt: 111, endedAt: 222, yielded: true },
+    });
+
+    // A collector is read by an explicit wait, so a parked yield would leave its
+    // waiter pending for good. The frozen completion is what resolves that wait.
+    await waitForFast(() => {
+      expect(findRequesterRun(runId)).toMatchObject({
+        execution: { status: "terminal", endedAt: 222 },
+        collectorCompletion: { status: "failed", schemaError: "structured_output was not called" },
+      });
+    });
+    expect(findRequesterRun(runId)?.pauseReason).toBeUndefined();
+    // Collector results never announce to the requester.
+    expect(mocks.runSubagentAnnounceFlow).not.toHaveBeenCalled();
+  });
+
+  it("keeps a collector result it already captured when the collector yields (#141474)", async () => {
+    mockPendingAgentWait();
+    const runId = "run-collector-yield-captured";
+    const childSessionKey = "agent:main:subagent:collector-yield-captured";
+    mocks.loadSessionStore.mockReturnValue(
+      createSessionStore({ lifecycleRevision: "revision-collector-captured" }, childSessionKey),
+    );
+    mod.registerSubagentRun({
+      runId,
+      childSessionKey,
+      task: "collect structured output",
+      expectsCompletionMessage: false,
+      collect: true,
+      outputSchema: { type: "object" },
+      swarmRequesterSessionKey: "agent:main:main",
+    });
+    mod.recordSwarmStructuredOutput(
+      { runId, childSessionKey },
+      { invalidAttempts: 0, structured: { answer: 42 } },
+    );
+
+    getLifecycleHandler()({
+      runId,
+      stream: "lifecycle",
+      data: { phase: "end", startedAt: 111, endedAt: 222, yielded: true },
+    });
+
+    // Settling a collector yield as the ordinary success it is keeps a result the
+    // collector already produced. Settling it as an error instead would overwrite
+    // a valid result with a schema diagnostic.
+    await waitForFast(() => {
+      expect(findRequesterRun(runId)?.collectorCompletion).toMatchObject({
+        status: "done",
+        structured: { answer: 42 },
+      });
+    });
+    expect(findRequesterRun(runId)?.collectorCompletion?.schemaError).toBeUndefined();
+    expect(findRequesterRun(runId)?.pauseReason).toBeUndefined();
+  });
+
+  it.each([{ aborted: true }, { stopReason: "aborted" }])(
+    "settles a collector yield seen through agent.wait without canceling it: %o",
+    async (extra) => {
+      const runId = "run-wait-collector-yield";
+      mockGatewayMethods(mocks.callGateway, {
+        "agent.wait": {
+          status: "ok",
+          startedAt: 111,
+          endedAt: 222,
+          livenessState: "paused",
+          yielded: true,
+          ...extra,
+        },
+      });
+
+      mod.registerSubagentRun({
+        runId,
+        childSessionKey: "agent:main:subagent:wait-collector-yield",
+        task: "collect through the wait observation",
+        expectsCompletionMessage: false,
+        collect: true,
+        outputSchema: { type: "object" },
+        swarmRequesterSessionKey: "agent:main:main",
+      });
+
+      await waitForFast(() => {
+        expect(findRequesterRun(runId)).toMatchObject({
+          execution: { status: "terminal", endedAt: 222, outcome: { status: "ok" } },
+          endedReason: SUBAGENT_ENDED_REASON_COMPLETE,
+          collectorCompletion: {
+            status: "failed",
+            schemaError: "structured_output was not called",
+          },
+        });
+      });
+      // A yield terminal can also look aborted (#92448); settling it must never
+      // turn the collector yield into a cancellation notice.
+      expect(findRequesterRun(runId)?.pauseReason).toBeUndefined();
+      expect(findRequesterRun(runId)?.endedReason).not.toBe(SUBAGENT_ENDED_REASON_KILLED);
+    },
+  );
+
   describe("sessions_yield follow-up adoption", () => {
     const CHILD_SESSION_KEY = "agent:main:subagent:yield-followup";
     const PAUSED_RUN_ID = "run-yield-followup-paused";
