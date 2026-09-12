@@ -51,6 +51,8 @@ export {
   registerSandboxBackend,
   requireSandboxBackendFactory,
   resolveSandboxRuntimeStatus,
+  resolveSandboxFileIdentity,
+  resolveSandboxFilePolicyPath,
   resolveWritableRenameTargets,
   resolveWritableRenameTargetsForBridge,
   runSshSandboxCommand,

@@ -5,6 +5,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resolveSandboxFilePolicyPath } from "./file-mutation-identity.js";
 import {
   createHostEscapeFixture,
   createSandbox,
@@ -41,6 +42,48 @@ describe("sandbox fs bridge boundary validation", () => {
   it("allows mkdirp when boundary open reports io for an existing directory", async () => {
     await expectMkdirpAllowsExistingDirectory({ forceBoundaryIoFallback: true });
   });
+
+  it("maps host-backed aliases back to canonical policy paths", async () => {
+    await withTempDir("openclaw-fs-policy-alias-", async (stateDir) => {
+      const workspaceDir = path.join(stateDir, "workspace");
+      const privateDir = path.join(workspaceDir, "private");
+      await fs.mkdir(privateDir, { recursive: true });
+      await fs.writeFile(path.join(privateDir, "secret.txt"), "secret");
+      await fs.symlink(privateDir, path.join(workspaceDir, "alias"), "dir");
+      const bridge = createSandboxFsBridge({
+        sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+      });
+
+      await expect(
+        resolveSandboxFilePolicyPath({
+          bridge,
+          filePath: "/workspace/alias/secret.txt",
+        }),
+      ).resolves.toBe("/workspace/private/secret.txt");
+    });
+  });
+
+  it.runIf(process.platform === "win32")(
+    "maps differently cased host paths back to canonical policy paths",
+    async () => {
+      await withTempDir("openclaw-fs-policy-case-", async (stateDir) => {
+        const workspaceDir = path.join(stateDir, "workspace");
+        const privateDir = path.join(workspaceDir, "private");
+        await fs.mkdir(privateDir, { recursive: true });
+        await fs.writeFile(path.join(privateDir, "secret.txt"), "secret");
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+        });
+
+        await expect(
+          resolveSandboxFilePolicyPath({
+            bridge,
+            filePath: "/workspace/PRIVATE/SECRET.txt",
+          }),
+        ).resolves.toBe("/workspace/private/secret.txt");
+      });
+    },
+  );
 
   it("rejects mkdirp when target exists as a file", async () => {
     await withTempDir("openclaw-fs-bridge-mkdirp-file-", async (stateDir) => {

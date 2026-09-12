@@ -8,12 +8,14 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { readFileDescriptorBounded } from "../../infra/boundary-file-read.js";
+import { resolveIdentityPathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { parseDirectoryEntries, type DirectoryEntry } from "../../infra/directory-entries.js";
 import type {
   SandboxBackendCommandResult,
   SandboxFsBridgeContext,
 } from "./backend-handle.types.js";
 import { runDockerSandboxShellCommand } from "./docker-backend.js";
+import { SANDBOX_FILE_POLICY_PATH } from "./file-mutation-identity.js";
 import { buildPinnedMutationPlan } from "./fs-bridge-mutation-helper.js";
 import { SANDBOX_CREATE_EXISTS_EXIT_CODE } from "./fs-bridge-mutation-python.js";
 import { SandboxFsPathGuard, type PinnedSandboxEntry } from "./fs-bridge-path-safety.js";
@@ -79,6 +81,12 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       relativePath: target.relativePath,
       containerPath: target.containerPath,
     };
+  }
+
+  [SANDBOX_FILE_POLICY_PATH](params: { filePath: string; cwd?: string }): string {
+    const target = this.resolveResolvedPath(params);
+    const identity = resolveIdentityPathViaExistingAncestorSync(target.hostPath);
+    return this.resolveResolvedPath({ filePath: identity }).containerPath;
   }
 
   async resolvePinnedMutationTarget(
