@@ -485,6 +485,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
   agentId: string,
   pathname: string,
   diagnostics?: SqliteIntegrityDiagnostics,
+  reuseIntegrity = false,
 ): SqliteIntegrityOperation<boolean> {
   database.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
   const userVersion = readSqliteUserVersion(database);
@@ -516,6 +517,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
       validateAfterRepair: () =>
         assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname }),
       diagnostics,
+      reuseIntegrity,
     });
     assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname });
   } else if (
@@ -527,7 +529,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
     // Yielding first leaves an occupied, unowned file that custom selectors must avoid.
     assertSqliteIntegrity(database, pathname);
   } else {
-    // Every physical open proves the full file before schema mutation or exposure.
+    // Pending migrations cannot inherit an earlier runtime verification.
     yield* sqliteIntegrityCheckSteps(database, pathname, diagnostics);
   }
   return hasPendingCurrentVersionMigration;
