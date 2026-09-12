@@ -2573,7 +2573,6 @@ src/config/validation-plugin-config.ts	2
 src/config/validation.ts	3
 src/config/zod-schema.channel-messaging-common.ts	12
 src/config/zod-schema.channels-config.ts	3
-src/config/zod-schema.core.ts	1
 src/config/zod-schema.ts	2
 src/context-engine/delegate.ts	1
 src/context-engine/registry.ts	4
