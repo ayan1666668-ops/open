@@ -503,6 +503,7 @@ export async function runSqliteSessionReclamation(params: {
               },
               "session.reclamation.worker-commit",
               { ...params.diagnostics, reclamationAdmission },
+              "worker",
             ),
           transferList: prepareReclamationWorkerTransferList(plan),
           workerData: {
