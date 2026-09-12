@@ -218,7 +218,9 @@ export async function prepareUpdateCandidateRehearsal(params: {
     if (selectedDirectory !== undefined && !cleanupDirectories.includes(selectedDirectory)) {
       throw new Error("Cleanup directory is not owned by this rehearsal");
     }
-    for (const directory of selectedDirectory !== undefined ? [selectedDirectory] : cleanupDirectories) {
+    for (const directory of selectedDirectory !== undefined
+      ? [selectedDirectory]
+      : cleanupDirectories) {
       await fs.rm(directory, { recursive: true, force: true });
     }
   };
