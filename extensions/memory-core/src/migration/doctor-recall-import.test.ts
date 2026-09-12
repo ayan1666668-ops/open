@@ -13,7 +13,16 @@
 //
 // and asserts that valid legacy history survives the upgrade while malformed
 // legacy rows cannot corrupt it.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPluginStateKeyedStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
@@ -24,6 +33,28 @@ import {
   resetMemoryCoreDreamingStateForTests,
 } from "../test-helpers.js";
 import { dreamingStateMigration } from "./doctor-dreaming-state.js";
+
+/** Depth-first search for the first file whose text contains `needle`. */
+function findFileContaining(dir: string, needle: string): string {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      const found = findFileContaining(full, needle);
+      if (found) {
+        return found;
+      }
+      continue;
+    }
+    try {
+      if (readFileSync(full, "utf8").includes(needle)) {
+        return full;
+      }
+    } catch {
+      // Binary or unreadable file: not an archive candidate.
+    }
+  }
+  return "";
+}
 
 const NOW = "2026-09-13T00:00:00.000Z";
 const LEGACY_DIR = join("memory", ".dreams");
@@ -144,17 +175,63 @@ describe("Doctor legacy import preserves valid recall history (real migration pa
     expect(read.entries.gamma?.maxScore).toBe(0.999);
   });
 
-  it("retires the legacy source after a successful import", async () => {
+  it("retires the legacy source after a successful import and archives it", async () => {
     writeFileSync(legacyFile, JSON.stringify(validLegacyStore()), "utf8");
-    const before = readFileSync(legacyFile, "utf8");
 
+    const result = await dreamingStateMigration.migrateLegacyState(
+      migrationParams(workspaceDir, storeFactory),
+    );
+
+    // The migration must report what it did, not silently succeed.
+    const changes = (result as { changes?: string[] })?.changes ?? [];
+    const warnings = (result as { warnings?: string[] })?.warnings ?? [];
+    expect(warnings).toStrictEqual([]);
+    expect(changes.some((line) => /short-term recall/i.test(line))).toBe(true);
+    // The reported row count proves the import actually carried entries across.
+    expect(changes.some((line) => /\(2 row\(s\)\)/.test(line))).toBe(true);
+
+    // The legacy source is retired from its live location: a second Doctor run
+    // must find nothing left to import.
+    expect(existsSync(legacyFile)).toBe(false);
+
+    // ...but its contents are recoverable from the archive, so an operator can
+    // still roll back. Search the workspace tree for the archived payload.
+    const archived = findFileContaining(root, "Alpha note with a healthy recall history.");
+    expect(archived).not.toBe("");
+
+    const second = await dreamingStateMigration.migrateLegacyState(
+      migrationParams(workspaceDir, storeFactory),
+    );
+    const secondChanges = (second as { changes?: string[] })?.changes ?? [];
+    expect(secondChanges.some((line) => /short-term recall/i.test(line))).toBe(false);
+  });
+
+  it("survives a subsequent write, reopen, and read-back without corrupting history", async () => {
+    writeFileSync(legacyFile, JSON.stringify(validLegacyStore()), "utf8");
     await dreamingStateMigration.migrateLegacyState(migrationParams(workspaceDir, storeFactory));
 
-    // The migration archives/acknowledges the source; the import must not have
-    // silently no-opped, which is how a partial migration would look.
-    const after = await readStore(workspaceDir, NOW);
-    expect(Object.keys(after.entries).length).toBeGreaterThan(0);
-    expect(before.length).toBeGreaterThan(0);
+    // The runtime reads history, updates counters, and writes it back. Persist an
+    // updated snapshot through the same store writer, then reopen from scratch.
+    const migrated = await readStore(workspaceDir, NOW);
+    const updated = structuredClone(migrated) as unknown as {
+      entries: Record<string, Record<string, unknown>>;
+    };
+    const alphaBefore = migrated.entries.alpha;
+    updated.entries.alpha = {
+      ...(updated.entries.alpha as Record<string, unknown>),
+      recallCount: (alphaBefore?.recallCount ?? 0) + 1,
+      totalScore: 3.5,
+    };
+    const { writeStore } = await import("../short-term-promotion-store.js");
+    await writeStore(workspaceDir, updated as never);
+
+    // Reopen the store from persisted state, as a fresh process would.
+    const reopened = await readStore(workspaceDir, NOW);
+    expect(reopened.entries.alpha?.recallCount).toBe(5);
+    expect(reopened.entries.alpha?.totalScore).toBe(3.5);
+    // The rewrite must not have damaged the untouched sibling.
+    expect(reopened.entries.gamma?.totalScore).toBe(0.333);
+    expect(reopened.entries.gamma?.maxScore).toBe(0.999);
   });
 
   it("drops malformed legacy rows during import without damaging valid ones", async () => {
