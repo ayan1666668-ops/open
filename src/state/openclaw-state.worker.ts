@@ -2,18 +2,26 @@ import {
   readStableSqliteFileGeneration,
   sameSqliteFileGeneration,
 } from "../infra/sqlite-file-generation.js";
+import { deferSqlitePostCommitPublication } from "../infra/sqlite-post-commit.js";
 import { runSqliteDeferredTransactionSync } from "../infra/sqlite-transaction.js";
 import type { SqliteWorkerBackend } from "../infra/sqlite-worker-contract.js";
 import { getSqliteWorkerStateContext } from "../infra/sqlite-worker-state-context.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mapTaskFlowView } from "../tasks/task-domain-views.js";
-import { normalizeRestoredFlowRecord } from "../tasks/task-flow-registry.records.js";
 import {
+  assertControllerId,
+  normalizeRestoredFlowRecord,
+} from "../tasks/task-flow-registry.records.js";
+import {
+  bindTaskFlowRecord,
   listTaskFlowRecordsForOwnerReadInDatabase,
   readTaskFlowRecord,
   listTaskFlowViewRecordsForOwnerInDatabase,
   readTaskFlowViewRecordInDatabase,
+  updateTaskFlowRecordInDatabase,
+  upsertTaskFlowRowInDatabase,
 } from "../tasks/task-flow-registry.store.kernel.js";
-import { isTerminalTaskFlow } from "../tasks/task-flow-registry.types.js";
+import { isTerminalTaskFlow, type TaskFlowRecord } from "../tasks/task-flow-registry.types.js";
 import {
   findTaskRecordByRunIdForViewInDatabase,
   listTaskRecordsForFlowReadInDatabase,
@@ -25,12 +33,20 @@ import {
   closeOpenClawStateDatabaseByPath,
   clearOpenClawStateDatabaseOpenFailure,
 } from "./openclaw-state-db-cache.js";
-import { openOpenClawStateDatabase } from "./openclaw-state-db.js";
+import {
+  openOpenClawStateDatabase,
+  runOpenClawStateWriteTransaction,
+} from "./openclaw-state-db.js";
 import type {
   OpenClawStateWorkerOperations,
   OpenClawStateWorkerInspectionOperations,
 } from "./openclaw-state-worker-contract.js";
 import { executeUserPreferenceCommand } from "./user-preferences.worker.js";
+
+const log = createSubsystemLogger("state/worker");
+type ManagedFlowWriteResult =
+  | OpenClawStateWorkerOperations["flows.createManaged"]["output"]
+  | OpenClawStateWorkerOperations["flows.updateManaged"]["output"];
 
 export function createSqliteWorkerBackend(
   _input: undefined,
@@ -71,6 +87,69 @@ export function openExistingSqliteWorkerBackend(
           env: getSqliteWorkerStateContext().environment,
         });
       }
+      if (command.type === "flows.createManaged" || command.type === "flows.updateManaged") {
+        let observed: TaskFlowRecord | undefined;
+        let committed: ManagedFlowWriteResult | undefined;
+        try {
+          const database = open();
+          return runOpenClawStateWriteTransaction(
+            ({ db: writer }) => {
+              let result: ManagedFlowWriteResult;
+              if (command.type === "flows.createManaged") {
+                const flow = command.input.flow;
+                if (flow.syncMode !== "managed") {
+                  throw new Error("Worker creation requires a managed flow");
+                }
+                assertControllerId(flow.controllerId);
+                upsertTaskFlowRowInDatabase(writer, bindTaskFlowRecord(flow));
+                result = flow;
+              } else {
+                observed = ownedFlow(
+                  readTaskFlowRecord(writer, command.input.flowId),
+                  command.input.ownerKey,
+                );
+                result = !observed
+                  ? { applied: false, reason: "not_found" }
+                  : observed.syncMode !== "managed" || !observed.controllerId
+                    ? { applied: false, reason: "not_managed", current: observed }
+                    : updateTaskFlowRecordInDatabase(writer, command.input);
+              }
+              deferSqlitePostCommitPublication(writer, () => {
+                committed = result;
+              });
+              return result;
+            },
+            {
+              path: context.databasePath,
+              database,
+              env: getSqliteWorkerStateContext().environment,
+            },
+          );
+        } catch (error) {
+          if (committed) {
+            log.warn("Managed task-flow write committed before cleanup failed", {
+              flowId:
+                command.type === "flows.createManaged"
+                  ? command.input.flow.flowId
+                  : command.input.flowId,
+              error,
+            });
+            return committed;
+          }
+          if (command.type === "flows.createManaged") {
+            throw error;
+          }
+          log.warn("Failed to persist managed task-flow update", {
+            flowId: command.input.flowId,
+            error,
+          });
+          return {
+            applied: false,
+            reason: "persist_failed",
+            ...(observed ? { current: observed } : {}),
+          };
+        }
+      }
       const { db } = open();
       return runSqliteDeferredTransactionSync(db, () => {
         switch (command.type) {
@@ -98,6 +177,10 @@ export function openExistingSqliteWorkerBackend(
             return flow
               ? summarizeTaskRecords(listTaskRecordsForFlowReadInDatabase(db, flow.flowId))
               : undefined;
+          }
+          case "flows.current": {
+            const flow = readTaskFlowRecord(db, command.input.flowId);
+            return flow ? normalizeRestoredFlowRecord(flow) : undefined;
           }
           case "flows.read":
           case "flows.detail": {
