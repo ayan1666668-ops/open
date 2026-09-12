@@ -10,6 +10,9 @@ import {
   acquireStateDatabaseCoordinator,
 } from "../infra/state-database-coordinator.js";
 import { DoctorUnreadableStateDatabaseError } from "../infra/state-repair-message.js";
+import { UPDATE_RUN_ID_ENV } from "../infra/update-control-plane-sentinel.js";
+import { assertUpdateRepairDriverAdmission } from "../infra/update-run-activity.js";
+import { listUpdateRuns } from "../infra/update-run-ledger.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import type { DoctorOptions } from "./doctor-prompter.js";
@@ -75,6 +78,7 @@ export async function beginDoctorMaintenance(params: {
     | undefined;
   const coordinators: Array<{ release(): void }> = [];
   let repairStoresMayBeOpen = false;
+  let assertContinuationCurrent: (() => void) | undefined;
   const release = async () => {
     if (repairStoresMayBeOpen) {
       const [{ closeOpenClawAgentDatabasesAsync }, { closeOpenClawStateDatabaseByPathAsync }] =
@@ -120,6 +124,32 @@ export async function beginDoctorMaintenance(params: {
         inspection.serviceUpdateVerdict?.kind !== "absent" &&
         inspection.offline !== true
       ) {
+        const readContinuation = () => {
+          const run = assertUpdateRepairDriverAdmission(
+            listUpdateRuns({ active: true, limit: 100 }, { env }),
+            env[UPDATE_RUN_ID_ENV],
+          );
+          return run?.steps.some((step) => step.step === "finalize:repair-continuation")
+            ? run
+            : undefined;
+        };
+        const continuation = readContinuation();
+        if (continuation) {
+          assertContinuationCurrent = () => {
+            if (readContinuation()?.runId !== continuation.runId) {
+              throw new Error(
+                `Update ${continuation.runId} no longer owns this repair continuation.`,
+              );
+            }
+          };
+        }
+      }
+      if (
+        parentActivation !== undefined &&
+        !assertContinuationCurrent &&
+        inspection.serviceUpdateVerdict?.kind !== "absent" &&
+        inspection.offline !== true
+      ) {
         throw new Error(
           "The update parent owns Gateway activation. Stop the service through its owner before retrying the update; Doctor will not stop or restart it.",
         );
@@ -128,9 +158,9 @@ export async function beginDoctorMaintenance(params: {
         if (inspection.serviceEnv) {
           assertDoctorServiceSelection(env, inspection.serviceEnv);
         }
-        // An explicit update policy leaves activation with the parent. Ordinary
-        // Doctor pins and restores the same launcher; neither path rewrites it.
-        if (parentActivation === undefined) {
+        // Explicit repair continuation may park and restore its own service;
+        // ordinary updater finalization leaves activation with the parent.
+        if (parentActivation === undefined || assertContinuationCurrent) {
           inspection.serviceUpdateVerdict.refreshDefinition = false;
           stopped = await maybeStopManagedServiceBeforeMutableUpdate({
             updateInstallKind: "package",
@@ -138,6 +168,7 @@ export async function beginDoctorMaintenance(params: {
             shouldRestart: true,
             jsonMode: true,
             expectedService: inspection,
+            assertCurrent: assertContinuationCurrent,
           });
           assertDoctorMaintenanceInspection(stopped, env);
           if (stopped.stopped) {
@@ -221,6 +252,11 @@ export async function beginDoctorMaintenance(params: {
       ]);
       const service = resolveGatewayService();
       const state = await withGatewayServiceOperationLock(serviceEnv, async (assertCurrent) => {
+        const assertMaintenanceCurrent = () => {
+          assertCurrent();
+          assertContinuationCurrent?.();
+        };
+        assertMaintenanceCurrent();
         const current = await readGatewayServiceState(service, {
           env: serviceEnv,
           requireEffective: true,
@@ -228,24 +264,29 @@ export async function beginDoctorMaintenance(params: {
           // A stopped unit may be collected. Reload only its metadata under
           // live custody of the recorded manager, then revalidate the launcher.
           ...(process.platform === "linux" && before.serviceManagerUid !== undefined
-            ? { loadForInspection: { managerUid: before.serviceManagerUid, assertCurrent } }
+            ? {
+                loadForInspection: {
+                  managerUid: before.serviceManagerUid,
+                  assertCurrent: assertMaintenanceCurrent,
+                },
+              }
             : {}),
         });
-        assertCurrent();
+        assertMaintenanceCurrent();
         assertDoctorServiceSelection(env, current.env);
         await revalidateManagedGatewayServiceAfterUpdate({
           state: current,
           root,
           preManagedServiceStop: before,
         });
-        assertCurrent();
+        assertMaintenanceCurrent();
         await service.restart({
           env: current.env,
           stdout: process.stdout,
           preserveDefinition: true,
-          assertCurrent,
+          assertCurrent: assertMaintenanceCurrent,
         });
-        assertCurrent();
+        assertMaintenanceCurrent();
         return current;
       });
       const port = await resolveUpdatedGatewayRestartPort({

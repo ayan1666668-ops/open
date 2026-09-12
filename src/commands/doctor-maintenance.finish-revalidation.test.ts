@@ -3,6 +3,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { GatewayService } from "../daemon/service.js";
 import { createMockGatewayService, mockSystemAccountHome } from "../daemon/service.test-helpers.js";
+import { readUpdateRunDriver } from "../infra/update-run-driver.js";
+import {
+  createUpdateRun,
+  recordUpdateRunPhase,
+  recordUpdateRunStep,
+  finishUpdateRun,
+} from "../infra/update-run-ledger.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { mockProcessPlatform } from "../test-utils/vitest-spies.js";
 import { beginDoctorMaintenance } from "./doctor-maintenance.js";
@@ -60,13 +68,26 @@ vi.mock("../infra/sqlite-coordinator.js", async (importOriginal) => {
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 beforeEach(() => mockSystemAccountHome());
 afterEach(() => {
+  closeOpenClawStateDatabaseForTest();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
 type StoppedUnitState = "retained" | "unloaded" | "changed-manager" | "changed-command";
+type Continuation =
+  | "own"
+  | "foreign"
+  | "unknown-adopter"
+  | "unrecorded"
+  | "unrecorded-parked"
+  | "parked"
+  | "lost-before-stop"
+  | "lost-before-restart";
 
-async function runDoctorFinishForStoppedUnit(scenario: StoppedUnitState): Promise<{
+async function runDoctorFinishForStoppedUnit(
+  scenario: StoppedUnitState,
+  continuation?: Continuation,
+): Promise<{
   finishError: unknown;
   restartCalls: number;
   logs: string[];
@@ -89,9 +110,37 @@ async function runDoctorFinishForStoppedUnit(scenario: StoppedUnitState): Promis
       OPENCLAW_SYSTEMD_UNIT: undefined,
     },
     async () => {
+      let runId: string | undefined;
+      if (continuation) {
+        const driver = readUpdateRunDriver();
+        if (!driver) {
+          throw new Error("Current driver identity is unavailable");
+        }
+        const run = createUpdateRun({
+          trigger: "cli",
+          origin: {
+            driver: continuation === "foreign" ? { ...driver, host: "other-host.invalid" } : driver,
+          },
+        });
+        runId = run.runId;
+        recordUpdateRunPhase(runId, "validating");
+        if (continuation === "unknown-adopter") {
+          recordUpdateRunStep(runId, { step: "driver:identity-unavailable", status: "completed" });
+        }
+        if (continuation !== "unrecorded" && continuation !== "unrecorded-parked") {
+          recordUpdateRunStep(runId, { step: "finalize:repair-continuation", status: "completed" });
+        }
+        vi.stubEnv(
+          "OPENCLAW_UPDATE_RUN_ID",
+          continuation === "unrecorded-parked" ? undefined : runId,
+        );
+        vi.stubEnv("OPENCLAW_UPDATE_IN_PROGRESS", "1");
+        vi.stubEnv("OPENCLAW_UPDATE_PARENT_ALLOWS_GATEWAY_ACTIVATION", "0");
+      }
       mockProcessPlatform("linux");
-      let running = true;
+      let running = continuation !== "parked" && continuation !== "unrecorded-parked";
       let stopObserved = false;
+      let commandReads = 0;
       const command = {
         programArguments: [
           process.execPath,
@@ -112,6 +161,9 @@ async function runDoctorFinishForStoppedUnit(scenario: StoppedUnitState): Promis
           hasInstalledDefinition: async () => true,
           isLoaded: async () => scenario === "retained",
           readCommand: async (_env, opts) => {
+            if (continuation === "lost-before-stop" && ++commandReads === 2 && runId) {
+              finishUpdateRun(runId, { status: "failed" });
+            }
             if (
               stopObserved &&
               scenario === "unloaded" &&
@@ -163,6 +215,9 @@ async function runDoctorFinishForStoppedUnit(scenario: StoppedUnitState): Promis
         },
       });
       expect(maintenance).toBeDefined();
+      if (continuation === "lost-before-restart" && runId) {
+        finishUpdateRun(runId, { status: "failed" });
+      }
       let finishError: unknown;
       try {
         await maintenance?.finish({});
@@ -177,6 +232,52 @@ async function runDoctorFinishForStoppedUnit(scenario: StoppedUnitState): Promis
     },
   );
 }
+
+it.each(["own", "parked", "unrecorded-parked"] as const)(
+  "continues owning-run Doctor maintenance with service %s",
+  async (continuation) => {
+    const { finishError, restartCalls, logs } = await runDoctorFinishForStoppedUnit(
+      "retained",
+      continuation,
+    );
+    expect(finishError).toBeUndefined();
+    expect(restartCalls).toBe(continuation === "own" ? 1 : 0);
+    if (continuation === "own") {
+      expect(logs).toContain("Stopped the managed Gateway for Doctor repair.");
+      expect(logs).toContain("Gateway restarted and verified after Doctor repair.");
+    }
+  },
+);
+
+it.each(["foreign", "unrecorded", "unknown-adopter"] as const)(
+  "preserves parent activation without an owning repair continuation (%s)",
+  async (continuation) => {
+    await expect(runDoctorFinishForStoppedUnit("retained", continuation)).rejects.toThrow(
+      continuation === "foreign"
+        ? "other-host.invalid"
+        : continuation === "unknown-adopter"
+          ? "unrecorded adopter"
+          : "update parent owns Gateway activation",
+    );
+  },
+);
+
+it("rechecks continuation before stopping the service", async () => {
+  await expect(runDoctorFinishForStoppedUnit("retained", "lost-before-stop")).rejects.toThrow(
+    "no longer owns this repair continuation",
+  );
+});
+
+it("rechecks continuation before restoring the service", async () => {
+  const { finishError, restartCalls } = await runDoctorFinishForStoppedUnit(
+    "retained",
+    "lost-before-restart",
+  );
+  expect(finishError).toMatchObject({
+    message: expect.stringContaining("no longer owns this repair continuation"),
+  });
+  expect(restartCalls).toBe(0);
+});
 
 it.each(["retained", "unloaded"] as const)(
   "restarts and verifies the unchanged gateway after systemd leaves it %s",
