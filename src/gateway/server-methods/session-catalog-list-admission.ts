@@ -4,6 +4,8 @@ type QueuedProviderList = {
   start: () => void;
 };
 
+type QueuedProviderListOutcome<T> = { kind: "started"; result: Promise<T> } | { kind: "cancelled" };
+
 class SessionCatalogListBusyError extends Error {
   readonly code = "catalog_busy";
 
@@ -29,25 +31,22 @@ export class SessionCatalogListAdmission {
     }
   }
 
-  run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    if (signal?.aborted) {
-      // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- AbortSignal preserves its exact reason, including non-Error values.
-      return Promise.reject(signal.reason);
-    }
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     if (this.active < this.maxConcurrent) {
-      return this.start(task);
+      return await this.start(task);
     }
     if (this.queue.length >= this.maxQueued) {
-      return Promise.reject(new SessionCatalogListBusyError(this.maxConcurrent, this.maxQueued));
+      throw new SessionCatalogListBusyError(this.maxConcurrent, this.maxQueued);
     }
     // A released slot runs the next caller's plugin and root scope, never the
     // preceding provider's context inherited by the queue drain.
     const runInAsyncContext = AsyncLocalStorage.snapshot();
-    return new Promise<T>((resolve, reject) => {
+    const outcome = await new Promise<QueuedProviderListOutcome<T>>((resolve) => {
       const queued: QueuedProviderList = {
         start: () => {
           signal?.removeEventListener("abort", onAbort);
-          void runInAsyncContext(() => this.start(task)).then(resolve, reject);
+          resolve({ kind: "started", result: runInAsyncContext(() => this.start(task)) });
         },
       };
       const onAbort = () => {
@@ -57,16 +56,20 @@ export class SessionCatalogListAdmission {
         }
         this.queue.splice(index, 1);
         signal?.removeEventListener("abort", onAbort);
-        // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- AbortSignal preserves its exact reason, including non-Error values.
-        reject(signal?.reason);
+        resolve({ kind: "cancelled" });
       };
-      // Only waiting work can retire here; started providers own their physical completion.
+      // Admission settles separately so cancellation cannot release a started provider.
       this.queue.push(queued);
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) {
         onAbort();
       }
     });
+    if (outcome.kind === "cancelled") {
+      signal?.throwIfAborted();
+      throw new Error("Cancelled session catalog admission has no aborted owner signal");
+    }
+    return await outcome.result;
   }
 
   private async start<T>(task: () => Promise<T>): Promise<T> {
