@@ -8,11 +8,9 @@ import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
   writePersistedInstalledPluginIndexInstallRecords,
 } from "../plugins/installed-plugin-index-records.js";
-import { loadOpenClawPlugins } from "../plugins/loader-runtime-load.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
-import { resolvePluginProvidersCore } from "../plugins/providers.runtime.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { activateSetupInference } from "./setup-inference-activate.js";
 
@@ -57,6 +55,8 @@ it("resolves a Groq manifest model from a global external install during setup",
           },
           type: "module",
           devDependencies: { "@openclaw/plugin-sdk": "workspace:*" },
+          peerDependencies: { openclaw: ">=2026.9.4" },
+          peerDependenciesMeta: { openclaw: { optional: true } },
           openclaw: {
             extensions: ["./index.ts"],
             install: {
@@ -120,35 +120,6 @@ export default defineSingleProviderPluginEntry({
         { config, env: state.env },
       );
       clearLoadInstalledPluginIndexInstallRecordsCache();
-
-      const runtimeProviders = resolvePluginProvidersCore({
-        config,
-        workspaceDir: state.workspaceDir,
-        env: state.env,
-        mode: "setup",
-        cache: false,
-        includeUntrustedWorkspacePlugins: false,
-        onlyPluginIds: ["groq"],
-      }).map((provider) => ({
-        id: provider.id,
-        pluginId: provider.pluginId,
-        auth: provider.auth.map((method) => ({ id: method.id, wizard: method.wizard })),
-      }));
-      const registryDiagnostics: string[] = [];
-      const runtimeRegistry = loadOpenClawPlugins({
-        config,
-        workspaceDir: state.workspaceDir,
-        env: state.env,
-        mode: "full",
-        cache: false,
-        activate: false,
-        onlyPluginIds: ["groq"],
-        logger: {
-          info: (message) => registryDiagnostics.push(`info:${String(message)}`),
-          warn: (message) => registryDiagnostics.push(`warn:${String(message)}`),
-          error: (message) => registryDiagnostics.push(`error:${String(message)}`),
-        },
-      });
 
       const requests: Array<{ method?: string; url?: string }> = [];
       const runtimeErrors: string[] = [];
@@ -215,20 +186,6 @@ export default defineSingleProviderPluginEntry({
             result,
             runtimeErrors,
             requests,
-            runtimeProviders,
-            runtimeRegistry: {
-              plugins: runtimeRegistry.plugins.map((plugin) => ({
-                id: plugin.id,
-                source: plugin.source,
-                origin: plugin.origin,
-              })),
-              providers: runtimeRegistry.providers.map((provider) => ({
-                id: provider.id,
-                pluginId: provider.pluginId,
-              })),
-              diagnostics: runtimeRegistry.diagnostics,
-              registryDiagnostics,
-            },
           }),
         ).toMatchObject({
           ok: true,
