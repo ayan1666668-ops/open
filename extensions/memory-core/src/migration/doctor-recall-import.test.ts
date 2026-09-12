@@ -188,7 +188,7 @@ describe("Doctor legacy import preserves valid recall history (real migration pa
     expect(warnings).toStrictEqual([]);
     expect(changes.some((line) => /short-term recall/i.test(line))).toBe(true);
     // The reported row count proves the import actually carried entries across.
-    expect(changes.some((line) => /\(2 row\(s\)\)/.test(line))).toBe(true);
+    expect(changes.some((line) => line.includes("(2 row(s))"))).toBe(true);
 
     // The legacy source is retired from its live location: a second Doctor run
     // must find nothing left to import.
