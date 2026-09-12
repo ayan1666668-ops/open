@@ -105,6 +105,7 @@ const platform = {
   },
   nodeCommandName: "testmeetings.chrome",
   nodeConfigPath: "plugins.entries.test-meetings.config.chromeNode.node",
+  browser: {},
 } as unknown as MeetingPlatformAdapter<
   { meetingSessionId: string; mode: TestMode; url: string },
   TestMode,
