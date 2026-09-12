@@ -283,6 +283,13 @@ operator-controlled: update them before reconnecting with a renewed certificate.
 
 Client commands such as `triage`, `gateway status`, and `gateway probe` only read the public certificate to determine a local TLS pin. They never generate or repair TLS files and do not need the server private key or CA bundle. Without `certPath`, they inspect `gateway/tls/gateway-cert.pem` under the state directory. A missing or unreadable certificate supplies no implicit pin; normal connection trust checks still apply. Start the Gateway to generate a missing pair, or provide the configured certificate files before connecting.
 
+Long-lived local health probes remember the last verified certificate for their
+endpoint, preserving health checks while replacement files are incomplete or
+reload is paused. They adopt a replacement only after verifying a connection.
+A new probe, or one that missed an intermediate renewal, cannot trust a serving
+certificate that is no longer in the configured file and was never verified.
+Complete or re-enable renewal so the listener and configured certificate agree.
+
 ### `gateway.reload`
 
 ```json5
