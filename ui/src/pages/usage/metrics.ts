@@ -111,11 +111,17 @@ function buildPeakErrorHours(sessions: UsageSessionEntry[], timeZone: "local" | 
     // For local view, construct a Date from the UTC components and use getHours()
     // so the browser's DST-aware timezone logic handles offset automatically.
     if (usage.utcQuarterHourMessageCounts && usage.utcQuarterHourMessageCounts.length > 0) {
+      const bucketState: UtcQuarterBucketState = {
+        utcDateKey: undefined,
+        utcWeekday: null,
+        utcStartMs: 0,
+      };
       for (const quarterHour of usage.utcQuarterHourMessageCounts) {
-        const mapped = getHourAndWeekdayForUtcQuarterBucket(
+        const mapped = mapUtcQuarterBucket(
           quarterHour.date,
           quarterHour.quarterIndex,
           timeZone,
+          bucketState,
         );
         if (!mapped) {
           continue;
@@ -190,18 +196,36 @@ function getUtcQuarterHourBucketDate(dateStr: string, quarterIndex: number): Dat
   return date;
 }
 
-function getHourAndWeekdayForUtcQuarterBucket(
+type UtcQuarterBucketState = {
+  utcDateKey: string | undefined;
+  utcWeekday: number | null;
+  utcStartMs: number;
+};
+
+function mapUtcQuarterBucket(
   dateStr: string,
   quarterIndex: number,
   timeZone: "local" | "utc",
+  state: UtcQuarterBucketState,
 ): { hour: number; weekday: number } | null {
-  const date = getUtcQuarterHourBucketDate(dateStr, quarterIndex);
-  if (!date) {
+  if (!Number.isInteger(quarterIndex) || quarterIndex < 0 || quarterIndex > 95) {
     return null;
   }
+  if (dateStr !== state.utcDateKey) {
+    state.utcDateKey = dateStr;
+    const date = getUtcQuarterHourBucketDate(dateStr, 0);
+    state.utcWeekday = date ? date.getUTCDay() : null;
+    state.utcStartMs = date ? date.getTime() : 0;
+  }
+  if (state.utcWeekday === null) {
+    return null;
+  }
+  const localDate =
+    timeZone === "local" ? new Date(state.utcStartMs + quarterIndex * 900_000) : null;
   return {
-    hour: getZonedHour(date, timeZone),
-    weekday: getZonedWeekday(date, timeZone),
+    // Date getters return +0 even for a -0 quarter index.
+    hour: localDate ? getZonedHour(localDate, timeZone) : Math.floor((quarterIndex + 0) / 4),
+    weekday: localDate ? getZonedWeekday(localDate, timeZone) : state.utcWeekday,
   };
 }
 
@@ -225,33 +249,19 @@ function forEachSessionTokenUsageBucket(
     return false;
   }
   let visited = false;
-  // Buckets usually share a UTC date; reuse its validation within this traversal.
-  let utcDateKey: string | undefined;
-  let utcWeekday: number | null = null;
-  let utcStartMs = 0;
+  const bucketState: UtcQuarterBucketState = {
+    utcDateKey: undefined,
+    utcWeekday: null,
+    utcStartMs: 0,
+  };
   for (const bucket of buckets) {
     if (bucket.totalTokens <= 0) {
       continue;
     }
-    const quarterIndex = bucket.quarterIndex;
-    if (!Number.isInteger(quarterIndex) || quarterIndex < 0 || quarterIndex > 95) {
+    const mapped = mapUtcQuarterBucket(bucket.date, bucket.quarterIndex, timeZone, bucketState);
+    if (!mapped) {
       continue;
     }
-    if (bucket.date !== utcDateKey) {
-      utcDateKey = bucket.date;
-      const date = getUtcQuarterHourBucketDate(bucket.date, 0);
-      utcWeekday = date ? date.getUTCDay() : null;
-      utcStartMs = date ? date.getTime() : 0;
-    }
-    if (utcWeekday === null) {
-      continue;
-    }
-    const localDate = timeZone === "local" ? new Date(utcStartMs + quarterIndex * 900_000) : null;
-    const mapped = {
-      // Date getters return +0 even for a -0 quarter index.
-      hour: localDate ? getZonedHour(localDate, timeZone) : Math.floor((quarterIndex + 0) / 4),
-      weekday: localDate ? getZonedWeekday(localDate, timeZone) : utcWeekday,
-    };
     visited = true;
     if (
       visitor({ hour: mapped.hour, weekday: mapped.weekday, tokens: bucket.totalTokens }) === false
