@@ -225,14 +225,33 @@ function forEachSessionTokenUsageBucket(
     return false;
   }
   let visited = false;
+  // Buckets usually share a UTC date; reuse its validation within this traversal.
+  let utcDateKey: string | undefined;
+  let utcWeekday: number | null = null;
+  let utcStartMs = 0;
   for (const bucket of buckets) {
     if (bucket.totalTokens <= 0) {
       continue;
     }
-    const mapped = getHourAndWeekdayForUtcQuarterBucket(bucket.date, bucket.quarterIndex, timeZone);
-    if (!mapped) {
+    const quarterIndex = bucket.quarterIndex;
+    if (!Number.isInteger(quarterIndex) || quarterIndex < 0 || quarterIndex > 95) {
       continue;
     }
+    if (bucket.date !== utcDateKey) {
+      utcDateKey = bucket.date;
+      const date = getUtcQuarterHourBucketDate(bucket.date, 0);
+      utcWeekday = date ? date.getUTCDay() : null;
+      utcStartMs = date ? date.getTime() : 0;
+    }
+    if (utcWeekday === null) {
+      continue;
+    }
+    const localDate = timeZone === "local" ? new Date(utcStartMs + quarterIndex * 900_000) : null;
+    const mapped = {
+      // Date getters return +0 even for a -0 quarter index.
+      hour: localDate ? getZonedHour(localDate, timeZone) : Math.floor((quarterIndex + 0) / 4),
+      weekday: localDate ? getZonedWeekday(localDate, timeZone) : utcWeekday,
+    };
     visited = true;
     if (
       visitor({ hour: mapped.hour, weekday: mapped.weekday, tokens: bucket.totalTokens }) === false
