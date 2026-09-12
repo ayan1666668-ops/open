@@ -3,6 +3,8 @@ import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 export type DirectoryEntry = {
   name: string;
   isDirectory: boolean;
+  /** True only for a regular file; absent/false preserves unsupported entry kinds. */
+  isFile?: boolean;
 };
 
 /** Decode the sandbox directory command's metadata, never file contents. */
@@ -13,9 +15,14 @@ export function parseDirectoryEntries(text: string): DirectoryEntry[] {
   }
   return entries.map((entry: unknown) => {
     const record = asNullableRecord(entry);
-    if (!record || typeof record.name !== "string" || typeof record.isDirectory !== "boolean") {
+    if (
+      !record ||
+      typeof record.name !== "string" ||
+      typeof record.isDirectory !== "boolean" ||
+      typeof record.isFile !== "boolean"
+    ) {
       throw new Error("Invalid sandbox directory entry.");
     }
-    return { name: record.name, isDirectory: record.isDirectory };
+    return { name: record.name, isDirectory: record.isDirectory, isFile: record.isFile };
   });
 }

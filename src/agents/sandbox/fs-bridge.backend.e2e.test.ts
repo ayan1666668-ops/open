@@ -134,12 +134,16 @@ describe("sandbox fs bridge local backend e2e", () => {
           throw new Error("The mounted bridge must support directory discovery.");
         }
         await expect(bridge.readDirectory({ filePath: "." })).resolves.toEqual([
-          { name: mutation === "write" ? "skills" : ".agents", isDirectory: true },
+          {
+            name: mutation === "write" ? "skills" : ".agents",
+            isDirectory: true,
+            isFile: false,
+          },
         ]);
         await expect(bridge.readDirectory({ filePath: "../" })).rejects.toThrow();
         await fs.symlink(path.dirname(skillPath), path.join(workspaceDir, "alias"));
         await expect(bridge.readDirectory({ filePath: "alias" })).resolves.toEqual([
-          { name: "SKILL.md", isDirectory: false },
+          { name: "SKILL.md", isDirectory: false, isFile: true },
         ]);
         await fs.symlink(stateDir, path.join(workspaceDir, "outside"));
         await expect(bridge.readDirectory({ filePath: "outside" })).rejects.toThrow();

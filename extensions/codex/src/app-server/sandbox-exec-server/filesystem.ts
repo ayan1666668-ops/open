@@ -374,11 +374,13 @@ async function listDirectoryEntries(
       filePath: readPath,
       ...(expectedPolicyPath ? { expectedPolicyPath } : {}),
     });
-    return entries.map((entry) => ({
-      fileName: entry.name,
-      isDirectory: entry.isDirectory,
-      isFile: !entry.isDirectory,
-    }));
+    if (entries.every((entry) => typeof entry.isFile === "boolean")) {
+      return entries.map((entry) => ({
+        fileName: entry.name,
+        isDirectory: entry.isDirectory,
+        isFile: entry.isFile === true,
+      }));
+    }
   }
   const resolved = execServer.fsBridge.resolvePath({
     filePath: readPath,

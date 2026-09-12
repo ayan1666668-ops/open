@@ -216,6 +216,36 @@ describe("sandbox exec-server fs RPC through real bridges", () => {
           "dir-copy",
         );
 
+        // Remote directory discovery must preserve unsupported entry kinds.
+        // A directory symlink into a denied source is neither a regular file
+        // nor a directory entry for recursive traversal, so the production
+        // RPC rejects it before any denied bytes can be copied.
+        const deniedRemoteSource = path.join(mountDir, "denied-remote-source");
+        const remoteCopySource = path.join(mountDir, "remote-copy-source");
+        const remoteCopyDestination = path.join(mountDir, "remote-copy-destination");
+        await fs.mkdir(deniedRemoteSource);
+        await fs.writeFile(path.join(deniedRemoteSource, "secret.txt"), "remote-denied");
+        await fs.mkdir(remoteCopySource);
+        await fs.writeFile(path.join(remoteCopySource, "allowed.txt"), "remote-allowed");
+        await fs.symlink(deniedRemoteSource, path.join(remoteCopySource, "denied-directory-alias"));
+        const remoteSourcePolicy = codexFsSandboxContext({
+          entries: [
+            { path: specialPath("project_roots"), access: "write" },
+            { path: specialPath("project_roots", "denied-remote-source"), access: "deny" },
+          ],
+        });
+        await expect(
+          rpc(socket, "fs/copy", {
+            sourcePath: "file:///workspace/remote-copy-source",
+            destinationPath: "file:///workspace/remote-copy-destination",
+            recursive: true,
+            sandbox: remoteSourcePolicy,
+          }),
+        ).rejects.toThrow("Cannot copy unsupported filesystem entry: denied-directory-alias");
+        await expect(
+          fs.stat(path.join(remoteCopyDestination, "denied-directory-alias", "secret.txt")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+
         // A destination alias into the canonical source subtree is rejected
         // before mkdirp or any child copy can mutate the destination.
         const sourceSubdir = path.join(mountDir, "nested", "src-dir", "subdir");

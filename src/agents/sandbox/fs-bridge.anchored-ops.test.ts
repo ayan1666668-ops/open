@@ -322,7 +322,7 @@ describe("sandbox fs bridge anchored ops", () => {
             return dockerExecResult("regular file|1|2");
           }
           if (getDockerArg(args, 1) === "readdir") {
-            return dockerExecResult('[{"name":"note.txt","isDirectory":false}]');
+            return dockerExecResult('[{"name":"note.txt","isDirectory":false,"isFile":true}]');
           }
           return dockerExecResult("");
         });
@@ -338,7 +338,7 @@ describe("sandbox fs bridge anchored ops", () => {
           await bridge.writeFile({ filePath: "alias/note.txt", data: "updated" });
         } else {
           await expect(bridge.readDirectory!({ filePath: "alias" })).resolves.toEqual([
-            { name: "note.txt", isDirectory: false },
+            { name: "note.txt", isDirectory: false, isFile: true },
           ]);
         }
 
