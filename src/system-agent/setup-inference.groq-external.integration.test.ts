@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
+import { writePersistedInstalledPluginIndexInstallRecords } from "../plugins/installed-plugin-index-records.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -32,7 +33,18 @@ it("resolves a Groq manifest model from a global external install during setup",
     async (state) => {
       const pluginDir = state.statePath("extensions", "groq");
       await fs.cp(path.join(process.cwd(), "extensions", "groq"), pluginDir, { recursive: true });
-      await state.writeConfig({ plugins: { entries: { groq: { enabled: true } } } });
+      const config = { plugins: { entries: { groq: { enabled: true } } } };
+      await state.writeConfig(config);
+      await writePersistedInstalledPluginIndexInstallRecords(
+        {
+          groq: {
+            source: "path",
+            sourcePath: pluginDir,
+            installPath: pluginDir,
+          },
+        },
+        { config, env: state.env },
+      );
 
       const requests: Array<{ method?: string; url?: string }> = [];
       const runtimeErrors: string[] = [];
