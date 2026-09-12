@@ -4,8 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { enqueueGitRefMutation } from "../../infra/git-exec.js";
-import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
+import * as gitExec from "../../infra/git-exec.js";
 import * as commandExec from "../../process/exec.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
@@ -244,12 +243,12 @@ describe("ManagedWorktreeService filesystem acceleration", () => {
       const commonDir = await git(repo, "rev-parse", "--git-common-dir");
       const held = createDeferredCore();
       const release = createDeferredCore();
-      const holder = enqueueGitRefMutation(repo, commonDir, async () => {
+      const holder = gitExec.enqueueGitRefMutation(repo, commonDir, async () => {
         held.resolve();
         await release.promise;
       });
       await held.promise;
-      const queueCalls = vi.spyOn(KeyedAsyncQueue.prototype, "enqueue");
+      const queueCalls = vi.spyOn(gitExec, "enqueueGitRefMutation");
       let current = true;
       const revoked = new Error("checkout authority revoked");
       const pending = service

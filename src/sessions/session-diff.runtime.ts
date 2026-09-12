@@ -281,7 +281,9 @@ async function collectTrackedFiles(
 
 type CheckoutDiffResult = GitReadOperations["checkout.diff"]["output"];
 
-export async function loadCheckoutDiff(params: GitCheckoutDiffInput): Promise<CheckoutDiffResult> {
+export async function collectCheckoutDiff(
+  params: GitCheckoutDiffInput,
+): Promise<CheckoutDiffResult> {
   const empty = (
     unavailableReason?: NonNullable<SessionsDiffResult["unavailableReason"]>,
   ): CheckoutDiffResult => ({
@@ -581,7 +583,7 @@ async function fingerprintBaselineCandidates(params: {
   return { files, truncated: files.length !== params.candidates.length };
 }
 
-export async function captureSessionDiffBaseline(params: {
+export async function collectCheckoutDiffBaseline(params: {
   cwd: string;
 }): Promise<GitReadOperations["checkout.baseline"]["output"]> {
   const collected = await collectBaselineCandidates({ cwd: params.cwd });

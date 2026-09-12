@@ -32,7 +32,7 @@ function missingObjectsError(commit: string, count: number): Error {
   );
 }
 
-export async function estimateWorktreeGitBytes(repoRoot: string, ref: string): Promise<number> {
+export async function estimateCheckoutObjectBytes(repoRoot: string, ref: string): Promise<number> {
   const commit = await requireGit(repoRoot, [
     "rev-parse",
     "--verify",
@@ -90,7 +90,7 @@ export async function estimateWorktreeGitBytes(repoRoot: string, ref: string): P
 }
 
 /** Measure without following links; unreadable trees must never be counted as empty. */
-export async function directorySizeBytes(root: string, excludeGit = false): Promise<number> {
+export async function measureDirectoryTreeBytes(root: string, excludeGit = false): Promise<number> {
   let entries: Dirent[];
   try {
     entries = await fs.readdir(root, { withFileTypes: true });
@@ -107,7 +107,7 @@ export async function directorySizeBytes(root: string, excludeGit = false): Prom
     }
     const child = path.join(root, entry.name);
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      total += await directorySizeBytes(child, excludeGit);
+      total += await measureDirectoryTreeBytes(child, excludeGit);
     } else {
       try {
         total += (await fs.lstat(child)).size;

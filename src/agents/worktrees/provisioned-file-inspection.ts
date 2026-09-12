@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { hasErrnoCode } from "../../infra/errno.js";
 
-export function normalizeRelativePath(relativePath: string): string | undefined {
+export function normalizeProvisionedRelativePath(relativePath: string): string | undefined {
   if (path.isAbsolute(relativePath)) {
     return undefined;
   }
@@ -68,7 +68,7 @@ export async function inspectProvisionedFiles(
   }
   const files: ProvisionedFile[] = [];
   for (const relativePath of provisionedPaths) {
-    const normalized = normalizeRelativePath(relativePath);
+    const normalized = normalizeProvisionedRelativePath(relativePath);
     if (!normalized || !(await hasSafeParentDirectories(worktreePath, normalized))) {
       throw new Error(`unsafe provisioned path: ${relativePath}`);
     }

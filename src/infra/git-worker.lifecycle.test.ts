@@ -8,12 +8,12 @@ import { promisify } from "node:util";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { KeyedAsyncQueue } from "../plugin-sdk/keyed-async-queue.js";
+import * as worktreeGit from "../agents/worktrees/git.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { drainGlobalSingletonLifecycleState } from "../shared/global-singleton.js";
 import { isPidAlive } from "../shared/pid-alive.js";
 import { killPidIfAlive } from "../test-utils/process-tree.js";
-import { enqueueGitRefMutation, gitNullConfigPath } from "./git-exec.js";
+import * as gitExec from "./git-exec.js";
 import { runGitWorkerOperation, type GitWorkerOperationOptions } from "./git-worker.js";
 
 const execFileAsync = promisify(execFile);
@@ -31,7 +31,7 @@ async function gitResult(cwd: string, args: string[]) {
     env: {
       ...process.env,
       GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: gitNullConfigPath(),
+      GIT_CONFIG_GLOBAL: gitExec.gitNullConfigPath(),
       GIT_TERMINAL_PROMPT: "0",
       GIT_TRACE2_EVENT: undefined,
       GIT_NO_LAZY_FETCH: "1",
@@ -120,13 +120,16 @@ async function exists(directory: string): Promise<number> {
   );
 }
 
-async function within<T>(pending: Promise<T>): Promise<T> {
+async function within<T>(
+  pending: Promise<T>,
+  timeoutMessage = "Git worker lifecycle wait timed out",
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       pending,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Git worker lifecycle wait timed out")), 10_000);
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), 10_000);
       }),
     ]);
   } finally {
@@ -135,6 +138,64 @@ async function within<T>(pending: Promise<T>): Promise<T> {
 }
 
 describe("Git operation host lifecycle", () => {
+  it("serves branch metadata while two independent diffs wait for Git", async () => {
+    const root = tempDirs.make("openclaw-git-worker-read-priority-");
+    const repo = await repository(root);
+    const peerRoot = path.join(root, "peer");
+    await fs.mkdir(peerRoot);
+    const peer = await repository(peerRoot);
+    const entered = createDeferredCore();
+    const release = createDeferredCore();
+    const realRun = worktreeGit.runGitBytes;
+    vi.spyOn(worktreeGit, "runGitBytes").mockImplementation(async (cwd, args, options) => {
+      if (
+        (cwd === repo || cwd === peer) &&
+        args.includes("--show-toplevel") &&
+        args.at(-1) === "HEAD"
+      ) {
+        entered.resolve();
+        await release.promise;
+      }
+      return await realRun(cwd, args, options);
+    });
+    const first = settle(
+      runGitWorkerOperation({ type: "checkout.diff", input: { cwd: repo, scope: "uncommitted" } }),
+    );
+    const pending: Promise<unknown>[] = [first];
+    try {
+      await within(
+        Promise.race([
+          entered.promise,
+          first.then(() => {
+            throw new Error("Diff ended before its Git read was held");
+          }),
+        ]),
+        "Diff did not reach its held Git request",
+      );
+      pending.push(
+        settle(
+          runGitWorkerOperation({
+            type: "checkout.diff",
+            input: { cwd: peer, scope: "uncommitted" },
+          }),
+        ),
+      );
+      const metadata = runGitWorkerOperation({
+        type: "repository.branches",
+        input: { repoRoot: repo },
+      });
+      pending.push(settle(metadata));
+      const result = await within(
+        metadata,
+        "Branch metadata waited behind unrelated diff Git requests",
+      );
+      expect(result.branches).toContainEqual({ name: "main", kind: "local" });
+    } finally {
+      release.resolve();
+      await Promise.all(pending);
+    }
+  });
+
   it.each(["abort", "close"] as const)(
     "joins the real Git fetch before %s settles",
     async (ending) => {
@@ -319,12 +380,12 @@ describe("Git operation host lifecycle", () => {
       const commonDir = await git(repo, "rev-parse", "--git-common-dir");
       const held = createDeferredCore();
       const release = createDeferredCore();
-      const holder = enqueueGitRefMutation(repo, commonDir, async () => {
+      const holder = gitExec.enqueueGitRefMutation(repo, commonDir, async () => {
         held.resolve();
         await release.promise;
       });
       await held.promise;
-      const queueCalls = vi.spyOn(KeyedAsyncQueue.prototype, "enqueue");
+      const queueCalls = vi.spyOn(gitExec, "enqueueGitRefMutation");
       const trace = path.join(root, "git-trace.jsonl");
       vi.stubEnv("GIT_TRACE2_EVENT", trace);
       let current = true;

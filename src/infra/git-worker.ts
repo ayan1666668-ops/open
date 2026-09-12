@@ -29,6 +29,7 @@ import { WorkerTaskError, WorkerTaskPool, type WorkerTaskResponse } from "./work
 type GitPool = WorkerTaskPool<GitWorkerCommand, GitWorkerReply<GitWorkerResult>>;
 type GitWorkerRuntime = {
   reads?: GitPool;
+  content?: GitPool;
   worktrees?: GitPool;
   pending: Set<Promise<unknown>>;
   closing?: Promise<void>;
@@ -42,10 +43,11 @@ function runtime(): GitWorkerRuntime {
     () => ({ pending: new Set() }),
     (state) => {
       state.closing ??= (async () => {
-        await Promise.all([state.reads?.close(), state.worktrees?.close()]);
+        await Promise.all([state.reads?.close(), state.content?.close(), state.worktrees?.close()]);
         // Worker termination alone does not settle its parent-owned Git processes.
         await Promise.allSettled(state.pending);
         state.reads = undefined;
+        state.content = undefined;
         state.worktrees = undefined;
       })().finally(() => {
         state.closing = undefined;
@@ -56,11 +58,15 @@ function runtime(): GitWorkerRuntime {
 }
 
 function poolFor(state: GitWorkerRuntime, command: GitWorkerCommand): GitPool {
-  const owner = command.type.startsWith("worktree.") ? "worktrees" : "reads";
-  // Long snapshot work cannot consume the workers needed by interactive reads.
+  const owner = command.type.startsWith("worktree.")
+    ? "worktrees"
+    : command.type === "repository.branches" || command.type === "checkout.context"
+      ? "reads"
+      : "content";
+  // Metadata must stay responsive while diffs or snapshots await slow Git work.
   return (state[owner] ??= new WorkerTaskPool({
     workerUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.gitOperations),
-    maxWorkers: owner === "worktrees" ? 1 : Math.max(1, Math.min(2, os.availableParallelism() - 1)),
+    maxWorkers: owner === "content" ? Math.max(1, Math.min(2, os.availableParallelism() - 1)) : 1,
     idleTimeoutMs: 30_000,
   }));
 }

@@ -8,7 +8,7 @@ import {
   hasSafeParentDirectories,
   inspectProvisionedFiles,
   lstatIfExists,
-  normalizeRelativePath,
+  normalizeProvisionedRelativePath,
   resolveGitPath,
 } from "./provisioned-file-inspection.js";
 import {
@@ -24,7 +24,7 @@ async function copyProvisionedFile(params: {
   relativePath: string;
   assertCurrent?: () => void;
 }): Promise<boolean> {
-  const normalized = normalizeRelativePath(params.relativePath);
+  const normalized = normalizeProvisionedRelativePath(params.relativePath);
   if (
     !normalized ||
     !(await hasSafeParentDirectories(params.repoRoot, normalized)) ||
@@ -71,7 +71,7 @@ export async function provisionIncludedFiles(
   };
   const provisioned: string[] = [];
   for (const relativePath of inspection.paths) {
-    const normalized = normalizeRelativePath(relativePath);
+    const normalized = normalizeProvisionedRelativePath(relativePath);
     if (
       normalized &&
       (await copyProvisionedFile({
@@ -299,7 +299,7 @@ export async function restoreProvisionedFiles(
   commitGuard?: () => void,
 ): Promise<void> {
   for (const state of states) {
-    const normalized = normalizeRelativePath(state.path);
+    const normalized = normalizeProvisionedRelativePath(state.path);
     if (!normalized || !(await hasSafeParentDirectories(worktreePath, normalized))) {
       throw new Error(`unsafe provisioned path: ${state.path}`);
     }

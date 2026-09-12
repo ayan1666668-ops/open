@@ -1,5 +1,5 @@
 import path from "node:path";
-import { directorySizeBytes, estimateWorktreeGitBytes } from "./capacity.runtime.js";
+import { estimateCheckoutObjectBytes, measureDirectoryTreeBytes } from "./capacity.runtime.js";
 import { splitNullBuffer } from "./git-path-inventory.js";
 import type {
   GitWorktreeOperation,
@@ -11,7 +11,7 @@ import {
   hasSafeParentDirectories,
   hasUnsnapshotableProvisionedFiles,
   lstatIfExists,
-  normalizeRelativePath,
+  normalizeProvisionedRelativePath,
   resolveGitPath,
 } from "./provisioned-file-inspection.js";
 import { inspectNestedRepository, snapshotWorktree } from "./snapshot-inventory.js";
@@ -48,7 +48,7 @@ async function inspectProvisioning(
     .filter((entry) => included.has(entry));
   let estimatedBytes = 0;
   for (const relativePath of paths) {
-    const normalized = normalizeRelativePath(relativePath);
+    const normalized = normalizeProvisionedRelativePath(relativePath);
     if (!normalized || !(await hasSafeParentDirectories(sourceRoot, normalized))) {
       continue;
     }
@@ -113,9 +113,9 @@ export async function executeGitWorktreeOperation(
     case "worktree.cleanup-inspection":
       return await inspectCleanup(operation.input);
     case "worktree.git-size":
-      return await estimateWorktreeGitBytes(operation.input.repoRoot, operation.input.ref);
+      return await estimateCheckoutObjectBytes(operation.input.repoRoot, operation.input.ref);
     case "worktree.directory-size":
-      return await directorySizeBytes(operation.input.root, operation.input.excludeGit);
+      return await measureDirectoryTreeBytes(operation.input.root, operation.input.excludeGit);
     default:
       throw new Error("Unknown managed-worktree Git operation");
   }
