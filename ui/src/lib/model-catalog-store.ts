@@ -123,13 +123,9 @@ export async function loadModelCatalog(
     resolve: completion.resolve,
     promise: completion.promise.finally(() => {
       read.cache.reads.delete(read);
-      if (
-        modelCatalogCache.get(client) === read.cache &&
-        cache.get(key) === entry &&
-        entry.pending.get(timeoutMs) === pending
-      ) {
+      if (cache.get(key) === entry && entry.pending.get(timeoutMs) === pending) {
         entry.pending.delete(timeoutMs);
-        if (!entry.result && entry.publishedRead === undefined && entry.pending.size === 0) {
+        if (!entry.result && entry.pending.size === 0) {
           cache.delete(key);
         }
         trimModelCatalogCache(read.cache);

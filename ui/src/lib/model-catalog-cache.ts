@@ -147,7 +147,7 @@ export function publishModelCatalogResult(
     }
   }
   const entry: ModelCatalogEntry = cache.entries.get(key) ?? { scope: params, pending: new Map() };
-  if (!params.refresh && entry.publishedRead !== undefined && entry.publishedRead > read.order) {
+  if (!params.refresh && (entry.publishedRead ?? 0) > read.order) {
     return false;
   }
   // A winner retires same-projection readers, but cannot retire explicit discovery.

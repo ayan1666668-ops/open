@@ -68,8 +68,11 @@ describe("config state model", () => {
 
         expect(runtimeConfig.state.lastError).toBe("New connection read failed");
         expect(currentConfigObject(runtimeConfig.state)).toBeNull();
-        server.request.mockResolvedValueOnce({ config: { count: 9 }, hash: "current" });
         await runtimeConfig.ensureLoaded();
+        expect(currentConfigObject(runtimeConfig.state)).toBeNull();
+        expect(server.request.mock.calls).toHaveLength(2);
+        server.request.mockResolvedValueOnce({ config: { count: 9 }, hash: "current" });
+        await runtimeConfig.refresh();
         expect(currentConfigObject(runtimeConfig.state)).toEqual({ count: 9 });
 
         server.request.mockRejectedValueOnce(new Error("Same connection refresh failed"));
@@ -82,7 +85,7 @@ describe("config state model", () => {
     },
   );
 
-  it("retains a paused draft while a new connection retries its config read", async () => {
+  it("retains a paused draft until explicit refresh after a reconnect read failure", async () => {
     vi.useFakeTimers();
     const server = createConfigServerMock();
     const client = createTestGatewayClient(server.request);
@@ -100,7 +103,7 @@ describe("config state model", () => {
       expect(runtimeConfig.state.configForm).toEqual({ count: 2 });
       expect(runtimeConfig.state.configFormDirty).toBe(true);
       expect(runtimeConfig.state.configAutoSaveStatus).toBe("paused");
-      await runtimeConfig.ensureLoaded();
+      await runtimeConfig.refresh();
       expect(currentConfigObject(runtimeConfig.state)).toEqual({ count: 2 });
       await vi.advanceTimersByTimeAsync(CONFIG_FORM_AUTO_SAVE_DEBOUNCE_MS);
       expect(server.submissions).toHaveLength(0);

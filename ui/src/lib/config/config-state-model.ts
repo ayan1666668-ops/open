@@ -48,7 +48,7 @@ const requestVersionsByState = new WeakMap<
   { config: number; schema: number }
 >();
 const connectionEpochsByState = new WeakMap<object, number>();
-const snapshotEpochsByState = new WeakMap<object, number>();
+const staleConfigSnapshots = new WeakSet<object>();
 export type ConfigRead = {
   version: number;
   client: GatewayBrowserClient;
@@ -165,14 +165,11 @@ export function currentConfigConnectionEpoch(state: object): number {
 
 export function setConfigSnapshot(state: RuntimeConfigState, snapshot: ConfigSnapshot): void {
   state.configSnapshot = snapshot;
-  snapshotEpochsByState.set(state, currentConfigConnectionEpoch(state));
-}
-
-export function isConfigSnapshotCurrent(state: object): boolean {
-  return (snapshotEpochsByState.get(state) ?? 0) === currentConfigConnectionEpoch(state);
+  staleConfigSnapshots.delete(state);
 }
 
 export function invalidateConfigConnection(state: object): void {
+  staleConfigSnapshots.add(state);
   invalidateConfigRead(state);
   connectionEpochsByState.set(state, currentConfigConnectionEpoch(state) + 1);
 }
@@ -215,7 +212,7 @@ export function resolveEditableSnapshotConfig(
 export function currentConfigObject(
   state: Pick<RuntimeConfigState, "configForm" | "configSnapshot">,
 ): Record<string, unknown> | null {
-  return isConfigSnapshotCurrent(state)
+  return !staleConfigSnapshots.has(state)
     ? (state.configForm ?? resolveEditableSnapshotConfig(state.configSnapshot))
     : null;
 }
@@ -229,10 +226,7 @@ const BLOCKED_AGENT_CONFIG_ENTRY_IDS = new Set(["__proto__", "prototype", "const
 
 function normalizeAgentConfigEntryId(agentId: string): string | null {
   const trimmedAgentId = agentId.trim();
-  if (
-    !AGENT_CONFIG_ENTRY_ID_PATTERN.test(trimmedAgentId) ||
-    BLOCKED_AGENT_CONFIG_ENTRY_IDS.has(trimmedAgentId)
-  ) {
+  if (!AGENT_CONFIG_ENTRY_ID_PATTERN.test(trimmedAgentId)) {
     return null;
   }
   const normalizedAgentId = normalizeAgentId(trimmedAgentId);
@@ -247,15 +241,14 @@ export function resolveAgentConfigEntryTarget(
   if (!normalizedAgentId) {
     return null;
   }
-  const agents = isRecord(config?.agents) ? config.agents : null;
-  const entries = isRecord(agents?.entries) ? agents.entries : null;
+  const agents = asConfigRecord(config?.agents);
+  const entries = asConfigRecord(agents?.entries);
   const authoredAgentId = Object.keys(entries ?? {}).find(
     (candidate) =>
       AGENT_CONFIG_ENTRY_ID_PATTERN.test(candidate) &&
-      !BLOCKED_AGENT_CONFIG_ENTRY_IDS.has(candidate) &&
       normalizeAgentId(candidate) === normalizedAgentId,
   );
-  if (!entries || !authoredAgentId || !Object.hasOwn(entries, authoredAgentId)) {
+  if (!entries || !authoredAgentId) {
     return null;
   }
   const entry = entries[authoredAgentId];

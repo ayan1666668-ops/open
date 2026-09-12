@@ -24,7 +24,6 @@ import {
   agentConfigEntry,
   clearConfigRequestVersions,
   createInitialConfigState,
-  isConfigSnapshotCurrent,
   type AgentConfigEntryTarget,
   type RuntimeConfigGateway,
   type RuntimeConfigState,
@@ -191,7 +190,7 @@ export function createRuntimeConfigCapability(
   });
 
   const ensureLoaded = async () => {
-    if (!state.configSnapshot || !isConfigSnapshotCurrent(state)) {
+    if (!state.configSnapshot) {
       await loadOnce("config", () => loadConfig(state));
     }
     appliedRefresh.reconcile();
