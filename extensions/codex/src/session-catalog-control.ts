@@ -597,10 +597,10 @@ export function createCodexSessionCatalogControl(params: {
     forRequest,
     forUpstream,
     homesForAgent,
-    forNode() {
-      const source = homeResolver.forNode();
+    forNode(agentId) {
+      const source = homeResolver.forNode(agentId);
       return {
-        control: forRequest(undefined, source),
+        control: forRequest(source.agentId, source),
         sourceHomeId: source.sourceHomeId,
         codexHome: source.codexHome,
       };

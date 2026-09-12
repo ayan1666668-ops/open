@@ -166,14 +166,20 @@ nor command; direct invocation also fails closed. It must never expose the user
 Codex home for an agent-scoped configuration or substitute local stdio for an
 explicit endpoint.
 
-Headless node catalogs likewise bind to the node's native `CODEX_HOME` or
-`~/.codex`, independently of the Gateway's route agent and the node's agent
-roster. They require user-home stdio and retain the configured command, arguments,
-and cleared environment variables. The Gateway does not send its agent id as a
-node source selector; older callers' optional `agentId` is validated only as
-inert route context. Catalog reads and native terminal resume use the same home
-as the node's existing CLI session listing and continuation commands. Explicit
-non-native connection settings fail instead of redirecting to another store.
+Headless node catalogs default to the node's native `CODEX_HOME` or `~/.codex`,
+independently of the Gateway's route agent and the node's agent roster. Native
+readers retain the configured command, arguments, and cleared environment
+variables. Catalog reads and native terminal resume use the same home as the
+node's existing CLI session listing and continuation commands.
+
+The Gateway still sends its optional agent id for released nodes: v2026.9.4
+uses it as a strict local source selector under the same command names. Updated
+native readers validate that field only as inert route context. Explicit
+agent-scoped and non-stdio source configurations keep their shipped local-owner
+selection, including rejection of missing or removed owners. Neither path
+silently substitutes a different source. Retire this compatibility only through
+a versioned node-source contract and an upgrade transition for those configured
+readers.
 
 The catalog projection normalizes identifiers, title, cwd, status, active wait
 flags, timestamps, source, model provider, Codex version, and Git branch. It
@@ -188,9 +194,12 @@ host property, not a thread status: a failed host result contains no fresh
 session rows and does not project `offline` onto native threads.
 
 An empty catalog does not create a sidebar section, even when it has an error
-or a continuation cursor. Existing bounded provider discovery and normal
-refreshes still run. Catalogs containing visible sessions remain present when
-another host fails.
+or a continuation cursor. When healthy cursor hosts have no visible rows under
+the current owner filter, the existing data owner advances one page per catalog
+between refreshes. Accepted pages retain their cursor and page-depth progress;
+later passes continue that search instead of restarting at the same first page.
+Discovery pauses while hidden and stops advancing on errors or cursor cycles.
+Catalogs containing visible sessions remain present when another host fails.
 
 The Control UI requests progressive catalog updates. Each local or paired host
 appears when its own App Server listing settles; the aggregate response remains

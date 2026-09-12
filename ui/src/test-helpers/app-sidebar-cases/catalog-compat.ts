@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
-import { catalogPage, createGatewayHarness, createSessions, mountSidebar } from "../app-sidebar.ts";
+import {
+  catalogPage,
+  createGatewayHarness,
+  createSessions,
+  deferred,
+  mountSidebar,
+} from "../app-sidebar.ts";
 import "../../components/app-sidebar.ts";
 
 describe("AppSidebar session catalog pagination", () => {
@@ -212,37 +218,68 @@ describe("AppSidebar session catalog pagination", () => {
     }
   });
 
-  it("hides an empty catalog with more pages until a refresh discovers sessions", async () => {
-    vi.useFakeTimers();
-    try {
-      const request = vi
-        .fn()
-        .mockResolvedValueOnce(catalogPage([], "page-2"))
-        .mockResolvedValueOnce(catalogPage([{ threadId: "thread-1", name: "Later session" }]));
-      const gateway = createGatewayHarness({ request } as unknown as GatewayBrowserClient);
-      gateway.publish({
-        hello: {
-          features: { methods: ["sessions.catalog.list"] },
-        } as ApplicationGatewaySnapshot["hello"],
-      });
-      const { sidebar } = await mountSidebar(
-        gateway.gateway,
-        createSessions("main", ["agent:main:main"]),
-      );
-      sidebar.connected = true;
-      await sidebar.updateComplete;
-      await vi.advanceTimersByTimeAsync(0);
-      await sidebar.updateComplete;
+  it.each(["empty", "other owners"] as const)(
+    "discovers a later matching page while the first page contains %s",
+    async (firstPageKind) => {
+      vi.useFakeTimers();
+      try {
+        const ada = { id: "profile-ada", label: "Ada", type: "human" } as const;
+        const bob = { id: "profile-bob", label: "Bob", type: "human" } as const;
+        const firstPage = catalogPage(
+          firstPageKind === "empty"
+            ? []
+            : Array.from({ length: 40 }, (_, index) => ({
+                threadId: `other-${index}`,
+                name: `Other owner ${index}`,
+              })),
+          "page-2",
+        );
+        for (const session of firstPage.catalogs[0]!.hosts[0]!.sessions) {
+          session.createdActor = bob;
+        }
+        const laterPage = catalogPage([{ threadId: "thread-1", name: "Later session" }]);
+        laterPage.catalogs[0]!.hosts[0]!.sessions[0]!.createdActor = ada;
+        const pending = deferred<typeof laterPage>();
+        const request = vi.fn((_method, params: { cursors?: Record<string, string> }) =>
+          params.cursors?.["gateway:local"] === "page-2"
+            ? pending.promise
+            : Promise.resolve(firstPage),
+        );
+        const gateway = createGatewayHarness({ request } as unknown as GatewayBrowserClient);
+        gateway.publish({
+          hello: {
+            features: { methods: ["sessions.catalog.list"] },
+          } as ApplicationGatewaySnapshot["hello"],
+        });
+        const sessions = createSessions("main", ["agent:main:main"]);
+        sessions.state.result!.owners = [ada, bob];
+        const { sidebar } = await mountSidebar(gateway.gateway, sessions);
+        sidebar.setSessionOwnerFilter(ada.id);
+        await sidebar.updateComplete;
+        sidebar.connected = true;
+        await sidebar.updateComplete;
+        await vi.advanceTimersByTimeAsync(0);
+        await sidebar.updateComplete;
 
-      expect(sidebar.querySelector('[data-session-section="catalog:codex"]')).toBeNull();
-      expect(request).toHaveBeenCalledTimes(1);
-      await sidebar.sessionData.refreshSessionCatalogs();
-      await sidebar.updateComplete;
-      expect(sidebar.textContent).toContain("Later session");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        expect(sidebar.querySelector('[data-session-section="catalog:codex"]')).toBeNull();
+        expect(request).toHaveBeenNthCalledWith(2, "sessions.catalog.list", {
+          agentId: "main",
+          catalogId: "codex",
+          hostIds: ["gateway:local"],
+          cursors: { "gateway:local": "page-2" },
+        });
+        pending.resolve(laterPage);
+        await vi.advanceTimersByTimeAsync(0);
+        await sidebar.updateComplete;
+        expect(sidebar.textContent).toContain("Later session");
+        await sidebar.sessionData.refreshSessionCatalogs();
+        await sidebar.updateComplete;
+        expect(sidebar.textContent).toContain("Later session");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("shows a rejected load-more request and clears it after a successful retry", async () => {
     vi.useFakeTimers();

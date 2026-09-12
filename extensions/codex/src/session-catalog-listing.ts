@@ -301,6 +301,7 @@ export async function listCodexSessionCatalog(params: {
   });
   const nodeHosts = nodes.toSorted(compareNodeLabels).map((node) =>
     listPairedNode({
+      agentId,
       runtime: params.runtime,
       node,
       query,
@@ -319,18 +320,17 @@ export function createCodexSessionCatalogNodeHostCommands(
   controlFactory: CodexSessionCatalogControlFactory,
   bindingStore?: CodexAppServerBindingStore,
 ): OpenClawPluginNodeHostCommand[] {
-  // Older Gateways send their route agent. Validate that field without using it to
-  // select a store: native node sessions belong to the node's Codex home.
+  // Native sources ignore the Gateway route; explicit preexisting sources retain their selector.
   const bindRequest = (paramsJSON?: string | null) => {
     const parsed = parseJsonParams(paramsJSON);
     if (!isRecord(parsed)) {
       throw new CatalogParamsError("Codex session catalog parameters must be an object");
     }
-    readBoundedOptionalString(parsed, "agentId", MAX_SESSION_ID_LENGTH);
+    const agentId = readBoundedOptionalString(parsed, "agentId", MAX_SESSION_ID_LENGTH);
     const request = { ...parsed };
     delete request.agentId;
     return {
-      ...controlFactory.forNode(),
+      ...controlFactory.forNode(agentId),
       params: request,
       paramsJSON: JSON.stringify(request),
     };
@@ -513,6 +513,7 @@ export async function readCodexSessionTranscript(params: {
         nodeId,
         command,
         params: {
+          agentId: params.agentId,
           threadId: params.threadId,
           ...request,
         },

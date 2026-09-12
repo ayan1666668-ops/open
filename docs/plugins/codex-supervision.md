@@ -129,14 +129,19 @@ honored for that stdio process. If the Mac config selects `"unix"`,
 capability or command, and a stale direct invocation fails instead of exposing
 the user Codex home or spawning a different local stdio App Server.
 
-Headless nodes also expose their native user-home stdio catalog: `CODEX_HOME`,
-or `~/.codex` when it is unset. Listing, transcript reads, terminal resume, and
-Chat continuation use that same node-owned store. A Gateway agent need not exist
-on the node, even when the node has multiple agents and no default owner.
-The optional `agentId` accepted from older catalog callers is route context only;
-it cannot select an agent-specific Codex home. An explicit non-stdio transport or
-agent-scoped catalog configuration is unavailable instead of silently selecting
-a different source.
+Headless nodes default to their native user-home stdio catalog: `CODEX_HOME`,
+or `~/.codex` when it is unset. Native listing, transcript reads, terminal resume,
+and Chat continuation use that same node-owned store. A Gateway agent need not
+exist on an updated native node, even when the node has multiple agents and no
+default owner.
+
+Gateways retain the optional `agentId` field for interoperability with released
+nodes that still require it. Updated native readers treat that field as route
+context only. Explicit agent-scoped or non-stdio catalog configurations retain
+their existing source-selection contract: the requested owner selects the
+configured node source, and a missing or removed owner fails instead of falling
+back to the native user home. Upgrade the node as well as the Gateway to obtain
+agent-independent native discovery.
 
 A newly advertised node command changes the node's approved command surface.
 Approve the update from the Gateway host:

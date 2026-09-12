@@ -10,6 +10,7 @@ import {
 import type { CodexSessionCatalogSession } from "./session-catalog-types.js";
 
 export async function lookupNodeCodexCatalogRecord(params: {
+  agentId: string;
   runtime: PluginRuntime;
   nodeId: string;
   threadId: string;
@@ -23,6 +24,7 @@ export async function lookupNodeCodexCatalogRecord(params: {
       nodeId: params.nodeId,
       command: CODEX_APP_SERVER_THREADS_LIST_COMMAND,
       params: {
+        agentId: params.agentId,
         limit: CODEX_SESSION_CATALOG_MAX_PAGE_LIMIT,
         ...(cursor ? { cursor } : {}),
       },

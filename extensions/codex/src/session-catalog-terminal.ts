@@ -225,6 +225,7 @@ export async function openCodexCatalogTerminal(
     throw new CatalogParamsError("paired-node Codex terminal is unavailable");
   }
   const lookup = await lookupNodeCodexCatalogRecord({
+    agentId: params.agentId,
     runtime: params.api.runtime,
     nodeId,
     threadId: params.threadId,
@@ -238,7 +239,7 @@ export async function openCodexCatalogTerminal(
     nodeId,
     command: CODEX_TERMINAL_RESUME_COMMAND,
     uploadPathStyle: "native",
-    paramsJSON: JSON.stringify({ threadId: params.threadId }),
+    paramsJSON: JSON.stringify({ agentId: params.agentId, threadId: params.threadId }),
     ...(record.cwd ? { cwd: record.cwd } : {}),
     title,
   };
