@@ -35,6 +35,7 @@ it("resolves a Groq manifest model from a global external install during setup",
       await state.writeConfig({ plugins: { entries: { groq: { enabled: true } } } });
 
       const requests: Array<{ method?: string; url?: string }> = [];
+      const runtimeErrors: string[] = [];
       const server = http.createServer((request, response) => {
         requests.push({ method: request.method, url: request.url });
         response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
@@ -83,14 +84,16 @@ it("resolves a Groq manifest model from a global external install during setup",
           surface: "gateway",
           runtime: {
             log: () => {},
-            error: () => {},
+            error: (message) => {
+              runtimeErrors.push(message);
+            },
             exit: (code) => {
               throw new Error(`exit ${code}`);
             },
           },
         });
 
-        expect(result).toMatchObject({
+        expect(result, JSON.stringify({ result, runtimeErrors, requests })).toMatchObject({
           ok: true,
           modelRef: "groq/openai/gpt-oss-120b",
         });
