@@ -391,11 +391,6 @@ export function renderSidebarSessionSortMenu(params: {
           if (view) {
             params.onViewChange(view);
           } else if (value === "session-sources") {
-            const item = event.detail.item;
-            if (item instanceof HTMLElement && item.dataset.nativeNavigation) {
-              delete item.dataset.nativeNavigation;
-              return;
-            }
             params.onOpenSessionSources();
           } else if (value?.startsWith("grouping:")) {
             params.onGroupingChange(value.slice("grouping:".length) as SidebarSessionsGrouping);
@@ -431,13 +426,11 @@ export function renderSidebarSessionSortMenu(params: {
                   class="sidebar-session-sort-menu__item"
                   value="session-sources"
                   @click=${(event: MouseEvent) => {
-                    if (!shouldHandleNavigationClick(event)) {
-                      if (event.currentTarget instanceof HTMLElement) {
-                        event.currentTarget.dataset.nativeNavigation = "true";
-                      }
-                      return;
+                    if (shouldHandleNavigationClick(event)) {
+                      event.preventDefault();
+                    } else {
+                      event.stopPropagation();
                     }
-                    event.preventDefault();
                   }}
                 >
                   <a href=${params.sessionSourcesHref} tabindex="-1">

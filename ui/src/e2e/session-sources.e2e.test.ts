@@ -4,6 +4,7 @@ import type { Locator } from "playwright";
 import { expect, it } from "vitest";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import {
+  controlUiSessionPath,
   defaultControlUiFeatureMethods,
   installMockGateway,
   waitForControlUiSettingsTakeover,
@@ -88,6 +89,37 @@ function isChecked(toggle: Locator) {
 }
 
 suite.define(() => {
+  it("opens session source settings with the keyboard and preserves modified-click navigation", async () => {
+    await suite.withPage({}, async ({ page, context }) => {
+      await installMockGateway(page, { featureMethods, methodResponses });
+      await page.goto(new URL(controlUiSessionPath("agent:main:main"), suite.server.baseUrl).href);
+      const trigger = page.getByRole("button", { name: "Filter & sort", exact: true });
+      const item = page.getByRole("menuitem", { name: "Session sources…", exact: true });
+      await trigger.click();
+      const originalUrl = page.url();
+      // Native tab gestures do not retain an opener.
+      const [popup] = await Promise.all([
+        context.waitForEvent("page"),
+        item.locator("a").click({ modifiers: ["ControlOrMeta"] }),
+      ]);
+      try {
+        await popup.waitForLoadState("domcontentloaded");
+        expect(new URL(popup.url()).pathname).toBe("/settings/appearance");
+        expect(new URL(popup.url()).hash).toBe("#settings-session-sources");
+        expect(page.url()).toBe(originalUrl);
+      } finally {
+        await popup.close();
+      }
+      await page.keyboard.press("Escape");
+      await item.waitFor({ state: "hidden" });
+      await trigger.press("Enter");
+      await item.focus();
+      await page.keyboard.press("Enter");
+      await waitForControlUiSettingsTakeover(page);
+      expect(new URL(page.url()).hash).toBe("#settings-session-sources");
+    });
+  });
+
   it("finds session sources from the sidebar and independently saves discovery preferences", async () => {
     await suite.withPage({ viewport: { width: 1440, height: 1000 } }, async ({ page }) => {
       const gateway = await installMockGateway(page, { featureMethods, methodResponses });
