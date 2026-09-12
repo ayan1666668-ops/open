@@ -338,11 +338,10 @@ public final class RealtimeTalkRelaySession {
         self.startEventPump(stream: eventStream, lifecycleGeneration: lifecycleGeneration)
         do {
             let result = try await self.createRelaySession()
+            let createdRelaySessionId = self.nonEmpty(result.relaysessionid)
             let statusAfterCreate = await self.lifecycleStatus(lifecycleGeneration)
             if statusAfterCreate != .current {
-                if let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !relaySessionId.isEmpty
-                {
+                if let relaySessionId = createdRelaySessionId {
                     await Self.closeRelaySession(
                         transport: self.transport,
                         relaySessionId: relaySessionId)
@@ -353,18 +352,14 @@ public final class RealtimeTalkRelaySession {
                 return
             }
             if let startupIssue {
-                if let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !relaySessionId.isEmpty
-                {
+                if let relaySessionId = createdRelaySessionId {
                     await Self.closeRelaySession(
                         transport: self.transport,
                         relaySessionId: relaySessionId)
                 }
                 throw Self.startupFailureError(startupIssue)
             }
-            guard let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !relaySessionId.isEmpty
-            else {
+            guard let relaySessionId = createdRelaySessionId else {
                 throw NSError(domain: "RealtimeTalkRelay", code: 1, userInfo: [
                     NSLocalizedDescriptionKey: String(
                         localized: "Gateway did not return a realtime relay session"),
@@ -394,14 +389,12 @@ public final class RealtimeTalkRelaySession {
                 timeoutSeconds: Self.startupReadyTimeoutSeconds,
                 lifecycleGeneration: lifecycleGeneration)
             {
-            case .ready:
+            case .ready, .cancelled:
                 return
             case let .failed(issue):
                 throw NSError(domain: "RealtimeTalkRelay", code: 6, userInfo: [
                     NSLocalizedDescriptionKey: issue.message,
                 ])
-            case .cancelled:
-                return
             }
         } catch {
             // A lost route must still surface: swallowing here would discard both the original

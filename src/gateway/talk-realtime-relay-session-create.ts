@@ -237,11 +237,7 @@ export function createTalkRealtimeRelaySession(
     audioSink: {
       isOpen: () => Boolean(getActiveRelay()),
       sendAudio: (audio) => {
-        const relay = getActiveRelay();
-        if (!relay) {
-          return;
-        }
-        if (outputOwnership.phase === "cancelling") {
+        if (!getActiveRelay() || outputOwnership.phase === "cancelling") {
           return;
         }
         const outputTurnId = outputOwnership.resolve(true);
@@ -470,10 +466,7 @@ export function createTalkRealtimeRelaySession(
     },
     onToolCall: (toolCall) => {
       const relay = getActiveRelay();
-      if (!relay) {
-        return;
-      }
-      if (outputOwnership.phase === "cancelling") {
+      if (!relay || outputOwnership.phase === "cancelling") {
         return;
       }
       const outputTurnId = outputOwnership.resolve(true);

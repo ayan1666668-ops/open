@@ -1,5 +1,6 @@
 import { PassThrough } from "node:stream";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
+import { createMeetingBrowserFixture } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { resolveGoogleMeetConfig } from "../config.js";
 import { MEET_URL, MEET_URL_EN, testBridgeProcess } from "../test-support/fixtures.test-helpers.js";
@@ -40,9 +41,19 @@ describe("Google Meet startup ownership", () => {
       const events: string[] = [];
       const children: ReturnType<typeof testBridgeProcess>[] = [];
       const nodeStops: Array<{ action: string; bridgeId?: string }> = [];
-      const tab = { targetId: "owned-tab", title: "Meet", url: MEET_URL_EN };
-      let tabExists = ownership !== "opened";
-      let inspections = 0;
+      const fixture = createMeetingBrowserFixture({
+        url: MEET_URL_EN,
+        tabId: "owned-tab",
+        title: "Meet",
+        tabOpen: ownership !== "opened",
+        status: () => ({
+          inCall: true,
+          micMuted: false,
+          audioInputRouted: true,
+          audioOutputRouted: true,
+          url: MEET_URL_EN,
+        }),
+      });
       processes.spawn.mockImplementation((command: string) => {
         events.push(`spawn:${command}`);
         const child = testBridgeProcess({ stdin: new PassThrough(), stdout: new PassThrough() });
@@ -57,30 +68,9 @@ describe("Google Meet startup ownership", () => {
         children.push(child);
         return child;
       });
-      const browser = async (request: { path: string }) => {
-        events.push(`browser:${request.path}`);
-        if (request.path === "/tabs") {
-          return { tabs: tabExists ? [tab] : [] };
-        }
-        if (request.path === "/tabs/open") {
-          tabExists = true;
-          return tab;
-        }
-        if (request.path === "/act") {
-          if (inspections++ > 0) {
-            return { result: JSON.stringify({ departed: true, urlMatched: true }) };
-          }
-          return {
-            result: JSON.stringify({
-              inCall: true,
-              micMuted: false,
-              audioInputRouted: true,
-              audioOutputRouted: true,
-              url: MEET_URL_EN,
-            }),
-          };
-        }
-        return { ok: true };
+      const browser = async (request: Record<string, unknown>) => {
+        events.push(`browser:${String(request.path)}`);
+        return fixture.browserResult(request);
       };
       const runtime = {
         gateway: {
@@ -146,6 +136,12 @@ describe("Google Meet startup ownership", () => {
           logger: { debug() {}, info() {}, warn() {}, error() {} },
         }),
       ).rejects.toThrow(/provider/i);
+
+      expect(fixture.state.audioCaptureEvents).toEqual([
+        { action: "start", captureId: expect.any(String) },
+        { action: "stop", captureId: fixture.state.audioCaptureEvents[0]?.captureId },
+      ]);
+      expect(fixture.state.audioCaptureId).toBeUndefined();
 
       expect(events.filter((event) => event.startsWith("node:"))).toEqual(
         transport === "chrome-node"
