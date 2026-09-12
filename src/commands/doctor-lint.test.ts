@@ -915,8 +915,8 @@ describe("runDoctorLintCli", () => {
       }
       return {
         ...prepared,
-        cleanup() {
-          prepared.cleanup();
+        async cleanupAsync() {
+          await prepared.cleanupAsync();
           return false;
         },
       };
