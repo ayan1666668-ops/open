@@ -1330,6 +1330,10 @@ function expandExplicitSourceTestTargets(targetArgs: string[], cwd: string, watc
   const forceFullImportGraph = sourceTargetCount > EXPLICIT_SOURCE_FULL_IMPORT_GRAPH_THRESHOLD;
   return targetArgs.flatMap((targetArg) => {
     const relative = toRepoRelativeTarget(targetArg, cwd);
+    if (classifyTarget(targetArg, cwd) === "extensionFull") {
+      // The full aggregate already includes the dedicated database-worker project.
+      return [targetArg];
+    }
     const databaseWorkerTargets = databaseWorkerExtensionTestFiles.filter((file) =>
       isGlobTarget(relative)
         ? path.matchesGlob(file, relative)
