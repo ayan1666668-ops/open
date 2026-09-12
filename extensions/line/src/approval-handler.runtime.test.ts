@@ -1,0 +1,224 @@
+// Line tests cover the native approval runtime transport and terminal notices.
+import type {
+  ExecApprovalPendingView,
+  ResolvedApprovalView,
+} from "openclaw/plugin-sdk/approval-handler-runtime";
+import type { ExecApprovalRequest } from "openclaw/plugin-sdk/approval-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const pushFlexMessage = vi.hoisted(() => vi.fn());
+const pushMessageLine = vi.hoisted(() => vi.fn());
+
+vi.mock("./send.js", async () => ({
+  ...(await vi.importActual<typeof import("./send.js")>("./send.js")),
+  pushFlexMessage,
+  pushMessageLine,
+}));
+
+const { lineApprovalNativeRuntime } = await import("./approval-handler.runtime.js");
+const { buildLinePendingApprovalCard } = await import("./approval-card.js");
+
+const APPROVAL_ID = "6f4a1b2c-0d3e-4f5a-8b9c-0d1e2f3a4b5c";
+const APPROVER = `U${"a".repeat(32)}`;
+const NOW_MS = 1_700_000_000_000;
+
+const cfg: OpenClawConfig = {
+  channels: {
+    line: {
+      enabled: true,
+      channelAccessToken: "line-token",
+      channelSecret: "line-secret",
+      allowFrom: [APPROVER],
+    },
+  },
+};
+
+const request: ExecApprovalRequest = {
+  id: APPROVAL_ID,
+  request: { command: "rm -rf ./build", host: "gateway" },
+  createdAtMs: NOW_MS,
+  expiresAtMs: NOW_MS + 120_000,
+};
+
+function execPendingView(): ExecApprovalPendingView {
+  return {
+    approvalId: APPROVAL_ID,
+    approvalKind: "exec",
+    phase: "pending",
+    title: "Exec Approval Required",
+    metadata: [{ label: "Host", value: "gateway" }],
+    commandText: "rm -rf ./build",
+    actions: (["allow-once", "allow-always", "deny"] as const).map((decision) => ({
+      decision,
+      label: decision,
+      style: "primary",
+      command: `/approve ${APPROVAL_ID} ${decision}`,
+      action: { type: "approval", approvalId: APPROVAL_ID, approvalKind: "exec", decision },
+    })),
+    expiresAtMs: NOW_MS + 120_000,
+  };
+}
+
+const plannedTarget = {
+  surface: "approver-dm" as const,
+  target: { to: `line:user:${APPROVER}` },
+  reason: "preferred" as const,
+};
+
+beforeEach(() => {
+  pushFlexMessage.mockReset();
+  pushMessageLine.mockReset();
+  pushFlexMessage.mockResolvedValue({ messageId: "m-1", chatId: APPROVER, receipt: {} });
+  pushMessageLine.mockResolvedValue({ messageId: "m-2", chatId: APPROVER, receipt: {} });
+});
+
+describe("LINE native approval runtime", () => {
+  it("prepares a LINE address into a bare recipient with its account", async () => {
+    const prepared = await lineApprovalNativeRuntime.transport.prepareTarget({
+      cfg,
+      accountId: "work",
+      plannedTarget,
+      request,
+      approvalKind: "exec",
+      view: execPendingView(),
+      pendingPayload: null,
+    });
+    expect(prepared).toEqual({
+      dedupeKey: expect.stringContaining(APPROVER),
+      target: { to: APPROVER, accountId: "work" },
+    });
+  });
+
+  it("declines a target with no recipient", async () => {
+    expect(
+      await lineApprovalNativeRuntime.transport.prepareTarget({
+        cfg,
+        plannedTarget: { ...plannedTarget, target: { to: "  " } },
+        request,
+        approvalKind: "exec",
+        view: execPendingView(),
+        pendingPayload: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("pushes the card and records the message it can annotate later", async () => {
+    const view = execPendingView();
+    const pendingPayload = buildLinePendingApprovalCard({ view, nowMs: NOW_MS });
+    const entry = await lineApprovalNativeRuntime.transport.deliverPending({
+      cfg,
+      accountId: "default",
+      plannedTarget,
+      preparedTarget: { to: APPROVER, accountId: "default" },
+      request,
+      approvalKind: "exec",
+      view,
+      pendingPayload,
+    });
+    expect(entry).toEqual({ to: APPROVER, accountId: "default", messageId: "m-1" });
+    expect(pushFlexMessage).toHaveBeenCalledWith(
+      APPROVER,
+      pendingPayload?.altText,
+      pendingPayload?.bubble,
+      expect.objectContaining({ accountId: "default" }),
+    );
+    expect(pushMessageLine).not.toHaveBeenCalled();
+  });
+
+  it("offers the approval command when the card cannot be drawn", async () => {
+    // Native delivery already suppressed the local prompt, so the approver would
+    // otherwise be left with no way to decide.
+    const entry = await lineApprovalNativeRuntime.transport.deliverPending({
+      cfg,
+      accountId: "default",
+      plannedTarget,
+      preparedTarget: { to: APPROVER, accountId: "default" },
+      request,
+      approvalKind: "exec",
+      view: execPendingView(),
+      pendingPayload: null,
+    });
+    expect(entry).toBeNull();
+    expect(pushFlexMessage).not.toHaveBeenCalled();
+    // The notice quotes the commands the view itself publishes, one per decision.
+    const [, text] = pushMessageLine.mock.calls[0] ?? [];
+    for (const decision of ["allow-once", "allow-always", "deny"]) {
+      expect(text).toContain(`/approve ${APPROVAL_ID} ${decision}`);
+    }
+  });
+
+  it("publishes the terminal decision as a new message", async () => {
+    const view = execPendingView();
+    const resolvedView: ResolvedApprovalView = {
+      ...view,
+      phase: "resolved",
+      decision: "allow-once",
+      resolvedBy: APPROVER,
+    };
+    const final = await lineApprovalNativeRuntime.presentation.buildResolvedResult({
+      cfg,
+      accountId: "default",
+      request,
+      resolved: { id: APPROVAL_ID, decision: "allow-once", resolvedBy: APPROVER, ts: NOW_MS },
+      view: resolvedView,
+      entry: { to: APPROVER, accountId: "default", messageId: "m-1" },
+    });
+    if (final.kind !== "update") {
+      throw new Error("Expected a LINE terminal approval update");
+    }
+    expect(final.payload.text).toContain("allow-once");
+    await lineApprovalNativeRuntime.transport.updateEntry?.({
+      cfg,
+      accountId: "default",
+      entry: { to: APPROVER, accountId: "default", messageId: "m-1" },
+      request,
+      approvalKind: "exec",
+      payload: final.payload,
+      phase: "resolved",
+    });
+    // LINE has no message edit, so the outcome has to arrive as its own message.
+    expect(pushMessageLine).toHaveBeenCalledWith(
+      APPROVER,
+      final.payload.text,
+      expect.objectContaining({ accountId: "default" }),
+    );
+  });
+
+  it("offers the approval command after a failed card send", () => {
+    const view = execPendingView();
+    lineApprovalNativeRuntime.observe?.onDeliveryError?.({
+      cfg,
+      accountId: "default",
+      error: new Error("connection reset"),
+      plannedTarget,
+      request,
+      approvalKind: "exec",
+      view,
+      pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+    });
+    expect(pushMessageLine).toHaveBeenCalledWith(
+      APPROVER,
+      expect.stringContaining(`/approve ${APPROVAL_ID}`),
+      expect.objectContaining({ accountId: "default" }),
+    );
+  });
+
+  it("stays quiet when LINE already showed the card and only its receipt failed", () => {
+    const view = execPendingView();
+    lineApprovalNativeRuntime.observe?.onDeliveryError?.({
+      cfg,
+      accountId: "default",
+      error: Object.assign(new Error("unreadable receipt"), {
+        code: "CHANNEL_PARTIAL_DELIVERY",
+        deliveryResult: { visibleReplySent: true },
+      }),
+      plannedTarget,
+      request,
+      approvalKind: "exec",
+      view,
+      pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+    });
+    expect(pushMessageLine).not.toHaveBeenCalled();
+  });
+});

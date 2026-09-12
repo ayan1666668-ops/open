@@ -511,6 +511,49 @@ falls back to that content, and an unusable alternative image becomes a text box
 Invalid template thumbnails are removed. Carousel thumbnails are removed together
 so every column keeps the same image layout. Text and action buttons stay intact.
 
+## Native approval cards
+
+LINE delivers exec, plugin, and OpenClaw-change approval requests as a Flex card in an
+approver's one-to-one chat. The card names the command or requested action, the reason
+the run was interrupted, the approval ID and its expiry, and one button per decision the
+request allows.
+
+Enable the existing top-level approval forwarding settings for each approval type you
+want to receive, and list the approvers as LINE user IDs:
+
+```json5
+{
+  approvals: {
+    exec: { enabled: true, mode: "session" },
+    plugin: { enabled: true, mode: "session" },
+  },
+  channels: {
+    line: {
+      allowFrom: ["U00000000000000000000000000000000"],
+    },
+  },
+}
+```
+
+There is no LINE-specific approval configuration. Native delivery starts once approval
+forwarding is enabled and at least one approver resolves from `channels.line.allowFrom`;
+until then, and whenever native delivery is unavailable, the `/approve <id> <decision>`
+text path stays exactly as it was.
+
+Two behaviors follow from the platform rather than from a choice:
+
+- **Cards go to an approver's one-to-one chat, never to a group.** A LINE postback in a
+  group carries no `userId` (LINE includes it only in message events), so a card tapped
+  in a group could not name who decided. Group chats get the same approver-DM notice and
+  `/approve` path they already had.
+- **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
+  message it has sent, so the outcome is published below the card, and the card's buttons
+  stay on screen. Tapping a decision that is already recorded is answered by the Gateway
+  rather than recorded twice.
+
+For forwarding modes and supported decisions, see
+[Approval forwarding to chat channels](/tools/exec-approvals-advanced#approval-forwarding-to-chat-channels).
+
 ## ACP support
 
 LINE supports ACP (Agent Communication Protocol) conversation bindings:
