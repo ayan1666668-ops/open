@@ -218,7 +218,7 @@ function setToHourEnd(date: Date, zone: "local" | "utc"): Date {
 function forEachSessionTokenUsageBucket(
   session: UsageSessionEntry,
   timeZone: "local" | "utc",
-  visitor: (params: { hour: number; weekday: number; tokens: number }) => void,
+  visitor: (params: { hour: number; weekday: number; tokens: number }) => boolean | void,
 ): boolean {
   const buckets = session.usage?.utcQuarterHourTokenUsage;
   if (!buckets || buckets.length === 0) {
@@ -234,7 +234,11 @@ function forEachSessionTokenUsageBucket(
       continue;
     }
     visited = true;
-    visitor({ hour: mapped.hour, weekday: mapped.weekday, tokens: bucket.totalTokens });
+    if (
+      visitor({ hour: mapped.hour, weekday: mapped.weekday, tokens: bucket.totalTokens }) === false
+    ) {
+      break;
+    }
   }
   return visited;
 }
@@ -276,9 +280,8 @@ function sessionTouchesSelectedHours(
   }
   let touches = false;
   const hasPreciseTokenBuckets = forEachSessionTokenUsageBucket(session, timeZone, ({ hour }) => {
-    if (hours.includes(hour)) {
-      touches = true;
-    }
+    touches = hours.includes(hour);
+    return !touches;
   });
   if (hasPreciseTokenBuckets) {
     return touches;
