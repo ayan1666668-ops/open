@@ -52,7 +52,7 @@ export async function saveBrowserDownload(
   try {
     await opts.beforeSave?.(candidate);
   } catch (error) {
-    if (opts.cancelOnBeforeSaveError?.(error)) {
+    if (!opts.signal?.aborted && opts.cancelOnBeforeSaveError?.(error)) {
       await download.cancel?.().catch(() => {});
     }
     throw error;
