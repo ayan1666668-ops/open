@@ -250,8 +250,10 @@ describe("applyClawAddPlan agent adoption", () => {
     expect(second).toMatchObject({ status: "partial", error: { code: "agent_config_conflict" } });
     expect(second.installRecord).toBeUndefined();
     expect(existsSync(bootstrap)).toBe(false);
+    // readWorkspaceStateSnapshot is synchronous on this base and awaited on newer main; resolve both.
     expect(
-      readWorkspaceStateSnapshot(plan.agent.workspace, { env }).setup.bootstrapSeededAt,
+      (await Promise.resolve(readWorkspaceStateSnapshot(plan.agent.workspace, { env }))).setup
+        .bootstrapSeededAt,
     ).toBeUndefined();
 
     // A fresh adoption seeds the package instructions again instead of reading them as consumed.

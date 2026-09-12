@@ -132,9 +132,12 @@ describe("releaseUnclaimedClawAdoption", () => {
     const bootstrap = join(workspace, "BOOTSTRAP.md");
     await writeFile(bootstrap, "seeded bootstrap");
     const env = { OPENCLAW_STATE_DIR: join(root, "state") };
-    mergeWorkspaceSetupState(workspace, { bootstrapSeededAt: new Date(1).toISOString() }, 1, {
-      env,
-    });
+    // mergeWorkspaceSetupState is synchronous on this base and awaited on newer main; resolve both.
+    await Promise.resolve(
+      mergeWorkspaceSetupState(workspace, { bootstrapSeededAt: new Date(1).toISOString() }, 1, {
+        env,
+      }),
+    );
 
     const result = await releaseUnclaimedClawAdoption({
       plan: planWith(workspace, [] as ClawAddPlan["actions"]),
@@ -149,6 +152,10 @@ describe("releaseUnclaimedClawAdoption", () => {
     expect(existsSync(bootstrap)).toBe(false);
     // A marker left behind makes the next seed read "already seeded, file gone" as consumed and
     // silently skip the retry's bootstrap.
-    expect(readWorkspaceStateSnapshot(workspace, { env }).setup.bootstrapSeededAt).toBeUndefined();
+    // readWorkspaceStateSnapshot is synchronous on this base and awaited on newer main; resolve both.
+    expect(
+      (await Promise.resolve(readWorkspaceStateSnapshot(workspace, { env }))).setup
+        .bootstrapSeededAt,
+    ).toBeUndefined();
   });
 });
