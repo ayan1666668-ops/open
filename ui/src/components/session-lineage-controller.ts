@@ -27,6 +27,7 @@ import {
   publishObservedSessionLineage,
   publishObservedSessionRow,
   retainActiveSessionRow,
+  type SidebarChildSessionRead,
 } from "./app-sidebar-child-session-data.ts";
 
 type LineageOwner = {
@@ -63,10 +64,6 @@ type LineageRequest = {
 type LineageNavigation = Pick<LineageScope, "key" | "selectedAgentId" | "gateway" | "sessions"> & {
   identity: ReturnType<typeof resolveUiConversationIdentity>;
 };
-
-type ChildRowAdmission =
-  | { status: "not-selected" }
-  | { status: "selected"; row: GatewaySessionRow | null };
 
 export function sessionLineageIdentityHost(
   context: ApplicationContext<RouteId> | undefined,
@@ -306,10 +303,7 @@ export class SessionLineageController {
     }
   }
 
-  captureChildRead(sourceListScope?: SessionListScope): {
-    isCurrent: () => boolean;
-    reconcile: (row: GatewaySessionRow) => ChildRowAdmission;
-  } {
+  captureChildRead(sourceListScope?: SessionListScope): SidebarChildSessionRead {
     this.synchronize();
     const navigation = this.navigation;
     const key = navigation?.key;

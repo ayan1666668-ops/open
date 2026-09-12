@@ -1,3 +1,4 @@
+import { createDeferredCore } from "../../../../src/shared/deferred.js";
 import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { formatUiError } from "../format-error.ts";
 import { isGatewayAvailable } from "../gateway-availability.ts";
@@ -26,7 +27,6 @@ import {
   retainSessionPaginationWindow,
   sessionListAgentMatcher,
   sessionListEventMatcher,
-  sessionListQueryAgentId,
   type ManagedSessionList,
   type QueuedSessionRefresh,
 } from "./session-list-query.ts";
@@ -105,6 +105,13 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
   let pageActive = !observesPageLifecycle || document.visibilityState !== "hidden";
   const managedLists = new Map<string, ManagedSessionList>();
   const observations = createSessionRosterObservations(host, managedLists);
+  const retireForegroundRefresh = () => {
+    observations.reset();
+    foregroundPublicationGeneration += 1;
+    inFlight = null;
+    queuedExplicitRefresh?.completions.forEach(({ complete }) => complete(null));
+    queuedExplicitRefresh = null;
+  };
 
   const managedList = (scope: SessionListScope): ManagedSessionList => {
     const query = normalizeManagedSessionListQuery(scope);
@@ -162,28 +169,28 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     };
   };
 
+  const scheduleManagedLists = (
+    matches: (entry: ManagedSessionList) => boolean,
+    excludedKey?: string,
+  ) => {
+    for (const entry of managedLists.values()) {
+      if (entry.key !== excludedKey && matches(entry)) {
+        entry.coordinator.schedule();
+      }
+    }
+  };
+
   const invalidateManagedLists = (
     agentId?: string | null,
     row?: GatewaySessionRow,
     sourceListScope?: SessionListScope,
   ) => {
-    const matchesAgent = sessionListAgentMatcher(agentId);
-    const matchesRow = row
-      ? sessionListEventMatcher({ key: row.key, agentId, session: row })
-      : undefined;
-    const sourceKey = sourceListScope
-      ? JSON.stringify(normalizeManagedSessionListQuery(sourceListScope))
-      : undefined;
-    for (const entry of managedLists.values()) {
-      // Adopting a query's accepted row into the primary roster cannot make
-      // that supplying query stale. Other membership projections still refresh.
-      if (entry.key === sourceKey) {
-        continue;
-      }
-      if (matchesRow ? matchesRow(entry) : matchesAgent(sessionListQueryAgentId(entry.query))) {
-        entry.coordinator.schedule();
-      }
-    }
+    const matches = sessionListEventMatcher({ agentId, session: row });
+    const sourceKey =
+      sourceListScope && JSON.stringify(normalizeManagedSessionListQuery(sourceListScope));
+    // Adopting a query's accepted row into the primary roster cannot make
+    // that supplying query stale. Other membership projections still refresh.
+    scheduleManagedLists(matches, sourceKey);
   };
 
   const refreshManagedList = createSessionManagedListRefresh(host, {
@@ -376,10 +383,8 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       return Promise.resolve(null);
     }
     // Claim inFlight before load publishes; each caller awaits its own load, never later events.
-    let settleRefresh!: (refresh: Promise<SessionsListResult | null>) => void;
-    const request = new Promise<SessionsListResult | null>((resolve) => {
-      settleRefresh = resolve;
-    }).finally(() => {
+    const completion = createDeferredCore<SessionsListResult | null>();
+    const request = completion.promise.finally(() => {
       if (inFlight !== request) {
         return;
       }
@@ -403,7 +408,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       }
     });
     inFlight = request;
-    settleRefresh(
+    completion.resolve(
       load(prepareSessionRefreshOptions(options, host.snapshot()), bootstrap, isErrorCurrent),
     );
     return request;
@@ -679,23 +684,15 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       const affected =
         event && typeof event === "object" ? eventRevisions.get(event)?.lists : undefined;
       if (affected) {
-        for (const entry of managedLists.values()) {
-          if (affected.has(entry)) {
-            entry.coordinator.schedule();
-          }
-        }
+        scheduleManagedLists((entry) => affected.has(entry));
       } else {
         invalidateManagedLists(options.agentId);
       }
     },
     reset() {
-      observations.reset();
-      foregroundPublicationGeneration += 1;
+      retireForegroundRefresh();
       primaryList = { scope: primaryList.scope };
       eventRefreshCoordinator.reset();
-      inFlight = null;
-      queuedExplicitRefresh?.completions.forEach(({ complete }) => complete(null));
-      queuedExplicitRefresh = null;
       eventRefreshQueued = false;
       for (const entry of managedLists.values()) {
         entry.coordinator.reset();
@@ -711,15 +708,11 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       }
     },
     dispose() {
-      observations.reset();
-      foregroundPublicationGeneration += 1;
+      retireForegroundRefresh();
       eventRefreshCoordinator.dispose();
       if (observesPageLifecycle) {
         updatePageLifecycleListeners(false);
       }
-      inFlight = null;
-      queuedExplicitRefresh?.completions.forEach(({ complete }) => complete(null));
-      queuedExplicitRefresh = null;
       for (const entry of managedLists.values()) {
         entry.coordinator.dispose();
         entry.listeners.clear();

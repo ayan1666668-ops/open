@@ -549,7 +549,7 @@ export class SessionDataController implements ReactiveController, SessionCatalog
     retireStaleChildSessionRows(this, this.lineage.routeKey, revalidating);
   }
 
-  async loadChildSessions(parentKey: string): Promise<void> {
+  async loadChildSessions(parentKey: string, retry = false): Promise<void> {
     const sessions = this.context?.sessions;
     if (
       !this.host.isConnected ||
@@ -566,21 +566,20 @@ export class SessionDataController implements ReactiveController, SessionCatalog
       await existing.hydration;
       return;
     }
-    const generation = this.childSessionGeneration;
+    const scope = childSessionListQuery(parentKey);
     const query: ChildSessionQuery = {};
     this.childSessionQueries.set(parentKey, query);
     const isCurrent = () =>
       this.host.isConnected &&
-      generation === this.childSessionGeneration &&
       sessions === this.context?.sessions &&
       this.childSessionQueries.get(parentKey) === query;
-    query.observation = sessions.observeList(childSessionListQuery(parentKey), (snapshot) => {
+    query.observation = sessions.observeList(scope, (snapshot) => {
       if (!isCurrent()) {
         return;
       }
       if (snapshot.loading) {
         if (!query.loading) {
-          query.childRead = this.lineage.captureChildRead(childSessionListQuery(parentKey));
+          query.childRead = this.lineage.captureChildRead(scope);
         }
         query.loading = true;
         this.loadingChildSessionKeys = new Set([...this.loadingChildSessionKeys, parentKey]);
@@ -588,6 +587,9 @@ export class SessionDataController implements ReactiveController, SessionCatalog
         return;
       }
       if (snapshot.error) {
+        if (retry && !query.observation) {
+          return;
+        }
         query.loading = false;
         this.childSessionErrorsByParent = new Map(this.childSessionErrorsByParent).set(
           parentKey,
@@ -627,18 +629,20 @@ export class SessionDataController implements ReactiveController, SessionCatalog
         parentKey,
         sessions,
         initialResult: result,
-        childRead:
-          query.childRead ?? this.lineage.captureChildRead(childSessionListQuery(parentKey)),
+        childRead: query.childRead ?? this.lineage.captureChildRead(scope),
         ownsQuery: isCurrent,
         selectedKey: () => this.lineage.routeKey,
-        finish: () => this.finishChildSessionLoad(parentKey),
       }).finally(() => {
         if (isCurrent()) {
           query.hydration = undefined;
-          this.requestSessionDataUpdate();
+          this.finishChildSessionLoad(parentKey);
         }
       });
     });
+    if (!isCurrent()) {
+      query.observation.dispose();
+      return;
+    }
     query.refresh = query.observation
       .refresh()
       .catch(() => undefined)
@@ -653,6 +657,10 @@ export class SessionDataController implements ReactiveController, SessionCatalog
   }
 
   private finishChildSessionLoad(parentKey: string): void {
+    if (this.childSessionErrorsByParent.has(parentKey)) {
+      this.childSessionQueries.get(parentKey)?.observation?.dispose();
+      this.childSessionQueries.delete(parentKey);
+    }
     const next = new Set(this.loadingChildSessionKeys);
     next.delete(parentKey);
     this.loadingChildSessionKeys = next;
@@ -703,7 +711,8 @@ export class SessionDataController implements ReactiveController, SessionCatalog
   }
 
   retryChildSessions(sessionKey: string): void {
-    if (this.childSessionErrorsByParent.has(sessionKey)) {
+    const retry = this.childSessionErrorsByParent.has(sessionKey);
+    if (retry) {
       const errors = new Map(this.childSessionErrorsByParent);
       errors.delete(sessionKey);
       this.childSessionErrorsByParent = errors;
@@ -711,7 +720,7 @@ export class SessionDataController implements ReactiveController, SessionCatalog
       this.childSessionQueries.delete(sessionKey);
       this.requestSessionDataUpdate();
     }
-    void this.loadChildSessions(sessionKey);
+    void this.loadChildSessions(sessionKey, retry);
   }
 
   private invalidateSessionMutations(): void {

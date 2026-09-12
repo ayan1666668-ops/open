@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../api/types.ts";
+import { childSessionListQuery } from "../lib/sessions/child-session-data.ts";
 import { createTestSessionCapability } from "../lib/sessions/session-capability.test-support.ts";
 import "../test-helpers/app-sidebar-suite.ts";
 import {
@@ -510,6 +511,63 @@ describe("sidebar child snapshot freshness", () => {
     expect(harness.list).toHaveBeenCalledTimes(2);
   });
 
+  it.each([false, true])(
+    "retries a synchronously failed shared query (retained: %s)",
+    async (retained) => {
+      const { harness, sidebar, publishChildChanged, expand } = await mountParent();
+      harness.list.mockRejectedValueOnce(new Error("Shared child failure"));
+      const shared = harness.sessions.observeList(childSessionListQuery(parentKey), () => {});
+      await expect(shared.refresh()).rejects.toThrow("Shared child failure");
+      expand();
+      await waitForFast(() => expect(sidebar.textContent).toContain("Shared child failure"));
+      vi.useFakeTimers();
+      try {
+        if (!retained) {
+          shared.dispose();
+          publishChildChanged();
+          await vi.advanceTimersByTimeAsync(250);
+        }
+        expect(harness.list).toHaveBeenCalledTimes(1);
+
+        harness.list.mockResolvedValue(result([child]));
+        sidebar.sessionData.retryChildSessions(parentKey);
+        await vi.advanceTimersByTimeAsync(0);
+        await sidebar.updateComplete;
+        expect(harness.list).toHaveBeenCalledTimes(2);
+        expect(sidebar.textContent).toContain(child.label);
+        expect(sidebar.sessionData.childSessionErrorsByParent.has(parentKey)).toBe(false);
+      } finally {
+        shared.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps incomplete child windows dormant until explicit retry", async () => {
+    const { harness, sidebar, publishChildChanged, expand } = await mountParent();
+    harness.list.mockResolvedValue({ ...result([child]), totalCount: 2, hasMore: false });
+    expand();
+    await waitForFast(() => expect(sidebar.textContent).toContain("kept changing"));
+    expect(harness.list).toHaveBeenCalledTimes(4);
+    vi.useFakeTimers();
+    try {
+      publishChildChanged();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(harness.list).toHaveBeenCalledTimes(4);
+      expect(sidebar.textContent).toContain("kept changing");
+
+      harness.list.mockResolvedValue(result([child]));
+      sidebar.sessionData.retryChildSessions(parentKey);
+      await vi.advanceTimersByTimeAsync(0);
+      await sidebar.updateComplete;
+      expect(harness.list).toHaveBeenCalledTimes(5);
+      expect(sidebar.textContent).toContain(child.label);
+      expect(sidebar.sessionData.childSessionErrorsByParent.has(parentKey)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retains a queued child refresh failure until explicit retry", async () => {
     const { harness, sidebar, publishChildChanged, expand } = await mountParent();
     const initial = deferred<SessionsListResult>();
@@ -533,6 +591,13 @@ describe("sidebar child snapshot freshness", () => {
         "Child refresh failed",
       );
       expect(sidebar.sessionData.loadedChildSessionKeys.has(parentKey)).toBe(false);
+
+      publishChildChanged();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(harness.list).toHaveBeenCalledTimes(2);
+      expect(sidebar.sessionData.childSessionErrorsByParent.get(parentKey)).toBe(
+        "Child refresh failed",
+      );
 
       harness.list.mockResolvedValueOnce(
         result([{ ...child, label: "Recovered child", updatedAt: 30 }]),

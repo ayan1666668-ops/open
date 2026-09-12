@@ -13,13 +13,19 @@ import {
   resolveUiSessionNavigationParentKey,
 } from "../lib/sessions/session-key.ts";
 import { matchesExistingSession } from "../lib/sessions/session-row-reconcile.ts";
-import type { SessionLineageController } from "./session-lineage-controller.ts";
 
 const MAX_SESSION_LINEAGE_DEPTH = 16;
 
 type SessionLineageObservation = {
   row: GatewaySessionRow;
   reconcile: SessionCapability["reconcile"];
+};
+
+export type SidebarChildSessionRead = {
+  isCurrent: () => boolean;
+  reconcile: (
+    row: GatewaySessionRow,
+  ) => { status: "not-selected" } | { status: "selected"; row: GatewaySessionRow | null };
 };
 
 function lineageRowCacheKey(row: GatewaySessionRow, key = row.key): string {
@@ -206,10 +212,9 @@ export async function hydrateSidebarChildSessions(params: {
   parentKey: string;
   sessions: SessionCapability;
   initialResult: SessionsListResult;
-  childRead: ReturnType<SessionLineageController["captureChildRead"]>;
+  childRead: SidebarChildSessionRead;
   ownsQuery: () => boolean;
   selectedKey: () => string | null;
-  finish: () => void;
 }): Promise<void> {
   const { owner, parentKey, sessions, initialResult, childRead } = params;
   const isCurrent = () => params.ownsQuery() && childRead.isCurrent();
@@ -240,19 +245,10 @@ export async function hydrateSidebarChildSessions(params: {
     if (!isCurrent()) {
       return;
     }
-    // Keep the expanded row stable and stop render-driven retries until explicit recovery.
-    owner.childSessionRowsByParent = {
-      ...owner.childSessionRowsByParent,
-      [parentKey]: owner.childSessionRowsByParent[parentKey] ?? [],
-    };
     owner.childSessionErrorsByParent = new Map(owner.childSessionErrorsByParent).set(
       parentKey,
       formatUiError(error),
     );
-  } finally {
-    if (isCurrent()) {
-      params.finish();
-    }
   }
 }
 
