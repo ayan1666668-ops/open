@@ -185,7 +185,24 @@ async function withGitRefAdmission<
           ),
           windowsEncoding: resolveWindowsConsoleEncoding(),
         });
-  return await enqueueGitRefMutation(cwd, commonDir.trim(), () => run(args), signal);
+  let entered = false;
+  try {
+    return await enqueueGitRefMutation(
+      cwd,
+      commonDir.trim(),
+      () => {
+        entered = true;
+        return run(args);
+      },
+      signal,
+    );
+  } catch (error) {
+    if (!entered && signal?.aborted && error === signal.reason) {
+      // The runner owns cancellation results and returns before spawning with this signal.
+      return await run(args);
+    }
+    throw error;
+  }
 }
 
 /** Byte-preserving Git transport shared by worker inventories and ordinary callers. */

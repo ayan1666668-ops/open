@@ -8,7 +8,7 @@ import {
   type GatewayProfileCommand,
 } from "./gateway-bench-profile.ts";
 
-type WorkerTarget = { sessionId: string; threadId: number };
+type WorkerTarget = { sessionId: string; inspectorWorkerId: string };
 type WorkerSample = {
   threadId: number;
   cpu?: NodeJS.CpuUsage;
@@ -17,6 +17,7 @@ type WorkerSample = {
 };
 type WorkerRecording = {
   target: WorkerTarget;
+  threadId?: number;
   profilePath: string;
   startedAt: number;
   pending: Promise<void>;
@@ -37,7 +38,11 @@ type Capture = {
   polling?: Promise<void>;
   timer?: NodeJS.Timeout;
 };
-type WorkerReply = { id?: number; result?: { profile?: unknown }; error?: { message: string } };
+type WorkerReply = {
+  id?: number;
+  result?: { profile?: unknown; result?: { value?: unknown } };
+  error?: { message: string };
+};
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -71,7 +76,7 @@ export class GatewayBenchWorkerProfiler {
       ({ params }: { params: { sessionId: string; workerInfo: { workerId: string } } }) => {
         const target = {
           sessionId: params.sessionId,
-          threadId: Number(params.workerInfo.workerId),
+          inspectorWorkerId: params.workerInfo.workerId,
         };
         this.targets.set(target.sessionId, target);
         for (const capture of this.captures.values()) {
@@ -153,13 +158,23 @@ export class GatewayBenchWorkerProfiler {
   private record(target: WorkerTarget, capture: Capture): void {
     const recording: WorkerRecording = {
       target,
-      profilePath: `${capture.profilePath}.worker-${target.threadId}.${capture.kind === "cpu" ? "cpuprofile" : "heapprofile"}`,
+      profilePath: `${capture.profilePath}.worker-target-${target.inspectorWorkerId}.${capture.kind === "cpu" ? "cpuprofile" : "heapprofile"}`,
       startedAt: performance.now(),
       pending: Promise.resolve(),
     };
     capture.recordings.push(recording);
     recording.pending = (async () => {
       try {
+        const identity = await this.post(target, "Runtime.evaluate", {
+          expression: "process.getBuiltinModule('node:worker_threads').threadId",
+          returnByValue: true,
+        });
+        const threadId = identity?.result?.value;
+        if (typeof threadId !== "number" || !Number.isSafeInteger(threadId) || threadId <= 0) {
+          throw new Error("Worker native thread identity is unavailable");
+        }
+        // Inspector target IDs have a separate allocation order from native thread IDs.
+        recording.threadId = threadId;
         if (capture.kind === "cpu") {
           await this.post(target, "Profiler.enable");
           await this.post(target, "Profiler.setSamplingInterval", {
@@ -239,7 +254,7 @@ export class GatewayBenchWorkerProfiler {
         kind,
         sampleIntervalMs: 100,
         workers: capture.recordings.map(({ pending: _pending, target, ...row }) => ({
-          threadId: target.threadId,
+          inspectorWorkerId: target.inspectorWorkerId,
           ...row,
         })),
         samples: capture.samples,
