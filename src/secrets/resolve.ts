@@ -47,6 +47,8 @@ import {
 } from "./resolve-errors.js";
 import { resolveStoreRefs } from "./resolve-store.js";
 import type { SecretRefResolveCache } from "./resolve-types.js";
+import type { SecretAssignmentSource } from "./runtime-assignment-provenance.js";
+import { sourceQualifiedStoreKey } from "./runtime-assignment-provenance.js";
 import {
   isNonEmptyString,
   isRecord,
@@ -69,6 +71,15 @@ export type { SecretRefResolveCache } from "./resolve-types.js";
 type ResolveSecretRefOptions = {
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
+  /** Original auth-profile owner env (shared state root) for store-ref resolution. */
+  storeOwnerEnv?: NodeJS.ProcessEnv;
+  /** Per-ref assignment sources ("auth-store" vs "config"), keyed by secretRefKey.
+   * Each ref may carry several sources when config and auth-store assignments
+   * collide on the same store key; each source resolves from its own store and
+   * values are stored under source-qualified keys so no consumer reads another
+   * source's credential. When absent, callers keep the legacy whole-batch
+   * `storeOwnerEnv ?? env` behavior. */
+  refSourceByKey?: ReadonlyMap<string, ReadonlySet<SecretAssignmentSource>>;
   cache?: SecretRefResolveCache;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 };
@@ -592,11 +603,65 @@ async function resolveProviderRefs(params: {
       });
     }
     if (params.providerConfig.source === "store") {
-      return resolveStoreRefs({
-        refs: params.refs,
-        providerName: params.providerName,
-        database: { env: params.options.env ?? process.env },
-      });
+      const fallbackEnv = params.options.env ?? process.env;
+      const sourceByKey = params.options.refSourceByKey;
+      if (!sourceByKey) {
+        // No per-ref provenance (Gateway and other callers): keep the legacy
+        // whole-batch owner-env read-through.
+        return resolveStoreRefs({
+          refs: params.refs,
+          providerName: params.providerName,
+          database: {
+            env: params.options.storeOwnerEnv ?? fallbackEnv,
+          },
+        });
+      }
+      // Per-ref credential-owner routing: an auth-store ref resolves through the
+      // owner env; a config ref keeps the current env. When a ref key carries
+      // several sources (config + auth-store collision), the ref participates
+      // once per source so each store's value is resolved and stored under a
+      // source-qualified key — a config consumer can never read the shared
+      // owner credential (P1-B, Codex R6).
+      const resolved = new Map<string, unknown>();
+      const ownerRefs: SecretRef[] = [];
+      const envRefs: SecretRef[] = [];
+      for (const ref of params.refs) {
+        const sources = sourceByKey.get(secretRefKey(ref)) ?? new Set(["config" as const]);
+        for (const source of sources) {
+          if (source === "auth-store") {
+            ownerRefs.push(ref);
+          } else {
+            envRefs.push(ref);
+          }
+        }
+      }
+      if (ownerRefs.length > 0) {
+        const values = resolveStoreRefs({
+          refs: ownerRefs,
+          providerName: params.providerName,
+          database: { env: params.options.storeOwnerEnv ?? fallbackEnv },
+        });
+        for (const [id, value] of values) {
+          const ref = ownerRefs.find((candidate) => candidate.id === id);
+          if (ref) {
+            resolved.set(sourceQualifiedStoreKey(ref, "auth-store"), value);
+          }
+        }
+      }
+      if (envRefs.length > 0) {
+        const values = resolveStoreRefs({
+          refs: envRefs,
+          providerName: params.providerName,
+          database: { env: fallbackEnv },
+        });
+        for (const [id, value] of values) {
+          const ref = envRefs.find((candidate) => candidate.id === id);
+          if (ref) {
+            resolved.set(sourceQualifiedStoreKey(ref, "config"), value);
+          }
+        }
+      }
+      return resolved;
     }
     if (params.providerConfig.source === "exec") {
       if (isPluginIntegrationSecretProviderConfig(params.providerConfig)) {
@@ -710,15 +775,20 @@ function createProviderResolutionTasks(params: {
         options: params.options,
         limits: params.limits,
       });
-      for (const ref of group.refs) {
-        if (!values.has(ref.id)) {
-          throw refResolutionError({
-            code: "SECRET_REF_PROVIDER_CONTRACT",
-            source: group.source,
-            provider: group.providerName,
-            refId: ref.id,
-            message: `Secret provider "${group.providerName}" did not return id "${ref.id}".`,
-          });
+      if (group.source !== "store") {
+        // Store groups key values by sourceQualifiedStoreKey and throw inside
+        // resolveStoreRefs on a missing entry, so the id contract check is not
+        // applicable; the per-ref check below only guards env/file/exec groups.
+        for (const ref of group.refs) {
+          if (!values.has(ref.id)) {
+            throw refResolutionError({
+              code: "SECRET_REF_PROVIDER_CONTRACT",
+              source: group.source,
+              provider: group.providerName,
+              refId: ref.id,
+              message: `Secret provider "${group.providerName}" did not return id "${ref.id}".`,
+            });
+          }
         }
       }
       return { group, values };
@@ -746,6 +816,14 @@ async function resolveSecretRefProviderGroups(params: {
   const resolved = new Map<string, unknown>();
   for (const result of taskResults.results) {
     if (!result) {
+      continue;
+    }
+    if (result.group.source === "store") {
+      // Store groups already resolve per-source and key values by
+      // sourceQualifiedStoreKey, so pass the composite keys through unchanged.
+      for (const [key, value] of result.values) {
+        resolved.set(key, value);
+      }
       continue;
     }
     for (const ref of result.group.refs) {
