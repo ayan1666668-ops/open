@@ -183,6 +183,14 @@ retired process are not kept. Extension relay settings still require a Gateway
 restart. Snapshot defaults apply to the next snapshot, and tab-cleanup settings
 apply on the next sweep.
 
+TLS certificate renewal watches the files at the running Gateway's accepted
+certificate, key, and CA paths. Valid replacement material updates existing and
+future HTTPS listeners, discovery, and pairing fingerprints without interrupting
+connections. Incomplete or invalid replacements keep the previous material serving.
+Reload mode `off` pauses renewal; re-enabling checks changes made while paused.
+TLS configuration and path changes still require a Gateway restart. Remote
+certificate pins remain operator-controlled; see [Gateway TLS](/gateway/config-gateway#gateway-tls).
+
 Authentication rate-limit changes retain recorded failures, earned lockout
 deadlines, and pending loopback delays. New limits and loopback exemptions apply
 to subsequent attempts; tightening the attempt limit can lock a client based on
@@ -221,8 +229,8 @@ nodes and operator connections stay open. Legacy nodes reconnect when hosted sur
 descriptors change so their protocol limits are recalculated. Pending node handshakes
 also recheck those capabilities before admission.
 
-Plugin metadata stays stable between lifecycle operations; ordinary runtime
-lookups do not scan plugin files. In hybrid mode, edits under
+Ordinary runtime lookups use the cached plugin inventory and do not scan plugin
+files. In hybrid mode, edits under
 `plugins.entries.<id>` replace the affected instance by default and rerun registration
 with its new config. Unchanged plugin instances retain their registration
 snapshots. A plugin's narrower reload policy can retain an instance or require a restart.
@@ -230,8 +238,8 @@ snapshots. A plugin's narrower reload policy can retain an instance or require a
 Plugin install, update, enable, disable, uninstall, and metadata refresh apply
 through the running Gateway's plugin lifecycle without a Gateway restart.
 Explicit plugin actions also work when passive reload is `off`. Source or
-manifest edits need `openclaw plugins reload <id>`; changing an agent workspace
-alone does not refresh plugin discovery. See
+manifest edits need `openclaw plugins reload <id>`. Changing an agent workspace
+alone does not refresh plugin discovery; use an explicit metadata refresh. See
 [Apply changes and inspect](/plugins/manage-plugins#apply-changes-and-inspect)
 and [Plugin metadata snapshots](/plugins/architecture#plugin-metadata-snapshot-and-lookup-table).
 
