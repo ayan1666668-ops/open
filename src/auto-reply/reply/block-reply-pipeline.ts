@@ -444,11 +444,9 @@ export function getBlockReplyAttemptGroups<T>(
   payload: ReplyPayload,
 ): Iterable<readonly T[]> {
   const assistantMessageIndex = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
-  if (assistantMessageIndex === undefined) {
-    return attemptsByMessage.values();
-  }
-  const matching = attemptsByMessage.get(assistantMessageIndex);
-  return matching?.length ? [matching] : attemptsByMessage.values();
+  return assistantMessageIndex === undefined
+    ? attemptsByMessage.values()
+    : [attemptsByMessage.get(assistantMessageIndex) ?? []];
 }
 
 function normalizeBlockReplySource(text: string): string {

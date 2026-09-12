@@ -614,10 +614,15 @@ async function runSweepSample(childCount: number): Promise<Sample> {
     runs,
     resumedRuns: new Set(),
     persist: () => {},
+    persistOrThrow: () => {},
     clearPendingLifecycleError: () => {},
     clearPendingLifecycleTimeout: () => {},
     clearPendingSubagentRecoveryNotice: () => true,
     sweepPendingLifecycle: () => {},
+    clearSubagentRunSteerRestart: () => true,
+    recordAcceptedSubagentSpawnRollback: () => ({ status: "persisted" }),
+    rollbackSubagentRunRegistration: () => true,
+    settleFailedQueuedSubagentLaunch: () => true,
     completeSubagentRunWithRecovery: async () => {
       lostContextCompletions += 1;
     },
@@ -658,6 +663,7 @@ async function runSweepSample(childCount: number): Promise<Sample> {
     retireSupersededRun: async () => {},
     getRunsForChildSession: getSubagentRunsForChildSession,
     getRunsForCollectorGroup: () => [],
+    shouldDeferArchive: () => false,
     warn: () => {},
   });
   try {
