@@ -308,8 +308,21 @@ export function normalizeShortTermRecallStore(raw: unknown, nowIso: string): Sho
       // Strict parsers reject non-canonical encodings that Number() silently accepts
       // (hex/binary/exponent notation, booleans, arrays, Infinity) and enforce
       // non-negativity, which Number.isInteger alone does not.
-      const startLine = parseStrictNonNegativeInteger(entry.startLine);
-      const endLine = parseStrictNonNegativeInteger(entry.endLine);
+      //
+      // A row written by an older permissive decoder can therefore carry a range
+      // field we must not trust. An unusable range must never be replaced by an
+      // invented line number, but discarding the row would lose real recall history.
+      // The entry's own map key still carries the range the writer meant (it was
+      // minted from the value that writer actually used), so recover it from there.
+      // Only a row with no usable range in either place has no identity to preserve.
+      const parsedStartLine = parseStrictNonNegativeInteger(entry.startLine);
+      const parsedEndLine = parseStrictNonNegativeInteger(entry.endLine);
+      const recoveredRange =
+        parsedStartLine === undefined || parsedEndLine === undefined
+          ? recoverEntryRangeFromKey(key)
+          : undefined;
+      const startLine = parsedStartLine ?? recoveredRange?.startLine;
+      const endLine = parsedEndLine ?? recoveredRange?.endLine;
       const source = entry.source === "memory" ? "memory" : null;
       if (!entryPath || startLine === undefined || endLine === undefined || !source) {
         continue;
@@ -598,4 +611,25 @@ export function parseEntryRangeFromKey(
     };
   }
   return { startLine: 1, endLine: 1 };
+}
+
+/**
+ * Recovers a positive line range from an entry's map key of the form
+ * `${source}:${path}:${startLine}:${endLine}` (see {@link buildEntryKey}).
+ *
+ * Returns `undefined` when the key does not carry a usable range, so callers can
+ * distinguish "recovered a faithful range" from "no identity available" instead of
+ * falling back to a placeholder range that would misidentify the entry.
+ */
+function recoverEntryRangeFromKey(key: string): { startLine: number; endLine: number } | undefined {
+  const match = key.match(/:(\d+):(\d+)$/);
+  if (!match) {
+    return undefined;
+  }
+  const startLine = toNonNegativeInt(match[1]);
+  const endLine = toNonNegativeInt(match[2]);
+  if (startLine <= 0 || endLine <= 0) {
+    return undefined;
+  }
+  return { startLine, endLine };
 }

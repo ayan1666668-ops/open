@@ -290,6 +290,89 @@ describe("normalizeShortTermRecallStore numeric decoding", () => {
       expect(value).toBeGreaterThanOrEqual(0);
     }
   });
+
+  // An entry's line range determines its identity via buildEntryKey(), so a row
+  // whose range field is unusable must not silently acquire an invented line
+  // number. Older permissive decoders minted the map key from the number they had
+  // coerced, so the key still carries the range the writer meant.
+  function storeKeyedBy(key: string, entry: Record<string, unknown>): unknown {
+    return {
+      version: 1,
+      updatedAt: nowIso,
+      entries: {
+        [key]: {
+          path: "memory/2026-09-01.md",
+          source: "memory",
+          snippet: "A note.",
+          firstRecalledAt: nowIso,
+          lastRecalledAt: nowIso,
+          ...entry,
+        },
+      },
+    };
+  }
+
+  baseIt("recovers a range from the entry key when the field is not canonical", () => {
+    // Old decoder wrote startLine "0x10" as 16 and keyed the row accordingly.
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:memory/2026-09-01.md:16:20", {
+        startLine: "0x10",
+        endLine: 20,
+      }),
+      nowIso,
+    );
+    const keys = Object.keys(normalized.entries);
+    expect(keys).toEqual(["memory:memory/2026-09-01.md:16:20"]);
+    expect(normalized.entries[keys[0]]?.startLine).toBe(16);
+    expect(normalized.entries[keys[0]]?.endLine).toBe(20);
+  });
+
+  baseIt("recovers both bounds when neither range field is usable", () => {
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:memory/2026-09-01.md:5:9", {
+        startLine: "0b101",
+        endLine: "not-a-number",
+      }),
+      nowIso,
+    );
+    const keys = Object.keys(normalized.entries);
+    expect(keys).toEqual(["memory:memory/2026-09-01.md:5:9"]);
+    expect(normalized.entries[keys[0]]?.startLine).toBe(5);
+    expect(normalized.entries[keys[0]]?.endLine).toBe(9);
+  });
+
+  baseIt("keeps the stored map key as identity even when the field parses", () => {
+    // Pre-existing behavior (upstream `key || buildEntryKey(...)`): the persisted map
+    // key is the identity, so a canonical field does not re-key the row. Recovery only
+    // supplies a range when the fields are unusable.
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:memory/2026-09-01.md:16:20", {
+        startLine: 3,
+        endLine: 9,
+      }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual(["memory:memory/2026-09-01.md:16:20"]);
+  });
+
+  baseIt("drops a row only when neither the fields nor the key carry a range", () => {
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("k1", { startLine: "0x10", endLine: 20 }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([]);
+  });
+
+  baseIt("does not invent a range from a non-positive key", () => {
+    const normalized = normalizeShortTermRecallStore(
+      storeKeyedBy("memory:memory/2026-09-01.md:0:0", {
+        startLine: "0x10",
+        endLine: "0x20",
+      }),
+      nowIso,
+    );
+    expect(Object.keys(normalized.entries)).toEqual([]);
+  });
 });
 
 describe("short-term promotion", () => {
