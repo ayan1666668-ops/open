@@ -45,9 +45,9 @@ export function createSettledOverflowAttemptRecovery(
         laneController: { throwIfAborted: vi.fn() },
       },
       preparedRuntime: {
-        provider: input.provider,
-        modelId: input.modelId,
-        model: { id: input.modelId },
+        provider: assistant.provider,
+        modelId: assistant.model,
+        model: { id: assistant.model },
         genericCompactionRecoveryAllowed: input.genericCompactionRecoveryAllowed,
         snapshot: () => ({
           contextTokenBudget: input.contextTokenBudget,
@@ -69,7 +69,7 @@ export function createSettledOverflowAttemptRecovery(
         }),
         setTerminalLifecycleMeta: vi.fn(),
         attemptCompactionCount: input.attemptCompactionCount,
-        activeErrorContext: { provider: input.provider, model: input.modelId },
+        activeErrorContext: { provider: assistant.provider, model: assistant.model },
         resolveReplayInvalidForAttempt: () => true,
         canRestartForLiveSwitch: false,
       },
