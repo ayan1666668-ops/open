@@ -137,7 +137,7 @@ export function registerBrowserAgentActRoutes(
         profileCtx,
         targetId,
         enforceCurrentUrlAllowed: shouldEnforceCurrentUrlForAct(action),
-        run: async ({ cdpUrl, tab, signal, resolveTabUrl }) => {
+        run: async ({ cdpUrl, tab, signal, resolveTabUrl, assertCurrent }) => {
           const evaluateEnabled = ctx.state().resolved.evaluateEnabled;
           const navigationPolicy = browserNavigationPolicyForProfile(ctx, profileCtx);
           let verificationDeadline: ReturnType<typeof createExistingSessionDeadline> | undefined;
@@ -448,8 +448,9 @@ export function registerBrowserAgentActRoutes(
             if (!pw) {
               return;
             }
-            const assertCurrent = req.assertCurrent;
-            await assertCurrent?.(profileCtx.profile);
+            if (assertCurrent) {
+              await assertCurrent();
+            }
             const result = await pw.executeActViaPlaywright({
               cdpUrl,
               action,
@@ -457,7 +458,7 @@ export function registerBrowserAgentActRoutes(
               evaluateEnabled,
               ...navigationPolicy,
               signal,
-              assertCurrent: assertCurrent ? () => assertCurrent(profileCtx.profile) : undefined,
+              ...(assertCurrent ? { assertCurrent } : {}),
             });
             const resultTargetOptions = {
               resolveCurrentTarget: true,

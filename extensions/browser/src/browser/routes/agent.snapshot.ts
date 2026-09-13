@@ -353,7 +353,7 @@ export function registerBrowserAgentSnapshotRoutes(
       res,
       ctx,
       targetId,
-      run: async ({ profileCtx, tab, cdpUrl, signal }) => {
+      run: async ({ profileCtx, tab, cdpUrl, signal, assertCurrent }) => {
         if (getBrowserProfileCapabilities(profileCtx.profile).usesChromeMcp) {
           const ssrfPolicyOpts = browserNavigationPolicyForProfile(ctx, profileCtx);
           await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
@@ -383,6 +383,7 @@ export function registerBrowserAgentSnapshotRoutes(
             targetId: tab.targetId,
             url,
             timeoutMs,
+            ...(assertCurrent ? { assertCurrent } : {}),
             ...(resolveRelayTarget
               ? {
                   resolveOperationTarget: resolveRelayTarget,

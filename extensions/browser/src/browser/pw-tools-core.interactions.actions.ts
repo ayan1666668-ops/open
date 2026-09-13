@@ -71,7 +71,9 @@ export async function clickViaPlaywright(
         await locator.hover({ timeout, signal });
         throwIfInteractionAborted(opts.signal);
         await sleepWithAbort(delayMs, opts.signal);
-        await assertInteractionCurrent(opts);
+        if (opts.assertCurrent) {
+          await assertInteractionCurrent(opts);
+        }
         throwIfInteractionAborted(opts.signal);
       }
       const clickOptions = { timeout, signal, button: opts.button, modifiers: opts.modifiers };
@@ -239,14 +241,18 @@ export async function typeViaPlaywright(
     async (signal) => {
       if (opts.slowly) {
         await locator.click({ timeout, signal });
-        await assertInteractionCurrent(opts);
+        if (opts.assertCurrent) {
+          await assertInteractionCurrent(opts);
+        }
         throwIfInteractionAborted(opts.signal);
         await locator.type(text, { timeout, signal, delay: 75 });
       } else {
         await locator.fill(text, { timeout, signal });
       }
       if (opts.submit) {
-        await assertInteractionCurrent(opts);
+        if (opts.assertCurrent) {
+          await assertInteractionCurrent(opts);
+        }
         throwIfInteractionAborted(opts.signal);
         await locator.press("Enter", { timeout, signal });
       }

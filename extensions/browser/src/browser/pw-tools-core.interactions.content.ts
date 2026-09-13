@@ -208,13 +208,17 @@ export async function waitForViaPlaywright(
       await waitFor(page.waitForLoadState(opts.loadState, { timeout }));
     }
     if (fn) {
-      await assertInteractionCurrent(opts);
-      throwIfInteractionAborted(opts.signal);
+      if (opts.assertCurrent) {
+        await assertInteractionCurrent(opts);
+        throwIfInteractionAborted(opts.signal);
+      }
       // Passing the live document handle makes Playwright fail instead of
       // recreating this predicate in a replacement execution context.
       const documentHandle = await page.evaluateHandle(() => globalThis.document);
       try {
-        await assertInteractionCurrent(opts);
+        if (opts.assertCurrent) {
+          await assertInteractionCurrent(opts);
+        }
         throwIfInteractionAborted(opts.signal);
         await waitFor(
           page.waitForFunction(

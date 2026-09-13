@@ -65,7 +65,9 @@ export async function runProfileRouteOperation<T>(params: {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await withProfileContextOperation(params.profileCtx, params.signal, async (signal) => {
-        await params.assertCurrent?.(params.profileCtx.profile);
+        if (params.assertCurrent) {
+          await params.assertCurrent(params.profileCtx.profile);
+        }
         signal.throwIfAborted();
         return await params.run(signal);
       });

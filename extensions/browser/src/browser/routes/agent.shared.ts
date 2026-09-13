@@ -14,6 +14,7 @@ import {
 } from "../navigation-guard.js";
 import type { PwAiModule } from "../pw-ai-module.js";
 import { getPwAiModule as getPwAiModuleBase } from "../pw-ai-module.js";
+import type { InteractionTargetOptions } from "../pw-tools-core.interactions.navigation.js";
 import type { BrowserRouteContext, ProfileContext } from "../server-context.js";
 import { isProfileRestartRequiredError } from "../server-context.lifecycle.js";
 import type { BrowserRequest, BrowserResponse } from "./types.js";
@@ -129,6 +130,7 @@ type RouteTabContext = {
   tab: Awaited<ReturnType<ProfileContext["ensureTabAvailable"]>>;
   cdpUrl: string;
   signal: AbortSignal;
+  assertCurrent?: InteractionTargetOptions["assertCurrent"];
   resolveTabUrl: (fallbackUrl?: string) => Promise<string | undefined>;
 };
 
@@ -158,6 +160,10 @@ export async function withRouteTabContext<T>(
   if (!profileCtx) {
     return undefined;
   }
+  const requestAssertCurrent = params.req.assertCurrent;
+  const assertCurrent = requestAssertCurrent
+    ? () => requestAssertCurrent(profileCtx.profile)
+    : undefined;
   try {
     return await runProfileRouteOperation({
       profileCtx,
@@ -177,12 +183,15 @@ export async function withRouteTabContext<T>(
             ...browserNavigationPolicyForProfile(params.ctx, profileCtx),
           });
         }
-        await params.req.assertCurrent?.(profileCtx.profile);
+        if (assertCurrent) {
+          await assertCurrent();
+        }
         return await params.run({
           profileCtx,
           tab,
           cdpUrl: profileCtx.profile.cdpUrl,
           signal,
+          ...(assertCurrent ? { assertCurrent } : {}),
           resolveTabUrl: (fallbackUrl?: string) =>
             resolveSafeRouteTabUrl({
               ctx: params.ctx,
@@ -267,12 +276,12 @@ export async function withPlaywrightRouteContext<T>(
     ...(params.profileCtx ? { profileCtx: params.profileCtx } : {}),
     targetId: params.targetId,
     enforceCurrentUrlAllowed: params.enforceCurrentUrlAllowed,
-    run: async ({ profileCtx, tab, cdpUrl, signal, resolveTabUrl }) => {
+    run: async (routeCtx) => {
       const pw = await requirePwAi(params.res, params.feature);
       if (!pw) {
         return undefined as T | undefined;
       }
-      return await params.run({ profileCtx, tab, cdpUrl, signal, resolveTabUrl, pw });
+      return await params.run({ ...routeCtx, pw });
     },
   });
 }

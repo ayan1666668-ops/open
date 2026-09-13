@@ -633,8 +633,12 @@ export async function focusPageByTargetIdViaPlaywright(opts: {
   targetId: string;
   ssrfPolicy?: SsrFPolicy;
   signal?: AbortSignal;
+  assertCurrent?: () => Promise<void>;
 }): Promise<void> {
   const page = await getPageForTargetId(opts);
+  if (opts.assertCurrent) {
+    await opts.assertCurrent();
+  }
   opts.signal?.throwIfAborted();
   await page.bringToFront();
 }

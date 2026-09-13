@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { useBrowserDashboardTestHarness } from "../../browser-dashboard.test-harness.js";
 import type { BrowserActRequest } from "../client-actions.types.js";
 import type { BrowserTab } from "../client.types.js";
+import { gotoPageWithNavigationGuard as gotoPageWithNavigationGuardReal } from "../pw-session-navigation.js";
 import {
   getPwToolsCoreSessionMocks,
   installPwToolsCoreTestHooks,
@@ -30,7 +31,10 @@ vi.mock("../cdp.helpers.js", async (importOriginal) => ({
   closeTrackedCdpTarget: browser.closeOwned,
 }));
 vi.mock("../pw-ai-module.js", () => ({
-  getPwAiModule: async () => await import("../pw-tools-core.interactions.execution.js"),
+  getPwAiModule: async () => ({
+    ...(await import("../pw-tools-core.interactions.execution.js")),
+    ...(await import("../pw-tools-core.snapshot.js")),
+  }),
 }));
 
 import {
@@ -40,12 +44,13 @@ import {
   stopBrowserDashboard,
 } from "../../browser-dashboard.js";
 import { registerBrowserAgentActRoutes } from "./agent.act.js";
+import { registerBrowserAgentSnapshotRoutes } from "./agent.snapshot.js";
 
 installPwToolsCoreTestHooks();
 const sessionKey = "agent:main:dashboard-action-proof";
 const request = { sessionKey, agentId: "main", name: "service" };
 
-function actionRoute(tab: BrowserTab) {
+function dashboardRoute(tab: BrowserTab, route: "/act" | "/navigate" = "/act") {
   const profile = makeBrowserProfile();
   const unused = async (): Promise<never> => {
     throw new Error("Unexpected browser profile operation");
@@ -78,7 +83,8 @@ function actionRoute(tab: BrowserTab) {
   };
   const { app, postHandlers } = createBrowserRouteApp();
   registerBrowserAgentActRoutes(app, context);
-  return postHandlers.get("/act")!;
+  registerBrowserAgentSnapshotRoutes(app, context);
+  return postHandlers.get(route)!;
 }
 
 describe("dashboard action ownership", () => {
@@ -153,7 +159,7 @@ describe("dashboard action ownership", () => {
       }
       const response = createBrowserRouteResponse();
       const operation = Promise.resolve(
-        actionRoute(tab)(
+        dashboardRoute(tab)(
           {
             params: {},
             query: {},
@@ -198,6 +204,118 @@ describe("dashboard action ownership", () => {
         releaseWait.resolve();
         releaseClose.resolve({ status: "closed" });
         await Promise.allSettled([operation, retirement]);
+      }
+    },
+  );
+
+  it.each([
+    { revoke: "Stop", retry: false },
+    { revoke: "replacement", retry: false },
+    { revoke: "none", retry: false },
+    { revoke: "Stop", retry: true },
+    { revoke: "replacement", retry: true },
+    { revoke: "none", retry: true },
+  ])(
+    "revalidates standalone navigation after $revoke during route preparation with retry=$retry",
+    async ({ revoke, retry }) => {
+      const dashboard = await requestBrowserDashboard(request);
+      const targetId = dashboard.browserTab!.targetId;
+      const tab: BrowserTab = { targetId, type: "page", title: "Service", url: dashboard.url };
+      const preparationEntered = createDeferred<void>();
+      const releasePreparation = createDeferred<void>();
+      const closeEntered = createDeferred<void>();
+      const releaseClose = createDeferred<{ status: "closed" }>();
+      const requestedUrl = "https://93.184.216.34/next";
+      let currentUrl = dashboard.url;
+      let navigations = 0;
+      let preparations = 0;
+      const goto = vi.fn(async (url: string) => {
+        navigations += 1;
+        if (retry && navigations === 1) {
+          throw new Error("page.goto: Frame has been detached");
+        }
+        currentUrl = url;
+        return null;
+      });
+      const page = {
+        url: () => currentUrl,
+        isClosed: () => false,
+        goto,
+        route: vi.fn(async () => {
+          preparations += 1;
+          if (preparations === (retry ? 2 : 1)) {
+            preparationEntered.resolve();
+            await releasePreparation.promise;
+          }
+        }),
+        unroute: vi.fn(async () => {}),
+      };
+      setPwToolsCoreCurrentPage(page);
+      const pwSession = await import("../pw-session.js");
+      const gotoGuard = vi
+        .mocked(pwSession.gotoPageWithNavigationGuard)
+        .mockImplementation(gotoPageWithNavigationGuardReal);
+      browser.closeOwned.mockImplementation(async () => {
+        closeEntered.resolve();
+        return await releaseClose.promise;
+      });
+      const response = createBrowserRouteResponse();
+      const operation = Promise.resolve(
+        dashboardRoute(tab, "/navigate")(
+          {
+            params: {},
+            query: {},
+            body: { targetId, url: requestedUrl },
+            assertCurrent: async (profile) =>
+              await assertBrowserDashboardTargetCurrent(dashboard, "main", {}, profile),
+          },
+          response.res,
+        ),
+      );
+      let retirement: Promise<unknown> | undefined;
+      try {
+        await Promise.race([
+          preparationEntered.promise,
+          operation.then(() => {
+            throw new Error(
+              `Navigation ended before preparation: ${response.statusCode} ${JSON.stringify(response.body)}`,
+            );
+          }),
+        ]);
+        if (revoke !== "none") {
+          if (revoke === "replacement") {
+            fixture.widgets[0]!.instanceId = "instance-two";
+            retirement = reconcileBrowserDashboards();
+          } else {
+            retirement = stopBrowserDashboard(request);
+          }
+          await Promise.race([
+            closeEntered.promise,
+            retirement.then(() => {
+              throw new Error("Dashboard retirement ended before closing its tab");
+            }),
+          ]);
+        }
+        expect(fixture.tabs.map((entry) => entry.targetId)).toContain(targetId);
+        releasePreparation.resolve();
+        await operation;
+        if (revoke === "none") {
+          expect(goto).toHaveBeenCalledTimes(retry ? 2 : 1);
+          expect(response.statusCode).toBe(200);
+          expect(response.body).toMatchObject({ ok: true, targetId, url: requestedUrl });
+          expect(page.url()).toBe(requestedUrl);
+        } else {
+          expect(goto).toHaveBeenCalledTimes(retry ? 1 : 0);
+          expect(response.statusCode).toBeGreaterThanOrEqual(400);
+          expect(response.body).toMatchObject({ error: expect.stringMatching(/dashboard/i) });
+          expect(page.url()).toBe(dashboard.url);
+        }
+        expect(page.unroute).toHaveBeenCalledTimes(retry ? 2 : 1);
+      } finally {
+        releasePreparation.resolve();
+        releaseClose.resolve({ status: "closed" });
+        await Promise.allSettled([operation, retirement]);
+        gotoGuard.mockRestore();
       }
     },
   );

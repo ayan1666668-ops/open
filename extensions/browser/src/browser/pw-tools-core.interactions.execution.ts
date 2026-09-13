@@ -67,7 +67,9 @@ async function executeSingleAction(
     signal,
     assertCurrent,
   };
-  await assertInteractionCurrent(interaction);
+  if (assertCurrent) {
+    await assertInteractionCurrent(interaction);
+  }
   switch (action.kind) {
     case "click":
       await clickViaPlaywright({

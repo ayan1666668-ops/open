@@ -502,6 +502,7 @@ export async function snapshotRoleViaPlaywright(opts: {
 export async function navigateViaPlaywright(opts: {
   cdpUrl: string;
   targetId?: string;
+  assertCurrent?: InteractionTargetOptions["assertCurrent"];
   resolveOperationTarget?: () => string | undefined | Promise<string | undefined>;
   relayReference?: RelayOperationReference;
   url: string;
@@ -552,9 +553,14 @@ export async function navigateViaPlaywright(opts: {
               if ((await opts.resolveOperationTarget?.()) !== currentTargetId) {
                 throw new BrowserTabNotFoundError({ input: currentTargetId });
               }
+              if (opts.assertCurrent) {
+                await opts.assertCurrent();
+              }
             },
           }
-        : {}),
+        : opts.assertCurrent
+          ? { assertPageCurrent: opts.assertCurrent }
+          : {}),
     });
   const navigateWithDownloadCapture = async (): Promise<{
     response: Awaited<ReturnType<typeof navigate>> | null;
@@ -685,11 +691,13 @@ export async function resizeViewportViaPlaywright(
   await runPageEmulationTransition({
     state,
     signal: opts.signal,
-    run: async () => {
-      await assertInteractionCurrent(opts);
-      opts.signal?.throwIfAborted();
-      await setViewportSizeOnPage(page, state, viewport);
-    },
+    run: opts.assertCurrent
+      ? async () => {
+          await assertInteractionCurrent(opts);
+          opts.signal?.throwIfAborted();
+          await setViewportSizeOnPage(page, state, viewport);
+        }
+      : () => setViewportSizeOnPage(page, state, viewport),
   });
 }
 
@@ -704,7 +712,9 @@ export async function closePageViaPlaywright(opts: InteractionTargetOptions): Pr
     }
     assertBrowserDashboardTabCanClose(targetId);
   }
-  await assertInteractionCurrent(opts);
+  if (opts.assertCurrent) {
+    await assertInteractionCurrent(opts);
+  }
   await page.close();
 }
 

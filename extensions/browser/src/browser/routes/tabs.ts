@@ -314,7 +314,14 @@ export function registerBrowserTabRoutes(app: BrowserRouteRegistrar, ctx: Browse
           });
         }
         signal.throwIfAborted();
-        await profileCtx.focusTab(resolved.targetId, { exactTargetId: true, signal });
+        const requestAssertCurrent = req.assertCurrent;
+        await profileCtx.focusTab(resolved.targetId, {
+          exactTargetId: true,
+          signal,
+          ...(requestAssertCurrent
+            ? { assertCurrent: () => requestAssertCurrent(profileCtx.profile) }
+            : {}),
+        });
         return resolved.targetId;
       },
     });
@@ -437,7 +444,14 @@ export function registerBrowserTabRoutes(app: BrowserRouteRegistrar, ctx: Browse
           });
         }
         signal.throwIfAborted();
-        await profileCtx.focusTab(target.targetId, { exactTargetId: true, signal });
+        const requestAssertCurrent = req.assertCurrent;
+        await profileCtx.focusTab(target.targetId, {
+          exactTargetId: true,
+          signal,
+          ...(requestAssertCurrent
+            ? { assertCurrent: () => requestAssertCurrent(profileCtx.profile) }
+            : {}),
+        });
         return { ok: true, targetId: target.targetId };
       },
     });
