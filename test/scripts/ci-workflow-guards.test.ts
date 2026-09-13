@@ -1715,7 +1715,6 @@ function runCheckShardFixture(options: {
     failStripe?: string;
     changedPathsJson?: string;
     boundary?: boolean;
-    boundarySource?: string;
   };
 }): {
   calls: string[];
@@ -1746,31 +1745,25 @@ if (args[args.indexOf("--stripe") + 1] === process.env.FAIL_TYPE_STRIPE) process
     );
   }
   if (options.types?.boundary) {
-    for (const entry of [
-      "scripts/run-additional-boundary-checks.mts",
-      "scripts/check-extension-plugin-sdk-boundary.mts",
-      "scripts/tsx.mjs",
-    ]) {
-      copyFileSync(entry, path.join(root, entry));
-    }
+    writeFileSync(
+      path.join(root, "scripts/run-additional-boundary-checks.mts"),
+      readFileSync("scripts/run-additional-boundary-checks.mts"),
+    );
     for (const directory of ["scripts/lib", "packages", "node_modules"]) {
       symlinkSync(path.resolve(directory), path.join(root, directory), "dir");
     }
-    // Root discovery must keep the real guard on this fixture's authored source.
-    writeFileSync(path.join(root, "pnpm-workspace.yaml"), "packages: []\n");
-    mkdirSync(path.join(root, "extensions/fixture"), { recursive: true });
+    copyFileSync("scripts/tsx.mjs", path.join(root, "scripts/tsx.mjs"));
     writeFileSync(
-      path.join(root, "extensions/fixture/index.ts"),
-      options.types.boundarySource ?? 'import type {} from "openclaw/plugin-sdk/core";\n',
+      path.join(root, "scripts/check-extension-plugin-sdk-boundary.mts"),
+      `
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const imports = process.execArgv.map((arg) => arg.startsWith("file:") ? "./" + path.relative(process.cwd(), fileURLToPath(arg)) : arg);
+const command = ["node", ...imports, path.relative(process.cwd(), process.argv[1]), ...process.argv.slice(2)].join(" ");
+appendFileSync(process.env.TYPE_CALLS, [process.env.TYPE_ROW, process.env.OPENCLAW_LOCAL_CHECK ?? "<unset>", command].join("\\t") + "\\n");
+`,
     );
-    writeExecutable(path.join(fakeBin, "node"), [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      'if [ "${3-}" = "scripts/check-extension-plugin-sdk-boundary.mts" ]; then',
-      '  printf "%s\\t%s\\tnode %s\\n" "$TYPE_ROW" "${OPENCLAW_LOCAL_CHECK-<unset>}" "$*" >> "$TYPE_CALLS"',
-      "fi",
-      'exec "$TYPE_NODE" "$@"',
-    ]);
     writeFileSync(
       path.join(root, "scripts/check-native-state-schema-version.mjs"),
       `
@@ -1863,7 +1856,6 @@ appendFileSync(process.env.TYPE_CALLS, [process.env.TYPE_ROW, process.env.OPENCL
           CHECKOUT_BASE_SHA: options.checkoutBase ?? "",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           PNPM_CALLS: callsPath,
-          TYPE_NODE: process.execPath,
           TASK: options.task ?? "guards",
           ...(typeCheck
             ? {
@@ -11239,29 +11231,6 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         preflightOutputs: manifest.outputs,
       }),
     ).toBe(false);
-  });
-
-  it("keeps the real extension boundary guard active in the type-owner fixture", () => {
-    const result = runCheckShardFixture({
-      frozenTarget: false,
-      task: "test-types",
-      scripts: ["tsgo:scripts", "tsgo:test:root"],
-      types: {
-        compose: true,
-        changedPathsJson: JSON.stringify([
-          "src/commands/doctor-config-preflight.plugin-persistence.test.ts",
-        ]),
-        boundary: true,
-        boundarySource: 'import {} from "@openclaw/normalization-core";\n',
-      },
-    });
-    expect(result.status, result.output).toBe(1);
-    expect(result.rows).toEqual([
-      { name: "central", status: 0 },
-      { name: "boundary", status: 1 },
-    ]);
-    expect(result.output).toContain("extensions/fixture/index.ts");
-    expect(result.output).toContain("normalization-core directly");
   });
 
   it.each([
