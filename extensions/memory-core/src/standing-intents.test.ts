@@ -369,9 +369,12 @@ describe("standing intents", () => {
     for (let index = 0; index < Math.ceil(created.length / 3); index += 1) {
       await matchStandingIntents({ agentId: "main", prompt: "cohort review", nowMs: 2_000 });
     }
-    expect(await listStandingIntents({ agentId: "main", nowMs: 61_999 })).toEqual(
-      created.map((intent) => ({ ...intent, status: "fired", fireCount: 1, lastFiredAt: 2_000 })),
-    );
+    for (const intent of created) {
+      intent.status = "fired";
+      intent.fireCount = 1;
+      intent.lastFiredAt = 2_000;
+    }
+    expect(await listStandingIntents({ agentId: "main", nowMs: 61_999 })).toEqual(created);
 
     // Reopen so fixture setup cannot leave cached statements outside the observer.
     closeOpenClawAgentDatabasesForTest();
@@ -389,23 +392,23 @@ describe("standing intents", () => {
       return statement;
     });
     try {
-      expect(await listStandingIntents({ agentId: "main", nowMs: 62_000 })).toEqual(
-        created.map((intent) => ({ ...intent, status: "armed", fireCount: 1, lastFiredAt: 2_000 })),
-      );
+      for (const intent of created) {
+        intent.status = "armed";
+      }
+      expect(await listStandingIntents({ agentId: "main", nowMs: 62_000 })).toEqual(created);
       expect(writes).toBeLessThanOrEqual(2);
     } finally {
       prepareSpy.mockRestore();
     }
+    const expectedMatches = created.slice(0, 3);
+    for (const intent of expectedMatches) {
+      intent.status = "fired";
+      intent.fireCount = 2;
+      intent.lastFiredAt = 62_001;
+    }
     expect(
       await matchStandingIntents({ agentId: "main", prompt: "cohort review", nowMs: 62_001 }),
-    ).toEqual(
-      created.slice(0, 3).map((intent) => ({
-        ...intent,
-        status: "fired",
-        fireCount: 2,
-        lastFiredAt: 62_001,
-      })),
-    );
+    ).toEqual(expectedMatches);
   });
 
   it("keeps provider, conversation, sender, and account identities namespaced", async () => {
