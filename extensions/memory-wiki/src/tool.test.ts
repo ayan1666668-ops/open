@@ -467,18 +467,36 @@ describe("memory-wiki tools", () => {
     expect(nextDetails.hasMore).toBe(false);
   });
 
-  it("resolves wiki_open_items through real plugin registration, with the lifecycle signal forwarded and live", async () => {
-    // Every other test in this file calls createWikiOpenItemsTool directly.
-    // This one goes through the actual registration path (plugin.register ->
-    // the registered factory -> the started service's lifecycle signal) to
-    // prove the wiring itself, not just the tool in isolation.
+  it("resolves wiki_open_items through real plugin registration — pagination, the oversized locator, and the lifecycle signal all live", async () => {
+    // Every other test in this file calls createWikiOpenItemsTool directly,
+    // and index.test.ts always mocks ./tool.js — so nothing exercised
+    // plugin.register() -> the registered factory -> a started lifecycle
+    // service -> the real tool against a real vault, end to end. That gap is
+    // exactly why the dropped-signal regression this PR fixed went unnoticed:
+    // resolveToolContext only produces a real (non-undefined) signal once the
+    // plugin's registered service has actually been started.
     const { rootDir } = await harness.createVault({ initialize: true });
-    await writeSynthesisPage(rootDir, path.join("syntheses", "registration.md"), [
-      "id: synth-registration",
-      "title: Registration",
+    await writeSynthesisPage(rootDir, path.join("syntheses", "questions.md"), [
+      "id: synth-questions",
+      "title: Questions",
       "questions:",
-      "  - Does registration wiring actually work end to end?",
+      "  - First registration question?",
+      "  - Second registration question?",
     ]);
+    // A claim-contradiction cluster large enough to alone exceed the result
+    // budget (see the dedicated oversized-locator test above for why this
+    // shape genuinely triggers it), to prove the locator through the same
+    // real registration path, not just through a direct tool call.
+    for (const index of Array.from({ length: 10 }, (_, i) => i)) {
+      await writeSynthesisPage(rootDir, path.join("syntheses", `claimant-${index}.md`), [
+        `id: synth-claimant-${index}`,
+        `title: ${"Claimant Page Title ".repeat(20)}${index}`,
+        "claims:",
+        "  - id: huge",
+        `    text: ${"x".repeat(480)}${index}`,
+        "    status: supported",
+      ]);
+    }
 
     const { api, registerTool, registerService } = harness.createPluginApi();
     api.pluginConfig = { vault: { path: rootDir } };
@@ -486,9 +504,7 @@ describe("memory-wiki tools", () => {
     memoryWikiPlugin.register(api);
 
     // Starting the registered service is what creates the real
-    // AbortController that resolveToolContext forwards as `signal` — no
-    // existing test in this suite starts it, which is exactly why the
-    // dropped-signal regression this PR fixed went unnoticed by any test.
+    // AbortController that resolveToolContext forwards as `signal`.
     expect(registerService).toHaveBeenCalledTimes(1);
     const service = registerService.mock.calls[0]?.[0] as { start: () => Promise<void> };
     await service.start();
@@ -496,24 +512,54 @@ describe("memory-wiki tools", () => {
     const registration = registerTool.mock.calls.find(
       ([, meta]) => meta?.name === "wiki_open_items",
     );
+    type OpenItemsResult = {
+      content: Array<{ type: string; text?: string }>;
+      details: Record<string, unknown>;
+    };
     const factory = registration?.[0] as (ctx: {
       agentId?: string;
       sessionKey?: string;
       sandboxed?: boolean;
-    }) => { execute: (id: string, params: unknown) => Promise<{ content: unknown[] }> } | null;
+    }) => { execute: (id: string, params: unknown) => Promise<OpenItemsResult> } | null;
 
     const tool = factory({ agentId: "main", sessionKey: "agent:main:test", sandboxed: false });
     expect(tool).not.toBeNull();
-    const result = await tool!.execute("registration-call", {});
-    const text = (
-      result.content.find((part) => (part as { type: string }).type === "text") as
-        | { text: string }
-        | undefined
-    )?.text;
 
-    // Real registration, a real started lifecycle, and a real seeded vault
-    // together produce the real item — not a mock's canned response.
-    expect(text).toContain("Does registration wiring actually work end to end?");
+    // Pagination, through the real registration path: two questions exist,
+    // `limit: 1` returns only the first and reports more remain, and
+    // `offset: 1` reaches the second.
+    const page1 = await tool!.execute("registration-page-1", {
+      kinds: ["open-question"],
+      limit: 1,
+    });
+    expect(page1.content.find((part) => part.type === "text")?.text).toContain(
+      "First registration question?",
+    );
+    expect(page1.details.hasMore).toBe(true);
+    expect(page1.details.nextOffset).toBe(1);
+
+    const page2 = await tool!.execute("registration-page-2", {
+      kinds: ["open-question"],
+      limit: 1,
+      offset: page1.details.nextOffset as number,
+    });
+    expect(page2.content.find((part) => part.type === "text")?.text).toContain(
+      "Second registration question?",
+    );
+    expect(page2.details.hasMore).toBe(false);
+
+    // The oversized-item locator, through the same real registration path:
+    // filtering to just the huge cluster isolates it as the first (and only)
+    // matched item, so the locator fallback is exercised for real here too,
+    // not only via a direct createWikiOpenItemsTool call.
+    const clusterResult = await tool!.execute("registration-oversized", {
+      kinds: ["claim-contradiction"],
+    });
+    const clusterItems = clusterResult.details.items as Array<Record<string, unknown>>;
+    expect(clusterItems.length).toBe(1);
+    expect(clusterItems[0]?.kind).toBe("claim-contradiction");
+    expect(clusterItems[0]?.claimId).toBe("huge");
+    expect(clusterItems[0]?.variants).toBeUndefined();
   });
 
   it("excludes foreign and unowned bridge-page items for sandboxed callers", async () => {
