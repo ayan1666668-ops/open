@@ -3570,6 +3570,22 @@ Update and merge these partial structured summaries.`,
     expect(outputText(payload)).not.toContain("Protocol note:");
   });
 
+  it("keeps the projected empty worker active across a continuation", async () => {
+    const server = await startMockServer();
+    const payload = await expectNonStreamingResponsesJson(server, {
+      tools: [{ type: "function", name: "write" }],
+      input: [
+        makeUserInput(
+          "<conversation_context>\n[user]\nSubagent terminal reply QA worker: empty.\n</conversation_context>\n\nCurrent user request:\nContinue.",
+        ),
+      ],
+    });
+    expect(outputToolArgsFromItem(outputToolCall(payload, "write"))).toEqual({
+      path: "qa-terminal-empty-side-effect.txt",
+      content: "empty terminal QA side effect completed\n",
+    });
+  });
+
   it("makes the empty terminal worker terminal after one side effect", async () => {
     const server = await startMockServer();
     await expectNonStreamingResponsesJson(server, {

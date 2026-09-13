@@ -49,6 +49,13 @@ export function splitMockConversationContext(text: string) {
   return { current: projection?.[2] ?? text, history: projection?.[1] ?? "" };
 }
 
+function extractProjectedUserTexts(history: string): string[] {
+  return Array.from(
+    history.matchAll(/(?:^|\n\n)\[user\]\n([\s\S]*?)(?=\n\n\[[a-zA-Z]+\]\n|$)/g),
+    (match) => match[1] ?? "",
+  ).filter(Boolean);
+}
+
 function extractCurrentTaskEvent(text: string): string | undefined {
   const startsTaskEvent = (value: string) =>
     /^\[Internal task completion event\](?:\r?\n|$)/u.test(value);
@@ -102,11 +109,12 @@ export function resolveMockSubagentTurn(input: ResponsesInputItem[]):
     }
   | undefined {
   let settled = false;
-  for (const item of input.toReversed()) {
-    if (item.role !== "user") {
-      continue;
-    }
-    const current = splitMockConversationContext(extractInputText(item.content)).current.trim();
+  const pending = input
+    .filter((item) => item.role === "user")
+    .map((item) => extractInputText(item.content));
+  while (pending.length > 0) {
+    const { current: currentText, history } = splitMockConversationContext(pending.pop() ?? "");
+    const current = currentText.trim();
     const event = extractCurrentTaskEvent(current);
     if (event) {
       return {
@@ -135,6 +143,11 @@ export function resolveMockSubagentTurn(input: ResponsesInputItem[]):
     // Explicit recovery resumes the preceding task; a fresh unrelated user turn
     // fences history even when old turns mention one of these QA scenarios.
     if (!privateWorker && !worker && !kickoff && isSubagentRecoveryText(current)) {
+      // Projected recovery carries its preceding turns inside this user item.
+      // Only explicit recovery opens that history; a new request still fences it.
+      for (const text of extractProjectedUserTexts(history)) {
+        pending.push(text);
+      }
       continue;
     }
     return {
@@ -167,12 +180,8 @@ export function extractMockSubagentContext(input: ResponsesInputItem[]) {
     return undefined;
   }
   const inheritedUserTexts = extractUserTurnTexts(input.slice(0, turn.index));
-  for (const match of history.matchAll(
-    /(?:^|\n\n)\[user\]\n([\s\S]*?)(?=\n\n\[[a-zA-Z]+\]\n|$)/g,
-  )) {
-    if (match[1]) {
-      inheritedUserTexts.push(match[1]);
-    }
+  for (const text of extractProjectedUserTexts(history)) {
+    inheritedUserTexts.push(text);
   }
   return { task, inheritedUserTexts };
 }
