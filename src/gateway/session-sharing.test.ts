@@ -6,7 +6,6 @@ import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.j
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { resetAgentJobStateForTest } from "./agent-turn/agent-job.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import {
   allowedSessionVisibilities,
@@ -27,7 +26,6 @@ import {
 } from "./session-sharing.test-utils.js";
 
 afterEach(() => {
-  resetAgentJobStateForTest();
   closeOpenClawAgentDatabasesForTest();
   closeOpenClawStateDatabaseForTest();
 });
@@ -761,7 +759,6 @@ describe("session sharing policy", () => {
         owner: { agentId: "main", sessionKey, sessionId },
         terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
       });
-      resetAgentJobStateForTest();
       const context = {
         chatAbortControllers: new Map(),
         getRuntimeConfig: () => cfg,
@@ -780,6 +777,72 @@ describe("session sharing policy", () => {
           client: outsider,
           method: "sessions.abort",
           requestParams: { runId },
+          context,
+        }).error,
+      ).toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("not found") });
+    });
+  });
+
+  it("scopes a main alias plus agent ID to the retained run owner's session", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = {
+        ...rolePolicyConfig(),
+        agents: { list: [{ id: "main", default: true }, { id: "work" }] },
+      };
+      const workOwner = roleClient("none", "durable-work-owner");
+      const mainOwner = roleClient("none", "durable-main-owner");
+      const sessionId = "session-work-main";
+      const runId = "run-work-main";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: "main" },
+        {
+          sessionId: "session-main-main",
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: mainOwner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      await upsertSessionEntryCore(
+        { agentId: "work", sessionKey: "main" },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: workOwner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "work", sessionKey: "agent:work:main", sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+      const requestParams = { key: "main", agentId: "work", runId };
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: workOwner,
+          method: "sessions.abort",
+          requestParams,
+          context,
+        }).error,
+      ).toBeNull();
+      expect(
+        resolveSessionMutationAuthorization({
+          client: mainOwner,
+          method: "sessions.abort",
+          requestParams,
           context,
         }).error,
       ).toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("not found") });
