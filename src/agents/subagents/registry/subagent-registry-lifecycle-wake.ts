@@ -420,7 +420,7 @@ export function scheduleRequesterSettleWake(
 export function completeCleanupBookkeeping(
   context: SubagentLifecycleWakeContext,
   cleanupParams: CleanupBookkeepingParams,
-  retryDeferredCompletedAnnounces: (excludeRunId?: string) => void,
+  resumeAncestorCleanup: (settledEntry: SubagentRunRecord) => void,
 ): void {
   const params = context.options;
   const suppressSessionEffects = shouldSuppressSubagentRecoverySessionEffects(cleanupParams.entry);
@@ -535,7 +535,7 @@ export function completeCleanupBookkeeping(
     }
     clearGatewayContextResolver(cleanupParams.entry);
     scheduleCleanupTails({ allowRetiredRow: false, isDeleteCleanup });
-    retryDeferredCompletedAnnounces(cleanupParams.runId);
+    resumeAncestorCleanup(cleanupParams.entry);
     return;
   }
   const retireAfterSettle =
@@ -558,7 +558,7 @@ export function completeCleanupBookkeeping(
       subagentRuns.confirmRetirement(cleanupParams.entry);
       clearGatewayContextResolver(cleanupParams.entry);
       scheduleCleanupTails({ allowRetiredRow: true, isDeleteCleanup });
-      retryDeferredCompletedAnnounces(cleanupParams.runId);
+      resumeAncestorCleanup(cleanupParams.entry);
       return;
     }
     persistRequesterSettleWakePending(context, cleanupParams.entry, {
@@ -570,7 +570,7 @@ export function completeCleanupBookkeeping(
     // the detached tails start. Absence is still stale-safe because any
     // replacement row or newer child generation rejects the cleanup.
     scheduleCleanupTails({ allowRetiredRow: true, isDeleteCleanup });
-    retryDeferredCompletedAnnounces(cleanupParams.runId);
+    resumeAncestorCleanup(cleanupParams.entry);
     scheduleRequesterSettleWake(context, cleanupParams.runId, cleanupParams.entry);
     return;
   }
@@ -603,7 +603,7 @@ export function completeCleanupBookkeeping(
     clearGatewayContextResolver(cleanupParams.entry);
   }
   scheduleCleanupTails({ allowRetiredRow: false, isDeleteCleanup });
-  retryDeferredCompletedAnnounces(cleanupParams.runId);
+  resumeAncestorCleanup(cleanupParams.entry);
   if (!cleanupParams.skipRequesterSettleWake) {
     scheduleRequesterSettleWake(context, cleanupParams.runId, cleanupParams.entry);
   }
