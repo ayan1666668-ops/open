@@ -5,6 +5,7 @@ import path from "node:path";
 import type { BackupResourceInventory } from "../commands/backup-resource-inventory.js";
 import { isPathWithin } from "../commands/cleanup-utils.js";
 import { resolveGatewayLockDir } from "../config/paths.js";
+import { embedSessionColdArchivesInSnapshot } from "../config/sessions/session-cold-storage-backup.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { assertOpenClawAgentDatabaseOwner } from "../state/openclaw-agent-db-maintenance.js";
 import { assertOpenClawStateDatabaseOwner } from "../state/openclaw-state-db-maintenance.js";
@@ -34,6 +35,7 @@ import {
   rewriteLegacyAuditBackupCheckpoints,
   type LegacyAuditBackupSnapshot,
 } from "./state-migrations.audit-backup.js";
+import { assertNotUpdateCapturePath } from "./update-capture-paths.js";
 
 type SqliteBackupAsset = {
   sourcePath: string;
@@ -357,6 +359,8 @@ export async function createBackupSqliteSnapshotPlan(params: {
     const genericGroup = genericGroups.get(archiveSourcePath);
     const sourceDatabasePath =
       canonicalSource?.sourcePath ?? genericGroup?.sourcePath ?? archiveSourcePath;
+    assertNotUpdateCapturePath(archiveSourcePath, params.inventory.stateDir);
+    assertNotUpdateCapturePath(sourceDatabasePath, params.inventory.stateDir);
     const sourcePath = path.join(params.tempDir, `openclaw-state-db-${snapshots.length}.sqlite`);
     try {
       const capture = () =>
@@ -374,23 +378,27 @@ export async function createBackupSqliteSnapshotPlan(params: {
                       pathname,
                     })
                 : undefined,
-          transform:
-            canonicalSource?.role === "global"
-              ? (database) => {
-                  if (
-                    params.legacyAuditDatabaseWitness !== undefined &&
-                    createLegacyAuditDatabaseWitness(database) !== params.legacyAuditDatabaseWitness
-                  ) {
-                    throw new LegacyAuditBackupStateChangedError(
-                      "Legacy audit database rows changed during SQLite backup",
-                    );
-                  }
-                  sanitizeOpenClawGlobalStateSnapshot(database);
-                  rewriteLegacyAuditBackupCheckpoints(database, params.legacyAuditSnapshots);
-                }
-              : canonicalSource?.role === "agent"
-                ? sanitizeOpenClawStateLeaseRows
-                : undefined,
+          transform: async (database) => {
+            if (canonicalSource?.role === "global") {
+              if (
+                params.legacyAuditDatabaseWitness !== undefined &&
+                createLegacyAuditDatabaseWitness(database) !== params.legacyAuditDatabaseWitness
+              ) {
+                throw new LegacyAuditBackupStateChangedError(
+                  "Legacy audit database rows changed during SQLite backup",
+                );
+              }
+              sanitizeOpenClawGlobalStateSnapshot(database);
+              rewriteLegacyAuditBackupCheckpoints(database, params.legacyAuditSnapshots);
+            } else if (canonicalSource?.role === "agent") {
+              sanitizeOpenClawStateLeaseRows(database);
+            }
+            await embedSessionColdArchivesInSnapshot({
+              database,
+              sourceStorePath:
+                canonicalSource?.archiveSourcePath ?? genericGroup?.sourcePath ?? archiveSourcePath,
+            });
+          },
         });
       const capturedPath = genericGroup && capturedGroups.get(genericGroup);
       if (capturedPath) {
