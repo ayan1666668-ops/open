@@ -4,7 +4,9 @@ import http from "node:http";
 import path from "node:path";
 import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
+import { createCompiledSdkHost } from "../plugins/compiled-sdk-host.test-support.js";
 import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
   writePersistedInstalledPluginIndexInstallRecords,
@@ -14,6 +16,9 @@ import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { activateSetupInference } from "./setup-inference-activate.js";
+import { groqSetupSdkEntrypoints } from "./setup-inference-groq-sdk.test-support.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 afterEach(async () => {
   configureAiTransportHost({});
@@ -26,6 +31,9 @@ it("resolves a Groq manifest model from a global external install during setup",
   clearPluginMetadataLifecycleCaches();
   resetPluginLoaderTestStateForTest();
   clearLoadInstalledPluginIndexInstallRecordsCache();
+  const sdkHost = createCompiledSdkHost(groqSetupSdkEntrypoints[0], (prefix) =>
+    tempDirs.make(prefix),
+  );
   await withOpenClawTestState(
     {
       label: "groq-external-setup",
@@ -33,7 +41,7 @@ it("resolves a Groq manifest model from a global external install during setup",
         OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
         OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS: "1",
         OPENCLAW_BUNDLED_PLUGINS_DIR: undefined,
-        OPENCLAW_DEV_SOURCE_ROOT: undefined,
+        OPENCLAW_DEV_SOURCE_ROOT: sdkHost,
         OPENCLAW_SKIP_PROVIDERS: undefined,
       },
     },
@@ -108,11 +116,13 @@ export default defineSingleProviderPluginEntry({
 `,
         "utf8",
       );
-      const hostRoot = resolveOpenClawPackageRootSync({
-        argv1: process.argv[1],
-        moduleUrl: import.meta.url,
-        cwd: process.cwd(),
-      });
+      const hostRoot =
+        sdkHost ??
+        resolveOpenClawPackageRootSync({
+          argv1: process.argv[1],
+          moduleUrl: import.meta.url,
+          cwd: process.cwd(),
+        });
       if (!hostRoot) {
         throw new Error("test host package root is unavailable");
       }
