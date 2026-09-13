@@ -5038,6 +5038,9 @@ class NodeRuntime private constructor(
           prefs.clearGatewayCustomHeaders(normalized)
           prefs.clearGatewayTlsFingerprint(normalized)
           prefs.clearNotificationForwardingSessionKey(normalized)
+          // The persisted chat agent selection is gateway-owned; forgetting the
+          // gateway must not resurrect it when the same endpoint is re-added.
+          prefs.remove(chatAgentSelectionPrefKey(normalized))
         }.onFailure { err ->
           runCatching { clientDatabases.cancelGatewayRemoval(normalized) }
           Log.e("OpenClawRuntime", "Failed to retire forgotten gateway authentication", err)
@@ -6566,6 +6569,7 @@ class NodeRuntime private constructor(
       val mainKey = normalizeMainKey(root["mainKey"].asStringOrNull())
       val agents = parseGatewayAgentSummaries(root)
 
+      var sessionKeyRebound = false
       publishGatewayData(gatewayScope) {
         updateGatewayDefaultAgentId(defaultAgentId)
         _gatewayAgents.value = agents
@@ -6577,7 +6581,16 @@ class NodeRuntime private constructor(
         if (persistedAgentId != selectedAgentId) {
           prefs.putString(chatAgentSelectionPrefKey(stableId), selectedAgentId ?: "")
         }
+        val previousSessionKey = mainSessionKey.value
         syncMainSessionKey(selectedAgentId ?: resolveAgentIdFromMainSessionKey(mainKey) ?: gatewayDefaultAgentId.value)
+        sessionKeyRebound = mainSessionKey.value != previousSessionKey
+      }
+      if (sessionKeyRebound) {
+        // Restoring a non-default agent rebinds the main session key, which
+        // retires any concurrent agent-scoped catalog reads and clears their
+        // published state; restart them scoped to the restored agent.
+        refreshModelCatalog()
+        refreshProviderModels()
       }
     } catch (_: Throwable) {
       // ignore

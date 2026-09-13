@@ -28,6 +28,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -309,12 +310,32 @@ class NodeRuntimeAgentSelectionTest {
         runtime.selectChatAgent("scout")
         assertEquals("scout", resolveAgentIdFromMainSessionKey(runtime.mainSessionKey.value))
 
-        // A gateway scope change clears the in-memory selection (see clearOperatorGatewayState).
-        ReflectionHelpers.setField(runtime, "selectedChatAgentId", null)
+        // Exercise the production disconnect path: prepareDisconnect clears the
+        // in-memory selection (clearOperatorGatewayState) and resets the main
+        // session key to the default agent, so a scout key observed below can
+        // only come from the persisted selection, not a stale binding.
+        val prepareDisconnect =
+          runtime.javaClass.getDeclaredMethod("prepareDisconnect", Boolean::class.javaPrimitiveType)
+        prepareDisconnect.isAccessible = true
+        prepareDisconnect.invoke(runtime, true)
+        assertNull(ReflectionHelpers.getField(runtime, "selectedChatAgentId"))
+        assertTrue(resolveAgentIdFromMainSessionKey(runtime.mainSessionKey.value) != "scout")
 
-        runtime.gatewayDataRequestOverrideForTests = { _, method, _ ->
-          check(method == "agents.list")
-          """{"defaultId":"main","mainKey":"main","agents":[{"id":"main"},{"id":"scout"}]}"""
+        // Reconnect, then refresh: agents.list restores the persisted selection.
+        ReflectionHelpers.setField(runtime, "operatorConnected", true)
+        ReflectionHelpers.setField(runtime, "connectedEndpoint", GatewayEndpoint.manual("127.0.0.1", 18789))
+        val modelListRequests = Channel<JsonObject>(Channel.UNLIMITED)
+        runtime.gatewayDataRequestOverrideForTests = { _, method, paramsJson ->
+          when (method) {
+            "agents.list" -> """{"defaultId":"main","mainKey":"main","agents":[{"id":"main"},{"id":"scout"}]}"""
+            "models.list" -> {
+              modelListRequests.send(Json.parseToJsonElement(paramsJson.orEmpty()).jsonObject)
+              """{"models":[]}"""
+            }
+            "models.authStatus" -> """{"providers":[]}"""
+            "config.get" -> """{"config":{}}"""
+            else -> error("Unexpected refresh request: $method")
+          }
         }
         runtime.refreshAgents()
 
@@ -323,6 +344,14 @@ class NodeRuntimeAgentSelectionTest {
           runtime.mainSessionKey.first { resolveAgentIdFromMainSessionKey(it) == "scout" }
         }
         assertEquals("scout", resolveAgentIdFromMainSessionKey(runtime.mainSessionKey.value))
+
+        // The rebind retires pre-restoration agent-scoped reads; fresh scout-scoped
+        // catalog reads must be scheduled instead of leaving the catalogs empty.
+        withTimeout(2_000) {
+          while (modelListRequests.receive()["agentId"]?.jsonPrimitive?.content != "scout") {
+            // Consume until the restored agent's own read arrives.
+          }
+        }
       } finally {
         closeNodeRuntimeTestFixture(runtime)
       }
