@@ -46,10 +46,7 @@ import {
   createBackupSqliteSnapshotPlan,
 } from "./backup-sqlite-snapshot.js";
 import { writeTarArchiveWithRetry } from "./backup-tar-retry.js";
-import {
-  createBackupLinkCache,
-  createBackupVolatileStatCache,
-} from "./backup-volatile-stat-cache.js";
+import { createBackupVolatileStatCache } from "./backup-volatile-stat-cache.js";
 import { isErrno } from "./errors.js";
 import {
   createLegacyAuditBackupCapture,
@@ -106,6 +103,7 @@ export type BackupCreateResult = {
    */
   skippedVolatileCount: number;
   externalSymbolicLinks?: BackupSymbolicLink[];
+  warnings?: string[];
 };
 
 async function resolveOutputPath(params: {
@@ -318,6 +316,7 @@ export function formatBackupCreateSummary(result: BackupCreateResult): string[] 
       lines.push("Archive verification: passed");
     }
   }
+  lines.push(...(result.warnings ?? []));
   return lines;
 }
 
@@ -543,6 +542,7 @@ export async function createBackupArchive(
     // node-tar invokes filter/onWriteEntry from async filesystem callbacks, so
     // collect violations there and reject only after tar settles.
     const unexpectedSqliteSourcePaths: string[] = [];
+    const opaqueSqliteSourcePaths = new Set<string>();
     let archiveSymlinkViolation: Error | undefined;
     let archivePrivacyViolation: Error | undefined;
     const tarFilter = (
@@ -592,13 +592,22 @@ export async function createBackupArchive(
       ) {
         return false;
       }
-      if (sqliteSourceKind === "sqlite" && isBackupTarFilterFile(entryStat)) {
+      if (
+        sqliteSourceKind === "sqlite" &&
+        (isBackupTarFilterFile(entryStat) ||
+          ("isSymbolicLink" in entryStat
+            ? entryStat.isSymbolicLink()
+            : entryStat.type === "SymbolicLink"))
+      ) {
         unexpectedSqliteSourcePaths.push(entryPath);
         return false;
       }
       if (plan.inventory.isVolatile(resolvedEntryPath)) {
         skippedVolatileCount += 1;
         return false;
+      }
+      if (sqliteSourceKind === "opaque" && isBackupTarFilterFile(entryStat)) {
+        opaqueSqliteSourcePaths.add(resolvedEntryPath);
       }
       return true;
     };
@@ -612,6 +621,7 @@ export async function createBackupArchive(
         skippedVolatileCount = 0;
         externalSymbolicLinks.length = 0;
         unexpectedSqliteSourcePaths.length = 0;
+        opaqueSqliteSourcePaths.clear();
         archiveSymlinkViolation = undefined;
         archivePrivacyViolation = undefined;
         const prepared = await writeArchiveStreamToFile({
@@ -623,7 +633,6 @@ export async function createBackupArchive(
                   gzip: false,
                   portable: true,
                   preservePaths: true,
-                  linkCache: createBackupLinkCache(),
                   statCache: createBackupVolatileStatCache(
                     (sourcePath) =>
                       plan.inventory.isVolatile(sourcePath) ||
@@ -749,6 +758,14 @@ export async function createBackupArchive(
       throw formatBackupOutputFailure(error, outputPath, "write", publication.stagingDir);
     });
     result.skippedVolatileCount = skippedVolatileCount;
+    if (opaqueSqliteSourcePaths.size) {
+      result.warnings = [...opaqueSqliteSourcePaths]
+        .toSorted()
+        .map(
+          (sourcePath) =>
+            `SQLite file archived as opaque bytes without a live snapshot or integrity checks: ${sourcePath}`,
+        );
+    }
     if (externalSymbolicLinks.length) {
       result.externalSymbolicLinks = externalSymbolicLinks;
     }

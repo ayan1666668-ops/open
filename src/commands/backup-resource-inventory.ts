@@ -1,11 +1,13 @@
 /** Frozen backup ownership and resource policy shared by archive traversal and SQLite discovery. */
-import type { Dirent } from "node:fs";
+import { statSync, type Dirent, type Stats } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isVolatileBackupPath } from "../infra/backup-volatile-filter.js";
 import { hasErrnoCode } from "../infra/errno.js";
+import { sameFileIdentity } from "../infra/fs-safe-advanced.js";
 import { isUpdateCapturePath } from "../infra/update-capture-paths.js";
 import type { ResolvedPluginBackupResource } from "../plugins/manifest-backup-resources.js";
+import { inspectOpenClawRegisteredAgentDatabases } from "../state/openclaw-agent-db-registry-listing.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { isPathWithin } from "./cleanup-utils.js";
 
@@ -27,10 +29,22 @@ type BackupRegenerableRoot = Readonly<{
   sourcePath: string;
 }>;
 
+type BackupCoreDatabase = Readonly<
+  {
+    sourcePath: string;
+    identity?: Stats;
+  } & ({ role: "global" } | { role: "agent"; agentId: string })
+>;
+
 export type BackupResourceInventory = Readonly<{
   stateDir: string;
   agentRoots: readonly BackupAgentRoot[];
   regenerableRoots: readonly BackupRegenerableRoot[];
+  coreDatabases: readonly BackupCoreDatabase[];
+  resolveSqliteOwner: (
+    sourcePath: string,
+    identity?: Stats,
+  ) => BackupCoreDatabase | { role: "plugin" } | undefined;
   isIncluded: (sourcePath: string) => boolean;
   isTraversable: (sourcePath: string) => boolean;
   isPackageContent: (sourcePath: string) => boolean;
@@ -111,6 +125,46 @@ export async function createBackupResourceInventory(params: {
   onlyConfig?: boolean;
 }): Promise<BackupResourceInventory> {
   const stateDir = path.resolve(params.stateDir);
+  const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
+  const globalPath = resolveOpenClawStateSqlitePath(env);
+  const globalIdentity = params.onlyConfig
+    ? undefined
+    : await fs.stat(globalPath).catch((error: unknown) => {
+        if (hasErrnoCode(error, "ENOENT")) return undefined;
+        throw error;
+      });
+  if (globalIdentity && !globalIdentity.isFile()) {
+    throw new Error(
+      `Canonical global SQLite path must be a regular file or symlink to one: ${globalPath}`,
+    );
+  }
+  const coreDatabases: BackupCoreDatabase[] = params.onlyConfig
+    ? []
+    : [
+        { role: "global", sourcePath: globalPath, identity: globalIdentity },
+        ...inspectOpenClawRegisteredAgentDatabases({
+          env,
+          includeIncompatibleSchemaVersions: true,
+        }).map(({ agentId, path: sourcePath }) => ({
+          role: "agent" as const,
+          agentId,
+          sourcePath,
+        })),
+      ];
+  for (const [index, database] of coreDatabases.entries()) {
+    const identity =
+      database.role === "global"
+        ? globalIdentity
+        : await fs.stat(database.sourcePath).catch((error: unknown) => {
+            if (hasErrnoCode(error, "ENOENT")) return undefined;
+            throw error;
+          });
+    if (identity && !identity.isFile()) {
+      throw new Error(`Core SQLite path must resolve to a regular file: ${database.sourcePath}`);
+    }
+    coreDatabases[index] = Object.freeze({ ...database, identity });
+  }
+  const pluginResourceRoots: string[] = [];
   const configPaths = new Set(params.configPaths.map((configPath) => path.resolve(configPath)));
   const agentRoots = Object.freeze(
     params.agentRoots.map((root) =>
@@ -123,7 +177,7 @@ export async function createBackupResourceInventory(params: {
   );
   const protectedPathSet = new Set<string>([
     ...configPaths,
-    resolveOpenClawStateSqlitePath({ ...process.env, OPENCLAW_STATE_DIR: stateDir }),
+    ...coreDatabases.map(({ sourcePath }) => sourcePath),
   ]);
   const regenerableRoots: BackupRegenerableRoot[] = [];
   const exclude = (kind: BackupRegenerableKind, sourcePath: string): void => {
@@ -160,6 +214,7 @@ export async function createBackupResourceInventory(params: {
         }
         if (resource.disposition === "include") {
           protectedPathSet.add(sourcePath);
+          pluginResourceRoots.push(sourcePath);
         } else {
           exclude("plugin resource", sourcePath);
         }
@@ -264,8 +319,39 @@ export async function createBackupResourceInventory(params: {
     return !ownedPath && isVolatileBackupPath(candidate, volatilePlan);
   };
 
+  const resolveSqliteOwner: BackupResourceInventory["resolveSqliteOwner"] = (
+    sourcePath,
+    identity,
+  ) => {
+    const candidate = path.resolve(sourcePath);
+    const exact = coreDatabases.filter(
+      (database) => path.resolve(database.sourcePath) === candidate,
+    );
+    const current = exact.length
+      ? undefined
+      : (identity ?? statSync(candidate, { throwIfNoEntry: false }));
+    const aliases = exact.length
+      ? exact
+      : current
+        ? coreDatabases.filter(
+            (database) => database.identity && sameFileIdentity(database.identity, current),
+          )
+        : [];
+    if (aliases.length > 1) {
+      throw new Error(`SQLite path aliases multiple core database owners: ${candidate}`);
+    }
+    return (
+      aliases[0] ??
+      (pluginResourceRoots.some((root) => isPathWithin(candidate, root))
+        ? { role: "plugin" }
+        : undefined)
+    );
+  };
+
   return Object.freeze({
     stateDir,
+    coreDatabases: Object.freeze(coreDatabases),
+    resolveSqliteOwner,
     agentRoots,
     regenerableRoots: uniqueRegenerableRoots,
     isIncluded,
