@@ -423,6 +423,7 @@ export async function installPluginFromArchive(
             trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
             requirePluginManifest: true,
             installPolicyRequest,
+            ...(params.signal ? { signal: params.signal } : {}),
             onBeforePluginArtifactCommit: params.onBeforePluginArtifactCommit,
             beforePersistentApply: params.beforePersistentApply,
             onEffectiveMode: (resolvedMode) => {
