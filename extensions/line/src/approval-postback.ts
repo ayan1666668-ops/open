@@ -78,7 +78,8 @@ export function parseLineApprovalPostbackData(data: string): LineApprovalPostbac
  * Record the decision a LINE tap carried, and return only what the approver must be told.
  *
  * A recorded decision stays silent: LINE echoes the chosen label through the action's
- * `displayText`, and the approval runtime publishes the outcome as its own message.
+ * `displayText`, and the approval runtime publishes the outcome as its own message. A tap
+ * that arrives after the approval was resolved is told the outcome that stands.
  * Unreadable data returns nothing so the caller still consumes the reserved namespace.
  */
 export async function resolveLineApprovalPostbackTap(params: {
@@ -105,19 +106,33 @@ export async function resolveLineApprovalPostbackTap(params: {
   try {
     const { resolveApprovalOverGateway } =
       await import("openclaw/plugin-sdk/approval-gateway-runtime");
-    await resolveApprovalOverGateway({
+    // Reviewer identity is all-or-nothing for the gateway, and it is what binds the
+    // resolution to this LINE account's approver custody. It also names the sender in
+    // the published outcome, so no display name overrides it.
+    const result = await resolveApprovalOverGateway({
       cfg: params.cfg,
       approvalId: callback.approvalId,
       approvalKind: callback.approvalKind,
       decision: callback.decision,
-      // Reviewer identity is all-or-nothing for the gateway, and it is what binds
-      // the resolution to this LINE account's approver custody.
       ...(params.senderId
         ? { channel: "line", accountId: params.accountId, senderId: params.senderId }
         : {}),
-      clientDisplayName: `LINE approval (${params.accountId})`,
     });
-    return undefined;
+    if (!result || result.applied) {
+      return undefined;
+    }
+    // A late tap changes nothing, and LINE cannot remove the buttons that invited it.
+    const { approval } = result;
+    const { formatApprovalDecisionLabel } = await import("openclaw/plugin-sdk/approval-runtime");
+    const outcome =
+      approval.status === "allowed"
+        ? formatApprovalDecisionLabel(approval.decision)
+        : approval.status === "denied"
+          ? "Denied"
+          : approval.status === "expired"
+            ? "Expired"
+            : "Cancelled";
+    return `This approval was already resolved: ${outcome}.`;
   } catch (error) {
     // The tap is the approver's only signal that anything happened; a swallowed
     // failure would leave the decision looking recorded while the run still waits.

@@ -548,8 +548,8 @@ Two behaviors follow from the platform rather than from a choice:
   `/approve` path they already had.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
-  stay on screen. Tapping a decision that is already recorded is answered by the Gateway
-  rather than recorded twice.
+  stay on screen. The first decision stands; tapping another button afterwards replies
+  with the decision that was recorded instead of changing it.
 
 For forwarding modes and supported decisions, see
 [Approval forwarding to chat channels](/tools/exec-approvals-advanced#approval-forwarding-to-chat-channels).
