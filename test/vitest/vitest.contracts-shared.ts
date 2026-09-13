@@ -7,6 +7,7 @@ import {
   channelSurfaceContractPatterns,
   pluginContractPatterns,
 } from "./vitest.contracts-paths.mjs";
+import { databaseWorkerCoreTestFiles } from "./vitest.database-worker-core-paths.mjs";
 import {
   intersectIncludePatterns,
   loadPatternListFromEnv,
@@ -45,6 +46,7 @@ export function createContractsVitestConfig(
       runner: nonIsolatedRunnerPath,
       setupFiles: baseTest.setupFiles ?? [],
       include: envIncludePatterns ?? cliIncludePatterns ?? includePatterns,
+      exclude: [...(baseTest.exclude ?? []), ...databaseWorkerCoreTestFiles],
       passWithNoTests: true,
     },
   });
