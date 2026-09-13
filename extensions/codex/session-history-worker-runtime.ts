@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   captureCodexSessionTranscriptReadAdmission,
@@ -5,11 +6,14 @@ import {
   validateCodexSessionTranscriptReadAdmission,
   validateCodexSessionTranscriptContextVersion,
 } from "openclaw/plugin-sdk/codex-session-transcript-runtime";
-import { WorkerTaskPool } from "openclaw/plugin-sdk/process-runtime";
+import {
+  resolveRuntimeWorkerArgv,
+  resolveRuntimeWorkerUrl,
+  WorkerTaskPool,
+} from "openclaw/plugin-sdk/process-runtime";
 import { isIncognitoSessionKey } from "openclaw/plugin-sdk/session-key-runtime";
 import type { TranscriptTurnAdmission } from "openclaw/plugin-sdk/session-transcript-runtime";
 import {
-  codexHistoryWorkerUrl,
   runCodexHistoryWorkerInput,
   type CodexHistoryWorkerInput,
   type CodexHistoryWorkerResult,
@@ -25,8 +29,31 @@ import {
 } from "./src/app-server/session-history.js";
 import type { SettledTurnMessages } from "./src/app-server/settled-turn-evidence.js";
 
+const codexHistoryWorkerEntrypoint = {
+  currentModuleUrl: import.meta.url,
+  sourceWorkerName: "session-history.worker",
+  distWorkerPath: "extensions/codex/session-history.worker.js",
+  package: {
+    name: "@openclaw/codex",
+    distWorkerPath: "session-history.worker.js",
+  },
+} as const;
+
+function resolveCodexHistoryWorkerUrl(): URL {
+  const sourceUrl = resolveRuntimeWorkerUrl(codexHistoryWorkerEntrypoint);
+  if (!/\.[cm]?ts$/u.test(sourceUrl.pathname) || resolveRuntimeWorkerArgv(sourceUrl).length > 1) {
+    return sourceUrl;
+  }
+  // oxlint-disable-next-line no-warning-comments -- removal awaits upstream Bun Worker preload support.
+  // TODO: Remove this source-tree fallback once Bun Workers honor execArgv --import preloads.
+  return resolveRuntimeWorkerUrl({
+    ...codexHistoryWorkerEntrypoint,
+    root: fileURLToPath(new URL("../..", import.meta.url)),
+  });
+}
+
 const historyReads = new WorkerTaskPool<CodexHistoryWorkerInput, CodexHistoryWorkerResult>({
-  workerUrl: codexHistoryWorkerUrl,
+  workerUrl: resolveCodexHistoryWorkerUrl(),
   maxWorkers: 1,
 });
 
