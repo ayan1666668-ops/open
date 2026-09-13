@@ -1,3 +1,5 @@
+import { describe, expect, it } from "vitest";
+
 import { isTargetedUnscheduledWake } from "./heartbeat-wake-policy.js";
 import type { HeartbeatWakeIntent } from "./heartbeat-wake-contracts.js";
 

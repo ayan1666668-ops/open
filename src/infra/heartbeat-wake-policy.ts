@@ -61,10 +61,6 @@ type TargetedUnscheduledWakeParams = {
 
 export function isTargetedUnscheduledWake(params: TargetedUnscheduledWakeParams): boolean {
   const hasSessionTarget = normalizeOptionalString(params.sessionKey) !== undefined;
-  const hasTarget = hasSessionTarget || normalizeOptionalString(params.agentId) !== undefined;
-  if (!hasTarget) {
-    return false;
-  }
 
   // These sources queue targeted events that would otherwise sit unread for a
   // configured agent without a recurring heartbeat schedule. Each case admits
