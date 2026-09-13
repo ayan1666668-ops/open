@@ -4,7 +4,7 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import prettyMilliseconds from "pretty-ms";
-import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.js";
+import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.ts";
 import {
   finalizeBuildStepCache,
   resolveBuildStepCacheState,

@@ -2,9 +2,8 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { isBuiltin } from "node:module";
-import { join, posix, resolve } from "node:path";
+import { delimiter, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.js";
 
 export type ReleasePlanIntent =
   | "publish"
@@ -85,6 +84,61 @@ const YAML_PACKAGE_MAX_BYTES = 4 * 1024 * 1024;
 // Keep both comparators local: this one precedes tooling verification, and CHILD_RUNNER's precedes
 // loader-hook registration. Importing either would execute code before its integrity boundary.
 const compareAscii = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+
+function resolveReleasePlanNodeExecutable(): string | undefined {
+  if (!process.versions.bun && process.allowedNodeEnvironmentFlags.has("--input-type")) {
+    return process.execPath;
+  }
+
+  const names =
+    process.platform === "win32"
+      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
+          .split(";")
+          .filter(Boolean)
+          .map((extension) => `node${extension.toLowerCase()}`)
+      : ["node"];
+  const candidates = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter(Boolean)
+    .flatMap((directory) => names.map((name) => join(directory, name)));
+  if (process.platform === "darwin") {
+    candidates.push(
+      "/opt/homebrew/bin/node",
+      "/opt/homebrew/opt/node/bin/node",
+      "/usr/local/bin/node",
+      "/usr/local/opt/node/bin/node",
+      "/usr/bin/node",
+    );
+  } else if (process.platform === "linux") {
+    candidates.push("/usr/local/bin/node", "/usr/bin/node");
+  }
+
+  const probeEnv: NodeJS.ProcessEnv = {};
+  for (const key of ["SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"]) {
+    const value = process.env[key];
+    if (value) {
+      probeEnv[key] = value;
+    }
+  }
+  const probeSource =
+    'process.stdout.write(!process.versions.bun&&process.allowedNodeEnvironmentFlags.has("--input-type")?process.execPath:"")';
+  for (const candidate of new Set(candidates)) {
+    try {
+      const nodePath = execFileSync(candidate, ["--eval", probeSource], {
+        encoding: "utf8",
+        env: probeEnv,
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5_000,
+      }).trim();
+      if (nodePath) {
+        return nodePath;
+      }
+    } catch {
+      // Missing, non-executable, incompatible, and Bun shim candidates are skipped.
+    }
+  }
+  return undefined;
+}
 
 type ToolingModule = { path: string; bytes: Buffer; imports: Array<[string, string]> };
 type YamlEntry =
@@ -475,7 +529,7 @@ function runOperation(request: ProducerRequest, params: ReleasePlanSource) {
   }
   let stdout: string;
   try {
-    const nodeExecPath = resolveNodeRuntimeExecutable({ requiredFlag: "--input-type" });
+    const nodeExecPath = resolveReleasePlanNodeExecutable();
     if (!nodeExecPath) {
       throw new Error("verified release plan child requires a Node executable");
     }

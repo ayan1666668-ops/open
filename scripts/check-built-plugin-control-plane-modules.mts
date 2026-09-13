@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type ts from "typescript";
-import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.js";
+import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.ts";
 import { collectSourceCheckoutPluginBuildEntries } from "./lib/bundled-plugin-build-entries.mjs";
 import { isRecord } from "./lib/record-shared.mjs";
 import { resolveRepoRoot } from "./lib/repo-root.mjs";

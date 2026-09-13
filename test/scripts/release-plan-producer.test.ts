@@ -63,7 +63,6 @@ const TOOLING_CLOSURE = [
   "scripts/lib/pnpm-lockfile-documents.mjs",
   "scripts/lib/record-shared.mjs",
   "scripts/lib/release-version.mjs",
-  "src/infra/node-runtime-executable.ts",
 ];
 const TOOLING_ROOT_FILES = ["package.json", "pnpm-lock.yaml"];
 
@@ -1333,11 +1332,7 @@ mutateModule.syncBuiltinESMExports();
     const toolingSha = commit(root, "tooling overlay", { allowEmpty: true });
     execFileSync("git", ["update-ref", "refs/heads/main", toolingSha], { cwd: root });
     expect(candidateSha).not.toBe(toolingSha);
-    expect(
-      readdirSync(join(root, "src"), { recursive: true, withFileTypes: true })
-        .filter((entry) => entry.isFile())
-        .map((entry) => relative(root, join(entry.parentPath, entry.name)).replaceAll("\\", "/")),
-    ).toEqual(["src/infra/node-runtime-executable.ts"]);
+    expect(existsSync(join(root, "src"))).toBe(false);
     expect(collectExtensionPackageJsonCandidates(root)).toEqual(candidates);
     expect(
       readdirSync(join(root, "extensions"), { recursive: true, withFileTypes: true })
