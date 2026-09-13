@@ -14,8 +14,13 @@ import type { ChatPageHost } from "../pages/chat/chat-state-host.ts";
 import {
   applySelectedChatAgent,
   refreshChatMetadata,
+  refreshChatModelCatalogOnDemand,
   retireChatMetadataRequests,
 } from "../pages/chat/chat-state-refresh.ts";
+import {
+  createGatewayRequestMock,
+  createTestGatewayClient,
+} from "../test-helpers/gateway-client.ts";
 import { gatewayHelloForMethods } from "../test-helpers/gateway-methods.ts";
 import "./app-host.ts";
 import type { ApplicationContext } from "./context.ts";
@@ -29,6 +34,89 @@ type ChatMetadataShell = HTMLElement & {
 afterEach(() => {
   vi.useRealTimers();
 });
+
+it.each([
+  { mode: "automatic", hidden: false, reject: false, replacementFails: false },
+  { mode: "automatic", hidden: false, reject: true, replacementFails: false },
+  { mode: "automatic", hidden: true, reject: false, replacementFails: false },
+  { mode: "automatic", hidden: true, reject: true, replacementFails: false },
+  { mode: "explicit", hidden: false, reject: false, replacementFails: false },
+  { mode: "explicit", hidden: false, reject: false, replacementFails: true },
+  { mode: "picker", hidden: false, reject: false, replacementFails: false },
+  { mode: "picker", hidden: false, reject: false, replacementFails: true },
+])(
+  "preserves cold catalog demand across an unrelated session event ($mode, hidden: $hidden, rejection: $reject, replacement failure: $replacementFails)",
+  async ({ mode, hidden, reject, replacementFails }) => {
+    const pendingCatalog = createDeferred<ModelCatalogResult>();
+    const fresh = { id: "fresh", name: "Fresh model", provider: "example" };
+    let catalogReads = 0;
+    const request = createGatewayRequestMock((method) => {
+      if (method === "models.list") {
+        if (++catalogReads === 1) {
+          return pendingCatalog.promise;
+        }
+        return replacementFails
+          ? Promise.reject(new Error("Replacement catalog failed"))
+          : Promise.resolve({ models: [fresh] });
+      }
+      return Promise.resolve({ commands: [] });
+    });
+    const client = createTestGatewayClient(request);
+    const state = makeChatHost({ client }) as ChatPageHost;
+    state.connected = true;
+    state.sessionKey = "agent:main:cold";
+    let presented = true;
+    state.chatMetadataIsPresented = () => presented;
+    const shell = document.createElement("openclaw-app-shell") as unknown as ChatMetadataShell;
+    shell.runtime = {
+      context: {
+        gateway: { snapshot: { client, phase: "connected" } },
+        agents: { state: { agentsList: null } },
+        sessions: state.sessions,
+      } as unknown as ApplicationContext,
+    };
+    const loading =
+      mode === "picker"
+        ? refreshChatModelCatalogOnDemand(state)
+        : refreshChatMetadata(state, { automatic: mode === "automatic" });
+    try {
+      expect(catalogReads).toBe(1);
+      shell.handleGatewayEvent({
+        event: "sessions.changed",
+        payload: { key: "agent:main:other", agentId: "main", reason: "message" },
+      });
+      presented = !hidden;
+      if (reject) {
+        pendingCatalog.reject(new Error("Retired catalog request failed"));
+      } else {
+        pendingCatalog.resolve({ models: [{ ...fresh, id: "retired" }] });
+      }
+      await loading;
+      if (hidden) {
+        expect(catalogReads).toBe(1);
+        expect(state.chatModelCatalog).toEqual([]);
+        presented = true;
+        await refreshChatMetadata(state, { automatic: true });
+      }
+      expect(state.chatModelCatalog).toEqual(replacementFails ? [] : [fresh]);
+      if (replacementFails) {
+        expect(state.chatModelCatalogError).toContain("Replacement catalog failed");
+      } else {
+        expect(state.chatModelCatalogError).toBeNull();
+      }
+      expect(state.chatModelsLoading).toBe(false);
+      expect(catalogReads).toBe(2);
+      expect(request.mock.calls.filter(([method]) => method === "chat.metadata")).toHaveLength(
+        mode === "picker" ? 0 : 1,
+      );
+    } finally {
+      pendingCatalog.resolve({ models: [] });
+      await loading;
+      retireChatMetadataRequests(state);
+      state.sessions.dispose();
+    }
+  },
+);
 
 it.each(["config.changed", "chat.metadata.changed"])(
   "refreshes the retained pane after repair without changing conversation state (%s)",

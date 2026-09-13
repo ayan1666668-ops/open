@@ -18,10 +18,12 @@ import {
   getModelCatalogCache,
   modelCatalogCache,
   modelCatalogKey,
+  modelCatalogObservers,
   modelCatalogParams,
   publishModelCatalogResult,
   type ModelCatalogReadScope,
   type ModelCatalogClient,
+  type ModelCatalogCacheUpdate,
   type ModelCatalogRead,
   type ModelCatalogRequest,
   type ModelCatalogRequestLane,
@@ -34,6 +36,21 @@ export type ChatModelCatalogState = {
   pendingProviders?: readonly string[];
   status: "idle" | "loading" | "ready" | "error" | "offline";
 };
+
+export function subscribeModelCatalogCache(
+  client: ModelCatalogClient,
+  listener: (update: ModelCatalogCacheUpdate) => void,
+): () => void {
+  const listeners = modelCatalogObservers.get(client) ?? new Set();
+  modelCatalogObservers.set(client, listeners);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      modelCatalogObservers.delete(client);
+    }
+  };
+}
 
 export function resolveModelCatalogState(
   result: Pick<ModelCatalogResult, "models" | "refreshFailed"> &
@@ -91,6 +108,17 @@ export function peekModelCatalog(
     cache.set(key, entry);
   }
   return entry?.result;
+}
+
+export function settleModelCatalogRequests(
+  client: ModelCatalogClient,
+  scope: ModelsListParams,
+): Promise<void> | undefined {
+  const key = modelCatalogKey(modelCatalogParams(scope));
+  const pending = Array.from(modelCatalogCache.get(client)?.requests.get(key)?.values() ?? [])
+    .map((lane) => lane.active?.transportSettled)
+    .filter((promise) => promise !== undefined);
+  return pending.length ? Promise.allSettled(pending).then(() => {}) : undefined;
 }
 
 function createModelCatalogRequest(params: {

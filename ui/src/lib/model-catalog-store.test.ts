@@ -12,9 +12,12 @@ import {
   publishModelCatalogResult,
   invalidateModelCatalogCache,
   modelCatalogCache,
-  settleModelCatalogRequests,
 } from "./model-catalog-cache.ts";
-import { loadModelCatalog, peekModelCatalog } from "./model-catalog-store.ts";
+import {
+  loadModelCatalog,
+  peekModelCatalog,
+  settleModelCatalogRequests,
+} from "./model-catalog-store.ts";
 
 const prepared = { id: "prepared", name: "Prepared", provider: "example" };
 const published = { id: "published", name: "Published", provider: "example" };

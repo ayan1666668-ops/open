@@ -243,12 +243,23 @@ export async function refreshChatMetadata(
     host.requestUpdate?.();
     const ownsRefresh = () =>
       binding.isCurrent() && refresh.isCurrent() && binding.refreshPending?.refresh === refresh;
+    let retryRetiredCatalog = false;
     const catalog = refresh.catalog
       .then(
         async (result) => {
-          if (!result || !ownsRefresh()) {
+          // Applying a current cooldown response may expire it; that must not create a retry loop.
+          retryRetiredCatalog = !refresh.isCurrent();
+          if (!result || !binding.isCurrent() || binding.refreshPending?.refresh !== refresh) {
             return;
           }
+          // Another pane can discover expiry after this snapshot was canonically accepted.
+          if (
+            retryRetiredCatalog &&
+            peekModelCatalog(binding.client, binding.scope, { allowStale: true }) !== result
+          ) {
+            return;
+          }
+          retryRetiredCatalog = false;
           // The receipt signals completion; the model owner supplies current or stale display data.
           applyCachedChatModelCatalog(host, binding);
           if (!ownsRefresh()) {
@@ -261,6 +272,7 @@ export async function refreshChatMetadata(
           }
         },
         (error: unknown) => {
+          retryRetiredCatalog = !refresh.isCurrent();
           if (ownsRefresh() && !applyChatModelCatalogSnapshot(host) && ownsRefresh()) {
             host.chatModelCatalogError = formatUiError(error);
             host.chatModelsLoading = false;
@@ -277,7 +289,11 @@ export async function refreshChatMetadata(
     const promise = Promise.allSettled([refresh.completed, catalog]).then(() => {
       if (binding.refreshPending?.refresh === refresh) {
         binding.refreshPending = undefined;
+        if (retryRetiredCatalog && binding.isCurrent()) {
+          return refreshChatMetadata(host, { automatic: true });
+        }
       }
+      return undefined;
     });
     binding.refreshPending = { refresh, promise };
     return promise;
@@ -418,10 +434,14 @@ async function loadChatModelCatalog(
         const fresh = peekModelCatalog(binding.client, binding.scope);
         if (fresh || ownsRequest()) {
           applyCachedChatModelCatalog(host, binding);
-          return (
+          const accepted =
             Boolean(fresh) ||
-            peekModelCatalog(binding.client, binding.scope, { allowStale: true }) === result
-          );
+            peekModelCatalog(binding.client, binding.scope, { allowStale: true }) === result;
+          if (!accepted && ownsRequest()) {
+            binding.catalogRequest = undefined;
+            return loadChatModelCatalog(host, binding);
+          }
+          return accepted;
         }
         return false;
       },
@@ -650,7 +670,7 @@ export function refreshPageChat(host: ChatPageHost, opts?: ChatRefreshOptions) {
           kind: "metadata",
           revalidateMetadata: () => publication.isCurrent(),
         });
-        await Promise.allSettled([fallback.completed, fallback.catalog]);
+        await fallback.completed;
       }
     },
   });

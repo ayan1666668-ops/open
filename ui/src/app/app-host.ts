@@ -497,7 +497,8 @@ class OpenClawShell
     this.shellNavigation.selectChatSession(sessionKey, agentId);
   }
   private readonly handleGatewayEvent = (event: GatewayEventFrame) => {
-    const client = this.context?.gateway?.snapshot.client;
+    const context = this.context;
+    const client = context?.gateway?.snapshot.client;
     if (client && event.event === "sessions.changed") {
       const source = asNullableRecord(event.payload);
       const changed = readSessionChangedEvent(event.payload);
@@ -513,8 +514,8 @@ class OpenClawShell
           client,
           { agentId, sessionKey: changed.key },
           {
-            hello: this.context?.gateway.snapshot.hello,
-            agentsList: this.context?.agents.state.agentsList,
+            hello: context?.gateway.snapshot.hello,
+            agentsList: context?.agents.state.agentsList,
           },
         );
       } else {

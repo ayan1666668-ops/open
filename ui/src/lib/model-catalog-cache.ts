@@ -8,9 +8,9 @@ export type ModelCatalogReadScope = Pick<
   "agentId" | "sessionKey" | "authProfileId"
 >;
 type ModelCatalogInvalidationScope = ModelCatalogReadScope & { sessionsOnly?: boolean };
-type ModelCatalogCacheUpdate =
+export type ModelCatalogCacheUpdate =
   | { type: "published" }
-  | { type: "invalidated"; matches: (scope: ModelsListParams) => boolean };
+  | { type: "invalidated"; matches: (scope: ModelsListParams, key: string) => boolean };
 
 export type ModelCatalogClient = Pick<GatewayBrowserClient, "request">;
 export type ModelCatalogRequest = {
@@ -57,7 +57,10 @@ export type ModelCatalogEntry = {
 
 // Application lifecycle invalidation must not eagerly load catalog readers or presentation.
 export const modelCatalogCache = new WeakMap<ModelCatalogClient, ModelCatalogCache>();
-const observers = new WeakMap<ModelCatalogClient, Set<(update: ModelCatalogCacheUpdate) => void>>();
+export const modelCatalogObservers = new WeakMap<
+  ModelCatalogClient,
+  Set<(update: ModelCatalogCacheUpdate) => void>
+>();
 
 export function getModelCatalogCache(client: ModelCatalogClient): ModelCatalogCache {
   let cache = modelCatalogCache.get(client);
@@ -68,26 +71,11 @@ export function getModelCatalogCache(client: ModelCatalogClient): ModelCatalogCa
   return cache;
 }
 
-export function subscribeModelCatalogCache(
-  client: ModelCatalogClient,
-  listener: (update: ModelCatalogCacheUpdate) => void,
-): () => void {
-  const listeners = observers.get(client) ?? new Set();
-  observers.set(client, listeners);
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) {
-      observers.delete(client);
-    }
-  };
-}
-
 function notifyModelCatalogCache(
   client: ModelCatalogClient,
   update: ModelCatalogCacheUpdate,
 ): void {
-  for (const listener of Array.from(observers.get(client) ?? [])) {
+  for (const listener of Array.from(modelCatalogObservers.get(client) ?? [])) {
     listener(update);
   }
 }
@@ -134,7 +122,7 @@ function trimModelCatalogCache(client: ModelCatalogClient, cache: ModelCatalogCa
   if (retired.size && modelCatalogCache.get(client) === cache) {
     notifyModelCatalogCache(client, {
       type: "invalidated",
-      matches: (scope) => retired.has(modelCatalogKey(modelCatalogParams(scope))),
+      matches: (_scope, key) => retired.has(key),
     });
   }
 }
@@ -221,22 +209,11 @@ export function publishModelCatalogResult(
   if (params.refresh && discoverySucceeded) {
     notifyModelCatalogCache(client, {
       type: "invalidated",
-      matches: (scope) => modelCatalogKey(modelCatalogParams(scope)) !== key,
+      matches: (_scope, candidateKey) => candidateKey !== key,
     });
   }
   notifyModelCatalogCache(client, { type: "published" });
   return true;
-}
-
-export function settleModelCatalogRequests(
-  client: ModelCatalogClient,
-  scope: ModelsListParams,
-): Promise<void> | undefined {
-  const key = modelCatalogKey(modelCatalogParams(scope));
-  const pending = Array.from(modelCatalogCache.get(client)?.requests.get(key)?.values() ?? [])
-    .map((lane) => lane.active?.transportSettled)
-    .filter((promise) => promise !== undefined);
-  return pending.length ? Promise.allSettled(pending).then(() => {}) : undefined;
 }
 
 function markModelCatalogInvalid(entry: ModelCatalogEntry): void {
@@ -252,7 +229,7 @@ export function invalidateModelCatalogEntry(
   const key = modelCatalogKey(modelCatalogParams(entry.scope));
   notifyModelCatalogCache(client, {
     type: "invalidated",
-    matches: (scope) => modelCatalogKey(modelCatalogParams(scope)) === key,
+    matches: (_scope, candidateKey) => candidateKey === key,
   });
 }
 
@@ -268,22 +245,6 @@ export function clearModelCatalogCache(client: ModelCatalogClient): void {
   notifyModelCatalogCache(client, { type: "invalidated", matches: () => true });
 }
 
-function modelCatalogScopeMatches(
-  readScope: ModelCatalogReadScope | undefined,
-  scope?: ModelCatalogInvalidationScope,
-): boolean {
-  return (
-    !scope ||
-    !readScope ||
-    ((!scope.sessionsOnly || readScope.sessionKey !== undefined) &&
-      (scope.agentId === undefined ||
-        readScope.agentId === undefined ||
-        readScope.agentId === scope.agentId.trim()) &&
-      (scope.sessionKey === undefined || readScope.sessionKey === scope.sessionKey) &&
-      (scope.authProfileId === undefined || readScope.authProfileId === scope.authProfileId))
-  );
-}
-
 /** Retire read eligibility while preserving the last accepted, scoped display snapshot. */
 export function invalidateModelCatalogCache(
   client: ModelCatalogClient,
@@ -293,19 +254,27 @@ export function invalidateModelCatalogCache(
   if (!cache) {
     return;
   }
+  const matches = (readScope: ModelCatalogReadScope | undefined) =>
+    !scope ||
+    !readScope ||
+    ((!scope.sessionsOnly || readScope.sessionKey !== undefined) &&
+      (scope.agentId === undefined ||
+        readScope.agentId === undefined ||
+        readScope.agentId === scope.agentId.trim()) &&
+      (scope.sessionKey === undefined || readScope.sessionKey === scope.sessionKey) &&
+      (scope.authProfileId === undefined || readScope.authProfileId === scope.authProfileId));
   for (const read of cache.reads) {
-    if (modelCatalogScopeMatches(read.scope, scope)) {
+    if (matches(read.scope)) {
       cache.reads.delete(read);
     }
   }
   for (const entry of cache.entries.values()) {
-    if (modelCatalogScopeMatches(entry.scope, scope)) {
+    if (matches(entry.scope)) {
       markModelCatalogInvalid(entry);
     }
   }
-  trimModelCatalogCache(client, cache);
   notifyModelCatalogCache(client, {
     type: "invalidated",
-    matches: (readScope) => modelCatalogScopeMatches(readScope, scope),
+    matches,
   });
 }

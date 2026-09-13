@@ -4569,22 +4569,33 @@ describe("refreshChatMetadata", () => {
     },
   );
 
-  it("ends automatic catalog loading for an expired response without retrying", async () => {
-    const models = [{ id: "expired", name: "Expired", provider: "test", unavailableUntil: 1 }];
-    const request = vi.fn(async (method: string) =>
-      method === "models.list" ? { models } : { commands: [] },
-    );
-    const state = createMetadataState(request);
-    try {
-      await refreshChatMetadata(state, { automatic: true });
-      expect(state.chatModelsLoading).toBe(false);
-      expect(state.chatModelCatalog).toEqual(models);
-      expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(1);
-    } finally {
-      retireChatMetadataRequests(state);
-      state.sessions.dispose();
-    }
-  });
+  it.each([1, 2])(
+    "ends automatic catalog loading for an expired response without retrying (%s panes)",
+    async (panes) => {
+      const models = [{ id: "expired", name: "Expired", provider: "test", unavailableUntil: 1 }];
+      const request = vi.fn(async (method: string) =>
+        method === "models.list" ? { models } : { commands: [] },
+      );
+      const state = createMetadataState(request);
+      const states = [state];
+      if (panes === 2) {
+        states.push(createMetadataState(request, { client: state.client }));
+      }
+      try {
+        await Promise.all(states.map((pane) => refreshChatMetadata(pane, { automatic: true })));
+        for (const pane of states) {
+          expect(pane.chatModelsLoading).toBe(false);
+          expect(pane.chatModelCatalog).toEqual(models);
+        }
+        expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(1);
+      } finally {
+        for (const pane of states) {
+          retireChatMetadataRequests(pane);
+          pane.sessions.dispose();
+        }
+      }
+    },
+  );
 
   it("keeps a fresh picker snapshot usable while automatic admission waits for commands", async () => {
     const models = [{ id: "fresh", name: "Fresh", provider: "test" }];

@@ -6,15 +6,16 @@ import type { ChatMetadataParams } from "../../../../packages/gateway-protocol/s
 import { createDeferredCore } from "../../../../src/shared/deferred.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ModelCatalogResult } from "../../api/types.ts";
+import { modelCatalogKey, modelCatalogParams } from "../model-catalog-cache.ts";
 import {
-  modelCatalogParams,
+  loadModelCatalog,
+  peekModelCatalog,
   settleModelCatalogRequests,
   subscribeModelCatalogCache,
-} from "../model-catalog-cache.ts";
-import { loadModelCatalog, peekModelCatalog } from "../model-catalog-store.ts";
+} from "../model-catalog-store.ts";
+import { uiConversationMatches } from "../sessions/session-key.ts";
 import {
   chatMetadataCache,
-  notifyChatMetadataListeners,
   type ChatMetadataEntry,
   type ChatMetadataPublication,
   type ChatMetadataRequest,
@@ -23,6 +24,16 @@ import {
   type ChatMetadataResult,
   type ChatMetadataUpdate,
 } from "./chat-metadata-cache.ts";
+
+function notifyChatMetadataListeners(entry: ChatMetadataEntry, update: ChatMetadataUpdate): void {
+  for (const listener of Array.from(entry.listeners.keys())) {
+    try {
+      listener(update);
+    } catch (error) {
+      console.error("[chat-metadata] listener error:", error);
+    }
+  }
+}
 
 function metadataScopeKey(scope: ChatMetadataParams): string {
   return JSON.stringify([
@@ -39,11 +50,46 @@ function metadataEntryFor(
   const key = metadataScopeKey(params);
   let cache = chatMetadataCache.get(client);
   if (!cache) {
-    cache = new Map();
+    const entries = new Map<string, ChatMetadataEntry>();
+    cache = {
+      entries,
+      invalidate: (scope, sessionDefaults) => {
+        const invalidated = Array.from(entries.values()).filter(
+          (entry) =>
+            (sessionDefaults && scope?.sessionKey
+              ? uiConversationMatches(
+                  { ...sessionDefaults, assistantAgentId: entry.scope.agentId },
+                  entry.scope.sessionKey,
+                  scope.sessionKey,
+                  scope.agentId,
+                )
+              : (!scope?.agentId || entry.scope.agentId === scope.agentId) &&
+                (!scope?.sessionKey || entry.scope.sessionKey === scope.sessionKey)) &&
+            (!scope?.authProfileId || entry.scope.authProfileId === scope.authProfileId),
+        );
+        // Retire every affected writer before subscribers can synchronously start replacements.
+        for (const entry of invalidated) {
+          entry.refreshRevision += 1;
+          entry.result = undefined;
+          entry.writer = undefined;
+        }
+        for (const entry of invalidated) {
+          notifyChatMetadataListeners(entry, {
+            type: "invalidated",
+            // Session mutations own roster reconciliation; global changes also change session facts.
+            refreshSessionFacts: !scope?.sessionKey,
+          });
+          entry.release();
+        }
+      },
+    };
     chatMetadataCache.set(client, cache);
   }
-  let entry = cache.get(key);
+  const entries = cache.entries;
+  let entry = entries.get(key);
   if (!entry) {
+    const catalogScope = modelCatalogParams(params);
+    const catalogKey = modelCatalogKey(catalogScope);
     const created: ChatMetadataEntry = {
       scope: params,
       listeners: new Map(),
@@ -56,25 +102,23 @@ function metadataEntryFor(
           (params.sessionKey || params.authProfileId) &&
           created.listeners.size === 0 &&
           !created.activeRequest &&
-          !created.queuedRequest &&
-          created.refresh?.phase !== "running" &&
-          created.refresh?.phase !== "waiting"
+          !created.queuedRequest
         ) {
           created.writer = undefined;
-          if (cache.get(key) === created) {
-            cache.delete(key);
+          if (entries.get(key) === created) {
+            entries.delete(key);
             stopCatalog();
           }
         }
       },
     };
     const stopCatalog = subscribeModelCatalogCache(client, (update) => {
-      if (update.type === "invalidated" && update.matches(modelCatalogParams(created.scope))) {
+      if (update.type === "invalidated" && update.matches(catalogScope, catalogKey)) {
         created.catalogRevision += 1;
       }
     });
     entry = created;
-    cache.set(key, entry);
+    entries.set(key, entry);
   }
   return entry;
 }
@@ -251,7 +295,7 @@ export function peekChatMetadata(
   client: GatewayBrowserClient,
   scope: ChatMetadataParams,
 ): ChatMetadataResult | undefined {
-  return chatMetadataCache.get(client)?.get(metadataScopeKey(scope))?.result;
+  return chatMetadataCache.get(client)?.entries.get(metadataScopeKey(scope))?.result;
 }
 
 export function subscribeChatMetadata(
@@ -378,7 +422,7 @@ export function loadChatMetadataRefresh(
     metadataRequired,
     revalidateMetadata: options?.revalidateMetadata,
     isCurrent: () =>
-      chatMetadataCache.get(client)?.get(metadataScopeKey(scope)) === entry &&
+      chatMetadataCache.get(client)?.entries.get(metadataScopeKey(scope)) === entry &&
       record.revision === entry.refreshRevision &&
       record.catalogRevision === entry.catalogRevision,
     start: () => {
@@ -401,11 +445,9 @@ export function loadChatMetadataRefresh(
       // Hidden or invalidated demand must retain both producer barriers through remount.
       const catalogSettlement =
         inheritedCatalog && active ? undefined : settleModelCatalogRequests(client, scope);
-      const pending = [
-        entry.activeRequest?.promise,
-        entry.queuedRequest?.promise,
-        catalogSettlement,
-      ].filter((promise) => promise !== undefined);
+      const pending = [entry.activeRequest?.promise, catalogSettlement].filter(
+        (promise) => promise !== undefined,
+      );
       if (current && pending.length) {
         if (!wakePending) {
           wakePending = true;
@@ -423,20 +465,18 @@ export function loadChatMetadataRefresh(
         entry.release();
         return;
       }
-      record.phase = "running";
+      record.phase = "admitted";
       record.revision = entry.refreshRevision;
       record.catalogRevision = entry.catalogRevision;
       const catalogRead = inheritedCatalog ?? loadModelCatalog(client, scope);
-      const transportSettlement = settleModelCatalogRequests(client, scope);
       const metadataRead = record.metadataRequired
         ? record.revalidateMetadata?.()
           ? revalidateChatMetadata(client, scope)
           : loadChatMetadata(client, scope)
         : Promise.resolve();
       void catalogRead.then(catalog.resolve, catalog.reject);
-      void Promise.allSettled([metadataRead, catalogRead]).then(() => completed.resolve());
-      void Promise.allSettled([metadataRead, transportSettlement]).then(() => {
-        record.phase = "settled";
+      void Promise.allSettled([metadataRead, catalog.promise]).then(() => {
+        completed.resolve();
         entry.release();
       });
     },
