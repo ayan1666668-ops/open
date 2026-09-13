@@ -1,5 +1,5 @@
 {
-  "originHash" : "d4742c598adf44e492c024a8502b3512e204ac2de7011680562e45ab918184b5",
+  "originHash" : "90b6a7a595484a20829d367d75e88b5031364b307e43c1fdf2cfdb02d060c2e1",
   "pins" : [
     {
       "identity" : "axorcist",
@@ -51,7 +51,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/openclaw/Peekaboo.git",
       "state" : {
-        "revision" : "8e8256a4aab32d1249525826b384ad81d65b79dc"
+        "revision" : "13ffdea67297ba28adc53c2f83c394059322155e"
       }
     },
     {
