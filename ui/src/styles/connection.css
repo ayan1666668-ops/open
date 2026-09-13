@@ -31,6 +31,13 @@
   color: var(--muted);
 }
 
+.config-host__placeholder {
+  display: inline-block;
+  width: 65%;
+  height: 1em;
+  vertical-align: -0.1em;
+}
+
 .config-host__address {
   font-family: var(--mono);
   font-size: var(--control-ui-text-xs);

@@ -222,25 +222,29 @@ describe("ConnectionPage Gateway lifecycle", () => {
     const current = source({ request } as unknown as GatewayBrowserClient);
     const { page } = await mount(current.gateway);
     const host = () => page.querySelector("#settings-connection-host");
-    const loading = () => host()?.querySelector('[role="status"]');
-    expect(loading()?.textContent).toContain("Loading…");
+    const placeholders = () => host()?.querySelectorAll('.skeleton[aria-hidden="true"]');
+    expect(placeholders()?.length).toBeGreaterThan(0);
+    expect(host()?.textContent).not.toContain("Loading…");
     expect(host()?.getAttribute("aria-busy")).toBe("true");
 
     firstResponse.resolve(deviceSystemInfo);
     await settleLitElement(page);
-    expect(loading()).toBeNull();
+    expect(placeholders()).toHaveLength(0);
     expect(host()?.getAttribute("aria-busy")).toBe("false");
     expect(host()?.textContent).toContain("Gateway");
+    const loadedHostText = host()?.textContent;
 
     await vi.advanceTimersByTimeAsync(10_000);
     await settleLitElement(page);
-    expect(loading()?.textContent).toContain("Loading…");
+    expect(placeholders()).toHaveLength(0);
+    expect(host()?.textContent).toBe(loadedHostText);
+    expect(host()?.getAttribute("aria-busy")).toBe("true");
     expect(page.querySelector(".config-host__name")?.textContent?.trim()).toBe("Gateway");
     expect(page.querySelectorAll('[role="meter"]').length).toBeGreaterThan(0);
 
     refreshResponse.reject(new Error("temporarily unavailable"));
     await settleLitElement(page);
-    expect(loading()).toBeNull();
+    expect(placeholders()).toHaveLength(0);
     expect(host()?.getAttribute("aria-busy")).toBe("false");
     expect(page.querySelector(".config-host__name")?.textContent?.trim()).toBe("Gateway");
   });
@@ -314,7 +318,8 @@ describe("ConnectionPage Gateway lifecycle", () => {
         );
       }
       await settleLitElement(page);
-      expect(page.querySelector(".config-host__name")?.textContent?.trim()).toBe("—");
+      expect(page.querySelector(".config-host__name .skeleton")).not.toBeNull();
+      expect(page.querySelector(".config-host__name")?.textContent).not.toContain("Stale");
       await vi.advanceTimersByTimeAsync(10_000);
       expect(request).toHaveBeenCalledTimes(2);
 
