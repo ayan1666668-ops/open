@@ -1,8 +1,10 @@
 import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it } from "vitest";
-import { responsesLoopbackModel } from "../transports/openai-responses-loopback.test-support.js";
 import type { Tool } from "../types.js";
-import { normalizeToolParameterSchema } from "./agent-tools-parameter-schema.js";
+import {
+  normalizeToolParameterSchema,
+  type ToolSchemaModelCompat,
+} from "./agent-tools-parameter-schema.js";
 import { convertResponsesToolPayload } from "./openai-responses-tools.js";
 import { prepareOpenAITools, projectOpenAITools } from "./openai-tool-projection.js";
 import { normalizeOpenAIStrictToolParameters } from "./openai-tool-schema.js";
@@ -30,6 +32,21 @@ function actions(schema: Record<string, unknown>): string[] {
   return (schema.properties as ReturnType<typeof actionSchema>["properties"]).action.enum;
 }
 
+function normalizePreparedSchema(
+  tools: Tool[],
+  strict: boolean,
+  modelCompat: ToolSchemaModelCompat,
+) {
+  const { projection, schemas } = prepareOpenAITools(tools);
+  return withPreparedToolSchemaNormalization(schemas, () =>
+    normalizeOpenAIStrictToolParameters(
+      expectDefined(projection.tools[0], "projected tool").parameters,
+      strict,
+      modelCompat,
+    ),
+  );
+}
+
 describe("OpenAI tool schema reuse", () => {
   it.each([false, true])(
     "keeps payloads independent and sees in-place source edits with strict=%s",
@@ -52,18 +69,14 @@ describe("OpenAI tool schema reuse", () => {
 
   it.each([false, true])("keeps current provider options isolated with strict=%s", (strict) => {
     const tools = [{ name: "choose", description: "Choose", parameters: actionSchema() }];
-    const model = {
-      ...responsesLoopbackModel,
-      compat: { unsupportedToolSchemaKeywords: [] as string[] },
-    };
+    const modelCompat: ToolSchemaModelCompat = {};
     for (const stripEnum of [false, true, false, true]) {
-      model.compat.unsupportedToolSchemaKeywords = stripEnum ? ["enum"] : [];
-      const [tool] = convertResponsesToolPayload(tools, { strict, model });
-      expect(tool?.strict).toBe(strict);
+      modelCompat.unsupportedToolSchemaKeywords = stripEnum ? ["enum"] : [];
+      const parameters = normalizePreparedSchema(tools, strict, modelCompat);
       if (stripEnum) {
-        expect(tool?.parameters).not.toHaveProperty("properties.action.enum");
+        expect(parameters).not.toHaveProperty("properties.action.enum");
       } else {
-        expect(tool?.parameters).toHaveProperty("properties.action.enum", ["read"]);
+        expect(parameters).toHaveProperty("properties.action.enum", ["read"]);
       }
     }
   });
@@ -135,12 +148,8 @@ describe("OpenAI tool schema reuse", () => {
       wire.properties.action.enum.push("write");
       expect(actions(payloadSchema(tools, strict))).toEqual(["read", "write"]);
       for (let index = 0; index < 8; index++) {
-        convertResponsesToolPayload(tools, {
-          strict,
-          model: {
-            ...responsesLoopbackModel,
-            compat: { unsupportedToolSchemaKeywords: [`synthetic_${index}`] },
-          },
+        normalizePreparedSchema(tools, strict, {
+          unsupportedToolSchemaKeywords: [`synthetic_${index}`],
         });
       }
       expect(normalizeOpenAIStrictToolParameters(parameters, strict)).toBe(direct);
@@ -161,7 +170,10 @@ describe("OpenAI tool schema reuse", () => {
       value: () => parameters,
       enumerable: false,
     });
-    expect(actions(normalizeToolParameterSchema(projected))).toEqual(["read", "public-edit"]);
+    expect(normalizeToolParameterSchema(projected)).toHaveProperty("properties.action.enum", [
+      "read",
+      "public-edit",
+    ]);
     expect(actions(payloadSchema(tools))).toEqual(["read"]);
 
     const another = expectDefined(projectOpenAITools(tools).tools[0], "projected tool").parameters;

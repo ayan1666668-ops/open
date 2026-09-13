@@ -55,7 +55,7 @@ export function createToolSchemaNormalizationCache<T>(maxEntries: number) {
       }
       const entry = preparedCache.get(prepared.source, key);
       return entry?.inputJson === prepared.inputJson
-        ? (JSON.parse(entry.outputJson) as T)
+        ? (JSON.parse(entry.outputJson) as T) // SAFETY: This pool stores only this normalizer's JSON schema output.
         : undefined;
     },
     remember(source: object, key: string, value: T): T {
