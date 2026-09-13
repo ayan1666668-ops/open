@@ -214,7 +214,12 @@ describe("update candidate canary cleanup", () => {
           }
           await expect(fs.access(fixture.childEnv.OPENCLAW_STATE_DIR!)).resolves.toBeUndefined();
         } else {
-          expect(result.status, result.logTail.join("\n")).toBe("ok");
+          if (expired) {
+            expect(result).toMatchObject({ status: "error", phase: "readiness" });
+            expect(result.logTail.join("\n")).toContain("Candidate validation deadline exceeded");
+          } else {
+            expect(result.status, result.logTail.join("\n")).toBe("ok");
+          }
           expect(groupAlive).toBe(false);
           expect(statePresentAtExit).toBe(true);
           await expect(fs.access(fixture.childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({
