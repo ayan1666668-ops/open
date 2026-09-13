@@ -552,4 +552,57 @@ describe("Computer Use provider registration", () => {
     await commands.find((command) => command.command === "screen.snapshot")!.onDisconnect?.();
     expect(closes).toEqual(["completion", "gateway-disconnect"]);
   });
+
+  it("reclaims an execution that goes idle so a later owner is not locked out", async () => {
+    vi.useFakeTimers();
+    try {
+      const firstId = "323e4567-e89b-42d3-a456-426614174000";
+      const secondId = "423e4567-e89b-42d3-a456-426614174000";
+      const commands: OpenClawPluginNodeHostCommand[] = [];
+      const closes: string[] = [];
+      const openExecution = vi.fn(async () => ({
+        snapshot: vi.fn(async () => "snapshot"),
+        act: vi.fn(async () => "act"),
+        close: vi.fn(async (reason: string) => {
+          closes.push(reason);
+        }),
+      }));
+      const provider: ComputerUseProvider = {
+        id: "fixture",
+        label: "Fixture",
+        capabilities: () => ({
+          contractVersion: 2,
+          provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
+          actions: ["start_recording", "stop_recording"],
+          targets: ["screen"],
+          deliveryModes: ["foreground"],
+          observations: ["image"],
+          features: { recording: true, agentCursor: false, multiDisplay: false },
+        }),
+        isAvailable: () => true,
+        openExecution,
+      };
+      registerComputerUseProvider(
+        { registerNodeHostCommand: (command) => commands.push(command) },
+        provider,
+      );
+      const computer = commands.find((command) => command.command === "computer.act")!;
+
+      await expect(
+        computer.handle(JSON.stringify({ action: "start_recording", executionId: firstId })),
+      ).resolves.toBe("act");
+
+      // No owner ever sends __close_execution on harnesses without run cleanup.
+      // The host must not stay owned forever.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(closes).toContain("idle-timeout");
+      await expect(
+        computer.handle(JSON.stringify({ action: "start_recording", executionId: secondId })),
+      ).resolves.toBe("act");
+      expect(openExecution).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
