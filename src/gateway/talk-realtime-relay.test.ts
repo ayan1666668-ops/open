@@ -137,7 +137,7 @@ function createTalkRealtimeRelaySession(
   const session = createTalkRealtimeRelaySessionRaw({
     ...request,
     controlSource: capabilities?.handlesAgentConsult === true ? "delegation" : "transcript",
-    supportsToolCalls: capabilities?.supportsToolCalls,
+    capabilities,
     context: {
       ...request.context,
       chatAbortControllers: request.context.chatAbortControllers ?? new Map(),
@@ -1033,10 +1033,7 @@ describe("talk realtime gateway relay", () => {
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
     const bridgeClose = vi.fn();
     const events: Array<{ event: string; payload: unknown; connIds: string[] }> = [];
-    let releaseQueue!: () => void;
-    const queueBlocked = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
+    const { promise: queueBlocked, resolve: releaseQueue } = createDeferred();
     try {
       await replaceSessionEntry(
         { agentId: "main", sessionKey: "agent:main:main" },
@@ -1487,6 +1484,7 @@ describe("talk realtime gateway relay", () => {
       broadcastToConnIds,
       broadcast,
       nodeSendToSession,
+      logGateway: { warn: vi.fn() },
       chatAbortControllers: new Map([
         [
           "run-1",
@@ -3711,6 +3709,110 @@ describe("talk realtime gateway relay", () => {
     },
   );
 
+  it.each([
+    { mode: "continuous", fails: false },
+    { mode: "capability", fails: false },
+    { mode: "continuous", fails: true },
+  ] as const)(
+    "keeps automatic interruption provider-owned and finalizes an explicit stop ($mode, failure=$fails)",
+    async ({ mode, fails }) => {
+      const finalization = createDeferred();
+      const close = vi.fn(() => finalization.promise);
+      const handleBargeIn = vi.fn();
+      const sendAudio = vi.fn();
+      let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
+      const provider = createIdleRelayProvider();
+      if (mode === "capability") {
+        provider.capabilities = {
+          transports: ["gateway-relay"],
+          inputAudioFormats: [],
+          outputAudioFormats: [],
+          supportsBargeIn: false,
+        };
+      }
+      provider.createBridge = (request) => {
+        bridgeRequest = request;
+        return makeRelayTransport({
+          close,
+          handleBargeIn,
+          sendAudio,
+          ...(mode === "continuous" ? { outputAudioMode: "continuous" as const } : {}),
+        });
+      };
+      const { abortController, broadcastToConnIds, session } =
+        createAbortableRelayRunFixture(provider);
+      const turnId = ensureActiveRelayTurnId(session.relaySessionId);
+      bridgeRequest?.onAudio(Buffer.from([1, 2]));
+      const target = { relaySessionId: session.relaySessionId, connId: "conn-1" };
+      try {
+        await expect(
+          cancelTalkRealtimeRelayTurn({ ...target, turnId: "stale-turn", reason: "user" }),
+        ).resolves.toEqual({ status: "stale" });
+        const eventsBeforeBargeIn = broadcastToConnIds.mock.calls.length;
+        const automaticCancellation = cancelTalkRealtimeRelayTurn({
+          ...target,
+          turnId,
+          reason: "barge-in",
+        });
+        expect(close).not.toHaveBeenCalled();
+        await expect(automaticCancellation).resolves.toEqual({ status: "idle" });
+        expect(abortController.signal.aborted).toBe(false);
+        expect(broadcastToConnIds.mock.calls).toHaveLength(eventsBeforeBargeIn);
+        expect(relaySessions.get(session.relaySessionId)?.harness.talk.activeTurnId).toBe(turnId);
+        await sendTalkRealtimeRelayAudio({ ...target, audioBase64: "AQI=" });
+        expect(sendAudio).toHaveBeenCalledExactlyOnceWith(Buffer.from([1, 2]));
+
+        const cancellation = cancelTalkRealtimeRelayTurn({ ...target, turnId, reason: "user" });
+        expect(close).toHaveBeenCalledExactlyOnceWith({ disposition: "abort" });
+        expect(handleBargeIn).not.toHaveBeenCalled();
+        expect(abortController.signal.aborted).toBe(true);
+        expect(broadcastToConnIds).toHaveBeenCalledWith(
+          "talk.event",
+          expect.objectContaining({
+            type: "clear",
+            talkEvent: expect.objectContaining({ type: "turn.cancelled", turnId }),
+          }),
+          new Set(["conn-1"]),
+          { dropIfSlow: false },
+        );
+        expect(() => sendTalkRealtimeRelayAudio({ ...target, audioBase64: "AQI=" })).toThrow(
+          "Unknown realtime relay session",
+        );
+        const eventCount = broadcastToConnIds.mock.calls.length;
+        bridgeRequest?.onAudio(Buffer.from([3, 4]));
+        expect(broadcastToConnIds.mock.calls).toHaveLength(eventCount);
+        const settled = vi.fn();
+        void cancellation.then(settled, settled);
+        await Promise.resolve();
+        expect(settled).not.toHaveBeenCalled();
+        const completion = fails
+          ? expect(cancellation).rejects.toThrow("finalization failed")
+          : expect(cancellation).resolves.toEqual({ status: "applied", turnId });
+        if (fails) {
+          finalization.reject(new Error("finalization failed"));
+        } else {
+          finalization.resolve();
+        }
+        await completion;
+        expect(broadcastToConnIds).toHaveBeenLastCalledWith(
+          "talk.event",
+          expect.objectContaining({
+            type: "close",
+            reason: fails ? "error" : "completed",
+            talkEvent: expect.objectContaining({
+              type: "session.closed",
+              payload: { reason: fails ? "error" : "output-cancelled" },
+            }),
+          }),
+          new Set(["conn-1"]),
+          { dropIfSlow: false },
+        );
+      } finally {
+        finalization.resolve();
+      }
+    },
+  );
+
   it("recovers an exact-response relay only after matching provider cancellation", async () => {
     vi.useFakeTimers();
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
@@ -4230,10 +4332,7 @@ describe("talk realtime gateway relay", () => {
   });
 
   it("submits an ordinary final after an interim rejection", async () => {
-    let rejectInterim: ((error: Error) => void) | undefined;
-    const rejectedInterim = new Promise<void>((_resolve, reject) => {
-      rejectInterim = reject;
-    });
+    const { promise: rejectedInterim, reject: rejectInterim } = createDeferred();
     const submitToolResult = vi
       .fn<RealtimeVoiceBridge["submitToolResult"]>()
       .mockReturnValueOnce(rejectedInterim)
@@ -5130,10 +5229,7 @@ describe("talk realtime gateway relay", () => {
 
   it("supersedes a rejected forced final with canonical cancellation", async () => {
     const fixture = await createSuppressionUnsupportedForcedConsultFixture(["native-call"]);
-    let rejectFinal: ((error: Error) => void) | undefined;
-    const rejectedFinal = new Promise<void>((_resolve, reject) => {
-      rejectFinal = reject;
-    });
+    const { promise: rejectedFinal, reject: rejectFinal } = createDeferred();
     fixture.submitToolResult.mockReturnValueOnce(rejectedFinal).mockReturnValueOnce(undefined);
     const staleFinal = submitTalkRealtimeRelayToolResult({
       relaySessionId: fixture.session.relaySessionId,
