@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { configureAiTransportHost, getAiTransportHost } from "@openclaw/ai";
 import { afterEach, expect, it } from "vitest";
+import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import {
   clearLoadInstalledPluginIndexInstallRecordsCache,
   writePersistedInstalledPluginIndexInstallRecords,
@@ -107,6 +108,16 @@ export default defineSingleProviderPluginEntry({
 `,
         "utf8",
       );
+      const hostRoot = resolveOpenClawPackageRootSync({
+        argv1: process.argv[1],
+        moduleUrl: import.meta.url,
+        cwd: process.cwd(),
+      });
+      if (!hostRoot) {
+        throw new Error("test host package root is unavailable");
+      }
+      await fs.mkdir(path.join(pluginDir, "node_modules"), { recursive: true });
+      await fs.symlink(hostRoot, path.join(pluginDir, "node_modules", "openclaw"), "junction");
       const config = { plugins: { entries: { groq: { enabled: true } } } };
       await state.writeConfig(config);
       await writePersistedInstalledPluginIndexInstallRecords(
