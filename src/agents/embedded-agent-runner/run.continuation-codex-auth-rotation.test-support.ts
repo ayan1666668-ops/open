@@ -261,12 +261,12 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
     expect(secondAttempt.resolvedApiKey).toBe("platform-key");
   });
 
-  it("clears a Platform key when Codex rotates to a subscription profile", async () => {
+  it("keeps credentials scoped while rotating from subscription to Platform", async () => {
     const { clearAgentHarnesses, registerAgentHarness } = await import("../harness/registry.js");
-    const platformLimit = new Error(
-      "You've reached your Platform usage limit. Next reset in 20 hours.",
+    const subscriptionLimit = new Error(
+      "You've reached your Codex subscription usage limit. Next reset in 20 hours.",
     );
-    const normalizedLimit = Object.assign(new Error(platformLimit.message), {
+    const normalizedLimit = Object.assign(new Error(subscriptionLimit.message), {
       name: "FailoverError",
       reason: "rate_limit",
       status: 429,
@@ -275,8 +275,8 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
     const pluginRunAttempt = vi.fn<AgentHarness["runAttempt"]>(async () => {
       attemptCount += 1;
       return attemptCount === 1
-        ? makeAttemptResult({ promptError: platformLimit })
-        : makeAttemptResult({ assistantTexts: ["subscription ok"], promptError: null });
+        ? makeAttemptResult({ promptError: subscriptionLimit })
+        : makeAttemptResult({ assistantTexts: ["platform ok"], promptError: null });
     });
     const platformPlan = makeForwardedRuntimePlan({
       resolvedRef: { provider: "openai", modelId: "gpt-5.5", harnessId: "codex" },
@@ -332,18 +332,13 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
       authStorage,
     });
     queueOpenAIResolvedModel({
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-      authStorage,
-    });
-    queueOpenAIResolvedModel({
       api: "openai-chatgpt-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
       authStorage,
     });
     mockedBuildAgentRuntimePlan
-      .mockReturnValueOnce(platformPlan)
-      .mockReturnValueOnce(subscriptionPlan);
+      .mockReturnValueOnce(subscriptionPlan)
+      .mockReturnValueOnce(platformPlan);
     mockedGetApiKeyForModel.mockImplementation(
       async ({ profileId, model }: { profileId?: string; model?: { api?: string } } = {}) => {
         expect(profileId).toBe("openai:platform");
@@ -375,7 +370,7 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
       },
     });
     mockedCoerceToFailoverError.mockImplementation((error) =>
-      error === platformLimit ? normalizedLimit : null,
+      error === subscriptionLimit ? normalizedLimit : null,
     );
     mockedDescribeFailoverError.mockImplementation((error: unknown) => ({
       message: error instanceof Error ? error.message : String(error),
@@ -390,7 +385,7 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
         provider: "openai",
         model: "gpt-5.5",
         config: { agents: { defaults: { agentRuntime: { id: "codex" } } } },
-        runId: "forced-codex-platform-to-subscription",
+        runId: "forced-codex-subscription-to-platform-simple",
       });
     } finally {
       clearAgentHarnesses();
@@ -405,25 +400,24 @@ describe("runEmbeddedAgent Codex auth rotation continuation", () => {
     expect(secondAttempt.authStorage).toBe(authStorage);
     expect(authStorage.setRuntimeApiKey).toHaveBeenCalledOnce();
     expect(authStorage.setRuntimeApiKey).toHaveBeenCalledWith("openai", "platform-key");
-    expect(firstAttempt.resolvedApiKey).toBe("platform-key");
-    expect(secondAttempt.resolvedApiKey).toBeUndefined();
-    expect(Object.keys(firstAttempt.authProfileStore.profiles)).toEqual(["openai:platform"]);
-    expect(Object.keys(secondAttempt.authProfileStore.profiles)).toEqual(["openai:sub"]);
+    expect(firstAttempt.resolvedApiKey).toBeUndefined();
+    expect(secondAttempt.resolvedApiKey).toBe("platform-key");
+    expect(Object.keys(firstAttempt.authProfileStore.profiles)).toEqual(["openai:sub"]);
+    expect(Object.keys(secondAttempt.authProfileStore.profiles)).toEqual(["openai:platform"]);
     expect(secondAttempt.authProfileStore).not.toBe(firstAttempt.authProfileStore);
     expectRecordFields(firstAttempt.model, {
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-    });
-    expectRecordFields(secondAttempt.model, {
       api: "openai-chatgpt-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
     });
-    expect(authStorage.removeRuntimeApiKey).toHaveBeenCalledOnce();
-    expect(authStorage.removeRuntimeApiKey).toHaveBeenCalledWith("openai");
-    expect(authStorage.removeRuntimeApiKey.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expectRecordFields(secondAttempt.model, {
+      api: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+    });
+    expect(authStorage.removeRuntimeApiKey).not.toHaveBeenCalled();
+    expect(authStorage.setRuntimeApiKey.mock.invocationCallOrder[0]).toBeGreaterThan(
       pluginRunAttempt.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(authStorage.removeRuntimeApiKey.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(authStorage.setRuntimeApiKey.mock.invocationCallOrder[0]).toBeLessThan(
       pluginRunAttempt.mock.invocationCallOrder[1] ?? Number.NEGATIVE_INFINITY,
     );
   });

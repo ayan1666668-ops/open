@@ -129,6 +129,7 @@ describe("runEmbeddedAgent overflow recovery continuation", () => {
         },
       },
     };
+    const pressureEvents: ReturnType<typeof peekSystemEventEntries> = [];
     mockOverflowRetrySuccess({
       runEmbeddedAttempt: mockedRunEmbeddedAttempt,
       compactDirect: mockedCompactDirect,
@@ -136,6 +137,11 @@ describe("runEmbeddedAgent overflow recovery continuation", () => {
         expect(loadSessionEntry(overflowBaseRunParams.sessionTarget!)).toMatchObject({
           lastContextPressureBand: 95,
         });
+        pressureEvents.push(
+          ...peekSystemEventEntries(overflowBaseRunParams.sessionKey).filter((event) =>
+            event.text.includes("[system:context-pressure]"),
+          ),
+        );
       },
     });
 
@@ -156,9 +162,6 @@ describe("runEmbeddedAgent overflow recovery continuation", () => {
       trigger: "overflow",
       authProfileId: "test-profile",
     });
-    const pressureEvents = peekSystemEventEntries(overflowBaseRunParams.sessionKey).filter(
-      (event) => event.text.includes("[system:context-pressure]"),
-    );
     expect(pressureEvents).toHaveLength(1);
     expect(pressureEvents[0]?.text).toContain("preserve critical working state");
     expect(pressureEvents[0]?.text).not.toContain("continue_delegate");
@@ -206,18 +209,20 @@ describe("runEmbeddedAgent overflow recovery continuation", () => {
         },
       },
     };
+    let sawCanonicalPressureEvent = false;
     mockOverflowRetrySuccess({
       runEmbeddedAttempt: mockedRunEmbeddedAttempt,
       compactDirect: mockedCompactDirect,
+      beforeCompact: () => {
+        sawCanonicalPressureEvent = peekSystemEventEntries(
+          overflowBaseRunParams.sessionTarget.sessionKey,
+        ).some((event) => event.text.includes("[system:context-pressure]"));
+      },
     });
 
     await runEmbeddedAgent({ ...overflowBaseRunParams, sessionKey: "", config });
 
-    expect(
-      peekSystemEventEntries(overflowBaseRunParams.sessionTarget.sessionKey).some((event) =>
-        event.text.includes("[system:context-pressure]"),
-      ),
-    ).toBe(true);
+    expect(sawCanonicalPressureEvent).toBe(true);
     expectLogExcludes(mockedLog.warn, "[session-key:missing] site=pi-runner.overflow-compaction");
   });
 

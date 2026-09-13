@@ -944,7 +944,16 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
 
   vi.doMock("./model.js", () => ({
     createEmptyAgentDiscoveryStores: mockedCreateEmptyAgentDiscoveryStores,
-    resolveModelAsync: mockedResolveModelAsync,
+    resolveModelAsync: async (...args: Parameters<typeof mockedResolveModelAsync>) => {
+      const result = await mockedResolveModelAsync(...args);
+      return {
+        ...result,
+        logicalRef: result.logicalRef ?? {
+          provider: result.model.provider,
+          model: result.model.id,
+        },
+      };
+    },
   }));
 
   vi.doMock("../model-auth.js", () => ({

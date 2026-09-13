@@ -235,7 +235,9 @@ export async function waitForRunEvent(events: string[], expected: string): Promi
     if (events.includes(expected)) {
       return;
     }
-    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
   }
   throw new Error(`Expected run event ${expected}; saw ${events.join(", ")}`);
 }

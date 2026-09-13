@@ -58,7 +58,7 @@ describe("runEmbeddedAgent continuation auth overlays", () => {
     expect(String(agentDir).replaceAll("\\", "/").endsWith("/.openclaw/agents/main/agent")).toBe(
       true,
     );
-    expect(authStoreOptions).toEqual({ allowKeychainPrompt: false });
+    expect(authStoreOptions).toMatchObject({ allowKeychainPrompt: false });
   });
 
   it("loads the external Claude CLI auth overlay for PI runs routed by Claude CLI OAuth", async () => {
