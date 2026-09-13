@@ -108,7 +108,7 @@ describe("subagent registry known-run reads", () => {
       const replacement = createRun("replacement", { swarmRunId: "collector", createdAt: 300 });
       saveSubagentRegistryToSqlite(new Map([direct, replacement].map((row) => [row.runId, row])));
       const moved = { ...replacement, swarmRunId: "different-collector" };
-      const memory = new Map([[moved.runId, moved]]);
+      const memory = new Map<string, SubagentRunRecord>([[moved.runId, moved]]);
       const api = createReadApi(memory);
 
       const first = api.getSubagentRunsByRunIds(["collector"]).entries.get("collector")!;
