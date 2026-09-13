@@ -132,6 +132,8 @@ calls from a monitor that retained its startup config. Dispatch waits for an
 in-progress model-runtime publication before admission. Channel transport and
 access-policy freshness still belong to the account monitor; reply dispatch does
 not replace durable ingress or its append-before-ack contract.
+The legacy `usePublishedModelRuntime` argument remains accepted for SDK
+compatibility but no longer controls Gateway model admission.
 
 Use `reload.noopPrefixes` only for fields whose consumers read the committed
 runtime config without replacing a channel resource. These writes still publish

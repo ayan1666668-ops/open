@@ -42,6 +42,8 @@ export type DispatchFromConfigParams = {
   configOverride?: OpenClawConfig;
   /** Gateway-owned worker services for archive recovery outside a request scope. */
   sessionWorkerPlacementContext?: SessionWorkerPlacementContext;
+  /** @deprecated Always enabled in the Gateway; remove in the next Plugin SDK major. */
+  usePublishedModelRuntime?: boolean;
 };
 
 export type DispatchReplyFromConfig = (
