@@ -409,7 +409,7 @@ describe("memory-wiki tools", () => {
     expect(text.length + JSON.stringify(details).length).toBeLessThanOrEqual(7_200);
   });
 
-  it("reports a truthful non-empty message, not a false 'No open wiki items', when a single item exceeds the result budget", async () => {
+  it("returns an identifiable locator, not a silent skip, when a single item exceeds the result budget", async () => {
     const { rootDir, config } = await harness.createVault({ initialize: true });
     // Per-item text/pagePath/pageTitle are each capped at 500 chars, so no
     // single-field open-question or low-confidence item can alone exceed the
@@ -431,7 +431,7 @@ describe("memory-wiki tools", () => {
     }
     // A separate, small item that sorts after the huge claim-contradiction
     // (claim-contradiction is derived before low-confidence-page) so it is
-    // reachable only by skipping past the oversized one.
+    // reachable only after the oversized one's locator is returned.
     await writeSynthesisPage(rootDir, path.join("syntheses", "normal.md"), [
       "id: synth-normal",
       "title: Normal",
@@ -439,21 +439,26 @@ describe("memory-wiki tools", () => {
     ]);
 
     const tool = createWikiOpenItemsTool(config);
-    const result = await tool.execute("open-items-false-empty", {});
+    const result = await tool.execute("open-items-oversized-locator", {});
     const text = result.content.find((part) => part.type === "text")?.text ?? "";
     const details = asSchemaObject(result.details);
+    const items = details.items as Array<Record<string, unknown>>;
 
-    // Zero items fit, but items do exist at this offset — must not claim
-    // "No open wiki items" (the false-empty case) and must offer a next step.
-    expect((details.items as unknown[]).length).toBe(0);
+    // The oversized item is not silently skipped: a compact locator with its
+    // real kind/claimId/page is returned so the caller can open the page
+    // directly instead of losing the item entirely.
+    expect(items.length).toBe(1);
+    expect(items[0]?.kind).toBe("claim-contradiction");
+    expect(items[0]?.claimId).toBe("huge");
+    expect(items[0]?.variants).toBeUndefined();
+    expect(items[0]?.text).toContain("too large to include");
     expect(text).not.toBe("No open wiki items.");
-    expect(text).toContain("unresolved item(s) remain");
     expect(details.hasMore).toBe(true);
     expect(typeof details.nextOffset).toBe("number");
 
-    // Skipping past the oversized item with the reported nextOffset reaches
-    // the remaining normal item instead of looping on the same offset.
-    const nextPage = await tool.execute("open-items-false-empty-next", {
+    // Advancing past the locator with the reported nextOffset reaches the
+    // remaining normal item.
+    const nextPage = await tool.execute("open-items-oversized-locator-next", {
       offset: details.nextOffset as number,
     });
     const nextDetails = asSchemaObject(nextPage.details);

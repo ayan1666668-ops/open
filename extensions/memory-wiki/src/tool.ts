@@ -287,6 +287,29 @@ function hasMemoryWikiOpenItemsResultBudget(
   return text.length + JSON.stringify(details).length <= WIKI_OPEN_ITEMS_RESULT_MAX_CHARS;
 }
 
+/**
+ * A compact stand-in for an item whose full form (typically a
+ * contradiction cluster with many variants) alone exceeds the result
+ * budget even after per-field truncation. Drops the bulky `variants`/
+ * `relatedPagePaths` content but keeps enough (`kind`, `pagePath`,
+ * `pageTitle`, `claimId`) that a caller can open the page directly
+ * instead of the item becoming an anonymous, unreachable skip.
+ */
+function locatorForOversizedOpenItem(item: {
+  kind: WikiOpenItemKind;
+  pagePath: string;
+  pageTitle: string;
+  claimId?: string;
+}): ReturnType<typeof boundMemoryWikiOpenItem> {
+  return boundMemoryWikiOpenItem({
+    kind: item.kind,
+    text: "(too large to include in this response — open the page directly to view the full item)",
+    pagePath: item.pagePath,
+    pageTitle: item.pageTitle,
+    ...(item.claimId ? { claimId: item.claimId } : {}),
+  });
+}
+
 export function createWikiStatusTool(
   config: ResolvedMemoryWikiConfig,
   appConfig?: OpenClawConfig,
@@ -425,26 +448,31 @@ export function createWikiOpenItemsTool(
       for (const item of windowed) {
         const candidate = [...boundedItems, boundMemoryWikiOpenItem(item)];
         if (!hasMemoryWikiOpenItemsResultBudget(candidate, result.counts)) {
+          // If nothing has been returned yet, this item alone (typically a
+          // contradiction cluster with many variants) exceeds the budget even
+          // after per-field truncation. Returning nothing would make it
+          // permanently unreachable in identifiable form and would also
+          // produce a `nextOffset` equal to the current `offset` — stuck
+          // forever on the same item. Fall back to a compact locator so a
+          // caller both learns what/where it is and still advances.
+          if (boundedItems.length === 0) {
+            const locator = locatorForOversizedOpenItem(item);
+            if (hasMemoryWikiOpenItemsResultBudget([locator], result.counts)) {
+              boundedItems.push(locator);
+            }
+          }
           break;
         }
         boundedItems.push(candidate.at(-1)!);
       }
-      // Position in `filtered` right after everything actually returned.
-      // `hasMore` therefore reflects both `limit` slicing and result-budget
-      // clipping, unlike a naive `boundedItems.length < windowed.length`
-      // check, which misses items already excluded by the `.slice` above.
+      // Position in `filtered` right after everything actually returned
+      // (full items and any oversized-item locators alike). `hasMore`
+      // therefore reflects both `limit` slicing and result-budget clipping,
+      // unlike a naive `boundedItems.length < windowed.length` check, which
+      // misses items already excluded by the `.slice` above.
       const consumedThrough = offset + boundedItems.length;
       const hasMore = consumedThrough < filtered.length;
-      // A single oversized item that alone exceeds the result budget would
-      // otherwise produce a `nextOffset` equal to the current `offset` —
-      // stuck forever on the same item. Skip past it so a caller that
-      // mechanically retries with `nextOffset` still makes forward progress.
-      const stuckOnOversizedItem = boundedItems.length === 0 && windowed.length > 0;
-      const nextOffset = hasMore
-        ? stuckOnOversizedItem
-          ? consumedThrough + 1
-          : consumedThrough
-        : undefined;
+      const nextOffset = hasMore ? consumedThrough : undefined;
       const text = renderMemoryWikiOpenItems(boundedItems, {
         offset,
         filteredTotal: filtered.length,
