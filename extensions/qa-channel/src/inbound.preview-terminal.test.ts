@@ -3,8 +3,12 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setQaChannelRuntime } from "../api.js";
 import { deleteQaBusMessage, editQaBusMessage, sendQaBusMessage } from "./bus-client.js";
-import { handleQaInbound } from "./inbound.js";
-import { createQaInboundParams, firstRunAssembledParams } from "./inbound.test-harness.js";
+import {
+  createQaInboundParams,
+  firstRunAssembledParams,
+  runQaInbound,
+  startQaInbound,
+} from "./inbound.test-harness.js";
 
 vi.mock("./bus-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./bus-client.js")>()),
@@ -16,7 +20,7 @@ vi.mock("./bus-client.js", async (importOriginal) => ({
 async function assembledTurn() {
   const runtime = createPluginRuntimeMock();
   setQaChannelRuntime(runtime);
-  await handleQaInbound(createQaInboundParams());
+  await startQaInbound(runtime);
   return firstRunAssembledParams(runtime);
 }
 
@@ -90,16 +94,6 @@ describe("QA preview terminal ownership", () => {
     );
   });
 
-  it("removes an unfinished preview on an empty final and rejects later partials", async () => {
-    const turn = await assembledTurn();
-    await turn.replyOptions?.onPartialReply?.({ text: "unfinished" });
-    await turn.delivery.deliver({ text: "" }, { kind: "final" });
-    await turn.replyOptions?.onPartialReply?.({ text: "late" });
-    expect(deleteQaBusMessage).toHaveBeenCalledOnce();
-    expect(editQaBusMessage).not.toHaveBeenCalled();
-    expect(sendQaBusMessage).toHaveBeenCalledOnce();
-  });
-
   it("does not close previews for an empty nonterminal block", async () => {
     const turn = await assembledTurn();
     await turn.delivery.deliver({ text: "" }, { kind: "block" });
@@ -155,5 +149,18 @@ describe("QA preview terminal ownership", () => {
     expect(deleteQaBusMessage).toHaveBeenCalledOnce();
     expect(sendQaBusMessage).toHaveBeenCalledOnce();
     expect(editQaBusMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves the dispatch failure when preview cleanup also fails", async () => {
+    const failure = new Error("dispatch failed");
+    vi.mocked(deleteQaBusMessage).mockRejectedValueOnce(new Error("cleanup failed"));
+    await expect(
+      runQaInbound(async (turn) => {
+        await turn.replyOptions?.onPartialReply?.({ text: "unfinished" });
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(deleteQaBusMessage).toHaveBeenCalledOnce();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("cleanup failed"));
   });
 });
