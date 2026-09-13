@@ -23,9 +23,7 @@ import {
 import { truncateUtf8Prefix } from "../../../utils/utf8-truncate.js";
 import { getDeliveryAttemptCount, getDeliveryLastError } from "./subagent-delivery-state.js";
 import { SUBAGENT_ENDED_REASON_KILLED } from "./subagent-lifecycle-events.js";
-import {
-  shouldDeferTerminalCleanupForUnconfirmedChild,
-} from "./subagent-registry-cleanup.js";
+import { shouldDeferTerminalCleanupForUnconfirmedChild } from "./subagent-registry-cleanup.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import {
   getSubagentSessionRuntimeMs,
