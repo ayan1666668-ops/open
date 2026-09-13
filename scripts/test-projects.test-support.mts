@@ -1624,14 +1624,18 @@ function listImportGraphFilesForCwd(cwd: string, options: ImportGraphOptions = {
   }
   const roots = tooling ? TOOLING_IMPORT_GRAPH_ROOTS : SOURCE_ROOTS_FOR_IMPORT_GRAPH;
   const extensions = tooling ? TOOLING_IMPORTABLE_FILE_EXTENSIONS : IMPORTABLE_FILE_EXTENSIONS;
-  const files = listTrackedTestPlanFiles(
+  const trackedFiles = listTrackedTestPlanFiles(
     cwd,
     tooling ? TOOLING_IMPORT_GRAPH_GREP_PATHS : IMPORT_GRAPH_GREP_PATHS,
-  ) ?? [
-    ...roots.flatMap((root) => listImportGraphFiles(cwd, root, [], extensions)),
-    // Root configs are inputs; UI caches and generated sibling trees are not.
-    ...listImportGraphFiles(cwd, "ui", [], extensions, false),
-  ];
+  );
+  const files =
+    trackedFiles && trackedFiles.length > 0
+      ? trackedFiles
+      : [
+          ...roots.flatMap((root) => listImportGraphFiles(cwd, root, [], extensions)),
+          // Root configs are inputs; UI caches and generated sibling trees are not.
+          ...listImportGraphFiles(cwd, "ui", [], extensions, false),
+        ];
   cachedImportGraphFiles.set(cacheKey, files);
   return files;
 }
