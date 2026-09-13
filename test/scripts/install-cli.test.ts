@@ -1713,7 +1713,7 @@ fi
       for (const [target, version] of [
         [bin, "11.19.1"],
         [fallback, "11.19.2"],
-      ]) {
+      ] as const) {
         symlinkSync(nodeExecutable, join(target, "node"));
         writeFileSync(
           join(target, "npm"),
