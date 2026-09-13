@@ -929,10 +929,13 @@ describe("handleAgentEnd", () => {
 
     await handleAgentEnd(ctx);
 
-    expect(ctx.emitBlockReply).toHaveBeenCalledWith({
-      mediaUrls: ["/tmp/reply.opus"],
-      audioAsVoice: true,
-    });
+    expect(ctx.emitBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaUrls: ["/tmp/reply.opus"],
+        audioAsVoice: true,
+      }),
+      expect.objectContaining({ onDelivered: expect.any(Function) }),
+    );
     expect(ctx.state.pendingToolMediaUrls).toStrictEqual([]);
     expect(ctx.state.pendingToolAudioAsVoice).toBe(false);
   });
@@ -963,10 +966,13 @@ describe("handleAgentEnd", () => {
     const lifecycleOrder = onAgentEvent.mock.invocationCallOrder[0] as number | undefined;
 
     expect(ctx.emitBlockReply).toHaveBeenCalledTimes(1);
-    expect(ctx.emitBlockReply).toHaveBeenCalledWith({
-      mediaUrls: ["/tmp/reply.opus"],
-      audioAsVoice: true,
-    });
+    expect(ctx.emitBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaUrls: ["/tmp/reply.opus"],
+        audioAsVoice: true,
+      }),
+      expect.objectContaining({ onDelivered: expect.any(Function) }),
+    );
     expect(blockReplyOrder).toBeTypeOf("number");
     if (typeof blockReplyOrder !== "number") {
       throw new Error("Expected orphaned media block reply call order.");
