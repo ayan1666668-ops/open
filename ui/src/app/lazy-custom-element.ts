@@ -246,7 +246,9 @@ const KEYBOARD_SHORTCUTS_TAG = "openclaw-keyboard-shortcuts-dialog";
 
 export const KEYBOARD_SHORTCUTS_ELEMENT = {
   tagName: KEYBOARD_SHORTCUTS_TAG,
-  label: KEYBOARD_SHORTCUTS_TAG,
+  get label() {
+    return t("shortcutsOverlay.title");
+  },
   loadModule: () => import("../components/keyboard-shortcuts-dialog.ts"),
 } satisfies OptionalCustomElement;
 
@@ -318,8 +320,9 @@ const EXEC_APPROVAL_TAG = "openclaw-exec-approval";
 
 export const EXEC_APPROVAL_ELEMENT = {
   tagName: EXEC_APPROVAL_TAG,
-  // This diagnostic uses the tag rather than user-facing copy.
-  label: EXEC_APPROVAL_TAG,
+  get label() {
+    return t("nav.approvals");
+  },
   loadModule: () => import("../components/exec-approval.ts"),
 } satisfies OptionalCustomElement;
 
