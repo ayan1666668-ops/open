@@ -153,9 +153,16 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
     );
   }
 
-  it.skipIf(!python3).each([false, true])(
-    "preserves the reviewed virtualenv invocation or rejects PATH drift (shadowed=%s)",
-    async (shadowed) => {
+  it.skipIf(!python3).each([
+    { mode: "auto", command: "python probe.py *.txt", shadowed: false },
+    { mode: "auto", command: "python probe.py *.txt", shadowed: true },
+    { mode: "auto", command: "python probe.py approved.txt", shadowed: false },
+    { mode: "ask", command: "python probe.py approved.txt", shadowed: false },
+    { mode: "ask", command: "python probe.py approved.txt", shadowed: true },
+    { mode: "ask", command: "env python probe.py approved.txt", shadowed: false },
+  ] as const)(
+    "preserves the $mode virtualenv invocation or rejects PATH drift: $command (shadowed=$shadowed)",
+    async ({ mode, command, shadowed }) => {
       if (!python3) {
         throw new Error("Python is required for this virtualenv regression");
       }
@@ -191,18 +198,37 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
       const earlierBin = path.join(root, "earlier-bin");
       fs.mkdirSync(earlierBin);
       const review = reviewer();
-      if (shadowed) {
+      if (shadowed && mode === "auto") {
         review.mockImplementation(async () => {
           fs.symlinkSync(fs.realpathSync(interpreter), path.join(earlierBin, "python"));
           return { decision: "allow-once", risk: "low", rationale: "list fixture files" };
         });
       }
+      if (mode === "ask") {
+        vi.mocked(callGatewayTool).mockImplementation(async (method) => {
+          if (method === "exec.approval.request") {
+            return { status: "accepted", id: "venv-approval" };
+          }
+          if (method === "exec.approval.waitDecision") {
+            if (shadowed) {
+              fs.symlinkSync(fs.realpathSync(interpreter), path.join(earlierBin, "python"));
+            }
+            return { decision: "allow-once" };
+          }
+          return { ok: true };
+        });
+      }
       // Gateway login-shell PATH is cached; select the fixture through its explicit exec setting.
-      const result = await tool(review, "auto", [earlierBin, path.dirname(interpreter)]).execute(
+      const result = await tool(review, mode, [earlierBin, path.dirname(interpreter)]).execute(
         "venv-review",
-        { command: "python probe.py *.txt" },
+        { command },
       );
-      expect(review.mock.calls.length).toBe(1);
+      expect(review.mock.calls.length).toBe(mode === "auto" ? 1 : 0);
+      expect(
+        vi
+          .mocked(callGatewayTool)
+          .mock.calls.filter(([method]) => method === "exec.approval.waitDecision").length,
+      ).toBe(mode === "ask" ? 1 : 0);
       if (shadowed) {
         expect(result.details.status).toBe("failed");
         expect(boundary.spawn.mock.calls.length).toBe(0);
@@ -215,6 +241,36 @@ describe.skipIf(process.platform === "win32")("gateway execution authorization b
       expect(result.details.aggregated).toBe("venv-package-loaded approved.txt");
     },
   );
+
+  it("keeps current-policy execution pinned when an allowlisted symlink changes", async () => {
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const commandPath = path.join(bin, "read-approved");
+    fs.symlinkSync("/bin/cat", commandPath);
+    fs.writeFileSync(path.join(root, "approved.txt"), "approved-content\n");
+    saveExecApprovals({
+      version: 1,
+      defaults: { security: "allowlist", ask: "off", askFallback: "deny" },
+      agents: { main: { allowlist: [{ pattern: fs.realpathSync("/bin/cat") }] } },
+    });
+    boundary.prepare.mockImplementation(async () => {
+      fs.unlinkSync(commandPath);
+      fs.symlinkSync("/bin/echo", commandPath);
+    });
+    const review = reviewer();
+
+    const result = await tool(review, "allowlist", [bin]).execute("allowlist-symlink", {
+      command: "read-approved approved.txt",
+    });
+
+    expect(review.mock.calls.length).toBe(0);
+    expect(vi.mocked(callGatewayTool).mock.calls.length).toBe(0);
+    if (result.details.status !== "completed") {
+      throw new Error(`Unexpected exec status: ${result.details.status}`);
+    }
+    expect(result.details.exitCode).toBe(0);
+    expect(result.details.aggregated).toBe("approved-content");
+  });
 
   it("preserves startup customization for ordinary full-mode execution", async () => {
     setPolicy("allowlist");

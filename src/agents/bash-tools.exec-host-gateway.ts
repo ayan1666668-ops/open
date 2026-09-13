@@ -953,32 +953,29 @@ export async function processGatewayAllowlist(
   const autoReviewBlockedByShellStartup = allowlistEval.segments.some((segment) =>
     hasPosixShellStartupBeforeInlineCommand(segment.argv),
   );
-  const dispatchEligibility =
-    autoReviewEnforcedCommand !== undefined
-      ? { eligible: true as const }
-      : resolveUnpinnedAutoApprovalEligibility({
-          authorizationPlan: allowlistEval.authorizationPlan,
-          binding: mutableFileBinding,
-        });
+  const dispatchEligibility = resolveUnpinnedAutoApprovalEligibility({
+    authorizationPlan: allowlistEval.authorizationPlan,
+    binding: mutableFileBinding,
+  });
   const reviewedCommand =
-    autoReviewEnforcedCommand === undefined &&
-    dispatchEligibility.eligible &&
-    allowlistEval.authorizationPlan &&
-    mutableFileBinding
+    dispatchEligibility.eligible && allowlistEval.authorizationPlan && mutableFileBinding
       ? buildReviewedShellCommandFromPlan({
           plan: allowlistEval.authorizationPlan,
           binding: mutableFileBinding,
+          segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
         })
       : undefined;
-  const approvedEnforcedCommand =
-    autoReviewEnforcedCommand ?? (reviewedCommand?.ok ? reviewedCommand.command : undefined);
+  const boundApprovedCommand = reviewedCommand?.ok ? reviewedCommand.command : undefined;
+  const approvedEnforcedCommand = boundApprovedCommand ?? autoReviewEnforcedCommand;
   const unpinnedEligibility =
-    dispatchEligibility.eligible && approvedEnforcedCommand === undefined
-      ? {
-          eligible: false as const,
-          reason: EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
-        }
-      : dispatchEligibility;
+    autoReviewEnforcedCommand !== undefined
+      ? { eligible: true as const }
+      : dispatchEligibility.eligible && approvedEnforcedCommand === undefined
+        ? {
+            eligible: false as const,
+            reason: EXEC_AUTO_REVIEW_DISPATCH_IDENTITY_WARNING,
+          }
+        : dispatchEligibility;
   // Mutable operands and unenforceable patterns cannot authorize later cwd/env bindings.
   const approvalAllowAlwaysPersistence =
     mutableFileApprovalRequiresOneShot ||
@@ -1458,7 +1455,7 @@ export async function processGatewayAllowlist(
         execCommandOverride:
           decision === null && fallbackSecurity === "allowlist"
             ? fallbackEnforcedCommand
-            : (approvedEnforcedCommand ?? enforcedCommand),
+            : (boundApprovedCommand ?? enforcedCommand),
       };
     };
 

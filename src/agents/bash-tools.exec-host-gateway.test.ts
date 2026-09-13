@@ -733,7 +733,9 @@ describe("processGatewayAllowlist", () => {
     const resolvedPath =
       candidate?.sourceSegment.resolution?.execution.resolvedRealPath ??
       candidate?.sourceSegment.resolution?.execution.resolvedPath;
-    return { authorizationPlan, resolvedPath };
+    const invocationPath =
+      candidate?.sourceSegment.resolution?.execution.resolvedPath ?? resolvedPath;
+    return { authorizationPlan, resolvedPath, invocationPath };
   }
 
   async function runTimedOutStrictInlineEval(params: {
@@ -1098,7 +1100,7 @@ describe("processGatewayAllowlist", () => {
 
   it("auto-reviews simple read-only approval misses without prompting", async () => {
     const command = "echo ok";
-    const { resolvedPath } = await configurePlanBackedCommand({ command });
+    const { resolvedPath, invocationPath } = await configurePlanBackedCommand({ command });
     expect(resolvedPath).toBeTruthy();
 
     const captured = captureSecurityEvents();
@@ -1120,7 +1122,7 @@ describe("processGatewayAllowlist", () => {
     );
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(result!).toEqual({
-      execCommandOverride: `${resolvedPath} ok`,
+      execCommandOverride: `'${invocationPath}' ok`,
       assertCurrent: expect.any(Function),
       revalidateBeforeExecution: expect.any(Function),
     });
@@ -1643,7 +1645,7 @@ Command: ${command}`;
       expect(defaultExecAutoReviewerMock).toHaveBeenCalledWith(
         expect.objectContaining({ resolvedPath: canonicalShadowGit }),
       );
-      expect(result).toMatchObject({ execCommandOverride: `${canonicalShadowGit} status` });
+      expect(result.execCommandOverride).toBe(`'${shadowGit}' status`);
       await expect(result.revalidateBeforeExecution?.()).resolves.toBeUndefined();
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1735,7 +1737,7 @@ Command: ${command}`;
 
   it("auto-reviews strict inline-eval commands instead of forcing human approval", async () => {
     const command = "python3 -c 'print(1)'";
-    const { resolvedPath } = await configurePlanBackedCommand({
+    const { invocationPath } = await configurePlanBackedCommand({
       command,
       allowlistSatisfied: true,
       requiresApproval: false,
@@ -1765,7 +1767,7 @@ Command: ${command}`;
     );
     expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
     expect(warnings[0]).toContain("reviewer or explicit approval");
-    expect(result.execCommandOverride).toBe(`${resolvedPath} -c 'print(1)'`);
+    expect(result.execCommandOverride).toBe(`'${invocationPath}' -c 'print(1)'`);
   });
 
   it("uses a plan-backed enforced command when the allowlist plan is usable", async () => {
@@ -2273,21 +2275,17 @@ Command: ${command}`;
       segmentSatisfiedBy: ["safeBuiltins", null] as ExecSegmentSatisfiedBy[],
     },
   ])(
-    "auto-reviews the exact enforced $name without prompting",
+    "auto-reviews bound executables while preserving the $name without prompting",
     async ({ command, segmentSatisfiedBy }) => {
       const { authorizationPlan } = await configurePlanBackedCommand({
         command,
         segmentSatisfiedBy,
       });
       const candidates = authorizationPlan.groups.flatMap((group) => group.candidates);
-      const enforced = buildAuthorizedShellCommandFromPlan({
-        plan: authorizationPlan,
-        mode: "enforced",
-        segmentSatisfiedBy: segmentSatisfiedBy ?? candidates.map(() => null),
-      });
-      expect(enforced.ok).toBe(true);
-      if (!enforced.ok) {
-        throw new Error(enforced.reason);
+      const nodePath = candidates.find((candidate) => candidate.sourceSegment.argv[0] === "node")
+        ?.sourceSegment.resolution?.execution.resolvedPath;
+      if (!nodePath) {
+        throw new Error("Expected a resolved node invocation path");
       }
 
       const result = await runGatewayAllowlist({
@@ -2304,7 +2302,7 @@ Command: ${command}`;
         }),
       );
       expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
-      expect(result.execCommandOverride).toBe(enforced.command);
+      expect(result.execCommandOverride).toBe(command.replaceAll("node", `'${nodePath}'`));
     },
   );
 

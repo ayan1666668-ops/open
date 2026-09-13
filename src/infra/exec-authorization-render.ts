@@ -296,6 +296,7 @@ export function buildAuthorizedShellCommandFromPlan(params: {
 export function buildReviewedShellCommandFromPlan(params: {
   plan: ExecAuthorizationPlan;
   binding: SystemRunMutableFileBinding;
+  segmentSatisfiedBy?: readonly ExecSegmentSatisfiedBy[];
 }): AuthorizedShellRenderResult {
   if (!params.plan.ok) {
     return { ok: false, reason: params.plan.reason };
@@ -303,8 +304,15 @@ export function buildReviewedShellCommandFromPlan(params: {
   if (params.plan.dialect !== "posix-shell") {
     return { ok: false, reason: "unsupported command dialect" };
   }
+  const candidates = params.plan.groups.flatMap((group) => group.candidates);
+  if (params.segmentSatisfiedBy && params.segmentSatisfiedBy.length !== candidates.length) {
+    return { ok: false, reason: "segment metadata mismatch" };
+  }
   const replacements: SourceReplacement[] = [];
-  for (const candidate of params.plan.groups.flatMap((group) => group.candidates)) {
+  for (const [candidateIndex, candidate] of candidates.entries()) {
+    if (params.segmentSatisfiedBy?.[candidateIndex] === "safeBuiltins") {
+      continue;
+    }
     const { sourceSegment: segment, sourceStep: step } = candidate;
     const sourceArgv = segment.sourceArgv ?? segment.argv;
     const { dispatchChain } = resolveExecWrapperTrustPlan(sourceArgv);

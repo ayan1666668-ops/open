@@ -150,7 +150,7 @@ export async function runClaudeCliNodeCommand(params: {
       const runPromise = supervisor.spawn({
         runId,
         mode: "child",
-        assertCurrent: params.assertCurrent,
+        beforeSpawn: params.assertCurrent,
         argv,
         cwd: params.cwd,
         // Apply the cache-stable Git policy locally without extending the node wire contract.

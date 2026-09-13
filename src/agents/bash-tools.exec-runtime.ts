@@ -938,11 +938,13 @@ export async function runExecProcess({
     const assertCurrent = () => {
       assertSourceCurrent?.();
       assertRuntimeCurrent?.();
-      assertHostPolicyCurrent?.();
     };
-    // Keep both owners through deferred supervisor admission and native construction.
+    // Source authority covers construction; approval policy ends at native launch.
     assertCurrent();
-    return withoutGatewayToolCallerIdentity(() => supervisor.spawn({ ...input, assertCurrent }));
+    assertHostPolicyCurrent?.();
+    return withoutGatewayToolCallerIdentity(() =>
+      supervisor.spawn({ ...input, assertCurrent, beforeSpawn: assertHostPolicyCurrent }),
+    );
   };
 
   try {
