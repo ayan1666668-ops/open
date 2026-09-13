@@ -1304,14 +1304,26 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("- Opus: anthropic/claude-opus-4-5");
   });
 
-  it.each([true, false])(
-    "permits authorized SSH updates without bypassing local ownership (gateway=%s)",
-    (gateway) => {
+  it.each([
+    { gateway: true, promptMode: "full" },
+    { gateway: false, promptMode: "full" },
+    { gateway: true, promptMode: "minimal" },
+    { gateway: false, promptMode: "minimal" },
+  ] as const)(
+    "permits remote updates without detached host repair bypasses ($gateway, $promptMode)",
+    ({ gateway, promptMode }) => {
       const prompt = buildAgentSystemPrompt({
         workspaceDir: "/tmp/openclaw",
+        promptMode,
         toolNames: gateway ? ["gateway", "exec"] : ["exec"],
       });
       expect(prompt).toContain("For the Gateway hosting this session:");
+      expect(prompt).toContain("Never move, replace, or rebuild its live installation via exec");
+      expect(prompt).toContain(
+        "do not delegate these operations to detached processes or scheduler jobs",
+      );
+      expect(prompt).toContain("`launchctl submit` creates a KeepAlive job, not a one-shot task");
+      expect(prompt).toContain("retries can repeat destructive swaps or restarts");
       expect(prompt).toContain("For a user-requested update on another host");
       expect(prompt).toContain("verify it is not this Gateway");
       expect(prompt).toContain("exec/SSH with `openclaw update --yes`");
