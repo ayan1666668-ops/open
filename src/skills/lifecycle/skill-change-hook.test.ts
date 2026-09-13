@@ -112,6 +112,47 @@ describe("committed skill artifact snapshots", () => {
       lstatSpy.mockRestore();
     }
   });
+
+  it("keeps metadata and the content hash on the same captured file version", async () => {
+    const parent = await tempDirs.make("openclaw-skill-change-version-");
+    const skillDir = path.join(parent, "skill");
+    const skillFile = path.join(skillDir, "SKILL.md");
+    const laterAsset = path.join(skillDir, "z.txt");
+    const replacement = path.join(parent, "replacement.md");
+    const initialContent = "---\nname: Before\nversion: 1.0.0\n---\n";
+    const replacementContent = "---\nname: After\nversion: 2.0.0\n---\n";
+    await fs.mkdir(skillDir);
+    await fs.writeFile(skillFile, initialContent);
+    await fs.writeFile(laterAsset, "asset");
+    await fs.writeFile(replacement, replacementContent);
+    const lstat = fs.lstat.bind(fs);
+    const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
+      const stat = await lstat(...args);
+      if (String(args[0]) === laterAsset) {
+        lstatSpy.mockRestore();
+        await fs.rename(replacement, skillFile);
+      }
+      return stat;
+    });
+    try {
+      await expect(
+        snapshotCommittedSkillArtifactBestEffort({
+          skillDir,
+          skillKey: "installed-key",
+          source: "source-install",
+        }),
+      ).resolves.toMatchObject({
+        name: "Before",
+        revision: {
+          declaredVersion: "1.0.0",
+          contentSha256: `sha256:${createHash("sha256").update(initialContent).digest("hex")}`,
+        },
+      });
+      await expect(fs.readFile(skillFile, "utf8")).resolves.toBe(replacementContent);
+    } finally {
+      lstatSpy.mockRestore();
+    }
+  });
 });
 
 describe("committed skill change dispatch", () => {

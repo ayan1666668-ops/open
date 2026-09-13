@@ -30,9 +30,18 @@ async function collectSkillTreeFiles(
   skillDir: string,
   skillRoot: Root,
   relativeDir = "",
-): Promise<SkillTreeFile[]> {
+): Promise<{
+  files: SkillTreeFile[];
+  selectedSkillFile?: { file: SkillTreeFile; content: Buffer };
+}> {
   const entries = await fs.readdir(path.join(skillDir, relativeDir), { withFileTypes: true });
+  const selectedSkillPath = relativeDir
+    ? undefined
+    : SKILL_FILE_CANDIDATES.find((candidate) =>
+        entries.some((entry) => entry.name === candidate && entry.isFile()),
+      );
   const files: SkillTreeFile[] = [];
+  let selectedSkillFile: { file: SkillTreeFile; content: Buffer } | undefined;
   for (const entry of entries.toSorted((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   )) {
@@ -47,7 +56,7 @@ async function collectSkillTreeFiles(
       throw new Error(`Skill tree contains unsupported entry ${JSON.stringify(portablePath)}.`);
     }
     if (stat.isDirectory()) {
-      files.push(...(await collectSkillTreeFiles(skillDir, skillRoot, relativePath)));
+      files.push(...(await collectSkillTreeFiles(skillDir, skillRoot, relativePath)).files);
       continue;
     }
     if (stat.nlink > 1) {
@@ -55,13 +64,24 @@ async function collectSkillTreeFiles(
     }
     const opened = await skillRoot.open(relativePath);
     try {
-      const { digest, bytes } = await sha256File(opened.handle);
-      files.push({ path: portablePath, sha256: digest, sizeBytes: bytes });
+      if (relativePath === selectedSkillPath) {
+        const content = await opened.handle.readFile();
+        const file = {
+          path: portablePath,
+          sha256: sha256Hex(content),
+          sizeBytes: content.byteLength,
+        };
+        files.push(file);
+        selectedSkillFile = { file, content };
+      } else {
+        const { digest, bytes } = await sha256File(opened.handle);
+        files.push({ path: portablePath, sha256: digest, sizeBytes: bytes });
+      }
     } finally {
       await opened.handle.close();
     }
   }
-  return files;
+  return { files, selectedSkillFile };
 }
 
 function parseSkillArtifactMetadata(content: Buffer): {
@@ -109,17 +129,12 @@ async function snapshotCommittedSkillArtifact(params: {
 }): Promise<PluginHookSkillArtifact> {
   const skillDir = path.resolve(params.skillDir);
   const skillRoot = await root(skillDir);
-  const files = await collectSkillTreeFiles(skillDir, skillRoot);
-  const skillFileEntry = SKILL_FILE_CANDIDATES.map((candidate) =>
-    files.find((file) => file.path === candidate),
-  ).find((entry) => entry !== undefined);
-  if (!skillFileEntry) {
+  const { files, selectedSkillFile } = await collectSkillTreeFiles(skillDir, skillRoot);
+  if (!selectedSkillFile) {
     throw new Error(`Skill tree is missing SKILL.md: ${skillDir}`);
   }
-  const skillFile = path.join(skillDir, skillFileEntry.path);
-  const frontmatter = parseSkillArtifactMetadata(
-    await skillRoot.readBytes(skillFileEntry.path, { maxBytes: Infinity }),
-  );
+  const skillFile = path.join(skillDir, selectedSkillFile.file.path);
+  const frontmatter = parseSkillArtifactMetadata(selectedSkillFile.content);
   const treeSha256 = sha256Hex(JSON.stringify(files));
   return {
     name: frontmatter.name ?? params.skillKey,
@@ -130,7 +145,7 @@ async function snapshotCommittedSkillArtifact(params: {
     source: params.source,
     revision: {
       ...(frontmatter.declaredVersion ? { declaredVersion: frontmatter.declaredVersion } : {}),
-      contentSha256: `sha256:${skillFileEntry.sha256}`,
+      contentSha256: `sha256:${selectedSkillFile.file.sha256}`,
       treeSha256: `sha256:${treeSha256}`,
       ...(params.sourceVersion ? { sourceVersion: params.sourceVersion } : {}),
     },

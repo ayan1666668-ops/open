@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { LEGACY_PACKAGE_INSTALL_GUARD_RELATIVE_PATH } from "./package-lifecycle-marker.mjs";
 
 export const PACKAGE_DIST_INVENTORY_RELATIVE_PATH = "dist/postinstall-inventory.json";
@@ -43,13 +42,9 @@ export type PackageDistContentInventoryEntry = {
 
 export function createPackageDistContentInventoryEntry(
   relativePath: string,
-  content: Uint8Array | { bytes: number; digest: string },
+  hash: { bytes: number; digest: string },
   mode: number,
 ): PackageDistContentInventoryEntry {
-  const hash =
-    content instanceof Uint8Array
-      ? { bytes: content.byteLength, digest: createHash("sha256").update(content).digest("hex") }
-      : content;
   return {
     path: relativePath.replace(/\\/g, "/"),
     sha256: hash.digest,

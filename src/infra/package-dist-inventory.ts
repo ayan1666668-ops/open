@@ -12,6 +12,7 @@ import {
   type PackageDistContentInventoryEntry,
 } from "../../scripts/lib/package-dist-inventory-contract.mts";
 import { escapeRegExp } from "../shared/regexp.js";
+import { sha256Hex } from "./crypto-digest.js";
 import { sha256File } from "./directory-durability.js";
 import { isMissingPathError } from "./errno.js";
 import { readFileHandleBounded } from "./fs-safe-advanced.js";
@@ -443,20 +444,25 @@ export async function collectPackageDistContentInventory(
           symlinks: "reject",
         });
         try {
-          let content;
+          let hash;
           try {
-            content =
-              opened.stat.size <= PACKAGE_DIST_INVENTORY_BUFFER_BYTES
-                ? await readFileHandleBounded(opened.handle, PACKAGE_DIST_INVENTORY_BUFFER_BYTES)
-                : await sha256File(opened.handle);
+            if (opened.stat.size <= PACKAGE_DIST_INVENTORY_BUFFER_BYTES) {
+              const content = await readFileHandleBounded(
+                opened.handle,
+                PACKAGE_DIST_INVENTORY_BUFFER_BYTES,
+              );
+              hash = { bytes: content.byteLength, digest: sha256Hex(content) };
+            } else {
+              hash = await sha256File(opened.handle);
+            }
           } catch (error) {
             if (!(error instanceof FsSafeError) || error.code !== "too-large") {
               throw error;
             }
             // A file can grow after admission; positioned hashing restarts at byte zero.
-            content = await sha256File(opened.handle);
+            hash = await sha256File(opened.handle);
           }
-          return createPackageDistContentInventoryEntry(relativePath, content, opened.stat.mode);
+          return createPackageDistContentInventoryEntry(relativePath, hash, opened.stat.mode);
         } finally {
           await opened[Symbol.asyncDispose]();
         }
