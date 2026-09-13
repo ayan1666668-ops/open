@@ -901,14 +901,19 @@ struct ChatGatewayPayloadCodecTests {
         #expect(identity.contract == "global|primary|work")
     }
 
-    @Test func `routing identity preserves legacy required selection without contract`() throws {
+    @Test func `routing identity leaves an unconfirmed contract empty when selection is required`() throws {
         let identity = try OpenClawChatGatewayPayloadCodec.decodeSessionRoutingIdentity(
             Data(#"{"defaultId":"Work","mainKey":"Primary","scope":"per-sender","selectionRequired":true,"agents":[]}"#
                 .utf8))
 
         #expect(identity.defaultAgentID == "work")
         #expect(identity.selectionRequired)
-        #expect(identity.contract == "per-sender|primary|unowned")
+        // The gateway never confirmed a value here; guessing "unowned" would
+        // disagree with a gateway that resolves an ambient owner instead
+        // (e.g. via agents.defaults.systemAgent.agentId) and permanently trip
+        // its session-routing-changed guard. Every consumer of `contract`
+        // already treats empty as "no expectation" and omits it from requests.
+        #expect(identity.contract.isEmpty)
     }
 
     @Test func `model choices preserve metadata and replace blank names`() throws {

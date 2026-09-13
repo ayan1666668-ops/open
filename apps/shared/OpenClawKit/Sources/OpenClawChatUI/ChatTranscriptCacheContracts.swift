@@ -483,14 +483,22 @@ public struct OpenClawChatSessionRoutingIdentity: Codable, Equatable, Sendable {
         self.selectionRequired = selectionRequired
         if let authoritativeContract, !authoritativeContract.isEmpty {
             self.contract = authoritativeContract
-        } else if selectionRequired,
-                  let unownedContract = OpenClawChatSessionRoutingContract.make(
-                      scope: display.scope,
-                      mainKey: display.mainKey,
-                      defaultAgentID: "unowned")
-        {
-            self.contract = unownedContract
+        } else if selectionRequired {
+            // The gateway is the sole owner of this opaque fingerprint. Guessing
+            // "unowned" here assumes no ambient owner is configured, but an
+            // `agents.defaults.systemAgent.agentId` makes the gateway's real
+            // value end in that agent id instead — a guess permanently
+            // disagrees with the gateway and trips its own
+            // session-routing-changed guard on every send. Every consumer of
+            // `contract` already treats an empty string as "no expectation"
+            // and omits it from requests, so leave it empty rather than
+            // assert a value the gateway never confirmed.
+            self.contract = ""
         } else {
+            // No ambiguity to guess about: a gateway old enough to omit this
+            // field entirely also predates explicit-ownership selection, so
+            // the display contract built from its own advertised default
+            // agent is a faithful reconstruction, not a guess.
             self.contract = displayContract
         }
     }

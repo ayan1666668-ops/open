@@ -3619,11 +3619,13 @@ extension NodeAppModel {
         return defaultId.isEmpty ? nil : defaultId.lowercased()
     }
 
+    /// The server-issued contract is opaque; synthesizing a local guess before
+    /// it arrives cannot replicate the gateway's explicit-ownership "unowned"
+    /// sentinel and permanently disagrees with it, tripping the gateway's own
+    /// routing-changed guard on every send. Treat it as unknown until the
+    /// gateway actually supplies it.
     var chatSessionRoutingContract: String? {
-        self.gatewaySessionRoutingContract ?? OpenClawChatSessionRoutingContract.make(
-            scope: self.gatewaySessionScope,
-            mainKey: self.mainSessionBaseKey,
-            defaultAgentID: self.gatewayDefaultAgentId)
+        self.gatewaySessionRoutingContract
     }
 
     var chatAgentName: String {
