@@ -574,10 +574,7 @@ export function registerComputerUseProvider(
   let closingPromise: Promise<void> | undefined;
   let pendingClose: Promise<void> | undefined;
   const idleReclaim = createExecutionIdleReclaim(() => {
-    const current = execution;
-    if (current) {
-      void closeExecution(current.id, "idle-timeout");
-    }
+    void closeExecution(undefined, "idle-timeout");
   });
 
   const executionEnvelopeFromParams = (paramsJSON: string | null | undefined) => {
@@ -707,10 +704,10 @@ export function registerComputerUseProvider(
     handle: async (paramsJSON, _io, context) => {
       const envelope = executionEnvelopeFromParams(paramsJSON);
       if (envelope.executionId) {
-        const opened = await getExecution(paramsJSON, context);
-        return await idleReclaim.run(
-          async () => await opened.snapshot(paramsJSON, context?.signal),
-        );
+        return await idleReclaim.run(async () => {
+          const opened = await getExecution(paramsJSON, context);
+          return await opened.snapshot(paramsJSON, context?.signal);
+        });
       }
       const executionId = randomUUID();
       const opened = await provider.openExecution(
@@ -747,8 +744,10 @@ export function registerComputerUseProvider(
         );
         return JSON.stringify({ ok: true });
       }
-      const opened = await getExecution(paramsJSON, context);
-      return await idleReclaim.run(async () => await opened.act(paramsJSON, context?.signal));
+      return await idleReclaim.run(async () => {
+        const opened = await getExecution(paramsJSON, context);
+        return await opened.act(paramsJSON, context?.signal);
+      });
     },
   });
   // The provider plugin must also register its dangerous `computer.act` invoke
