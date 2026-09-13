@@ -33,13 +33,18 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
   const events = new Map<string, ServerRequestEvent[]>();
   const agent = new Agent({ ca: PROXY_FIXTURE_CERTIFICATE });
   const gatewayOwner = createQaGatewayChild();
-  let mock: Awaited<ReturnType<typeof startQaMockOpenAiServer>> | undefined;
+  const mockOwner: {
+    server?: Awaited<ReturnType<typeof startQaMockOpenAiServer>>;
+  } = {};
   onTestFinished(async () => {
     const errors: unknown[] = [];
     const stopped = await gatewayOwner.stop();
     errors.push(...stopped.errors);
     // Stop the consumer before its native transports, then remove their owned files.
-    for (const close of [...servers.map((server) => () => server.close()), () => mock?.stop()]) {
+    for (const close of [
+      ...servers.map((server) => () => server.close()),
+      () => mockOwner.server?.stop(),
+    ]) {
       try {
         await close();
       } catch (error) {
@@ -72,7 +77,8 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
     events
       .get(account)!
       .filter((event) => (event.body as { stage?: string } | undefined)?.stage === name);
-  mock = await startQaMockOpenAiServer();
+  const mock = await startQaMockOpenAiServer();
+  mockOwner.server = mock;
   const modelRef = "mock-openai/gpt-5.6-luna";
   // The built Gateway admits bundled plugins from its owning package root.
   // Snapshot the declared entry before startup to bind the loaded code to this build.
@@ -137,7 +143,9 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
       if (Date.now() >= deadline) {
         throw new Error(`Native candidate did not complete. ${gateway.logs().slice(-12_000)}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20);
+      });
     }
   };
   await wait(() => accounts.every((account) => stage(account, "websocket.connected").length === 1));
