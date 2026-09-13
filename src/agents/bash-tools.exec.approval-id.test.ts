@@ -136,15 +136,6 @@ vi.mock("../process/supervisor/index.js", async () => {
     ) {
       return '{"events":[]}\n';
     }
-    if (command.includes("printf approval-one")) {
-      return "approval-one";
-    }
-    if (command.includes("printf approval-two")) {
-      return "approval-two";
-    }
-    if (command.includes("echo allow-always")) {
-      return "allow-always\n";
-    }
     if (command.includes("echo cron-ok")) {
       return "cron-ok\n";
     }
@@ -157,8 +148,14 @@ vi.mock("../process/supervisor/index.js", async () => {
     getProcessSupervisor: () => ({
       spawn: async (input: SpawnInput) => {
         const command = "argv" in input ? input.argv.join(" ") : "";
-        const inlineOutput = ["delayed-ok", "webchat-ok"].find((value) => command.includes(value));
-        // Exercise real POSIX printf output; Windows retains the portable routing fixture.
+        const inlineOutput = [
+          "delayed-ok",
+          "webchat-ok",
+          "approval-one",
+          "approval-two",
+          "allow-always",
+        ].find((value) => command.includes(value));
+        // Let the real POSIX shell handle executable quoting; Windows keeps the routing fixture.
         if (inlineOutput && process.platform !== "win32") {
           return nativeSupervisor.spawn(input);
         }
@@ -885,6 +882,7 @@ describe("exec approvals", () => {
     });
 
     expect(second.details.status).toBe("completed");
+    expect(getResultText(second)).toContain("allow-always");
     expect(calls).not.toContain("exec.approval.request");
     expect(calls).not.toContain("exec.approval.waitDecision");
   });
