@@ -29,6 +29,7 @@ import {
   runSubagentAnnounceDispatch,
   type SubagentAnnounceDeliveryResult,
 } from "../announce/subagent-announce-dispatch.js";
+import { maybeWakeRequesterAfterAllChildrenSettled as runRequesterSettleWake } from "../announce/subagent-announce.requester-settle-wake.js";
 import {
   SUBAGENT_ENDED_REASON_COMPLETE,
   SUBAGENT_ENDED_REASON_ERROR,
@@ -42,7 +43,10 @@ import {
 } from "./subagent-registry-lifecycle.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
 import { getLatestSubagentRunByChildSessionKeyFromRuns } from "./subagent-registry-queries.js";
-import { getLatestLiveSubagentRunByChildSessionKey } from "./subagent-registry-read.js";
+import {
+  countPendingDescendantRuns,
+  getLatestLiveSubagentRunByChildSessionKey,
+} from "./subagent-registry-read.js";
 import { markSubagentRunPausedAfterYield } from "./subagent-registry-run-manager.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
@@ -1426,6 +1430,93 @@ describe("subagent registry lifecycle hardening", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([false, true])(
+    "resumes an ancestor after requester-settle retirement (persistence fails: %s)",
+    async (persistenceFails) => {
+      const ancestor = createRunEntry({
+        runId: "retirement-ancestor",
+        childSessionKey: "agent:main:subagent:retirement-ancestor",
+        endedAt: Date.now(),
+        expectsCompletionMessage: true,
+        suppressCompletionDelivery: true,
+        wakeOnDescendantSettle: true,
+        retainAttachmentsOnKeep: true,
+      });
+      const intermediate = createRunEntry({
+        runId: "retirement-intermediate",
+        childSessionKey: "agent:main:subagent:retirement-intermediate",
+        requesterSessionKey: ancestor.childSessionKey,
+        requesterAgentId: "main",
+        endedAt: Date.now(),
+        cleanup: "delete",
+        requesterSettleWake: {
+          status: "pending",
+          attemptCount: 1,
+          batchRunIds: ["retirement-intermediate"],
+        },
+      });
+      const descendant = createRunEntry({
+        runId: "retirement-descendant",
+        childSessionKey: "agent:main:subagent:retirement-descendant",
+        requesterSessionKey: intermediate.childSessionKey,
+        requesterAgentId: "main",
+        expectsCompletionMessage: false,
+        retainAttachmentsOnKeep: true,
+      });
+      for (const entry of [ancestor, intermediate, descendant]) {
+        subagentRuns.set(entry.runId, entry);
+      }
+      let failRetirement = persistenceFails;
+      const controller = createLifecycleController({
+        entry: ancestor,
+        runs: subagentRuns,
+        getLatestRunForChildSession: getLatestLiveSubagentRunByChildSessionKey,
+        countPendingDescendantRuns,
+        maybeWakeRequesterAfterAllChildrenSettled: runRequesterSettleWake,
+        persistOrThrow: () => {
+          if (failRetirement && !subagentRuns.has(intermediate.runId)) {
+            throw new Error("retirement transaction failed");
+          }
+        },
+        resumeSubagentRun: (runId) => {
+          const current = subagentRuns.get(runId);
+          if (current) {
+            controller.startSubagentAnnounceCleanupFlow(runId, current);
+          }
+        },
+      });
+      try {
+        controller.startSubagentAnnounceCleanupFlow(ancestor.runId, ancestor);
+        expect(ancestor.cleanupCompletedAt).toBeUndefined();
+        controller.completeCleanupBookkeeping({
+          runId: intermediate.runId,
+          entry: intermediate,
+          cleanup: "delete",
+          completedAt: Date.now(),
+          preserveTranscript: true,
+        });
+        if (persistenceFails) {
+          await waitForLifecycleState(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
+          expect(subagentRuns.has(intermediate.runId)).toBe(true);
+          expect(ancestor.cleanupCompletedAt).toBeUndefined();
+          failRetirement = false;
+          controller.resumeRequesterSettleWake(intermediate.runId, intermediate);
+        }
+        await waitForLifecycleState(() => expect(subagentRuns.has(intermediate.runId)).toBe(false));
+        await completeRun(controller, descendant, {
+          endedAt: Date.now(),
+          triggerCleanup: true,
+        });
+        await waitForLifecycleState(() => expect(ancestor.cleanupCompletedAt).toBeTypeOf("number"));
+      } finally {
+        controller.clearScheduledResumeTimers();
+        for (const entry of [ancestor, intermediate, descendant]) {
+          subagentRuns.delete(entry.runId);
+        }
+      }
+    },
+  );
 
   it("keeps a same-run replacement from hiding another session successor", () => {
     const entry = createRunEntry({

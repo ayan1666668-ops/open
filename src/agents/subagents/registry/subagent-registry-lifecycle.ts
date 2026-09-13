@@ -246,10 +246,11 @@ export class SubagentLifecycleController {
   };
 
   completeCleanupBookkeeping = (params: CleanupBookkeepingParams) => {
-    completeCleanupBookkeeping(this, params, (settledEntry) =>
-      resumeAncestorCleanup(this, settledEntry),
-    );
+    completeCleanupBookkeeping(this, params);
   };
+
+  resumeAncestorCleanup = (settledEntry: SubagentRunRecord): void =>
+    resumeAncestorCleanup(this, settledEntry);
 
   static discardTerminalDelivery(
     this: void,

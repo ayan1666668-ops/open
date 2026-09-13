@@ -97,6 +97,7 @@ export interface SubagentLifecycleAnnounceCleanupContext
 }
 
 export interface SubagentLifecycleWakeContext extends SubagentLifecycleCommonContext {
+  resumeAncestorCleanup(settledEntry: SubagentRunRecord): void;
   deleteRequesterSettleWakeTimer(runId: string): void;
   getRequesterSettleWakeTimer(runId: string): ScheduledRequesterSettleWake | undefined;
   hasScheduledRequesterSettleWakeRun(entry: SubagentRunRecord): boolean;
