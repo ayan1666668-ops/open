@@ -2,6 +2,7 @@
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { controlNextRecoverySleep } from "../../test/helpers/infra/delivery-recovery.js";
+import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 import { upsertDeliveryQueueEntry } from "./delivery-queue-sqlite.js";
 const RECOVERY_REPLAY_SPACING_MS = 250;
@@ -27,6 +28,7 @@ import {
   SessionDeliverySafeRetryError,
   type QueuedSessionDelivery,
 } from "./session-delivery-queue-storage.js";
+import { readSessionQueueRow } from "./session-delivery-queue.storage.test-support.js";
 
 describe("session-delivery queue recovery", () => {
   beforeEach(() => {
