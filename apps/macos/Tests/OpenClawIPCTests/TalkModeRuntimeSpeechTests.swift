@@ -1317,6 +1317,14 @@ struct TalkModeRuntimeSpeechTests {
         session.stop()
     }
 
+    @Test @MainActor func `native playback completion resets idle interaction anchor`() async throws {
+        let runtime = TalkModeRuntime()
+        await runtime._test_finishNativePlaybackTransitionFromSpeaking()
+        let anchor = try #require(await runtime.lastInteractionAt)
+        #expect(anchor.timeIntervalSince1970 > 1_000_000_000)
+        #expect(await runtime.phase == .thinking)
+    }
+
     @Test @MainActor func `preserves idle timeout across offline gateway config fallback`() async {
         let runtime = TalkModeRuntime()
         let authoritative = Self.gatewayConfig(idleTimeoutS: 30, sourcedFromGateway: true)

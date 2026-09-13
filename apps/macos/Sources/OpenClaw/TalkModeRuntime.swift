@@ -957,10 +957,14 @@ extension TalkModeRuntime {
             }
         }
 
-        if self.phase == .speaking {
-            self.phase = .thinking
-            await MainActor.run { TalkModeController.shared.updatePhase(.thinking) }
-        }
+        await self.finishNativePlaybackTransition()
+    }
+
+    private func finishNativePlaybackTransition() async {
+        self.lastInteractionAt = Date()
+        guard self.phase == .speaking else { return }
+        self.phase = .thinking
+        await MainActor.run { TalkModeController.shared.updatePhase(.thinking) }
     }
 
     static func playbackPlan(provider: String, apiKey: String?, voiceId: String?) -> PlaybackPlan {
@@ -1682,6 +1686,12 @@ extension TalkModeRuntime {
 
     func _test_idleTimeoutSeconds() -> TimeInterval? {
         self.idleTimeout
+    }
+
+    func _test_finishNativePlaybackTransitionFromSpeaking() async {
+        self.phase = .speaking
+        self.lastInteractionAt = Date(timeIntervalSince1970: 0)
+        await self.finishNativePlaybackTransition()
     }
 }
 #endif
