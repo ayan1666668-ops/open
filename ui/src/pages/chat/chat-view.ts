@@ -50,6 +50,7 @@ import {
 } from "./components/chat-thread-interactions.ts";
 import { renderChatThread } from "./components/chat-thread.ts";
 import type { ChatTranscriptController } from "./components/chat-transcript-controller.ts";
+import { selectChatInputDisplay } from "./history-merge.ts";
 import type { ProviderPolicyNotice } from "./tool-stream-contract.ts";
 import type { WorkspaceResultConflict } from "./workspace-conflict.ts";
 import "../../components/resizable-divider.ts";
@@ -143,14 +144,6 @@ export function renderChat(props: ChatProps) {
   const pendingInputs = props.historyState ? getChatPendingInputs(props.historyState) : undefined;
   const requestUpdate = props.onRequestUpdate ?? (() => {});
   const canCompose = props.canSend;
-  const showModelSetupSplash =
-    props.modelSetupRequired === true &&
-    props.messages.length === 0 &&
-    (pendingInputs?.page.items.length ?? 0) === 0 &&
-    props.toolMessages.length === 0 &&
-    props.streamSegments.length === 0 &&
-    !props.stream &&
-    props.queue.length === 0;
   const openImage = props.onOpenImage
     ? (item: ImageLightboxItem, requestVersion?: number) =>
         requestVersion === undefined
@@ -184,6 +177,7 @@ export function renderChat(props: ChatProps) {
         loading: props.loading && !placementStartup,
         streamStartedAt: placementStartup?.startedAt ?? props.streamStartedAt,
         queue,
+        initialTurnId: props.placementStartup?.initialTurn?.id,
         pendingInputs: pendingInputs?.page.items,
         runActive: props.runActive === true,
         runWorking,
@@ -230,6 +224,11 @@ export function renderChat(props: ChatProps) {
   // placement initial turn, whose retry action belongs to startup.
   const defaultComposer = renderChatComposer({
     ...props,
+    displayQueue: selectChatInputDisplay(
+      props.messages,
+      props.queue,
+      pendingInputs?.page.items ?? [],
+    ).queue,
     anchoredNotices: renderChatComposerNotices(props),
     onRequestUpdate: requestUpdate,
     onToggleRealtimeTalk: props.suggestionComposer ? undefined : props.onToggleRealtimeTalk,
@@ -454,7 +453,7 @@ export function renderChat(props: ChatProps) {
                     .agentId=${props.currentAgentId}
                     .presented=${props.presented ?? true}
                   ></openclaw-plugin-contributions>
-                  ${showModelSetupSplash ? nothing : chatColumnFooter}
+                  ${chatColumnFooter}
                 </div>
               </div>
             </div>

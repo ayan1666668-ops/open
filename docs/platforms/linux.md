@@ -127,6 +127,11 @@ or mark the AppImage executable and run it directly. The AppImage runtime
 needs FUSE 2 (`sudo apt install libfuse2`, or `libfuse2t64` on Ubuntu 24.04+);
 without it, run the AppImage with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
+Regular stable publication requests Linux bundles automatically after the
+Gateway release becomes visible. Linux build, signing, and publication finish
+independently. While those bundles are pending, the app updater continues to
+offer the previous published Linux version through its original signed download.
+
 Published AMD64 AppImages are built on Ubuntu 22.04 and require glibc 2.35 or
 newer plus a `libstdc++` that provides `GLIBCXX_3.4.30`. Ubuntu 22.04 and
 Debian 12 meet that ABI floor. RHEL 9 and Rocky Linux 9 ship glibc 2.34, so
@@ -321,8 +326,8 @@ Write a unit by hand only for a custom setup. Minimal user-unit example
 Description=OpenClaw Gateway (profile: <profile>)
 After=network-online.target
 Wants=network-online.target
-StartLimitBurst=5
-StartLimitIntervalSec=60
+StartLimitBurst=10
+StartLimitIntervalSec=300
 
 [Service]
 ExecStart=/usr/local/bin/openclaw gateway --port 18789
