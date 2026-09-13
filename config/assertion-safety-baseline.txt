@@ -1332,11 +1332,7 @@ extensions/whatsapp/src/targets-runtime.ts	2
 extensions/workboard/browser/lib/workboard/metadata-contract-normalization.ts	1
 extensions/workboard/browser/lib/workboard/normalization.ts	5
 extensions/workboard/browser/pages/workboard/view-card-actions.ts	2
-extensions/workboard/browser/pages/workboard/view-card-details.ts	1
 extensions/workboard/browser/pages/workboard/view-card-modal.ts	1
-extensions/workboard/browser/pages/workboard/view-card.ts	1
-extensions/workboard/browser/pages/workboard/view.ts	1
-extensions/workboard/browser/pages/workboard/workboard-select.ts	1
 extensions/workboard/doctor-contract-api.ts	4
 extensions/workboard/src/cli.ts	2
 extensions/workboard/src/command.ts	1
@@ -1950,7 +1946,7 @@ src/agents/tools/ask-user-tool.ts	8
 src/agents/tools/automations-tool-name.ts	1
 src/agents/tools/chat-history-text.ts	3
 src/agents/tools/common.ts	2
-src/agents/tools/computer-tool-node.ts	2
+src/agents/tools/computer-tool-node.ts	1
 src/agents/tools/computer-tool-request.ts	3
 src/agents/tools/computer-tool.ts	2
 src/agents/tools/conversation-tools.ts	3
@@ -2895,7 +2891,6 @@ src/infra/clawhub-client.ts	2
 src/infra/clawhub-install-trust.ts	2
 src/infra/control-ui-assets.ts	1
 src/infra/delivery-queue-sqlite-bound.ts	2
-src/infra/delivery-queue-sqlite.ts	2
 src/infra/delivery-queue-sqlite.types.ts	1
 src/infra/delivery-recovery.shared.ts	4
 src/infra/device-pairing-store.ts	5
