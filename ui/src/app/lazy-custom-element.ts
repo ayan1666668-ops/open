@@ -321,7 +321,7 @@ const EXEC_APPROVAL_TAG = "openclaw-exec-approval";
 export const EXEC_APPROVAL_ELEMENT = {
   tagName: EXEC_APPROVAL_TAG,
   get label() {
-    return t("nav.approvals");
+    return t("tabs.approvals");
   },
   loadModule: () => import("../components/exec-approval.ts"),
 } satisfies OptionalCustomElement;
