@@ -149,7 +149,29 @@ suite.define(() => {
       };
       await openMenu();
       const menu = page.locator(".sidebar-session-sort-menu");
-      await menu.locator('[value="compact:open-empty-groups"]').click();
+      const choice = menu.locator('[value="compact:open-empty-groups"]');
+      await choice.scrollIntoViewIfNeeded();
+      const geometry = await choice.evaluate((element) => {
+        const label = element.querySelector<HTMLElement>(".session-menu__text");
+        const value = element.querySelector<HTMLElement>(".sidebar-session-empty-groups-value");
+        const menuPart = element.closest("wa-dropdown")?.shadowRoot?.querySelector("[part=menu]");
+        if (!label || !value || !menuPart) {
+          throw new Error("Expected compact preference label, value, and menu");
+        }
+        return {
+          width: menuPart.getBoundingClientRect().width,
+          labelClipped: label.scrollWidth > label.clientWidth,
+          valueClipped: value.scrollWidth > value.clientWidth,
+          labelBottom: label.getBoundingClientRect().bottom,
+          valueTop: value.getBoundingClientRect().top,
+        };
+      });
+      expect(geometry.width).toBeLessThanOrEqual(220);
+      expect(geometry.labelClipped).toBe(false);
+      expect(geometry.valueClipped).toBe(false);
+      expect(geometry.valueTop).toBeGreaterThanOrEqual(geometry.labelBottom - 0.5);
+      await captureUiProof(suite, page, "empty-groups-mobile-root.png");
+      await choice.click();
       await expectBrowser(menu.getByRole("menuitem", { name: "Back", exact: true })).toBeVisible();
       await expectBrowser(menu.locator('[value="empty-groups:filtering"]')).toHaveAttribute(
         "aria-checked",

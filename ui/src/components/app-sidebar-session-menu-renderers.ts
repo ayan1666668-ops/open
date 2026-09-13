@@ -424,7 +424,7 @@ export function renderSidebarSessionSortMenu(params: {
     `${position.x}:${position.y}`,
     html`
       <wa-dropdown
-        class=${`sidebar-session-sort-menu${params.rosterMode ? "" : " sidebar-session-sort-menu--preferences"}${params.compact ? " session-menu--compact" : ""}`}
+        class=${`sidebar-session-sort-menu${params.rosterMode || params.compact ? "" : " sidebar-session-sort-menu--preferences"}${params.compact ? " session-menu--compact" : ""}`}
         .open=${true}
         placement="bottom-start"
         .distance=${0}

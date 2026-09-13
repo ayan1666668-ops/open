@@ -20,6 +20,17 @@ wa-dropdown-item.session-menu__item--compact-details {
   min-width: 0;
 }
 
+/* A compact preference row stacks its value so the established 220px menu
+   still fits both the full label and the current choice. */
+wa-dropdown-item[value="compact:open-empty-groups"]::part(label) {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+wa-dropdown-item[value="compact:open-empty-groups"] {
+  min-height: 44px;
+}
+
 wa-dropdown.sidebar-session-sort-menu::part(menu) {
   box-sizing: border-box;
   width: min(220px, calc(100dvw - 16px));
