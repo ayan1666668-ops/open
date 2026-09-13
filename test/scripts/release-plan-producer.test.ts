@@ -63,6 +63,7 @@ const TOOLING_CLOSURE = [
   "scripts/lib/pnpm-lockfile-documents.mjs",
   "scripts/lib/record-shared.mjs",
   "scripts/lib/release-version.mjs",
+  "src/infra/node-runtime-executable.ts",
 ];
 const TOOLING_ROOT_FILES = ["package.json", "pnpm-lock.yaml"];
 
@@ -1224,7 +1225,7 @@ const mutateFs = await import("node:fs");
 const mutateChildProcess = mutateModule.createRequire(import.meta.url)("node:child_process");
 const originalExecFileSync = mutateChildProcess.execFileSync;
 mutateChildProcess.execFileSync = function(command, args, options) {
-  if (command === process.execPath && args?.[0] === "--input-type=module") {
+  if (args?.[0] === "--input-type=module") {
     const entryPath = ${JSON.stringify(join(packageRoot, "dist/index.js"))};
     const original = mutateFs.readFileSync(entryPath, "utf8");
     const malicious =
@@ -1332,7 +1333,11 @@ mutateModule.syncBuiltinESMExports();
     const toolingSha = commit(root, "tooling overlay", { allowEmpty: true });
     execFileSync("git", ["update-ref", "refs/heads/main", toolingSha], { cwd: root });
     expect(candidateSha).not.toBe(toolingSha);
-    expect(existsSync(join(root, "src"))).toBe(false);
+    expect(
+      readdirSync(join(root, "src"), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => relative(root, join(entry.parentPath, entry.name)).replaceAll("\\", "/")),
+    ).toEqual(["src/infra/node-runtime-executable.ts"]);
     expect(collectExtensionPackageJsonCandidates(root)).toEqual(candidates);
     expect(
       readdirSync(join(root, "extensions"), { recursive: true, withFileTypes: true })

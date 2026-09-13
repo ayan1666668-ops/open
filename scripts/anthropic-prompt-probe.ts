@@ -383,6 +383,15 @@ async function startAnthropicProxy(params: {
         lastCapture = extractProxyCapture(rawBody, req);
 
         const upstreamUrl = resolveAnthropicUpstreamUrl(req.url, params.upstreamBaseUrl);
+        const controller = new AbortController();
+        const timeoutError = new Error(`Anthropic upstream timed out after ${params.timeoutMs}ms`);
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            reject(timeoutError);
+            controller.abort(timeoutError);
+          }, params.timeoutMs);
+        });
         const headers = new Headers();
         for (const [key, value] of Object.entries(req.headers)) {
           if (value === undefined) {
@@ -402,30 +411,56 @@ async function startAnthropicProxy(params: {
               ? undefined
               : Uint8Array.from(requestBody),
           duplex: "half",
-          signal: AbortSignal.timeout(params.timeoutMs),
+          signal: controller.signal,
         } as RequestInit & { duplex: "half" };
-        const upstreamRes = await fetch(upstreamUrl, upstreamInit);
-        const responseHeaders: Record<string, string> = {};
-        for (const [key, value] of upstreamRes.headers.entries()) {
-          const lower = key.toLowerCase();
+        try {
+          const upstreamRes = await Promise.race([
+            fetch(upstreamUrl, upstreamInit),
+            timeoutPromise,
+          ]);
+          const responseHeaders: Record<string, string> = {};
+          for (const [key, value] of upstreamRes.headers.entries()) {
+            const lower = key.toLowerCase();
+            if (
+              lower === "content-length" ||
+              lower === "content-encoding" ||
+              lower === "transfer-encoding" ||
+              lower === "connection" ||
+              lower === "keep-alive"
+            ) {
+              continue;
+            }
+            responseHeaders[key] = value;
+          }
+          res.writeHead(upstreamRes.status, responseHeaders);
+          // Commit the upstream status before reading its body. If that read stalls or
+          // terminates early, destroying the chunked response must remain visible to
+          // downstream clients as a truncated transfer instead of a valid empty body.
+          res.flushHeaders();
+          let responseBodyBytes = 0;
+          if (upstreamRes.body) {
+            await Promise.race([
+              (async () => {
+                for await (const chunk of upstreamRes.body!) {
+                  const bytes = Buffer.from(chunk);
+                  responseBodyBytes += bytes.byteLength;
+                  res.write(bytes);
+                }
+              })(),
+              timeoutPromise,
+            ]);
+          }
           if (
-            lower === "content-length" ||
-            lower === "content-encoding" ||
-            lower === "transfer-encoding" ||
-            lower === "connection" ||
-            lower === "keep-alive"
+            responseBodyBytes === 0 &&
+            method !== "HEAD" &&
+            ![204, 304].includes(upstreamRes.status)
           ) {
-            continue;
+            throw new Error("Anthropic upstream returned an empty response body");
           }
-          responseHeaders[key] = value;
+          res.end();
+        } finally {
+          clearTimeout(timeout);
         }
-        res.writeHead(upstreamRes.status, responseHeaders);
-        if (upstreamRes.body) {
-          for await (const chunk of upstreamRes.body) {
-            res.write(Buffer.from(chunk));
-          }
-        }
-        res.end();
       } catch (error) {
         // Once upstream headers are forwarded, a synthetic 502 is invalid.
         // Close the downstream body so its reader fails instead of hanging.

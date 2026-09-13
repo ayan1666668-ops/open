@@ -20,9 +20,11 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { mainLanes } from "../../scripts/lib/docker-e2e-scenarios.mts";
 import { buildSystemdUnit } from "../../src/daemon/systemd-unit.js";
+import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const testNodeExecPath = resolveTestNodeExecPath();
 
 const PACKAGE_BUILDER_NODE_SCRIPT = `node() {
   local script="$1"
@@ -4151,7 +4153,7 @@ process.stdout.write("original stdout\\n");
 process.exit(${code});
 `,
       );
-      const child = spawnSync(process.execPath, [childPath, "update", "--json"], {
+      const child = spawnSync(testNodeExecPath, [childPath, "update", "--json"], {
         env: { ...env, NODE_OPTIONS: preloadOptions },
         encoding: "utf8",
       });
@@ -4257,7 +4259,7 @@ process.exit(78);
             : "process.exit(78);",
       );
       const child = spawnSync(
-        process.execPath,
+        testNodeExecPath,
         [childPath, ["doctor", "worker"].includes(scenario) ? "doctor" : "update"],
         { env: { ...env, NODE_OPTIONS: preloadOptions }, encoding: "utf8" },
       );
@@ -4272,7 +4274,7 @@ process.exit(78);
       if (scenario === "missing") {
         writeFileSync(resultPath, complete);
         expect(
-          spawnSync(process.execPath, [childPath, "update"], {
+          spawnSync(testNodeExecPath, [childPath, "update"], {
             env: { ...env, NODE_OPTIONS: preloadOptions },
           }).status,
         ).toBe(78);
@@ -4318,7 +4320,7 @@ process.exit(78);
             .split('if [ "$update_status" -ne 0 ]; then')[0]! + "\nlane_exit=$update_status";
       const bin = join(workDir, "bin");
       writeExecutables(bin, {
-        openclaw: `#!${process.execPath}
+        openclaw: `#!${testNodeExecPath}
 const fs = require("node:fs"), path = require("node:path"), { spawnSync } = require("node:child_process");
 fs.appendFileSync(path.join(process.env.TMPDIR,"invocations.jsonl"), JSON.stringify({argv:process.argv.slice(2), options:process.env.NODE_OPTIONS, artifactRoot:process.env.OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT})+"\\n");
 if (process.env.OPENCLAW_UPDATE_POST_CORE === "1") {
@@ -4327,7 +4329,7 @@ if (process.env.OPENCLAW_UPDATE_POST_CORE === "1") {
 }
 if (process.argv[2] !== "update") process.exit(0);
 const resultDir = fs.mkdtempSync(path.join(process.env.TMPDIR,"openclaw-update-post-core-"));
-const child = spawnSync(process.execPath, [__filename,"update","--json"], {env:{...process.env, OPENCLAW_UPDATE_POST_CORE:"1",OPENCLAW_UPDATE_POST_CORE_RESULT_PATH:path.join(resultDir,"plugins.json")}});
+const child = spawnSync(${JSON.stringify(testNodeExecPath)}, [__filename,"update","--json"], {env:{...process.env, OPENCLAW_UPDATE_POST_CORE:"1",OPENCLAW_UPDATE_POST_CORE_RESULT_PATH:path.join(resultDir,"plugins.json")}});
 if (child.status !== 0) process.exit(90);
 fs.rmSync(resultDir,{recursive:true});
 process.exit(78);
@@ -4764,7 +4766,7 @@ ${storage === "wal" ? 'process.kill(process.pid, "SIGKILL");' : ""}`,
       writeFileSync(join(state, "logs", "gateway-restart.log"), `restart: token=${secret}\n`);
       writeFileSync(
         join(unitDir, "openclaw-gateway.service"),
-        `[Service]\nExecStart=${process.execPath} gateway --token ${secret}\nWorkingDirectory=/safe/service\nEnvironment="API_KEY=${secret}"\n`,
+        `[Service]\nExecStart=${testNodeExecPath} gateway --token ${secret}\nWorkingDirectory=/safe/service\nEnvironment="API_KEY=${secret}"\n`,
       );
       writeFileSync(join(artifacts, "doctor.log"), `doctor: token=${secret}\n`);
       writeFileSync(join(artifacts, "update.err"), `post-core failure: token=${secret}\n`);
@@ -6726,7 +6728,7 @@ process.exit(73);
       encoding: "utf8",
       timeout: 10_000,
       env: {
-        PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+        PATH: `${bin}:${dirname(testNodeExecPath)}:/usr/bin:/bin`,
         TMPDIR: root,
         OPENCLAW_CURRENT_PACKAGE_TGZ: tarball,
         OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: registry,
@@ -7918,7 +7920,7 @@ fs.appendFileSync(process.env.FIXTURE_DOCKER_CAPTURE, JSON.stringify({ args, sta
     for (const lifecycle of ["preinstall", "postinstall", "prepare"]) {
       const [command, ...args] = manifest.scripts[lifecycle].split(/\s+/);
       expect(command).toBe("node");
-      const result = spawnSync(process.execPath, args, {
+      const result = spawnSync(testNodeExecPath, args, {
         cwd: root,
         encoding: "utf8",
         env: { PATH: process.env.PATH, HOME: join(root, "home"), npm_config_user_agent: "pnpm/12" },

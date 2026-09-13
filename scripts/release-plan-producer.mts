@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { isBuiltin } from "node:module";
 import { join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { deserialize, serialize } from "node:v8";
+import { resolveNodeRuntimeExecutable } from "../src/infra/node-runtime-executable.js";
 
 export type ReleasePlanIntent =
   | "publish"
@@ -98,23 +98,28 @@ type ProducerRequest =
 const CHILD_RUNNER = String.raw`
 import { createHash } from "node:crypto"; import { readFileSync } from "node:fs";
 import { createRequire, isBuiltin, registerHooks } from "node:module";
-import { deserialize, serialize } from "node:v8";
 const TOOLING_ROOT = "file:///__openclaw_verified_tooling__/", YAML_ROOT = "file:///__openclaw_verified_yaml__/";
 const YAML_ABSOLUTE_ROOT = "/__openclaw_verified_yaml__", CORE_PATH = ${JSON.stringify(CORE_PATH)};
 const EXPECTED_TOOLING_PATHS = ${JSON.stringify(TOOLING_MODULE_PATHS)};
 const compareAscii = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const fail = message => { throw new Error(message); };
+const decodeBase64 = value => {
+  if (typeof value !== "string" || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) fail("verified retained bytes are not canonical base64");
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.toString("base64") !== value) fail("verified retained bytes are not canonical base64");
+  return bytes;
+};
 const toolingUrl = path => new URL(path, TOOLING_ROOT).href, yamlUrl = path => new URL(path, YAML_ROOT).href;
 const safePath = path => typeof path === "string" && path.length > 0 &&
   /^[\x20-\x7e]+$/.test(path) && !path.includes("\\") && !path.startsWith("/") &&
   !path.split("/").some(part => part === "." || part === "..");
 try {
-  const payload = deserialize(readFileSync(0)), expectedPaths = [...EXPECTED_TOOLING_PATHS].sort(compareAscii);
+  const payload = JSON.parse(readFileSync(0, "utf8")), expectedPaths = [...EXPECTED_TOOLING_PATHS].sort(compareAscii);
   if (!Array.isArray(payload.toolingModules) || payload.toolingModules.length !== expectedPaths.length) fail("verified tooling module set is incomplete");
   const toolingModules = new Map();
   for (const record of payload.toolingModules) {
     if (!record || !expectedPaths.includes(record.path) || toolingModules.has(record.path) || !Array.isArray(record.imports)) fail("verified tooling module record is invalid");
-    toolingModules.set(record.path, { bytes: Buffer.from(record.bytes),
+    toolingModules.set(record.path, { bytes: decodeBase64(record.bytesBase64),
       format: record.path.endsWith(".mjs") ? "module" : "module-typescript",
       imports: new Map(record.imports) });
   }
@@ -127,7 +132,7 @@ try {
       yamlRecords.push(JSON.stringify(["directory", entry.path])); continue;
     }
     if (entry.kind !== "file" || yamlModules.has(entry.path)) fail("verified yaml retained tree contains an invalid entry");
-    const bytes = Buffer.from(entry.bytes); yamlFiles += 1; yamlBytes += bytes.byteLength;
+    const bytes = decodeBase64(entry.bytesBase64); yamlFiles += 1; yamlBytes += bytes.byteLength;
     if (yamlFiles > ${YAML_PACKAGE_MAX_FILES} || yamlBytes > ${YAML_PACKAGE_MAX_BYTES}) fail("verified yaml retained tree exceeds its bounds");
     yamlModules.set(entry.path, bytes);
     yamlRecords.push(JSON.stringify(["file", entry.path, bytes.byteLength, createHash("sha256").update(bytes).digest("hex")]));
@@ -191,9 +196,9 @@ try {
     return sources.map(parseYaml);
   };
   const core = await import(toolingUrl(CORE_PATH)), value = core.runReleasePlanProducerOperation(payload.request, { runGh, parseYamlDocuments });
-  process.stdout.write(serialize({ ok: true, value }));
+  process.stdout.write(JSON.stringify({ ok: true, value }));
 } catch (error) {
-  process.stdout.write(serialize({ ok: false, message: error instanceof Error ? error.message : String(error) }));
+  process.stdout.write(JSON.stringify({ ok: false, message: error instanceof Error ? error.message : String(error) }));
 }
 `;
 
@@ -468,17 +473,31 @@ function runOperation(request: ProducerRequest, params: ReleasePlanSource) {
   if (!fs.readFileSync(fileURLToPath(import.meta.url)).equals(bootstrapBytes)) {
     throw new Error(`tooling bootstrap differs from tooling SHA: ${BOOTSTRAP_PATH}`);
   }
-  let stdout: Buffer;
+  let stdout: string;
   try {
-    stdout = execFileSync(process.execPath, ["--input-type=module", "-e", CHILD_RUNNER], {
+    const nodeExecPath = resolveNodeRuntimeExecutable({ requiredFlag: "--input-type" });
+    if (!nodeExecPath) {
+      throw new Error("verified release plan child requires a Node executable");
+    }
+    // The verified child always runs on Node, while its parent may run on Bun.
+    // JSON plus canonical base64 keeps this integrity boundary runtime-neutral.
+    const toolingModules = retainToolingClosure(repoRoot, toolingSha).map(({ bytes, ...record }) =>
+      Object.assign(record, { bytesBase64: bytes.toString("base64") }),
+    );
+    const yamlEntries = retainYamlPackage().map((entry) =>
+      entry.kind === "file"
+        ? { kind: entry.kind, path: entry.path, bytesBase64: entry.bytes.toString("base64") }
+        : entry,
+    );
+    stdout = execFileSync(nodeExecPath, ["--input-type=module", "-e", CHILD_RUNNER], {
       cwd: repoRoot,
-      encoding: null,
+      encoding: "utf8",
       env: {},
-      input: serialize({
+      input: JSON.stringify({
         identityResponses,
         request,
-        toolingModules: retainToolingClosure(repoRoot, toolingSha),
-        yamlEntries: retainYamlPackage(),
+        toolingModules,
+        yamlEntries,
       }),
       maxBuffer: 16 * 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
@@ -486,7 +505,7 @@ function runOperation(request: ProducerRequest, params: ReleasePlanSource) {
   } catch (error) {
     throw new Error("verified release plan child failed", { cause: error });
   }
-  const envelope = deserialize(stdout) as { ok?: unknown; value?: unknown; message?: unknown };
+  const envelope = JSON.parse(stdout) as { ok?: unknown; value?: unknown; message?: unknown };
   if (envelope.ok !== true) {
     throw new Error(
       typeof envelope.message === "string" ? envelope.message : "verified child failed",

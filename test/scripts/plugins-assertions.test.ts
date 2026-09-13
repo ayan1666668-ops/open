@@ -18,6 +18,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
+import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
 import { createBoundedChildOutput } from "../helpers/bounded-child-output.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
@@ -773,8 +774,9 @@ fs.renameSync = (source, destination) => {
 };
 `,
     );
+    const nodeExecPath = resolveTestNodeExecPath();
     const child = spawn(
-      process.execPath,
+      nodeExecPath,
       [
         "--import",
         pathToFileURL(preload).href,
