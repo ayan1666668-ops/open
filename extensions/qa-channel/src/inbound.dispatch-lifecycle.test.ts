@@ -1,7 +1,7 @@
-import { getQaBusState, injectQaBusInboundMessage } from "openclaw/plugin-sdk/qa-channel";
 import { createReplyDispatcher, SILENT_REPLY_TOKEN } from "openclaw/plugin-sdk/reply-runtime";
 import { describe, expect, it } from "vitest";
 import { createQaBusState, startQaBusServer } from "../../qa-lab/bus-api.js";
+import { getQaBusState, injectQaBusInboundMessage } from "./bus-client.js";
 import { createQaInboundParams, runQaInbound } from "./inbound.test-harness.js";
 
 async function withQaBus(run: (params: ReturnType<typeof createQaInboundParams>) => Promise<void>) {
