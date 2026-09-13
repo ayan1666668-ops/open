@@ -644,7 +644,9 @@ describe("preflightWorkerWorkspace", () => {
         await expect.poll(() => secondStarted).toBe(true);
         if (cancel) {
           controller.abort(cancellation);
-          await new Promise<void>((resolve) => setImmediate(resolve));
+          await new Promise<void>((resolve) => {
+            setImmediate(resolve);
+          });
           expect(settled).toBe(false);
         }
       } finally {

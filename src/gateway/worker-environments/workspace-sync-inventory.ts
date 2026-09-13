@@ -432,7 +432,7 @@ async function writeEligibleGitFiles(params: {
   ): Promise<Exclude<WorkerWorkspaceInventoryEntry, { type: "directory" }> | undefined> => {
     signal.throwIfAborted();
     if (isDerivedWorkspacePath(file, await isStagedInput(file)) || transferredPaths.has(file)) {
-      return;
+      return undefined;
     }
     signal.throwIfAborted();
     const absolute = path.join(canonicalRoot, file);
@@ -446,7 +446,7 @@ async function writeEligibleGitFiles(params: {
     // Gitlinks are directories. Keep their commit in the base repository without
     // recursively copying nested repositories or their credential-bearing metadata.
     if (!stats || (!stats.isFile() && !stats.isSymbolicLink())) {
-      return;
+      return undefined;
     }
     if (stats.isSymbolicLink()) {
       // Mirrors the remote manifest guard, but before transfer: macOS openrsync
