@@ -34,6 +34,10 @@ import { createSuiteTempRootTracker } from "../../test-helpers/temp-dir.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
 import { createTestPreparedRunAdmission } from "../admitted-run-context.test-support.js";
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../agent-run-terminal-outcome.js";
+import {
+  createApiKeyCredential,
+  createAuthProfileStoreFixture,
+} from "../auth-profiles/credential-fixtures.test-support.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../auth-profiles/runtime-snapshots.js";
 import { saveAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import { testing as cliBackendsTesting } from "../cli-backends.test-support.js";
@@ -2249,19 +2253,16 @@ describe("CLI attempt execution", () => {
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "google-gemini-cli:user@example.test": {
-            type: "oauth",
-            provider: "google-gemini-cli",
-            access: "access-token",
-            refresh: "refresh-token",
-            expires: Date.now() + 3_600_000,
-            email: "user@example.test",
-          },
+      createAuthProfileStoreFixture({
+        "google-gemini-cli:user@example.test": {
+          type: "oauth",
+          provider: "google-gemini-cli",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 3_600_000,
+          email: "user@example.test",
         },
-      },
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -2306,16 +2307,9 @@ describe("CLI attempt execution", () => {
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "google:api-key": {
-            type: "api_key",
-            provider: "google",
-            key: "gemini-api-key",
-          },
-        },
-      },
+      createAuthProfileStoreFixture({
+        "google:api-key": createApiKeyCredential("google", "gemini-api-key"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -2354,16 +2348,9 @@ describe("CLI attempt execution", () => {
     });
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "vercel-ai-gateway:default": {
-            type: "api_key",
-            provider: "vercel-ai-gateway",
-            key: "vercel-key",
-          },
-        },
-      },
+      createAuthProfileStoreFixture({
+        "vercel-ai-gateway:default": createApiKeyCredential("vercel-ai-gateway", "vercel-key"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -2401,23 +2388,16 @@ describe("CLI attempt execution", () => {
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:work": {
-            type: "oauth",
-            provider: "openai",
-            access: "openai-access",
-            refresh: "openai-refresh",
-            expires: Date.now() + 60_000,
-          },
-          "google:api-key": {
-            type: "api_key",
-            provider: "google",
-            key: "gemini-api-key",
-          },
+      createAuthProfileStoreFixture({
+        "openai:work": {
+          type: "oauth",
+          provider: "openai",
+          access: "openai-access",
+          refresh: "openai-refresh",
+          expires: Date.now() + 60_000,
         },
-      },
+        "google:api-key": createApiKeyCredential("google", "gemini-api-key"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -2459,16 +2439,9 @@ describe("CLI attempt execution", () => {
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "google:api-key": {
-            type: "api_key",
-            provider: "google",
-            key: "gemini-api-key",
-          },
-        },
-      },
+      createAuthProfileStoreFixture({
+        "google:api-key": createApiKeyCredential("google", "gemini-api-key"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -3076,16 +3049,9 @@ describe("CLI attempt execution", () => {
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "anthropic:work": {
-            type: "api_key",
-            provider: "anthropic",
-            key: "test-key",
-          },
-        },
-      },
+      createAuthProfileStoreFixture({
+        "anthropic:work": createApiKeyCredential("anthropic", "test-key"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -4156,18 +4122,15 @@ describe("CLI attempt execution", () => {
     });
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:work": {
-            type: "oauth",
-            provider: "openai",
-            access: "access-token",
-            refresh: "refresh-token",
-            expires: Date.now() + 60_000,
-          },
+      createAuthProfileStoreFixture({
+        "openai:work": {
+          type: "oauth",
+          provider: "openai",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
         },
-      },
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -4212,16 +4175,9 @@ describe("CLI attempt execution", () => {
     });
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:backup": {
-            type: "api_key",
-            provider: "openai",
-            key: "sk-test",
-          },
-        },
-      },
+      createAuthProfileStoreFixture({
+        "openai:backup": createApiKeyCredential("openai", "sk-test"),
+      }),
       agentDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );
@@ -4649,18 +4605,15 @@ describe("embedded attempt harness pinning", () => {
     const { clearAgentHarnesses, registerAgentHarness } = await import("../harness/registry.js");
     const sessionEntry = makeSessionEntry("codex-auth-session");
     saveAuthProfileStore(
-      {
-        version: 1,
-        profiles: {
-          "openai:work": {
-            type: "oauth",
-            provider: "openai",
-            access: "access-token",
-            refresh: "refresh-token",
-            expires: Date.now() + 60_000,
-          },
+      createAuthProfileStoreFixture({
+        "openai:work": {
+          type: "oauth",
+          provider: "openai",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
         },
-      },
+      }),
       tmpDir,
       { filterExternalAuthProfiles: false, syncExternalCli: false },
     );

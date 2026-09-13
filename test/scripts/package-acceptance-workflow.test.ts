@@ -2294,7 +2294,11 @@ describe("frozen admission workflow barriers", () => {
       const admission = workflowStep(job, "Admit frozen source contracts");
       expect(steps.indexOf(plan)).toBeLessThan(steps.indexOf(provision));
       expect(steps.indexOf(provision)).toBeLessThan(steps.indexOf(admission));
-      expect(provision.if).toBe("steps.frozen_selection.outputs.parser_required == 'true'");
+      expect(provision.if).toBe(
+        file === FULL_RELEASE_VALIDATION_WORKFLOW
+          ? "steps.frozen_selection.outputs.parser_required == 'true' || steps.publication_request.outputs.required == 'true'"
+          : "steps.frozen_selection.outputs.parser_required == 'true'",
+      );
       let install = provision.run;
       if (provision.uses) {
         expect(provision.uses).toBe("./.release-harness/.github/actions/setup-release-harness");
@@ -2963,6 +2967,7 @@ function runReleaseChecksInputValidation(
   );
   const fixture = frozenWorkflowFixture(RELEASE_CHECKS_WORKFLOW, "resolve_target", {}, {}, {}, [
     "scripts/full-release-validation-policy.mjs",
+    "scripts/full-release-publication-contract.mjs",
     "scripts/lib/release-changelog.mjs",
     "scripts/full-release-candidate-contract.mjs",
     "scripts/lib/cross-os-release-checks/suite-filter.mjs",
@@ -3774,7 +3779,9 @@ if (tool === "gh") {
       FIXTURE_CALLS: calls,
       FIXTURE_METADATA_ERROR: String(params.metadataError ?? false),
       FIXTURE_DIRECTORY: JSON.stringify(
-        params.supportsScenario === false ? ["run.sh"] : ["run.sh", "legacy-operator-state.mjs"],
+        params.supportsScenario === false
+          ? ["run.sh"]
+          : ["run.sh", "legacy-operator-state.mjs", "custom-plugin-siblings.mjs"],
       ),
     },
   });
@@ -6601,6 +6608,7 @@ wait_for_run openclaw-npm-release.yml 404 "$EXPECTED_SHA" "$STARTED_JOB" "$APPRO
     expect(workflowJob(RELEASE_PUBLISH_WORKFLOW, "finalize_github_release").needs).toEqual([
       "publish",
       "publish_docker",
+      "approve_github_release",
     ]);
     expect(nativeJob["continue-on-error"]).toBe(true);
     expect(androidJob["continue-on-error"]).toBe(true);
@@ -10031,6 +10039,21 @@ describe("package artifact reuse", () => {
     expect(openaiDefault.command).not.toContain("OPENCLAW_LIVE_GATEWAY_MODELS=");
   });
 
+  it("retains the full OpenAI Ultra model coverage independently of the fresh default", () => {
+    const ultra = workflowMatrixEntry(
+      LIVE_E2E_WORKFLOW,
+      "validate_live_provider_suites",
+      "native-live-src-gateway-profiles-openai-gpt56-ultra",
+    );
+    expect(ultra).toMatchObject({
+      profiles: "stable full",
+      timeout_minutes: 75,
+      profile_env_only: false,
+      command:
+        "OPENCLAW_LIVE_GATEWAY_THINKING=ultra OPENCLAW_LIVE_GATEWAY_PROVIDERS=openai OPENCLAW_LIVE_GATEWAY_MODELS=openai/gpt-5.6-sol,openai/gpt-5.6-terra,openai/gpt-5.6-luna OPENCLAW_LIVE_GATEWAY_STEP_TIMEOUT_MS=300000 OPENCLAW_LIVE_GATEWAY_MODEL_TIMEOUT_MS=900000 node .release-harness/scripts/test-live-shard.mjs native-live-src-gateway-profiles",
+    });
+  });
+
   it("runs Docker live harnesses from trusted helper scripts", () => {
     const workflow = readFileSync(LIVE_E2E_WORKFLOW, "utf8");
     const providerSuites = workflowJob(LIVE_E2E_WORKFLOW, "validate_live_docker_provider_suites");
@@ -10103,6 +10126,7 @@ describe("package artifact reuse", () => {
     );
     expect(runCodexSuite?.if).toContain("steps.codex_compat.outputs.run_lane != 'false'");
     for (const [model, thinking] of [
+      ["sol", "ultra"],
       ["terra", "ultra"],
       ["luna", "max"],
     ]) {
@@ -11307,7 +11331,9 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
       expect(result.status, result.stderr).toBe(0);
       expect(output).toEqual({
         baselines: "supported-lines",
-        scenarios: soak ? "reported-issues" : "base legacy-operator-state",
+        scenarios: soak
+          ? parseUpgradeSurvivorScenarios("reported-issues").join(" ")
+          : "base legacy-operator-state custom-plugin-siblings",
       });
       expect(calls).toEqual([
         {
@@ -12604,7 +12630,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
       },
       trusted_workflow_json: {
         default: "",
-        required: false,
+        required: true,
         type: "string",
       },
     });
@@ -12628,7 +12654,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
     );
     expect(toolingIdentity.env).toMatchObject({
       GH_TOKEN: "${{ github.token }}",
-      REQUESTED_IDENTITY_JSON: "${{ inputs.trusted_workflow_json }}",
+      REQUESTED_IDENTITY_JSON: "${{ steps.publication_dispatch.outputs.trusted_workflow_json }}",
       WORKFLOW_CONTRACT: "${{ env.RELEASE_ISOLATION_TOOLING_CONTRACT }}",
       WORKFLOW_FULL_REF: "${{ github.ref }}",
       WORKFLOW_REF: "${{ github.ref_name }}",
@@ -13804,7 +13830,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
     expect(createReleaseIndex).toBeGreaterThanOrEqual(0);
     expect(verifyReleaseIndex).toBeGreaterThan(createReleaseIndex);
     expect(appendProofIndex).toBeGreaterThan(verifyReleaseIndex);
-    expect(finalizeJob.needs).toEqual(["publish", "publish_docker"]);
+    expect(finalizeJob.needs).toEqual(["publish", "publish_docker", "approve_github_release"]);
     expect(finalizeJob.if).toContain("needs.publish_docker.result == 'success'");
     expect(finalizeRelease.run).toContain('gh release edit "${RELEASE_TAG}"');
   });
@@ -13815,6 +13841,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
     for (const source of [
       "scripts/release-ci-summary.mjs",
       "scripts/full-release-validation-policy.mjs",
+      "scripts/full-release-publication-contract.mjs",
       "scripts/lib/release-changelog.mjs",
       "scripts/full-release-candidate-contract.mjs",
       "scripts/lib/canonical-json.mjs",
@@ -13991,7 +14018,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
       expect(workflow.on?.workflow_dispatch?.inputs?.[input]).toMatchObject({ required: false });
     }
     expect(publish.needs).toEqual(["resolve_release_target"]);
-    expect(finalize.needs).toEqual(["publish", "publish_docker"]);
+    expect(finalize.needs).toEqual(["publish", "publish_docker", "approve_github_release"]);
     expect(windows.needs).toEqual(["resolve_release_target", "finalize_github_release"]);
     expect(windows["continue-on-error"]).toBe(true);
     expect(windows.if).toContain("needs.finalize_github_release.result == 'success'");

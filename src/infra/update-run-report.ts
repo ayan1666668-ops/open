@@ -1,9 +1,17 @@
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { UPDATE_RUN_PHASES } from "../../packages/gateway-protocol/src/update-run-vocabulary.js";
-import { UPDATE_INSTALL_SKIP_GUIDANCE } from "../shared/update-outcome.js";
+import {
+  formatUpdateActivationTimeoutGuidance,
+  UPDATE_ACTIVATION_TIMEOUT_REASON,
+  UPDATE_INSTALL_SKIP_GUIDANCE,
+} from "../shared/update-outcome.js";
 import { formatDurationPrecise } from "./format-time/format-duration.ts";
 import type { RestartSentinelPayload } from "./restart-sentinel-store.js";
 import { formatUpdateDoctorConfigWriteRefusal } from "./update-doctor-config.js";
+import {
+  formatUpdateFailureFact,
+  selectUpdateFailureReportSteps,
+} from "./update-failure-facts-format.js";
 import {
   LEGACY_UPDATE_RUN_ADVISORY,
   LEGACY_UPDATE_RUN_EXPIRED_REASON,
@@ -71,6 +79,9 @@ function recoveryHints(run: ReportInput, nextAction?: string): string[] {
   }
   if (run.reason === LEGACY_UPDATE_RUN_EXPIRED_REASON) {
     return [LEGACY_UPDATE_RUN_ADVISORY];
+  }
+  if (run.reason === UPDATE_ACTIVATION_TIMEOUT_REASON) {
+    return nextAction ? [] : [formatUpdateActivationTimeoutGuidance()];
   }
   const hints: string[] = [];
   if (run.reason === "preflight-insufficient-space") {
@@ -168,8 +179,11 @@ export function renderUpdateRunReport(
   if (phases.length) {
     lines.push(`Phases: ${phases.join(" → ")}`);
   }
-  for (const step of run.steps.filter((item) => item.status === "failed").slice(-3)) {
+  for (const step of selectUpdateFailureReportSteps(
+    run.steps.filter((item) => item.status === "failed"),
+  )) {
     lines.push(bounded(`Failed: ${step.step}${step.detail ? ` — ${step.detail}` : ""}`, 300));
+    lines.push(...(step.failureFacts ?? []).slice(0, 5).map(formatUpdateFailureFact));
   }
   for (const message of updateRunWarningMessages(run.steps).slice(-3)) {
     lines.push(`Warning: ${bounded(message, 500)}`);
@@ -298,6 +312,7 @@ export function updateRunReportInputFromSentinel(payload: RestartSentinelPayload
     steps: (stats?.steps ?? []).map((step) => ({
       step: step.name,
       status: step.log?.exitCode === 0 ? "completed" : "failed",
+      failureFacts: step.failureFacts,
     })),
   };
 }
