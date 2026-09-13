@@ -19393,6 +19393,8 @@ public struct SystemInfoResult: Codable, Sendable {
     public let loadaverage: [AnyCodable]?
     public let memorytotalbytes: Int
     public let memoryfreebytes: Int
+    public let eventloop: [String: AnyCodable]?
+    public let processmemory: [String: AnyCodable]?
     public let disktotalbytes: Int?
     public let diskavailablebytes: Int?
     public let diskpath: String?
@@ -19417,6 +19419,8 @@ public struct SystemInfoResult: Codable, Sendable {
         loadaverage: [AnyCodable]? = nil,
         memorytotalbytes: Int,
         memoryfreebytes: Int,
+        eventloop: [String: AnyCodable]? = nil,
+        processmemory: [String: AnyCodable]? = nil,
         disktotalbytes: Int? = nil,
         diskavailablebytes: Int? = nil,
         diskpath: String? = nil,
@@ -19440,6 +19444,8 @@ public struct SystemInfoResult: Codable, Sendable {
         self.loadaverage = loadaverage
         self.memorytotalbytes = memorytotalbytes
         self.memoryfreebytes = memoryfreebytes
+        self.eventloop = eventloop
+        self.processmemory = processmemory
         self.disktotalbytes = disktotalbytes
         self.diskavailablebytes = diskavailablebytes
         self.diskpath = diskpath
@@ -19465,6 +19471,8 @@ public struct SystemInfoResult: Codable, Sendable {
         case loadaverage = "loadAverage"
         case memorytotalbytes = "memoryTotalBytes"
         case memoryfreebytes = "memoryFreeBytes"
+        case eventloop = "eventLoop"
+        case processmemory = "processMemory"
         case disktotalbytes = "diskTotalBytes"
         case diskavailablebytes = "diskAvailableBytes"
         case diskpath = "diskPath"
