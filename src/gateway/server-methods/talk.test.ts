@@ -2145,7 +2145,7 @@ describe("talk.session unified handlers", () => {
     mocks.listRealtimeVoiceProviders.mockReturnValue([provider] as never);
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
-      providerConfig: { apiKey: "openai-key" },
+      providerConfig: { apiKey: "openai-key", model: "gpt-realtime" },
     });
     mocks.createTalkRealtimeRelaySession.mockReturnValue({
       provider: "openai",
@@ -2505,7 +2505,12 @@ describe("talk.session unified handlers", () => {
     expect(JSON.stringify(response)).not.toContain(model);
   });
 
-  it.each([
+  it.each<{
+    label: string;
+    configuredModel: string;
+    requestedModel: string | undefined;
+    resolvedModel?: string;
+  }>([
     {
       label: "request override from a configured GA model",
       configuredModel: "gpt-realtime-2.1",
@@ -2516,7 +2521,20 @@ describe("talk.session unified handlers", () => {
       configuredModel: "gpt-live-test-canary",
       requestedModel: undefined,
     },
+    {
+      label: "provider-normalized request override",
+      configuredModel: "gpt-realtime-2.1",
+      requestedModel: "gpt-live-test-canary",
+      resolvedModel: "normalized-test-model",
+    },
   ])("resolves relay readiness from the effective model: $label", async (testCase) => {
+    const resolvedModel = testCase.resolvedModel ?? "gpt-live-test-canary";
+    const capabilities = {
+      transports: ["gateway-relay"],
+      handlesAgentConsult: true,
+      supportsToolCalls: false,
+      supportsBargeIn: false,
+    };
     const provider = {
       id: "openai",
       label: "OpenAI Realtime",
@@ -2534,7 +2552,8 @@ describe("talk.session unified handlers", () => {
       );
       return {
         provider,
-        providerConfig: { model: "gpt-live-test-canary" },
+        providerConfig: { model: resolvedModel },
+        capabilities,
       } as never;
     });
     mocks.createTalkRealtimeRelaySession.mockReturnValueOnce({
@@ -2582,7 +2601,10 @@ describe("talk.session unified handlers", () => {
     expect(mocks.createTalkRealtimeRelaySession).toHaveBeenCalledWith(
       expect.objectContaining({
         provider,
-        providerConfig: { model: "gpt-live-test-canary" },
+        providerConfig: { model: resolvedModel },
+        capabilities,
+        controlSource: "delegation",
+        tools: [],
         model: "gpt-live-test-canary",
         sessionTarget: expect.objectContaining({
           agentId: "voice-agent",
@@ -3720,7 +3742,7 @@ describe("talk.client.create handler", () => {
     });
   });
 
-  it("passes a requested model override into selection and capability resolution", async () => {
+  it("uses the requested model's resolved capabilities for native delegation", async () => {
     const createBrowserSession = vi.fn(async () => ({
       provider: "openai",
       transport: "webrtc" as const,
@@ -3736,12 +3758,12 @@ describe("talk.client.create handler", () => {
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
       providerConfig: { model: "gpt-live-1" },
-    });
-    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
-      handlesAgentConsult: true,
-      supportsToolCalls: false,
-      supportsVideoFrames: false,
+      capabilities: {
+        transports: ["webrtc"],
+        handlesAgentConsult: true,
+        supportsToolCalls: false,
+        supportsVideoFrames: false,
+      },
     });
     const respond = vi.fn();
 
@@ -3763,10 +3785,10 @@ describe("talk.client.create handler", () => {
     });
 
     expect(mocks.resolveConfiguredRealtimeVoiceProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ providerConfigOverrides: { model: "gpt-live-1" } }),
-    );
-    expect(mocks.resolveRealtimeVoiceProviderCapabilities).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "main", model: "gpt-live-1" }),
+      expect.objectContaining({
+        agentId: "main",
+        providerConfigOverrides: { model: "gpt-live-1" },
+      }),
     );
     const createInput = mockCallArg(createBrowserSession) as Record<string, unknown>;
     expectRecordFields(createInput, {
@@ -3802,14 +3824,14 @@ describe("talk.client.create handler", () => {
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
       providerConfig: { apiKey: "platform-key", model: "gpt-realtime-2.1" },
-    });
-    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
-      inputAudioFormats: [],
-      outputAudioFormats: [],
-      supportsGatewayControl: true,
-      supportsToolCalls: true,
-      supportsVideoFrames: true,
+      capabilities: {
+        transports: ["webrtc"],
+        inputAudioFormats: [],
+        outputAudioFormats: [],
+        supportsGatewayControl: true,
+        supportsToolCalls: true,
+        supportsVideoFrames: true,
+      },
     });
     const respond = vi.fn();
 
@@ -3828,6 +3850,9 @@ describe("talk.client.create handler", () => {
 
     expect(createBrowserSession).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayControl: mocks.gatewayControl }),
+    );
+    expect(mocks.resolveConfiguredRealtimeVoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ clientControl: { owner: "gateway" } }),
     );
     expect(mocks.createOrResumeClientVoiceSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3855,12 +3880,12 @@ describe("talk.client.create handler", () => {
         createBridge: vi.fn(),
       },
       providerConfig: { model: "gpt-realtime-2.1" },
-    });
-    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
-      inputAudioFormats: [],
-      outputAudioFormats: [],
-      supportsToolCalls: true,
+      capabilities: {
+        transports: ["webrtc"],
+        inputAudioFormats: [],
+        outputAudioFormats: [],
+        supportsToolCalls: true,
+      },
     });
     const respond = vi.fn();
 
@@ -3925,12 +3950,12 @@ describe("talk.client.create handler", () => {
         createBridge: vi.fn(),
       },
       providerConfig: { model: "gpt-live-1" },
-    });
-    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
-      handlesAgentConsult: true,
-      supportsToolCalls: false,
-      supportsVideoFrames: false,
+      capabilities: {
+        transports: ["webrtc"],
+        handlesAgentConsult: true,
+        supportsToolCalls: false,
+        supportsVideoFrames: false,
+      },
     });
     mocks.consultRealtimeVoiceAgent.mockImplementationOnce(async (rawParams?: unknown) => {
       const params = rawParams as {
@@ -4043,17 +4068,17 @@ describe("talk.client.create handler", () => {
       createBrowserSession,
       createBridge: vi.fn(),
     };
-    mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
-      transports: ["webrtc"],
-      inputAudioFormats: [],
-      outputAudioFormats: [],
-      handlesAgentConsult: true,
-      supportsToolCalls: false,
-      supportsVideoFrames: false,
-    });
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
       providerConfig: {},
+      capabilities: {
+        transports: ["webrtc"],
+        inputAudioFormats: [],
+        outputAudioFormats: [],
+        handlesAgentConsult: true,
+        supportsToolCalls: false,
+        supportsVideoFrames: false,
+      },
     });
 
     const respond = vi.fn();
@@ -4247,6 +4272,7 @@ describe("talk.client.create handler", () => {
     mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
       provider,
       providerConfig: { apiKey: "test-api-key" },
+      capabilities: provider.capabilities,
     });
 
     const respond = vi.fn();
@@ -4819,6 +4845,13 @@ describe("talk.client.create handler", () => {
         createBridge: vi.fn(),
       },
       providerConfig: {},
+      capabilities: {
+        transports: ["gateway-relay"],
+        inputAudioFormats: [],
+        outputAudioFormats: [],
+        supportsBrowserSession: true,
+        supportsVideoFrames: true,
+      },
     });
     const respond = vi.fn();
 
