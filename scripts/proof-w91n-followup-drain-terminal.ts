@@ -1,4 +1,4 @@
-// Real-runtime proof for the bounded followup-drain terminal path.
+// Real-runtime proof for the bounded followup-drain suspension path.
 //
 // Run: pnpm tsx scripts/proof-w91n-followup-drain-terminal.ts
 //
@@ -7,11 +7,11 @@
 // the real Gateway work-admission fence drive every scenario, with the shipped
 // retry policy (no timing overrides), so the wall-clock cost of scenario 1 is
 // the production backoff ladder itself. Only `defaultRuntime.error` is captured,
-// at the logging edge, so the terminal message can be asserted.
+// at the logging edge, so the suspension message can be asserted.
 //
 // Scenarios:
 //   1. An item whose run throws the non-retriable authority error is retried a
-//      bounded number of times, then retired with one loud terminal error, and
+//      bounded number of times, then parked with one loud suspension error, and
 //      the loop stops.
 //   2. A deferred item still retries past the unclassified cap and succeeds.
 //   3. The Gateway restart fence still parks the drain instead of retiring it.
@@ -93,7 +93,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs: numbe
   throw new Error(`ASSERTION FAILED: timed out after ${timeoutMs}ms waiting for ${label}`);
 }
 
-async function scenarioBoundedRetirement(): Promise<void> {
+async function scenarioBoundedSuspension(): Promise<void> {
   const key = `proof-w91n-terminal-${Date.now()}`;
   capturedErrors.length = 0;
   let attempts = 0;
@@ -113,24 +113,27 @@ async function scenarioBoundedRetirement(): Promise<void> {
   scheduleFollowupDrain(key, runFollowup);
 
   await waitFor(
-    () => !FOLLOWUP_QUEUES.has(key),
-    "the wedged queue to be retired",
+    () => FOLLOWUP_QUEUES.get(key)?.drainSuspended === true,
+    "the wedged queue to be suspended",
     expectedLadderMs + 30_000,
   );
   const elapsedMs = Date.now() - startedAt;
-  const attemptsAtRetirement = attempts;
+  const attemptsAtSuspension = attempts;
   // The loop must be dead, not merely slow: a further settle window adds nothing.
   await sleep(2_000);
 
   assert(
-    attemptsAtRetirement === EXPECTED_MAX_CONSECUTIVE_FAILURES,
-    `expected exactly ${EXPECTED_MAX_CONSECUTIVE_FAILURES} attempts before retirement, saw ${attemptsAtRetirement}`,
+    attemptsAtSuspension === EXPECTED_MAX_CONSECUTIVE_FAILURES,
+    `expected exactly ${EXPECTED_MAX_CONSECUTIVE_FAILURES} attempts before suspension, saw ${attemptsAtSuspension}`,
   );
   assert(
-    attempts === attemptsAtRetirement,
-    `expected the drain loop to stop after retirement, saw ${attempts - attemptsAtRetirement} extra attempts`,
+    attempts === attemptsAtSuspension,
+    `expected the drain loop to stop after suspension, saw ${attempts - attemptsAtSuspension} extra attempts`,
   );
-  assert(!FOLLOWUP_QUEUES.has(key), "expected the wedged queue to be removed from the registry");
+  assert(
+    FOLLOWUP_QUEUES.get(key)?.items[0]?.messageId === "proof-m1",
+    "expected the failed input to remain queued without lifecycle settlement",
+  );
 
   const gaps = attemptTimestamps
     .slice(1)
@@ -147,24 +150,27 @@ async function scenarioBoundedRetirement(): Promise<void> {
     );
   }
 
-  const terminal = capturedErrors.filter((message) =>
-    message.includes("followup queue retired undeliverable work"),
-  );
-  assert(terminal.length === 1, `expected exactly one terminal error, saw ${terminal.length}`);
-  const [terminalMessage] = terminal;
-  assert(terminalMessage?.includes(key) === true, "terminal error must name the session key");
-  assert(
-    terminalMessage?.includes("messageId=proof-m1") === true,
-    "terminal error must identify the retired item",
+  const suspension = capturedErrors.filter((message) =>
+    message.includes("followup queue suspended"),
   );
   assert(
-    terminalMessage?.includes(AUTHORITY_ERROR) === true,
-    "terminal error must carry the final underlying error",
+    suspension.length === 1,
+    `expected exactly one suspension error, saw ${suspension.length}`,
+  );
+  const [suspensionMessage] = suspension;
+  assert(suspensionMessage?.includes(key) === true, "suspension error must name the session key");
+  assert(
+    suspensionMessage?.includes("messageId=proof-m1") === true,
+    "suspension error must identify the retained item",
+  );
+  assert(
+    suspensionMessage?.includes(AUTHORITY_ERROR) === true,
+    "suspension error must carry the final underlying error",
   );
   console.log(
-    `      ok: ${attempts} attempts, gaps ${gaps.join("/")}ms, retired after ${(elapsedMs / 1000).toFixed(1)}s`,
+    `      ok: ${attempts} attempts, gaps ${gaps.join("/")}ms, suspended after ${(elapsedMs / 1000).toFixed(1)}s`,
   );
-  console.log(`      terminal log: ${terminalMessage}`);
+  console.log(`      suspension log: ${suspensionMessage}`);
 }
 
 async function scenarioDeferredStillRetries(): Promise<void> {
@@ -193,12 +199,10 @@ async function scenarioDeferredStillRetries(): Promise<void> {
     `expected ${deferrals + 1} attempts, saw ${attempts} — deferred retries must stay unbounded`,
   );
   assert(
-    !capturedErrors.some((message) =>
-      message.includes("followup queue retired undeliverable work"),
-    ),
-    "a deferred item must never be retired",
+    !capturedErrors.some((message) => message.includes("followup queue suspended")),
+    "a deferred item must never be suspended",
   );
-  console.log(`      ok: ${attempts} attempts, delivered, nothing retired`);
+  console.log(`      ok: ${attempts} attempts, delivered, nothing suspended`);
 }
 
 async function scenarioRestartFenceParks(): Promise<void> {
@@ -218,7 +222,9 @@ async function scenarioRestartFenceParks(): Promise<void> {
     delivered = true;
   };
 
-  console.log("[3/3] restart fence: expecting the drain to park, not retire...");
+  console.log(
+    "[3/3] restart fence: expecting the drain to park until rollback, without suspension...",
+  );
   enqueueFollowupRun(key, createRun("fenced", "proof-m3"), SETTINGS);
   scheduleFollowupDrain(key, runFollowup);
 
@@ -231,10 +237,8 @@ async function scenarioRestartFenceParks(): Promise<void> {
   );
   assert(FOLLOWUP_QUEUES.has(key), "expected the fenced item to stay queued");
   assert(
-    !capturedErrors.some((message) =>
-      message.includes("followup queue retired undeliverable work"),
-    ),
-    "a fenced item must never be retired",
+    !capturedErrors.some((message) => message.includes("followup queue suspended")),
+    "a fenced item must never be suspended",
   );
 
   const lease = fenceLease as { rollback: () => boolean } | null;
@@ -249,7 +253,7 @@ async function main(): Promise<void> {
   // Unref'd backoff timers must not be the only thing holding the loop open.
   const keepAlive = setInterval(() => {}, 1_000);
   try {
-    await scenarioBoundedRetirement();
+    await scenarioBoundedSuspension();
     await scenarioDeferredStillRetries();
     await scenarioRestartFenceParks();
   } finally {

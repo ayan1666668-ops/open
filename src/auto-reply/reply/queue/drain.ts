@@ -44,7 +44,13 @@ import {
   waitForQueueDebounce,
 } from "../../../utils/queue-helpers.js";
 import { isRoutableChannel } from "../route-reply.js";
-import { clearFollowupQueue, FOLLOWUP_QUEUES, trimSummaryElisionsToCap } from "./state.js";
+import { resolveQueueSettings } from "./settings-runtime.js";
+import {
+  clearFollowupQueue,
+  FOLLOWUP_QUEUES,
+  getFollowupQueue,
+  trimSummaryElisionsToCap,
+} from "./state.js";
 import {
   admitFollowupRunLifecycle,
   completeFollowupRunLifecycle,
@@ -52,6 +58,7 @@ import {
   isFollowupRunDeferredError,
   retireFollowupRunCancellation,
   type FollowupRun,
+  type ResolveQueueSettingsParams,
 } from "./types.js";
 
 type InternalFollowupRun = FollowupRun & {
@@ -73,128 +80,105 @@ const FOLLOWUP_RUN_CALLBACKS = resolveGlobalMap<string, (run: FollowupRun) => Pr
   FOLLOWUP_DRAIN_CALLBACKS_KEY,
 );
 
-type FollowupDrainRetryPolicy = {
-  /** Delay before the first retry that follows an unclassified drain failure. */
-  baseDelayMs: number;
-  /** Ceiling for the exponential backoff between unclassified retries. */
-  maxDelayMs: number;
-  /** Consecutive unclassified failures tolerated before the head item is retired. */
-  maxConsecutiveFailures: number;
-};
-
-const FOLLOWUP_DRAIN_RETRY_POLICY_KEY = Symbol.for("openclaw.followupDrainRetryPolicy");
-
-// Deferred retries and the Gateway restart fence own their own retry paths and
-// are bounded by the condition they wait on. An error the drain cannot classify
-// has no such bound: the failing item stays at the head of the queue, so the
-// reschedule tail replays it identically, forever, at debounce speed. Count
-// consecutive unclassified failures per queue key, back off between them, and
-// retire the head item once the cap is reached.
-const DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY: FollowupDrainRetryPolicy = {
-  baseDelayMs: 500,
-  maxDelayMs: 10_000,
-  maxConsecutiveFailures: 7,
-};
-
-const followupDrainRetryPolicy = resolveGlobalSingleton<FollowupDrainRetryPolicy>(
-  FOLLOWUP_DRAIN_RETRY_POLICY_KEY,
-  () => ({ ...DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY }),
+// Failures belong to attempted source identities, not session keys or whichever
+// item becomes the head while delivery awaits. Retry clones share the identity;
+// queue replacement starts a fresh budget and weak keys retain no cleared work.
+type FollowupDrainFailure = { queue: FollowupQueueState; failures: number };
+const FOLLOWUP_DRAIN_FAILURES = resolveGlobalSingleton(
+  Symbol.for("openclaw.followupDrainFailures"),
+  () => new WeakMap<FollowupRun, FollowupDrainFailure>(),
 );
+const FOLLOWUP_DRAIN_RETRY_BASE_MS = 500;
+const FOLLOWUP_DRAIN_RETRY_MAX_MS = 10_000;
+const FOLLOWUP_DRAIN_MAX_FAILURES = 7;
 
-const FOLLOWUP_DRAIN_FAILURE_COUNTS_KEY = Symbol.for("openclaw.followupDrainFailureCounts");
-
-const FOLLOWUP_DRAIN_FAILURE_COUNTS = resolveGlobalMap<string, number>(
-  FOLLOWUP_DRAIN_FAILURE_COUNTS_KEY,
-);
-
-function recordFollowupDrainFailure(key: string): number {
-  const failures = (FOLLOWUP_DRAIN_FAILURE_COUNTS.get(key) ?? 0) + 1;
-  FOLLOWUP_DRAIN_FAILURE_COUNTS.set(key, failures);
-  return failures;
-}
-
-function clearFollowupDrainFailures(key: string): void {
-  FOLLOWUP_DRAIN_FAILURE_COUNTS.delete(key);
-}
-
-function resolveFollowupDrainRetryDelayMs(failures: number): number {
-  const exponent = Math.max(0, failures - 1);
-  return Math.min(
-    followupDrainRetryPolicy.maxDelayMs,
-    followupDrainRetryPolicy.baseDelayMs * 2 ** exponent,
-  );
+function resolveFollowupDrainFailure(queue: FollowupQueueState, source: FollowupRun) {
+  let failure = FOLLOWUP_DRAIN_FAILURES.get(source);
+  if (!failure || failure.queue !== queue) {
+    failure = { queue, failures: 0 };
+    FOLLOWUP_DRAIN_FAILURES.set(source, failure);
+  }
+  return failure;
 }
 
 function scheduleFollowupDrainAfter(
   key: string,
+  queue: FollowupQueueState,
   runFollowup: (run: FollowupRun) => Promise<void>,
-  delayMs: number,
+  failures: number,
 ): void {
-  if (delayMs <= 0) {
-    scheduleFollowupDrain(key, runFollowup);
-    return;
-  }
-  const timer = setTimeout(() => {
-    // A recovery or explicit clear may have retired the queue while the backoff
-    // was pending; never resurrect a key that no longer holds work.
-    if (!FOLLOWUP_QUEUES.has(key)) {
-      return;
+  const delayMs = Math.min(
+    FOLLOWUP_DRAIN_RETRY_MAX_MS,
+    FOLLOWUP_DRAIN_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
+  );
+  const cancel = () => {
+    clearTimeout(timer);
+    if (queue.retryTimer === timer) {
+      delete queue.retryTimer;
     }
-    scheduleFollowupDrain(key, runFollowup);
+    queue.abortController.signal.removeEventListener("abort", cancel);
+  };
+  const timer = setTimeout(() => {
+    cancel();
+    if (FOLLOWUP_QUEUES.get(key) === queue && !queue.abortController.signal.aborted) {
+      scheduleFollowupDrain(key, runFollowup);
+    }
   }, delayMs);
-  // A pending backoff must never hold the process open during shutdown.
+  queue.retryTimer = timer;
+  queue.abortController.signal.addEventListener("abort", cancel, { once: true });
   timer.unref?.();
 }
 
-/** Describe a retired queue item without logging its prompt content. */
-function describeRetiredFollowupItem(item: FollowupRun | undefined): string {
-  if (!item) {
-    return "summary-only queue state";
-  }
-  const parts = [
-    item.messageId ? `messageId=${item.messageId}` : undefined,
-    item.originatingChannel ? `channel=${item.originatingChannel}` : undefined,
-    item.originatingTo ? `to=${item.originatingTo}` : undefined,
-    typeof item.enqueuedAt === "number"
-      ? `enqueuedAt=${new Date(item.enqueuedAt).toISOString()}`
-      : undefined,
-    `promptChars=${item.prompt?.length ?? 0}`,
-  ].filter((part): part is string => part !== undefined);
-  return parts.length > 0 ? parts.join(" ") : "queued followup";
+/** Identify failed work without logging prompt content. */
+function describeFailedFollowupItem(item: FollowupRun): string {
+  return `messageId=${item.messageId ?? "unknown"} channel=${item.originatingChannel ?? "unknown"} promptChars=${item.prompt.length}`;
 }
 
-/**
- * Retire the queued work that keeps failing for `key`. The failing item is the
- * one `drainNextQueueItem` restored to the head, so retiring exactly that item
- * follows the `dropAbortedFollowups` precedent and leaves the rest of the queue
- * drainable. A queue that holds only summarized overflow has no head item to
- * retire, so it is cleared whole.
- */
-function retireWedgedFollowupQueue(params: {
+function handleFollowupDrainFailure(params: {
   key: string;
   queue: FollowupQueueState;
+  attemptedSources: FollowupRun[];
+  callback: (run: FollowupRun) => Promise<void>;
   error: unknown;
-  failures: number;
 }): void {
-  const { key, queue, error, failures } = params;
-  const head = queue.items[0];
-  if (head) {
-    removeQueuedItemsByRef(queue.items, [head]);
-    queue.inFlight.delete(head);
-    try {
-      completeFollowupRunLifecycle(head);
-    } catch (settlementError) {
-      defaultRuntime.error?.(
-        `followup queue retirement settlement failed for ${key}: ${String(settlementError)}`,
-      );
-    }
-  } else {
-    clearFollowupQueue(key);
-  }
-  defaultRuntime.error?.(
-    `followup queue retired undeliverable work for ${key} after ${failures} consecutive drain failures; ` +
-      `the queued reply was dropped and will not be delivered (${describeRetiredFollowupItem(head)}): ${String(error)}`,
+  const { key, queue, attemptedSources, callback, error } = params;
+  const attemptedFailures = new Set(
+    attemptedSources.map((source) => resolveFollowupDrainFailure(queue, source)),
   );
+  const pendingSources = [
+    ...queue.items,
+    ...queue.summarySources,
+    ...queue.summaryElisions.flatMap((entry) => entry.sources),
+  ].filter((source) => {
+    const failure = FOLLOWUP_DRAIN_FAILURES.get(source);
+    return failure && attemptedFailures.has(failure);
+  });
+  // Admission may have consumed a failed aggregate already. Its error
+  // must not spend the retry budget of untouched work behind it.
+  if (attemptedSources.length > 0 && pendingSources.length === 0) {
+    scheduleFollowupDrain(key, callback);
+    return;
+  }
+  // A canceled member of a failed collect batch no longer owns a retry.
+  // Only failure identities still represented by pending work spend a budget.
+  const pendingFailures = new Set(
+    pendingSources.map((source) => resolveFollowupDrainFailure(queue, source)),
+  );
+  const failures =
+    pendingFailures.size > 0
+      ? Math.max(...[...pendingFailures].map((failure) => ++failure.failures))
+      : (queue.drainFailureCount = (queue.drainFailureCount ?? 0) + 1);
+  if (failures >= FOLLOWUP_DRAIN_MAX_FAILURES) {
+    // Repetition is not evidence that accepted input is permanently invalid.
+    // Park the queue without settling sources or consuming summary content.
+    queue.drainSuspended = true;
+    defaultRuntime.error?.(
+      `followup queue suspended for ${key} after ${failures} consecutive drain failures; ` +
+        `queued work retained and automatic retries stopped; use /queue reset after resolving the failure (${attemptedSources.map(describeFailedFollowupItem).join("; ") || "source not yet reserved"}): ${String(error)}`,
+    );
+  } else {
+    scheduleFollowupDrainAfter(key, queue, callback, failures);
+  }
 }
 
 let followedRestartDrainSignal: AbortSignal | undefined;
@@ -288,6 +272,33 @@ export function kickFollowupDrainIfIdle(key: string): void {
 }
 
 type FollowupQueueState = NonNullable<ReturnType<typeof FOLLOWUP_QUEUES.get>>;
+
+/** Only the accepted queue-settings directive owner may resume parked work. */
+export function resumeSuspendedFollowupDrain(
+  key: string,
+  settings: ResolveQueueSettingsParams,
+): boolean {
+  const queue = FOLLOWUP_QUEUES.get(key);
+  const callback = FOLLOWUP_RUN_CALLBACKS.get(key);
+  if (!queue?.drainSuspended || !callback) {
+    return false;
+  }
+  getFollowupQueue(key, resolveQueueSettings(settings));
+  if (FOLLOWUP_QUEUES.get(key) !== queue) {
+    return false;
+  }
+  for (const source of [
+    ...queue.items,
+    ...queue.summarySources,
+    ...queue.summaryElisions.flatMap((entry) => entry.sources),
+  ]) {
+    resolveFollowupDrainFailure(queue, source).failures = 0;
+  }
+  queue.drainFailureCount = 0;
+  delete queue.drainSuspended;
+  scheduleFollowupDrain(key, callback);
+  return true;
+}
 
 /** Capture one exact active drain generation for post-recovery retirement. */
 export function prepareStaleFollowupDrainRetirement(key: string): (() => void) | undefined {
@@ -1337,7 +1348,7 @@ async function drainProtectedPriorityFollowup(
 }
 
 export function createOverflowSummaryRetrySource(source: FollowupRun): FollowupRun {
-  return {
+  const retry: FollowupRun = {
     prompt: source.prompt,
     queueAbortSignal: source.queueAbortSignal,
     transcriptPrompt: source.transcriptPrompt,
@@ -1369,6 +1380,11 @@ export function createOverflowSummaryRetrySource(source: FollowupRun): FollowupR
       : {}),
     run: source.run,
   };
+  const failure = FOLLOWUP_DRAIN_FAILURES.get(source);
+  if (failure) {
+    FOLLOWUP_DRAIN_FAILURES.set(retry, failure);
+  }
+  return retry;
 }
 
 function resolveOverflowSummaryInboundEventKind(sources: FollowupRun[]): "room_event" | undefined {
@@ -1586,7 +1602,7 @@ export function scheduleFollowupDrain(
   runFollowup: (run: FollowupRun) => Promise<void>,
 ): void {
   const existingQueue = FOLLOWUP_QUEUES.get(key);
-  if (existingQueue?.draining) {
+  if (existingQueue?.draining || existingQueue?.retryTimer || existingQueue?.drainSuspended) {
     // The active drain keeps its current callback, but deferred retries must
     // use the latest session/runtime context supplied by the finishing run.
     rememberFollowupDrainCallback(key, runFollowup);
@@ -1598,7 +1614,30 @@ export function scheduleFollowupDrain(
   }
   const drainOwner = {};
   queue.drainOwner = drainOwner;
-  const effectiveRunFollowup = FOLLOWUP_RUN_CALLBACKS.get(key) ?? runFollowup;
+  const callback = FOLLOWUP_RUN_CALLBACKS.get(key) ?? runFollowup;
+  let attemptedSources: FollowupRun[] = [];
+  const effectiveRunFollowup = async (run: FollowupRun) => {
+    // Reservation owners expose the exact sources for individual, priority,
+    // collected, and overflow deliveries before crossing the async callback.
+    attemptedSources = [...queue.inFlight];
+    const failures = attemptedSources.map((source) => resolveFollowupDrainFailure(queue, source));
+    try {
+      await callback(run);
+    } catch (error) {
+      if (isFollowupRunDeferredError(error) || isGatewayRestartDrainError(error)) {
+        for (const failure of failures) {
+          failure.failures = 0;
+        }
+        queue.drainFailureCount = 0;
+      }
+      throw error;
+    }
+    for (const failure of failures) {
+      failure.failures = 0;
+    }
+    queue.drainFailureCount = 0;
+    attemptedSources = [];
+  };
   const reserveOptions = {
     inFlight: queue.inFlight,
     shouldRestoreOnError: () =>
@@ -1607,7 +1646,7 @@ export function scheduleFollowupDrain(
   };
   // Cache callback only when a drain actually starts. Avoid keeping stale
   // callbacks around from finalize calls where no queue work is pending.
-  rememberFollowupDrainCallback(key, effectiveRunFollowup);
+  rememberFollowupDrainCallback(key, callback);
   const drainQueuedFollowups = async (): Promise<void> => {
     let retryDeferred = false;
     let waitingForSteer = false;
@@ -1849,6 +1888,9 @@ export function scheduleFollowupDrain(
         // retires the queue above; rollback leaves it here for normal retry.
         await waitForGatewayRestartFenceSettlement();
       } else {
+        // A source can abort while its final failing attempt still holds the
+        // reservation. Settle that cancellation before deciding to park work.
+        await dropAbortedFollowups(queue, callback);
         unclassifiedFailure = { error: err };
         defaultRuntime.error?.(`followup queue drain failed for ${key}: ${String(err)}`);
       }
@@ -1859,56 +1901,26 @@ export function scheduleFollowupDrain(
       if (FOLLOWUP_QUEUES.get(key) === queue) {
         queue.draining = false;
         delete queue.drainOwner;
-        if (!unclassifiedFailure) {
-          // Only consecutive unclassified failures are bounded; any generation
-          // that ends without one proves the key is not wedged.
-          clearFollowupDrainFailures(key);
-        }
         const hasPendingQueueWork = queue.items.length > 0 || queue.droppedCount > 0;
         if (waitingForSteer && hasPendingQueueWork) {
           if (!queue.items.some((item) => item.steerPending)) {
-            scheduleFollowupDrain(key, effectiveRunFollowup);
+            scheduleFollowupDrain(key, callback);
           }
         } else if (retryDeferred && hasPendingQueueWork) {
-          scheduleFollowupDrain(key, effectiveRunFollowup);
+          scheduleFollowupDrain(key, callback);
         } else if (!hasPendingQueueWork) {
           FOLLOWUP_QUEUES.delete(key);
           clearFollowupDrainCallback(key);
-          clearFollowupDrainFailures(key);
         } else if (unclassifiedFailure) {
-          const failures = recordFollowupDrainFailure(key);
-          if (failures >= followupDrainRetryPolicy.maxConsecutiveFailures) {
-            clearFollowupDrainFailures(key);
-            retireWedgedFollowupQueue({
-              key,
-              queue,
-              error: unclassifiedFailure.error,
-              failures,
-            });
-            if (
-              FOLLOWUP_QUEUES.get(key) === queue &&
-              (queue.items.length > 0 || queue.droppedCount > 0)
-            ) {
-              // Retiring the head item may unblock the rest of the queue; give
-              // the survivors one backoff window before they drain again.
-              scheduleFollowupDrainAfter(
-                key,
-                effectiveRunFollowup,
-                followupDrainRetryPolicy.baseDelayMs,
-              );
-            } else if (FOLLOWUP_QUEUES.get(key) === queue) {
-              FOLLOWUP_QUEUES.delete(key);
-              clearFollowupDrainCallback(key);
-            }
-          } else {
-            scheduleFollowupDrainAfter(
-              key,
-              effectiveRunFollowup,
-              resolveFollowupDrainRetryDelayMs(failures),
-            );
-          }
+          handleFollowupDrainFailure({
+            key,
+            queue,
+            attemptedSources,
+            callback,
+            error: unclassifiedFailure.error,
+          });
         } else {
-          scheduleFollowupDrain(key, effectiveRunFollowup);
+          scheduleFollowupDrain(key, callback);
         }
       }
     }
@@ -1928,23 +1940,5 @@ export function scheduleFollowupDrain(
     }
     defaultRuntime.error?.(`followup queue drain admission failed for ${key}: ${String(err)}`);
   });
-}
-if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
-  // Mirrors queue/enqueue.ts's test API registration.
-  // SAFETY: globalThis carries arbitrary symbol-keyed slots; this opens one test-only slot.
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.queueDrainTestApi")] = {
-    setFollowupDrainRetryPolicy(policy: Partial<FollowupDrainRetryPolicy>): void {
-      Object.assign(followupDrainRetryPolicy, policy);
-    },
-    resetFollowupDrainRetryPolicy(): void {
-      Object.assign(followupDrainRetryPolicy, DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY);
-    },
-    readFollowupDrainFailureCount(key: string): number {
-      return FOLLOWUP_DRAIN_FAILURE_COUNTS.get(key) ?? 0;
-    },
-    resetFollowupDrainFailureCounts(): void {
-      FOLLOWUP_DRAIN_FAILURE_COUNTS.clear();
-    },
-  };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

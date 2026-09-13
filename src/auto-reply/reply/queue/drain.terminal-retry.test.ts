@@ -1,22 +1,9 @@
-// Regression: the drain reschedule tail treated every unclassified error as
-// retriable. `drainNextQueueItem` restores the failing item to the head of the
-// queue, so an error that can never clear (e.g. a reply operation that refuses
-// to rebind tool authority after admission) made the `finally` tail call
-// `scheduleFollowupDrain` again immediately, replaying the identical failure at
-// debounce speed forever. A live Gateway logged the same drain failure ~2Hz for
-// five hours against one session key.
-//
-// Post-fix: consecutive unclassified failures are counted per queue key, the
-// retry is spaced by exponential backoff, and past the cap the head item is
-// retired (removeQueuedItemsByRef + completeFollowupRunLifecycle, the
-// dropAbortedFollowups precedent) with one loud terminal error.
-//
-// No module mocks: real enqueueFollowupRun / scheduleFollowupDrain / FOLLOWUP_QUEUES.
-// Only the retry policy timings are shrunk, through the queue drain test API, so
-// the suite does not wait real seconds for the backoff ladder.
-
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultRuntime } from "../../../runtime.js";
+import { handleDirectiveOnly } from "../directive-handling.impl.js";
+import { parseInlineSessionDirectives } from "../directive-handling.parse.js";
+import * as directivePersistence from "../directive-handling.shared.js";
 import {
   clearSessionQueues,
   enqueueFollowupRun,
@@ -24,160 +11,473 @@ import {
   scheduleFollowupDrain,
 } from "../queue.js";
 import { createQueueTestRun as createRun } from "../queue.test-helpers.js";
-import {
-  readFollowupDrainFailureCount,
-  resetFollowupDrainFailureCounts,
-  resetFollowupDrainRetryPolicy,
-  setFollowupDrainRetryPolicy,
-} from "./drain.test-support.js";
 import { FOLLOWUP_QUEUES } from "./state.js";
-import type { QueueSettings } from "./types.js";
+import {
+  admitFollowupRunLifecycle,
+  completeFollowupRunLifecycle,
+  type FollowupRun,
+  type QueueSettings,
+} from "./types.js";
 
-const MAX_CONSECUTIVE_FAILURES = 3;
 const SETTINGS: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
+const CAP = 7;
+let key: string;
+let nextKey = 0;
 
-async function waitFor(predicate: () => boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 5);
-    });
-  }
-  throw new Error(`timed out waiting for ${label}`);
+async function flush(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
 }
 
-describe("followup drain terminal path for unclassified errors", () => {
-  const keysToCleanup: string[] = [];
-  let errors: string[] = [];
-  let previousRuntimeError: typeof defaultRuntime.error;
-
-  beforeEach(() => {
-    errors = [];
-    previousRuntimeError = defaultRuntime.error;
-    defaultRuntime.error = ((message: unknown) => {
-      errors.push(String(message));
-    }) as typeof defaultRuntime.error;
-    resetFollowupDrainFailureCounts();
-    setFollowupDrainRetryPolicy({
-      baseDelayMs: 1,
-      maxDelayMs: 2,
-      maxConsecutiveFailures: MAX_CONSECUTIVE_FAILURES,
-    });
-  });
-
-  afterEach(() => {
-    resetFollowupDrainRetryPolicy();
-    resetFollowupDrainFailureCounts();
-    defaultRuntime.error = previousRuntimeError;
-    if (keysToCleanup.length > 0) {
-      clearSessionQueues(keysToCleanup.splice(0));
+async function finish(): Promise<void> {
+  for (let i = 0; i < 1000; i++) {
+    await vi.runAllTimersAsync();
+    await sleep(2);
+    if (!FOLLOWUP_QUEUES.get(key)?.draining && vi.getTimerCount() === 0) {
+      return;
     }
+  }
+  throw new Error("queue did not settle");
+}
+
+async function applyQueueDirective(body: string, authorized = true, storePath?: string) {
+  const sessionEntry = {
+    sessionId: "sess",
+    updatedAt: Date.now(),
+    queueMode: "followup" as const,
+    queueCap: 50,
+  };
+  return handleDirectiveOnly({
+    cfg: { messages: { queue: { mode: "followup", debounceMsByChannel: { slack: 0 } } } },
+    agentId: "main",
+    directives: parseInlineSessionDirectives(body),
+    sessionEntry,
+    sessionStore: { [key]: sessionEntry },
+    sessionKey: key,
+    storePath,
+    messageProvider: "slack",
+    commandAuthorized: authorized,
+    senderIsOwner: false,
+    elevatedEnabled: false,
+    elevatedAllowed: false,
+    defaultProvider: "openai",
+    defaultModel: "gpt-test",
+    aliasIndex: { byAlias: new Map(), byKey: new Map() },
+    allowedModelKeys: new Set<string>(),
+    allowedModelCatalog: [],
+    resetModelOverride: false,
+    provider: "openai",
+    model: "gpt-test",
+    initialModelLabel: "openai/gpt-test",
+    formatModelSwitchEvent: (label) => label,
   });
+}
 
-  it("retires the wedged head item after the consecutive-failure cap and stops retrying", async () => {
-    const key = `test-drain-terminal-${Date.now()}-${Math.random()}`;
-    keysToCleanup.push(key);
-    let attempts = 0;
-    const runFollowup = async () => {
-      attempts += 1;
-      throw new Error("Reply operation cannot change tool authority after admission");
-    };
-
-    enqueueFollowupRun(
-      key,
-      createRun({ prompt: "wedged", messageId: "m-wedged", originatingChannel: "slack" }),
-      SETTINGS,
-    );
-    scheduleFollowupDrain(key, runFollowup);
-
-    await waitFor(() => !FOLLOWUP_QUEUES.has(key), "the wedged queue to be retired");
-    // The loop is dead: a settle window adds no further attempts.
-    const attemptsAtRetirement = attempts;
-    await new Promise((resolve) => {
-      setTimeout(resolve, 50);
+describe("followup drain failure ownership", () => {
+  let errors: string[];
+  beforeEach(() => {
+    key = `test-terminal-retry-${nextKey++}`;
+    vi.useFakeTimers();
+    errors = [];
+    vi.spyOn(defaultRuntime, "error").mockImplementation((message: unknown) => {
+      errors.push(String(message));
     });
-
-    expect(attemptsAtRetirement).toBe(MAX_CONSECUTIVE_FAILURES);
-    expect(attempts).toBe(MAX_CONSECUTIVE_FAILURES);
-    expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
-    expect(readFollowupDrainFailureCount(key)).toBe(0);
-    const terminal = errors.filter((message) =>
-      message.includes("followup queue retired undeliverable work"),
-    );
-    expect(terminal).toHaveLength(1);
-    expect(terminal[0]).toContain(key);
-    expect(terminal[0]).toContain("messageId=m-wedged");
-    expect(terminal[0]).toContain("cannot change tool authority after admission");
-    expect(terminal[0]).toContain(`after ${MAX_CONSECUTIVE_FAILURES} consecutive drain failures`);
+  });
+  afterEach(async () => {
+    clearSessionQueues([key]);
+    await finish();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("retires only the wedged head item and drains the survivors behind it", async () => {
-    const key = `test-drain-terminal-survivor-${Date.now()}-${Math.random()}`;
-    keysToCleanup.push(key);
+  it("backs off and parks failed work without settling its lifecycle or consuming survivors", async () => {
+    const settled = vi.fn();
+    const failed = createRun({ prompt: "failed", messageId: "failed" });
+    failed.turnAdoptionLifecycle = { onAdopted: vi.fn(), onSettled: settled };
+    const attempts: number[] = [];
     const delivered: string[] = [];
-    const runFollowup = async (run: { prompt: string }) => {
-      if (run.prompt === "wedged") {
+    enqueueFollowupRun(key, failed, SETTINGS);
+    enqueueFollowupRun(key, createRun({ prompt: "survivor", messageId: "survivor" }), SETTINGS);
+    scheduleFollowupDrain(key, async (run) => {
+      if (run.prompt === "failed") {
+        attempts.push(Date.now());
         throw new Error("permanent producer defect");
       }
       delivered.push(run.prompt);
-    };
-
-    enqueueFollowupRun(key, createRun({ prompt: "wedged", messageId: "m-1" }), SETTINGS);
-    enqueueFollowupRun(key, createRun({ prompt: "survivor", messageId: "m-2" }), SETTINGS);
-    scheduleFollowupDrain(key, runFollowup);
-
-    await waitFor(() => delivered.length > 0, "the survivor item to drain");
-    expect(delivered).toEqual(["survivor"]);
-    expect(
-      errors.some((message) => message.includes("followup queue retired undeliverable work")),
-    ).toBe(true);
+    });
+    await flush();
+    await finish();
+    expect(attempts).toHaveLength(CAP);
+    expect(attempts.slice(1).map((time, index) => time - attempts[index])).toEqual([
+      500, 1000, 2000, 4000, 8000, 10000,
+    ]);
+    expect(delivered).toEqual([]);
+    expect(settled).not.toHaveBeenCalled();
+    expect(errors.filter((error) => error.includes("queue suspended"))).toHaveLength(1);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((run) => run.prompt)).toEqual([
+      "failed",
+      "survivor",
+    ]);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(attempts).toHaveLength(CAP);
+    const replacement = vi.fn(async () => {});
+    scheduleFollowupDrain(key, replacement);
+    enqueueFollowupRun(key, createRun({ prompt: "new", messageId: "new" }), SETTINGS);
+    await finish();
+    expect(attempts).toHaveLength(CAP);
+    expect(FOLLOWUP_QUEUES.get(key)?.items).toHaveLength(3);
+    expect(replacement).not.toHaveBeenCalled();
   });
 
-  it("resets the consecutive-failure counter once a drain generation succeeds", async () => {
-    const key = `test-drain-terminal-reset-${Date.now()}-${Math.random()}`;
-    keysToCleanup.push(key);
-    let attempts = 0;
-    const runFollowup = async () => {
-      attempts += 1;
-      if (attempts <= MAX_CONSECUTIVE_FAILURES - 1) {
-        throw new Error("transient producer defect");
+  it.each(["/queue reset", "/queue cap:51"])(
+    "resumes retained work with a fresh budget after accepted %s",
+    async (command) => {
+      const settled = vi.fn();
+      const source = createRun({ prompt: "retained", messageId: "retained" });
+      source.turnAdoptionLifecycle = { onAdopted: vi.fn(), onSettled: settled };
+      enqueueFollowupRun(key, source, SETTINGS);
+      const queuedSource = FOLLOWUP_QUEUES.get(key)?.items[0];
+      let attempts = 0;
+      const delivered: FollowupRun[] = [];
+      scheduleFollowupDrain(key, async (run) => {
+        if (++attempts < CAP * 2) {
+          throw new Error("temporary");
+        }
+        await admitFollowupRunLifecycle(run);
+        delivered.push(run);
+        completeFollowupRunLifecycle(run);
+      });
+      await finish();
+      expect(attempts).toBe(CAP);
+      expect(settled).not.toHaveBeenCalled();
+      const response = await applyQueueDirective(command);
+      expect(response?.text).toContain("Retained queued messages will retry.");
+      await finish();
+      expect(attempts).toBe(CAP * 2);
+      expect(delivered).toEqual([queuedSource]);
+      expect(settled).toHaveBeenCalledTimes(1);
+      expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
+    },
+  );
+
+  it.each([
+    { command: "/queue reset", authorized: false },
+    { command: "/queue", authorized: true },
+    { command: "/queue followup", authorized: true },
+    { command: "/queue cap:zero", authorized: true },
+  ])(
+    "does not resume for an unauthorized, status-only, unchanged, or invalid directive: $command ($authorized)",
+    async ({ command, authorized }) => {
+      const run = vi.fn(async () => {
+        throw new Error("temporary");
+      });
+      enqueueFollowupRun(key, createRun({ prompt: "retained", messageId: "retained" }), SETTINGS);
+      scheduleFollowupDrain(key, run);
+      await finish();
+      expect(run).toHaveBeenCalledTimes(CAP);
+      const response = await applyQueueDirective(command, authorized);
+      expect(response?.text).not.toContain("Retained queued messages will retry.");
+      await finish();
+      expect(run).toHaveBeenCalledTimes(CAP);
+      expect(FOLLOWUP_QUEUES.get(key)?.items[0]?.prompt).toBe("retained");
+    },
+  );
+
+  it("does not resume if the authorized queue directive loses its persistence transaction", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("temporary");
+    });
+    enqueueFollowupRun(key, createRun({ prompt: "retained", messageId: "retained" }), SETTINGS);
+    scheduleFollowupDrain(key, run);
+    await finish();
+    vi.spyOn(directivePersistence, "persistSessionDirectiveSnapshot").mockResolvedValue({
+      status: "conflict",
+    });
+    const response = await applyQueueDirective(
+      "/queue reset",
+      true,
+      "/unused/persistence-boundary",
+    );
+    expect(response?.text).toContain("Session settings were not applied");
+    await finish();
+    expect(run).toHaveBeenCalledTimes(CAP);
+    expect(FOLLOWUP_QUEUES.get(key)?.items[0]?.prompt).toBe("retained");
+  });
+
+  it("does not treat a concurrent untouched setting update as an explicit retry request", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("temporary");
+    });
+    enqueueFollowupRun(key, createRun({ prompt: "retained", messageId: "retained" }), SETTINGS);
+    scheduleFollowupDrain(key, run);
+    await finish();
+    vi.spyOn(directivePersistence, "persistSessionDirectiveSnapshot").mockImplementation(
+      async (params) => {
+        params.sessionEntry.queueCap = 51;
+        return { status: "applied" };
+      },
+    );
+    await applyQueueDirective("/queue followup", true, "/unused/persistence-boundary");
+    await finish();
+    expect(run).toHaveBeenCalledTimes(CAP);
+  });
+
+  it.each(["in-flight", "suspended"])(
+    "settles %s cancellation and releases the empty queue for fresh input",
+    async (when) => {
+      const controller = new AbortController();
+      const settled = vi.fn();
+      const source = createRun({ prompt: "cancel", messageId: "cancel" });
+      source.abortSignal = controller.signal;
+      source.turnAdoptionLifecycle = { onAdopted: vi.fn(), onSettled: settled };
+      let attempts = 0;
+      const run = async (queued: FollowupRun) => {
+        if (queued.abortSignal?.aborted) {
+          return;
+        }
+        attempts++;
+        if (attempts === CAP && when === "in-flight") {
+          controller.abort();
+        }
+        throw new Error("temporary");
+      };
+      enqueueFollowupRun(key, source, SETTINGS, "message-id", run, false);
+      scheduleFollowupDrain(key, run);
+      await finish();
+      if (when === "suspended") {
+        controller.abort();
+        await finish();
       }
+      expect(attempts).toBe(CAP);
+      expect(settled).toHaveBeenCalledTimes(1);
+      expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
+      const delivered: string[] = [];
+      enqueueFollowupRun(
+        key,
+        createRun({ prompt: "fresh", messageId: "fresh" }),
+        SETTINGS,
+        "message-id",
+        async (queued) => {
+          delivered.push(queued.prompt);
+        },
+      );
+      await finish();
+      expect(delivered).toEqual(["fresh"]);
+    },
+  );
+
+  it("does not charge the next item for the preceding item's recovered failures", async () => {
+    const attempts = new Map<string, number>();
+    const delivered: string[] = [];
+    for (const prompt of ["first", "second"]) {
+      enqueueFollowupRun(key, createRun({ prompt, messageId: prompt }), SETTINGS);
+    }
+    scheduleFollowupDrain(key, async (run) => {
+      const count = (attempts.get(run.prompt) ?? 0) + 1;
+      attempts.set(run.prompt, count);
+      if (count < CAP) {
+        throw new Error("temporary");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(delivered).toEqual(["first", "second"]);
+    expect(errors.some((error) => error.includes("queue suspended"))).toBe(false);
+  });
+
+  it("parks a failed protected priority item without dropping the unrelated head", async () => {
+    const delivered: string[] = [];
+    enqueueFollowupRun(key, createRun({ prompt: "head", messageId: "head" }), SETTINGS);
+    const priority = createRun({ prompt: "priority", messageId: "priority" });
+    priority.protectFromQueueOverflow = true;
+    enqueueFollowupRun(key, priority, SETTINGS);
+    scheduleFollowupDrain(key, async (run) => {
+      if (run.prompt === "priority") {
+        throw new Error("priority failure");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(delivered).toEqual([]);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((run) => run.prompt)).toEqual(["head", "priority"]);
+    expect(errors.filter((error) => error.includes("queue suspended"))).toHaveLength(1);
+  });
+
+  it("parks a failing overflow summary without dropping any accepted work", async () => {
+    const settings = { ...SETTINGS, cap: 1, dropPolicy: "summarize" as const };
+    enqueueFollowupRun(key, createRun({ prompt: "summary", messageId: "summary" }), settings);
+    enqueueFollowupRun(key, createRun({ prompt: "survivor", messageId: "survivor" }), settings);
+    const delivered: string[] = [];
+    let failures = 0;
+    scheduleFollowupDrain(key, async (run) => {
+      if (run.prompt.includes("[Queue overflow]")) {
+        failures++;
+        throw new Error("summary failure");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(failures, JSON.stringify(errors)).toBe(CAP);
+    expect(delivered).toEqual([]);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((run) => run.prompt)).toEqual(["survivor"]);
+    expect(FOLLOWUP_QUEUES.get(key)?.summarySources.map((run) => run.prompt)).toEqual(["summary"]);
+  });
+
+  it("parks a failed collect batch without consuming work appended during its last attempt", async () => {
+    const settings = { ...SETTINGS, mode: "collect" as const };
+    for (const prompt of ["first", "second"]) {
+      enqueueFollowupRun(key, createRun({ prompt, messageId: prompt }), settings);
+    }
+    let attempts = 0;
+    const delivered: string[] = [];
+    scheduleFollowupDrain(key, async (run) => {
+      if (run.prompt.includes("first") || run.prompt.includes("second")) {
+        attempts++;
+        if (attempts === CAP) {
+          enqueueFollowupRun(
+            key,
+            createRun({ prompt: "survivor", messageId: "survivor" }),
+            settings,
+          );
+        }
+        throw new Error("collect failure");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(attempts, JSON.stringify(errors)).toBe(CAP);
+    expect(delivered).toEqual([]);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((run) => run.prompt)).toEqual([
+      "first",
+      "second",
+      "survivor",
+    ]);
+  });
+
+  it("does not suspend a collect newcomer using a canceled source's exhausted budget", async () => {
+    const settings = { ...SETTINGS, mode: "collect" as const };
+    const controller = new AbortController();
+    const settled = vi.fn();
+    const source = createRun({ prompt: "older", messageId: "older" });
+    source.abortSignal = controller.signal;
+    source.turnAdoptionLifecycle = { onAdopted: vi.fn(), onSettled: settled };
+    let attempts = 0;
+    const delivered: string[] = [];
+    const run = async (queued: FollowupRun) => {
+      if (queued.abortSignal?.aborted) {
+        return;
+      }
+      if (queued.prompt.includes("older")) {
+        attempts++;
+        if (attempts === CAP - 1) {
+          enqueueFollowupRun(
+            key,
+            createRun({ prompt: "newcomer", messageId: "newcomer" }),
+            settings,
+          );
+        }
+        if (attempts === CAP) {
+          controller.abort();
+        }
+        throw new Error("collect failure");
+      }
+      delivered.push(queued.prompt);
     };
+    enqueueFollowupRun(key, source, settings, "message-id", run, false);
+    scheduleFollowupDrain(key, run);
+    await finish();
+    expect(attempts).toBe(CAP);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toContain("newcomer");
+    expect(errors.some((error) => error.includes("queue suspended"))).toBe(false);
+  });
 
-    enqueueFollowupRun(key, createRun({ prompt: "transient", messageId: "m-t" }), SETTINGS);
-    scheduleFollowupDrain(key, runFollowup);
+  it("does not retire a survivor after a failing collect attempt already consumed its sources", async () => {
+    const settings = { ...SETTINGS, mode: "collect" as const };
+    for (const prompt of ["first", "second"]) {
+      enqueueFollowupRun(key, createRun({ prompt, messageId: prompt }), settings);
+    }
+    let attempts = 0;
+    const delivered: string[] = [];
+    scheduleFollowupDrain(key, async (run) => {
+      if (run.prompt.includes("first")) {
+        if (++attempts === CAP) {
+          await admitFollowupRunLifecycle(run);
+          enqueueFollowupRun(
+            key,
+            createRun({ prompt: "survivor", messageId: "survivor" }),
+            settings,
+          );
+        }
+        throw new Error("failed collect admission attempt");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(attempts).toBe(CAP);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toContain("survivor");
+    expect(errors.some((error) => error.includes("queue suspended"))).toBe(false);
+  });
 
-    await waitFor(() => !FOLLOWUP_QUEUES.has(key), "the queue to drain");
-    expect(attempts).toBe(MAX_CONSECUTIVE_FAILURES);
-    expect(readFollowupDrainFailureCount(key)).toBe(0);
-    expect(
-      errors.some((message) => message.includes("followup queue retired undeliverable work")),
-    ).toBe(false);
+  it("prevents enqueue and idle kicks from bypassing a pending backoff", async () => {
+    const run = vi.fn(async () => {
+      throw new Error("temporary");
+    });
+    enqueueFollowupRun(key, createRun({ prompt: "failed", messageId: "failed" }), SETTINGS);
+    scheduleFollowupDrain(key, run);
+    await flush();
+    expect(run).toHaveBeenCalledTimes(1);
+    enqueueFollowupRun(key, createRun({ prompt: "later", messageId: "later" }), SETTINGS);
+    scheduleFollowupDrain(key, run);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears retry timers and accounting before a key is recreated", async () => {
+    const old = vi.fn(async () => {
+      throw new Error("old failure");
+    });
+    enqueueFollowupRun(key, createRun({ prompt: "old", messageId: "old" }), SETTINGS);
+    scheduleFollowupDrain(key, old);
+    await flush();
+    clearSessionQueues([key]);
+    enqueueFollowupRun(key, createRun({ prompt: "new", messageId: "new" }), SETTINGS);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(old).toHaveBeenCalledTimes(1);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((run) => run.prompt)).toEqual(["new"]);
+    let attempts = 0;
+    const delivered: string[] = [];
+    scheduleFollowupDrain(key, async (run) => {
+      if (++attempts < CAP) {
+        throw new Error("new temporary failure");
+      }
+      delivered.push(run.prompt);
+    });
+    await flush();
+    await finish();
+    expect(delivered).toEqual(["new"]);
   });
 
   it("leaves deferred retries unbounded", async () => {
-    const key = `test-drain-terminal-deferred-${Date.now()}-${Math.random()}`;
-    keysToCleanup.push(key);
-    const deferredAttempts = MAX_CONSECUTIVE_FAILURES + 3;
     let attempts = 0;
-    const runFollowup = async () => {
-      attempts += 1;
-      if (attempts <= deferredAttempts) {
-        throw new FollowupRunDeferredError("still busy");
+    enqueueFollowupRun(key, createRun({ prompt: "deferred", messageId: "deferred" }), SETTINGS);
+    scheduleFollowupDrain(key, async (_run: FollowupRun) => {
+      if (++attempts <= CAP + 3) {
+        throw new FollowupRunDeferredError();
       }
-    };
-
-    enqueueFollowupRun(key, createRun({ prompt: "deferred", messageId: "m-d" }), SETTINGS);
-    scheduleFollowupDrain(key, runFollowup);
-
-    await waitFor(() => !FOLLOWUP_QUEUES.has(key), "the deferred queue to drain");
-    expect(attempts).toBe(deferredAttempts + 1);
-    expect(readFollowupDrainFailureCount(key)).toBe(0);
-    expect(
-      errors.some((message) => message.includes("followup queue retired undeliverable work")),
-    ).toBe(false);
+    });
+    await flush();
+    await finish();
+    expect(attempts).toBe(CAP + 4);
+    expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
+    expect(errors.some((error) => error.includes("queue suspended"))).toBe(false);
   });
 });
