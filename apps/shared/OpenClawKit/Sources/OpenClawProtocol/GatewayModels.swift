@@ -101,6 +101,7 @@ public enum ChatRunStartupPhase: String, Codable, Sendable {
     case runningSetup = "running_setup"
     case provisioningEnvironment = "provisioning_environment"
     case preparingContext = "preparing_context"
+    case memoryFlushing = "memory_flushing"
     case startingModel = "starting_model"
 }
 
@@ -3299,6 +3300,16 @@ public struct CancelledApprovalSnapshot: Codable, Sendable {
     }
 }
 
+public struct CanvasDocumentPreviewParams: Codable, Sendable {
+    public let html: String
+
+    public init(
+        html: String)
+    {
+        self.html = html
+    }
+}
+
 public struct CanvasDocumentViewParams: Codable, Sendable {
     public let docid: String
 
@@ -4615,6 +4626,7 @@ public struct ConnectParams: Codable, Sendable {
     public let pathenv: String?
     public let role: String?
     public let scopes: [String]?
+    public let modelcatalog: AnyCodable?
     public let device: [String: AnyCodable]?
     public let auth: [String: AnyCodable]?
     public let locale: String?
@@ -4632,6 +4644,7 @@ public struct ConnectParams: Codable, Sendable {
         pathenv: String? = nil,
         role: String? = nil,
         scopes: [String]? = nil,
+        modelcatalog: AnyCodable? = nil,
         device: [String: AnyCodable]? = nil,
         auth: [String: AnyCodable]? = nil,
         locale: String? = nil,
@@ -4648,6 +4661,7 @@ public struct ConnectParams: Codable, Sendable {
         self.pathenv = pathenv
         self.role = role
         self.scopes = scopes
+        self.modelcatalog = modelcatalog
         self.device = device
         self.auth = auth
         self.locale = locale
@@ -4666,6 +4680,7 @@ public struct ConnectParams: Codable, Sendable {
         case pathenv = "pathEnv"
         case role
         case scopes
+        case modelcatalog = "modelCatalog"
         case device
         case auth
         case locale
@@ -24968,18 +24983,22 @@ public struct SessionsDispatchResult: Codable, Sendable {
 public struct SessionsReclaimParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
+    public let recovertogateway: [String: AnyCodable]?
 
     public init(
         key: String,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        recovertogateway: [String: AnyCodable]? = nil)
     {
         self.key = key
         self.agentid = agentid
+        self.recovertogateway = recovertogateway
     }
 
     private enum CodingKeys: String, CodingKey {
         case key
         case agentid = "agentId"
+        case recovertogateway = "recoverToGateway"
     }
 }
 
