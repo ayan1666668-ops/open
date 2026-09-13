@@ -352,6 +352,7 @@
   display: none;
 }
 
+openclaw-chat-detail-panel,
 .side-panel__panel
   > :is(
     .chat,
