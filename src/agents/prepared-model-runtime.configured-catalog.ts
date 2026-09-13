@@ -4,10 +4,13 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
 import { dedupeByKey } from "../shared/dedupe-by-key.js";
 import type { InlineModelEntry } from "./embedded-agent-runner/model.inline-provider.js";
 import { modelCatalogRowToEntry } from "./model-catalog-entry.js";
-import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import type { ModelCatalogEntry, ModelCatalogSnapshot } from "./model-catalog.types.js";
 import { modelTransportRoutesMatch } from "./model-compat-catalog.js";
 import { buildConfiguredModelCatalog } from "./model-selection-shared.js";
-import { resolveModelCatalogIdentityKey } from "./openai-model-routes.js";
+import {
+  createModelCatalogIdentityKeyResolver,
+  resolveModelCatalogIdentityKey,
+} from "./openai-model-routes.js";
 import type { PreparedModelRuntimeCatalogFacts } from "./prepared-model-runtime.catalog-contract.js";
 import type { PreparedConfiguredRuntimeModel } from "./prepared-model-runtime.types.js";
 import type { ModelRegistry } from "./sessions/model-registry.js";
@@ -29,36 +32,40 @@ function createConfiguredModelCatalogSnapshot(params: {
   configuredRuntimeModels: readonly PreparedConfiguredRuntimeModel[];
 }): ModelCatalogSnapshot {
   const replace = params.agentFacts.input.config.models?.mode === "replace";
-  const runtimeEntries = params.configuredRuntimeModels.map(({ model }) =>
+  const keyOf = createModelCatalogIdentityKeyResolver();
+  const runtimeEntries = (replace ? [] : params.configuredRuntimeModels).map(({ model }) =>
     modelCatalogRowToEntry(model),
   );
-  const capturedEntries = params.templateModelRegistry.getAll().map(modelCatalogRowToEntry);
-  const catalog = capturedEntries.map((entry) => {
-    const donor = runtimeEntries.find(
-      (candidate) =>
-        resolveModelCatalogIdentityKey(candidate) === resolveModelCatalogIdentityKey(entry) &&
-        modelTransportRoutesMatch(candidate, entry),
-    );
-    return entry.contextWindows || !donor
-      ? entry
-      : Object.assign({}, entry, {
-          contextWindows: donor.contextWindows,
-          contextWindowDefault: donor.contextWindowDefault,
-        });
-  });
+  const runtimeByIdentity = new Map<string, ModelCatalogEntry[]>();
+  for (const entry of runtimeEntries) {
+    const key = keyOf(entry);
+    const donors = runtimeByIdentity.get(key) ?? [];
+    donors.push(entry);
+    runtimeByIdentity.set(key, donors);
+  }
+  const catalog = (replace ? [] : params.templateModelRegistry.getAll()).map(
+    modelCatalogRowToEntry,
+  );
+  for (const entry of catalog) {
+    if (entry.contextWindows) {
+      continue;
+    }
+    const donor = runtimeByIdentity
+      .get(keyOf(entry))
+      ?.find((candidate) => modelTransportRoutesMatch(candidate, entry));
+    if (donor) {
+      entry.contextWindows = donor.contextWindows;
+      entry.contextWindowDefault = donor.contextWindowDefault;
+    }
+  }
   const configuredEntries = dedupeByKey(
     [
       ...buildConfiguredModelCatalog({
         cfg: params.agentFacts.input.config,
-        catalog:
-          params.agentFacts.input.config.models?.mode === "replace"
-            ? []
-            : [...catalog, ...runtimeEntries],
+        catalog: [...catalog, ...runtimeEntries],
         manifestPlugins: params.workspaceFacts.pluginMetadataSnapshot,
       }),
-      ...(replace
-        ? []
-        : params.configuredRuntimeModels.map(({ model }) => modelCatalogRowToEntry(model))),
+      ...runtimeEntries,
       ...(replace
         ? []
         : params.agentFacts.configuredModelRefs.flatMap(({ provider, modelId }) => {
@@ -66,15 +73,12 @@ function createConfiguredModelCatalogSnapshot(params: {
             return model ? [modelCatalogRowToEntry(model)] : [];
           })),
     ],
-    resolveModelCatalogIdentityKey,
-  );
-  const staticEntries = (replace ? [] : params.configuredRuntimeModels).map(({ model }) =>
-    modelCatalogRowToEntry(model),
+    keyOf,
   );
   return {
     entries: configuredEntries,
     routeVariants: configuredEntries,
-    ...(staticEntries.length > 0 ? { staticEntries } : {}),
+    ...(runtimeEntries.length > 0 ? { staticEntries: runtimeEntries } : {}),
   };
 }
 
