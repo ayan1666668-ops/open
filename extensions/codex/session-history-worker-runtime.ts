@@ -41,11 +41,14 @@ const codexHistoryWorkerEntrypoint = {
 
 function resolveCodexHistoryWorkerUrl(): URL {
   const sourceUrl = resolveRuntimeWorkerUrl(codexHistoryWorkerEntrypoint);
-  if (!/\.[cm]?ts$/u.test(sourceUrl.pathname) || resolveRuntimeWorkerArgv(sourceUrl).length > 1) {
+  const sourceNeedsBuiltFallback =
+    /\.[cm]?ts$/u.test(sourceUrl.pathname) &&
+    (typeof process.versions.bun === "string" || resolveRuntimeWorkerArgv(sourceUrl).length === 1);
+  if (!sourceNeedsBuiltFallback) {
     return sourceUrl;
   }
-  // oxlint-disable-next-line no-warning-comments -- removal awaits upstream Bun Worker preload support.
-  // TODO: Remove this source-tree fallback once Bun Workers honor execArgv --import preloads.
+  // oxlint-disable-next-line no-warning-comments -- removal awaits Bun Worker preload resolver support.
+  // TODO: Remove this fallback once Bun Workers apply resolver hooks from execArgv --import preloads.
   return resolveRuntimeWorkerUrl({
     ...codexHistoryWorkerEntrypoint,
     root: fileURLToPath(new URL("../..", import.meta.url)),
