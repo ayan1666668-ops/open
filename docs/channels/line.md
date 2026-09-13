@@ -513,13 +513,13 @@ so every column keeps the same image layout. Text and action buttons stay intact
 
 ## Native approval cards
 
-LINE delivers exec, plugin, and OpenClaw-change approval requests as a Flex card in an
-approver's one-to-one chat. The card names the command or requested action, the reason
-the run was interrupted, the approval ID and its expiry, and one button per decision the
-request allows.
+LINE delivers exec, plugin, and OpenClaw-change approval requests as a Flex card with one
+button per decision the request allows. The card names the command or requested action,
+the reason the run was interrupted, and the approval ID and its expiry.
 
-Enable the existing top-level approval forwarding settings for each approval type you
-want to receive, and list the approvers as LINE user IDs:
+Cards use the existing top-level approval forwarding settings; there is no LINE-specific
+approval configuration. Enable forwarding with `mode` `session` or `both` for each approval
+type (OpenClaw-change approvals follow `approvals.exec`):
 
 ```json5
 {
@@ -529,25 +529,31 @@ want to receive, and list the approvers as LINE user IDs:
   },
   channels: {
     line: {
+      // Optional: route group requests to these approvers.
       allowFrom: ["U00000000000000000000000000000000"],
     },
   },
 }
 ```
 
-There is no LINE-specific approval configuration. Cards need both settings: forwarding
-enabled for the approval type (OpenClaw-change approvals follow `approvals.exec`), and at
-least one approver in `channels.line.allowFrom`. Until both are set, a LINE chat that
-raises an approval gets these setup steps instead of an approval prompt, and the request
-can be approved from the Control UI or terminal UI. Restart the Gateway after turning
-forwarding on so the LINE account starts delivering cards.
+Where the card goes depends on whether `channels.line.allowFrom` lists approvers:
+
+- **Without approvers**, the card appears in the one-to-one chat that raised the request,
+  and that user decides. A group keeps the `/approve <id> <decision>` text prompt.
+- **With approvers**, an approver's own chat keeps the card. A group, or another user's
+  chat, gets a notice that the request went to LINE DMs, and each approver receives the
+  card there.
+
+With forwarding off, LINE chats get no approval prompt: an exec request answers with these
+setup steps and can still be approved from a connected Control UI or terminal UI, and a
+plugin tool call that needs approval fails with the same steps. Restart the Gateway after
+changing forwarding so the LINE account picks it up.
 
 Two behaviors follow from the platform rather than from a choice:
 
-- **Cards go to an approver's one-to-one chat, never to a group.** A LINE postback in a
-  group carries no `userId` (LINE includes it only in message events), so a card tapped
-  in a group could not name who decided. A group, or any chat that is not the approver's
-  own, gets a notice that the request went to LINE DMs.
+- **Cards never go to a group.** A LINE postback in a group carries no `userId` (LINE
+  includes it only in message events), so a card tapped in a group could not name who
+  decided.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
   stay on screen. The first decision stands; tapping a button on a card that is no longer
