@@ -2,16 +2,16 @@
 // a parent session which child runs are still in flight.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { buildActiveSubagentRuntimeContext } from "./subagent-active-context.js";
-
-/** Keep in sync with module-private RECENT_PROMPT_MAX_ENTRIES. */
-const RECENT_PROMPT_MAX_ENTRIES = 8;
 import type { SubagentRunRecordOverrides } from "../../subagent-test-fixtures.test-helpers.js";
+import { buildActiveSubagentRuntimeContext } from "./subagent-active-context.js";
 import {
   addSubagentRunForTests,
   resetSubagentRegistryForTests,
 } from "./subagent-registry.test-helpers.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
+
+/** Keep in sync with module-private RECENT_PROMPT_MAX_ENTRIES. */
+const RECENT_PROMPT_MAX_ENTRIES = 8;
 
 beforeEach(() => {
   resetSubagentRegistryForTests();
@@ -57,7 +57,7 @@ describe("buildActiveSubagentRuntimeContext", () => {
       });
 
       expect(prompt).toContain("## Active Subagents");
-      expect(prompt).toContain("taskName=inspect_state");
+      expect(prompt).toContain('taskName_json="inspect_state"');
       expect(prompt).toContain("session=agent:main:subagent:active-context");
       expect(prompt).not.toContain("For announcing children");
       expect(prompt).toContain("status=running");
@@ -92,7 +92,7 @@ describe("buildActiveSubagentRuntimeContext", () => {
     expect(prompt).not.toContain("## Active Subagents");
     expect(prompt).toContain("## Recently Completed Subagents");
     expect(prompt).toContain("last 30m");
-    expect(prompt).toContain("taskName=read_email");
+    expect(prompt).toContain('taskName_json="read_email"');
     expect(prompt).toContain("session=agent:main:subagent:recent-context");
     expect(prompt).toContain("status=done");
   });
@@ -133,8 +133,8 @@ describe("buildActiveSubagentRuntimeContext", () => {
 
     expect(prompt).toContain("## Active Subagents");
     expect(prompt).toContain("## Recently Completed Subagents");
-    expect(prompt).toContain("taskName=active_task");
-    expect(prompt).toContain("taskName=recent_task");
+    expect(prompt).toContain('taskName_json="active_task"');
+    expect(prompt).toContain('taskName_json="recent_task"');
   });
 
   it("normalizes public main aliases before looking up active children", () => {
@@ -157,7 +157,7 @@ describe("buildActiveSubagentRuntimeContext", () => {
       controllerSessionKey: "main",
     });
 
-    expect(prompt).toContain("taskName=inspect_alias");
+    expect(prompt).toContain('taskName_json="inspect_alias"');
     expect(prompt).toContain("session=agent:main:subagent:active-context-alias");
   });
 
@@ -302,10 +302,10 @@ describe("buildActiveSubagentRuntimeContext", () => {
     expect(prompt).toContain("## Recently Completed Subagents");
     // Newest entries (highest i) retained; oldest dropped.
     // Match with trailing ";" so cap_task_1 does not false-positive on cap_task_10/11.
-    expect(prompt).toContain(`taskName=cap_task_${total - 1};`);
-    expect(prompt).toContain(`taskName=cap_task_${total - RECENT_PROMPT_MAX_ENTRIES};`);
+    expect(prompt).toContain(`taskName_json="cap_task_${total - 1}";`);
+    expect(prompt).toContain(`taskName_json="cap_task_${total - RECENT_PROMPT_MAX_ENTRIES}";`);
     for (const dropped of [0, 1, 2, 3]) {
-      expect(prompt).not.toContain(`taskName=cap_task_${dropped};`);
+      expect(prompt).not.toContain(`taskName_json="cap_task_${dropped}";`);
     }
   });
 
@@ -343,6 +343,6 @@ describe("buildActiveSubagentRuntimeContext", () => {
 
     expect(laterParentTurn).toContain("## Recently Completed Subagents");
     expect(laterParentTurn).toContain("run-later-parent-turn");
-    expect(laterParentTurn).toContain("taskName=summarize_inbox");
+    expect(laterParentTurn).toContain('taskName_json="summarize_inbox"');
   });
 });

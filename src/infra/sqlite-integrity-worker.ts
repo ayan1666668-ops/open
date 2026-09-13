@@ -5,12 +5,13 @@ import { sameFileIdentity, type FileIdentityStat } from "./fs-safe-advanced.js";
 import { resolveRuntimeProcessEntrypointUrl } from "./runtime-process-url.js";
 import { resolveRuntimeWorkerArgv } from "./runtime-worker-url.js";
 import {
-  SQLITE_INSPECTION_TIMEOUT_MS,
+  readSqliteInspectionBudget,
   sqliteInspectionTimeoutError,
 } from "./sqlite-readonly-worker.js";
 
 export type SqliteIntegrityWorkerInput = {
   pathname: string;
+  databaseLabel: string;
   identity: FileIdentityStat;
   busyTimeoutMs: number;
 };
@@ -37,30 +38,36 @@ export type SqliteIntegrityWorkerMessage =
 export function readSqliteIntegrityFileIdentity(
   pathname: string,
   expected?: FileIdentityStat,
-): FileIdentityStat {
+): FileIdentityStat & { size: bigint } {
   const current = fs.statSync(pathname, { bigint: true });
   if (!current.isFile() || (expected && !sameFileIdentity(expected, current))) {
     throw new Error(`SQLite source changed during integrity admission: ${pathname}`);
   }
-  return { dev: current.dev, ino: current.ino };
+  return { dev: current.dev, ino: current.ino, size: current.size };
 }
 
-/** The caller retains its owning lease until the read-only child closes. */
+/** The caller retains its owning lease or private snapshot until the read-only child closes. */
 export function assertSqliteIntegrityInWorker(
   pathname: string,
   busyTimeoutMs: number,
   signal: AbortSignal,
+  databaseLabel = pathname,
 ): Promise<void> {
   signal.throwIfAborted();
   // The caller retains its owning lease through native exit. This witness
   // detects observed path swaps; it is not native descriptor authority.
   const identity = readSqliteIntegrityFileIdentity(pathname);
+  const { timeoutMs, size } = readSqliteInspectionBudget(
+    "integrity check",
+    databaseLabel,
+    identity.size,
+  );
   const entry = resolveRuntimeProcessEntrypointUrl("sqliteIntegrity");
   const worker = fork(entry, [], {
     execArgv: resolveRuntimeWorkerArgv(entry).slice(0, -1),
     serialization: "advanced",
     stdio: ["ignore", "ignore", "ignore", "ipc"],
-    timeout: SQLITE_INSPECTION_TIMEOUT_MS,
+    timeout: timeoutMs,
     killSignal: "SIGKILL",
     signal,
   });
@@ -94,7 +101,12 @@ export function assertSqliteIntegrityInWorker(
           throw failure;
         }
         if (worker.killed && closeSignal === "SIGKILL") {
-          const error = sqliteInspectionTimeoutError("integrity check", pathname);
+          const error = sqliteInspectionTimeoutError(
+            "integrity check",
+            databaseLabel,
+            timeoutMs,
+            size,
+          );
           error.message += ` (lastObservedPhase=${lastObservedPhase})`;
           throw error;
         }
@@ -121,7 +133,7 @@ export function assertSqliteIntegrityInWorker(
     });
     if (!signal.aborted) {
       worker.send(
-        { pathname, identity, busyTimeoutMs } satisfies SqliteIntegrityWorkerInput,
+        { pathname, databaseLabel, identity, busyTimeoutMs } satisfies SqliteIntegrityWorkerInput,
         (error) => {
           if (error) {
             failure = error;

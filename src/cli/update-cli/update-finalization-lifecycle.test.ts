@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { UPDATE_RUN_ID_ENV } from "../../infra/update-control-plane-sentinel.js";
@@ -10,6 +12,8 @@ import {
 import { defaultRuntime } from "../../runtime.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { withCliProcessScope } from "../runtime-cleanup-scope.js";
 import { UpdateFinalizationLifecycle } from "./update-finalization-lifecycle.js";
 
 const dirs = createTempDirTracker();
@@ -28,6 +32,120 @@ afterEach(() => {
   vi.unstubAllEnvs();
   dirs.cleanup();
 });
+
+it.each(["doctor", "targetConfigConvergence"] as const)(
+  "keeps default %s work and heartbeat alive beyond the former deadline",
+  async (phase) => {
+    const stopChildren = vi.fn();
+    const lifecycle = new UpdateFinalizationLifecycle(false, undefined, stopChildren);
+    expect(lifecycle.budget(phase)).toBeUndefined();
+    lifecycle.attachLedger();
+    const [initial] = listUpdateRuns();
+    if (!initial) {
+      throw new Error("Finalization did not create its update run.");
+    }
+    const work = createDeferredCore();
+    const entered = createDeferredCore();
+    const timerCount = vi.getTimerCount();
+    const running = withCliProcessScope(() =>
+      lifecycle.run(phase, () => {
+        entered.resolve();
+        return work.promise;
+      }),
+    );
+    await entered.promise;
+
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(stopChildren).not.toHaveBeenCalled();
+    expect(getUpdateRun(initial.runId)).toMatchObject({ status: "running" });
+    expect(getUpdateRun(initial.runId)?.updatedAtMs).toBeGreaterThan(initial.updatedAtMs);
+    work.resolve();
+    await expect(running).resolves.toBeUndefined();
+    expect(vi.getTimerCount()).toBe(timerCount);
+    lifecycle.complete(0);
+    expect(getUpdateRun(initial.runId)?.status).toBe("succeeded");
+  },
+);
+
+it("uses generous state and plugin budgets while preserving explicit operator budgets", () => {
+  const defaults = new UpdateFinalizationLifecycle(false, undefined, () => {});
+  const explicit = new UpdateFinalizationLifecycle(false, 5_000, () => {});
+  for (const [phase, budget] of [
+    ["preflight", 300_000],
+    ["targetConfigValidation", 300_000],
+    ["configSnapshot", 300_000],
+    ["plugins", 1_200_000],
+    ["completionCache", 300_000],
+    ["doctor", undefined],
+    ["targetConfigConvergence", undefined],
+  ] as const) {
+    expect(defaults.budget(phase)).toBe(budget);
+    expect(explicit.budget(phase)).toBe(5_000);
+  }
+});
+
+it("sizes finalization state without blocking the parent on database metadata", async () => {
+  const database = resolveOpenClawStateSqlitePath(process.env);
+  fs.mkdirSync(path.dirname(database), { recursive: true });
+  fs.writeFileSync(database, "");
+  fs.truncateSync(database, 2 * 1024 ** 3);
+  const parentStat = vi.spyOn(fs, "statSync");
+  const lifecycle = new UpdateFinalizationLifecycle(false, undefined, () => {});
+  await lifecycle.run("preflight", async () => undefined);
+  expect(lifecycle.budget("preflight")).toBe(2_860_000);
+  expect(
+    parentStat.mock.calls.filter(([file]) =>
+      [database, `${database}-wal`, `${database}-shm`, `${database}-journal`].includes(
+        String(file),
+      ),
+    ),
+  ).toEqual([]);
+});
+
+it.each([
+  ["preflight", 30_001],
+  ["targetConfigValidation", 30_001],
+  ["configSnapshot", 30_001],
+  ["completionCache", 30_001],
+  ["plugins", 600_001],
+] as const)(
+  "allows %s to finish beyond its former aggregate deadline",
+  async (phase, elapsedMs) => {
+    const databasePath = resolveOpenClawStateSqlitePath(process.env);
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    for (const file of [databasePath, `${databasePath}-wal`]) {
+      fs.writeFileSync(file, "");
+      fs.truncateSync(file, 1024 ** 3);
+    }
+    const stopChildren = vi.fn();
+    vi.spyOn(defaultRuntime, "exit").mockImplementation(() => {
+      throw new Error("Finalization exited before the measured work completed");
+    });
+    const lifecycle = new UpdateFinalizationLifecycle(false, undefined, stopChildren);
+    const work = createDeferredCore();
+    const entered = createDeferredCore();
+    const running = withCliProcessScope(() =>
+      lifecycle.run(phase, () => {
+        entered.resolve();
+        return work.promise;
+      }),
+    );
+    await entered.promise;
+    try {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(stopChildren).not.toHaveBeenCalled();
+    } finally {
+      work.resolve();
+      await running;
+    }
+    if (phase !== "plugins") {
+      expect(lifecycle.budget(phase)).toBe(2_860_000);
+    }
+    expect(lifecycle.phaseTimings).toContainEqual(
+      expect.objectContaining({ phase, outcome: "completed" }),
+    );
+  },
+);
 
 it.each([false, true])(
   "renews a long finalization phase and releases its heartbeat (failure=%s)",
@@ -58,6 +176,17 @@ it.each([false, true])(
     await settled;
     expect(vi.getTimerCount()).toBe(timerCount);
     const finishedPhase = getUpdateRun(initial.runId);
+    if (fails) {
+      expect(finishedPhase?.steps).toContainEqual(
+        expect.objectContaining({
+          step: "finalize:plugins",
+          status: "failed",
+          failureFacts: [
+            { check: "plugins", code: "finalization-failed", message: "plugin repair failed" },
+          ],
+        }),
+      );
+    }
     await vi.advanceTimersByTimeAsync(UPDATE_RUN_HEARTBEAT_MS * 2);
     expect(getUpdateRun(initial.runId)).toEqual(finishedPhase);
     lifecycle.complete(fails ? 1 : 0);

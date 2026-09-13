@@ -9,9 +9,16 @@ import { OpenClawLitElement } from "../lit/openclaw-element.ts";
 const modalLayers = (document.openClawModalLayers ??= new Set<HTMLElement>());
 
 function setModalLayer(modal: HTMLElement, open: boolean) {
+  const wasOpen = modalLayers.size > 0;
   modalLayers.delete(modal);
   if (open) {
     modalLayers.add(modal);
+  }
+  const isOpen = modalLayers.size > 0;
+  if (wasOpen !== isOpen) {
+    window.dispatchEvent(
+      new CustomEvent("openclaw:native-modal-state", { detail: { open: isOpen } }),
+    );
   }
 }
 
@@ -31,6 +38,8 @@ export class OpenClawModalDialog extends OpenClawLitElement {
 
   static override styles = css`
     :host {
+      /* Slotted document panels share the standard/fullscreen shell height limit. */
+      --openclaw-modal-height-limit: var(--openclaw-modal-max-height, calc(100dvh - 48px));
       display: contents;
     }
 
@@ -42,7 +51,7 @@ export class OpenClawModalDialog extends OpenClawLitElement {
 
     wa-dialog::part(dialog) {
       max-width: var(--openclaw-modal-max-width, calc(100vw - 48px));
-      max-height: var(--openclaw-modal-max-height, calc(100dvh - 48px));
+      max-height: var(--openclaw-modal-height-limit);
       padding: 0;
       border: 0;
       background: transparent;
@@ -55,13 +64,16 @@ export class OpenClawModalDialog extends OpenClawLitElement {
       overflow: visible;
     }
 
+    :host(.fullscreen) {
+      --openclaw-modal-height-limit: calc(100dvh - 20px);
+    }
+
     :host(.fullscreen) wa-dialog {
       --width: calc(100vw - 20px);
     }
 
     :host(.fullscreen) wa-dialog::part(dialog) {
       max-width: calc(100vw - 20px);
-      max-height: calc(100dvh - 20px);
     }
 
     :host(.viewport-edge-to-edge) wa-dialog {
@@ -89,6 +101,8 @@ export class OpenClawModalDialog extends OpenClawLitElement {
     }
 
     :host(.palette) wa-dialog {
+      --openclaw-modal-backdrop-filter: none;
+      --wa-color-overlay-modal: color-mix(in oklab, black 12%, transparent);
       --show-duration: 0ms;
       --hide-duration: 0ms;
     }
@@ -130,13 +144,16 @@ export class OpenClawModalDialog extends OpenClawLitElement {
       }
     }
     @media (max-width: 640px) {
+      :host {
+        --openclaw-modal-height-limit: 90dvh;
+      }
+
       wa-dialog {
         --width: min(var(--openclaw-modal-width, 540px), calc(100vw - 24px));
       }
 
       wa-dialog::part(dialog) {
         max-width: var(--openclaw-modal-max-width, calc(100vw - 24px));
-        max-height: 90dvh;
       }
     }
 
@@ -167,6 +184,7 @@ export class OpenClawModalDialog extends OpenClawLitElement {
     }
     super.connectedCallback();
     if (this.open) {
+      setModalLayer(this, true);
       this.releaseNativeOcclusion ??= acquireNativeOverlayOcclusion();
     }
     void this.updateComplete.then(() => this.syncDialogOpen());
