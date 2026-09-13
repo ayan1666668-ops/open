@@ -2,25 +2,21 @@
 
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import type { GatewaySessionRow } from "../api/types.ts";
 import {
   createTestSessionCapability,
   sessionsResult,
 } from "../lib/sessions/session-capability.test-support.ts";
 import "../test-helpers/app-sidebar-suite.ts";
-import {
-  createGatewayHarness,
-  deferred,
-  mountSidebar,
-  TWO_AGENTS,
-} from "../test-helpers/app-sidebar.ts";
+import { createGatewayHarness, mountSidebar, TWO_AGENTS } from "../test-helpers/app-sidebar.ts";
 import { createTestGatewayClient } from "../test-helpers/gateway-client.ts";
 import "./app-sidebar.ts";
 
 describe("AppSidebar automatic list scope replacement", () => {
   it("loads the selected filtered roster after an earlier automatic scope read settles", async () => {
     vi.useFakeTimers();
-    const previous = deferred<ReturnType<typeof sessionsResult>>();
+    const previous = createDeferred<ReturnType<typeof sessionsResult>>();
     const targets: unknown[] = [];
     let mainReads = 0;
     const archived = (agentId: string, label: string) =>
@@ -104,7 +100,7 @@ describe("AppSidebar automatic list scope replacement", () => {
         { key: mainChild, kind: "direct", label: "Stale Main child", spawnedBy: mainParent },
         { key: researchChild, kind: "direct", label: "Next child", spawnedBy: researchParent },
       ];
-      const previous = deferred<ReturnType<typeof sessionsResult>>();
+      const previous = createDeferred<ReturnType<typeof sessionsResult>>();
       const parents: unknown[] = [];
       let primaryReads = 0;
       const gateway = createGatewayHarness(
