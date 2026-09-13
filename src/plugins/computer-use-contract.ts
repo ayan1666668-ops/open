@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Static, type TSchema, Type } from "typebox";
 import { Compile } from "typebox/compile";
+import { createExecutionIdleReclaim } from "./computer-use-idle-reclaim.js";
 import type {
   OpenClawPluginNodeHostCommand,
   OpenClawPluginNodeHostCommandAvailabilityContext,
@@ -58,13 +59,6 @@ export const COMPUTER_ACT_V1_ACTION_NAMES = COMPUTER_USE_V2_ACTION_NAMES.slice(1
 
 export const COMPUTER_CONTRACT_MISMATCH = "COMPUTER_CONTRACT_MISMATCH";
 export const COMPUTER_STALE_OBSERVATION = "COMPUTER_STALE_OBSERVATION";
-
-/**
- * Reclaim window for an execution whose owner never sends `__close_execution`.
- * Harnesses that build the computer tool without a run-cleanup registrar cannot
- * release the host themselves, so without this the first dispatch owns it forever.
- */
-const COMPUTER_EXECUTION_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 const SCROLL_DIRECTIONS = ["up", "down", "left", "right"] as const;
 const DELIVERY_MODES = ["background", "foreground"] as const;
@@ -579,42 +573,12 @@ export function registerComputerUseProvider(
   let execution: { id: string; promise: Promise<ComputerUseExecution> } | undefined;
   let closingPromise: Promise<void> | undefined;
   let pendingClose: Promise<void> | undefined;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let inFlight = 0;
-
-  const clearIdleTimer = (): void => {
-    if (!idleTimer) {
-      return;
-    }
-    clearTimeout(idleTimer);
-    idleTimer = undefined;
-  };
-  // Every dispatch refreshes the window, so only genuine inactivity reclaims the
-  // host; an in-flight command is never interrupted by it.
-  const armIdleTimer = (): void => {
-    clearIdleTimer();
+  const idleReclaim = createExecutionIdleReclaim(() => {
     const current = execution;
-    if (!current || inFlight > 0) {
-      return;
+    if (current) {
+      void closeExecution(current.id, "idle-timeout");
     }
-    idleTimer = setTimeout(() => {
-      idleTimer = undefined;
-      if (execution === current && inFlight === 0) {
-        void closeExecution(current.id, "idle-timeout");
-      }
-    }, COMPUTER_EXECUTION_IDLE_TIMEOUT_MS);
-    (idleTimer as { unref?: () => void }).unref?.();
-  };
-  const runOwned = async <T>(run: () => Promise<T>): Promise<T> => {
-    inFlight += 1;
-    clearIdleTimer();
-    try {
-      return await run();
-    } finally {
-      inFlight -= 1;
-      armIdleTimer();
-    }
-  };
+  });
 
   const executionEnvelopeFromParams = (paramsJSON: string | null | undefined) => {
     let value: unknown;
@@ -676,7 +640,7 @@ export function registerComputerUseProvider(
     if (!current || (executionId !== undefined && current.id !== executionId)) {
       return Promise.resolve();
     }
-    clearIdleTimer();
+    idleReclaim.clear();
     if (pendingClose) {
       return pendingClose;
     }
@@ -744,7 +708,9 @@ export function registerComputerUseProvider(
       const envelope = executionEnvelopeFromParams(paramsJSON);
       if (envelope.executionId) {
         const opened = await getExecution(paramsJSON, context);
-        return await runOwned(async () => await opened.snapshot(paramsJSON, context?.signal));
+        return await idleReclaim.run(
+          async () => await opened.snapshot(paramsJSON, context?.signal),
+        );
       }
       const executionId = randomUUID();
       const opened = await provider.openExecution(
@@ -782,7 +748,7 @@ export function registerComputerUseProvider(
         return JSON.stringify({ ok: true });
       }
       const opened = await getExecution(paramsJSON, context);
-      return await runOwned(async () => await opened.act(paramsJSON, context?.signal));
+      return await idleReclaim.run(async () => await opened.act(paramsJSON, context?.signal));
     },
   });
   // The provider plugin must also register its dangerous `computer.act` invoke
