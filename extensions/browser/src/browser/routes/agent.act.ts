@@ -448,6 +448,7 @@ export function registerBrowserAgentActRoutes(
             if (!pw) {
               return;
             }
+            await req.assertCurrent?.(profileCtx.profile);
             const result = await pw.executeActViaPlaywright({
               cdpUrl,
               action,

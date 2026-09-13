@@ -58,6 +58,10 @@ import {
   BROWSER_REF_MARKER_ATTRIBUTE,
   readMainFrameDocumentIdentityForPage,
 } from "./pw-session.page-cdp.js";
+import {
+  assertBrowserDashboardTabCanClose,
+  readBrowserDashboardTabs,
+} from "./session-tab-store.js";
 
 export async function getObservedBrowserStateViaPlaywright(opts: {
   cdpUrl: string;
@@ -609,6 +613,14 @@ export async function closePageByTargetIdViaPlaywright(opts: {
 }): Promise<void> {
   const page = await getPageForTargetId(opts);
   opts.signal?.throwIfAborted();
+  if (readBrowserDashboardTabs().length > 0) {
+    const targetId = (await pageTargetInfo(page))?.targetId;
+    opts.signal?.throwIfAborted();
+    if (!targetId) {
+      throw new Error("Cannot verify that this page is not retained by a dashboard");
+    }
+    assertBrowserDashboardTabCanClose(targetId);
+  }
   await page.close();
 }
 

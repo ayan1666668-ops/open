@@ -162,6 +162,7 @@ export async function withRouteTabContext<T>(
     return await runProfileRouteOperation({
       profileCtx,
       signal: params.req.signal,
+      assertCurrent: params.req.assertCurrent,
       run: async (signal) => {
         // Agent routes can address local-managed tabs through Playwright when per-tab WS discovery lags.
         const tab = await profileCtx.ensureTabAvailable(params.targetId, {
@@ -176,6 +177,7 @@ export async function withRouteTabContext<T>(
             ...browserNavigationPolicyForProfile(params.ctx, profileCtx),
           });
         }
+        await params.req.assertCurrent?.(profileCtx.profile);
         return await params.run({
           profileCtx,
           tab,

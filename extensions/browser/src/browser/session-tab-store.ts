@@ -31,6 +31,16 @@ const browserSessionTabRecordSchema = z
     interactionTargetKind: z.enum(["native", "opaque"]),
     trackedAt: browserSessionTimestampSchema,
     lastUsedAt: browserSessionTimestampSchema,
+    dashboard: z
+      .object({
+        name: z.string().min(1).max(64),
+        sessionKey: z.string().min(1),
+        instanceId: z.string().min(1),
+        agentId: z.string().min(1).optional(),
+        url: z.string().min(1).max(4096),
+        state: z.enum(["active", "stopping", "stopped", "released"]),
+      })
+      .optional(),
     cleanupRequestedAt: browserSessionTimestampSchema.optional(),
     cleanupAttemptToken: z.string().min(1).optional(),
     cleanupKind: z.enum(["lifecycle", "sweep"]).optional(),
@@ -64,6 +74,7 @@ export type BrowserSessionTabRecord = z.infer<typeof browserSessionTabRecordSche
 
 type BrowserSessionTabStoreRuntime = {
   state: Pick<PluginRuntime["state"], "openSyncKeyedStore">;
+  gateway?: PluginRuntime["gateway"];
 };
 
 /** Opens and publishes Browser's canonical durable tab store during plugin registration. */
@@ -73,7 +84,11 @@ export function initializeBrowserSessionTabStore(runtime: BrowserSessionTabStore
     maxEntries: BROWSER_SESSION_TABS_MAX_ENTRIES,
     overflowPolicy: "reject-new",
   });
-  setBrowserStateRuntime({ sessionTabs });
+  setBrowserStateRuntime({
+    sessionTabs,
+    gateway: runtime.gateway,
+    dashboardOperations: new Map(),
+  });
   resetDurableTabAliases();
   for (const entry of sessionTabs.entries()) {
     const record = parseBrowserSessionTabRecord(entry.value);
@@ -99,6 +114,40 @@ export function getBrowserSessionTabStore() {
 
 export function getOptionalBrowserSessionTabStore() {
   return getOptionalBrowserStateRuntime()?.sessionTabs;
+}
+
+export function readBrowserDashboardTabs(): Array<
+  BrowserSessionTabRecord & { storageKey: string }
+> {
+  return (getOptionalBrowserSessionTabStore()?.entries() ?? []).flatMap(({ key, value }) => {
+    const record = parseBrowserSessionTabRecord(value);
+    return record?.dashboard && browserSessionTabStorageKey(record) === key
+      ? [{ ...record, storageKey: key }]
+      : [];
+  });
+}
+
+/** Ordinary close commands cannot discard a dashboard's retained page. */
+export function findRetainedBrowserDashboardTab(
+  targetId: string,
+  profile?: string,
+  tabs = readBrowserDashboardTabs(),
+) {
+  return tabs.find(
+    (tab) =>
+      tab.nativeTargetId === targetId &&
+      (!profile || tab.profile === profile) &&
+      (tab.dashboard?.state === "active" || tab.dashboard?.state === "stopping"),
+  );
+}
+
+export function assertBrowserDashboardTabCanClose(targetId: string, profile?: string): void {
+  const retained = findRetainedBrowserDashboardTab(targetId, profile);
+  if (retained) {
+    throw new Error(
+      `This tab belongs to dashboard ${retained.dashboard!.name}. Stop it from the dashboard or use browser action=close dashboard=${retained.dashboard!.name}.`,
+    );
+  }
 }
 
 export function browserSessionTabStorageKey(record: {
@@ -150,6 +199,12 @@ export function sameBrowserSessionTabRecord(
     left.interactionTargetKind === right.interactionTargetKind &&
     left.trackedAt === right.trackedAt &&
     left.lastUsedAt === right.lastUsedAt &&
+    left.dashboard?.name === right.dashboard?.name &&
+    left.dashboard?.sessionKey === right.dashboard?.sessionKey &&
+    left.dashboard?.instanceId === right.dashboard?.instanceId &&
+    left.dashboard?.agentId === right.dashboard?.agentId &&
+    left.dashboard?.url === right.dashboard?.url &&
+    left.dashboard?.state === right.dashboard?.state &&
     left.cleanupRequestedAt === right.cleanupRequestedAt &&
     left.cleanupAttemptToken === right.cleanupAttemptToken &&
     left.cleanupKind === right.cleanupKind

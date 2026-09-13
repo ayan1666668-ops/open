@@ -82,7 +82,12 @@ type BrowserProfileActions = {
   listTabs: (options?: BrowserOperationOptions) => Promise<BrowserTab[]>;
   openTab: (
     url: string,
-    opts?: { label?: string; signal?: AbortSignal; timeoutMs?: number },
+    opts?: {
+      label?: string;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      requireDurableOwnership?: boolean;
+    },
   ) => Promise<BrowserOpenResult>;
   labelTab: (targetId: string, label: string) => Promise<BrowserTab>;
   focusTab: (targetId: string, options?: BrowserTabTargetOptions) => Promise<void>;

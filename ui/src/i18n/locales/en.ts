@@ -3754,6 +3754,7 @@ export const en: TranslationMap & {
       kindPlugin: "Plugin",
       kindReport: "Report",
       kindWebsite: "Website",
+      kindBrowserDashboard: "Browser dashboard",
       pluginLoading: "Loading plugin widget…",
       disabledPlugin: "Widget from disabled plugin {pluginId}",
     },

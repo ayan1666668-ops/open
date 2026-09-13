@@ -25,6 +25,7 @@ import type {
   EnsureTabAvailableOptions,
   ProfileRuntimeState,
 } from "./server-context.types.js";
+import { assertBrowserDashboardTabCanClose } from "./session-tab-store.js";
 import { resolveTargetIdFromTabs } from "./target-id.js";
 
 type SelectionDeps = {
@@ -286,6 +287,7 @@ export function createProfileSelectionOps({
 
   const closeTab = async (targetId: string, options?: BrowserTabTargetOptions): Promise<string> => {
     const resolvedTargetId = await resolveTargetIdOrThrow(targetId, options);
+    assertBrowserDashboardTabCanClose(resolvedTargetId, profile.name);
 
     if (capabilities.usesChromeMcp) {
       assertChromeMcpCdpTransportAllowed(profile, getCdpControlPolicy());
@@ -301,6 +303,7 @@ export function createProfileSelectionOps({
           ?.closePageByTargetIdViaPlaywright;
         if (typeof closePageByTargetIdViaPlaywright === "function") {
           options?.signal?.throwIfAborted();
+          assertBrowserDashboardTabCanClose(resolvedTargetId, profile.name);
           await closePageByTargetIdViaPlaywright({
             cdpUrl: profile.cdpUrl,
             targetId: resolvedTargetId,
@@ -313,6 +316,7 @@ export function createProfileSelectionOps({
 
       if (!closedViaPlaywright) {
         options?.signal?.throwIfAborted();
+        assertBrowserDashboardTabCanClose(resolvedTargetId, profile.name);
         await fetchOk(
           appendCdpPath(cdpHttpBase, `/json/close/${resolvedTargetId}`),
           undefined,

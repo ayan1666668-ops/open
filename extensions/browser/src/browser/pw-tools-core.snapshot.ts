@@ -50,6 +50,10 @@ import {
   withPageScopedCdpClient,
 } from "./pw-session.page-cdp.js";
 import { runPageEmulationTransition, setViewportSizeOnPage } from "./pw-tools-core.state.js";
+import {
+  assertBrowserDashboardTabCanClose,
+  readBrowserDashboardTabs,
+} from "./session-tab-store.js";
 import { appendSnapshotUrls, type SnapshotUrlEntry } from "./snapshot-urls.js";
 
 type StoredSnapshotRef = RoleRefs[string] & { backendDOMNodeId?: number };
@@ -688,6 +692,13 @@ export async function closePageViaPlaywright(opts: {
 }): Promise<void> {
   const page = await getPageForTargetId(opts);
   ensurePageState(page);
+  if (readBrowserDashboardTabs().length > 0) {
+    const targetId = (await pageTargetInfo(page))?.targetId;
+    if (!targetId) {
+      throw new Error("Cannot verify that this page is not retained by a dashboard");
+    }
+    assertBrowserDashboardTabCanClose(targetId);
+  }
   await page.close();
 }
 

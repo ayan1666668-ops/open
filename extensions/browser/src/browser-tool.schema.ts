@@ -191,6 +191,17 @@ export function createBrowserToolSchema(capabilities: BrowserToolCapabilities) {
   return Type.Object({
     action: stringEnum(capabilities.actions),
     target: optionalStringEnum(BROWSER_TARGETS),
+    ...(!capabilities.tabBound
+      ? {
+          dashboard: Type.Optional(
+            Type.String({
+              pattern: "^[a-z0-9][a-z0-9._-]{0,63}$",
+              description:
+                "Stable browser:dashboard widget name in this session. Resolves the same managed browser tab shown to the user; close pauses it.",
+            }),
+          ),
+        }
+      : {}),
     node: Type.Optional(Type.String()),
     profile: Type.Optional(
       Type.String({

@@ -166,6 +166,7 @@ export function registerBrowserPermissionRoutes(
       const granted = await runProfileRouteOperation({
         profileCtx,
         signal: req.signal,
+        assertCurrent: req.assertCurrent,
         run: async (signal) => {
           await profileCtx.ensureBrowserAvailable({ signal });
           const cdpPolicy = resolveCdpControlPolicy(
