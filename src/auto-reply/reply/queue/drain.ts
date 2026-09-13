@@ -72,6 +72,131 @@ const FOLLOWUP_DRAIN_CALLBACKS_KEY = Symbol.for("openclaw.followupDrainCallbacks
 const FOLLOWUP_RUN_CALLBACKS = resolveGlobalMap<string, (run: FollowupRun) => Promise<void>>(
   FOLLOWUP_DRAIN_CALLBACKS_KEY,
 );
+
+type FollowupDrainRetryPolicy = {
+  /** Delay before the first retry that follows an unclassified drain failure. */
+  baseDelayMs: number;
+  /** Ceiling for the exponential backoff between unclassified retries. */
+  maxDelayMs: number;
+  /** Consecutive unclassified failures tolerated before the head item is retired. */
+  maxConsecutiveFailures: number;
+};
+
+const FOLLOWUP_DRAIN_RETRY_POLICY_KEY = Symbol.for("openclaw.followupDrainRetryPolicy");
+
+// Deferred retries and the Gateway restart fence own their own retry paths and
+// are bounded by the condition they wait on. An error the drain cannot classify
+// has no such bound: the failing item stays at the head of the queue, so the
+// reschedule tail replays it identically, forever, at debounce speed. Count
+// consecutive unclassified failures per queue key, back off between them, and
+// retire the head item once the cap is reached.
+const DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY: FollowupDrainRetryPolicy = {
+  baseDelayMs: 500,
+  maxDelayMs: 10_000,
+  maxConsecutiveFailures: 7,
+};
+
+const followupDrainRetryPolicy = resolveGlobalSingleton<FollowupDrainRetryPolicy>(
+  FOLLOWUP_DRAIN_RETRY_POLICY_KEY,
+  () => ({ ...DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY }),
+);
+
+const FOLLOWUP_DRAIN_FAILURE_COUNTS_KEY = Symbol.for("openclaw.followupDrainFailureCounts");
+
+const FOLLOWUP_DRAIN_FAILURE_COUNTS = resolveGlobalMap<string, number>(
+  FOLLOWUP_DRAIN_FAILURE_COUNTS_KEY,
+);
+
+function recordFollowupDrainFailure(key: string): number {
+  const failures = (FOLLOWUP_DRAIN_FAILURE_COUNTS.get(key) ?? 0) + 1;
+  FOLLOWUP_DRAIN_FAILURE_COUNTS.set(key, failures);
+  return failures;
+}
+
+function clearFollowupDrainFailures(key: string): void {
+  FOLLOWUP_DRAIN_FAILURE_COUNTS.delete(key);
+}
+
+function resolveFollowupDrainRetryDelayMs(failures: number): number {
+  const exponent = Math.max(0, failures - 1);
+  return Math.min(
+    followupDrainRetryPolicy.maxDelayMs,
+    followupDrainRetryPolicy.baseDelayMs * 2 ** exponent,
+  );
+}
+
+function scheduleFollowupDrainAfter(
+  key: string,
+  runFollowup: (run: FollowupRun) => Promise<void>,
+  delayMs: number,
+): void {
+  if (delayMs <= 0) {
+    scheduleFollowupDrain(key, runFollowup);
+    return;
+  }
+  const timer = setTimeout(() => {
+    // A recovery or explicit clear may have retired the queue while the backoff
+    // was pending; never resurrect a key that no longer holds work.
+    if (!FOLLOWUP_QUEUES.has(key)) {
+      return;
+    }
+    scheduleFollowupDrain(key, runFollowup);
+  }, delayMs);
+  // A pending backoff must never hold the process open during shutdown.
+  timer.unref?.();
+}
+
+/** Describe a retired queue item without logging its prompt content. */
+function describeRetiredFollowupItem(item: FollowupRun | undefined): string {
+  if (!item) {
+    return "summary-only queue state";
+  }
+  const parts = [
+    item.messageId ? `messageId=${item.messageId}` : undefined,
+    item.originatingChannel ? `channel=${item.originatingChannel}` : undefined,
+    item.originatingTo ? `to=${item.originatingTo}` : undefined,
+    typeof item.enqueuedAt === "number"
+      ? `enqueuedAt=${new Date(item.enqueuedAt).toISOString()}`
+      : undefined,
+    `promptChars=${item.prompt?.length ?? 0}`,
+  ].filter((part): part is string => part !== undefined);
+  return parts.length > 0 ? parts.join(" ") : "queued followup";
+}
+
+/**
+ * Retire the queued work that keeps failing for `key`. The failing item is the
+ * one `drainNextQueueItem` restored to the head, so retiring exactly that item
+ * follows the `dropAbortedFollowups` precedent and leaves the rest of the queue
+ * drainable. A queue that holds only summarized overflow has no head item to
+ * retire, so it is cleared whole.
+ */
+function retireWedgedFollowupQueue(params: {
+  key: string;
+  queue: FollowupQueueState;
+  error: unknown;
+  failures: number;
+}): void {
+  const { key, queue, error, failures } = params;
+  const head = queue.items[0];
+  if (head) {
+    removeQueuedItemsByRef(queue.items, [head]);
+    queue.inFlight.delete(head);
+    try {
+      completeFollowupRunLifecycle(head);
+    } catch (settlementError) {
+      defaultRuntime.error?.(
+        `followup queue retirement settlement failed for ${key}: ${String(settlementError)}`,
+      );
+    }
+  } else {
+    clearFollowupQueue(key);
+  }
+  defaultRuntime.error?.(
+    `followup queue retired undeliverable work for ${key} after ${failures} consecutive drain failures; ` +
+      `the queued reply was dropped and will not be delivered (${describeRetiredFollowupItem(head)}): ${String(error)}`,
+  );
+}
+
 let followedRestartDrainSignal: AbortSignal | undefined;
 
 function bindFollowupRestartDrainSignal(): void {
@@ -1486,6 +1611,7 @@ export function scheduleFollowupDrain(
   const drainQueuedFollowups = async (): Promise<void> => {
     let retryDeferred = false;
     let waitingForSteer = false;
+    let unclassifiedFailure: { error: unknown } | undefined;
     try {
       const collectState = { forceIndividualCollect: false };
       while (queue.items.length > 0 || queue.droppedCount > 0) {
@@ -1723,6 +1849,7 @@ export function scheduleFollowupDrain(
         // retires the queue above; rollback leaves it here for normal retry.
         await waitForGatewayRestartFenceSettlement();
       } else {
+        unclassifiedFailure = { error: err };
         defaultRuntime.error?.(`followup queue drain failed for ${key}: ${String(err)}`);
       }
     } finally {
@@ -1732,6 +1859,11 @@ export function scheduleFollowupDrain(
       if (FOLLOWUP_QUEUES.get(key) === queue) {
         queue.draining = false;
         delete queue.drainOwner;
+        if (!unclassifiedFailure) {
+          // Only consecutive unclassified failures are bounded; any generation
+          // that ends without one proves the key is not wedged.
+          clearFollowupDrainFailures(key);
+        }
         const hasPendingQueueWork = queue.items.length > 0 || queue.droppedCount > 0;
         if (waitingForSteer && hasPendingQueueWork) {
           if (!queue.items.some((item) => item.steerPending)) {
@@ -1742,6 +1874,39 @@ export function scheduleFollowupDrain(
         } else if (!hasPendingQueueWork) {
           FOLLOWUP_QUEUES.delete(key);
           clearFollowupDrainCallback(key);
+          clearFollowupDrainFailures(key);
+        } else if (unclassifiedFailure) {
+          const failures = recordFollowupDrainFailure(key);
+          if (failures >= followupDrainRetryPolicy.maxConsecutiveFailures) {
+            clearFollowupDrainFailures(key);
+            retireWedgedFollowupQueue({
+              key,
+              queue,
+              error: unclassifiedFailure.error,
+              failures,
+            });
+            if (
+              FOLLOWUP_QUEUES.get(key) === queue &&
+              (queue.items.length > 0 || queue.droppedCount > 0)
+            ) {
+              // Retiring the head item may unblock the rest of the queue; give
+              // the survivors one backoff window before they drain again.
+              scheduleFollowupDrainAfter(
+                key,
+                effectiveRunFollowup,
+                followupDrainRetryPolicy.baseDelayMs,
+              );
+            } else if (FOLLOWUP_QUEUES.get(key) === queue) {
+              FOLLOWUP_QUEUES.delete(key);
+              clearFollowupDrainCallback(key);
+            }
+          } else {
+            scheduleFollowupDrainAfter(
+              key,
+              effectiveRunFollowup,
+              resolveFollowupDrainRetryDelayMs(failures),
+            );
+          }
         } else {
           scheduleFollowupDrain(key, effectiveRunFollowup);
         }
@@ -1763,5 +1928,23 @@ export function scheduleFollowupDrain(
     }
     defaultRuntime.error?.(`followup queue drain admission failed for ${key}: ${String(err)}`);
   });
+}
+if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
+  // Mirrors queue/enqueue.ts's test API registration.
+  // SAFETY: globalThis carries arbitrary symbol-keyed slots; this opens one test-only slot.
+  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.queueDrainTestApi")] = {
+    setFollowupDrainRetryPolicy(policy: Partial<FollowupDrainRetryPolicy>): void {
+      Object.assign(followupDrainRetryPolicy, policy);
+    },
+    resetFollowupDrainRetryPolicy(): void {
+      Object.assign(followupDrainRetryPolicy, DEFAULT_FOLLOWUP_DRAIN_RETRY_POLICY);
+    },
+    readFollowupDrainFailureCount(key: string): number {
+      return FOLLOWUP_DRAIN_FAILURE_COUNTS.get(key) ?? 0;
+    },
+    resetFollowupDrainFailureCounts(): void {
+      FOLLOWUP_DRAIN_FAILURE_COUNTS.clear();
+    },
+  };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
