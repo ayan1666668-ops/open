@@ -555,5 +555,9 @@ export async function handleQaInbound(params: {
       },
     },
   });
-  await dispatch.finally(clearPreview);
+  try {
+    await dispatch;
+  } finally {
+    await clearPreview();
+  }
 }
