@@ -151,7 +151,9 @@ function normalizeManifestSetupProviders(
       continue;
     }
     const id = normalizeOptionalString(entry.id) ?? "";
-    if (!id) {
+    // The id becomes a key in the secret env-var candidate buckets, so a
+    // prototype-named id would resolve an inherited member instead of a bucket.
+    if (!id || isBlockedObjectKey(id)) {
       continue;
     }
     const authMethods = normalizeTrimmedStringList(entry.authMethods);
