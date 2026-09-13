@@ -496,8 +496,11 @@ export {
   extractProjectKeysFromCuratedEntry,
   INVALID_PROJECT_ANNOTATION_KEY,
   normalizeProjectAnnotationKey,
+  resolveMemoryFrontmatterLineRange,
   stripMemoryAnnotationCarriers,
+  stripMemoryFrontmatterCarrier,
   type CuratedProjectAnnotations,
+  type MemoryFrontmatterLineRange,
 } from "./curated-annotations.js";
 
 export function runMemoryHostTasksWithConcurrency<T>(

@@ -8,7 +8,9 @@ export { hashText } from "../../packages/memory-host-sdk/src/host/hash.js";
 export { enforceEmbeddingMaxInputTokens } from "../../packages/memory-host-sdk/src/host/embedding-chunk-limits.js";
 export {
   extractCuratedEntryRecallMetadata,
+  resolveMemoryFrontmatterLineRange,
   stripMemoryAnnotationCarriers,
+  stripMemoryFrontmatterCarrier,
 } from "../../packages/memory-host-sdk/src/host/curated-annotations.js";
 export type {
   MemoryEntryProvenance,
