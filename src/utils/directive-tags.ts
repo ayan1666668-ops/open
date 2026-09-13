@@ -17,6 +17,7 @@ type InlineDirectiveParseOptions = {
   currentMessageId?: string;
   stripAudioTag?: boolean;
   stripReplyTags?: boolean;
+  isInsideCodeSpan?: (index: number) => boolean;
 };
 
 // TRANSITIONAL(marker-retirement): inline reply/audio markers are the last text
@@ -56,13 +57,16 @@ export function replaceOutsideCodeRegions(
   text: string,
   regex: RegExp,
   replacement: (match: string, captures: unknown[], offset: number, source: string) => string,
+  isInsideCodeSpan?: (index: number) => boolean,
 ): string {
   let codeRegions: ReturnType<typeof findCodeRegions> | undefined;
   return text.replace(regex, (...args: unknown[]) => {
     codeRegions ??= text.includes("[[") ? findCodeRegions(text) : [];
     const match = String(args[0]);
     const offset = args.at(-2);
-    return typeof offset === "number" && isInsideCode(offset + match.indexOf("[["), codeRegions)
+    const markerOffset = Number(offset) + match.indexOf("[[");
+    return typeof offset === "number" &&
+      (isInsideCodeSpan?.(markerOffset) ?? isInsideCode(markerOffset, codeRegions))
       ? match
       : replacement(match, args.slice(1, -2), Number(offset), text);
   });
@@ -175,7 +179,12 @@ export function parseInlineDirectives(
   text?: string,
   options: InlineDirectiveParseOptions = {},
 ): InlineDirectiveParseResult {
-  const { currentMessageId, stripAudioTag = true, stripReplyTags = true } = options;
+  const {
+    currentMessageId,
+    stripAudioTag = true,
+    stripReplyTags = true,
+    isInsideCodeSpan,
+  } = options;
   if (!text) {
     return { text: "", ...NO_INLINE_DIRECTIVES };
   }
@@ -190,25 +199,37 @@ export function parseInlineDirectives(
   let sawCurrent = false;
   let lastExplicitId: string | undefined;
 
-  cleaned = replaceOutsideCodeRegions(cleaned, AUDIO_TAG_RE, (match, _captures, offset, source) => {
-    audioAsVoice = true;
-    hasAudioTag = true;
-    return stripAudioTag ? replacementPreservesWordBoundary(source, offset, match.length) : match;
-  });
+  cleaned = replaceOutsideCodeRegions(
+    cleaned,
+    AUDIO_TAG_RE,
+    (match, _captures, offset, source) => {
+      audioAsVoice = true;
+      hasAudioTag = true;
+      return stripAudioTag ? replacementPreservesWordBoundary(source, offset, match.length) : match;
+    },
+    isInsideCodeSpan,
+  );
 
-  cleaned = replaceOutsideCodeRegions(cleaned, REPLY_TAG_RE, (match, captures, offset, source) => {
-    const idRaw = typeof captures[0] === "string" ? captures[0] : undefined;
-    hasReplyTag = true;
-    if (idRaw === undefined) {
-      sawCurrent = true;
-    } else {
-      const id = sanitizeReplyDirectiveId(idRaw);
-      if (id) {
-        lastExplicitId = id;
+  cleaned = replaceOutsideCodeRegions(
+    cleaned,
+    REPLY_TAG_RE,
+    (match, captures, offset, source) => {
+      const idRaw = typeof captures[0] === "string" ? captures[0] : undefined;
+      hasReplyTag = true;
+      if (idRaw === undefined) {
+        sawCurrent = true;
+      } else {
+        const id = sanitizeReplyDirectiveId(idRaw);
+        if (id) {
+          lastExplicitId = id;
+        }
       }
-    }
-    return stripReplyTags ? replacementPreservesWordBoundary(source, offset, match.length) : match;
-  });
+      return stripReplyTags
+        ? replacementPreservesWordBoundary(source, offset, match.length)
+        : match;
+    },
+    isInsideCodeSpan,
+  );
 
   if (!hasAudioTag && !hasReplyTag) {
     return { text, ...NO_INLINE_DIRECTIVES };
