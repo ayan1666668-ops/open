@@ -946,6 +946,15 @@ impl DesktopState {
             (None, remote_gateway::normalize_gateway_url(raw)?)
         };
         remote_gateway::resolve_remote_tls_fingerprint(&mut request, &gateway_url)?;
+        // Blank Settings fields retain configured credentials for this endpoint.
+        // Runtime resolution must not turn that intent into a plaintext save.
+        let submitted_request = request.clone();
+        if matches!(source, RemoteConnectionSource::Submitted) {
+            request = remote_gateway::resolve_submitted_credentials_at(
+                &remote_gateway::config_path()?,
+                &request,
+            )?;
+        }
         let target = remote_gateway::dashboard_url(&gateway_url)?;
         let script = native_auth_initialization_script(&target, &gateway_url, &request)?;
         let pending = Arc::new(Mutex::new(tunnel));
@@ -963,7 +972,7 @@ impl DesktopState {
                         // prepared connection may save or publish after retirement.
                         remote_gateway::save_config_at(
                             &remote_gateway::config_path()?,
-                            &request,
+                            &submitted_request,
                             &gateway_url,
                             source,
                         )?;

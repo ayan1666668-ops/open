@@ -725,6 +725,90 @@ fn load_saved_remote_at(path: &Path) -> Result<Option<RemoteGatewayRequest>, Str
     }))
 }
 
+fn credential_endpoint_matches(
+    remote: &Map<String, Value>,
+    request: &RemoteGatewayRequest,
+) -> bool {
+    let transport = match remote.get("transport") {
+        None | Some(Value::Null) => "direct",
+        Some(Value::String(transport)) => transport.as_str(),
+        _ => return false,
+    };
+    if transport != request.transport {
+        return false;
+    }
+    match transport {
+        "direct" => {
+            let old_url = remote
+                .get("url")
+                .and_then(Value::as_str)
+                .and_then(|url| normalize_gateway_url(url).ok());
+            let new_url = request
+                .url
+                .as_deref()
+                .and_then(|url| normalize_gateway_url(url).ok());
+            matches!((old_url, new_url), (Some(old), Some(new)) if old == new)
+        }
+        "ssh" => {
+            let old_target = remote
+                .get("sshTarget")
+                .and_then(Value::as_str)
+                .and_then(|target| validate_ssh_target(target).ok());
+            let new_target = request
+                .ssh_target
+                .as_deref()
+                .and_then(|target| validate_ssh_target(target).ok());
+            let old_port = match remote.get("remotePort") {
+                None | Some(Value::Null) => Some(DEFAULT_GATEWAY_PORT),
+                Some(port) => port
+                    .as_u64()
+                    .and_then(|port| u16::try_from(port).ok())
+                    .filter(|port| *port != 0),
+            };
+            // The allocated loopback URL is not the SSH credential endpoint.
+            // An omitted SSH port preserves alias semantics, unlike explicit 22.
+            matches!(
+                (old_target, new_target, old_port),
+                (Some(old), Some(new), Some(port))
+                    if old == new && port == request.remote_port.unwrap_or(DEFAULT_GATEWAY_PORT)
+            )
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn resolve_submitted_credentials_at(
+    path: &Path,
+    request: &RemoteGatewayRequest,
+) -> Result<RemoteGatewayRequest, String> {
+    validate_request(request)?;
+    let mut effective = request.clone();
+    if normalize_optional(request.token.clone()).is_some() {
+        effective.password = None;
+        return Ok(effective);
+    }
+    if normalize_optional(request.password.clone()).is_some() {
+        effective.token = None;
+        return Ok(effective);
+    }
+    effective.token = None;
+    effective.password = None;
+    let Some(root) = read_config(path)? else {
+        return Ok(effective);
+    };
+    if let Some(remote) = root
+        .get("gateway")
+        .and_then(|gateway| gateway.get("remote"))
+        .and_then(Value::as_object)
+        .filter(|remote| credential_endpoint_matches(remote, request))
+    {
+        effective.token = configured_secret(remote.get("token"), "token", &root)?;
+        effective.password = configured_secret(remote.get("password"), "password", &root)?;
+        validate_request(&effective)?;
+    }
+    Ok(effective)
+}
+
 fn ensure_private_parent(parent: &Path) -> Result<(), String> {
     if !parent.exists() {
         let mut builder = fs::DirBuilder::new();
@@ -777,11 +861,29 @@ pub(crate) fn save_config_at(
         .unwrap_or_default();
     let same_endpoint = old_remote.get("url").and_then(Value::as_str) == Some(gateway_url.as_str())
         && old_remote.get("sshTarget").and_then(Value::as_str) == request.ssh_target.as_deref();
+    let credentials = credential_endpoint_matches(&old_remote, request).then(|| {
+        (
+            old_remote.get("token").cloned(),
+            old_remote.get("password").cloned(),
+        )
+    });
     let mut remote = if same_endpoint {
         old_remote
     } else {
         Map::new()
     };
+    // Credential identity is independent of whole-map retention. Copy raw refs
+    // across URL normalization/forward-port changes, never their resolved bytes.
+    remote.remove("token");
+    remote.remove("password");
+    if let Some((token, password)) = credentials {
+        if let Some(token) = token {
+            remote.insert("token".to_string(), token);
+        }
+        if let Some(password) = password {
+            remote.insert("password".to_string(), password);
+        }
+    }
     remote.insert("url".to_string(), json!(gateway_url.as_str()));
     remote.insert("transport".to_string(), json!(request.transport));
     if let Some(fingerprint) = &request.tls_fingerprint {
@@ -1061,6 +1163,33 @@ mod tests {
             .expect("remote mode")
     }
 
+    fn reconnect_submitted_at(path: &Path) -> RemoteGatewayRequest {
+        let before = fs::read(path).expect("saved config");
+        let original = read_config(path).unwrap().unwrap();
+        let mut input = request();
+        input.url = original["gateway"]["remote"]["url"]
+            .as_str()
+            .map(str::to_string);
+        input.token = None;
+        input.password = Some(" \t".to_string());
+        let effective =
+            resolve_submitted_credentials_at(path, &input).expect("blank Settings credentials");
+        assert_eq!(fs::read(path).unwrap(), before, "resolution must not write");
+        let url = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
+        save_config_at(path, &input, &url, RemoteConnectionSource::Submitted)
+            .expect("persist submitted intent");
+        let saved = read_config(path).unwrap().unwrap();
+        for field in ["token", "password"] {
+            assert_eq!(
+                saved["gateway"]["remote"].get(field),
+                original["gateway"]["remote"].get(field),
+                "blank Settings submission must preserve the raw {field}"
+            );
+        }
+        assert_eq!(saved.get("secrets"), original.get("secrets"));
+        effective
+    }
+
     #[test]
     fn normalizes_dashboard_and_websocket_urls_without_exposing_auth() {
         assert_eq!(
@@ -1222,6 +1351,14 @@ mod tests {
             assert_eq!(restored.url.as_deref(), Some(url.as_str()));
             assert_eq!(restored.token, input.token);
             assert_eq!(restored.password, input.password);
+            for mode in ["local", "remote"] {
+                let mut config = read_config(&path).unwrap().unwrap();
+                config["gateway"]["mode"] = json!(mode);
+                fs::write(&path, config.to_string()).unwrap();
+                let effective = reconnect_submitted_at(&path);
+                assert_eq!(effective.token, input.token);
+                assert_eq!(effective.password, input.password);
+            }
             fs::remove_dir_all(path.parent().unwrap()).expect("cleanup");
         }
     }
@@ -1263,24 +1400,261 @@ mod tests {
         fs::remove_dir_all(path.parent().unwrap()).expect("cleanup");
     }
 
+    #[test]
+    fn submitted_credentials_follow_endpoint_identity_not_remote_map_retention() {
+        for (name, old, submitted, same_credentials, retain_map) in [
+            (
+                "direct HTTP normalization",
+                json!({"url": "ws://127.0.0.1:18789/openclaw"}),
+                json!({"transport": "direct", "url": "http://127.0.0.1:18789/openclaw"}),
+                true,
+                true,
+            ),
+            (
+                "direct host and default port normalization",
+                json!({"url": "https://GATEWAY.example.com:443/openclaw"}),
+                json!({"transport": "direct", "url": "wss://gateway.example.com/openclaw"}),
+                true,
+                false,
+            ),
+            (
+                "direct path change",
+                json!({"url": "wss://gateway.example.com/openclaw"}),
+                json!({"transport": "direct", "url": "wss://gateway.example.com/other"}),
+                false,
+                false,
+            ),
+            (
+                "direct host change",
+                json!({"url": "wss://gateway.example.com/openclaw"}),
+                json!({"transport": "direct", "url": "wss://other.example.com/openclaw"}),
+                false,
+                false,
+            ),
+            (
+                "direct port change",
+                json!({"url": "ws://127.0.0.1:18789/openclaw"}),
+                json!({"transport": "direct", "url": "ws://127.0.0.1:18790/openclaw"}),
+                false,
+                false,
+            ),
+            (
+                "direct scheme change",
+                json!({"url": "ws://127.0.0.1:18789/openclaw"}),
+                json!({"transport": "direct", "url": "wss://127.0.0.1:18789/openclaw"}),
+                false,
+                false,
+            ),
+            (
+                "malformed saved URL",
+                json!({"url": "not a URL"}),
+                json!({"transport": "direct", "url": "ws://127.0.0.1:18789/openclaw"}),
+                false,
+                false,
+            ),
+            (
+                "transport change with retained legacy map",
+                json!({"transport": "direct", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                false,
+                true,
+            ),
+            (
+                "malformed transport with retained legacy map",
+                json!({"transport": 1, "url": "ws://127.0.0.1:18789/"}),
+                json!({"transport": "direct", "url": "ws://127.0.0.1:18789/"}),
+                false,
+                true,
+            ),
+            (
+                "SSH forward port change",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:49153/", "sshTarget": "fixture", "remotePort": 18789}),
+                true,
+                false,
+            ),
+            (
+                "SSH target normalization",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "operator@fixture:2222"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": " operator@fixture:2222 "}),
+                true,
+                false,
+            ),
+            (
+                "SSH target change",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "other"}),
+                false,
+                false,
+            ),
+            (
+                "SSH omitted port is not explicit 22",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture:22"}),
+                false,
+                false,
+            ),
+            (
+                "SSH explicit port change",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture:2222"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture:2223"}),
+                false,
+                false,
+            ),
+            (
+                "SSH Gateway port change with retained legacy map",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture", "remotePort": 18789}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture", "remotePort": 18790}),
+                false,
+                true,
+            ),
+            (
+                "SSH malformed saved port",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture", "remotePort": 65536}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                false,
+                true,
+            ),
+            (
+                "SSH malformed saved target",
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "-unsafe"}),
+                json!({"transport": "ssh", "url": "ws://127.0.0.1:18789/", "sshTarget": "fixture"}),
+                false,
+                false,
+            ),
+        ] {
+            for field in ["token", "password"] {
+                let path = isolated_path();
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let fingerprint = "ab".repeat(32);
+                let mut config = json!({
+                    "agents": {"defaults": {"workspace": "keep"}},
+                    "gateway": {"mode": "local", "bind": "loopback", "remote": old},
+                });
+                let remote = &mut config["gateway"]["remote"];
+                remote[field] = json!("fixture-endpoint-secret");
+                remote["tlsFingerprint"] = json!(fingerprint);
+                remote["retainedExtra"] = json!({"keep": true});
+                fs::write(&path, config.to_string()).unwrap();
+                let input: RemoteGatewayRequest =
+                    serde_json::from_value(submitted.clone()).unwrap();
+                let effective = resolve_submitted_credentials_at(&path, &input).unwrap();
+                let effective = serde_json::to_value(effective).unwrap();
+                for credential in ["token", "password"] {
+                    assert_eq!(
+                        effective[credential].as_str(),
+                        (same_credentials && field == credential)
+                            .then_some("fixture-endpoint-secret"),
+                        "{name}: runtime {credential}"
+                    );
+                }
+                let url = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
+                save_config_at(&path, &input, &url, RemoteConnectionSource::Submitted).unwrap();
+                let saved = read_config(&path).unwrap().unwrap();
+                let remote = &saved["gateway"]["remote"];
+                assert_eq!(
+                    remote.get(field).and_then(Value::as_str),
+                    same_credentials.then_some("fixture-endpoint-secret"),
+                    "{name}: persisted credential"
+                );
+                let opposite = if field == "token" {
+                    "password"
+                } else {
+                    "token"
+                };
+                assert!(
+                    remote.get(opposite).is_none(),
+                    "{name}: opposite credential"
+                );
+                assert_eq!(remote.get("retainedExtra").is_some(), retain_map, "{name}");
+                assert_eq!(
+                    remote.get("tlsFingerprint").and_then(Value::as_str),
+                    retain_map.then_some(fingerprint.as_str()),
+                    "{name}: existing TLS retention"
+                );
+                assert_eq!(saved["agents"], config["agents"]);
+                assert_eq!(saved["gateway"]["bind"], "loopback");
+                fs::remove_dir_all(path.parent().unwrap()).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn submitted_replacement_bypasses_broken_refs_and_retires_the_opposite_credential() {
+        for field in ["token", "password"] {
+            let path = isolated_path();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let broken = json!({"source": "file", "provider": "missing", "id": "value"});
+            let config = json!({
+                "gateway": {
+                    "mode": "local",
+                    "remote": {
+                        "url": "ws://127.0.0.1:18789/",
+                        "token": broken,
+                        "password": broken,
+                    },
+                },
+            });
+            fs::write(&path, config.to_string()).unwrap();
+            let mut input = request();
+            input.url = Some("ws://127.0.0.1:18789/".to_string());
+            input.token = None;
+            assert!(resolve_submitted_credentials_at(&path, &input).is_err());
+            input.token = (field == "token").then(|| "fixture-replacement".to_string());
+            input.password = (field == "password").then(|| "fixture-replacement".to_string());
+            let effective = resolve_submitted_credentials_at(&path, &input).unwrap();
+            assert_eq!(effective.token, input.token);
+            assert_eq!(effective.password, input.password);
+            let url = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
+            save_config_at(&path, &input, &url, RemoteConnectionSource::Submitted).unwrap();
+            let saved = read_config(&path).unwrap().unwrap();
+            assert_eq!(saved["gateway"]["remote"][field], "fixture-replacement");
+            let opposite = if field == "token" {
+                "password"
+            } else {
+                "token"
+            };
+            assert!(saved["gateway"]["remote"].get(opposite).is_none());
+
+            fs::write(&path, config.to_string()).unwrap();
+            input.url = Some("ws://127.0.0.1:18790/".to_string());
+            input.token = None;
+            input.password = None;
+            let effective = resolve_submitted_credentials_at(&path, &input)
+                .expect("a changed endpoint must not resolve old refs");
+            assert!(effective.token.is_none());
+            assert!(effective.password.is_none());
+            let url = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
+            save_config_at(&path, &input, &url, RemoteConnectionSource::Submitted).unwrap();
+            let saved = read_config(&path).unwrap().unwrap();
+            assert!(saved["gateway"]["remote"].get("token").is_none());
+            assert!(saved["gateway"]["remote"].get("password").is_none());
+            fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn saved_remote_file_credentials_survive_reconnect_and_rotation() {
         use std::os::unix::fs::PermissionsExt;
 
         for field in ["token", "password"] {
-            for (mode, id, payload, rotated_payload) in [
+            for (mode, id, payload, rotated_payload, expected, rotated_expected) in [
                 (
                     "singleValue",
                     "value",
-                    "fixture-file-secret\n",
-                    "fixture-rotated-secret\n",
+                    "  fixture-file-secret  \n",
+                    "  fixture-rotated-secret  \n",
+                    "  fixture-file-secret  ",
+                    "  fixture-rotated-secret  ",
                 ),
                 (
                     "json",
                     "/gateway~1auth/secret~0value",
                     r#"{"gateway/auth":{"secret~value":"fixture-file-secret"}}"#,
                     r#"{"gateway/auth":{"secret~value":"fixture-rotated-secret"}}"#,
+                    "fixture-file-secret",
+                    "fixture-rotated-secret",
                 ),
             ] {
                 let path = isolated_path();
@@ -1303,6 +1677,7 @@ mod tests {
                     "gateway": {
                         "mode": "remote",
                         "remote": {
+                            "transport": "direct",
                             "url": "ws://127.0.0.1:18789/openclaw",
                         },
                     },
@@ -1310,13 +1685,18 @@ mod tests {
                 config["gateway"]["remote"][field] = reference.clone();
                 fs::write(&path, config.to_string()).expect("file-backed remote config");
 
-                for (payload, expected) in [
-                    (payload, "fixture-file-secret"),
-                    (rotated_payload, "fixture-rotated-secret"),
-                ] {
+                for (payload, expected) in
+                    [(payload, expected), (rotated_payload, rotated_expected)]
+                {
                     fs::write(&secret_path, payload).expect("rotate secret fixture");
                     let restored = reconnect_saved_at(&path);
                     assert_eq!(serde_json::to_value(restored).unwrap()[field], expected);
+                    let mut noncanonical = config.clone();
+                    noncanonical["gateway"]["remote"]["url"] =
+                        json!("http://127.0.0.1:18789/openclaw");
+                    fs::write(&path, noncanonical.to_string()).unwrap();
+                    let effective = reconnect_submitted_at(&path);
+                    assert_eq!(serde_json::to_value(effective).unwrap()[field], expected);
                     let raw = fs::read_to_string(&path).expect("saved config");
                     let saved: Value = serde_json::from_str(&raw).expect("JSON config");
                     assert_eq!(saved["gateway"]["remote"][field], reference);
@@ -1325,6 +1705,30 @@ mod tests {
                         "resolved secret must stay out of config"
                     );
                 }
+
+                let mut ssh_config = config.clone();
+                ssh_config["gateway"]["remote"]["transport"] = json!("ssh");
+                ssh_config["gateway"]["remote"]["sshTarget"] = json!("fixture");
+                fs::write(&path, ssh_config.to_string()).unwrap();
+                let mut input = request();
+                input.transport = "ssh".to_string();
+                input.ssh_target = Some("fixture".to_string());
+                input.url = Some("ws://127.0.0.1:49153/openclaw".to_string());
+                input.token = None;
+                let effective = resolve_submitted_credentials_at(&path, &input).unwrap();
+                assert_eq!(
+                    serde_json::to_value(effective).unwrap()[field],
+                    rotated_expected
+                );
+                let forwarded = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
+                save_config_at(&path, &input, &forwarded, RemoteConnectionSource::Submitted)
+                    .expect("persist a new forward port without materializing the ref");
+                let raw = fs::read_to_string(&path).unwrap();
+                let saved: Value = serde_json::from_str(&raw).unwrap();
+                assert_eq!(saved["gateway"]["remote"][field], reference);
+                assert_eq!(saved["secrets"], config["secrets"]);
+                assert!(!raw.contains(rotated_expected));
+                fs::write(&path, config.to_string()).unwrap();
 
                 fs::set_permissions(&secret_path, fs::Permissions::from_mode(0o644))
                     .expect("insecure secret fixture");
@@ -1345,6 +1749,10 @@ mod tests {
                 input.token = (field == "token").then(|| "fixture-rotated-secret".to_string());
                 input.password =
                     (field == "password").then(|| "fixture-rotated-secret".to_string());
+                let effective = resolve_submitted_credentials_at(&path, &input)
+                    .expect("explicit replacement must not resolve the broken ref");
+                assert_eq!(effective.token, input.token);
+                assert_eq!(effective.password, input.password);
                 let url = normalize_gateway_url(input.url.as_deref().unwrap()).unwrap();
                 save_config_at(&path, &input, &url, RemoteConnectionSource::Submitted)
                     .expect("explicit credential replacement");
@@ -1371,6 +1779,12 @@ mod tests {
             let before = fs::read(&path).unwrap();
             if env::var_os(UNAVAILABLE).is_some() {
                 assert!(load_saved_remote_at(&path).is_err());
+                let mut input = request();
+                input.url = config["gateway"]["remote"]["url"]
+                    .as_str()
+                    .map(str::to_string);
+                input.token = None;
+                assert!(resolve_submitted_credentials_at(&path, &input).is_err());
             } else {
                 let expected = env::var(CREDENTIAL).expect("child credential");
                 let restored = reconnect_saved_at(&path);
@@ -1381,6 +1795,16 @@ mod tests {
                 assert!(!fs::read_to_string(&path).unwrap().contains(&expected));
             }
             assert_eq!(fs::read(&path).unwrap(), before);
+            if env::var_os(UNAVAILABLE).is_none() {
+                let expected = env::var(CREDENTIAL).expect("child credential");
+                let effective = reconnect_submitted_at(&path);
+                for (field, value) in [("token", effective.token), ("password", effective.password)]
+                {
+                    let configured = config["gateway"]["remote"].get(field).is_some();
+                    assert_eq!(value.as_deref(), configured.then_some(expected.as_str()));
+                }
+                assert!(!fs::read_to_string(&path).unwrap().contains(&expected));
+            }
             return;
         }
 
@@ -1417,7 +1841,7 @@ mod tests {
                     .args(["--exact", &test_name, "--nocapture"])
                     .env(CONFIG_PATH, &path)
                     .env_remove(UNAVAILABLE);
-                for value in ["fixture-env-secret", "fixture-rotated-env-secret"] {
+                for value in ["  fixture-env-secret  ", "  fixture-rotated-env-secret  "] {
                     let output = command
                         .env(CREDENTIAL, value)
                         .output()
