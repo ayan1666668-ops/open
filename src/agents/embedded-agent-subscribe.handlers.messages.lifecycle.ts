@@ -8,11 +8,15 @@ import { createInlineCodeState } from "../../packages/markdown-core/src/code-spa
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { splitMediaFromOutput } from "../media/parse.js";
-import { coerceChatContentText } from "../shared/chat-content.js";
+import { extractTextFromChatContent } from "../shared/chat-content.js";
 import {
   parseAssistantTextSignature,
   resolveAssistantMessagePhase,
 } from "../shared/chat-message-content.js";
+import {
+  sanitizeAssistantFinalAnswerText,
+  sanitizeAssistantVisibleText,
+} from "../shared/text/assistant-visible-text.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
@@ -111,7 +115,7 @@ export function handleMessageEnd(
       event: "assistant_message_end",
       runId: ctx.params.runId,
       sessionId: (ctx.params.session as { id?: string }).id,
-      rawText: coerceChatContentText(extractEmbeddedAssistantText(assistantMessage)),
+      rawText: extractEmbeddedAssistantText(assistantMessage),
       rawThinking: extractAssistantThinking(assistantMessage),
     }));
     emitAssistantCommentaryStreamData(ctx, assistantMessage, true);
@@ -138,7 +142,11 @@ export function handleMessageEnd(
 
   let rawText: string | undefined;
   const getRawText = () =>
-    (rawText ??= coerceChatContentText(extractEmbeddedAssistantText(assistantMessage)));
+    (rawText ??=
+      extractTextFromChatContent(assistantMessage.content, {
+        joinWith: "\n",
+        normalizeText: (value) => value.trim(),
+      }) ?? "");
   const snapshot = extractAssistantStreamSnapshot(ctx, assistantMessage);
   const rawVisibleText = snapshot.text;
   appendRawStream(() => ({
@@ -150,13 +158,20 @@ export function handleMessageEnd(
     rawThinking: extractAssistantThinking(assistantMessage),
   }));
   warnIfAssistantEmittedSuspiciousText(ctx, assistantMessage);
+  const standaloneMessageToolText = extractStandaloneMessageToolText(rawVisibleText, {
+    allowRoutedReply: isOpenAiCompletionsAssistantMessage(assistantMessage),
+    allowCurrentSourceReply:
+      ctx.params.sourceReplyDeliveryMode === "message_tool_only" &&
+      ctx.builtinToolNames?.has("message") === true,
+  });
+  const decodedMessageToolTextWasVisible =
+    assistantPhase === "final_answer" || rawVisibleText !== getRawText();
   const text =
-    extractStandaloneMessageToolText(rawVisibleText, {
-      allowRoutedReply: isOpenAiCompletionsAssistantMessage(assistantMessage),
-      allowCurrentSourceReply:
-        ctx.params.sourceReplyDeliveryMode === "message_tool_only" &&
-        ctx.builtinToolNames?.has("message") === true,
-    }) ?? rawVisibleText;
+    standaloneMessageToolText === undefined
+      ? rawVisibleText
+      : decodedMessageToolTextWasVisible
+        ? sanitizeAssistantFinalAnswerText(standaloneMessageToolText)
+        : sanitizeAssistantVisibleText(standaloneMessageToolText);
   // Exact NO_REPLY stays silent. The legacy rewrite (silentReplyRewrite) was
   // removed by contract; global messaging-tool send evidence is not a
   // user-route reply and must never be mirrored into the final payload.
@@ -317,15 +332,17 @@ export function handleMessageEnd(
       const repeatsPreviousMessage =
         currentCount === 0 &&
         previousText !== undefined &&
-        normalizeTextForComparison(previousText) === normalizeTextForComparison(finalAssistantText);
+        normalizeTextForComparison(previousText) ===
+          normalizeTextForComparison(terminalAssistantTextEvidence);
       if (
         !repeatsPreviousMessage &&
-        normalizeTextForComparison(currentText) !== normalizeTextForComparison(finalAssistantText)
+        normalizeTextForComparison(currentText) !==
+          normalizeTextForComparison(terminalAssistantTextEvidence)
       ) {
         ctx.state.assistantTexts.splice(
           messageAssistantTextBaseline,
           currentCount,
-          ...(finalAssistantText ? [finalAssistantText] : []),
+          ...(terminalAssistantTextEvidence ? [terminalAssistantTextEvidence] : []),
         );
       }
     }
@@ -364,8 +381,12 @@ export function handleMessageEnd(
   const silentExpectedWithoutSentinel =
     ctx.params.silentExpected && !isSilentReplyText(trimmedText, SILENT_REPLY_TOKEN);
   const finalAssistantText = silentExpectedWithoutSentinel ? "" : cleanedText;
-  const terminalAssistantTextEvidence =
-    replyTargetOnlyTerminalEvidence || parsedText.isSilent ? trimmedText : finalAssistantText;
+  const rawTerminalText = getRawText().trim();
+  const terminalAssistantTextEvidence = isSilentReplyText(rawTerminalText, SILENT_REPLY_TOKEN)
+    ? rawTerminalText
+    : replyTargetOnlyTerminalEvidence || parsedText.isSilent
+      ? trimmedText
+      : finalAssistantText;
   const {
     finalDirectives,
     finalTextCorrection,
@@ -396,6 +417,12 @@ export function handleMessageEnd(
       !replyTargetOnlyTerminalEvidence &&
       finalAssistantText !== currentMessageAssistantText,
   });
+  if (
+    isSilentReplyText(rawTerminalText, SILENT_REPLY_TOKEN) &&
+    ctx.state.assistantTexts.length === messageAssistantTextBaseline
+  ) {
+    ctx.state.assistantTexts.push(rawTerminalText);
+  }
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
