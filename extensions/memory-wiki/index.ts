@@ -40,6 +40,7 @@ import {
   createWikiApplyTool,
   createWikiGetTool,
   createWikiLintTool,
+  createWikiOpenItemsTool,
   createWikiSearchTool,
   createWikiStatusTool,
 } from "./src/tool.js";
@@ -232,6 +233,19 @@ export default definePluginEntry({
         { name },
       );
     }
+    api.registerTool(
+      (ctx) => {
+        const resolved = resolveToolContext(ctx.agentId);
+        return resolved
+          ? createWikiOpenItemsTool(resolved.config, resolved.appConfig, {
+              agentId: resolved.config.agentId ?? ctx.agentId,
+              agentSessionKey: ctx.sessionKey,
+              sandboxed: ctx.sandboxed,
+            })
+          : null;
+      },
+      { name: "wiki_open_items" },
+    );
     api.registerCli(
       async ({ program }) => {
         const { registerWikiCli } = await import("./src/cli.js");
