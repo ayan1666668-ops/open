@@ -24,7 +24,7 @@ import type { ChatState } from "./chat-state-contract.ts";
 import type { ChatProps } from "./chat-view.ts";
 import type { BackgroundTasksHost } from "./components/chat-background-tasks.ts";
 import type { SessionWorkspaceHost } from "./components/chat-session-workspace.ts";
-import type { SidebarContent } from "./components/chat-sidebar.ts";
+import type { SidebarSelection } from "./components/chat-sidebar.ts";
 import type { ChatExportResult } from "./export.ts";
 import type { ChatInputHistoryKeyInput, ChatInputHistoryKeyResult } from "./input-history.ts";
 import type { RenderLifecycle } from "./render-lifecycle.ts";
@@ -77,6 +77,8 @@ export type ChatPageHost = ChatHost &
     chatModelPickerOpenSessionKey?: string | null;
     chatModelCatalog: ModelCatalogEntry[];
     chatModelCatalogError: string | null;
+    chatModelCatalogRefreshFailed?: boolean;
+    chatModelCatalogPendingProviders?: readonly string[];
     chatAccountSelection?: ChatAccountSelection | null;
     modelAuthStatusRequestVersion: number;
     modelAuthStatusResult: ModelAuthStatusResult | null;
@@ -118,8 +120,7 @@ export type ChatPageHost = ChatHost &
     chatScrollElement?: () => HTMLElement | null;
     chatScrollToEnd?: (options: ChatScrollToEndOptions) => boolean;
     sidebarLayout: SidebarLayout;
-    sidebarContent: SidebarContent | null;
-    attachmentSidebarContent: Extract<SidebarContent, { kind: "attachment" }> | null;
+    sidebarContent: SidebarSelection | null;
     sidebarFocusPanelId: string;
     sidebarFocusVersion: number;
     updateSidebarActivePanel: (panelId: string) => void;
@@ -145,7 +146,7 @@ export type ChatPageHost = ChatHost &
     removeQueuedMessage: (id: string) => void;
     retryQueuedChatMessage: (id: string) => Promise<void>;
     steerQueuedChatMessage: (id: string) => Promise<void>;
-    moveQueuedChatMessage: (id: string, toIndex: number) => void;
+    moveQueuedChatMessage: (id: string, targetId: string) => void;
     editQueuedChatMessage: (id: string) => void;
     updateQueuedChatMessageEdit: (draftText: string, mentions?: readonly HumanMention[]) => void;
     submitQueuedChatMessageEdit: () => void;

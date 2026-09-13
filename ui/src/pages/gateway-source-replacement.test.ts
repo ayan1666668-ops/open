@@ -4,6 +4,7 @@ import { TaskStatus } from "@lit/task";
 import type { SkillsLibraryListResult } from "@openclaw/gateway-protocol";
 import { nothing } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDeferred as deferred } from "../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../app/context.ts";
 import { clawhubVerdictKey } from "../lib/skills/index.ts";
@@ -59,16 +60,6 @@ function applyPageGatewaySnapshot(
   snapshot: ApplicationGatewaySnapshot,
 ) {
   page.gateway.applySnapshot(snapshot, { initial: false, sourceChanged: false });
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((nextResolve, nextReject) => {
-    resolve = nextResolve;
-    reject = nextReject;
-  });
-  return { promise, reject, resolve };
 }
 
 function gatewayWithClient(
@@ -547,6 +538,7 @@ describe("gateway source replacement across reconnect with a reused client", () 
       agents: context.agents,
       agentsList,
       selectedAgentId: "main",
+      selection: context.agentSelection.state,
       report,
       error: null,
     } as unknown as SkillsRouteData;
@@ -594,6 +586,8 @@ describe("gateway source replacement across reconnect with a reused client", () 
             slug: "agentreceipt",
             installedVersion: "1.2.3",
             installedAt: 123,
+            originPath: "/tmp/.clawhub/origin.json",
+            lockPath: "/tmp/workspace/.clawhub/lock.json",
           },
         }),
       ],
@@ -609,6 +603,7 @@ describe("gateway source replacement across reconnect with a reused client", () 
       agents: context.agents,
       agentsList,
       selectedAgentId: "main",
+      selection: context.agentSelection.state,
       report,
       error: null,
     } as SkillsRouteData;
@@ -656,6 +651,8 @@ describe("gateway source replacement across reconnect with a reused client", () 
             slug: "agentreceipt",
             installedVersion: "1.2.3",
             installedAt: 123,
+            originPath: "/tmp/.clawhub/origin.json",
+            lockPath: "/tmp/workspace/.clawhub/lock.json",
           },
         }),
       ],
@@ -672,6 +669,7 @@ describe("gateway source replacement across reconnect with a reused client", () 
       agents: harness.context.agents,
       agentsList,
       selectedAgentId: "main",
+      selection: harness.context.agentSelection.state,
       report,
       error: null,
     } as SkillsRouteData;
@@ -735,6 +733,7 @@ describe("gateway source replacement across reconnect with a reused client", () 
       agents: context.agents,
       agentsList,
       selectedAgentId: "main",
+      selection: context.agentSelection.state,
       report: null,
       error: null,
     };
@@ -769,6 +768,7 @@ describe("gateway source replacement across reconnect with a reused client", () 
       agents: context.agents,
       agentsList,
       selectedAgentId: "main",
+      selection: context.agentSelection.state,
       report: staleReport,
       error: null,
     } as unknown as SkillsRouteData;
