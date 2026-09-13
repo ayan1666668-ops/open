@@ -301,6 +301,34 @@ describe("Windows Gateway task supervisor", () => {
     expect(spawn).toHaveBeenCalledOnce();
   });
 
+  it("exits cleanly when shutdown races a child restart result", async () => {
+    let shutdown: (() => void) | undefined;
+    vi.spyOn(process, "once").mockImplementation(((event: string, listener: () => void) => {
+      if (event === "SIGTERM") {
+        shutdown = listener;
+      }
+      return process;
+    }) as typeof process.once);
+    spawn.mockImplementationOnce(async (input: SpawnInput) => ({
+      cancel: vi.fn(),
+      wait: async () => {
+        shutdown?.();
+        return {
+          exitCode: readSpawnRestartExitCode(input),
+          exitSignal: null,
+        };
+      },
+      waitForExtinction: vi.fn(async () => {}),
+    }));
+
+    const { runWindowsGatewayTaskSupervisor } = await import("./task-supervisor.js");
+    await runWindowsGatewayTaskSupervisor();
+
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBeUndefined();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
   it("cancels a child when shutdown arrives while spawn is pending", async () => {
     let resolveSpawn: ((value: unknown) => void) | undefined;
     const pendingSpawn = new Promise((resolve) => {

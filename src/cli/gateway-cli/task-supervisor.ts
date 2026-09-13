@@ -86,18 +86,23 @@ export async function runWindowsGatewayTaskSupervisor(): Promise<void> {
         reason: result.reason,
         stderr,
       };
-      const restarting = !cancelled && result.exitCode === restartExitCode;
+      const restartRequested = result.exitCode === restartExitCode;
       if (result.exitCode === 0) {
         log.info("Gateway child exited", diagnostic);
-      } else if (restarting) {
-        log.info("Gateway child requested restart", diagnostic);
+      } else if (restartRequested) {
+        log.info(
+          cancelled
+            ? "Gateway child restart suppressed by shutdown"
+            : "Gateway child requested restart",
+          diagnostic,
+        );
       } else {
         process.exitCode = result.exitCode ?? 1;
         log.error("Gateway child failed", diagnostic);
       }
       await managed.waitForExtinction?.();
       managed = null;
-      if (restarting && !cancelled) {
+      if (restartRequested && !cancelled) {
         // The child has released its Gateway lock and extinguished descendants.
         // Recheck cancellation after the asynchronous extinction join so shutdown
         // cannot admit a replacement; stop and update handoffs exit 0.
