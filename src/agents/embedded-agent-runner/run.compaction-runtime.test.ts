@@ -53,6 +53,25 @@ describe("embedded compaction recovery authority", () => {
     });
   });
 
+  it("uses the resolved model budget to recover current output beyond the default reader window", async () => {
+    await withRecoveryFixture(
+      { historicalTurns: 4, contextTokenBudget: 200_000, toolResultText: "x".repeat(1_200_000) },
+      async (fixture) => {
+        const before = await fixture.snapshot();
+        fixture.compact.mockRejectedValueOnce(new Error("independent engine failure"));
+
+        await expect(fixture.recover("overflow")).resolves.toEqual({ action: "retry" });
+
+        const after = await fixture.snapshot();
+        expect(after.toolResultChars).toBeLessThan(before.toolResultChars);
+        expect(after.resetCount).toBe(before.resetCount);
+        expect(after.eventDigests.slice(0, before.eventDigests.length)).toEqual(
+          before.eventDigests,
+        );
+      },
+    );
+  });
+
   it.each(
     (["overflow", "timeout"] as const).flatMap((kind) => [true, false].map((ok) => ({ kind, ok }))),
   )("settles no-op engine hooks for $kind recovery (ok=$ok)", async ({ kind, ok }) => {

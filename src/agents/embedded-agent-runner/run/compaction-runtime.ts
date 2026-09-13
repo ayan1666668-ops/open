@@ -423,7 +423,7 @@ export function createEmbeddedRunCompactionRuntime(input: {
       },
     };
   };
-  const prepareRecoverySession = () => {
+  const prepareRecoverySession = (contextTokenBudget: number) => {
     const owner = prepareRecoveryOwner();
     const sessionManager =
       memoryManager ??
@@ -432,7 +432,7 @@ export function createEmbeddedRunCompactionRuntime(input: {
         : SessionManager.open(
             owner.session.target,
             params.workspaceDir,
-            resolveEmbeddedSessionContextLimits(params.contextTokenBudget),
+            resolveEmbeddedSessionContextLimits(contextTokenBudget),
           ));
     return {
       sessionManager,

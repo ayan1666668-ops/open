@@ -21,6 +21,8 @@ type FixtureOptions = {
   inMemory?: boolean;
   detached?: boolean;
   historicalTurns?: number;
+  contextTokenBudget?: number;
+  toolResultText?: string;
 };
 export type RecoveryFixture = Awaited<ReturnType<typeof createRecoveryFixture>>;
 
@@ -72,7 +74,9 @@ async function createRecoveryFixture(state: OpenClawTestState, options: FixtureO
     content: [
       {
         type: "text",
-        text: options.oversized === false ? "small output" : "fixture output ".repeat(12_000),
+        text:
+          options.toolResultText ??
+          (options.oversized === false ? "small output" : "fixture output ".repeat(1_800)),
       },
     ],
     isError: false,
@@ -291,7 +295,7 @@ async function createRecoveryFixture(state: OpenClawTestState, options: FixtureO
         state: recoveryState,
         usageAccumulator,
         contextEngine,
-        contextTokenBudget: 4_096,
+        contextTokenBudget: options.contextTokenBudget ?? 4_096,
         genericCompactionRecoveryAllowed: true,
         attempt: makeAttemptResult({
           ...(kind === "timeout" ? { timedOut: true } : { promptError }),
