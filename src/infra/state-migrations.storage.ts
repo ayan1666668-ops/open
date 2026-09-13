@@ -26,6 +26,7 @@ import {
   inferDeliveryQueueFailureRetention,
   projectDeliveryQueueTerminalEntry,
 } from "./delivery-queue-sqlite.types.js";
+import { hashFileDescriptorSync } from "./file-descriptor.js";
 import { openNodeSqliteDatabase } from "./node-sqlite.js";
 import { parseRegistryNpmSpec } from "./npm-registry-spec.js";
 import { migrationFileExists, safeReadDir } from "./state-migrations.fs.js";
@@ -155,13 +156,22 @@ type LegacyArchiveResolution = {
   action: "archived" | "removed";
 };
 
+function hashLegacyArchiveSource(sourcePath: string): string {
+  const fd = fs.openSync(sourcePath, "r");
+  try {
+    return hashFileDescriptorSync(fd).sha256;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function archiveLegacyFileSource(params: {
   sourcePath: string;
   label: string;
   warnings: string[];
 }): LegacyArchiveResolution | null {
   try {
-    const sourceBytes = fs.readFileSync(params.sourcePath);
+    let sourceSha256: string | undefined;
     // Reuse any identical archive, including a numbered collision from an earlier run.
     for (let index = 1; ; index++) {
       const targetPath =
@@ -170,7 +180,9 @@ function archiveLegacyFileSource(params: {
         fs.renameSync(params.sourcePath, targetPath);
         return { sourcePath: params.sourcePath, targetPath, action: "archived" };
       }
-      if (sourceBytes.equals(fs.readFileSync(targetPath))) {
+      // SQLite sidecars can exceed whole-file allocation limits; hash only collisions.
+      sourceSha256 ??= hashLegacyArchiveSource(params.sourcePath);
+      if (sourceSha256 === hashLegacyArchiveSource(targetPath)) {
         fs.rmSync(params.sourcePath, { force: true });
         return { sourcePath: params.sourcePath, targetPath, action: "removed" };
       }
