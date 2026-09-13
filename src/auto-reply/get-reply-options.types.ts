@@ -96,6 +96,8 @@ export type TurnAdoptionLifecycle = {
   onDeferred?: () => boolean | void;
   /** Reports that a deferred turn is still queued behind an active turn. */
   onDeferredHeartbeat?: () => void;
+  /** Explicit cancellation before adoption; releases without consuming retry budget. */
+  onCancelled?: () => void | Promise<void>;
   /** Deferred turn finished without owning the reply lane. */
   onAbandoned?: () => void;
   /** Always fires when the followup ownership cycle ends (admitted or not). Gateway cleanup. */

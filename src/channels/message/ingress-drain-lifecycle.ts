@@ -1,3 +1,15 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const ingressCancelCompat = new AsyncLocalStorage<true>();
+
+export function runIngressCancelCompat<T>(fn: () => T): T {
+  return ingressCancelCompat.run(true, fn);
+}
+
+export function isIngressCancelCompat(): boolean {
+  return ingressCancelCompat.getStore() === true;
+}
+
 /** Full pre-adoption -> adoption ownership lifecycle for one claimed event. */
 export type ChannelIngressDispatchLifecycle = {
   /** Pre-adoption only. After adopt the drain treats this signal as inert. */
@@ -39,6 +51,7 @@ export function bindIngressLifecycleToReplyOptions(lifecycle: ChannelIngressDisp
     onAdopted: () => void | Promise<void>;
     onDeferred: () => void;
     onDeferredHeartbeat?: () => void;
+    onCancelled?: () => void | Promise<void>;
     onAbandoned: () => void | Promise<void>;
     abortSignal: AbortSignal;
   };
@@ -49,6 +62,7 @@ export function bindIngressLifecycleToReplyOptions(lifecycle: ChannelIngressDisp
       onAdopted: lifecycle.onAdopted,
       onDeferred: lifecycle.onDeferred,
       onDeferredHeartbeat: lifecycle.onDeferredHeartbeat,
+      ...(lifecycle.onCancelled ? { onCancelled: lifecycle.onCancelled } : {}),
       onAbandoned: lifecycle.onAbandoned,
       abortSignal: lifecycle.abortSignal,
     },

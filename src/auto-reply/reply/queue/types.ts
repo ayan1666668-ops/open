@@ -367,17 +367,21 @@ export function completeFollowupRunLifecycle(
 ): void {
   run.steerPending?.settle(false);
   const lifecycle = run.turnAdoptionLifecycle;
+  if (!lifecycle || completedTurnAdoptionLifecycleCallbacks.has(lifecycle)) {
+    return;
+  }
+  completedTurnAdoptionLifecycleCallbacks.add(lifecycle);
 
   const finish = () => {
-    if (!lifecycle || completedTurnAdoptionLifecycleCallbacks.has(lifecycle)) {
-      return;
-    }
-    completedTurnAdoptionLifecycleCallbacks.add(lifecycle);
     // Async onAbandoned work must contain its own rejections; core guarantees a
     // non-rejecting promise. onSettled must still run after a synchronous throw.
     try {
       if (disposition !== "consumed" && !admittedTurnAdoptionLifecycles.has(lifecycle)) {
-        lifecycle.onAbandoned?.();
+        if (lifecycle.abortSignal?.aborted && lifecycle.onCancelled) {
+          void lifecycle.onCancelled();
+        } else {
+          lifecycle.onAbandoned?.();
+        }
       }
     } finally {
       lifecycle.onSettled?.();
@@ -388,7 +392,7 @@ export function completeFollowupRunLifecycle(
     completedTurnAdoptionLifecycles.add(lifecycle);
   }
 
-  const admission = lifecycle ? admittingTurnAdoptionLifecycles.get(lifecycle) : undefined;
+  const admission = admittingTurnAdoptionLifecycles.get(lifecycle);
   if (!admission) {
     finish();
     return;
