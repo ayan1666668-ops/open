@@ -5,25 +5,27 @@ import {
   createLocalApprovalPromptTestFixture,
   createNativeApprovalTestFixture,
 } from "openclaw/plugin-sdk/channel-test-helpers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   lineApprovalCapability,
   shouldSuppressLocalLineExecApprovalPrompt,
+  trackLineNativeApprovalStart,
 } from "./approval-native.js";
 import { linePlugin } from "./channel.js";
 
 const APPROVER = "U0123456789abcdef0123456789abcdef";
 
-const { buildConfig, buildExecRequest, checks } = createNativeApprovalTestFixture({
-  channel: "line",
-  capability: lineApprovalCapability,
-  buildConfig: ({ channel, approvals } = {}) => ({
-    channels: {
-      line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
-    },
-    approvals,
-  }),
-});
+const { buildConfig, buildExecRequest, buildPluginRequest, checks } =
+  createNativeApprovalTestFixture({
+    channel: "line",
+    capability: lineApprovalCapability,
+    buildConfig: ({ channel, approvals } = {}) => ({
+      channels: {
+        line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
+      },
+      approvals,
+    }),
+  });
 
 const { suppressLocalSessionPrompt } = createLocalApprovalPromptTestFixture({
   channel: "line",
@@ -185,6 +187,9 @@ describe("line approval capability", () => {
         exec: { enabled: true, mode: "both", targets: [{ channel: "line", to: opsGroup }] },
       },
     });
+    const started = new AbortController();
+    onTestFinished(() => started.abort());
+    trackLineNativeApprovalStart({ cfg, accountId: "default", abortSignal: started.signal });
     const request = buildExecRequest(`line:${APPROVER}`);
     const suppressed = (to: string, source: "session" | "target") =>
       lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
@@ -211,6 +216,75 @@ describe("line approval capability", () => {
       });
     expect(fromGroup(raisingGroup, "session")).toBe(true);
     expect(fromGroup(`line:${APPROVER}`, "target")).toBe(true);
+  });
+
+  // Cards start with the account, but forwarding hot-reloads. Until the account starts
+  // with cards, and again once it stops, the forwarded prompt is the only thing that
+  // chat receives, so it must not be dropped.
+  it("keeps the forwarded prompt for an account that is not running cards", () => {
+    const suppressed = () =>
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg: configured,
+        approvalKind: "exec",
+        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
+        request: buildExecRequest(`line:${APPROVER}`),
+      });
+
+    expect(suppressed()).toBe(false);
+
+    const started = new AbortController();
+    trackLineNativeApprovalStart({
+      cfg: configured,
+      accountId: "default",
+      abortSignal: started.signal,
+    });
+    expect(suppressed()).toBe(true);
+
+    // A restart registers again before the previous run's abort arrives.
+    const restarted = new AbortController();
+    trackLineNativeApprovalStart({
+      cfg: configured,
+      accountId: "default",
+      abortSignal: restarted.signal,
+    });
+    started.abort();
+    expect(suppressed()).toBe(true);
+
+    restarted.abort();
+    expect(suppressed()).toBe(false);
+  });
+
+  // The running handler decides with the config its account started with. A setting that
+  // hot-reloads after that start, such as plugin forwarding or a wider agent filter, draws
+  // no card until a restart, so its forwarded prompt stays.
+  it("keeps the forwarded prompt for requests the started cards would not draw", () => {
+    const started = new AbortController();
+    onTestFinished(() => started.abort());
+    trackLineNativeApprovalStart({
+      cfg: buildConfig({
+        channel: { allowFrom: [APPROVER] },
+        approvals: { exec: { enabled: true, agentFilter: ["ops"] } },
+      }),
+      accountId: "default",
+      abortSignal: started.signal,
+    });
+    const current = buildConfig({
+      channel: { allowFrom: [APPROVER] },
+      approvals: { exec: { enabled: true }, plugin: { enabled: true } },
+    });
+    const suppressed = (
+      approvalKind: "exec" | "plugin",
+      request: ReturnType<typeof buildExecRequest> | ReturnType<typeof buildPluginRequest>,
+    ) =>
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg: current,
+        approvalKind,
+        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
+        request,
+      });
+
+    expect(suppressed("plugin", buildPluginRequest(`line:${APPROVER}`))).toBe(false);
+    expect(suppressed("exec", buildExecRequest(`line:${APPROVER}`))).toBe(false);
   });
 
   it("suppresses the local prompt when approvers receive the card", () => {

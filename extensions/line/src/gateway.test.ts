@@ -6,6 +6,7 @@ import {
 } from "openclaw/plugin-sdk/channel-test-helpers";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { lineApprovalCapability } from "./approval-native.js";
 import { lineGatewayAdapter } from "./gateway.js";
 import { setLineRuntime } from "./runtime.js";
 import type { LineProbeResult, ResolvedLineAccount } from "./types.js";
@@ -137,6 +138,55 @@ describe("lineGatewayAdapter.startAccount", () => {
     } finally {
       controller.abort();
     }
+  });
+
+  // Forwarding hot-reloads but cards start with the account, so the forwarded text prompt
+  // is dropped only while an account that started with cards is running.
+  it("drops forwarded prompts only while the account runs cards", async () => {
+    probeLineBotMock.mockResolvedValue({ ok: false, error: "timeout" });
+    const approver = "U0123456789abcdef0123456789abcdef";
+    const cfg: OpenClawConfig = {
+      approvals: { exec: { enabled: true } },
+      channels: {
+        line: { channelAccessToken: "token", channelSecret: "secret", allowFrom: [approver] },
+      },
+    };
+    const suppressed = () =>
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg,
+        approvalKind: "exec",
+        target: { channel: "line", to: `line:${approver}`, source: "session" },
+        request: {
+          id: "approval-1",
+          request: {
+            command: "date",
+            turnSourceChannel: "line",
+            turnSourceTo: `line:${approver}`,
+            turnSourceAccountId: "default",
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1,
+        },
+      });
+    const startAccount = async (config: OpenClawConfig, abortSignal: AbortSignal) =>
+      await lineGatewayAdapter.startAccount?.({
+        ...createStartAccountContext({ account: lineAccount(), cfg: config }),
+        abortSignal,
+        channelRuntime: createPluginRuntimeMock().channel,
+      });
+
+    // Started before forwarding was turned on: no cards, so the prompt stays.
+    const withoutCards = new AbortController();
+    await startAccount({ ...cfg, approvals: { exec: { enabled: false } } }, withoutCards.signal);
+    expect(suppressed()).toBe(false);
+    withoutCards.abort();
+
+    const withCards = new AbortController();
+    await startAccount(cfg, withCards.signal);
+    expect(suppressed()).toBe(true);
+
+    withCards.abort();
+    expect(suppressed()).toBe(false);
   });
 
   // The startup warning reaches gateway logs, which are read far more widely than

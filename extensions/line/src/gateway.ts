@@ -6,7 +6,10 @@ import { createAccountStatusSink } from "openclaw/plugin-sdk/channel-outbound";
 import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runtime-context";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { resolveLineAccount } from "./accounts.js";
-import { isLineNativeApprovalClientEnabled } from "./approval-native.js";
+import {
+  isLineNativeApprovalClientEnabled,
+  trackLineNativeApprovalStart,
+} from "./approval-native.js";
 import { getLineRuntime } from "./runtime.js";
 import { describeLineWebhookDelivery } from "./status.js";
 import type { ResolvedLineAccount } from "./types.js";
@@ -68,6 +71,11 @@ export const lineGatewayAdapter: NonNullable<ChannelPlugin<ResolvedLineAccount>[
         accountId: account.accountId,
         capability: CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
         context: {},
+        abortSignal: ctx.abortSignal,
+      });
+      trackLineNativeApprovalStart({
+        cfg: ctx.cfg,
+        accountId: account.accountId,
         abortSignal: ctx.abortSignal,
       });
     }
