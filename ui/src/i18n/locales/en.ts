@@ -5194,6 +5194,8 @@ export const en: TranslationMap & {
     },
     messages: {
       copySelection: "Copy",
+      copyLink: "Copy link",
+      copyFileName: "Copy file name",
       forkFromHere: "Fork from here",
       reply: "Reply",
       replyToMessage: "Reply to message",
