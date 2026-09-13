@@ -9,6 +9,7 @@ import { describe, expect, it, vi, type MockInstance } from "vitest";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store-runtime.js";
 import type { BackupResourceInventory } from "../commands/backup-resource-inventory.js";
 import { backupRestoreCommand } from "../commands/backup-restore.js";
+import { formatBackupCreateSummary } from "../commands/backup-shared.js";
 import { backupVerifyCommand, verifyBackupArchive } from "../commands/backup-verify.js";
 import { backupCreateCommand } from "../commands/backup.js";
 import { createTestRuntime } from "../commands/test-runtime-config-helpers.js";
@@ -35,11 +36,7 @@ import {
   type OpenClawTestState,
   withOpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
-import {
-  createBackupArchive,
-  formatBackupCreateSummary,
-  type BackupCreateResult,
-} from "./backup-create.js";
+import { createBackupArchive, type BackupCreateResult } from "./backup-create.js";
 import { classifyBackupSqliteSource } from "./backup-sqlite-snapshot.js";
 import { writeTarArchiveWithRetry } from "./backup-tar-retry.js";
 import { isVolatileBackupPath } from "./backup-volatile-filter.js";
@@ -2624,7 +2621,7 @@ describe("createBackupArchive", () => {
         for (const [sourceFile, bytes] of opaqueFiles) {
           const suffix = `/state/${path.relative(state.stateDir, sourceFile).split(path.sep).join("/")}`;
           const entry = expectDefined(
-            entries.find((entry) => entry.endsWith(suffix)),
+            entries.find((candidate) => candidate.endsWith(suffix)),
             suffix,
           );
           expect(await fs.readFile(path.join(restored.targetPath, entry))).toEqual(bytes);

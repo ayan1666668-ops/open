@@ -91,7 +91,9 @@ export function classifyBackupSqliteSource(
   if (transient || !inventory.isIncluded(resolvedSourcePath)) {
     return "excluded";
   }
-  if (isAppleDoubleMetadataFile(resolvedSourcePath)) return "excluded";
+  if (isAppleDoubleMetadataFile(resolvedSourcePath)) {
+    return "excluded";
+  }
   return databasePath && inventory.resolveSqliteOwner(databasePath) ? "sqlite" : "opaque";
 }
 

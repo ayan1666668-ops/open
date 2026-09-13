@@ -18,7 +18,9 @@ class BackupVolatileStatCache extends Map<string, Stats> {
   override set(key: string, stat: Stats): this {
     // Each archive name is an independent file. Project this before node-tar
     // schedules pending hardlinks; suppressing link-cache writes can deadlock it.
-    if (stat.isFile()) stat.nlink = 1;
+    if (stat.isFile()) {
+      stat.nlink = 1;
+    }
     return super.set(key, stat);
   }
 

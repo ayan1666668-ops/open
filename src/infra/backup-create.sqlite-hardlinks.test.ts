@@ -192,7 +192,7 @@ describe.skipIf(process.platform === "win32")("backup SQLite hardlinks", () => {
             "plugins",
             "hardlinks",
           );
-          expect((await fs.readdir(restoredDirectory)).sort()).toEqual(names.sort());
+          expect((await fs.readdir(restoredDirectory)).toSorted()).toEqual(names.toSorted());
           for (const [name, bytes] of originals) {
             expect(await fs.readFile(path.join(restoredDirectory, name))).toEqual(bytes);
             expect(await fs.readFile(path.join(path.dirname(ownerPath), name))).toEqual(bytes);

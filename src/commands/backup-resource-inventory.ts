@@ -130,7 +130,9 @@ export async function createBackupResourceInventory(params: {
   const globalIdentity = params.onlyConfig
     ? undefined
     : await fs.stat(globalPath).catch((error: unknown) => {
-        if (hasErrnoCode(error, "ENOENT")) return undefined;
+        if (hasErrnoCode(error, "ENOENT")) {
+          return undefined;
+        }
         throw error;
       });
   if (globalIdentity && !globalIdentity.isFile()) {
@@ -156,7 +158,9 @@ export async function createBackupResourceInventory(params: {
       database.role === "global"
         ? globalIdentity
         : await fs.stat(database.sourcePath).catch((error: unknown) => {
-            if (hasErrnoCode(error, "ENOENT")) return undefined;
+            if (hasErrnoCode(error, "ENOENT")) {
+              return undefined;
+            }
             throw error;
           });
     if (identity && !identity.isFile()) {
