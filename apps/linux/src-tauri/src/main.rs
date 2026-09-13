@@ -415,6 +415,24 @@ impl NavigationState {
         true
     }
 
+    fn permits_local_completion(&self, quitting: bool) -> bool {
+        if quitting || self.remote_dashboard {
+            return false;
+        }
+        let Some(previous) = &self.settings_return else {
+            return true;
+        };
+        if previous.generation != self.watch_generation {
+            return false;
+        }
+        match &previous.target {
+            SettingsReturnTarget::Local(url) => !url
+                .query_pairs()
+                .any(|(key, value)| key == "mode" && value == "remoteError"),
+            SettingsReturnTarget::Remote(_) => false,
+        }
+    }
+
     fn begin_watchdog(&mut self) -> Option<u64> {
         if self.remote_dashboard || self.settings_return.is_some() {
             return None;
@@ -835,14 +853,31 @@ impl DesktopState {
         cli: OpenClawCli,
         ready: ReadyGateway,
     ) -> Result<GatewaySnapshot, String> {
-        let navigated = self.navigate_local(app, &ready.dashboard_url, false, None, true, true)?;
-        if navigated {
+        let snapshot = ready.snapshot.clone();
+        let generation = self.on_main(app, move |state, app| {
+            let mut navigation = state.inner.navigation.lock().expect("navigation");
+            if !navigation.permits_local_completion(state.is_quitting()) {
+                return Ok(None);
+            }
+            if navigation.settings_return.is_none() {
+                state.navigate_local_document(
+                    &app,
+                    &mut navigation,
+                    &ready.dashboard_url,
+                    true,
+                    true,
+                )?;
+            }
+            // Explicit completion publishes fresh credentials even while Settings owns the page.
             app.state::<gateway_ws::GatewayClient>()
-                .configure(app, ready.gateway_ws);
-            self.update_tray(&ready.snapshot);
-            self.start_watchdog(app.clone(), cli);
+                .configure(&app, ready.gateway_ws);
+            state.update_tray(&ready.snapshot);
+            Ok(navigation.begin_watchdog())
+        })?;
+        if let Some(generation) = generation {
+            self.watch_local(app.clone(), cli, generation);
         }
-        Ok(ready.snapshot)
+        Ok(snapshot)
     }
 
     pub fn connect_explicit_local(
@@ -1651,19 +1686,6 @@ impl DesktopState {
             .is_ok_and(|navigation| navigation.watchdog_is_current(generation))
     }
 
-    fn start_watchdog(&self, app: AppHandle, cli: OpenClawCli) {
-        let generation = {
-            let Ok(mut navigation) = self.inner.navigation.lock() else {
-                return;
-            };
-            let Some(generation) = navigation.begin_watchdog() else {
-                return;
-            };
-            generation
-        };
-        self.watch_local(app, cli, generation);
-    }
-
     fn restore_healthy_local_dashboard(
         &self,
         app: &AppHandle,
@@ -2207,6 +2229,8 @@ mod navigation_tests {
             queue.submit_action(action);
             assert_eq!(queue.current_selection(), 1);
             assert!(!navigation.permit_local(false, None));
+            assert!(navigation.permits_local_completion(false));
+            assert!(navigation.begin_watchdog().is_none());
             navigation.begin_settings(1, remote_target()).unwrap();
             let previous = navigation.settings_return.as_ref().unwrap();
             assert_eq!(previous.target, SettingsReturnTarget::Local(target));
@@ -2215,6 +2239,35 @@ mod navigation_tests {
             assert!(navigation.finish_settings_return().is_some());
             assert!(navigation.settings_return.is_none());
         }
+    }
+
+    #[test]
+    fn local_completion_rejects_remote_quitting_and_expired_settings_owners() {
+        let mut navigation = NavigationState::default();
+        assert!(navigation.permits_local_completion(false));
+        assert!(!navigation.permits_local_completion(true));
+        navigation.select_remote();
+        assert!(!navigation.permits_local_completion(false));
+
+        for target in [
+            remote_target(),
+            SettingsReturnTarget::Local(Url::parse("tauri://localhost/?mode=remoteError").unwrap()),
+        ] {
+            let mut navigation = NavigationState::default();
+            navigation.begin_settings(0, target).unwrap();
+            assert!(!navigation.permits_local_completion(false));
+        }
+
+        let mut navigation = NavigationState::default();
+        navigation
+            .begin_settings(
+                0,
+                SettingsReturnTarget::Local(Url::parse("tauri://localhost/?mode=stopped").unwrap()),
+            )
+            .unwrap();
+        assert!(!navigation.permits_local_completion(true));
+        navigation.watch_generation = navigation.watch_generation.wrapping_add(1);
+        assert!(!navigation.permits_local_completion(false));
     }
 
     #[test]
