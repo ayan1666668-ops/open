@@ -3644,6 +3644,37 @@ describe("failure alert form round trips", () => {
     expect(state.cronFieldErrors.failureAlertCooldownSeconds).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "https://user:pass@example.com/hook",
+    "http://user@example.com/hook",
+    "https://exa mple.com/hook",
+    "http://",
+  ])("rejects webhook URLs the server boundary rejects: %j", (deliveryTo) => {
+    const errors = validateCronForm({
+      ...DEFAULT_CRON_FORM,
+      name: "Webhook job",
+      payloadKind: "agentTurn",
+      payloadText: "Run",
+      deliveryMode: "webhook",
+      deliveryTo,
+    });
+
+    expect(errors.deliveryTo).toBe("cron.errors.webhookUrlInvalid");
+  });
+
+  it("accepts a well-formed webhook URL without userinfo", () => {
+    const errors = validateCronForm({
+      ...DEFAULT_CRON_FORM,
+      name: "Webhook job",
+      payloadKind: "agentTurn",
+      payloadText: "Run",
+      deliveryMode: "webhook",
+      deliveryTo: "https://example.com/hook",
+    });
+
+    expect(errors.deliveryTo).toBeUndefined();
+  });
 });
 
 describe("selected automation runtime refresh", () => {
