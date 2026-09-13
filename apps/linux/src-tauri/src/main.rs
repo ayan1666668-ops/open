@@ -1817,7 +1817,7 @@ impl DesktopState {
 }
 
 fn local_mode(snapshot: &GatewaySnapshot) -> &'static str {
-    if snapshot.installed && !snapshot.running {
+    if snapshot.phase == "stopped" {
         "stopped"
     } else {
         "reconnecting"
@@ -1831,8 +1831,9 @@ fn local_recovery_owns_gateway(navigation: &Result<bool, String>) -> bool {
 #[cfg(test)]
 mod navigation_tests {
     use super::{
-        is_active_onboarding_url, is_release_version, local_recovery_owns_gateway, GatewayAction,
-        GatewayOperationQueue, GatewaySnapshot, NavigationState, SettingsReturnTarget, Url,
+        is_active_onboarding_url, is_release_version, local_mode, local_recovery_owns_gateway,
+        GatewayAction, GatewayOperationQueue, GatewaySnapshot, NavigationState, SettingsReturnTarget,
+        Url,
     };
 
     fn remote_target() -> SettingsReturnTarget {
@@ -1922,6 +1923,20 @@ mod navigation_tests {
                 .settings_return
                 .is_some());
         }
+    }
+
+    #[test]
+    fn unknown_gateway_status_keeps_recovery_active() {
+        let unknown = GatewaySnapshot::reconnecting("Gateway service inspection failed.");
+        assert_eq!(local_mode(&unknown), "reconnecting");
+
+        let stopped = GatewaySnapshot {
+            phase: "stopped",
+            status: "Stopped".to_string(),
+            detail: None,
+            ..unknown
+        };
+        assert_eq!(local_mode(&stopped), "stopped");
     }
 
     #[test]

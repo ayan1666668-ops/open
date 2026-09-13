@@ -46,7 +46,7 @@ struct StatusLine {
     pending_count: usize,
     installed: bool,
     running: bool,
-    reachable: bool,
+    stopped: bool,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -105,7 +105,7 @@ impl TrayHandles {
         status_line.gateway.clone_from(&snapshot.status);
         status_line.installed = snapshot.installed;
         status_line.running = snapshot.running;
-        status_line.reachable = snapshot.reachable;
+        status_line.stopped = snapshot.phase == "stopped";
         if !snapshot.reachable {
             status_line.pending_count = 0;
         }
@@ -129,15 +129,15 @@ impl TrayHandles {
         let restart = self.restart.clone();
         let _ = app.run_on_main_thread(move || {
             let current = state.lock().expect("tray status mutex poisoned");
-            let (text, installed, running, reachable) = (
+            let (text, installed, running, stopped) = (
                 current.text(),
                 current.installed,
                 current.running,
-                current.reachable,
+                current.stopped,
             );
             drop(current);
             let _ = status.set_text(text);
-            let _ = start.set_enabled(installed && !running && !reachable);
+            let _ = start.set_enabled(stopped);
             let _ = stop.set_enabled(installed && running);
             let _ = restart.set_enabled(installed);
         });
@@ -342,7 +342,7 @@ pub fn build(
             pending_count: 0,
             installed: false,
             running: false,
-            reachable: false,
+            stopped: false,
         })),
         update_action,
         quickchat_shortcut,
