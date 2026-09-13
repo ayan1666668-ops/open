@@ -2264,15 +2264,15 @@ describe("capability cli", () => {
       name: "image describe",
       run: () =>
         runCapability("image", "describe", "--agent", "beta", "--file", "photo.png", "--json"),
-      selectedAgent: () => imageDescribeCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [imageDescribeCall()?.agentId, imageDescribeCall()?.agentDir],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "image describe-many",
       run: () =>
         runCapability("image", "describe-many", "--agent", "beta", "--file", "photo.png", "--json"),
-      selectedAgent: () => imageDescribeCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [imageDescribeCall()?.agentId, imageDescribeCall()?.agentDir],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "image describe with explicit model",
@@ -2288,15 +2288,21 @@ describe("capability cli", () => {
           "photo.png",
           "--json",
         ),
-      selectedAgent: () => firstImageDescribeWithModelCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [
+        firstImageDescribeWithModelCall()?.agentId,
+        firstImageDescribeWithModelCall()?.agentDir,
+      ],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "audio transcribe",
       run: () =>
         runCapability("audio", "transcribe", "--agent", "beta", "--file", "memo.m4a", "--json"),
-      selectedAgent: () => firstAudioTranscriptionCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [
+        firstAudioTranscriptionCall()?.agentId,
+        firstAudioTranscriptionCall()?.agentDir,
+      ],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "video generate",
@@ -2322,8 +2328,11 @@ describe("capability cli", () => {
       name: "video describe",
       run: () =>
         runCapability("video", "describe", "--agent", "beta", "--file", "clip.mp4", "--json"),
-      selectedAgent: () => firstVideoDescriptionCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [
+        firstVideoDescriptionCall()?.agentId,
+        firstVideoDescriptionCall()?.agentDir,
+      ],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "embedding create",
@@ -2341,7 +2350,7 @@ describe("capability cli", () => {
 
       await run();
 
-      expect(selectedAgent()).toBe(expectedAgent);
+      expect(selectedAgent()).toEqual(expectedAgent);
     },
   );
 
@@ -2394,8 +2403,8 @@ describe("capability cli", () => {
       name: "image describe",
       run: () =>
         runCapabilityWithParentAgent("image", "describe", "beta", "--file", "photo.png", "--json"),
-      selectedAgent: () => imageDescribeCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [imageDescribeCall()?.agentId, imageDescribeCall()?.agentDir],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "image describe-many",
@@ -2408,15 +2417,18 @@ describe("capability cli", () => {
           "photo.png",
           "--json",
         ),
-      selectedAgent: () => imageDescribeCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [imageDescribeCall()?.agentId, imageDescribeCall()?.agentDir],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "audio transcribe",
       run: () =>
         runCapabilityWithParentAgent("audio", "transcribe", "beta", "--file", "memo.m4a", "--json"),
-      selectedAgent: () => firstAudioTranscriptionCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [
+        firstAudioTranscriptionCall()?.agentId,
+        firstAudioTranscriptionCall()?.agentDir,
+      ],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "video generate",
@@ -2449,8 +2461,11 @@ describe("capability cli", () => {
       name: "video describe",
       run: () =>
         runCapabilityWithParentAgent("video", "describe", "beta", "--file", "clip.mp4", "--json"),
-      selectedAgent: () => firstVideoDescriptionCall()?.agentId,
-      expectedAgent: "beta",
+      selectedAgent: () => [
+        firstVideoDescriptionCall()?.agentId,
+        firstVideoDescriptionCall()?.agentDir,
+      ],
+      expectedAgent: ["beta", "/tmp/agent-beta"],
     },
     {
       name: "embedding create",
@@ -2468,7 +2483,7 @@ describe("capability cli", () => {
 
       await run();
 
-      expect(selectedAgent()).toBe(expectedAgent);
+      expect(selectedAgent()).toEqual(expectedAgent);
     },
   );
 
