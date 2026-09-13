@@ -7,13 +7,11 @@ import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { createCompiledSdkHost } from "../plugins/compiled-sdk-host.test-support.js";
-import {
-  clearLoadInstalledPluginIndexInstallRecordsCache,
-  writePersistedInstalledPluginIndexInstallRecords,
-} from "../plugins/installed-plugin-index-records.js";
+import { clearLoadInstalledPluginIndexInstallRecordsCache } from "../plugins/installed-plugin-index-records.js";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
 import { waitForPluginCacheRetirement } from "../plugins/plugin-cache.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { seedInstalledPluginIndex } from "../plugins/test-helpers/installed-plugin-index.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { activateSetupInference } from "./setup-inference-activate.js";
 import { groqSetupSdkEntrypoints } from "./setup-inference-groq-sdk.test-support.js";
@@ -130,7 +128,7 @@ export default defineSingleProviderPluginEntry({
       await fs.symlink(hostRoot, path.join(pluginDir, "node_modules", "openclaw"), "junction");
       const config = { plugins: { entries: { groq: { enabled: true } } } };
       await state.writeConfig(config);
-      await writePersistedInstalledPluginIndexInstallRecords(
+      await seedInstalledPluginIndex(
         {
           groq: {
             source: "path",
