@@ -3779,6 +3779,8 @@ export const en: TranslationMap & {
   palette: {
     placeholder: "Search chats and commands…",
     noResults: "No results",
+    searchingSessions: "Searching sessions…",
+    searchingCommands: "Searching commands…",
     searchFailed: "Chat search failed — check the gateway logs and retry",
     modelSearchFailed: "Model search unavailable. Change your search to retry.",
     searchPartial: "Transcript search unavailable — showing chat titles and metadata",
@@ -4390,6 +4392,7 @@ export const en: TranslationMap & {
       runningSetup: "Running setup…",
       provisioningEnvironment: "Provisioning environment…",
       preparingContext: "Preparing this turn…",
+      memoryFlushing: "Saving conversation memory…",
       startingModel: "Waiting for a response…",
     },
     archivedSessionDisabled: "This session is archived. Unarchive it to continue the conversation.",
@@ -5320,7 +5323,9 @@ export const en: TranslationMap & {
       browserAnnotationRemoved: "Browser annotation removed.",
       browserAnnotationUndoUnavailable:
         "Undo is unavailable because the browser annotation limit has been reached.",
+      preparingAttachments: "Preparing attachments…",
       removeAttachment: "Remove attachment",
+      removeNamedAttachment: "Remove {name}",
       removeBrowserAnnotation: "Remove browser annotation: {name}",
       addAttachment: "Add attachment",
       attachPhoto: "Photo",

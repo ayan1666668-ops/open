@@ -13,7 +13,8 @@ import {
   settleModelCatalogRequests,
   subscribeModelCatalogCache,
 } from "../model-catalog-store.ts";
-import { uiConversationMatches } from "../sessions/session-key.ts";
+import { readSessionChangedEvent } from "../sessions/reconcile.ts";
+import { uiConversationMatches, type UiSessionDefaultsHost } from "../sessions/session-key.ts";
 import {
   chatMetadataCache,
   type ChatMetadataEntry,
@@ -51,35 +52,55 @@ function metadataEntryFor(
   let cache = chatMetadataCache.get(client);
   if (!cache) {
     const entries = new Map<string, ChatMetadataEntry>();
+    const invalidate = (scope?: ChatMetadataParams, sessionDefaults?: UiSessionDefaultsHost) => {
+      const invalidated = Array.from(entries.values()).filter(
+        (entry) =>
+          (sessionDefaults && scope?.sessionKey
+            ? uiConversationMatches(
+                { ...sessionDefaults, assistantAgentId: entry.scope.agentId },
+                entry.scope.sessionKey,
+                scope.sessionKey,
+                scope.agentId,
+              )
+            : (!scope?.agentId || entry.scope.agentId === scope.agentId) &&
+              (!scope?.sessionKey || entry.scope.sessionKey === scope.sessionKey)) &&
+          (!scope?.authProfileId || entry.scope.authProfileId === scope.authProfileId),
+      );
+      // Retire every affected writer before subscribers can synchronously start replacements.
+      for (const entry of invalidated) {
+        entry.refreshRevision += 1;
+        entry.result = undefined;
+        entry.writer = undefined;
+      }
+      for (const entry of invalidated) {
+        notifyChatMetadataListeners(entry, {
+          type: "invalidated",
+          // Session mutations own roster reconciliation; global changes also change session facts.
+          refreshSessionFacts: !scope?.sessionKey,
+        });
+        entry.release();
+      }
+    };
     cache = {
       entries,
-      invalidate: (scope, sessionDefaults) => {
-        const invalidated = Array.from(entries.values()).filter(
-          (entry) =>
-            (sessionDefaults && scope?.sessionKey
-              ? uiConversationMatches(
-                  { ...sessionDefaults, assistantAgentId: entry.scope.agentId },
-                  entry.scope.sessionKey,
-                  scope.sessionKey,
-                  scope.agentId,
-                )
-              : (!scope?.agentId || entry.scope.agentId === scope.agentId) &&
-                (!scope?.sessionKey || entry.scope.sessionKey === scope.sessionKey)) &&
-            (!scope?.authProfileId || entry.scope.authProfileId === scope.authProfileId),
-        );
-        // Retire every affected writer before subscribers can synchronously start replacements.
-        for (const entry of invalidated) {
-          entry.refreshRevision += 1;
-          entry.result = undefined;
-          entry.writer = undefined;
-        }
-        for (const entry of invalidated) {
-          notifyChatMetadataListeners(entry, {
-            type: "invalidated",
-            // Session mutations own roster reconciliation; global changes also change session facts.
-            refreshSessionFacts: !scope?.sessionKey,
-          });
-          entry.release();
+      invalidate,
+      invalidateSession: (source, sessionDefaults) => {
+        if (
+          source?.reason === "reset" ||
+          source?.phase === "reset" ||
+          source?.reason === "command-metadata" ||
+          source?.reason === "patch"
+        ) {
+          const changed = readSessionChangedEvent(source);
+          if (changed) {
+            invalidate(
+              {
+                agentId: typeof source?.agentId === "string" ? source.agentId : undefined,
+                sessionKey: changed.key,
+              },
+              sessionDefaults,
+            );
+          }
         }
       },
     };

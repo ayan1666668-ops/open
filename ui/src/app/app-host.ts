@@ -1,4 +1,3 @@
-import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import type { PropertyValues } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts";
@@ -20,12 +19,13 @@ import type { ThemeModeChangeDetail } from "../components/theme-mode-toggle.ts";
 import { i18n, t } from "../i18n/index.ts";
 import { normalizeAgentLabel } from "../lib/agents/display.ts";
 import type { BoardFace } from "../lib/board/settings.ts";
-import { invalidateChatMetadataStore } from "../lib/chat/chat-metadata-cache.ts";
+import {
+  invalidateChatMetadataForSessionEvent,
+  invalidateChatMetadataStore,
+} from "../lib/chat/chat-metadata-cache.ts";
 import { createIdleImport } from "../lib/idle-import.ts";
 import { invalidateModelAuthStatusRequests } from "../lib/model-auth-request-state.ts";
-import { invalidateModelCatalogCache } from "../lib/model-catalog-cache.ts";
 import { resolveSessionDisplayName } from "../lib/session-display.ts";
-import { readSessionChangedEvent } from "../lib/sessions/reconcile.ts";
 import {
   isUiGlobalSessionKey,
   normalizeAgentId,
@@ -500,28 +500,10 @@ class OpenClawShell
     const context = this.context;
     const client = context?.gateway?.snapshot.client;
     if (client && event.event === "sessions.changed") {
-      const source = asNullableRecord(event.payload);
-      const changed = readSessionChangedEvent(event.payload);
-      const agentId = typeof source?.agentId === "string" ? source.agentId : undefined;
-      if (
-        changed &&
-        (source?.reason === "reset" ||
-          source?.phase === "reset" ||
-          source?.reason === "command-metadata" ||
-          source?.reason === "patch")
-      ) {
-        invalidateChatMetadataStore(
-          client,
-          { agentId, sessionKey: changed.key },
-          {
-            hello: context?.gateway.snapshot.hello,
-            agentsList: context?.agents.state.agentsList,
-          },
-        );
-      } else {
-        // Session aliases are resolved by the Gateway; retire saved projections for this agent.
-        invalidateModelCatalogCache(client, { agentId, sessionsOnly: true });
-      }
+      invalidateChatMetadataForSessionEvent(client, event.payload, {
+        hello: context?.gateway.snapshot.hello,
+        agentsList: context?.agents.state.agentsList,
+      });
     }
     if (event.event === "config.changed" || event.event === "chat.metadata.changed") {
       if (client) {

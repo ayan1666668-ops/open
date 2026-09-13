@@ -1,3 +1,4 @@
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import type {
   ChatMetadataParams,
   CommandsListResult,
@@ -59,6 +60,10 @@ export const chatMetadataCache = new WeakMap<
   {
     entries: Map<string, ChatMetadataEntry>;
     invalidate: (scope?: ChatMetadataParams, sessionDefaults?: UiSessionDefaultsHost) => void;
+    invalidateSession: (
+      source: Record<string, unknown> | null,
+      sessionDefaults: UiSessionDefaultsHost,
+    ) => void;
   }
 >();
 
@@ -73,4 +78,16 @@ export function invalidateChatMetadataStore(
     sessionDefaults && scope?.sessionKey ? { agentId: scope.agentId, sessionsOnly: true } : scope,
   );
   chatMetadataCache.get(client)?.invalidate(scope, sessionDefaults);
+}
+
+export function invalidateChatMetadataForSessionEvent(
+  client: GatewayBrowserClient,
+  payload: unknown,
+  sessionDefaults: UiSessionDefaultsHost,
+): void {
+  const source = asNullableRecord(payload);
+  const agentId = typeof source?.agentId === "string" ? source.agentId : undefined;
+  // Session aliases are resolved by the Gateway; retire saved model projections for this agent.
+  invalidateModelCatalogCache(client, { agentId, sessionsOnly: true });
+  chatMetadataCache.get(client)?.invalidateSession(source, sessionDefaults);
 }
