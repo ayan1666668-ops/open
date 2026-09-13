@@ -378,18 +378,16 @@ function loadScopedSubagentRuns(
   scope: SubagentRegistryReadScope,
   database?: OpenClawStateDatabase,
 ): SubagentRunRecord[] {
-  if (scope.kind === "runs") {
-    if (scope.runIds.length === 0) {
-      return [];
-    }
-  } else {
-    const key = scope.sessionKey.trim();
-    if (!key) {
-      return [];
-    }
-    scope = { ...scope, sessionKey: key };
+  const normalizedScope =
+    scope.kind === "runs" ? scope : { ...scope, sessionKey: scope.sessionKey.trim() };
+  if (
+    normalizedScope.kind === "runs"
+      ? normalizedScope.runIds.length === 0
+      : !normalizedScope.sessionKey
+  ) {
+    return [];
   }
-  return readSubagentRegistryRows(scope, database).flatMap((row) => {
+  return readSubagentRegistryRows(normalizedScope, database).flatMap((row) => {
     const run = rowToSubagentRunRecord(row);
     return run ? [run] : [];
   });

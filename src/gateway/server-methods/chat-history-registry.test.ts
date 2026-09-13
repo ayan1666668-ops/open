@@ -20,7 +20,7 @@ describe("chat history registry projection", () => {
         async () => {
           const scope = {
             agentId: "main",
-            sessionKey: "agent:main:registry-history",
+            sessionKey: "agent:main:dashboard:12345678-0aaa-4000-8000-000000000001",
             sessionId: "registry-history",
           };
           await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
@@ -53,7 +53,10 @@ describe("chat history registry projection", () => {
               chatHistoryHandlers[method],
               "history handler",
             )({
-              params: { sessionKey: scope.sessionKey, ...(cursor ? { cursor } : {}) },
+              params:
+                method === "chat.startup" && !cursor
+                  ? { shortId: "12345678", slugHint: "registry-history", agentId: "main" }
+                  : { sessionKey: scope.sessionKey, ...(cursor ? { cursor } : {}) },
               context,
               req: { type: "req", id: "registry-history", method },
               client: null,
@@ -68,6 +71,9 @@ describe("chat history registry projection", () => {
           };
           const initial = await request();
           expect(initial.deltaCursor).toEqual(expect.any(String));
+          if (method === "chat.startup") {
+            expect(initial.resolution).toMatchObject({ ok: true, key: scope.sessionKey });
+          }
           clearSubagentRunsReadCacheForTest();
           const parse = vi.spyOn(JSON, "parse");
           try {
