@@ -325,7 +325,6 @@ describe("startCodexAttemptThread", () => {
       "account/login/start",
       "config/read",
       "configRequirements/read",
-      "account/read",
       "thread/start",
     ]);
     expect(startSpy).toHaveBeenCalledTimes(2);
