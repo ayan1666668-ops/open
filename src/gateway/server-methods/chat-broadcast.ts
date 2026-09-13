@@ -11,7 +11,9 @@ type ChatBroadcastContext = Pick<
   GatewayRequestContext,
   "broadcast" | "nodeSendToSession" | "agentRunSeq"
 > &
-  Partial<Pick<GatewayRequestContext, "getRuntimeConfig" | "chatRunState">>;
+  Partial<
+    Pick<GatewayRequestContext, "chatAbortControllers" | "getRuntimeConfig" | "chatRunState">
+  >;
 
 type SideResultPayload = {
   kind: "btw";
@@ -185,6 +187,13 @@ export function broadcastChatDelta(
 }
 
 export function broadcastChatTerminal(params: ChatBroadcastParams & ChatTerminal): void {
+  const activeRun = params.context.chatAbortControllers?.get(params.runId);
+  if (activeRun?.chatTerminalBroadcasted) {
+    return;
+  }
+  if (activeRun) {
+    activeRun.chatTerminalBroadcasted = true;
+  }
   broadcastChatFrame(params);
   params.context.agentRunSeq.delete(params.runId);
 }

@@ -9,6 +9,8 @@ import {
   type SessionSharingEvent,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
+  captureSessionRecipientAuthority,
+  isSessionRecipientAuthorityCurrent,
   loadSessionEntry,
   loadTranscriptEvents,
   patchSessionEntryCore,
