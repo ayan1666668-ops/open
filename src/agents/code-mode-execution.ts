@@ -312,6 +312,7 @@ function dispatchCodeModeRequests(
     ...createPendingBridgeStates(newPendingRequests, {
       config: params.config,
       inbox: params.owner.inbox,
+      results: params.owner.results,
       runtime: params.runtime,
       catalogProjection: params.catalogProjection,
       namespaceRuntime: params.namespaceRuntime,

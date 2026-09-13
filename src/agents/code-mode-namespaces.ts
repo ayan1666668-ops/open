@@ -47,6 +47,7 @@ const RESERVED_NAMESPACE_GLOBALS = new Set([
   "Object",
   "Promise",
   "phase",
+  "results",
   "Set",
   "setTimeout",
   "skills",
