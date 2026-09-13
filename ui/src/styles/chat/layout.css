@@ -2150,6 +2150,11 @@ openclaw-chat-video-player {
   margin: 0 auto;
 }
 
+/* Separate peer cards still need breathing room; the composer owns its own margin. */
+.chat-prs:has(+ :is(.session-suggestions, .chat-swarm), + openclaw-plugin-contributions > *) {
+  padding-bottom: 8px;
+}
+
 .chat-pr {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

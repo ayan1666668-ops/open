@@ -5,6 +5,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CONTROL_UI_SESSION_PULL_REQUESTS_CHANGED_EVENT } from "../../../src/gateway/control-ui-contract.js";
 import { SESSION_PULL_REQUESTS_SUBSCRIBE_METHOD } from "../lib/session-pull-requests.ts";
+import { finishElementAnimations } from "../test-helpers/animations.ts";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
@@ -261,6 +262,7 @@ describeControlUiE2e("session pull request chips", () => {
     await expect.poll(() => mergedChip.locator(".chat-pr__warning").count()).toBe(0);
 
     // The chip row sits inside the chat column directly above the composer.
+    await page.locator(".chat").evaluate(finishElementAnimations);
     const rowBottom = await page
       .locator(".chat-pr")
       .last()
@@ -400,6 +402,7 @@ describeControlUiE2e("session pull request chips", () => {
       // The row shares the composer's centered width; it is part of the input
       // stack, not a full-pane banner.
       await page.setViewportSize(viewport);
+      await page.locator(".chat").evaluate(finishElementAnimations);
       if (captureUiProof) {
         await page.screenshot({
           animations: "disabled",
