@@ -80,9 +80,9 @@ import {
 import {
   addTaskStatusSummaryRecord,
   createEmptyTaskStatusSummary,
+  summarizeTaskRecords,
   type TaskStatusSummary,
 } from "./task-registry.summary.js";
-import { summarizeTaskRecords } from "./task-registry.summary.js";
 import type { TaskRecord, TaskRegistrySummary, TaskStatus } from "./task-registry.types.js";
 import type { ActiveTaskRestartBlocker } from "./task-restart-blocker.js";
 import { resolveEffectiveTaskCleanupAfter, resolveTaskCleanupAfter } from "./task-retention.js";
@@ -940,7 +940,9 @@ export async function getInspectableTaskStatusSummaryReadOnly(): Promise<TaskSta
       const backing = createBackingSessionLookupContext();
       for (const [index, task] of snapshot.candidates.entries()) {
         if (index > 0 && index % SWEEP_YIELD_BATCH_SIZE === 0) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
+          await new Promise<void>((resolve) => {
+            setImmediate(resolve);
+          });
           context.admission.assertCurrent();
         }
         const projected = reconcileTaskRecordForOperatorInspectionWithContexts(

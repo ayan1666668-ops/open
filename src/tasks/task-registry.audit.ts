@@ -128,35 +128,38 @@ function visitTaskAuditCodes(
   }
 }
 
+const TASK_AUDIT_DESCRIPTIONS: Record<
+  Exclude<TaskAuditCode, "lost" | "inconsistent_timestamps">,
+  string
+> = {
+  stale_queued: "queued task has not advanced recently",
+  stale_running: "running task appears stuck",
+  delivery_failed: "terminal update delivery failed",
+  missing_cleanup: "terminal task is missing cleanupAfter",
+};
+
 function describeTaskAuditCode(
   task: TaskRecord,
   code: TaskAuditCode,
   severity: TaskAuditSeverity,
   timestampIssue?: TaskTimestampInconsistency,
 ): string {
-  switch (code) {
-    case "stale_queued":
-      return "queued task has not advanced recently";
-    case "stale_running":
-      return "running task appears stuck";
-    case "lost":
-      return (
-        task.error?.trim() ||
-        (severity === "warn"
-          ? "task lost its backing session and is retained until cleanupAfter"
-          : "task lost its backing session")
-      );
-    case "delivery_failed":
-      return "terminal update delivery failed";
-    case "missing_cleanup":
-      return "terminal task is missing cleanupAfter";
-    case "inconsistent_timestamps":
-      return timestampIssue === "start_before_creation"
-        ? "startedAt is earlier than createdAt"
-        : timestampIssue === "end_before_start"
-          ? "endedAt is earlier than startedAt"
-          : `${task.status} task should not already have endedAt`;
+  if (code === "lost") {
+    return (
+      task.error?.trim() ||
+      (severity === "warn"
+        ? "task lost its backing session and is retained until cleanupAfter"
+        : "task lost its backing session")
+    );
   }
+  if (code === "inconsistent_timestamps") {
+    return timestampIssue === "start_before_creation"
+      ? "startedAt is earlier than createdAt"
+      : timestampIssue === "end_before_start"
+        ? "endedAt is earlier than startedAt"
+        : `${task.status} task should not already have endedAt`;
+  }
+  return TASK_AUDIT_DESCRIPTIONS[code];
 }
 
 function compareFindings(left: TaskAuditFinding, right: TaskAuditFinding): number {
