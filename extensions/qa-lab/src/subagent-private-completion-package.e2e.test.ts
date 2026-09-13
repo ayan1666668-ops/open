@@ -117,6 +117,14 @@ function requiredSqlValue(row: Record<string, SQLInputValue>, key: string): SQLI
   return value;
 }
 
+function requiredSqlText(row: Record<string, SQLInputValue>, key: string): string {
+  const value = requiredSqlValue(row, key);
+  if (typeof value !== "string") {
+    throw new Error(`expected SQLite text field: ${key}`);
+  }
+  return value;
+}
+
 function record(value: unknown): Record<string, unknown> {
   expect(isRecord(value)).toBe(true);
   return value as Record<string, unknown>;
@@ -660,20 +668,22 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       heldProvider.releaseChild();
       const pendingInput = await waitForQaTransportCondition(
         () => {
-          const row = rows(
+          const pendingRow = rows(
             agentDb,
             "SELECT * FROM session_pending_inputs WHERE session_key = ? AND state = 'queued'",
             pendingSession,
-          ).find((row) => String(row.message_json).includes("QA-PARENT-PRIVATE-CHILD1-"));
-          return row
+          ).find((row) =>
+            requiredSqlText(row, "message_json").includes("QA-PARENT-PRIVATE-CHILD1-"),
+          );
+          return pendingRow
             ? {
-                ...row,
-                input_id: requiredSqlValue(row, "input_id"),
-                run_id: requiredSqlValue(row, "run_id"),
-                session_id: requiredSqlValue(row, "session_id"),
-                message_json: requiredSqlValue(row, "message_json"),
-                consumed_event_id: requiredSqlValue(row, "consumed_event_id"),
-                state: requiredSqlValue(row, "state"),
+                ...pendingRow,
+                input_id: requiredSqlText(pendingRow, "input_id"),
+                run_id: requiredSqlText(pendingRow, "run_id"),
+                session_id: requiredSqlText(pendingRow, "session_id"),
+                message_json: requiredSqlText(pendingRow, "message_json"),
+                consumed_event_id: requiredSqlValue(pendingRow, "consumed_event_id"),
+                state: requiredSqlText(pendingRow, "state"),
               }
             : undefined;
         },
@@ -681,9 +691,9 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
         50,
       );
       expect(pendingInput.consumed_event_id).toBeNull();
-      expect(record(JSON.parse(String(pendingInput.message_json))).display).toBe(false);
+      expect(record(JSON.parse(pendingInput.message_json)).display).toBe(false);
       const pendingNonce = /QA-PARENT-PRIVATE-CHILD1-[A-F0-9]{32}/u.exec(
-        String(pendingInput.message_json),
+        pendingInput.message_json,
       )?.[0];
       expect(pendingNonce).toBeTruthy();
       expect(
@@ -725,16 +735,14 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       }
       const capturedRow = {
         ...captured,
-        run_id: requiredSqlValue(captured, "run_id"),
-        child_session_key: requiredSqlValue(captured, "child_session_key"),
+        run_id: requiredSqlText(captured, "run_id"),
+        child_session_key: requiredSqlText(captured, "child_session_key"),
         controller_session_key: requiredSqlValue(captured, "controller_session_key"),
-        requester_session_key: requiredSqlValue(captured, "requester_session_key"),
+        requester_session_key: requiredSqlText(captured, "requester_session_key"),
         created_at: requiredSqlValue(captured, "created_at"),
-        payload_json: requiredSqlValue(captured, "payload_json"),
+        payload_json: requiredSqlText(captured, "payload_json"),
       };
-      const privatePayload = record(
-        record(JSON.parse(String(capturedRow.payload_json))).parentCompletion,
-      );
+      const privatePayload = record(record(JSON.parse(capturedRow.payload_json)).parentCompletion);
       expect(record(privatePayload.execution).status).toBe("terminal");
       expect(record(privatePayload.completion).required).toBe(true);
       expect(["pending", "in_progress"]).toContain(record(privatePayload.delivery).status);
@@ -851,15 +859,15 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
 
       // Isolate the feature's registry wire format from the unrelated schema-20
       // boundary. Only this captured envelope is copied into release-owned data.
-      const probeParent = String(capturedRow.requester_session_key);
-      const probeChild = String(capturedRow.child_session_key);
+      const probeParent = capturedRow.requester_session_key;
+      const probeChild = capturedRow.child_session_key;
       await gateway.call("sessions.create", { key: probeParent });
       await gateway.call("sessions.create", { key: probeChild });
       const releasedChildEventCursor = events.length;
       const probeRun = record(
         await gateway.call("chat.send", {
           sessionKey: probeChild,
-          idempotencyKey: String(capturedRow.run_id),
+          idempotencyKey: capturedRow.run_id,
           message: "Subagent private completion QA worker: second. Finish with the private result.",
         }),
       );
@@ -940,9 +948,7 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
         phase: "released-registry-reader-probe",
         ...rollbackIdentity,
         syntheticRegistryFixture: true,
-        capturedEnvelopeSha256: createHash("sha256")
-          .update(String(capturedRow.payload_json))
-          .digest("hex"),
+        capturedEnvelopeSha256: createHash("sha256").update(capturedRow.payload_json).digest("hex"),
         before: capturedRow,
         atProjection,
         after: remainingRows,

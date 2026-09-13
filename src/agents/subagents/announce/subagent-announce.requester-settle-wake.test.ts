@@ -78,10 +78,7 @@ vi.mock("../spawn/subagent-depth.js", () => ({
     sessionKey.split(":subagent:").length - 1,
 }));
 
-import {
-  maybeWakeRequesterAfterAllChildrenSettled,
-  type RequesterSettleWakeBatchState,
-} from "./subagent-announce.requester-settle-wake.js";
+import { maybeWakeRequesterAfterAllChildrenSettled } from "./subagent-announce.requester-settle-wake.js";
 
 function listedRequesterRuns(): SubagentRunRecord[] {
   return registryRuntimeMock.listSubagentRunsForRequester(REQUESTER) as SubagentRunRecord[];
