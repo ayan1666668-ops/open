@@ -105,8 +105,11 @@ const resolveLineOriginTarget = createChannelNativeOriginTargetResolver({
 const resolveLineApproverDmTargets = createChannelApproverDmTargetResolver({
   shouldHandleRequest: shouldHandleLineNativeApprovalRequest,
   resolveApprovers: getLineApprovalApprovers,
+  // Approvers are already normalized user ids, the same form the origin resolver
+  // yields, so a card sent to the chat that raised the request counts as delivered
+  // there instead of drawing a "sent to DMs" notice into that same chat.
   mapApprover: (approver, params) => ({
-    to: `line:user:${approver}`,
+    to: approver,
     accountId: normalizeOptionalString(params.accountId),
   }),
 });
@@ -123,11 +126,22 @@ const lineLazyApprovalNativeRuntime = createLazyChannelApprovalNativeRuntimeAdap
   },
 });
 
+// Both settings are required: approvers alone leave forwarding off, and forwarding
+// alone has nobody to send the card to.
+function describeLineApprovalSetup(
+  approvalKind: "exec" | "plugin",
+  accountId: string | null | undefined,
+): string {
+  const prefix =
+    accountId && accountId !== "default" ? `channels.line.accounts.${accountId}` : "channels.line";
+  return `Approve it from the Web UI or terminal UI for now. LINE supports native approval cards in an approver's one-to-one chat. Set \`approvals.${approvalKind}.enabled\` to \`true\` and list approver LINE user IDs in \`${prefix}.allowFrom\`.`;
+}
+
 const lineNativeApprovalCapability = createApproverRestrictedNativeApprovalCapability({
   channel: "line",
   channelLabel: "LINE",
-  describeExecApprovalSetup: () =>
-    "Approve it from the Web UI or terminal UI for now. LINE supports native approval cards in an approver's one-to-one chat. Configure `channels.line.allowFrom` with the LINE user ids allowed to approve.",
+  describeExecApprovalSetup: ({ accountId }) => describeLineApprovalSetup("exec", accountId),
+  describePluginApprovalSetup: ({ accountId }) => describeLineApprovalSetup("plugin", accountId),
   listAccountIds: (cfg) => listLineAccountIds(cfg),
   hasApprovers: ({ cfg, accountId }) => getLineApprovalApprovers({ cfg, accountId }).length > 0,
   isExecAuthorizedSender: ({ cfg, accountId, senderId }) =>
@@ -149,9 +163,10 @@ const lineNativeApprovalCapability = createApproverRestrictedNativeApprovalCapab
   isNativeDeliveryEnabled: isLineNativeApprovalClientEnabled,
   // A group postback carries no `userId` (`GroupSource.userId` is documented as
   // message-event only), so a card in a group could not name who tapped it. Routing
-  // to approver DMs keeps the tap attributable and leaves group chats the origin
-  // notice plus the `/approve` text path.
+  // to approver DMs keeps the tap attributable; the chat that raised the request is
+  // told where the approval went.
   resolveNativeDeliveryMode: () => "dm",
+  notifyOriginWhenDmOnly: true,
   requireMatchingTurnSourceChannel: true,
   resolveSuppressionAccountId: ({ target, request }) =>
     normalizeOptionalString(target.accountId) ??

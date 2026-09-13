@@ -8,7 +8,7 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
 import { lineApprovalAuth } from "./approval-auth.js";
 
-export type LineApprovalPostback = Extract<MessagePresentationAction, { type: "approval" }>;
+type LineApprovalPostback = Extract<MessagePresentationAction, { type: "approval" }>;
 
 const APPROVAL_PARAM = "line.approval";
 const APPROVAL_KIND_PARAM = "line.approvalKind";
@@ -57,7 +57,7 @@ export function buildLineApprovalPostbackData(action: LineApprovalPostback): str
 }
 
 /** Read an approval decision back out of inbound postback data, if it carries one. */
-export function parseLineApprovalPostbackData(data: string): LineApprovalPostback | undefined {
+function parseLineApprovalPostbackData(data: string): LineApprovalPostback | undefined {
   if (!hasLineApprovalPostbackData(data)) {
     return undefined;
   }

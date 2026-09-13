@@ -535,17 +535,19 @@ want to receive, and list the approvers as LINE user IDs:
 }
 ```
 
-There is no LINE-specific approval configuration. Native delivery starts once approval
-forwarding is enabled and at least one approver resolves from `channels.line.allowFrom`;
-until then, and whenever native delivery is unavailable, the `/approve <id> <decision>`
-text path stays exactly as it was.
+There is no LINE-specific approval configuration. Cards need both settings: forwarding
+enabled for the approval type (OpenClaw-change approvals follow `approvals.exec`), and at
+least one approver in `channels.line.allowFrom`. Until both are set, a LINE chat that
+raises an approval gets these setup steps instead of an approval prompt, and the request
+can be approved from the Control UI or terminal UI. Restart the Gateway after turning
+forwarding on so the LINE account starts delivering cards.
 
 Two behaviors follow from the platform rather than from a choice:
 
 - **Cards go to an approver's one-to-one chat, never to a group.** A LINE postback in a
   group carries no `userId` (LINE includes it only in message events), so a card tapped
-  in a group could not name who decided. Group chats get the same approver-DM notice and
-  `/approve` path they already had.
+  in a group could not name who decided. A group, or any chat that is not the approver's
+  own, gets a notice that the request went to LINE DMs.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
   stay on screen. The first decision stands; tapping a button on a card that is no longer

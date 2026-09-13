@@ -4,10 +4,18 @@ import type {
   ExecApprovalPendingView,
   PendingApprovalView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildLinePendingApprovalCard } from "./approval-card.js";
-import { parseLineApprovalPostbackData } from "./approval-postback.js";
+import { resolveLineApprovalPostbackTap } from "./approval-postback.js";
 import { LINE_FLEX_BUBBLE_MAX_BYTES } from "./flex-templates/message.js";
+
+const gateway = vi.hoisted(() => ({
+  resolveApprovalOverGateway: vi.fn<(params: object) => Promise<undefined>>(async () => undefined),
+}));
+
+vi.mock("openclaw/plugin-sdk/approval-gateway-runtime", () => ({
+  resolveApprovalOverGateway: gateway.resolveApprovalOverGateway,
+}));
 
 const APPROVAL_ID = "6f4a1b2c-0d3e-4f5a-8b9c-0d1e2f3a4b5c";
 const NOW_MS = 1_700_000_000_000;
@@ -73,15 +81,23 @@ function cardPostbackData(
 }
 
 describe("LINE pending approval card", () => {
-  it("carries one resolvable postback per offered decision", () => {
+  it("carries one resolvable postback per offered decision", async () => {
     const card = buildLinePendingApprovalCard({ view: execView(), nowMs: NOW_MS });
     expect(card).not.toBeNull();
     expect(card?.allowedDecisions).toEqual(["allow-once", "allow-always", "deny"]);
-    expect(cardPostbackData(card!).map((data) => parseLineApprovalPostbackData(data))).toEqual([
-      { type: "approval", approvalId: APPROVAL_ID, approvalKind: "exec", decision: "allow-once" },
-      { type: "approval", approvalId: APPROVAL_ID, approvalKind: "exec", decision: "allow-always" },
-      { type: "approval", approvalId: APPROVAL_ID, approvalKind: "exec", decision: "deny" },
-    ]);
+    for (const data of cardPostbackData(card!)) {
+      await resolveLineApprovalPostbackTap({
+        cfg: {},
+        accountId: "default",
+        data,
+        senderId: "U0123456789abcdef0123456789abcdef",
+      });
+    }
+    expect(gateway.resolveApprovalOverGateway.mock.calls.map(([params]) => params)).toEqual(
+      (["allow-once", "allow-always", "deny"] as const).map((decision) =>
+        expect.objectContaining({ approvalId: APPROVAL_ID, approvalKind: "exec", decision }),
+      ),
+    );
   });
 
   it("names the command in the card and in the notification text", () => {

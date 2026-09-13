@@ -315,7 +315,7 @@ resolved approver list for authorization even when native approval delivery is d
 
 ### Native approval delivery
 
-Some channels can also act as native approval clients: Discord, Slack, Telegram, Matrix, Google Chat, Microsoft Teams, LINE, and QQ bot.
+Some channels can also act as native approval clients: Discord, Slack, Telegram, Matrix, LINE, and QQ bot.
 Native clients add approver DMs, origin-chat fanout, and channel-specific interactive approval UX on
 top of the shared same-chat `/approve` flow.
 
