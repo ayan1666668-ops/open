@@ -1373,7 +1373,7 @@ describe("gateway session utils", () => {
         { checkpointId: "", createdAt: 30, reason: "manual" },
         { checkpointId: "checkpoint-bad-reason", createdAt: 40, reason: "bogus" },
         { checkpointId: "checkpoint-infinite", createdAt: Infinity, reason: "manual" },
-        { checkpointId: "checkpoint-nan", createdAt: NaN, reason: "manual" },
+        { checkpointId: "checkpoint-nan", createdAt: Number.NaN, reason: "manual" },
         { checkpointId: "checkpoint-auto", createdAt: 20, reason: "auto-threshold" },
         {
           checkpointId: "  checkpoint-newer  ",
