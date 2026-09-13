@@ -21,6 +21,7 @@ extension OpenClawChatViewModel {
             return OpenClawChatMessageContent(
                 type: content.type,
                 text: cleaned,
+                textSignature: content.textSignature,
                 thinking: content.thinking,
                 thinkingSignature: content.thinkingSignature,
                 mimeType: content.mimeType,
@@ -59,7 +60,10 @@ extension OpenClawChatViewModel {
             details: message.details,
             isError: message.isError,
             provenance: message.provenance,
-            historyMarker: message.historyMarker)
+            historyMarker: message.historyMarker,
+            phase: message.phase,
+            turnBoundary: message.turnBoundary,
+            steerTargetRunID: message.steerTargetRunID)
     }
 
     static func messageContentFingerprint(for message: OpenClawChatMessage) -> String {
@@ -99,7 +103,7 @@ extension OpenClawChatViewModel {
             return [role, "idempotency", idempotencyKey].joined(separator: "|")
         }
         if let transcriptMessageID = Self.normalizedTranscriptMessageID(message.transcriptMessageID) {
-            return [role, "transcript", transcriptMessageID].joined(separator: "|")
+            return [role, "transcript", transcriptMessageID, message.transcriptProjection].joined(separator: "|")
         }
 
         let timestamp: String = {
@@ -200,7 +204,10 @@ extension OpenClawChatViewModel {
             details: incoming.details,
             isError: incoming.isError,
             provenance: incoming.provenance ?? existing.provenance,
-            historyMarker: incoming.historyMarker ?? existing.historyMarker)
+            historyMarker: incoming.historyMarker ?? existing.historyMarker,
+            phase: incoming.phase,
+            turnBoundary: incoming.turnBoundary,
+            steerTargetRunID: incoming.steerTargetRunID)
     }
 
     private static func preservingLocalAudioDurations(
@@ -223,6 +230,7 @@ extension OpenClawChatViewModel {
             return OpenClawChatMessageContent(
                 type: content.type,
                 text: content.text,
+                textSignature: content.textSignature,
                 thinking: content.thinking,
                 thinkingSignature: content.thinkingSignature,
                 mimeType: content.mimeType,
@@ -519,7 +527,10 @@ extension OpenClawChatViewModel {
                 details: existing.details,
                 isError: existing.isError,
                 provenance: existing.provenance,
-                historyMarker: existing.historyMarker)
+                historyMarker: existing.historyMarker,
+                phase: existing.phase,
+                turnBoundary: existing.turnBoundary,
+                steerTargetRunID: existing.steerTargetRunID)
         }
         self.replaceMessages(Self.dedupeMessages(updated))
         guard let survivingIndex = self.messages.firstIndex(where: { message in
@@ -745,7 +756,7 @@ extension OpenClawChatViewModel {
             return "\(message.role)|idempotency|\(idempotencyKey)"
         }
         if let transcriptMessageID = normalizedTranscriptMessageID(message.transcriptMessageID) {
-            return "\(message.role)|transcript|\(transcriptMessageID)"
+            return "\(message.role)|transcript|\(transcriptMessageID)|\(message.transcriptProjection)"
         }
         guard let timestamp = message.timestamp else { return nil }
         let text = message.content.compactMap(\.text).joined(separator: "\n")

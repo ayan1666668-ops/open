@@ -653,7 +653,10 @@ extension OpenClawChatViewModel {
             details: message.details,
             isError: message.isError,
             provenance: message.provenance,
-            historyMarker: message.historyMarker)
+            historyMarker: message.historyMarker,
+            phase: message.phase,
+            turnBoundary: message.turnBoundary,
+            steerTargetRunID: message.steerTargetRunID)
     }
 
     private func handleAgentEvent(_ evt: OpenClawAgentEventPayload) {
