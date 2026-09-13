@@ -7,7 +7,7 @@ import { readPackageVersion } from "../../infra/package-json.js";
 import { UPDATE_RUN_ID_ENV } from "../../infra/update-control-plane-sentinel.js";
 import { readBuiltGatewayBuildId } from "../../infra/update-git-runtime.js";
 import {
-  assertUpdateRepairDriverAdmission,
+  inspectUpdateRepairDriverAdmission,
   isAbandonedUpdateRun,
   isUnacknowledgedAbandonedUpdateRun,
 } from "../../infra/update-run-activity.js";
@@ -84,8 +84,12 @@ export async function updateRepairCommand(opts: UpdateFinalizeOptions): Promise<
   });
   const activeRuns = listUpdateRuns({ active: true, limit: 100 }, options);
   const inheritedRunId = env[UPDATE_RUN_ID_ENV];
-  const continuation = assertUpdateRepairDriverAdmission(activeRuns, inheritedRunId);
-  if (continuation) {
+  const admission = inspectUpdateRepairDriverAdmission(activeRuns, inheritedRunId);
+  if (admission.kind === "conflict") {
+    throw new Error(admission.message);
+  }
+  if (admission.kind === "continuation") {
+    const continuation = admission.run;
     recordUpdateRunRepairContinuation(continuation.runId, inheritedRunId, options);
     await updateFinalizeCommand(
       opts,
@@ -157,7 +161,10 @@ export async function updateRepairCommand(opts: UpdateFinalizeOptions): Promise<
   // transaction revalidates each captured run's inactivity and driver identity.
   assertConfigWriteAllowedInCurrentMode({ env });
   const currentRuns = listUpdateRuns({ active: true, limit: 100 }, options);
-  assertUpdateRepairDriverAdmission(currentRuns, inheritedRunId);
+  const currentAdmission = inspectUpdateRepairDriverAdmission(currentRuns, inheritedRunId);
+  if (currentAdmission.kind === "conflict") {
+    throw new Error(currentAdmission.message);
+  }
   const currentHistory = inspectNewerRecoveryHistory(recoveryRuns, env);
   if (
     currentRuns.some(needsPostCoreRepair) ||

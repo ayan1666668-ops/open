@@ -5,7 +5,6 @@ import {
   UPDATE_RUN_DRIVER_LIMIT,
   UPDATE_RUN_PHASES,
 } from "../../packages/gateway-protocol/src/update-run-vocabulary.js";
-import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db-contract.js";
 import { runExistingOpenClawStateWriteTransaction } from "../state/openclaw-state-db-existing-write.js";
 import {
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnly,
@@ -22,8 +21,8 @@ import {
 } from "./kysely-sync.js";
 import { assertSqliteSchemaContains } from "./sqlite-schema-contract.js";
 import {
+  inspectUpdateRepairDriverAdmission,
   isAbandonedUpdateRun,
-  isCurrentUpdateRunContinuation,
   isStaleIdentitylessUpdateRun,
   recordedUpdateRunDrivers,
 } from "./update-run-activity.js";
@@ -43,7 +42,6 @@ import {
 import { LEGACY_UPDATE_RUN_EXPIRED_REASON } from "./update-run-legacy-expiry.js";
 import {
   inspectUpdateRunReconciliation,
-  listUpdateRuns,
   readUpdateRunReconciliationCandidates,
   readUpdateRunRecord as readRun,
   type UpdateRunReconciliationCandidate,
@@ -61,7 +59,9 @@ import { hasStoredUpdateRecovery, readRecoveries } from "./update-run-recovery-s
 import { recordUpdateRunVerificationRecord } from "./update-run-verification.js";
 
 export {
+  findActiveUpdateRun,
   getLatestUpdateFetchFailure,
+  getUpdateRun,
   getUpdateRunAsync,
   listUpdateRuns,
   listUpdateRunsAsync,
@@ -561,14 +561,25 @@ export function recordUpdateRunRepairContinuation(
   mutateRun(
     runId,
     (record) => {
-      if (!isCurrentUpdateRunContinuation(record, inheritedRunId)) {
-        throw new Error(`Update ${record.runId} is no longer owned by this repair process.`);
+      const admission = inspectUpdateRepairDriverAdmission([record], inheritedRunId);
+      if (admission.kind === "conflict") {
+        throw new Error(admission.message);
+      }
+      const step =
+        admission.kind === "continuation"
+          ? "finalize:repair-continuation"
+          : "finalize:repair-takeover";
+      if (record.steps.some((entry) => entry.step === step)) {
+        return;
       }
       upsertStep(record, {
-        step: "finalize:repair-continuation",
+        step,
         status: "completed",
         endedAtMs: Date.now(),
-        detail: `Repair continued within the owning update by PID ${process.pid}.`,
+        detail:
+          admission.kind === "continuation"
+            ? `Repair continued within the owning update by PID ${process.pid}.`
+            : `Repair took over Gateway activation by PID ${process.pid} under abandonment admission.`,
       });
     },
     options,
@@ -726,20 +737,4 @@ export function recordUpdateRunRepairAttempt(
     },
     options,
   );
-}
-
-export function getUpdateRun(
-  runId: string,
-  options: OpenClawStateDatabaseOptions = {},
-): UpdateRunRecord | undefined {
-  return withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
-    ({ db }) => (tableExists(db, "update_runs") ? readRun(db, runId) : undefined),
-    options,
-  );
-}
-
-export function findActiveUpdateRun(
-  options: OpenClawStateDatabaseOptions = {},
-): UpdateRunRecord | undefined {
-  return listUpdateRuns({ limit: 1, active: true }, options)[0];
 }

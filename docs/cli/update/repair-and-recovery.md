@@ -124,8 +124,12 @@ and live process identity match that owner. The run records the continuation,
 and Doctor can use its normal maintenance lifecycle: stop the owned Gateway,
 repair state, then restore and verify the same service. Doctor only restarts a
 service that it stopped; an already stopped service stays stopped. The owning
-run remains active; it is not reconciled as abandoned. Normal update finalization
-without this explicit repair continuation still leaves activation to its parent.
+run remains active while its driver is alive. If that driver exits during
+maintenance, Doctor records an activation takeover under abandonment admission
+and restores the service, even if the driver already terminalized its ledger
+row. A restoration failure reports the cause and the commands to inspect and
+restart the Gateway. Normal update finalization without this explicit repair
+continuation still leaves activation to its parent.
 
 An unrelated update whose driver is live or cannot be inspected still blocks
 repair, even after a long period without activity. The refusal identifies the

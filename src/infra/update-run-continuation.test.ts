@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSelfAndAncestorPidsSync } from "./restart-stale-pids.js";
-import { isCurrentUpdateRunContinuation } from "./update-run-activity.js";
+import { inspectUpdateRepairDriverAdmission } from "./update-run-activity.js";
 import type { UpdateRunRecord } from "./update-run-record.js";
 
 const spawnSync = vi.hoisted(() => vi.fn());
@@ -77,7 +77,9 @@ describe("Windows update repair continuation", () => {
       };
     });
 
-    expect(isCurrentUpdateRunContinuation(updateRun(updaterStart), runId)).toBe(expected);
+    expect(inspectUpdateRepairDriverAdmission([updateRun(updaterStart)], runId).kind).toBe(
+      expected ? "continuation" : "conflict",
+    );
   });
 
   it("keeps self and direct parent when transitive ancestry cannot be inspected", () => {
@@ -102,6 +104,6 @@ describe("Windows update repair continuation", () => {
     };
 
     expect(getSelfAndAncestorPidsSync().has(repairPid)).toBe(true);
-    expect(isCurrentUpdateRunContinuation(run, runId)).toBe(false);
+    expect(inspectUpdateRepairDriverAdmission([run], runId).kind).toBe("conflict");
   });
 });

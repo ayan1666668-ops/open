@@ -35,15 +35,11 @@ export function recordedUpdateRunDrivers(record: UpdateRunRecord): UpdateRunDriv
 }
 
 /** Correlation alone cannot let another process continue a live update. */
-export function isCurrentUpdateRunContinuation(
+function isCurrentUpdateRunContinuation(
   record: UpdateRunRecord,
   inheritedRunId: string | undefined,
 ): boolean {
-  if (
-    record.status !== "running" ||
-    record.runId !== inheritedRunId?.trim() ||
-    hasUnrecordedUpdateRunDriver(record)
-  ) {
+  if (record.runId !== inheritedRunId?.trim() || hasUnrecordedUpdateRunDriver(record)) {
     return false;
   }
   const drivers = recordedUpdateRunDrivers(record);
@@ -81,19 +77,25 @@ function formatUpdateRunOwnership(record: UpdateRunRecord): string {
   return `Update ${record.runId} is still in progress (${record.phase}); ${owners}${unrecorded}; started ${new Date(record.createdAtMs).toISOString()} (age ${age(record.createdAtMs)}), last activity ${new Date(activity).toISOString()} (age ${age(activity)}). Wait for that update, or stop that driver through its owning host or supervisor and re-run \`openclaw update repair\`.`;
 }
 
-export function assertUpdateRepairDriverAdmission(
+export type UpdateRepairDriverAdmission =
+  | { kind: "continuation"; run: UpdateRunRecord }
+  | { kind: "recovery"; runs: UpdateRunRecord[] }
+  | { kind: "conflict"; message: string };
+
+export function inspectUpdateRepairDriverAdmission(
   runs: UpdateRunRecord[],
   inheritedRunId: string | undefined,
-): UpdateRunRecord | undefined {
+): UpdateRepairDriverAdmission {
   let continuation: UpdateRunRecord | undefined;
   for (const run of runs) {
     if (isCurrentUpdateRunContinuation(run, inheritedRunId)) {
       continuation = run;
-    } else if (!inspectUpdateRunAbandonment(run, { explicit: true })) {
-      throw new Error(formatUpdateRunOwnership(run));
+    } else if (!inspectUpdateRunDriverAbandonment(run, { explicit: true })) {
+      // A captured continuation remains relevant after its driver terminalizes it.
+      return { kind: "conflict", message: formatUpdateRunOwnership(run) };
     }
   }
-  return continuation;
+  return continuation ? { kind: "continuation", run: continuation } : { kind: "recovery", runs };
 }
 
 /** Only a fresh, unacknowledged recovery may substitute for a full repair invocation. */
@@ -119,9 +121,13 @@ export function inspectUpdateRunAbandonment(
   record: UpdateRunRecord,
   input: { explicit?: boolean } = {},
 ): string | undefined {
-  if (record.status !== "running") {
-    return undefined;
-  }
+  return record.status === "running" ? inspectUpdateRunDriverAbandonment(record, input) : undefined;
+}
+
+function inspectUpdateRunDriverAbandonment(
+  record: UpdateRunRecord,
+  input: { explicit?: boolean },
+): string | undefined {
   if (isExpiredLegacyUpdateRun(record)) {
     return LEGACY_UPDATE_RUN_EXPIRED_REASON;
   }
