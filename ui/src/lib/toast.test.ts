@@ -84,6 +84,87 @@ describe("shared toast", () => {
     expect(appHost.textContent).toContain("Critical session notice");
   });
 
+  it.each(["hover exit", "render update"])(
+    "keeps shadow-root Undo focused through %s and resumes only after focus leaves",
+    async (trigger) => {
+      vi.useFakeTimers();
+      const host = await mountHost();
+      const shadowOwner = document.createElement("div");
+      const root = shadowOwner.attachShadow({ mode: "open" });
+      const modal = document.createElement("openclaw-modal-dialog");
+      modal.open = true;
+      root.append(modal);
+      document.body.append(shadowOwner);
+      await modal.updateComplete;
+      const onDismiss = vi.fn();
+      showToast({
+        message: "Session archived",
+        actionLabel: "Undo",
+        onAction: vi.fn(),
+        durationMs: 100,
+        onDismiss,
+      });
+      await host.updateComplete;
+      expect(host.parentElement).toBe(modal);
+      await vi.advanceTimersByTimeAsync(40);
+      const action = host.querySelector<HTMLButtonElement>(".app-toast__action")!;
+      const toast = host.querySelector<HTMLElement>(".app-toast")!;
+      if (trigger === "hover exit") {
+        toast.dispatchEvent(new Event("pointerenter"));
+      }
+      action.focus();
+      expect(document.activeElement).toBe(shadowOwner);
+      expect(root.activeElement).toBe(action);
+      if (trigger === "hover exit") {
+        toast.dispatchEvent(new Event("pointerleave"));
+      } else {
+        host.requestUpdate();
+        await host.updateComplete;
+      }
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onDismiss).not.toHaveBeenCalled();
+      expect(root.activeElement).toBe(action);
+      const dismiss = host.querySelector<HTMLButtonElement>(".app-toast__dismiss")!;
+      dismiss.focus();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onDismiss).not.toHaveBeenCalled();
+      dismiss.blur();
+      await vi.advanceTimersByTimeAsync(59);
+      expect(onDismiss).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onDismiss).toHaveBeenCalledExactlyOnceWith("timeout");
+    },
+  );
+
+  it("reconciles focus in the new root after relocation out of a shadow root", async () => {
+    vi.useFakeTimers();
+    const host = await mountHost();
+    const shadowOwner = document.createElement("div");
+    const root = shadowOwner.attachShadow({ mode: "open" });
+    const modal = document.createElement("openclaw-modal-dialog");
+    modal.open = true;
+    root.append(modal);
+    document.body.append(shadowOwner);
+    await modal.updateComplete;
+    const onDismiss = vi.fn();
+    showToast({ message: "Session archived", durationMs: 100, onDismiss });
+    await host.updateComplete;
+    await vi.advanceTimersByTimeAsync(40);
+    host.querySelector<HTMLButtonElement>(".app-toast__dismiss")!.focus();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onDismiss).not.toHaveBeenCalled();
+    document.body.append(host);
+    await host.updateComplete;
+    expect(host.contains(document.activeElement)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(onDismiss).not.toHaveBeenCalled();
+    host.querySelector<HTMLButtonElement>(".app-toast__dismiss")!.blur();
+    await vi.advanceTimersByTimeAsync(59);
+    expect(onDismiss).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onDismiss).toHaveBeenCalledExactlyOnceWith("timeout");
+  });
+
   it("preserves queued outcomes, placement, and the deadline across drawer handoffs", async () => {
     vi.useFakeTimers();
     const app = document.createElement("div");

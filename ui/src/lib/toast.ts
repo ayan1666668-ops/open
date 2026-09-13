@@ -109,11 +109,15 @@ class OpenClawToastHost extends OpenClawLightDomContentsElement {
     this.syncDismissTimer();
   }
 
-  private syncDismissTimer(focused = this.contains(this.ownerDocument.activeElement)) {
+  private syncDismissTimer(focused?: boolean) {
     if (!this.toast || !this.active || !this.isConnected) {
       return;
     }
-    if (this.hovered || focused) {
+    const root = this.getRootNode();
+    const active =
+      root instanceof ShadowRoot ? root.activeElement : this.ownerDocument.activeElement;
+    const hasFocus = focused ?? this.contains(active);
+    if (this.hovered || hasFocus) {
       if (this.dismissTimer !== null) {
         this.remainingMs = Math.max(0, this.deadline - performance.now());
         globalThis.clearTimeout(this.dismissTimer);
