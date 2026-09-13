@@ -13,8 +13,6 @@
     "../../**/dist/**",
     "../../src/agents/bash-tools*.test.ts",
     "../../src/agents/bash-tools*.test.tsx",
-    "../../src/agents/agent-command*.test.ts",
-    "../../src/agents/agent-command*.test.tsx",
     "../../src/agents/code-mode*.test.ts",
     "../../src/agents/code-mode*.test.tsx",
     "../../src/agents/model-catalog.test.ts",

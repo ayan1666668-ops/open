@@ -8,8 +8,6 @@
     "../../src/agents/command/**/*.test.tsx",
     "../../src/commands/**/*.test.ts",
     "../../src/commands/**/*.test.tsx",
-    "../../src/agents/agent-command*.test.ts",
-    "../../src/agents/agent-command*.test.tsx",
     "../../src/tasks/**/*.test.ts",
     "../../src/tasks/**/*.test.tsx",
     "../../src/tui/**/*.test.ts",
