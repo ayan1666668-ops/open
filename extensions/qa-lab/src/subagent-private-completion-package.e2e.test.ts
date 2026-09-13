@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rename, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -609,6 +609,12 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       const backupPath = path.join(prefix, "pre-upgrade.tar.gz");
       let upgradedIdentity: Awaited<ReturnType<typeof install>> | undefined;
       await restartState(async () => {
+        // QA's source mount is outside the backup assets and is unused by this
+        // installed-package proof. Remove only that exact fixture-owned link.
+        const repoLink = path.join(gateway.workspaceDir, "repo");
+        expect((await lstat(repoLink)).isSymbolicLink()).toBe(true);
+        expect(await readlink(repoLink)).toBe(repoRoot);
+        await unlink(repoLink);
         const backup = record(
           JSON.parse(
             (await runInstalled(["backup", "create", "--output", backupPath, "--verify", "--json"]))
