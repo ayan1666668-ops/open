@@ -184,10 +184,11 @@ export class LazyCustomElementRequestController {
   private load(request: LazyCustomElementRequest): void {
     void ensureCustomElementDefined(request.element.tagName, request.element.loadModule).then(
       async () => {
+        // Registration outlives dismissal; mount the closed element so the next open works.
+        this.host.requestUpdate();
         if (this.current !== request) {
           return;
         }
-        this.host.requestUpdate();
         await this.host.updateComplete;
         if (this.current === request) {
           // Replay only once the host has actually rendered the element.
@@ -235,7 +236,9 @@ const DEBUG_OVERLAY_TAG = "openclaw-debug-overlay";
 
 export const DEBUG_OVERLAY_ELEMENT = {
   tagName: DEBUG_OVERLAY_TAG,
-  label: DEBUG_OVERLAY_TAG,
+  get label() {
+    return t("debug.overlay.title");
+  },
   loadModule: () => import("../pages/debug/debug-overlay.ts"),
 } satisfies OptionalCustomElement;
 
