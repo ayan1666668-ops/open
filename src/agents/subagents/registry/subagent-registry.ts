@@ -254,6 +254,12 @@ export function resumeSubagentRun(runId: string, source: "live" | "restore" = "l
     resumedRuns.add(runId);
     return;
   }
+  if (entry.killIntent || entry.killReconciliation) {
+    // Cancellation owns its task and cleanup before a retained requester wake can settle.
+    scheduleSubagentRegistrySweep();
+    resumedRuns.add(runId);
+    return;
+  }
   const orphanReason = resolveSubagentRunOrphanReason({
     entry,
     includeStaleUnended: source === "restore",
@@ -342,12 +348,6 @@ export function resumeSubagentRun(runId: string, source: "live" | "restore" = "l
   }
 
   if (typeof entry.execution.endedAt === "number" && entry.execution.endedAt > 0) {
-    if (entry.killReconciliation) {
-      // Restored kills remain reconciliation tombstones; only the sweeper may
-      // accept late provider completion or stabilize their task cancellation.
-      resumedRuns.add(runId);
-      return;
-    }
     if (contextCleanup.suppressAnnounceForSteerRestart(entry)) {
       resumedRuns.add(runId);
       return;

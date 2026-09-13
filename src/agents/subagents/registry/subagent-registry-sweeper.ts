@@ -303,39 +303,6 @@ export function createSubagentRegistrySweeper(params: {
           // The restored FIFO callback owns this row until durable settlement.
           continue;
         }
-        // Yield freezes the parent's wake before its children finish. Keep
-        // terminal delivery priority while unfinished children reach recovery.
-        if (
-          entry.requesterSettleWake &&
-          entry.execution.status !== "running" &&
-          hasSubagentRunEnded(entry) &&
-          !entry.execution.restartRecovery
-        ) {
-          params.resumeRequesterSettleWake(runId, entry);
-          continue;
-        }
-        if (isSuspendedPendingFinalDelivery(entry)) {
-          const expired =
-            now - (entry.delivery?.suspendedAt ?? now) >= resolveSuspendedDeliveryExpiryMs();
-          if (expired) {
-            await discardSuspendedPendingFinalDelivery({
-              runId,
-              entry,
-              now,
-              reason: "expired",
-              resumedRuns,
-              clearPendingLifecycleError: params.clearPendingLifecycleError,
-              clearPendingLifecycleTimeout: params.clearPendingLifecycleTimeout,
-              discardTerminalDelivery: params.discardTerminalDelivery,
-              completeCleanupBookkeeping: params.completeCleanupBookkeeping,
-              shouldEmitEndedHookForRun: params.shouldEmitEndedHookForRun,
-              emitSubagentEndedHookForRun: params.emitSubagentEndedHookForRun,
-              warn: params.warn,
-            });
-            mutatedRunIds.add(runId);
-          }
-          continue;
-        }
         if (entry.killIntent) {
           if (
             await reconcileDurableSubagentKillIntent({
@@ -366,6 +333,46 @@ export function createSubagentRegistrySweeper(params: {
             warn: params.warn,
           });
           if (reconciled) {
+            mutatedRunIds.add(runId);
+            if (
+              runs.get(runId) === entry &&
+              !entry.killReconciliation &&
+              entry.requesterSettleWake
+            ) {
+              params.resumeRequesterSettleWake(runId, entry);
+            }
+          }
+          continue;
+        }
+        // Yield freezes the parent's wake before its children finish. Keep
+        // terminal delivery priority while unfinished children reach recovery.
+        if (
+          entry.requesterSettleWake &&
+          entry.execution.status !== "running" &&
+          hasSubagentRunEnded(entry) &&
+          !entry.execution.restartRecovery
+        ) {
+          params.resumeRequesterSettleWake(runId, entry);
+          continue;
+        }
+        if (isSuspendedPendingFinalDelivery(entry)) {
+          const expired =
+            now - (entry.delivery?.suspendedAt ?? now) >= resolveSuspendedDeliveryExpiryMs();
+          if (expired) {
+            await discardSuspendedPendingFinalDelivery({
+              runId,
+              entry,
+              now,
+              reason: "expired",
+              resumedRuns,
+              clearPendingLifecycleError: params.clearPendingLifecycleError,
+              clearPendingLifecycleTimeout: params.clearPendingLifecycleTimeout,
+              discardTerminalDelivery: params.discardTerminalDelivery,
+              completeCleanupBookkeeping: params.completeCleanupBookkeeping,
+              shouldEmitEndedHookForRun: params.shouldEmitEndedHookForRun,
+              emitSubagentEndedHookForRun: params.emitSubagentEndedHookForRun,
+              warn: params.warn,
+            });
             mutatedRunIds.add(runId);
           }
           continue;

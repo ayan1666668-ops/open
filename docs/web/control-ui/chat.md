@@ -66,6 +66,10 @@ loads current choices again. Reopening a picker after a reported cooldown expire
 checks readiness again. A catalog refresh keeps existing controls visible,
 and the Gateway still validates the model and account when starting a run.
 
+Catalog refreshes update the open conversation's model and context facts without
+reloading unrelated session lists. Session and configuration changes still refresh
+the affected lists through the shared session store.
+
 If a New Session model lookup does not finish within 30 seconds, the controls
 show **Models unavailable**. Open the model picker to retry; your draft stays
 in place.

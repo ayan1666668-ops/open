@@ -439,6 +439,9 @@ not exhaust the obligation. Existing delivery retry limits still apply.
 Settling a yielded turn's wake leaves its unfinished task and final delivery
 intact. A completed cancellation can also finish wake bookkeeping after its
 task record expires, without recreating the task or repeating cleanup.
+Pending cancellation reconciliation runs before requester wakes. For an old
+completed cancellation, recovery preserves the original cleanup record while
+retiring its marker; a delayed cancellation callback cannot reopen that work.
 
 Two safety valves apply:
 
