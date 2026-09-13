@@ -267,7 +267,7 @@ describe("restartGatewayProcessWithFreshPid", () => {
 
   it("returns the task-supervisor restart code without launching a detached handoff", () => {
     clearSupervisorHints();
-    setPlatform("win32");
+    mockProcessPlatform("win32");
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
     process.argv = [...originalArgv, formatWindowsTaskSupervisorChildArgument(305419896)];
@@ -282,7 +282,7 @@ describe("restartGatewayProcessWithFreshPid", () => {
 
   it("rejects a task-supervisor child without its private restart marker", () => {
     clearSupervisorHints();
-    setPlatform("win32");
+    mockProcessPlatform("win32");
     process.env.OPENCLAW_SERVICE_MARKER = "openclaw";
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
     process.argv = [...originalArgv, WINDOWS_TASK_SUPERVISOR_CHILD_FLAG];
