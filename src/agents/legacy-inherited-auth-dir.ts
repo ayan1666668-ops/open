@@ -5,6 +5,7 @@ import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { resolveAgentDir } from "./agent-scope-config.js";
+import { resolveSharedAuthStoreOwnership } from "./auth-profiles/path-resolve.js";
 
 export function resolveLegacyInheritedAuthAgentId(config: OpenClawConfig): string {
   return (
@@ -14,11 +15,21 @@ export function resolveLegacyInheritedAuthAgentId(config: OpenClawConfig): strin
   );
 }
 
-export function resolveLegacyInheritedAuthDir(
+export function resolveLegacyInheritedAuthAgentDir(
   config: OpenClawConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return resolveAgentDir(config, resolveLegacyInheritedAuthAgentId(config), env);
+}
+
+export function resolveLegacyInheritedAuthDir(
+  config: OpenClawConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  preparedLegacyAgentDir?: string,
+): string | undefined {
+  return resolveSharedAuthStoreOwnership(env).location === "legacy-main"
+    ? (preparedLegacyAgentDir ?? resolveLegacyInheritedAuthAgentDir(config, env))
+    : undefined;
 }
 
 export function pinLegacyInheritedAuthOwnerForRosterTransition(

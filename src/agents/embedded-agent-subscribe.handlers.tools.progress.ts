@@ -15,9 +15,11 @@ import {
   buildCommandItemTitle,
   buildToolItemId,
   buildToolItemTitle,
+  buildToolStartKey,
   emitAgentEventCallbackBestEffort,
   emitTrackedItemEvent,
   isExecToolName,
+  toolStartData,
 } from "./embedded-agent-subscribe.handlers.tools.start.js";
 import type { ToolHandlerContext } from "./embedded-agent-subscribe.handlers.types.js";
 import {
@@ -47,16 +49,23 @@ function readChannelToolProgress(result: unknown): ChannelToolProgress | undefin
   return { text: truncateLiveExecOutput(text) };
 }
 
-function shouldEmitLiveExecUpdate(ctx: ToolHandlerContext, toolCallId: string): boolean {
+function prepareLiveExecUpdate(
+  ctx: ToolHandlerContext,
+  toolCallId: string,
+  partialResult: unknown,
+): { result: unknown } | undefined {
   const now = Date.now();
   const state = ctx.state.execLiveUpdateStateById ?? new Map<string, { lastEmittedAtMs: number }>();
   ctx.state.execLiveUpdateStateById = state;
   const previous = state.get(toolCallId);
   if (previous && now - previous.lastEmittedAtMs < LIVE_EXEC_UPDATE_MIN_INTERVAL_MS) {
-    return false;
+    return undefined;
   }
-  state.set(toolCallId, { lastEmittedAtMs: now });
-  return true;
+  // Skip payload work inside the throttle; stamp after preparation so slow
+  // redaction cannot make the next detailed frame arrive back-to-back.
+  const result = capLiveExecResult(sanitizeToolResult(partialResult));
+  state.set(toolCallId, { lastEmittedAtMs: Date.now() });
+  return { result };
 }
 
 /** Handles partial tool output and emits throttled live UI updates. */
@@ -71,15 +80,17 @@ export function handleToolExecutionUpdate(
 ) {
   const toolName = normalizeToolPolicyName(evt.toolName);
   const toolCallId = evt.toolCallId;
+  const parentToolCallId = toolStartData.get(
+    buildToolStartKey(ctx.params.runId, toolCallId),
+  )?.parentToolCallId;
   const hideFromChannelProgress = evt.hideFromChannelProgress === true;
   const partial = evt.partialResult;
-  const sanitized = sanitizeToolResult(partial);
   const isExecTool = isExecToolName(toolName);
-  const liveResult = isExecTool ? capLiveExecResult(sanitized) : sanitized;
+  const execUpdate = isExecTool ? prepareLiveExecUpdate(ctx, toolCallId, partial) : undefined;
+  const liveResult = isExecTool ? execUpdate?.result : sanitizeToolResult(partial);
   const toolProgress = isExecTool ? undefined : readChannelToolProgress(liveResult);
   // Typed progress already has a sanitized path; suppress duplicate raw previews.
-  const emitDetailedLiveUpdate =
-    !toolProgress && (!isExecTool || shouldEmitLiveExecUpdate(ctx, toolCallId));
+  const emitDetailedLiveUpdate = !toolProgress && (!isExecTool || execUpdate !== undefined);
   if (emitDetailedLiveUpdate) {
     emitAgentEvent({
       runId: ctx.params.runId,
@@ -88,6 +99,7 @@ export function handleToolExecutionUpdate(
         phase: "update",
         name: toolName,
         toolCallId,
+        ...(parentToolCallId ? { parentToolCallId } : {}),
         partialResult: liveResult,
         ...(hideFromChannelProgress ? { hideFromChannelProgress: true } : {}),
       },
@@ -118,6 +130,7 @@ export function handleToolExecutionUpdate(
         phase: "update",
         name: toolName,
         toolCallId,
+        ...(parentToolCallId ? { parentToolCallId } : {}),
         ...(hideFromChannelProgress ? { hideFromChannelProgress: true } : {}),
       },
     });

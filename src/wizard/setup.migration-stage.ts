@@ -22,13 +22,14 @@ import {
   disposeOpenClawAgentDatabaseByPath,
   openOpenClawAgentDatabase,
 } from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseByPath } from "../state/openclaw-state-db.js";
+import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { hashSetupMigrationConfig } from "./setup.migration-canonical.js";
 import {
   assertDisjointPromotionTargets,
   assertSupportedStagedStateTree,
   createPromotionResume,
+  migrationPathEntryExists,
   moveRecordedEmptyTarget,
   PROMOTION_JOURNAL_FILE,
   PROMOTION_JOURNAL_VERSION,
@@ -81,21 +82,9 @@ type SetupMigrationStage = {
   cleanup: () => Promise<void>;
 };
 
-async function pathExists(candidate: string): Promise<boolean> {
-  try {
-    await fs.lstat(candidate);
-    return true;
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      return false;
-    }
-    throw error;
-  }
-}
-
 async function findExistingAncestor(candidate: string): Promise<string> {
   let current = path.resolve(candidate);
-  while (!(await pathExists(current))) {
+  while (!(await migrationPathEntryExists(current))) {
     const parent = path.dirname(current);
     if (parent === current) {
       throw new Error(`Could not find an existing parent for migration staging at ${candidate}.`);
@@ -326,14 +315,14 @@ export async function createSetupMigrationStage(params: {
   let finalAgentDatabaseRegistered = false;
   let retainForRecovery = false;
 
-  const disposeDatabases = () => {
+  const disposeDatabases = async () => {
     if (databasesDisposed) {
       return;
     }
     clearRuntimeAuthProfileStoreSnapshot(stagedAgentDir);
     const stagedAgentDatabasePath = path.join(stagedAgentDir, "openclaw-agent.sqlite");
     disposeOpenClawAgentDatabaseByPath(stagedAgentDatabasePath, { env: stageEnv });
-    closeOpenClawStateDatabaseByPath(resolveOpenClawStateSqlitePath(stageEnv));
+    await closeOpenClawStateDatabaseByPathAsync(resolveOpenClawStateSqlitePath(stageEnv));
     databasesDisposed = true;
   };
 
@@ -352,7 +341,7 @@ export async function createSetupMigrationStage(params: {
     projectPlanToStage: (plan) => projectPlanTargets(plan, toStage),
     projectResultToFinal: (result) => projectValue(result, toFinal) as MigrationApplyResult,
     async promote({ expectedConfig, continuation, readConfigFile, commitConfigFile }) {
-      disposeDatabases();
+      await disposeDatabases();
       // Bootstrap owns this state-local lock tree; it is not provider output and must not be promoted.
       const gatewayLockDir = resolveGatewayLockDir(stagedStateDir);
       await fs.rm(gatewayLockDir, { recursive: true, force: true });
@@ -388,7 +377,8 @@ export async function createSetupMigrationStage(params: {
       ];
       const existingComponents: PromotionComponent[] = [];
       for (const component of components) {
-        if (component.name === "workspace" || (await pathExists(component.stagedPath))) {
+        const { name, stagedPath } = component;
+        if (name === "workspace" || (await migrationPathEntryExists(stagedPath))) {
           existingComponents.push(component);
         }
       }
@@ -502,7 +492,7 @@ export async function createSetupMigrationStage(params: {
       if (retainForRecovery) {
         return;
       }
-      disposeDatabases();
+      await disposeDatabases();
       await Promise.all([
         fs.rm(stagedStateDir, { recursive: true, force: true }),
         fs.rm(stagedWorkspaceDir, { recursive: true, force: true }),

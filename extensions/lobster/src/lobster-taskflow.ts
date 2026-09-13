@@ -12,12 +12,17 @@ export type JsonLike =
       [key: string]: JsonLike;
     };
 
-export type BoundTaskFlow = ReturnType<
-  NonNullable<OpenClawPluginApi["runtime"]>["tasks"]["managedFlows"]["bindSession"]
->;
+type RuntimeTasks = NonNullable<OpenClawPluginApi["runtime"]>["tasks"];
+export type BoundTaskFlow = Pick<
+  ReturnType<RuntimeTasks["async"]["managedFlows"]["bindSession"]>,
+  "tryCreateManaged" | "resume" | "setWaiting" | "finish" | "fail"
+> &
+  Pick<ReturnType<RuntimeTasks["managedFlows"]["bindSession"]>, "cancel">;
 
-type FlowRecord = NonNullable<ReturnType<BoundTaskFlow["tryCreateManaged"]>>;
-type MutationResult = ReturnType<BoundTaskFlow["setWaiting"]>;
+type FlowRecord = NonNullable<Awaited<ReturnType<BoundTaskFlow["tryCreateManaged"]>>>;
+type MutationResult =
+  | Awaited<ReturnType<BoundTaskFlow["setWaiting"]>>
+  | Awaited<ReturnType<BoundTaskFlow["cancel"]>>;
 
 type LobsterApprovalWaitState = {
   kind: "lobster_approval";
@@ -29,6 +34,7 @@ type LobsterApprovalWaitState = {
 
 type RunManagedLobsterFlowParams = {
   taskFlow: BoundTaskFlow;
+  config: OpenClawPluginApi["config"];
   runner: LobsterRunner;
   runnerParams: LobsterRunnerParams;
   controllerId: string;
@@ -40,6 +46,7 @@ type RunManagedLobsterFlowParams = {
 
 type ResumeManagedLobsterFlowParams = {
   taskFlow: BoundTaskFlow;
+  config: OpenClawPluginApi["config"];
   runner: LobsterRunner;
   runnerParams: LobsterRunnerParams & {
     action: "resume";
@@ -69,41 +76,39 @@ function toJsonLike(value: unknown, seen = new WeakSet<object>()): JsonLike {
   if (value === null) {
     return null;
   }
-  switch (typeof value) {
-    case "boolean":
-    case "string":
-      return value;
-    case "number":
-      return Number.isFinite(value) ? value : String(value);
-    case "bigint":
-      return value.toString();
-    case "undefined":
-    case "function":
-    case "symbol":
-      return null;
-    case "object": {
-      if (value instanceof Date) {
-        return value.toISOString();
-      }
-      if (Array.isArray(value)) {
-        return value.map((item) => toJsonLike(item, seen));
-      }
-      if (seen.has(value)) {
-        return "[Circular]";
-      }
-      seen.add(value);
-      const jsonObject: Record<string, JsonLike> = {};
-      for (const [key, entry] of Object.entries(value)) {
-        if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") {
-          continue;
-        }
-        jsonObject[key] = toJsonLike(entry, seen);
-      }
-      seen.delete(value);
-      return jsonObject;
-    }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : String(value);
   }
-  return null;
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value !== "object") {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const jsonArray = value.map((item) => toJsonLike(item, seen));
+    seen.delete(value);
+    return jsonArray;
+  }
+  const jsonObject: Record<string, JsonLike> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") {
+      continue;
+    }
+    jsonObject[key] = toJsonLike(entry, seen);
+  }
+  seen.delete(value);
+  return jsonObject;
 }
 
 function buildApprovalWaitState(envelope: Extract<LobsterEnvelope, { ok: true }>): JsonLike {
@@ -117,52 +122,50 @@ function buildApprovalWaitState(envelope: Extract<LobsterEnvelope, { ok: true }>
   } satisfies LobsterApprovalWaitState;
 }
 
-function applyEnvelopeToFlow(params: {
-  taskFlow: BoundTaskFlow;
-  flow: FlowRecord;
-  envelope: LobsterEnvelope;
-  waitingStep: string;
-}): MutationResult {
-  const { taskFlow, flow, envelope, waitingStep } = params;
-  const flowMutation = { flowId: flow.flowId, expectedRevision: flow.revision };
-
-  if (!envelope.ok) {
-    return taskFlow.fail(flowMutation);
-  }
-
-  if (envelope.status === "needs_approval") {
-    return taskFlow.setWaiting({
-      ...flowMutation,
-      currentStep: waitingStep,
-      waitJson: buildApprovalWaitState(envelope),
-    });
-  }
-
-  return taskFlow.finish(flowMutation);
-}
-
 async function executeManagedLobsterFlow(
-  params: Pick<RunManagedLobsterFlowParams, "taskFlow" | "runner" | "runnerParams" | "waitingStep">,
+  params: Pick<
+    RunManagedLobsterFlowParams,
+    "taskFlow" | "config" | "runner" | "runnerParams" | "waitingStep"
+  >,
   flow: FlowRecord,
-  failureFlowId = flow.flowId,
 ): Promise<ManagedLobsterFlowResult> {
   try {
     const envelope = await params.runner.run(params.runnerParams);
-    const mutation = applyEnvelopeToFlow({
-      taskFlow: params.taskFlow,
-      flow,
-      envelope,
-      waitingStep: params.waitingStep ?? "await_lobster_approval",
-    });
+    if (envelope.ok && envelope.status === "cancelled") {
+      try {
+        const mutation = await params.taskFlow.cancel({ flowId: flow.flowId, cfg: params.config });
+        return mutation.cancelled
+          ? { ok: true, envelope, flow, mutation }
+          : {
+              ok: false,
+              flow,
+              mutation,
+              error: new Error(`TaskFlow cancellation failed: ${mutation.reason ?? "unknown"}`),
+            };
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        return { ok: false, flow, error: err };
+      }
+    }
+    const flowMutation = { flowId: flow.flowId, expectedRevision: flow.revision };
     if (!envelope.ok) {
+      const mutation = await params.taskFlow.fail(flowMutation);
       return { ok: false, flow, mutation, error: new Error(envelope.error.message) };
     }
+    const mutation =
+      envelope.status === "needs_approval"
+        ? await params.taskFlow.setWaiting({
+            ...flowMutation,
+            currentStep: params.waitingStep ?? "await_lobster_approval",
+            waitJson: buildApprovalWaitState(envelope),
+          })
+        : await params.taskFlow.finish(flowMutation);
     return { ok: true, envelope, flow, mutation };
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     try {
-      const mutation = params.taskFlow.fail({
-        flowId: failureFlowId,
+      const mutation = await params.taskFlow.fail({
+        flowId: flow.flowId,
         expectedRevision: flow.revision,
       });
       return { ok: false, flow, mutation, error: err };
@@ -181,9 +184,7 @@ export async function runManagedLobsterFlow(
     currentStep: params.currentStep ?? "run_lobster",
     ...(params.stateJson !== undefined ? { stateJson: params.stateJson } : {}),
   };
-  const flow = params.taskFlow.tryCreateManaged
-    ? params.taskFlow.tryCreateManaged(createFlowParams)
-    : params.taskFlow.createManaged(createFlowParams);
+  const flow = await params.taskFlow.tryCreateManaged(createFlowParams);
   if (!flow) {
     return { ok: false, error: new Error("TaskFlow persistence failed.") };
   }
@@ -193,7 +194,7 @@ export async function runManagedLobsterFlow(
 export async function resumeManagedLobsterFlow(
   params: ResumeManagedLobsterFlowParams,
 ): Promise<ManagedLobsterFlowResult> {
-  const resumed = params.taskFlow.resume({
+  const resumed = await params.taskFlow.resume({
     flowId: params.flowId,
     expectedRevision: params.expectedRevision,
     status: "running",
@@ -207,5 +208,5 @@ export async function resumeManagedLobsterFlow(
       error: new Error(`TaskFlow resume failed: ${resumed.code}`),
     };
   }
-  return await executeManagedLobsterFlow(params, resumed.flow, params.flowId);
+  return await executeManagedLobsterFlow(params, resumed.flow);
 }

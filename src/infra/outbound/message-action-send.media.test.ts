@@ -5,13 +5,12 @@ import path from "node:path";
 // attachments, and channel/plugin media source aliases.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { MEDIA_MAX_BYTES } from "../../media/store.js";
-import { createChannelTestPluginBase } from "../../test-utils/channel-plugins.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import {
   messageActionRunnerMocks as channelResolutionMocks,
+  createWorkspaceMediaTestPlugin,
   resetMessageActionMediaMocks,
   runMessageAction,
   setMessageActionTestPlugin as setTestPlugin,
@@ -58,6 +57,7 @@ const runDrySend = (params: {
   cfg: OpenClawConfig;
   actionParams: Record<string, unknown>;
   sandboxRoot?: string;
+  sandboxContainerWorkdir?: string;
 }) =>
   runMessageAction({
     cfg: params.cfg,
@@ -65,40 +65,12 @@ const runDrySend = (params: {
     params: params.actionParams as never,
     dryRun: true,
     sandboxRoot: params.sandboxRoot,
+    sandboxContainerWorkdir: params.sandboxContainerWorkdir,
   });
 
 const requireRecord = createRequireRecord("record", "expected-non-array-record");
 
-const workspacePlugin: ChannelPlugin = {
-  ...createChannelTestPluginBase({
-    id: "workspace",
-    label: "Workspace",
-    config: {
-      listAccountIds: () => ["default"],
-      resolveAccount: (cfg) => cfg.channels?.workspace ?? {},
-      isConfigured: async (account) =>
-        typeof (account as { botToken?: unknown }).botToken === "string" &&
-        (account as { botToken?: string }).botToken!.trim() !== "" &&
-        typeof (account as { appToken?: unknown }).appToken === "string" &&
-        (account as { appToken?: string }).appToken!.trim() !== "",
-    },
-  }),
-  outbound: {
-    deliveryMode: "direct",
-    resolveTarget: ({ to }) => {
-      const trimmed = to?.trim() ?? "";
-      if (!trimmed) {
-        return {
-          ok: false,
-          error: new Error("missing target for workspace"),
-        };
-      }
-      return { ok: true, to: trimmed };
-    },
-    sendText: async () => ({ channel: "workspace", messageId: "msg-test" }),
-    sendMedia: async () => ({ channel: "workspace", messageId: "msg-test" }),
-  },
-};
+const workspacePlugin = createWorkspaceMediaTestPlugin();
 
 describe("runMessageAction media behavior", () => {
   beforeEach(async () => {
@@ -140,7 +112,7 @@ describe("runMessageAction media behavior", () => {
     expect(requireRecord(sendArgs.ctx).idempotencyKey).toBe(
       "run-1:message-tool:send-1:fingerprint",
     );
-    expect(requireRecord(sendArgs.ctx).plugin).toBe(workspacePlugin);
+    expect(requireRecord(sendArgs.ctx).channelPlugin).toBe(workspacePlugin);
     expect(channelResolutionMocks.resolveOutboundChannelPlugin).toHaveBeenCalledTimes(1);
   });
 
@@ -250,7 +222,10 @@ describe("runMessageAction media behavior", () => {
     });
   });
 
-  it("sends structured attachments as media urls", async () => {
+  it.each([
+    { name: "Docker", containerWorkdir: "/workspace" },
+    { name: "OpenShell", containerWorkdir: "/sandbox" },
+  ])("sends structured $name sandbox attachments as media urls", async ({ containerWorkdir }) => {
     setTestPlugin(workspacePlugin, "workspace");
 
     await withSandbox(async (sandboxDir) => {
@@ -260,9 +235,13 @@ describe("runMessageAction media behavior", () => {
           channel: "workspace",
           target: "12345678",
           message: "track ready",
-          attachments: [{ path: "./song.mp3" }, { filePath: "/workspace/cover.png" }],
+          attachments: [
+            { path: "./song.mp3" },
+            { filePath: `file://${containerWorkdir}/cover.png` },
+          ],
         },
         sandboxRoot: sandboxDir,
+        sandboxContainerWorkdir: containerWorkdir,
       });
 
       expect(result.kind).toBe("send");

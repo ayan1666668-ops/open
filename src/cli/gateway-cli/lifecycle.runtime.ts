@@ -2,13 +2,10 @@
 // run-loop.ts primes this hub before the HTTP listener binds, so each re-export
 // must target the module that defines the symbol rather than a re-export facade;
 // a facade also evaluates its siblings and drags their graphs onto cold start.
-export {
-  abortEmbeddedAgentRun,
-  listActiveEmbeddedRunSessionIds,
-  listActiveEmbeddedRunSessionKeys,
-} from "../../agents/embedded-agent-runner/runs.js";
-export { markRestartAbortedMainSessions } from "../../agents/main-session-recovery/main-session-restart-recovery-marking.js";
-export { getRuntimeConfig } from "../../config/config.js";
+export { abortEmbeddedAgentRun } from "../../agents/embedded-agent-runner/runs.js";
+export { listActiveEmbeddedRunSessionIds } from "../../agents/embedded-agent-runner/active-run-projections.js";
+export { getDiagnosticSessionActivitySnapshot } from "../../logging/diagnostic-run-activity.js";
+export { LAUNCH_AGENT_EXIT_TIMEOUT_SECONDS } from "../../daemon/launchd-plist.js";
 export {
   respawnGatewayProcessForUpdate,
   restartGatewayProcessWithFreshPid,
@@ -60,4 +57,15 @@ export {
 } from "../../cron/service/active-run-cancellation.js";
 export { markGatewayDraining, resetAllLanes } from "../../process/command-queue.js";
 export { reloadTaskRuntimeStateFromStore } from "../../tasks/runtime-internal.js";
-export { abortPendingChannelReloads } from "../../gateway/server-reload-contracts.js";
+export { abortPendingChannelReloads } from "../../gateway/server-reload-generation.js";
+
+export async function stopGatewayManagedProviderLocalServices(): Promise<void> {
+  const { hasManagedProviderLocalServices } =
+    await import("../../agents/provider-runtime-lifecycle.js");
+  if (!hasManagedProviderLocalServices()) {
+    return;
+  }
+  const { stopManagedProviderLocalServices } =
+    await import("../../agents/provider-local-service.js");
+  await stopManagedProviderLocalServices();
+}

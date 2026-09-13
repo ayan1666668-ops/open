@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { clampThinkingLevel } from "@openclaw/ai/internal/runtime";
 import { resolveThinkingDefaultForModel } from "../../auto-reply/thinking.js";
+import { getRuntimeConfig } from "../../config/io.js";
 import { createSessionEntryWithTranscript } from "../../config/sessions/session-accessor.js";
 import { bindStreamLlmRuntime } from "../../llm/model-runtime-binding.js";
 import type { Message, Model } from "../../llm/types.js";
@@ -40,16 +41,11 @@ import { getModelRegistryRuntime } from "./model-registry-runtime.js";
 import { ModelRegistry } from "./model-registry.js";
 import { findInitialModel } from "./model-resolver.js";
 import { DefaultResourceLoader, type ResourceLoader } from "./resource-loader.js";
+import { withSessionManagerWrite } from "./session-manager-write-admission.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { isInstallTelemetryEnabled } from "./telemetry.js";
-import {
-  createCodingTools,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-  type ToolName,
-} from "./tools/index.js";
+import type { ToolName } from "./tools/index.js";
 
 export interface CreateAgentSessionOptions {
   /** Working directory for project-local discovery. Default: process.cwd() */
@@ -66,8 +62,6 @@ export interface CreateAgentSessionOptions {
   model?: Model;
   /** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
   thinkingLevel?: ThinkingLevel;
-  /** Models available for cycling (Ctrl+P in interactive mode) */
-  scopedModels?: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 
   /**
    * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -127,8 +121,6 @@ export type {
   ExtensionFactory,
   ToolDefinition,
 } from "./extensions/index.js";
-
-export { createCodingTools, createReadTool, createEditTool, createWriteTool };
 
 // Helper Functions
 
@@ -288,7 +280,7 @@ async function createAgentSessionImpl(
 
   // Use provided or create AuthStorage and ModelRegistry
   const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
-  const authStorage = options.authStorage ?? AuthStorage.forAgent(agentDir);
+  const authStorage = options.authStorage ?? AuthStorage.forAgent(agentDir, getRuntimeConfig());
   const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
   const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
@@ -466,7 +458,6 @@ async function createAgentSessionImpl(
         ...optionsLocal,
         apiKey: auth.apiKey,
         timeoutMs: optionsLocal?.timeoutMs ?? providerRetrySettings.timeoutMs,
-        maxRetries: optionsLocal?.maxRetries ?? providerRetrySettings.maxRetries,
         maxRetryDelayMs: optionsLocal?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
         headers:
           attributionHeaders || auth.headers || optionsLocal?.headers
@@ -520,26 +511,27 @@ async function createAgentSessionImpl(
     bindStreamLlmRuntime(agent.streamFn, modelRegistryRuntime.llmRuntime);
   }
 
-  // Restore messages if session has existing data
-  if (hasExistingSession) {
-    agent.state.messages = sanitizeCompactionReplayMessages(existingSession.messages);
-    if (!hasThinkingEntry) {
+  await withSessionManagerWrite(sessionManager, () => {
+    // Restore messages if session has existing data.
+    if (hasExistingSession) {
+      agent.state.messages = sanitizeCompactionReplayMessages(existingSession.messages);
+      if (!hasThinkingEntry) {
+        sessionManager.appendThinkingLevelChange(thinkingLevel);
+      }
+    } else {
+      // Persist initial settings before exposing the new session to callers.
+      if (model) {
+        sessionManager.appendModelChange(model.provider, model.id);
+      }
       sessionManager.appendThinkingLevelChange(thinkingLevel);
     }
-  } else {
-    // Save initial model and thinking level for new sessions so they can be restored on resume
-    if (model) {
-      sessionManager.appendModelChange(model.provider, model.id);
-    }
-    sessionManager.appendThinkingLevelChange(thinkingLevel);
-  }
+  });
 
   const session = new AgentSession({
     agent,
     sessionManager,
     settingsManager,
     cwd,
-    scopedModels: options.scopedModels,
     resourceLoader,
     customTools: options.customTools,
     modelRegistry,

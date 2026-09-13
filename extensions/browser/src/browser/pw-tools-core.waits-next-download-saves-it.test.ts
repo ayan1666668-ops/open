@@ -5,6 +5,7 @@ import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPwToolsCoreSessionMocks,
+  getPwToolsCoreNavigationGuardMocks,
   installPwToolsCoreTestHooks,
   setPwToolsCoreCurrentPage,
   setPwToolsCoreCurrentRefLocator,
@@ -25,6 +26,7 @@ vi.mock("./chrome.js", () => chromeMocks);
 vi.mock("./client-fetch.js", () => clientFetchMocks);
 
 const sessionMocks = getPwToolsCoreSessionMocks();
+const navigationGuardMocks = getPwToolsCoreNavigationGuardMocks();
 
 let mod: Pick<
   typeof import("./pw-tools-core.downloads.js"),
@@ -159,11 +161,7 @@ describe("pw-tools-core", () => {
   }) {
     const savedPath = requireSaveAsPath(params.saveAs);
     expect(savedPath).not.toBe(params.targetPath);
-    const savedParentName = path.basename(path.dirname(savedPath));
-    expect(
-      savedParentName.includes("fs-safe-output") ||
-        savedParentName === path.basename(path.dirname(params.targetPath)),
-    ).toBe(true);
+    await expectPathMissing(path.dirname(savedPath));
     expect(path.basename(savedPath)).toContain(path.basename(params.targetPath));
     expect(path.basename(savedPath)).toMatch(/\.part$/);
     expect(await fs.readFile(params.targetPath, "utf8")).toBe(params.content);
@@ -282,7 +280,7 @@ describe("pw-tools-core", () => {
           saveAs,
         });
 
-        await expect(p).rejects.toThrow(/path alias|outside workspace|directory changed/i);
+        await expect(p).rejects.toThrow(/directory changed/u);
         expect(parentSwappedBeforeFinalize).toBe(true);
         expect(saveAs).toHaveBeenCalledOnce();
         await expectPathMissing(outsideTargetPath);
@@ -358,6 +356,7 @@ describe("pw-tools-core", () => {
   it("lets only the latest overlapping explicit waiter save the download", async () => {
     const harness = createDownloadEventHarness();
     const state = sessionMocks.ensurePageState();
+    const cancel = vi.fn(async () => {});
     const saveAs = vi.fn(async (outPath: string) => {
       await fs.writeFile(outPath, "latest-content", "utf8");
     });
@@ -380,10 +379,12 @@ describe("pw-tools-core", () => {
       url: () => "https://example.com/latest.bin",
       suggestedFilename: () => "latest.bin",
       saveAs,
+      cancel,
     });
 
     await expect(first).rejects.toThrow("superseded by another waiter");
     await expect(latest).resolves.toMatchObject({ suggestedFilename: "latest.bin" });
+    expect(cancel).not.toHaveBeenCalled();
     expect(saveAs).toHaveBeenCalledOnce();
     expect(state.downloadWaiterDepth).toBe(0);
     expect(harness.activeHandlerCount()).toBe(0);
@@ -412,17 +413,104 @@ describe("pw-tools-core", () => {
         ref: "e12",
         path: targetPath,
         timeoutMs: 1000,
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
       });
 
       await Promise.resolve();
       harness.expectArmed();
-      expect(click).toHaveBeenCalledWith({ timeout: 1000 });
+      expect(click).toHaveBeenCalledWith({ timeout: 1000, signal: expect.any(AbortSignal) });
+      expect(sessionMocks.withPageNavigationRequestGuard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+        }),
+      );
 
       harness.trigger(download);
 
       const res = await p;
+      expect(navigationGuardMocks.assertBrowserNavigationResultAllowed).toHaveBeenCalledWith({
+        url: "https://example.com/report.pdf",
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+        browserProxyMode: undefined,
+        signal: undefined,
+      });
       await expectAtomicDownloadSave({ saveAs, targetPath, content: "report-content" });
       await expect(fs.realpath(res.path)).resolves.toBe(await fs.realpath(targetPath));
+    });
+  });
+
+  it("rejects a policy-denied waited download before saving it", async () => {
+    await withTempDir(async (tempDir) => {
+      const harness = createDownloadEventHarness();
+      const targetPath = path.join(tempDir, "metadata.bin");
+      const saveAs = vi.fn(async () => {});
+      const cancel = vi.fn(async () => {});
+      navigationGuardMocks.assertBrowserNavigationResultAllowed.mockRejectedValueOnce(
+        new Error("browser navigation blocked by policy"),
+      );
+
+      const pending = mod.waitForDownloadViaPlaywright({
+        cdpUrl: "http://127.0.0.1:18792",
+        targetId: "T1",
+        path: targetPath,
+        timeoutMs: 1000,
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+      });
+
+      await Promise.resolve();
+      harness.expectArmed();
+      harness.trigger({
+        url: () => "http://169.254.169.254/latest/meta-data/",
+        suggestedFilename: () => "metadata.bin",
+        saveAs,
+        cancel,
+      });
+
+      await expect(pending).rejects.toThrow("browser navigation blocked by policy");
+      expect(saveAs).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(navigationGuardMocks.assertBrowserNavigationResultAllowed).toHaveBeenCalledWith({
+        url: "http://169.254.169.254/latest/meta-data/",
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+        browserProxyMode: undefined,
+        signal: expect.any(AbortSignal),
+      });
+    });
+  });
+
+  it("propagates a policy-denied clicked download before saving it", async () => {
+    await withTempDir(async (tempDir) => {
+      const harness = createDownloadEventHarness();
+      const click = vi.fn(async () => {});
+      const saveAs = vi.fn(async () => {});
+      const cancel = vi.fn(async () => {});
+      setPwToolsCoreCurrentRefLocator({ click });
+      navigationGuardMocks.assertBrowserNavigationResultAllowed.mockRejectedValueOnce(
+        new Error("browser navigation blocked by policy"),
+      );
+
+      const pending = mod.downloadViaPlaywright({
+        cdpUrl: "http://127.0.0.1:18792",
+        targetId: "T1",
+        ref: "e12",
+        path: path.join(tempDir, "metadata.bin"),
+        timeoutMs: 1000,
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+      });
+
+      await Promise.resolve();
+      harness.expectArmed();
+      harness.trigger({
+        url: () => "http://169.254.169.254/latest/meta-data/",
+        suggestedFilename: () => "metadata.bin",
+        saveAs,
+        cancel,
+      });
+
+      await expect(pending).rejects.toThrow("browser navigation blocked by policy");
+      expect(click).toHaveBeenCalledOnce();
+      expect(saveAs).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
     });
   });
 
@@ -487,7 +575,10 @@ describe("pw-tools-core", () => {
       path.resolve(path.join(path.sep, "tmp", "openclaw-preferred", "downloads")),
     );
     const expectedDownloadsTail = `${path.join("tmp", "openclaw-preferred", "downloads")}${path.sep}`;
-    expect(path.dirname(outPath)).toBe(expectedRootedDownloadsDir);
+    const relativeStagedPath = path.relative(expectedRootedDownloadsDir, outPath);
+    expect(relativeStagedPath.startsWith(`..${path.sep}`)).toBe(false);
+    expect(path.isAbsolute(relativeStagedPath)).toBe(false);
+    await expectPathMissing(path.dirname(outPath));
     await expect(fs.realpath(path.dirname(res.path))).resolves.toBe(expectedRootedDownloadsDir);
     expect(path.basename(outPath)).toContain(path.basename(res.path));
     expect(path.basename(outPath)).toMatch(/\.part$/);
@@ -507,7 +598,10 @@ describe("pw-tools-core", () => {
     const expectedRootedDownloadsDir = await fs.realpath(
       path.resolve(path.join(path.sep, "tmp", "openclaw-preferred", "downloads")),
     );
-    expect(path.dirname(outPath)).toBe(expectedRootedDownloadsDir);
+    const relativeStagedPath = path.relative(expectedRootedDownloadsDir, outPath);
+    expect(relativeStagedPath.startsWith(`..${path.sep}`)).toBe(false);
+    expect(path.isAbsolute(relativeStagedPath)).toBe(false);
+    await expectPathMissing(path.dirname(outPath));
     await expect(fs.realpath(path.dirname(res.path))).resolves.toBe(expectedRootedDownloadsDir);
     expect(path.basename(outPath)).toContain(path.basename(res.path));
     expect(path.basename(outPath)).toMatch(/\.part$/);

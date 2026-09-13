@@ -1,3 +1,4 @@
+import { on } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import { WebSocket, type RawData } from "ws";
 import { createHostDesktopService } from "./host-source.js";
 import { handleDesktopObserveUpgrade } from "./observe-bridge.js";
 import { createDesktopSessionRegistry } from "./session-registry.js";
+import { SocketReader } from "./socket-reader.test-support.js";
 
 const VERSION = Buffer.from("RFB 003.008\n", "ascii");
 const cleanups: Array<() => Promise<void>> = [];
@@ -13,59 +15,20 @@ afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
-class SocketReader {
-  private buffered = Buffer.alloc(0);
-  private readonly waiters = new Set<() => void>();
-
-  constructor(socket: net.Socket) {
-    socket.on("data", (chunk) => {
-      this.buffered = Buffer.concat([
-        this.buffered,
-        Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
-      ]);
-      for (const waiter of this.waiters) {
-        waiter();
-      }
-      this.waiters.clear();
-    });
-  }
-
-  async readExactly(length: number): Promise<Buffer> {
-    while (this.buffered.length < length) {
-      await new Promise<void>((resolve) => {
-        this.waiters.add(resolve);
-      });
-    }
-    const value = this.buffered.subarray(0, length);
-    this.buffered = this.buffered.subarray(length);
-    return value;
-  }
-}
-
 class WebSocketReader {
-  private readonly chunks: Buffer[] = [];
-  private readonly waiters: Array<(chunk: Buffer) => void> = [];
+  private readonly messages: AsyncIterator<unknown[]>;
 
   constructor(ws: WebSocket) {
-    ws.on("message", (data: RawData) => {
-      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-      const waiter = this.waiters.shift();
-      if (waiter) {
-        waiter(chunk);
-      } else {
-        this.chunks.push(chunk);
-      }
-    });
+    this.messages = on(ws, "message", { close: ["close"] });
   }
 
   async next(): Promise<Buffer> {
-    const chunk = this.chunks.shift();
-    return (
-      chunk ??
-      (await new Promise<Buffer>((resolve) => {
-        this.waiters.push(resolve);
-      }))
-    );
+    const message = await this.messages.next();
+    if (message.done) {
+      throw new Error("WebSocket closed before the next RFB frame");
+    }
+    const [data] = message.value as [RawData];
+    return Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
   }
 }
 
@@ -136,7 +99,7 @@ describe("gateway host desktop observe integration", () => {
         }),
     );
 
-    const registry = createDesktopSessionRegistry({ lingerMs: 10 });
+    const registry = createDesktopSessionRegistry();
     const service = createHostDesktopService({
       config: { enabled: true, port: rfbAddress.port },
       registry,

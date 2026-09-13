@@ -330,7 +330,12 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
         (call) => call[0] === "ps" && Array.isArray(call[1]) && (call[1] as unknown[])[0] === "-ww",
       );
       expect(psCall?.[1]).toEqual(["-ww", "-p", String(stalePid), "-o", "command="]);
-      expect(psCall?.[2]).toEqual({ encoding: "utf8", killSignal: "SIGKILL", timeout: 2000 });
+      expect(psCall?.[2]).toEqual({
+        env: expect.any(Object),
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        timeout: 2000,
+      });
     });
 
     it("skips malformed lsof pid tokens with trailing garbage", () => {
@@ -575,6 +580,7 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
             call[0] === "ps" && Array.isArray(call[1]) && (call[1] as unknown[])[0] === "-o",
         );
         expect(ancestorPsCall?.[2]).toEqual({
+          env: expect.any(Object),
           encoding: "utf8",
           killSignal: "SIGKILL",
           timeout: 400,
@@ -605,7 +611,7 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
         expect(findGatewayPidsOnPortSync(18789)).toStrictEqual([]);
         expect(mockReadWindowsListeningPids).toHaveBeenCalledWith(18789, undefined);
         // lsof must NOT be invoked — Windows uses PowerShell/netstat
-        expect(mockSpawnSync).not.toHaveBeenCalled();
+        expect(mockSpawnSync.mock.calls.some((call) => call[0] === "lsof")).toBe(false);
       } finally {
         if (origDescriptor) {
           Object.defineProperty(process, "platform", origDescriptor);
@@ -846,6 +852,34 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
       expect(cleanStaleGatewayProcessesSync()).toStrictEqual([]);
       expect(killSpy).not.toHaveBeenCalled();
     });
+
+    it.each(["after inspection", "before escalation"] as const)(
+      "rechecks signal authority %s",
+      (boundary) => {
+        const stalePid = process.pid + 100;
+        installInitialBusyPoll(stalePid, () => createLsofResult({ status: 1 }));
+        let current = boundary !== "after inspection";
+        const killSpy = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+          if (signal === "SIGTERM") {
+            current = false;
+          }
+          return true;
+        });
+        cleanStaleGatewayProcessesSync(18789, {
+          assertCurrent: () => {
+            if (!current) {
+              throw new Error("update owner revoked");
+            }
+          },
+        });
+        expect(killSpy).not.toHaveBeenCalledWith(stalePid, "SIGKILL");
+        if (boundary === "after inspection") {
+          expect(killSpy).not.toHaveBeenCalled();
+        } else {
+          expect(killSpy).toHaveBeenCalledWith(stalePid, "SIGTERM");
+        }
+      },
+    );
 
     it("sends SIGTERM to stale pids and returns them", () => {
       const stalePid = process.pid + 100;
@@ -1379,19 +1413,15 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
           ok: true,
           args: ["openclaw", "gateway"],
         });
-        mockSpawnSync
-          .mockReturnValueOnce({
-            error: null,
-            status: 1,
-            stdout: "",
-            stderr: "access denied",
-          })
-          .mockReturnValueOnce({
-            error: null,
-            status: 1,
-            stdout: "",
-            stderr: "still denied",
-          });
+        mockSpawnSync.mockImplementation((command: string) => {
+          if (
+            command.endsWith("\\powershell.exe") ||
+            command === "C:\\Windows\\System32\\taskkill.exe"
+          ) {
+            return { error: null, status: 1, stdout: "", stderr: "access denied" };
+          }
+          throw new Error(`Unexpected Windows process command: ${command}`);
+        });
         vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
           if (signal === 0 && pid === stalePid) {
             throw Object.assign(new Error("EPERM"), { code: "EPERM" });
@@ -1404,14 +1434,22 @@ describe.skipIf(isWindows)("restart-stale-pids", () => {
         });
 
         expect(cleanStaleGatewayProcessesSync()).toStrictEqual([]);
-        expect(mockCall(mockSpawnSync, 0)[0]).toBe("C:\\Windows\\System32\\taskkill.exe");
-        expect(mockCall(mockSpawnSync, 0)[1]).toEqual(["/T", "/PID", String(stalePid)]);
-        expect(mockCallRecordArg(mockSpawnSync, 0, 2, "taskkill options").timeout).toBe(5000);
-        expect(mockCall(mockSpawnSync, 1)[0]).toBe("C:\\Windows\\System32\\taskkill.exe");
-        expect(mockCall(mockSpawnSync, 1)[1]).toEqual(["/F", "/T", "/PID", String(stalePid)]);
-        expect(mockCallRecordArg(mockSpawnSync, 1, 2, "forced taskkill options").timeout).toBe(
-          5000,
-        );
+        expect(
+          mockSpawnSync.mock.calls.filter(
+            (call) => call[0] === "C:\\Windows\\System32\\taskkill.exe",
+          ),
+        ).toEqual([
+          [
+            "C:\\Windows\\System32\\taskkill.exe",
+            ["/T", "/PID", String(stalePid)],
+            { stdio: "ignore", timeout: 5000, windowsHide: true },
+          ],
+          [
+            "C:\\Windows\\System32\\taskkill.exe",
+            ["/F", "/T", "/PID", String(stalePid)],
+            { stdio: "ignore", timeout: 5000, windowsHide: true },
+          ],
+        ]);
       } finally {
         if (origDescriptor) {
           Object.defineProperty(process, "platform", origDescriptor);

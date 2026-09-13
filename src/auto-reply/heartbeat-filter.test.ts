@@ -6,9 +6,10 @@ import {
   isHeartbeatUserMessage,
 } from "./heartbeat-filter.js";
 import {
+  HEARTBEAT_RESPONSE_TOOL_INSTRUCTIONS,
   HEARTBEAT_RESPONSE_TOOL_PROMPT,
   HEARTBEAT_PROMPT,
-  HEARTBEAT_TRANSCRIPT_PROMPT,
+  INTERNAL_WAKE_TRANSCRIPT_PROMPTS,
   resolveHeartbeatPromptForResponseTool,
 } from "./heartbeat.js";
 import { MESSAGE_TOOL_DELIVERY_HINTS } from "./reply/delivery-hints.js";
@@ -52,7 +53,7 @@ describe("isHeartbeatUserMessage", () => {
       isHeartbeatUserMessage(
         {
           role: "user",
-          content: `${HEARTBEAT_PROMPT}\nWhen reading HEARTBEAT.md, use workspace file /tmp/HEARTBEAT.md (exact case). Do not read docs/heartbeat.md.`,
+          content: `${HEARTBEAT_PROMPT}\nUse the provided monitor scratch when deciding what needs attention.`,
         },
         HEARTBEAT_PROMPT,
       ),
@@ -67,10 +68,22 @@ describe("isHeartbeatUserMessage", () => {
       ).toBe(true);
     }
 
+    for (const completion of [
+      "After completing all due tasks, use heartbeat_respond to report the outcome. Set notify=false when nothing needs the user's attention.",
+      `After completing all due tasks:\n${HEARTBEAT_RESPONSE_TOOL_INSTRUCTIONS}`,
+    ]) {
+      expect(
+        isHeartbeatUserMessage({
+          role: "user",
+          content: `Run the following periodic tasks (only those due based on their intervals):\n\n- deployment: Check deployment status\n\n${completion}\n\nHeartbeat monitor scratch:\nReview the deployment queue.`,
+        }),
+      ).toBe(true);
+    }
+
     expect(
       isHeartbeatUserMessage({
         role: "user",
-        content: HEARTBEAT_TRANSCRIPT_PROMPT,
+        content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat,
       }),
     ).toBe(true);
 
@@ -191,13 +204,18 @@ describe("isHeartbeatOkResponse", () => {
 });
 
 describe("filterHeartbeatTranscriptArtifacts", () => {
-  it("removes no-op heartbeat pairs", () => {
+  it.each([
+    "[OpenClaw heartbeat poll]",
+    "[OpenClaw exec completion]",
+    "[OpenClaw cron wake]",
+    "[OpenClaw session event]",
+  ])("removes no-op wake pairs for %s", (marker) => {
     const messages = [
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hi there!" },
       { role: "user", content: HEARTBEAT_PROMPT },
       { role: "assistant", content: "NO_REPLY" },
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: marker },
       { role: "assistant", content: "HEARTBEAT_OK" },
       { role: "user", content: "What time is it?" },
       { role: "assistant", content: "It is 3pm." },
@@ -216,7 +234,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
     (_label, reasoningBlock) => {
       const nextUserMessage = { role: "user", content: "What time is it?" };
       const messages = [
-        { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+        { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
         {
           role: "assistant",
           content: [reasoningBlock, { type: "text", text: "HEARTBEAT_OK" }],
@@ -238,7 +256,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
           content: [
             {
               type: "input_text",
-              text: `${deliveryHint} ${HEARTBEAT_TRANSCRIPT_PROMPT}`,
+              text: `${deliveryHint} ${INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat}`,
             },
           ],
         },
@@ -263,7 +281,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes prompt-only interrupted heartbeat spans", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "user", content: "what model are you" },
     ];
 
@@ -274,7 +292,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes interrupted helper-only heartbeat spans", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -282,14 +300,14 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
             type: "toolCall",
             id: "call_bash",
             name: "bash",
-            arguments: { command: "cat HEARTBEAT.md" },
+            arguments: { command: "inspect monitor scratch" },
           },
         ],
       },
       {
         role: "toolResult",
         toolCallId: "call_bash",
-        content: [{ type: "text", text: "checked HEARTBEAT.md" }],
+        content: [{ type: "text", text: "checked monitor scratch" }],
       },
       { role: "user", content: "what model are you" },
     ];
@@ -301,7 +319,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes heartbeat response-tool spans and preserves the next real user message", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [{ type: "toolCall", id: "call_bash", name: "bash", arguments: {} }],
@@ -309,7 +327,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
       {
         role: "toolResult",
         toolCallId: "call_bash",
-        content: [{ type: "text", text: "checked HEARTBEAT.md" }],
+        content: [{ type: "text", text: "checked monitor scratch" }],
       },
       createHeartbeatNoChangeMessage(),
       {
@@ -325,9 +343,19 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
     ]);
   });
 
-  it("removes full default response-tool prompt spans", () => {
+  it.each([
+    ["default", HEARTBEAT_RESPONSE_TOOL_PROMPT],
+    [
+      "scheduled task",
+      `Run the following periodic tasks (only those due based on their intervals):\n\n- deployment: Check deployment status\n\nAfter completing all due tasks:\n${HEARTBEAT_RESPONSE_TOOL_INSTRUCTIONS}\n\nHeartbeat monitor scratch:\nReview the deployment queue.`,
+    ],
+    [
+      "previous scheduled task",
+      "Run the following periodic tasks (only those due based on their intervals):\n\n- deployment: Check deployment status\n\nAfter completing all due tasks, use heartbeat_respond to report the outcome. Set notify=false when nothing needs the user's attention.",
+    ],
+  ])("removes %s response-tool prompt spans", (_label, prompt) => {
     const messages = [
-      { role: "user", content: HEARTBEAT_RESPONSE_TOOL_PROMPT },
+      { role: "user", content: prompt },
       createHeartbeatNoChangeMessage(),
       {
         role: "toolResult",
@@ -344,7 +372,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes native OpenAI Responses heartbeat function-call spans", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -352,7 +380,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
             type: "function_call",
             call_id: "call_bash",
             name: "bash",
-            arguments: '{"command":"cat HEARTBEAT.md"}',
+            arguments: '{"command":"inspect monitor scratch"}',
           },
         ],
       },
@@ -362,7 +390,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
           {
             type: "function_call_output",
             call_id: "call_bash",
-            output: "checked HEARTBEAT.md",
+            output: "checked monitor scratch",
           },
         ],
       },
@@ -397,7 +425,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes assistant continuations after heartbeat response-tool results", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       createHeartbeatNoChangeMessage(),
       {
         role: "toolResult",
@@ -415,7 +443,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes pre-terminal assistant text once a heartbeat ack arrives", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "Checking heartbeat status..." },
       { role: "assistant", content: "HEARTBEAT_OK" },
       { role: "user", content: "what model are you" },
@@ -428,7 +456,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves structured notify=true heartbeat response-tool alerts", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -455,7 +483,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves notify=true heartbeat response-tool alerts followed by a final ack", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -483,7 +511,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves top-level notify=true heartbeat response-tool calls followed by a final ack", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: null,
@@ -513,7 +541,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves OpenAI Responses notify=true heartbeat calls keyed by call_id", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -546,7 +574,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves Anthropic-style notify=true heartbeat calls keyed by tool_use_id", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -578,7 +606,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves Anthropic-style notify=true heartbeat calls completed by mixed user turns", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -611,7 +639,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes pending notify=true heartbeat response-tool calls without tool results", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -633,7 +661,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes failed notify=true heartbeat response-tool calls", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -661,7 +689,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes Anthropic-style failed notify=true heartbeat calls keyed by tool_use_id", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -694,7 +722,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes Anthropic-style error result heartbeat calls keyed by tool_use_id", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -726,7 +754,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("does not treat unrelated helper tool results as completed notify=true responses", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -734,7 +762,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
             type: "toolCall",
             id: "call_bash",
             name: "bash",
-            arguments: { command: "cat HEARTBEAT.md" },
+            arguments: { command: "inspect monitor scratch" },
           },
           {
             type: "toolCall",
@@ -747,7 +775,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
       {
         role: "toolResult",
         toolCallId: "call_bash",
-        content: [{ type: "text", text: "checked HEARTBEAT.md" }],
+        content: [{ type: "text", text: "checked monitor scratch" }],
       },
       { role: "user", content: "what changed while I was away?" },
     ];
@@ -759,7 +787,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("removes heartbeat response-tool spans with notify=false even when alert fields are present", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -803,7 +831,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
     };
     const assistantMessage = { role: "assistant", content: "I am OpenClaw." };
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [
@@ -831,15 +859,15 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("stops a no-op span before a later visible heartbeat alert", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "HEARTBEAT_OK" },
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what changed while I was away?" },
     ];
 
     expect(filterHeartbeatTranscriptArtifacts(messages, undefined, HEARTBEAT_PROMPT)).toEqual([
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what changed while I was away?" },
     ]);
@@ -847,14 +875,14 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("stops a prompt-only span before a later visible heartbeat alert", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what changed while I was away?" },
     ];
 
     expect(filterHeartbeatTranscriptArtifacts(messages, undefined, HEARTBEAT_PROMPT)).toEqual([
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what changed while I was away?" },
     ]);
@@ -862,7 +890,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("does not remove across a real user message", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       createHeartbeatNoChangeMessage(),
       {
         role: "toolResult",
@@ -891,7 +919,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves helper tool turns when the heartbeat produces a visible alert", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: [{ type: "toolCall", id: "call_bash", name: "bash", arguments: {} }],
@@ -899,7 +927,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
       {
         role: "toolResult",
         toolCallId: "call_bash",
-        content: [{ type: "text", text: "checked HEARTBEAT.md" }],
+        content: [{ type: "text", text: "checked monitor scratch" }],
       },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what model are you" },
@@ -912,7 +940,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
 
   it("preserves top-level helper tool turns when the heartbeat produces a visible alert", () => {
     const messages = [
-      { role: "user", content: HEARTBEAT_TRANSCRIPT_PROMPT },
+      { role: "user", content: INTERNAL_WAKE_TRANSCRIPT_PROMPTS.heartbeat },
       {
         role: "assistant",
         content: null,
@@ -921,7 +949,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
             id: "call_bash",
             function: {
               name: "bash",
-              arguments: '{"command":"cat HEARTBEAT.md"}',
+              arguments: '{"command":"inspect monitor scratch"}',
             },
           },
         ],
@@ -929,7 +957,7 @@ describe("filterHeartbeatTranscriptArtifacts", () => {
       {
         role: "tool",
         toolCallId: "call_bash",
-        content: [{ type: "text", text: "checked HEARTBEAT.md" }],
+        content: [{ type: "text", text: "checked monitor scratch" }],
       },
       { role: "assistant", content: "Build is blocked on a failing release check." },
       { role: "user", content: "what model are you" },

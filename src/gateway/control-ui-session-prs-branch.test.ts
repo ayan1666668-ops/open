@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { loadControlUiSessionPullRequests } from "./control-ui-session-prs.js";
 import {
   evictPullRequestCache,
@@ -15,12 +16,15 @@ import {
 
 describe("session branch diff stats", () => {
   const execFileAsync = promisify(execFile);
+  const templateDirs = useAutoCleanupTempDirTracker(afterAll);
+  let templateRepo: string;
   let root: string;
 
-  const git = (...args: string[]) =>
+  const gitIn = (cwd: string, ...args: string[]) =>
     execFileAsync("git", ["-c", "user.email=test@openclaw.ai", "-c", "user.name=Test", ...args], {
-      cwd: root,
+      cwd,
     });
+  const git = (...args: string[]) => gitIn(root, ...args);
 
   const writeFile = (file: string, contents: string | Uint8Array) =>
     fs.writeFile(path.join(root, file), contents);
@@ -47,9 +51,20 @@ describe("session branch diff stats", () => {
   const resolveRevision = async (revision: string) =>
     (await git("rev-parse", revision)).stdout.trim();
 
+  const initializeRepoAt = async (repo: string, initialContents = "one\n") => {
+    await gitIn(repo, "init", "--initial-branch=main", ".");
+    await fs.writeFile(path.join(repo, "a.txt"), initialContents);
+    await gitIn(repo, "add", "a.txt");
+    await gitIn(repo, "commit", "-m", "base");
+  };
+
   const initializeRepo = async (initialContents = "one\n") => {
-    await git("init", "--initial-branch=main", ".");
-    await writeCommit("a.txt", initialContents, "base");
+    if (initialContents !== "one\n") {
+      await initializeRepoAt(root, initialContents);
+      return;
+    }
+    // Each case owns its .git directory; only the unchanged base history is copied.
+    await fs.cp(templateRepo, root, { recursive: true });
   };
 
   const initializeFeatureBranch = async (initialContents = "one\n") => {
@@ -124,6 +139,11 @@ describe("session branch diff stats", () => {
   const loadMergedBranchState = (headSha: string, overrides: Record<string, unknown> = {}) =>
     loadBranchState({ pullRequests: [mergedPull(headSha, overrides)] });
 
+  beforeAll(async () => {
+    templateRepo = templateDirs.make("openclaw-session-prs-template-");
+    await initializeRepoAt(templateRepo);
+  });
+
   beforeEach(async () => {
     root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-prs-")));
   });
@@ -131,6 +151,30 @@ describe("session branch diff stats", () => {
   afterEach(async () => {
     await evictPullRequestCache();
     await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("discovers GitHub identity locally and skips network for default, non-GitHub, and detached checkouts", async () => {
+    await initializeRepo();
+    await git("remote", "add", "origin", "https://github.com/openclaw/openclaw.git");
+    await trackRemote("main");
+    await git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    const fetchImpl = routedFetch([]);
+    const load = () =>
+      loadControlUiSessionPullRequests(
+        { sessionKey: "agent:main:discovery", refresh: true },
+        { fetchImpl, resolveGitRoot: async () => root },
+      );
+    await expect(load()).resolves.toEqual({
+      pullRequests: [],
+      rateLimited: false,
+      repository: { owner: "openclaw", repo: "openclaw" },
+    });
+    await git("remote", "set-url", "origin", "https://gitlab.com/openclaw/openclaw.git");
+    await expect(load()).resolves.toEqual({ pullRequests: [], rateLimited: false });
+    await git("remote", "set-url", "origin", "https://github.com/openclaw/openclaw.git");
+    await git("checkout", "--detach");
+    await expect(load()).resolves.toEqual({ pullRequests: [], rateLimited: false });
+    expect(fetchImpl.mock.calls).toHaveLength(0);
   });
 
   it("counts committed and uncommitted changes vs the origin default merge base", async () => {
@@ -451,16 +495,21 @@ describe("session branch diff stats", () => {
     });
   });
 
-  it("omits the branch payload when the default branch is unknown", async () => {
-    await initializeRepo();
-    await git("checkout", "-b", "feature");
-    await trackRemote("feature");
-
-    const result = await loadBranchState({
-      // No defaultBranch: origin/HEAD unresolvable in this checkout.
-      defaultBranch: null,
-    });
-    // Fail closed: without a default branch there is nothing to compare against.
-    expect(result.branch).toBeUndefined();
-  });
+  it.each([null, "main"])(
+    "handles a missing default tracking ref when the known default branch is %s",
+    async (defaultBranch) => {
+      await initializeRepo();
+      await git("checkout", "-b", "feature");
+      await trackRemote("feature");
+      const result = await loadBranchState({ defaultBranch });
+      if (defaultBranch) {
+        // An unavailable local comparison must not hide a known pushed branch.
+        expect(result.branch?.createUrl).toBe(
+          "https://github.com/openclaw/openclaw/pull/new/feature",
+        );
+      } else {
+        expect(result.branch).toBeUndefined();
+      }
+    },
+  );
 });

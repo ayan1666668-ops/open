@@ -135,8 +135,6 @@ vi.mock("../progress.js", () => ({
 vi.mock("./discover.js", () => ({
   dedupeBeacons: (beacons: unknown[]) => beacons,
   parseDiscoverTimeoutMs: () => 2000,
-  pickBeaconHost: () => null,
-  pickGatewayPort: () => 18789,
   renderBeaconLines: () => [],
 }));
 
@@ -200,6 +198,17 @@ describe("gateway register option collisions", () => {
 
   it.each([
     {
+      name: "forwards the expected endpoint without overriding configured routing",
+      argv: ["gateway", "call", "chat.send", "--expect-url", "wss://gateway.example/ws", "--json"],
+      assert: () => {
+        expect(callGatewayCli).toHaveBeenCalledTimes(1);
+        const [method, opts] = firstGatewayCall();
+        expect(method).toBe("chat.send");
+        expect(opts).toMatchObject({ expectUrl: "wss://gateway.example/ws" });
+        expect(opts).not.toHaveProperty("url");
+      },
+    },
+    {
       name: "forwards --token to gateway call when parent and child option names collide",
       argv: ["gateway", "call", "health", "--token", "tok_call", "--json"],
       assert: () => {
@@ -242,6 +251,26 @@ describe("gateway register option collisions", () => {
         });
         expect(defaultRuntime.writeJson).toHaveBeenCalledWith(
           expect.objectContaining({ status: "ready", requestId: "host-operation" }),
+        );
+      },
+    },
+    {
+      name: "preserves the custom suspend port in its human-readable resume hint",
+      argv: ["gateway", "suspend", "--port", "19086"],
+      assert: () => {
+        expectLocalGatewayCall("gateway.suspend.prepare", 19086);
+        expect(defaultRuntime.log).toHaveBeenCalledWith(
+          "Resume with: openclaw gateway resume suspension-1 --port 19086",
+        );
+      },
+    },
+    {
+      name: "preserves an inherited suspend port in its human-readable resume hint",
+      argv: ["gateway", "--port", "19087", "suspend"],
+      assert: () => {
+        expectLocalGatewayCall("gateway.suspend.prepare", 19087);
+        expect(defaultRuntime.log).toHaveBeenCalledWith(
+          "Resume with: openclaw gateway resume suspension-1 --port 19087",
         );
       },
     },

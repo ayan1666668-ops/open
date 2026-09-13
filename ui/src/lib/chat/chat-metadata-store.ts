@@ -2,33 +2,30 @@ import {
   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
   resolveGatewayStartupRetryAfterMs,
 } from "@openclaw/gateway-client/browser";
-import type { CommandsListResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type { ChatMetadataParams } from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { ModelCatalogEntry } from "../../api/types.ts";
+import {
+  chatMetadataCache,
+  notifyChatMetadataListeners,
+  type ChatMetadataEntry,
+  type ChatMetadataResult,
+  type ChatMetadataUpdate,
+  type ChatMetadataWriter,
+} from "./chat-metadata-cache.ts";
 
-export type ChatMetadataResult = CommandsListResult & {
-  models?: ModelCatalogEntry[];
-};
-
-type ChatMetadataEntry = {
-  result?: ChatMetadataResult;
-  loadPending?: Promise<ChatMetadataResult>;
-  revalidationPending?: Promise<ChatMetadataResult>;
-  latestRequest?: Promise<ChatMetadataResult>;
-  listeners: Set<() => void>;
-};
-
-const chatMetadataCache = new WeakMap<GatewayBrowserClient, Map<string, ChatMetadataEntry>>();
-
-function chatMetadataAgentKey(agentId: string | null | undefined): string {
-  return agentId?.trim() ?? "";
+function metadataScopeKey(scope: ChatMetadataParams): string {
+  return JSON.stringify([
+    scope.agentId?.trim() ?? "",
+    scope.sessionKey ?? null,
+    scope.authProfileId ?? null,
+  ]);
 }
 
 function metadataEntryFor(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
+  params: ChatMetadataParams,
 ): ChatMetadataEntry {
-  const key = chatMetadataAgentKey(agentId);
+  const key = metadataScopeKey(params);
   let cache = chatMetadataCache.get(client);
   if (!cache) {
     cache = new Map();
@@ -36,7 +33,21 @@ function metadataEntryFor(
   }
   let entry = cache.get(key);
   if (!entry) {
-    entry = { listeners: new Set() };
+    const created: ChatMetadataEntry = {
+      scope: params,
+      listeners: new Set(),
+      release: () => {
+        // Selected-account projections live with their consumers, not every conversation/draft.
+        // Retire the writer too: a late startup/read cannot repopulate a released entry.
+        if ((params.sessionKey || params.authProfileId) && created.listeners.size === 0) {
+          created.writer = undefined;
+          if (cache.get(key) === created) {
+            cache.delete(key);
+          }
+        }
+      },
+    };
+    entry = created;
     cache.set(key, entry);
   }
   return entry;
@@ -48,22 +59,11 @@ function waitForMetadataRetry(delayMs: number): Promise<void> {
   });
 }
 
-function notifyChatMetadataListeners(entry: ChatMetadataEntry): void {
-  for (const listener of Array.from(entry.listeners)) {
-    try {
-      listener();
-    } catch (error) {
-      console.error("[chat-metadata] listener error:", error);
-    }
-  }
-}
-
 async function requestChatMetadata(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
+  params: ChatMetadataParams,
   opts?: { startupRetryWindowMs?: number },
 ): Promise<ChatMetadataResult> {
-  const params = agentId ? { agentId } : {};
   const retryWindowMs = opts?.startupRetryWindowMs;
   if (retryWindowMs === undefined) {
     return client.request<ChatMetadataResult>("chat.metadata", params);
@@ -103,110 +103,101 @@ async function requestChatMetadata(
   }
 }
 
+function beginPublication(entry: ChatMetadataEntry, revalidating = false) {
+  const writer: ChatMetadataWriter = { revalidating };
+  entry.writer = writer;
+  const isCurrent = () => entry.writer === writer;
+  return {
+    writer,
+    isCurrent,
+    publish: (result: ChatMetadataResult & { models?: unknown; accountSelection?: unknown }) => {
+      writer.pending = undefined;
+      // Legacy/startup responses can carry models. The direct catalog is their only UI owner.
+      const { models: _models, accountSelection: _accountSelection, ...metadata } = result;
+      if (isCurrent()) {
+        entry.result = metadata;
+        notifyChatMetadataListeners(entry, { type: "result", result: metadata });
+      }
+      entry.release();
+      return metadata;
+    },
+    fail: (error: unknown) => {
+      writer.pending = undefined;
+      if (isCurrent()) {
+        notifyChatMetadataListeners(entry, { type: "error", error });
+      }
+      entry.release();
+      throw error;
+    },
+  };
+}
+
 function beginChatMetadataRequest(
   entry: ChatMetadataEntry,
-  pendingKey: "loadPending" | "revalidationPending",
   request: Promise<ChatMetadataResult>,
+  revalidating = false,
 ): Promise<ChatMetadataResult> {
-  const pending = request
-    .then((result) => {
-      // The newest request owns the snapshot even when an older load settles later.
-      if (entry.latestRequest === pending) {
-        entry.result = result;
-        notifyChatMetadataListeners(entry);
-      }
-      return result;
-    })
-    .finally(() => {
-      if (entry[pendingKey] === pending) {
-        entry[pendingKey] = undefined;
-      }
-    });
-  entry[pendingKey] = pending;
-  entry.latestRequest = pending;
+  const { writer, publish, fail } = beginPublication(entry, revalidating);
+  const pending = request.then(publish, fail);
+  writer.pending = pending;
+  notifyChatMetadataListeners(entry, { type: "loading" });
   return pending;
 }
 
 export function peekChatMetadata(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
+  scope: ChatMetadataParams,
 ): ChatMetadataResult | undefined {
-  return chatMetadataCache.get(client)?.get(chatMetadataAgentKey(agentId))?.result;
+  return chatMetadataCache.get(client)?.get(metadataScopeKey(scope))?.result;
 }
 
 export function subscribeChatMetadata(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
-  listener: () => void,
+  scope: ChatMetadataParams,
+  listener: (update: ChatMetadataUpdate) => void,
 ): () => void {
-  const entry = metadataEntryFor(client, agentId);
+  const entry = metadataEntryFor(client, scope);
   entry.listeners.add(listener);
-  return () => entry.listeners.delete(listener);
+  return () => {
+    entry.listeners.delete(listener);
+    entry.release();
+  };
 }
 
 export function loadChatMetadata(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
+  scope: ChatMetadataParams,
 ): Promise<ChatMetadataResult> {
-  const entry = metadataEntryFor(client, agentId);
+  const entry = metadataEntryFor(client, scope);
   if (entry.result) {
     return Promise.resolve(entry.result);
   }
-  if (entry.loadPending) {
-    return entry.loadPending;
+  const pending = entry.writer?.pending;
+  if (pending) {
+    return pending;
   }
-  if (entry.revalidationPending) {
-    return entry.revalidationPending;
-  }
-
-  return beginChatMetadataRequest(entry, "loadPending", requestChatMetadata(client, agentId));
+  return beginChatMetadataRequest(entry, requestChatMetadata(client, entry.scope));
 }
 
 export function revalidateChatMetadata(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
+  scope: ChatMetadataParams,
   opts?: { startupRetryWindowMs?: number },
 ): Promise<ChatMetadataResult> {
-  // Shared revalidation outlives any one caller: consumers drop interest through
-  // ownership checks, while completion warms the cache for the next mount.
-  const entry = metadataEntryFor(client, agentId);
-  if (entry.revalidationPending) {
-    return entry.revalidationPending;
+  const entry = metadataEntryFor(client, scope);
+  const writer = entry.writer;
+  if (writer?.revalidating && writer.pending) {
+    return writer.pending;
   }
-
-  return beginChatMetadataRequest(
-    entry,
-    "revalidationPending",
-    requestChatMetadata(client, agentId, opts),
-  );
+  return beginChatMetadataRequest(entry, requestChatMetadata(client, entry.scope, opts), true);
 }
 
-export function rememberChatMetadata(
+export function beginChatMetadataPublication(
   client: GatewayBrowserClient,
-  agentId: string | null | undefined,
-  result: ChatMetadataResult,
-): void {
-  const entry = metadataEntryFor(client, agentId);
-  entry.result = result;
-  entry.loadPending = undefined;
-  entry.revalidationPending = undefined;
-  entry.latestRequest = undefined;
-  notifyChatMetadataListeners(entry);
-}
-
-export function invalidateChatMetadataStore(client: GatewayBrowserClient): void {
-  const entries = chatMetadataCache.get(client)?.values();
-  if (!entries) {
-    return;
-  }
-  const invalidated = Array.from(entries);
-  for (const entry of invalidated) {
-    entry.result = undefined;
-    entry.loadPending = undefined;
-    entry.revalidationPending = undefined;
-    entry.latestRequest = undefined;
-  }
-  for (const entry of invalidated) {
-    notifyChatMetadataListeners(entry);
-  }
+  scope: ChatMetadataParams,
+) {
+  const entry = metadataEntryFor(client, scope);
+  const { isCurrent, publish } = beginPublication(entry);
+  notifyChatMetadataListeners(entry, { type: "loading" });
+  return { isCurrent, publish };
 }

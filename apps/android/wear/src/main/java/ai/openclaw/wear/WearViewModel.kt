@@ -31,6 +31,7 @@ internal data class WearUiState(
   val activeAgentId: String? = null,
   val selectedModelRef: String? = null,
   val models: List<WearModel> = emptyList(),
+  val modelCatalogRefreshFailed: Boolean = false,
   val proxyCapabilities: Set<WearProxyCapability> = emptySet(),
   val sessions: List<WearSession> = emptyList(),
   val selectedSession: WearSession? = null,
@@ -51,6 +52,7 @@ internal data class WearUiState(
   val realtimeMouthLevel: Float = 0f,
   val realtimePlaybackFailed: Boolean = false,
   val talkBusy: Boolean = false,
+  val talkStopping: Boolean = false,
   val controlBusy: Boolean = false,
   val failure: WearConversationFailure? = null,
   val agentPulse: WearAgentPulseSnapshot? = null,
@@ -58,41 +60,7 @@ internal data class WearUiState(
   val agentPulseFailure: WearConversationFailure? = null,
 )
 
-internal fun WearUiState.resetForPhoneChange(): WearUiState =
-  copy(
-    loading = true,
-    connected = false,
-    phoneNodeId = null,
-    agents = emptyList(),
-    activeAgentId = null,
-    selectedModelRef = null,
-    models = emptyList(),
-    proxyCapabilities = emptySet(),
-    sessions = emptyList(),
-    selectedSession = null,
-    phoneActiveSessionKey = null,
-    sessionSearchQuery = null,
-    sessionSearchResults = emptyList(),
-    sessionSearchHasMore = false,
-    sessionSearchNextOffset = null,
-    modelSearchQuery = null,
-    modelSearchResults = emptyList(),
-    messages = emptyList(),
-    streamText = null,
-    activeRunId = null,
-    sending = false,
-    realtimeTalk = WearRealtimeTalkSnapshot(),
-    realtimeCapturing = false,
-    realtimePlaying = false,
-    realtimeMouthLevel = 0f,
-    realtimePlaybackFailed = false,
-    talkBusy = false,
-    controlBusy = false,
-    failure = null,
-    agentPulse = null,
-    agentPulseLoading = false,
-    agentPulseFailure = null,
-  )
+internal fun WearUiState.resetForPhoneChange(): WearUiState = WearUiState()
 
 internal fun WearUiState.switchAgentContext(agentId: String): WearUiState =
   copy(
@@ -111,6 +79,7 @@ internal fun WearUiState.switchAgentContext(agentId: String): WearUiState =
     activeRunId = null,
     selectedModelRef = null,
     models = emptyList(),
+    modelCatalogRefreshFailed = false,
     agentPulse = null,
     agentPulseLoading = false,
     agentPulseFailure = null,
@@ -130,9 +99,11 @@ internal fun WearUiState.switchSessionContext(session: WearSession): WearUiState
     activeRunId = null,
     selectedModelRef = session.modelRef,
     models = emptyList(),
+    modelCatalogRefreshFailed = false,
     realtimeTalk = WearRealtimeTalkSnapshot(),
     realtimeMouthLevel = 0f,
     talkBusy = false,
+    talkStopping = false,
     failure = null,
     agentPulse = null,
     agentPulseLoading = false,
@@ -148,6 +119,9 @@ internal fun WearUiState.switchModelContext(modelRef: String): WearUiState {
     // The phone preserves the selected model in its bounded catalog slice.
     // A model change therefore invalidates the previous slice.
     models = emptyList(),
+    modelCatalogRefreshFailed = false,
+    modelSearchQuery = null,
+    modelSearchResults = emptyList(),
     sessions = sessions.map { session -> if (session.key == updatedSession.key) updatedSession else session },
   )
 }
@@ -196,7 +170,7 @@ internal fun reduceWearTerminalChatEvent(
     )
   }
   return when (event.state) {
-    "final" ->
+    "final" -> {
       WearTerminalChatTransition(
         state =
           current.copy(
@@ -207,12 +181,18 @@ internal fun reduceWearTerminalChatEvent(
         reloadHistory = true,
         observedMessage = event.message,
       )
-    "aborted", "error" ->
+    }
+
+    "aborted", "error" -> {
       WearTerminalChatTransition(
         state = current.copy(streamText = null, activeRunId = null),
         reloadHistory = true,
       )
-    else -> WearTerminalChatTransition(state = current, reloadHistory = false)
+    }
+
+    else -> {
+      WearTerminalChatTransition(state = current, reloadHistory = false)
+    }
   }
 }
 
@@ -262,6 +242,7 @@ internal class WearViewModel(
               realtimePlaying = false,
               realtimeMouthLevel = 0f,
               talkBusy = false,
+              talkStopping = false,
               failure = WearConversationFailure.INTERNAL_ERROR,
             )
           }
@@ -383,6 +364,7 @@ internal class WearViewModel(
         selectedModelRef = null,
         realtimeTalk = WearRealtimeTalkSnapshot(),
         talkBusy = false,
+        talkStopping = false,
         failure = null,
       )
     }
@@ -400,6 +382,28 @@ internal class WearViewModel(
     talkAttemptId = null
   }
 
+  fun cancelPendingRealtimeTalkStart() {
+    if (talkStartJob?.isActive != true) return
+    // Losing RESUMED revokes pending intent without changing an established call.
+    // The canceled start still owns ambiguous phone-side Stop cleanup.
+    talkStartJob?.cancel()
+    talkStartJob = null
+    talkAttemptId = null
+    realtimeTalkClient.disconnectLocal()
+    mutableState.update {
+      it.copy(talkBusy = false, talkStopping = false, realtimeTalk = WearRealtimeTalkSnapshot())
+    }
+  }
+
+  fun suspendRealtimeTalk() {
+    cancelPendingRealtimeTalkStart()
+    if (!mutableState.value.talkStopping && (mutableState.value.realtimeTalk.active || mutableState.value.realtimeCapturing)) {
+      stopRealtimeTalk()
+    } else {
+      realtimeTalkClient.disconnectLocal()
+    }
+  }
+
   fun startRealtimeTalk() {
     val current = mutableState.value
     val selectedSession = current.selectedSession ?: return
@@ -409,7 +413,7 @@ internal class WearViewModel(
     talkAttemptId = attemptId
     val startJob =
       viewModelScope.launch(start = CoroutineStart.LAZY) {
-        mutableState.update { it.copy(talkBusy = true, failure = null) }
+        mutableState.update { it.copy(talkBusy = true, talkStopping = false, failure = null) }
         try {
           val snapshot =
             realtimeTalkClient.start(
@@ -418,14 +422,14 @@ internal class WearViewModel(
               capabilities,
             )
           if (talkAttemptId != attemptId) return@launch
-          mutableState.update { it.copy(realtimeTalk = snapshot, talkBusy = false) }
+          mutableState.update { it.copy(realtimeTalk = snapshot, talkBusy = false, talkStopping = false) }
         } catch (err: CancellationException) {
           throw err
         } catch (err: Throwable) {
           if (talkAttemptId != attemptId) return@launch
           talkAttemptId = null
           mutableState.update {
-            it.copy(talkBusy = false, failure = err.toWearConversationFailure())
+            it.copy(talkBusy = false, talkStopping = false, failure = err.toWearConversationFailure())
           }
         } finally {
           if (talkStartJob === coroutineContext[Job]) talkStartJob = null
@@ -439,12 +443,24 @@ internal class WearViewModel(
     if (mutableState.value.talkBusy) return
     val attemptId = talkAttemptId
     viewModelScope.launch {
-      mutableState.update { it.copy(talkBusy = true) }
+      // The Watch has stopped locally even while the phone's Stop is pending.
+      // Keep the transcript, but never project stale remote Listening/Speaking.
+      mutableState.update {
+        it.copy(
+          talkBusy = true,
+          talkStopping = true,
+          realtimeTalk =
+            WearRealtimeTalkSnapshot(
+              attemptId = it.realtimeTalk.attemptId,
+              conversation = it.realtimeTalk.conversation,
+            ),
+        )
+      }
       try {
         val snapshot = realtimeTalkClient.stop()
         if (talkAttemptId != attemptId) return@launch
         if (talkAttemptId == snapshot.attemptId) talkAttemptId = null
-        mutableState.update { it.copy(realtimeTalk = snapshot, talkBusy = false) }
+        mutableState.update { it.copy(realtimeTalk = snapshot, talkBusy = false, talkStopping = false) }
       } catch (err: CancellationException) {
         throw err
       } catch (err: Throwable) {
@@ -455,6 +471,7 @@ internal class WearViewModel(
           it.copy(
             realtimeTalk = WearRealtimeTalkSnapshot(),
             talkBusy = false,
+            talkStopping = false,
             failure = err.toWearConversationFailure(),
           )
         }
@@ -730,10 +747,16 @@ internal class WearViewModel(
             selectedSession?.modelRef
               ?: wearSelectedModelRef(selectedSession?.key, activeSessionKey, status.selectedModelRef)
           val modelList =
-            if (status.connected && WearProxyCapability.ModelControls in status.capabilities) {
+            if (
+              status.connected &&
+              selectedSession != null &&
+              WearProxyCapability.ModelControls in status.capabilities &&
+              WearProxyCapability.SessionScopedModelCatalog in status.capabilities
+            ) {
               repository.models(
                 expectedNodeId = status.phoneNodeId,
                 capabilities = status.capabilities,
+                sessionKey = selectedSession.key,
                 selectedModelRef = selectedModelRef,
               )
             } else {
@@ -778,6 +801,7 @@ internal class WearViewModel(
                   ?: agentList.agents.firstOrNull(WearAgent::selected)?.id,
               selectedModelRef = selectedModelRef,
               models = modelList.models,
+              modelCatalogRefreshFailed = modelList.refreshFailed,
               proxyCapabilities = status.capabilities,
               sessions = projectedSessions,
               selectedSession = selectedSession,
@@ -816,6 +840,7 @@ internal class WearViewModel(
               activeAgentId = null,
               selectedModelRef = null,
               models = emptyList(),
+              modelCatalogRefreshFailed = false,
               proxyCapabilities = emptySet(),
               sessions = emptyList(),
               selectedSession = null,
@@ -872,6 +897,9 @@ internal class WearViewModel(
               selectedSession = loadedSession,
               selectedModelRef = loadedSession.modelRef,
               models = if (catalogScopeChanged) emptyList() else it.models,
+              modelCatalogRefreshFailed = !catalogScopeChanged && it.modelCatalogRefreshFailed,
+              modelSearchQuery = if (catalogScopeChanged) null else it.modelSearchQuery,
+              modelSearchResults = if (catalogScopeChanged) emptyList() else it.modelSearchResults,
               sessions =
                 it.sessions.map { item ->
                   if (item.key == session.key) {
@@ -970,6 +998,7 @@ internal class WearViewModel(
     val capabilities = current.proxyCapabilities
     if (
       WearProxyCapability.ModelControls !in capabilities ||
+      WearProxyCapability.SessionScopedModelCatalog !in capabilities ||
       (query != null && WearProxyCapability.ModelCatalogSearch !in capabilities) ||
       !wearSessionRequestIsCurrent(session, current.selectedSession, session.phoneNodeId)
     ) {
@@ -984,6 +1013,7 @@ internal class WearViewModel(
             repository.models(
               expectedNodeId = session.phoneNodeId,
               capabilities = capabilities,
+              sessionKey = session.key,
               selectedModelRef = session.modelRef,
               query = query,
             )
@@ -1005,9 +1035,18 @@ internal class WearViewModel(
               state
             } else {
               if (query == null) {
-                state.copy(models = modelList.models, modelSearchQuery = null, modelSearchResults = emptyList())
+                state.copy(
+                  models = modelList.models,
+                  modelCatalogRefreshFailed = modelList.refreshFailed,
+                  modelSearchQuery = null,
+                  modelSearchResults = emptyList(),
+                )
               } else {
-                state.copy(modelSearchQuery = query, modelSearchResults = modelList.models)
+                state.copy(
+                  modelCatalogRefreshFailed = modelList.refreshFailed,
+                  modelSearchQuery = query,
+                  modelSearchResults = modelList.models,
+                )
               }
             }
           }
@@ -1032,22 +1071,34 @@ internal class WearViewModel(
         beginSequenceResync(event, sourceChanged = false)
         return
       }
+
       WearSequenceDecision.AwaitingSnapshot -> {
         resyncEventBuffer.append(event)
         return
       }
-      WearSequenceDecision.Accepted -> Unit
+
+      WearSequenceDecision.Accepted -> {}
     }
     when (event.event) {
-      WearEventType.Connection -> handleConnectionEvent(event.payload as? JsonObject)
-      WearEventType.Chat -> handleChatEvent(event)
-      WearEventType.Resync -> refresh()
+      WearEventType.Connection -> {
+        handleConnectionEvent(event.payload as? JsonObject)
+      }
+
+      WearEventType.Chat -> {
+        handleChatEvent(event)
+      }
+
+      WearEventType.Resync -> {
+        refresh()
+      }
+
       WearEventType.Talk -> {
         val payload = event.payload ?: return
         runCatching { WearRealtimeTalkCodec.decode(payload) }
           .getOrNull()
           ?.let { snapshot ->
             if (!shouldAcceptWearTalkSnapshot(snapshot, talkAttemptId)) return@let
+            if (mutableState.value.talkStopping && snapshot.active) return@let
             if (!snapshot.active) {
               talkStartJob?.cancel()
               talkStartJob = null
@@ -1058,6 +1109,7 @@ internal class WearViewModel(
               it.copy(
                 realtimeTalk = snapshot,
                 talkBusy = talkStartJob?.isActive == true,
+                talkStopping = false,
               )
             }
           }
@@ -1148,6 +1200,7 @@ internal class WearViewModel(
         activeRunId = if (connected) it.activeRunId else null,
         realtimeTalk = if (connected) it.realtimeTalk else WearRealtimeTalkSnapshot(),
         talkBusy = if (connected) it.talkBusy else false,
+        talkStopping = if (connected) it.talkStopping else false,
         failure = wearConversationFailureForConnection(payload),
       )
     }
@@ -1182,6 +1235,7 @@ internal class WearViewModel(
           )
         }
       }
+
       "final", "aborted", "error" -> {
         val transition = reduceWearTerminalChatEvent(mutableState.value, event)
         if (transition.reloadHistory) cancelLoad()
@@ -1190,12 +1244,14 @@ internal class WearViewModel(
           loadHistory(selected, observedMessage = transition.observedMessage)
         }
       }
-      else ->
+
+      else -> {
         event.message?.let { message ->
           cancelLoad()
           mutableState.update { it.copy(messages = mergeEventMessage(it.messages, message)) }
           loadHistory(selected, observedMessage = message)
         }
+      }
     }
   }
 
@@ -1462,6 +1518,7 @@ internal class WearViewModel(
         activeRunId = if (disconnected) null else it.activeRunId,
         realtimeTalk = if (disconnected) WearRealtimeTalkSnapshot() else it.realtimeTalk,
         talkBusy = if (disconnected) false else it.talkBusy,
+        talkStopping = if (disconnected) false else it.talkStopping,
         failure = error.toWearConversationFailure(),
       )
     }
@@ -1632,6 +1689,7 @@ internal fun applyWearGatewayControlStatus(
       ),
     proxyCapabilities = status.capabilities,
     realtimeTalk = if (enabled) state.realtimeTalk else WearRealtimeTalkSnapshot(),
+    talkStopping = enabled && state.talkStopping,
   )
 
 internal fun wearSnapshotSourcesMatch(
@@ -1648,12 +1706,19 @@ internal fun mergeEventMessage(
   val matchIndex =
     messages.indexOfFirst { existing ->
       when {
-        message.id != null -> existing.id == message.id
-        message.timestamp != null ->
+        message.id != null -> {
+          existing.id == message.id
+        }
+
+        message.timestamp != null -> {
           existing.id == null &&
             existing.timestamp == message.timestamp &&
             existing.role == message.role
-        else -> false
+        }
+
+        else -> {
+          false
+        }
       }
     }
   val merged =
@@ -1794,15 +1859,22 @@ internal fun Throwable.toWearConversationFailure(): WearConversationFailure =
 internal fun wearConversationFailureForConnection(payload: JsonObject?): WearConversationFailure? {
   if (payload.boolean("connected") == true) return null
   return when (WearConnectionFailure.fromWireValue(payload.string("failure"))) {
-    WearConnectionFailure.Incompatible -> WearConversationFailure.INCOMPATIBLE
-    WearConnectionFailure.GatewayOffline -> WearConversationFailure.GATEWAY_OFFLINE
-    null ->
+    WearConnectionFailure.Incompatible -> {
+      WearConversationFailure.INCOMPATIBLE
+    }
+
+    WearConnectionFailure.GatewayOffline -> {
+      WearConversationFailure.GATEWAY_OFFLINE
+    }
+
+    null -> {
       if (payload.string("status")?.contains("update", ignoreCase = true) == true) {
         // Older protocol-v1 phones only sent status text for incompatibility.
         WearConversationFailure.INCOMPATIBLE
       } else {
         WearConversationFailure.GATEWAY_OFFLINE
       }
+    }
   }
 }
 

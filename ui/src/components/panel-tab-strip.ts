@@ -17,6 +17,11 @@ export type PanelTabStripTab = {
   badge?: string | null;
   className?: string;
   closeLabel: string;
+  group?: string;
+  draggable?: boolean;
+  reorderId?: string;
+  /** Explicit click/Enter/Space action; arrow-key selection still uses onSelect. */
+  onActivate?: () => void;
 };
 
 const reconciledTabLayouts = new WeakMap<Element, string>();
@@ -242,25 +247,40 @@ export function renderPanelTabStrip(params: {
       .active=${params.activeId ?? ""}
       activation="auto"
       without-scroll-controls
-      @wa-tab-show=${(event: CustomEvent<{ name: string }>) => params.onSelect(event.detail.name)}
+      @wa-tab-show=${(event: CustomEvent<{ name: string }>) => {
+        // Web Awesome also emits for controlled selection updates. Echoing those
+        // as user actions can reopen a panel that its owner just focused away.
+        if (event.detail.name !== params.activeId) {
+          params.onSelect(event.detail.name);
+        }
+      }}
     >
       ${repeat(
         params.tabs,
         (tab) => tab.id,
         (tab, index) => {
           const selected = tab.id === params.activeId;
-          // Every gap keeps its separator so activating a tab cannot reflow the
-          // row; the pair touching the active tab is faded out in CSS instead.
-          const showSeparator = params.separateTabs === true && index < params.tabs.length - 1;
+          const reorderId = tab.reorderId ?? tab.id;
+          const draggable = Boolean(params.onReorder) && tab.draggable !== false;
+          // Every gap outside a group keeps its separator so activating a tab cannot
+          // reflow the row; the pair touching the active tab is faded out in CSS instead.
+          const showSeparator =
+            params.separateTabs === true &&
+            index < params.tabs.length - 1 &&
+            (tab.group === undefined || tab.group !== params.tabs[index + 1]?.group);
           const tabContent = html`
-            ${tab.icon == null || tab.icon === nothing
-              ? nothing
-              : html`<span class="tabstrip-tab__icon" aria-hidden="true">${tab.icon}</span>`}
+            ${
+              tab.icon == null || tab.icon === nothing
+                ? nothing
+                : html`<span class="tabstrip-tab__icon" aria-hidden="true">${tab.icon}</span>`
+            }
             <span class="tabstrip-tab__label" ${ref(panelTabLabelOverflowRef())}>${tab.label}</span>
             ${tab.badge ? html`<span class="tabstrip-tab__badge">${tab.badge}</span>` : nothing}
-            ${tab.statusLabel
-              ? html`<span class="tabstrip-tab__status">${tab.statusLabel}</span>`
-              : nothing}
+            ${
+              tab.statusLabel
+                ? html`<span class="tabstrip-tab__status">${tab.statusLabel}</span>`
+                : nothing
+            }
           `;
           return html`
             <wa-tab
@@ -271,13 +291,34 @@ export function renderPanelTabStrip(params: {
               aria-selected=${selected ? "true" : "false"}
               title=${tab.title || nothing}
               ?active=${selected}
-              draggable=${params.onReorder ? "true" : nothing}
+              draggable=${draggable ? "true" : nothing}
               .tabIndex=${selected ? 0 : -1}
-              ${selected
-                ? ref((element) =>
-                    reconcileSelectedTabElement(element, layoutKey, focusedTabDomId === tab.domId),
-                  )
-                : nothing}
+              ${
+                selected
+                  ? ref((element) =>
+                      reconcileSelectedTabElement(
+                        element,
+                        layoutKey,
+                        focusedTabDomId === tab.domId,
+                      ),
+                    )
+                  : nothing
+              }
+              @click=${(event: MouseEvent) => {
+                if (tab.onActivate) {
+                  event.stopPropagation();
+                  tab.onActivate();
+                }
+              }}
+              @keydown=${(event: KeyboardEvent) => {
+                if (tab.onActivate && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!event.repeat) {
+                    tab.onActivate();
+                  }
+                }
+              }}
               @auxclick=${(event: MouseEvent) => {
                 if (event.button === 1) {
                   event.preventDefault();
@@ -285,15 +326,15 @@ export function renderPanelTabStrip(params: {
                 }
               }}
               @dragstart=${(event: DragEvent) => {
-                if (!params.onReorder || !event.dataTransfer) {
+                if (!draggable || !event.dataTransfer) {
                   return;
                 }
                 event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData(PANEL_TAB_DRAG_TYPE, tab.id);
+                event.dataTransfer.setData(PANEL_TAB_DRAG_TYPE, reorderId);
                 if (event.currentTarget instanceof Element) {
                   const group = event.currentTarget.closest<HTMLElement>("wa-tab-group");
                   if (group) {
-                    group.dataset.draggedPanelTab = tab.id;
+                    group.dataset.draggedPanelTab = reorderId;
                   }
                 }
               }}
@@ -305,7 +346,7 @@ export function renderPanelTabStrip(params: {
                   event.currentTarget instanceof Element
                     ? draggedPanelTabId(event.currentTarget)
                     : "";
-                if (!sourceId || sourceId === tab.id) {
+                if (!sourceId || sourceId === reorderId) {
                   return;
                 }
                 event.preventDefault();
@@ -337,13 +378,13 @@ export function renderPanelTabStrip(params: {
                   target instanceof Element
                     ? draggedPanelTabId(target) || event.dataTransfer.getData(PANEL_TAB_DRAG_TYPE)
                     : "";
-                if (!sourceId || sourceId === tab.id || !(target instanceof Element)) {
+                if (!sourceId || sourceId === reorderId || !(target instanceof Element)) {
                   return;
                 }
                 event.preventDefault();
                 const placement = panelTabDropPlacement(event, target);
                 finishPanelTabDrag(target);
-                params.onReorder(sourceId, tab.id, placement);
+                params.onReorder(sourceId, reorderId, placement);
               }}
               @dragend=${(event: DragEvent) => {
                 if (event.currentTarget instanceof Element) {
@@ -351,21 +392,22 @@ export function renderPanelTabStrip(params: {
                 }
               }}
             >
-              ${tab.labelTooltip
-                ? html`<openclaw-tooltip
-                    class="tabstrip-tab__label-tooltip"
-                    .content=${tab.labelTooltip}
-                  >
-                    <span class="tabstrip-tab__tooltip-trigger">${tabContent}</span>
-                  </openclaw-tooltip>`
-                : tabContent}
+              ${
+                tab.labelTooltip
+                  ? html`<openclaw-tooltip
+                      class="tabstrip-tab__label-tooltip"
+                      .content=${tab.labelTooltip}
+                    >
+                      <span class="tabstrip-tab__tooltip-trigger">${tabContent}</span>
+                    </openclaw-tooltip>`
+                  : tabContent
+              }
             </wa-tab>
             <button
               slot="nav"
               class="rail-header__action tabstrip-tab__close"
               type="button"
               .tabIndex=${selected ? 0 : -1}
-              title=${tab.closeLabel}
               aria-label=${tab.closeLabel}
               @keydown=${(event: KeyboardEvent) => {
                 if (
@@ -414,9 +456,11 @@ export function renderPanelTabStrip(params: {
             >
               <span class="tabstrip-tab__close-box">${icons.x}</span>
             </button>
-            ${showSeparator
-              ? html`<span slot="nav" class="tabstrip-separator" aria-hidden="true"></span>`
-              : nothing}
+            ${
+              showSeparator
+                ? html`<span slot="nav" class="tabstrip-separator" aria-hidden="true"></span>`
+                : nothing
+            }
           `;
         },
       )}
@@ -487,6 +531,12 @@ export const panelTabStripStyles = css`
   .tabstrip-tab__icon {
     display: inline-flex;
     color: var(--accent, #ff5c5c);
+  }
+  .tabstrip-tab__favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    object-fit: contain;
   }
   .tabstrip-tab.is-exited .tabstrip-tab__icon {
     color: var(--muted, #8a919e);

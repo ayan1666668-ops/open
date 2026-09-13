@@ -9,6 +9,7 @@ import {
   parseBrowserPositiveIntegerOption,
   printBrowserJsonResult,
   runBrowserCliCommand as runBrowserObserve,
+  withBrowserActionTimeoutSlack,
   type BrowserParentOpts,
 } from "./browser-cli-shared.js";
 import { defaultRuntime, shortenHomePath } from "./core-api.js";
@@ -87,7 +88,7 @@ export function registerBrowserActionObserveCommands(
     .option("--target-id <id>", BROWSER_TAB_REFERENCE_HELP)
     .option(
       "--timeout-ms <ms>",
-      "How long to wait for the response (default: 20000)",
+      "How long to wait for the complete response body (default: 20000)",
       (v: string) => parseBrowserPositiveIntegerOption(v, "--timeout-ms"),
     )
     .option("--max-chars <n>", "Max body chars to return (default: 200000)", (v: string) =>
@@ -99,7 +100,9 @@ export function registerBrowserActionObserveCommands(
       await runBrowserObserve(async () => {
         const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : undefined;
         const maxChars = Number.isFinite(opts.maxChars) ? opts.maxChars : undefined;
-        const result = await callBrowserRequest<{ response: { body: string } }>(
+        const result = await callBrowserRequest<{
+          response: { body: string; truncated?: boolean };
+        }>(
           parent,
           {
             method: "POST",
@@ -112,12 +115,17 @@ export function registerBrowserActionObserveCommands(
               maxChars,
             },
           },
-          { timeoutMs: timeoutMs ?? 20000 },
+          { timeoutMs: withBrowserActionTimeoutSlack(timeoutMs) },
         );
         if (printBrowserJsonResult(parent, result)) {
           return;
         }
         defaultRuntime.log(result.response.body);
+        if (result.response.truncated === true) {
+          defaultRuntime.error(
+            "Warning: response body is a truncated prefix. Use --json to inspect response metadata.",
+          );
+        }
       });
     });
 }

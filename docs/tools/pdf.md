@@ -85,6 +85,7 @@ Used for every other provider.
 
 Details:
 
+- Local extraction runs in a reusable worker so PDF text and image processing do not block the Gateway. Cancelling the agent run stops queued or active extraction.
 - Encrypted PDFs open with the top-level `password` parameter.
 - If the model has no image input and there is no extractable text, the tool errors.
 - If image rendering fails, OpenClaw drops the images and continues with the extracted text.
@@ -117,10 +118,11 @@ See [Configuration Reference](/gateway/config-agents#agent-defaults) for full fi
 
 ## Output details
 
-The tool returns text in `content[0].text` and structured metadata in `details`.
+The tool returns analysis in both `content[0].text` and `details.text`, so [Code Mode](/tools/code-mode) and [Tool Search](/tools/tool-search) can read the same result.
 
 Common `details` fields:
 
+- `text`: the analysis text
 - `model`: resolved model ref (`provider/model`)
 - `native`: `true` for native provider mode, `false` for fallback
 - `attempts`: fallback attempts that failed before success

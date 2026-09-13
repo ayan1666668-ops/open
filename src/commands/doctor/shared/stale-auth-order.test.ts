@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildAuthHealthSummary } from "../../../agents/auth-health.js";
+import { createApiKeyCredential } from "../../../agents/auth-profiles/credential-fixtures.test-support.js";
 import { testing as externalAuthTesting } from "../../../agents/auth-profiles/external-auth.test-support.js";
 import { resolveAuthProfileOrder } from "../../../agents/auth-profiles/order.js";
 import {
@@ -13,8 +14,8 @@ import {
   writePersistedAuthProfileStoreRaw,
 } from "../../../agents/auth-profiles/sqlite.js";
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
-import { resetProviderAuthAliasMapCacheForTest } from "../../../agents/provider-auth-aliases.test-support.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { clearPluginMetadataLifecycleCaches } from "../../../plugins/plugin-metadata-lifecycle.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -54,7 +55,10 @@ const pluginMetadataMocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../../plugins/current-plugin-metadata-snapshot.js", () => ({
+vi.mock("../../../plugins/current-plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../plugins/current-plugin-metadata-snapshot.js")
+  >()),
   getCurrentPluginMetadataSnapshot: pluginMetadataMocks.getCurrentPluginMetadataSnapshot,
 }));
 
@@ -117,7 +121,7 @@ async function withStateDir<T>(prefix: string, run: (stateDir: string) => Promis
 
 describe("repairStaleConfiguredAuthOrders", () => {
   beforeEach(() => {
-    resetProviderAuthAliasMapCacheForTest();
+    clearPluginMetadataLifecycleCaches();
     externalAuthTesting.setResolveExternalAuthProfilesForTest(() => []);
   });
 
@@ -770,11 +774,7 @@ describe("repairStaleConfiguredAuthOrders", () => {
         {
           version: 1,
           profiles: {
-            "openai:main-seed": {
-              type: "api_key",
-              provider: "openai",
-              key: "api-key",
-            },
+            "openai:main-seed": createApiKeyCredential("openai", "api-key"),
           },
         },
         path.join(stateDir, "agents", "main", "agent"),

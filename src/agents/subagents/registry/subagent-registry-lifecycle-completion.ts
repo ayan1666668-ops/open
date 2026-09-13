@@ -25,7 +25,7 @@ import type { SubagentLifecycleCompletionContext } from "./subagent-registry-lif
 import {
   freezeRunResultAtCompletion,
   refreshPendingFinalDeliveryPayload,
-  safeFinalizeSubagentTaskRun,
+  finalizeSubagentTaskRun,
 } from "./subagent-registry-lifecycle-delivery.js";
 import type { SubagentCompletionRequest, SubagentRunRecord } from "./subagent-registry.types.js";
 import {
@@ -315,7 +315,7 @@ export async function completeSubagentRunAttempt(
         completionReason = SUBAGENT_ENDED_REASON_KILLED;
         completionOutcome = { status: "error", error: killIntent.reason };
         entry.killIntent = undefined;
-        if (killOwnsCurrentLifecycle) {
+        if (killOwnsCurrentLifecycle && entry.execution.suppressSessionEffects !== true) {
           suppressSessionEffects = false;
           entry.execution = {
             ...entry.execution,
@@ -326,6 +326,7 @@ export async function completeSubagentRunAttempt(
         }
         entry.killReconciliation = {
           killedAt: killIntent.requestedAt,
+          taskCancellationAccepted: killOwnsCurrentLifecycle ? true : undefined,
           suppressTaskDelivery: killIntent.suppressTaskDelivery === true ? true : undefined,
         };
       }
@@ -452,6 +453,8 @@ export async function completeSubagentRunAttempt(
         status: "terminal",
         endedAt,
         outcome: executionOutcome,
+        interruptedAt: undefined,
+        interruptionReason: undefined,
         restartRecovery: retainedRestartRecovery,
         suppressSessionEffects: suppressSessionEffects ? true : undefined,
       };
@@ -495,6 +498,25 @@ export async function completeSubagentRunAttempt(
         completion.capturedAt = endedAt;
         mutated = true;
       }
+    }
+
+    const closesAsIntentionalNonDelivery =
+      entry.expectsCompletionMessage === true &&
+      executionOutcome.status === "ok" &&
+      terminalReply?.disposition === "empty" &&
+      terminalReply.code !== "message-tool-not-called" &&
+      entry.requesterTurnYielded !== true &&
+      entry.requesterSettleWake === undefined &&
+      entry.delivery?.disposition !== "intentional_non_delivery";
+    if (closesAsIntentionalNonDelivery) {
+      // Producer-owned empty success is a terminal fact, not a failed send.
+      // Close it before task finalization so no requester delivery can start.
+      entry.delivery = {
+        status: "not_required",
+        disposition: "intentional_non_delivery",
+      };
+      entry.suppressCompletionDelivery = true;
+      mutated = true;
     }
 
     // A newer generation may share the session key. Its transcript/reply is
@@ -553,7 +575,7 @@ export async function completeSubagentRunAttempt(
     // A steer abort ends one agent run but continues the same detached task.
     // The successor must remain able to publish its eventual terminal state.
     if (provisionalKillSnapshot) {
-      const finalizedTasks = safeFinalizeSubagentTaskRun(params, {
+      const finalizedTasks = finalizeSubagentTaskRun(params, {
         entry,
         outcome: executionOutcome,
         taskResolution: postCaptureTaskResolution,
@@ -609,7 +631,7 @@ export async function completeSubagentRunAttempt(
         throw error;
       }
       if (!suppressTaskFinalization) {
-        safeFinalizeSubagentTaskRun(params, {
+        finalizeSubagentTaskRun(params, {
           entry,
           outcome: executionOutcome,
         });

@@ -190,7 +190,19 @@ function createBrowserToolOptions(ctx: OpenClawPluginToolContext): {
 /** Browser plugin reload policy. */
 export const browserPluginReload = {
   restartPrefixes: ["browser"],
-  hotPrefixes: ["browser.profiles"],
+  hotPrefixes: [
+    "browser.profiles",
+    "browser.defaultProfile",
+    "browser.headless",
+    "browser.executablePath",
+    "browser.attachOnly",
+    "browser.cdpUrl",
+    "browser.noSandbox",
+    "browser.extraArgs",
+    "browser.snapshotDefaults",
+    "browser.tabCleanup",
+    "browser.allowSystemProfileImport",
+  ],
 };
 
 /** Node-host command descriptors exposed by the Browser plugin. */
@@ -243,6 +255,11 @@ function createLazyBrowserPluginService(): OpenClawPluginService {
   };
   return {
     id: "browser-control",
+    // Policy changes drain the service's generation before adopting new values.
+    // Profile-level refresh keeps the admitted policy until this owner stops.
+    reload: {
+      configPrefixes: ["browser.enabled", "browser.evaluateEnabled", "browser.ssrfPolicy"],
+    },
     start: async (ctx) => {
       if (!isTruthyEnvValue(process.env[EAGER_BROWSER_CONTROL_SERVICE_ENV])) {
         return;
@@ -314,6 +331,21 @@ export function registerBrowserPlugin(api: OpenClawPluginApi) {
       const { handleGatewayExtensionUpgrade } =
         await import("./src/browser/extension-relay/gateway-relay-route.js");
       return await handleGatewayExtensionUpgrade(req, socket, head);
+    },
+  });
+  api.registerHttpRoute({
+    path: "/browser/screencast",
+    auth: "plugin",
+    match: "exact",
+    handler: (_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(426, { "Content-Type": "text/plain" });
+      res.end("Upgrade Required: connect the browser screencast over WebSocket.");
+    },
+    handleUpgrade: async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      await loadBrowserRegistrationRuntimeModule();
+      const { handleBrowserScreencastUpgrade } =
+        await import("./src/browser/screencast/upgrade.js");
+      return await handleBrowserScreencastUpgrade(req, socket, head);
     },
   });
   api.registerService(createLazyBrowserPluginService());

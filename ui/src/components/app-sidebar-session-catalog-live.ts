@@ -17,7 +17,7 @@ import {
 import { sessionCatalogHostKey } from "./app-sidebar-session-types.ts";
 
 export const SESSION_CATALOG_CHANGED_REFRESH_MS = 5_000;
-const SESSION_CATALOG_STABLE_REFRESH_MS = 30_000;
+export const SESSION_CATALOG_STABLE_REFRESH_MS = 30_000;
 
 function sessionCatalogMaterialSnapshot(catalogs: readonly SessionCatalog[]): string {
   // Fast follow-up polls cover catalog/host/session identity sets, labels, connectivity,
@@ -63,17 +63,6 @@ export function sessionCatalogListClient(
   return snapshot.client;
 }
 
-function isLegacyProgressIdRejection(error: unknown): boolean {
-  if (!(error instanceof GatewayRequestError) || error.gatewayCode !== "INVALID_REQUEST") {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("progressid") &&
-    /(?:unexpected|unknown|unrecognized) property|additional propert(?:y|ies)/.test(message)
-  );
-}
-
 function isSessionsCatalogHostEvent(value: unknown): value is SessionsCatalogHostEvent {
   const event = asNullableRecord(value);
   const catalog = asNullableRecord(event?.catalog);
@@ -99,14 +88,14 @@ function isSessionsCatalogHostEvent(value: unknown): value is SessionsCatalogHos
 
 /** Tracks one sidebar's progressive list streams and adaptive refresh lifecycle. */
 export class SessionCatalogLiveState {
+  refreshScope = {};
   timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   requestGeneration: number | null = null;
   sawChange = false;
   refreshPending = false;
-  progressive = true;
 
   private activationTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private connectionEpoch = 0;
+  private activationQueueIfActive = false;
   private refetchOwner: symbol | null = null;
   private presenceSignature: string | null = null;
   private progressSequence = 0;
@@ -126,6 +115,7 @@ export class SessionCatalogLiveState {
   }
 
   clear() {
+    this.refreshScope = {};
     this.cancelScheduledRefreshes();
     this.requestGeneration = null;
     this.requestOwner = null;
@@ -137,47 +127,6 @@ export class SessionCatalogLiveState {
     this.sawChange = false;
     this.refreshPending = false;
     this.refetchOwner = null;
-  }
-
-  resetConnection() {
-    this.retireConnection(true);
-  }
-
-  retireConnection(reset = false): void {
-    this.clear();
-    if (reset) {
-      this.connectionEpoch += 1;
-      this.progressive = true;
-    }
-  }
-
-  async requestList(
-    client: GatewayBrowserClient,
-    agentId: string,
-    progressId: string,
-  ): Promise<SessionsCatalogListResult> {
-    const connectionEpoch = this.connectionEpoch;
-    const baseParams = { agentId, limitPerHost: 40 };
-    let progressive = this.progressive;
-    let result: SessionsCatalogListResult;
-    try {
-      result = await client.request("sessions.catalog.list", {
-        ...baseParams,
-        ...(progressive ? { progressId } : {}),
-      });
-    } catch (error) {
-      if (!progressive || !isLegacyProgressIdRejection(error)) {
-        throw error;
-      }
-      // Older Gateways advertise the list method but reject the additive field.
-      // Retry once without streaming, then keep that connection on final pages.
-      result = await client.request("sessions.catalog.list", baseParams);
-      progressive = false;
-    }
-    if (connectionEpoch === this.connectionEpoch) {
-      this.progressive = progressive;
-    }
-    return result;
   }
 
   mergeFinal(catalogs: SessionCatalog[], currentCatalogs: readonly SessionCatalog[]) {
@@ -309,7 +258,15 @@ export class SessionCatalogLiveState {
       const rawId = typeof record.deviceId === "string" ? record.deviceId : record.instanceId;
       const id = typeof rawId === "string" ? rawId.trim().toLowerCase() : "";
       const mode = typeof record.mode === "string" ? record.mode.trim().toLowerCase() : "";
-      if (!id || mode === "gateway") {
+      // Catalog hosts are native nodes. Browser/operator churn cannot change that inventory;
+      // older nodes may omit mode, so only then does the authenticated role decide.
+      const isNodePresence = mode
+        ? mode === "node"
+        : Array.isArray(record.roles) &&
+          record.roles.some(
+            (role) => typeof role === "string" && role.trim().toLowerCase() === "node",
+          );
+      if (!id || !isNodePresence) {
         continue;
       }
       const reason = typeof record.reason === "string" ? record.reason.trim().toLowerCase() : "";
@@ -409,14 +366,20 @@ export class SessionCatalogLiveState {
     visible: boolean;
     connected: boolean;
     generation: number;
+    queueIfActive: boolean;
     refresh: () => void;
   }) {
     if (!params.visible || !params.connected) {
       return;
     }
+    // Focus can fire without a hidden interval. Preserve the existing freshness poll and
+    // do not queue behind an active request unless a real visibility/presence change occurred.
+    if (!params.queueIfActive && this.timer !== null) {
+      return;
+    }
     this.cancelTimer();
     if (this.requestGeneration === params.generation) {
-      this.refreshPending = true;
+      this.refreshPending ||= params.queueIfActive;
       return;
     }
     params.refresh();
@@ -424,6 +387,7 @@ export class SessionCatalogLiveState {
 
   cancelActivation() {
     this.cancelTimer("activationTimer");
+    this.activationQueueIfActive = false;
   }
 
   cancelScheduledRefreshes() {
@@ -431,7 +395,8 @@ export class SessionCatalogLiveState {
     this.cancelActivation();
   }
 
-  scheduleActivation(refresh: () => void) {
+  scheduleActivation(queueIfActive: boolean, refresh: (queueIfActive: boolean) => void) {
+    this.activationQueueIfActive ||= queueIfActive;
     if (this.activationTimer !== null) {
       return;
     }
@@ -439,7 +404,9 @@ export class SessionCatalogLiveState {
     // One short window keeps the burst to a single fleet scan.
     this.activationTimer = globalThis.setTimeout(() => {
       this.activationTimer = null;
-      refresh();
+      const shouldQueue = this.activationQueueIfActive;
+      this.activationQueueIfActive = false;
+      refresh(shouldQueue);
     }, 50);
   }
 }
@@ -475,7 +442,11 @@ export async function refreshSessionCatalogsLive(params: {
     client === params.currentClient();
   const revisionIsCurrent = () => requestIsCurrent() && revision === params.currentRevision();
   try {
-    const result = await live.requestList(client, params.agentId, progressId);
+    const result = await client.request<SessionsCatalogListResult>("sessions.catalog.list", {
+      agentId: params.agentId,
+      limitPerHost: 40,
+      progressId,
+    });
     if (!requestIsCurrent() || !result?.catalogs) {
       return;
     }
@@ -488,6 +459,7 @@ export async function refreshSessionCatalogsLive(params: {
       agentId: params.agentId,
       pageDepths: params.pageDepths,
       isCurrent: revisionIsCurrent,
+      canRequestPage: () => revisionIsCurrent() && document.visibilityState !== "hidden",
     });
     if (!revisionIsCurrent()) {
       return;

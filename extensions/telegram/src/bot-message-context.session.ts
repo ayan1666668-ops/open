@@ -5,10 +5,12 @@ import {
   type BuiltChannelInboundEventContext,
   formatMediaPlaceholderText,
   formatInboundEnvelope,
+  formatInboundMediaUnavailableText,
   resolveEnvelopeFormatOptions,
   toLocationContext,
   type NormalizedLocation,
   type InboundEventKind,
+  type GroupThreadMentionFacts,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { normalizeCommandBody } from "openclaw/plugin-sdk/command-surface";
 import type {
@@ -245,6 +247,7 @@ export async function buildTelegramInboundContextPayload(params: {
   inboundEventKind: InboundEventKind;
   groupRequireMention: boolean;
   mentionFacts: TelegramMentionFacts;
+  groupThread?: GroupThreadMentionFacts;
   hasControlCommand: boolean;
   stickerCacheHit?: boolean;
   audioTranscribedMediaIndex?: number;
@@ -483,6 +486,24 @@ export async function buildTelegramInboundContextPayload(params: {
         forwardedFrom: visibleForwardOrigin?.from,
         forwardedDate: visibleForwardOrigin?.date ? visibleForwardOrigin.date * 1000 : undefined,
       });
+  // Record terminal download outcomes after body assembly, including buffered forwards.
+  // Missing paths alone also describe intentionally unsupported media; raw commands stay untouched.
+  const unavailableMedia = allMedia.flatMap((media) =>
+    media.unavailable ? [media.unavailable] : [],
+  );
+  const unavailableReason =
+    allMedia.length > 1
+      ? `${unavailableMedia.length} of ${allMedia.length} attachments could not be downloaded`
+      : unavailableMedia[0]?.reason === "oversize"
+        ? `file exceeds ${unavailableMedia[0].limitMb}MB limit`
+        : "download failed";
+  const appendMediaUnavailableNotice = (text: string) =>
+    unavailableMedia.length > 0
+      ? formatInboundMediaUnavailableText({
+          body: text,
+          notice: `[media unavailable: ${unavailableReason}]`,
+        })
+      : text;
   const replySuffix =
     visibleReplyChain.length > 0
       ? `\n\n[Reply chain - nearest first]\n${visibleReplyChain
@@ -536,7 +557,7 @@ export async function buildTelegramInboundContextPayload(params: {
     channel: "Telegram",
     from: conversationLabel,
     timestamp: msg.date ? msg.date * 1000 : undefined,
-    body: `${visibleBodyText}${replySuffix}`,
+    body: `${appendMediaUnavailableNotice(visibleBodyText)}${replySuffix}`,
     chatType: isGroup ? "group" : "direct",
     sender: {
       name: senderName,
@@ -549,6 +570,9 @@ export async function buildTelegramInboundContextPayload(params: {
   const hasGroupHistoryContext = isGroup;
   const commandBody = normalizeCommandBody(rawBody, {
     botUsername: normalizeOptionalLowercaseString(primaryCtx.me?.username),
+    // Preserve multiline text-directive arguments for the core boundary (#138545);
+    // native strictness is re-derived core-side from the same text.
+    preserveArguments: true,
   });
   const commandSource =
     options?.commandSource ??
@@ -714,7 +738,9 @@ export async function buildTelegramInboundContextPayload(params: {
       inboundEventKind,
       body,
       rawBody,
-      bodyForAgent: shouldRenderBufferedBody ? visibleBodyText : bodyText,
+      bodyForAgent: appendMediaUnavailableNotice(
+        shouldRenderBufferedBody ? visibleBodyText : bodyText,
+      ),
       commandBody,
       inboundHistory,
       sourceModality: msg.voice ? "voice" : undefined,
@@ -782,6 +808,7 @@ export async function buildTelegramInboundContextPayload(params: {
     },
     contextVisibility: contextVisibilityMode,
     extra: {
+      GroupThread: params.groupThread,
       BotUsername: primaryCtx.me?.username ?? undefined,
       AmbientTranscriptWatermarkKey: ambientTranscriptWatermarkKey,
       AmbientTranscriptBody: options?.ambientTranscriptBody,

@@ -1,32 +1,42 @@
-// Settings page owning the dashboard's gateway connection draft (URL, token,
-// password, default session key) plus the latest handshake snapshot.
+// Settings page owning this browser's Gateway connection draft (URL, credential,
+// default session) and the live handshake summary.
 import "../../styles/connection.css";
 import { consume } from "@lit/context";
 import { html } from "lit";
 import { state } from "lit/decorators.js";
 import type { SystemInfoResult } from "../../../../packages/gateway-protocol/src/index.js";
-import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { subtitleForRoute, titleForRoute } from "../../app-navigation.ts";
+import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import {
-  applicationContext,
-  type ApplicationContext,
-  type ApplicationGatewaySnapshot,
-} from "../../app/context.ts";
-import { loadGatewaySessionSelection, loadSettings, type UiSettings } from "../../app/settings.ts";
-import { renderDocsLink } from "../../components/settings-ui.ts";
+  loadSettings,
+  resolveGatewayCredentialsForUrlEdit,
+  type UiSettings,
+} from "../../app/settings.ts";
+import type {
+  GatewayStatusSample,
+  GatewayStatusSnapshot,
+} from "../../components/gateway-vitals.ts";
+import { renderLearnMoreLink } from "../../components/settings-ui.ts";
 import { renderSettingsWorkspace } from "../../components/settings-workspace.ts";
-import { t } from "../../i18n/index.ts";
+import type { SparklineSample } from "../../components/sparkline-tile.ts";
 import { isMissingOperatorReadScopeError } from "../../lib/gateway-errors.ts";
+import {
+  GatewayPageController,
+  type GatewayPageChange,
+} from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { PollController } from "../../lit/poll-controller.ts";
-import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
+import {
+  CONNECTION_PING_SAMPLE_LIMIT,
+  summarizeConnectionPing,
+  type ConnectionPingSummary,
+} from "./latency.ts";
 import { isUnknownSystemInfoMethodError, supportsSystemInfo } from "./system-info.ts";
 import { renderConnection } from "./view.ts";
 
 const SYSTEM_INFO_POLL_INTERVAL_MS = 10_000;
+const DIAGNOSTICS_POLL_INTERVAL_MS = 5_000;
 const CONNECTION_DOCS_URL = "https://docs.openclaw.ai/gateway/remote";
-
-export { supportsSystemInfo } from "./system-info.ts";
 
 export class ConnectionPage extends OpenClawLightDomElement {
   @consume({ context: applicationContext, subscribe: true })
@@ -34,19 +44,21 @@ export class ConnectionPage extends OpenClawLightDomElement {
 
   @state() private settings: UiSettings = loadSettings();
   @state() private password = "";
-  @state() private gatewayTokenVisible = false;
-  @state() private gatewayPasswordVisible = false;
+  @state() private gatewaySecretVisible = false;
   @state() private systemInfo: SystemInfoResult | null = null;
   @state() private systemInfoUnavailable = false;
+  @state() private systemInfoLoading = false;
+  @state() private ping: ConnectionPingSummary | null = null;
+  @state() private pingFailed = false;
+  private pingSamples: SparklineSample[] = [];
+  private pingRequest: AbortController | null = null;
+  @state() private statusHistory: GatewayStatusSample[] = [];
+  @state() private statusFailed = false;
+  private statusRequest: AbortController | null = null;
 
-  // Distinguishes an operator-edited session key from the stored selection so
-  // Connect only overrides the per-gateway selection after an explicit edit.
-  private sessionKeyDirty = false;
-  private gatewayClient: ApplicationContext["gateway"]["snapshot"]["client"] = null;
-  private systemInfoGatewaySource: ApplicationContext["gateway"] | null = null;
-  private systemInfoClient: GatewayBrowserClient | null = null;
-  private systemInfoLoading = false;
-  private systemInfoRequestId = 0;
+  private sessionKeyBaseline = "";
+  private sessionGatewayUrl = "";
+  @state() private sessionSaved = false;
 
   private readonly systemInfoPolling = new PollController(
     this,
@@ -57,75 +69,209 @@ export class ConnectionPage extends OpenClawLightDomElement {
     false,
   );
 
-  private readonly subscriptions = new SubscriptionsController(this)
-    .effect(
-      () => this.context?.gateway,
-      (gateway) => {
-        this.resetDraft(gateway);
-        this.synchronizeSystemInfoGateway(gateway);
-        return gateway.subscribe((snapshot) => {
-          if (snapshot.client !== this.gatewayClient) {
-            this.resetDraft(gateway);
-          } else if (snapshot.phase !== "connected") {
-            this.resetSensitiveUi();
-          }
-          this.handleSystemInfoGatewaySnapshot(snapshot);
-          this.requestUpdate();
-        });
-      },
-    )
-    .watch(
-      () => this.context?.channels,
-      (channels, notify) => channels.subscribe(notify),
-    );
+  private readonly diagnosticsPolling = new PollController(
+    this,
+    DIAGNOSTICS_POLL_INTERVAL_MS,
+    () => this.refreshDiagnostics(),
+    false,
+  );
+
+  private readonly gateway = new GatewayPageController(this, {
+    getGateway: () => this.context?.gateway,
+    invalidateRequests: () => {
+      this.systemInfoLoading = false;
+      this.resetDiagnostics();
+    },
+    onSnapshot: (change) => this.handleGatewaySnapshot(change),
+    onPageActivation: () => this.syncDiagnosticsPolling(),
+  });
 
   override disconnectedCallback() {
     this.systemInfoPolling.stop();
-    this.invalidateSystemInfoRequest();
-    this.systemInfoGatewaySource = null;
-    this.systemInfoClient = null;
-    this.subscriptions.clear();
+    this.resetDiagnostics();
     this.resetSensitiveUi();
     super.disconnectedCallback();
   }
 
   private resetSensitiveUi() {
-    this.gatewayTokenVisible = false;
-    this.gatewayPasswordVisible = false;
+    this.gatewaySecretVisible = false;
   }
 
-  private synchronizeSystemInfoGateway(gateway: ApplicationContext["gateway"]) {
-    if (gateway !== this.systemInfoGatewaySource) {
-      this.systemInfoPolling.stop();
-      this.invalidateSystemInfoRequest();
-      this.systemInfoGatewaySource = gateway;
-      this.systemInfoClient = null;
-      this.systemInfo = null;
-      this.systemInfoUnavailable = false;
-    }
-    this.handleSystemInfoGatewaySnapshot(gateway.snapshot);
-  }
-
-  private handleSystemInfoGatewaySnapshot(snapshot: ApplicationGatewaySnapshot) {
-    const clientChanged = snapshot.client !== this.systemInfoClient;
-    const hasSystemInfo = supportsSystemInfo(snapshot.hello);
-    this.systemInfoClient = snapshot.client;
-    if (clientChanged) {
-      this.invalidateSystemInfoRequest();
+  private handleGatewaySnapshot({
+    snapshot,
+    initial,
+    sourceChanged,
+    clientChanged,
+  }: GatewayPageChange) {
+    if (initial || sourceChanged || clientChanged) {
+      this.resetDiagnostics();
+      this.resetConnectionDraft();
+      if (
+        initial ||
+        sourceChanged ||
+        this.sessionGatewayUrl !== this.context.gateway.connection.gatewayUrl
+      ) {
+        this.resetSessionDraft();
+      }
       this.systemInfo = null;
       this.systemInfoUnavailable = false;
     } else if (snapshot.phase !== "connected") {
-      this.invalidateSystemInfoRequest();
+      this.resetSensitiveUi();
       this.systemInfo = null;
     }
+    if (initial || sourceChanged) {
+      this.systemInfoPolling.stop();
+    }
     if (snapshot.phase === "connected" && snapshot.hello) {
-      this.systemInfoUnavailable = !hasSystemInfo;
-      if (!hasSystemInfo) {
-        this.invalidateSystemInfoRequest();
+      this.systemInfoUnavailable = !supportsSystemInfo(snapshot.hello);
+      if (this.systemInfoUnavailable) {
+        this.gateway.invalidate();
+        this.systemInfoLoading = false;
         this.systemInfo = null;
       }
     }
+    if (this.settings.sessionKey === this.sessionKeyBaseline) {
+      this.settings = { ...this.settings, sessionKey: snapshot.sessionKey };
+    }
+    this.sessionKeyBaseline = snapshot.sessionKey;
     this.syncSystemInfoPolling();
+    this.syncDiagnosticsPolling();
+  }
+
+  private stopDiagnosticsPolling() {
+    this.diagnosticsPolling.stop();
+    this.pingRequest?.abort();
+    this.pingRequest = null;
+    this.statusRequest?.abort();
+    this.statusRequest = null;
+  }
+
+  private resetDiagnostics() {
+    this.stopDiagnosticsPolling();
+    this.pingSamples = [];
+    this.ping = null;
+    this.pingFailed = false;
+    this.statusHistory = [];
+    this.statusFailed = false;
+  }
+
+  private syncDiagnosticsPolling() {
+    const snapshot = this.context.gateway.snapshot;
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      snapshot.phase !== "connected" ||
+      !snapshot.client
+    ) {
+      this.stopDiagnosticsPolling();
+      return;
+    }
+    if (this.diagnosticsPolling.start()) {
+      this.refreshDiagnostics();
+    }
+  }
+
+  private refreshDiagnostics() {
+    void this.measurePing();
+    void this.loadGatewayStatus();
+  }
+
+  private async measurePing() {
+    const gatewaySource = this.gateway.gateway;
+    const scope = this.gateway.capture();
+    if (
+      !gatewaySource ||
+      gatewaySource !== this.context.gateway ||
+      !scope ||
+      this.pingRequest ||
+      document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+    const request = new AbortController();
+    this.pingRequest = request;
+    const isCurrent = () =>
+      this.pingRequest === request &&
+      this.isConnected &&
+      document.visibilityState !== "hidden" &&
+      this.context.gateway === gatewaySource &&
+      this.gateway.isCurrent(scope);
+    const started = performance.now();
+    try {
+      // This RPC reads in-memory state; discard its payload and measure only the round trip.
+      await scope.client.request(
+        "last-heartbeat",
+        {},
+        {
+          timeoutMs: DIAGNOSTICS_POLL_INTERVAL_MS,
+          signal: request.signal,
+        },
+      );
+      if (!isCurrent()) {
+        return;
+      }
+      this.pingSamples = [
+        ...this.pingSamples.slice(-(CONNECTION_PING_SAMPLE_LIMIT - 1)),
+        { at: Date.now(), value: performance.now() - started },
+      ];
+      this.ping = summarizeConnectionPing(this.pingSamples.map((sample) => sample.value));
+      this.pingFailed = false;
+    } catch {
+      if (isCurrent()) {
+        this.pingFailed = true;
+      }
+    } finally {
+      if (this.pingRequest === request) {
+        this.pingRequest = null;
+      }
+    }
+  }
+
+  private async loadGatewayStatus() {
+    const gatewaySource = this.gateway.gateway;
+    const scope = this.gateway.capture();
+    if (
+      !gatewaySource ||
+      gatewaySource !== this.context.gateway ||
+      !scope ||
+      this.statusRequest ||
+      document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+    const request = new AbortController();
+    this.statusRequest = request;
+    const isCurrent = () =>
+      this.statusRequest === request &&
+      this.isConnected &&
+      document.visibilityState !== "hidden" &&
+      this.context.gateway === gatewaySource &&
+      this.gateway.isCurrent(scope);
+    try {
+      const status = await scope.client.request<GatewayStatusSnapshot>(
+        "status",
+        {},
+        {
+          timeoutMs: DIAGNOSTICS_POLL_INTERVAL_MS,
+          signal: request.signal,
+        },
+      );
+      if (isCurrent()) {
+        this.statusHistory = [
+          ...this.statusHistory.slice(-(CONNECTION_PING_SAMPLE_LIMIT - 1)),
+          { at: Date.now(), status },
+        ];
+        this.statusFailed = false;
+      }
+    } catch {
+      if (isCurrent()) {
+        this.statusFailed = true;
+      }
+    } finally {
+      if (this.statusRequest === request) {
+        this.statusRequest = null;
+      }
+    }
   }
 
   private syncSystemInfoPolling() {
@@ -145,53 +291,27 @@ export class ConnectionPage extends OpenClawLightDomElement {
     }
   }
 
-  private invalidateSystemInfoRequest() {
-    this.systemInfoRequestId += 1;
-    this.systemInfoLoading = false;
-  }
-
-  private isCurrentSystemInfoRequest(
-    requestId: number,
-    client: GatewayBrowserClient,
-    gatewaySource: ApplicationContext["gateway"],
-  ): boolean {
-    const gateway = gatewaySource.snapshot;
-    return (
-      this.isConnected &&
-      requestId === this.systemInfoRequestId &&
-      this.systemInfoGatewaySource === gatewaySource &&
-      this.context.gateway === gatewaySource &&
-      gateway.phase === "connected" &&
-      gateway.client === client
-    );
-  }
-
   private async loadSystemInfo() {
-    const gatewaySource = this.systemInfoGatewaySource;
+    const gatewaySource = this.gateway.gateway;
     if (!gatewaySource || gatewaySource !== this.context.gateway) {
       return;
     }
-    const gateway = gatewaySource.snapshot;
-    const client = gateway.client;
-    if (
-      gateway.phase !== "connected" ||
-      !client ||
-      this.systemInfoUnavailable ||
-      this.systemInfoLoading
-    ) {
+    const scope = this.gateway.capture();
+    if (!scope || this.systemInfoUnavailable || this.systemInfoLoading) {
       return;
     }
-
-    const requestId = ++this.systemInfoRequestId;
+    // Context can change before Lit rebinds the controller's source.
+    const isCurrent = () =>
+      this.isConnected && this.context.gateway === gatewaySource && this.gateway.isCurrent(scope);
     this.systemInfoLoading = true;
     try {
-      const response = await client.request("system.info", {});
-      if (!this.isCurrentSystemInfoRequest(requestId, client, gatewaySource)) {
+      const response = await scope.client.request("system.info", {});
+      if (!isCurrent()) {
         return;
       }
       this.systemInfo = response as SystemInfoResult;
     } catch (error) {
-      if (!this.isCurrentSystemInfoRequest(requestId, client, gatewaySource)) {
+      if (!isCurrent()) {
         return;
       }
       if (isMissingOperatorReadScopeError(error) || isUnknownSystemInfoMethodError(error)) {
@@ -200,86 +320,107 @@ export class ConnectionPage extends OpenClawLightDomElement {
         this.systemInfoPolling.stop();
       }
     } finally {
-      if (this.isCurrentSystemInfoRequest(requestId, client, gatewaySource)) {
+      if (isCurrent()) {
         this.systemInfoLoading = false;
       }
     }
   }
 
-  private resetDraft(gateway: ApplicationContext["gateway"]) {
-    const sessionKey = gateway.snapshot.sessionKey;
-    const { gatewayUrl, token, password } = gateway.connection;
-    this.gatewayClient = gateway.snapshot.client;
-    this.settings = {
-      ...loadSettings(),
-      gatewayUrl,
-      token,
-      sessionKey,
-      lastActiveSessionKey: sessionKey,
-    };
+  private resetConnectionDraft() {
+    const { gatewayUrl, token, password } = this.context.gateway.connection;
+    this.settings = { ...this.settings, gatewayUrl, token };
     this.password = password;
-    this.sessionKeyDirty = false;
     this.resetSensitiveUi();
   }
 
+  private resetSessionDraft() {
+    this.sessionGatewayUrl = this.context.gateway.connection.gatewayUrl;
+    this.sessionKeyBaseline = this.context.gateway.snapshot.sessionKey;
+    this.settings = { ...this.settings, sessionKey: this.sessionKeyBaseline };
+    this.sessionSaved = false;
+  }
+
+  private saveSession() {
+    this.context.gateway.setSessionKey(this.settings.sessionKey);
+    this.resetSessionDraft();
+    this.sessionSaved = true;
+  }
+
   private connect() {
-    const session = this.sessionKeyDirty
-      ? {
-          sessionKey: this.settings.sessionKey,
-          lastActiveSessionKey: this.settings.sessionKey,
-        }
-      : loadGatewaySessionSelection(this.settings.gatewayUrl);
-    this.settings = { ...this.settings, ...session };
-    this.sessionKeyDirty = false;
     this.context.gateway.connect({
       gatewayUrl: this.settings.gatewayUrl,
       token: this.settings.token,
       password: this.password,
-      sessionKey: session.sessionKey,
     });
+  }
+
+  private updateConnection(patch: Partial<Pick<UiSettings, "gatewayUrl" | "token">>) {
+    if (patch.gatewayUrl !== undefined) {
+      const credentials = resolveGatewayCredentialsForUrlEdit(
+        this.settings.gatewayUrl,
+        patch.gatewayUrl,
+        { token: this.settings.token, password: this.password },
+      );
+      this.password = credentials.password;
+      this.settings = { ...this.settings, ...patch, token: credentials.token };
+      return;
+    }
+    this.settings = { ...this.settings, ...patch };
   }
 
   override render() {
     const gateway = this.context.gateway.snapshot;
+    const live = this.context.gateway.connection;
+    const dirty =
+      this.settings.gatewayUrl !== live.gatewayUrl ||
+      this.settings.token !== live.token ||
+      this.password !== live.password;
     const body = renderConnection({
-      connected: gateway.phase === "connected",
+      phase: gateway.phase,
       hello: gateway.hello,
       settings: this.settings,
-      password: this.password,
+      liveGatewayUrl: live.gatewayUrl,
+      secret: this.settings.token || this.password,
       lastError: gateway.lastError,
-      lastChannelsRefresh: this.context.channels.state.channelsLastSuccess,
       systemInfo: this.systemInfo,
+      systemInfoLoading: this.systemInfoLoading,
       systemInfoUnavailable: this.systemInfoUnavailable,
-      showGatewayToken: this.gatewayTokenVisible,
-      showGatewayPassword: this.gatewayPasswordVisible,
-      onConnectionChange: (patch) => {
-        this.settings = { ...this.settings, ...patch };
+      ping: this.ping,
+      pingFailed: this.pingFailed,
+      pingSamples: this.pingSamples,
+      statusHistory: this.statusHistory,
+      statusFailed: this.statusFailed,
+      dirty,
+      sessionDirty: this.settings.sessionKey.trim() !== gateway.sessionKey,
+      sessionSaved: this.sessionSaved,
+      showGatewaySecret: this.gatewaySecretVisible,
+      onConnectionChange: (patch) => this.updateConnection(patch),
+      onSecretChange: (token) => {
+        this.password = "";
+        this.updateConnection({ token });
       },
-      onPasswordChange: (next) => (this.password = next),
       onSessionKeyChange: (sessionKey) => {
-        this.sessionKeyDirty = true;
+        this.sessionSaved = false;
         this.settings = {
           ...this.settings,
           sessionKey,
-          lastActiveSessionKey: sessionKey,
         };
       },
-      onToggleGatewayTokenVisibility: () => {
-        this.gatewayTokenVisible = !this.gatewayTokenVisible;
-      },
-      onToggleGatewayPasswordVisibility: () => {
-        this.gatewayPasswordVisible = !this.gatewayPasswordVisible;
+      onToggleGatewaySecretVisibility: () => {
+        this.gatewaySecretVisible = !this.gatewaySecretVisible;
       },
       onConnect: () => this.connect(),
-      onRefresh: () => void this.context.channels.refresh(false),
+      onDiscardConnection: () => this.resetConnectionDraft(),
+      onReconnect: () => this.context.gateway.connect(),
+      onSaveSession: () => this.saveSession(),
+      onDiscardSession: () => this.resetSessionDraft(),
     });
     return html`
       <section class="content-header">
         <div>
           <div class="page-title">${titleForRoute("connection")}</div>
           <div class="page-subtitle">
-            ${subtitleForRoute("connection")}
-            ${renderDocsLink(CONNECTION_DOCS_URL, t("common.learnMore"))}
+            ${subtitleForRoute("connection")} ${renderLearnMoreLink(CONNECTION_DOCS_URL)}
           </div>
         </div>
       </section>

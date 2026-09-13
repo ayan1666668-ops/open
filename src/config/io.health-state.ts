@@ -1,12 +1,21 @@
+import type { DatabaseSync } from "node:sqlite";
 import { formatErrorMessage } from "../infra/errors.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
+import { findStartupMaintenanceRequiredError } from "../infra/startup-maintenance-required.js";
+import {
+  isArtifactPreservingStateRead,
+  withExistingOpenClawStateDatabaseArtifactPreservingReadOnlyAsync,
+  withExistingOpenClawStateDatabaseReadOnly,
+} from "../state/openclaw-state-db-readonly.js";
 // Stores config health fingerprints in shared SQLite state.
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
-import {
-  openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
-} from "../state/openclaw-state-db.js";
+import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { OpenClawStateOwnershipError } from "../state/openclaw-state-ownership.js";
+import { setBoundedConfigIoWarningEntry } from "./io.state.js";
+
+// Fresh config snapshots share a database; retain failures until a write recovers.
+const loggedHealthWriteFailures = new Map<string, string>();
 
 export type ConfigHealthFingerprint = {
   hash: string;
@@ -67,34 +76,63 @@ function stringifyConfigHealthFingerprint(
   return value ? JSON.stringify(value) : null;
 }
 
+function readConfigHealthState(database: { db: DatabaseSync }): ConfigHealthState {
+  const healthDb = getNodeSqliteKysely<ConfigHealthDatabase>(database.db);
+  const rows = executeSqliteQuerySync(
+    database.db,
+    healthDb
+      .selectFrom("config_health_entries")
+      .select([
+        "config_path",
+        "last_known_good_json",
+        "last_promoted_good_json",
+        "last_observed_suspicious_signature",
+      ])
+      .orderBy("config_path", "asc"),
+  ).rows;
+  return {
+    entries: Object.fromEntries(
+      rows.map((row) => [
+        row.config_path,
+        {
+          lastKnownGood: parseConfigHealthFingerprint(row.last_known_good_json),
+          lastPromotedGood: parseConfigHealthFingerprint(row.last_promoted_good_json),
+          lastObservedSuspiciousSignature: row.last_observed_suspicious_signature,
+        } satisfies ConfigHealthEntry,
+      ]),
+    ),
+  };
+}
+
 export function readConfigHealthStateFromStore(deps: ConfigHealthStateDeps): ConfigHealthState {
   try {
-    const database = openOpenClawStateDatabase({ env: resolveConfigHealthStateEnv(deps) });
-    const healthDb = getNodeSqliteKysely<ConfigHealthDatabase>(database.db);
-    const rows = executeSqliteQuerySync(
-      database.db,
-      healthDb
-        .selectFrom("config_health_entries")
-        .select([
-          "config_path",
-          "last_known_good_json",
-          "last_promoted_good_json",
-          "last_observed_suspicious_signature",
-        ])
-        .orderBy("config_path", "asc"),
-    ).rows;
-    return {
-      entries: Object.fromEntries(
-        rows.map((row) => [
-          row.config_path,
-          {
-            lastKnownGood: parseConfigHealthFingerprint(row.last_known_good_json),
-            lastPromotedGood: parseConfigHealthFingerprint(row.last_promoted_good_json),
-            lastObservedSuspiciousSignature: row.last_observed_suspicious_signature,
-          } satisfies ConfigHealthEntry,
-        ]),
-      ),
-    };
+    return (
+      withExistingOpenClawStateDatabaseReadOnly(readConfigHealthState, {
+        env: resolveConfigHealthStateEnv(deps),
+      }) ?? {}
+    );
+  } catch (error) {
+    if (error instanceof OpenClawStateOwnershipError) {
+      throw error;
+    }
+    return {};
+  }
+}
+
+/** Keep live reads unchanged; await only an already-admitted private snapshot. */
+export async function readConfigHealthStateFromStoreAsync(
+  deps: ConfigHealthStateDeps,
+): Promise<ConfigHealthState> {
+  if (!isArtifactPreservingStateRead()) {
+    return readConfigHealthStateFromStore(deps);
+  }
+  try {
+    return (
+      (await withExistingOpenClawStateDatabaseArtifactPreservingReadOnlyAsync(
+        readConfigHealthState,
+        { env: resolveConfigHealthStateEnv(deps) },
+      )) ?? {}
+    );
   } catch (error) {
     if (error instanceof OpenClawStateOwnershipError) {
       throw error;
@@ -107,6 +145,8 @@ export function writeConfigHealthStateToStore(
   deps: ConfigHealthStateDeps,
   state: ConfigHealthState,
 ): void {
+  const env = resolveConfigHealthStateEnv(deps);
+  const databasePath = resolveOpenClawStateSqlitePath(env);
   try {
     const entries = Object.entries(state.entries ?? {});
     if (entries.length === 0) {
@@ -140,12 +180,21 @@ export function writeConfigHealthStateToStore(
             ),
         );
       },
-      { env: resolveConfigHealthStateEnv(deps) },
+      { env, path: databasePath },
     );
+    loggedHealthWriteFailures.delete(databasePath);
   } catch (error) {
-    if (error instanceof OpenClawStateOwnershipError) {
+    if (
+      error instanceof OpenClawStateOwnershipError ||
+      findStartupMaintenanceRequiredError(error)
+    ) {
       throw error;
     }
-    deps.logger.warn(`Config health-state write failed: ${formatErrorMessage(error)}`);
+    const message = formatErrorMessage(error);
+    const repeated = loggedHealthWriteFailures.get(databasePath) === message;
+    setBoundedConfigIoWarningEntry(loggedHealthWriteFailures, databasePath, message);
+    if (!repeated) {
+      deps.logger.warn(`Config health-state write failed: ${message}`);
+    }
   }
 }

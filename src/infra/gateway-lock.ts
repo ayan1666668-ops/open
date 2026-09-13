@@ -11,9 +11,13 @@ import {
 } from "@openclaw/normalization-core/number-coercion";
 import { z } from "zod";
 import { resolveConfigPath, resolveGatewayLockDir, resolveStateDir } from "../config/paths.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getFileLockProcessStartTime, isPidAlive } from "../shared/pid-alive.js";
 import { safeParseJsonWithSchema } from "../utils/zod-parse.js";
+import { acquireWithWait } from "./acquire-with-wait.js";
+import { resolveIdentityPathViaExistingAncestorSync } from "./boundary-path.js";
 import { sha256HexPrefixCore } from "./crypto-digest.js";
+import { hasErrnoCode } from "./errno.js";
 import { createFileLockManager } from "./file-lock-manager.js";
 import {
   isGatewayArgv,
@@ -21,17 +25,21 @@ import {
   isOpenClawCommandArgv,
   parseProcCmdline,
 } from "./gateway-process-argv.js";
-import { tryAcquireExclusiveSqliteCoordinator } from "./node-sqlite.js";
-import { acquireGatewayLifecycleCoordinator } from "./state-database-coordinator.js";
+import { resolveDiagnosticProcessEnv } from "./process-env.js";
+import { tryAcquireExclusiveSqliteCoordinator } from "./sqlite-coordinator.js";
 import {
-  readWindowsProcessArgsSync,
-  readWindowsProcessStartTimeSync,
-} from "./windows-port-pids.js";
+  acquireGatewayLifecycleCoordinator,
+  StateDatabaseCoordinatorContentionError,
+} from "./state-database-coordinator.js";
+import { readWindowsProcessArgsSync } from "./windows-port-pids.js";
+import { readWindowsProcessStartTimeSync } from "./windows-process-start.js";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_STALE_MS = 30_000;
 const GATEWAY_LOCKS = createFileLockManager("openclaw.gateway-lock");
+export const GATEWAY_LIFECYCLE_LOCK_TIMEOUT_MS = 5 * 60_000;
+const log = createSubsystemLogger("gateway");
 
 type LockPayload = {
   pid: number;
@@ -63,7 +71,6 @@ const LockPayloadSchema = z.object({
 type GatewayLockHandle = {
   lockPath: string;
   stateLockPath: string;
-  configPath: string;
   stateDir: string;
   releaseInTree: () => Promise<void>;
   release: () => Promise<void>;
@@ -97,6 +104,7 @@ export function isSameGatewayLockIdentity(
 export type GatewayLockOptions = {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  lifecycleDeadlineMs?: number;
   pollIntervalMs?: number;
   staleMs?: number;
   allowInTests?: boolean;
@@ -120,6 +128,14 @@ export class GatewayLockError extends Error {
     super(message);
     this.name = "GatewayLockError";
   }
+}
+
+export function isGatewayLifecycleContentionError(error: unknown): boolean {
+  return (
+    error instanceof GatewayLockError &&
+    error.cause instanceof StateDatabaseCoordinatorContentionError &&
+    error.cause.family === "gateway-lifecycle"
+  );
 }
 
 type LockOwnerStatus = "alive" | "dead" | "unknown";
@@ -150,6 +166,7 @@ function readWindowsCmdline(pid: number): string[] | null {
 function readDarwinCmdline(pid: number): string[] | null {
   try {
     const raw = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      env: resolveDiagnosticProcessEnv(),
       encoding: "utf8",
       timeout: CMDLINE_EXEC_TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
@@ -244,11 +261,20 @@ async function resolveGatewayOwnerStatus(
   return isGatewayArgv(args, { allowGatewayBinary: true }) ? "alive" : "dead";
 }
 
-async function readLockPayload(lockPath: string): Promise<LockPayload | null> {
+async function readLockPayload(
+  lockPath: string,
+  requireInspection = false,
+): Promise<LockPayload | null> {
   try {
-    const raw = await fs.readFile(lockPath, "utf8");
-    return parseGatewayLockPayload(raw);
-  } catch {
+    const payload = parseGatewayLockPayload(await fs.readFile(lockPath, "utf8"));
+    if (requireInspection && !payload) {
+      throw new GatewayLockError("Gateway lock payload could not be verified");
+    }
+    return payload;
+  } catch (error) {
+    if (requireInspection && !hasErrnoCode(error, "ENOENT")) {
+      throw new GatewayLockError("Gateway lock inspection is unavailable", error);
+    }
     return null;
   }
 }
@@ -294,32 +320,9 @@ async function shouldReclaimGatewayLock(params: {
   }
 }
 
-function canonicalizeStateDir(stateDir: string): string {
-  const resolved = path.resolve(stateDir);
-  try {
-    return fsSync.realpathSync.native(resolved);
-  } catch {
-    const missingSegments: string[] = [];
-    let current = resolved;
-    while (true) {
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return resolved;
-      }
-      missingSegments.push(path.basename(current));
-      current = parent;
-      try {
-        return path.join(fsSync.realpathSync.native(current), ...missingSegments.toReversed());
-      } catch {
-        // Keep walking so aliases in an existing ancestor still share one lock.
-      }
-    }
-  }
-}
-
 function resolveGatewayLockPaths(env: NodeJS.ProcessEnv, suppliedLockDir?: string) {
   const resolvedStateDir = resolveStateDir(env);
-  const stateDir = canonicalizeStateDir(resolvedStateDir);
+  const stateDir = resolveIdentityPathViaExistingAncestorSync(resolvedStateDir);
   const lockDir = suppliedLockDir ?? resolveGatewayLockDir(stateDir);
   const configPath = resolveConfigPath(env, resolvedStateDir);
   const configHash = sha256HexPrefixCore(configPath, 8);
@@ -331,20 +334,19 @@ function resolveGatewayLockPaths(env: NodeJS.ProcessEnv, suppliedLockDir?: strin
   };
 }
 
+type GatewayLockObservationOptions = Pick<
+  GatewayLockOptions,
+  "env" | "lockDir" | "platform" | "readProcessCmdline" | "readProcessStartTime"
+> & { requireInspection?: boolean };
+
 export async function readActiveGatewayLockPort(
-  opts: Pick<
-    GatewayLockOptions,
-    "env" | "lockDir" | "platform" | "readProcessCmdline" | "readProcessStartTime"
-  > = {},
+  opts: GatewayLockObservationOptions = {},
 ): Promise<number | undefined> {
   return (await readActiveGatewayLockIdentity(opts))?.port;
 }
 
 export async function readActiveGatewayLockIdentity(
-  opts: Pick<
-    GatewayLockOptions,
-    "env" | "lockDir" | "platform" | "readProcessCmdline" | "readProcessStartTime"
-  > = {},
+  opts: GatewayLockObservationOptions = {},
 ): Promise<GatewayLockIdentity | undefined> {
   const env = opts.env ?? process.env;
   const { configLockPath, stateLockPath } = resolveGatewayLockPaths(env, opts.lockDir);
@@ -354,10 +356,10 @@ export async function readActiveGatewayLockIdentity(
 
 async function readVerifiedGatewayLockIdentity(
   lockPath: string,
-  opts: Pick<GatewayLockOptions, "platform" | "readProcessCmdline" | "readProcessStartTime">,
+  opts: GatewayLockObservationOptions,
 ): Promise<GatewayLockIdentity | undefined> {
-  const payload = await readLockPayload(lockPath);
-  if (!payload?.port || (payload.role && payload.role !== "gateway")) {
+  const payload = await readLockPayload(lockPath, opts.requireInspection);
+  if (!payload || (payload.role && payload.role !== "gateway")) {
     return undefined;
   }
   const ownerStatus = await resolveGatewayOwnerStatus(
@@ -368,7 +370,15 @@ async function readVerifiedGatewayLockIdentity(
     opts.readProcessStartTime,
     { trustUnknownCmdlineOwner: false },
   );
-  if (ownerStatus !== "alive") {
+  // Discovery may omit an unverifiable owner; mutation preflight must preserve unknown.
+  if (
+    opts.requireInspection &&
+    ownerStatus !== "dead" &&
+    (ownerStatus === "unknown" || !payload.port)
+  ) {
+    throw new GatewayLockError("Gateway lock owner identity could not be verified");
+  }
+  if (ownerStatus !== "alive" || !payload.port) {
     return undefined;
   }
   return {
@@ -392,14 +402,55 @@ export async function acquireGatewayLock(
   const role = opts.role ?? "gateway";
   const ownerId = randomUUID();
   const paths = resolveGatewayLockPaths(env, opts.lockDir);
+  const now = opts.now ?? performance.now.bind(performance);
+  const startedAt = now();
+  const timeoutMs = resolveTimerTimeoutMs(
+    opts.timeoutMs,
+    role === "gateway" ? GATEWAY_LIFECYCLE_LOCK_TIMEOUT_MS : 0,
+    0,
+  );
+  const deadlineMs = opts.lifecycleDeadlineMs ?? startedAt + timeoutMs;
+  let waited = false;
   let stateLifecycle: ReturnType<typeof acquireGatewayLifecycleCoordinator>;
   try {
-    stateLifecycle = acquireGatewayLifecycleCoordinator({
-      databasePath: path.join(paths.stateDir, "state", "openclaw.sqlite"),
-      busyTimeoutMs: opts.timeoutMs,
+    stateLifecycle = await acquireWithWait({
+      deadlineMs,
+      pollIntervalMs: resolvePositiveTimerTimeoutMs(opts.pollIntervalMs, 250),
+      maxPollIntervalMs: 2000,
+      now,
+      sleep: opts.sleep,
+      acquire: () =>
+        acquireGatewayLifecycleCoordinator({
+          databasePath: path.join(paths.stateDir, "state", "openclaw.sqlite"),
+          busyTimeoutMs: 0,
+        }),
+      shouldRetry: (error) => {
+        if (
+          !(error instanceof StateDatabaseCoordinatorContentionError) ||
+          error.family !== "gateway-lifecycle"
+        ) {
+          return false;
+        }
+        if (!waited && deadlineMs > startedAt && role === "gateway") {
+          log.warn(
+            `waiting for gateway-lifecycle ownership held by another OpenClaw process, up to ${Math.ceil((deadlineMs - startedAt) / 1000)} s`,
+          );
+        }
+        waited = true;
+        return true;
+      },
     });
   } catch (error) {
-    throw new GatewayLockError("failed to acquire gateway state ownership", error);
+    const waitHint =
+      waited && role === "gateway"
+        ? `; waited ${Math.round(now() - startedAt)}ms for gateway-lifecycle ownership`
+        : "";
+    throw new GatewayLockError(`failed to acquire gateway state ownership${waitHint}`, error);
+  }
+  if (waited && role === "gateway") {
+    log.info(
+      `gateway-lifecycle ownership acquired after ${((now() - startedAt) / 1000).toFixed(1)} s`,
+    );
   }
   let stateLock: Awaited<ReturnType<typeof acquireLockFile>>;
   try {
@@ -608,7 +659,6 @@ async function acquireLockFile(
         });
         return {
           lockPath,
-          configPath,
           release: async () => {
             let releaseError: unknown;
             try {

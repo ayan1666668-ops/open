@@ -10,10 +10,15 @@ import {
   resolveToolCallTargetPaths,
   type ToolCallKind,
 } from "./tool-call-view.ts";
+import { resolveToolDisplay } from "./tool-display.ts";
 
 type ToolGroupSummaryInput = {
   name: string;
   args?: unknown;
+  callId?: string;
+  runId?: string;
+  parentToolCallId?: string;
+  isError?: boolean;
 };
 
 type FileActivity = "read" | "edit" | "write" | "delete";
@@ -73,7 +78,9 @@ function countCard(counts: GroupCounts, card: ToolGroupSummaryInput): void {
         break;
       default:
         counts.others += 1;
-        counts.otherNames.add(card.name);
+        // Same display label as the standalone row, so a collapsed rollup of
+        // e.g. heartbeat_respond reads "Heartbeat Respond" in both shapes.
+        counts.otherNames.add(resolveToolDisplay({ name: card.name, args: card.args }).label);
     }
   }
 }
@@ -104,7 +111,22 @@ export function summarizeToolGroup(cards: readonly ToolGroupSummaryInput[]): str
     otherNames: new Set(),
     others: 0,
   };
-  for (const card of cards) {
+  const parents = new Set(
+    cards.flatMap((card) =>
+      card.runId && card.parentToolCallId && card.parentToolCallId !== card.callId
+        ? [JSON.stringify([card.runId, card.parentToolCallId])]
+        : [],
+    ),
+  );
+  // Only recorded relationships suppress a wrapper; failed wrappers retain their own outcome.
+  const operations = cards.filter(
+    (card) =>
+      card.isError ||
+      !card.runId ||
+      !card.callId ||
+      !parents.has(JSON.stringify([card.runId, card.callId])),
+  );
+  for (const card of operations.length ? operations : cards) {
     countCard(counts, card);
   }
 

@@ -4,9 +4,11 @@ import { logError } from "openclaw/plugin-sdk/logging-core";
 import { resolveRequestClientIp } from "openclaw/plugin-sdk/webhook-ingress";
 import {
   readJsonBodyWithLimit,
+  sendHttpRequestRejection,
   WEBHOOK_BODY_READ_DEFAULTS,
 } from "openclaw/plugin-sdk/webhook-request-guards";
 import { parseDiscordActivityCustomId } from "../component-custom-id.js";
+import { getDiscordEndpointRuntime } from "../endpoint-runtime.js";
 import {
   DISCORD_TOKEN_URL,
   DISCORD_USER_URL,
@@ -26,6 +28,7 @@ import {
 } from "./shell.js";
 
 const BODY_MAX_BYTES = 8 * 1024;
+const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const WIDGET_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const DOC_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -69,8 +72,12 @@ function respond(
   return true;
 }
 
+function jsonBody(body: unknown): string {
+  return `${JSON.stringify(body)}\n`;
+}
+
 function respondJson(res: ServerResponse, statusCode: number, body: unknown): true {
-  return respond(res, statusCode, `${JSON.stringify(body)}\n`, "application/json; charset=utf-8");
+  return respond(res, statusCode, jsonBody(body), JSON_CONTENT_TYPE);
 }
 
 function notFound(res: ServerResponse, widgetDocument = false): true {
@@ -154,13 +161,33 @@ export function createDiscordActivityHttpHandler(deps: DiscordActivityHttpDeps):
     if (!account) {
       return respondJson(res, 503, { error: "Discord Activities is not fully configured" });
     }
+    const endpointRuntime = getDiscordEndpointRuntime() ?? null;
     const bodyResult = await readJsonBodyWithLimit(req, {
       maxBytes: BODY_MAX_BYTES,
       timeoutMs: bodyTimeoutMs,
       emptyObjectOnEmpty: true,
+      // Defer destruction so the rejections below reach the client before the close.
+      destroyOnLimit: false,
     });
     if (!bodyResult.ok && bodyResult.code === "REQUEST_BODY_TIMEOUT") {
-      return respondJson(res, 408, { error: "request body timeout" });
+      await sendHttpRequestRejection(
+        req,
+        res,
+        408,
+        jsonBody({ error: "request body timeout" }),
+        JSON_CONTENT_TYPE,
+      );
+      return true;
+    }
+    if (!bodyResult.ok && bodyResult.code === "PAYLOAD_TOO_LARGE") {
+      await sendHttpRequestRejection(
+        req,
+        res,
+        413,
+        jsonBody({ error: "request body too large" }),
+        JSON_CONTENT_TYPE,
+      );
+      return true;
     }
     const body =
       bodyResult.ok &&
@@ -196,6 +223,7 @@ export function createDiscordActivityHttpHandler(deps: DiscordActivityHttpDeps):
             }),
           },
           auditContext: "discord.activities.oauth.token",
+          endpointRuntime,
         });
       } catch {
         return respondJson(res, 503, { error: "Discord token exchange unavailable" });
@@ -215,6 +243,7 @@ export function createDiscordActivityHttpHandler(deps: DiscordActivityHttpDeps):
           url: DISCORD_USER_URL,
           init: { headers: { Authorization: `Bearer ${granted}` } },
           auditContext: "discord.activities.oauth.user",
+          endpointRuntime,
         });
       } catch {
         return respondJson(res, 503, { error: "Discord user lookup unavailable" });

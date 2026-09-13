@@ -21,9 +21,9 @@ import {
   formatTuiErrorMessage,
   isCommandMarkedMessage,
 } from "./tui-formatters.js";
+import { extractTuiImageSources } from "./tui-images.js";
 import { readTuiSessionUserMessage } from "./tui-session-events.js";
 import {
-  clearTuiSessionModeOverrides,
   sessionInfoUiEquals,
   type SessionInfoDefaults,
   type SessionInfoEntry,
@@ -37,14 +37,10 @@ import {
 import * as submit from "./tui-submit-state.js";
 import type { TuiHistoryLoadResult, TuiOptions, TuiStateAccess } from "./tui-types.js";
 
-type SessionActionBtwPresenter = {
-  clear: () => void;
-};
-
 type SessionActionContext = {
   client: TuiBackend;
   chatLog: ChatLog;
-  btw: SessionActionBtwPresenter;
+  btw: { clear: () => void };
   tui: TUI;
   opts: TuiOptions;
   state: TuiStateAccess;
@@ -111,11 +107,8 @@ export function createSessionActions(context: SessionActionContext) {
     submit.clearPendingSubmit(state);
     setActivityStatus("idle");
     state.currentSessionId = null;
-    state.sessionInfo.displayName = undefined;
-    clearTuiSessionModeOverrides(state.sessionInfo);
-    // Session keys can move backwards in updatedAt ordering; drop previous session freshness
-    // so refresh data for the newly selected session isn't rejected as stale.
-    state.sessionInfo.updatedAt = null;
+    state.sessionInfo = {};
+    lastSessionDefaults = null;
     state.historyLoaded = false;
     // Live prompt identities belong to the old selection, not its pending successor.
     chatLog.clearAll();
@@ -339,8 +332,11 @@ export function createSessionActions(context: SessionActionContext) {
   const runRefreshSessionInfo = async () => {
     const selection = captureSessionSelection();
     const historyGeneration = historyLoadGeneration;
+    const sessionGeneration = state.sessionGeneration ?? 0;
     const isCurrentRefresh = () =>
-      historyGeneration === historyLoadGeneration && isCurrentSessionSelection(selection);
+      historyGeneration === historyLoadGeneration &&
+      sessionGeneration === (state.sessionGeneration ?? 0) &&
+      isCurrentSessionSelection(selection);
     try {
       const resolveListAgentId = () => {
         if (selection.sessionKey === "global") {
@@ -455,9 +451,12 @@ export function createSessionActions(context: SessionActionContext) {
     // History rebuilds mutate shared UI state after multiple awaits. Only the
     // latest request may render, or a slow reload can replace a newer selection.
     const generation = ++historyLoadGeneration;
+    const sessionGeneration = state.sessionGeneration ?? 0;
     const selection = captureSessionSelection();
     const isCurrentLoad = () =>
-      generation === historyLoadGeneration && isCurrentSessionSelection(selection);
+      generation === historyLoadGeneration &&
+      (state.sessionGeneration ?? 0) === sessionGeneration &&
+      isCurrentSessionSelection(selection);
     try {
       const history = await client.loadHistory({
         sessionKey: selection.sessionKey,
@@ -471,7 +470,9 @@ export function createSessionActions(context: SessionActionContext) {
         messages?: unknown[];
         sessionId?: string;
         sessionInfo?: SessionInfoEntry &
-          Partial<Pick<SessionEntry, "abortedLastRun" | "lastRunError" | "status">>;
+          Partial<Pick<SessionEntry, "abortedLastRun" | "lastRunError" | "status">> & {
+            activeRunIds?: unknown;
+          };
         defaults?: SessionInfoDefaults;
         thinkingLevel?: string;
         fastMode?: FastMode;
@@ -551,14 +552,19 @@ export function createSessionActions(context: SessionActionContext) {
             if (entry.pending && entry.pendingRunId) {
               chatLog.addPendingUser(entry.pendingRunId, text);
             } else if (entry.live && liveUserMessage) {
-              chatLog.addLiveUser(text, {
-                messageId: liveUserMessage.messageId,
-                ...(liveUserMessage.runId ? { runId: liveUserMessage.runId } : {}),
-              });
+              chatLog.addLiveUser(text, liveUserMessage);
             } else if (liveUserMessage) {
-              chatLog.addUser(text, { messageId: liveUserMessage.messageId });
+              chatLog.addUser(text, {
+                messageId: liveUserMessage.messageId,
+                ...(liveUserMessage.images ? { images: liveUserMessage.images } : {}),
+              });
             } else {
-              chatLog.addUser(text);
+              const images = extractTuiImageSources(message);
+              if (images.length > 0) {
+                chatLog.addUser(text, { images });
+              } else {
+                chatLog.addUser(text);
+              }
             }
           }
           continue;
@@ -568,7 +574,12 @@ export function createSessionActions(context: SessionActionContext) {
             includeThinking: state.showThinking,
           });
           if (text) {
-            chatLog.finalizeAssistant(text);
+            const images = extractTuiImageSources(message);
+            if (images.length > 0) {
+              chatLog.finalizeAssistant(text, undefined, images);
+            } else {
+              chatLog.finalizeAssistant(text);
+            }
           }
           continue;
         }
@@ -594,14 +605,10 @@ export function createSessionActions(context: SessionActionContext) {
       }
       submit.reconcilePendingSubmitHistory(
         state,
-        projection.entries.flatMap((entry) =>
-          !entry.pending &&
-          entry.identity?.role === "user" &&
-          entry.identity.runId !== null &&
-          pendingRunIds.has(entry.identity.runId)
-            ? [entry.identity.runId]
-            : [],
-        ),
+        projection.entries.flatMap((entry) => {
+          const sendId = entry.identity?.sendId;
+          return !entry.pending && sendId && pendingRunIds.has(sendId) ? [sendId] : [];
+        }),
       );
       const inFlightRunId = formatPrimitiveString(record.inFlightRun?.runId, "");
       const inFlightText = formatPrimitiveString(record.inFlightRun?.text, "");
@@ -631,7 +638,14 @@ export function createSessionActions(context: SessionActionContext) {
           : status === "killed" || sessionInfo?.abortedLastRun === true
             ? ({ state: "interrupted" } as const)
             : ({ state: "completed" } as const);
-      return { loaded: true, runOutcome };
+      const activeRunIds = sessionInfo?.activeRunIds;
+      return {
+        loaded: true,
+        runOutcome,
+        ...(Array.isArray(activeRunIds) && activeRunIds.every((id) => typeof id === "string")
+          ? { activeRunIds }
+          : {}),
+      };
     } catch (err) {
       if (isCurrentLoad() && !isAbortError(err)) {
         chatLog.addSystem(`history failed: ${formatTuiErrorMessage(err)}`);
@@ -659,8 +673,14 @@ export function createSessionActions(context: SessionActionContext) {
       return;
     }
     const selection = captureSessionSelection();
+    const sessionId = state.currentSessionId;
+    const sessionGeneration = state.sessionGeneration ?? 0;
     const pendingRunId = submit.getPendingSubmitAcceptedRunId(state);
     const activeRunId = state.activeChatRunId;
+    const isCurrentAbort = () =>
+      isCurrentSessionSelection(selection) &&
+      (state.sessionGeneration ?? 0) === sessionGeneration &&
+      (sessionId === null || state.currentSessionId === sessionId);
     const dropPendingRun = (runId: string) => {
       reduceTuiSessionProjection(state, {
         type: "sendFailed",
@@ -677,7 +697,7 @@ export function createSessionActions(context: SessionActionContext) {
         sessionKey: selection.sessionKey,
         ...(!parseAgentSessionKey(selection.sessionKey) ? { agentId: selection.agentId } : {}),
       });
-      if (!isCurrentSessionSelection(selection)) {
+      if (!isCurrentAbort()) {
         return;
       }
       if (!result.aborted) {
@@ -704,7 +724,7 @@ export function createSessionActions(context: SessionActionContext) {
       }
       setActivityStatus("aborted");
     } catch (err) {
-      if (!isCurrentSessionSelection(selection)) {
+      if (!isCurrentAbort()) {
         return;
       }
       chatLog.addSystem(`abort failed: ${formatTuiErrorMessage(err)}`);

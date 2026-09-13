@@ -13,7 +13,6 @@ import {
   validatePollParams,
   validateSendParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import type { MessageActionParams } from "../../../packages/gateway-protocol/src/index.js";
 import { sendDurableMessageBatchCore } from "../../channels/message/runtime.js";
 import type { ConversationReadInvocationOrigin } from "../../channels/plugins/conversation-read-origin.js";
 import { resolveChannelDefaultAccountId } from "../../channels/plugins/helpers.js";
@@ -21,6 +20,7 @@ import { dispatchChannelMessageAction } from "../../channels/plugins/message-act
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import { resolveChannelThreadAddressing } from "../../channels/thread-addressing.js";
 import type { InternalChannelThreadingToolContext } from "../../channels/threading-tool-context-internal.js";
+import { isChannelPartialDeliveryError } from "../../channels/turn/delivery-result.js";
 import { createOutboundSendDeps } from "../../cli/deps.js";
 import {
   getRuntimeConfigSnapshot,
@@ -32,10 +32,12 @@ import { resolveOutboundChannelPlugin } from "../../infra/outbound/channel-resol
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
 import { OutboundDeliveryError } from "../../infra/outbound/deliver-types.js";
 import { validateExplicitMessageAccountSelection } from "../../infra/outbound/message-account-selection.js";
+import { resolveImplicitMessageActionTarget } from "../../infra/outbound/message-action-normalization.js";
 import {
   hydrateAttachmentParamsForAction,
   resolveAttachmentMediaPolicy,
 } from "../../infra/outbound/message-action-params.js";
+import { actionHasTarget } from "../../infra/outbound/message-action-spec.js";
 import {
   ensureOutboundSessionEntry,
   resolveOutboundSessionRoute,
@@ -75,9 +77,11 @@ import {
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveGatewayConversationReadOrigin } from "../conversation-read-origin.js";
 import { selectMessageActionRequesterIdentity } from "../message-action-turn-capability.js";
-import { authorizeGatewaySessionCreation } from "../operator-role-policy.js";
+import {
+  authorizeGatewaySessionCreation,
+  resolveSandboxedSessionCreation,
+} from "../operator-role-policy.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
-import { resolveGatewayPluginConfig } from "../runtime-plugin-config.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "../server-constants.js";
 import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -697,9 +701,7 @@ async function resolveRequestedChannel(params: {
     };
   }
   const sourceCfg = params.context.getRuntimeConfig();
-  const cfg = resolveGatewayPluginConfig({
-    config: sourceCfg,
-  });
+  const cfg = sourceCfg;
   let channel = normalizedChannel;
   if (!channel) {
     try {
@@ -787,7 +789,7 @@ function resolveMessageActionRuntimeConfig(params: {
   });
   // Message actions must use the hot runtime snapshot when it matches the caller's source config.
   if (selected === runtimeConfig && selected !== params.cfg) {
-    return resolveGatewayPluginConfig({ config: selected });
+    return selected;
   }
   return params.cfg;
 }
@@ -840,12 +842,26 @@ function createGatewayInflightUnavailableFailure(params: {
   channel: string;
   err: unknown;
 }): InflightResult {
+  // A channel partial-delivery error carries the receipt of the part that was
+  // already delivered (e.g. a caption sent before the media upload failed).
+  // Preserve it on the structured error and mark the result non-retryable so
+  // the agent does not resend an already-visible message; `String(err)` alone
+  // would drop the receipt and invite a duplicate delivery on retry.
+  const partialDelivery = isChannelPartialDeliveryError(params.err)
+    ? params.err.deliveryResult
+    : undefined;
+  const queuedDelivery =
+    !partialDelivery &&
+    params.err instanceof OutboundDeliveryError &&
+    params.err.queueCustody === "held";
   const error = errorShape(
     ErrorCodes.UNAVAILABLE,
     String(params.err),
-    params.err instanceof OutboundDeliveryError && params.err.recoveryOwnedRetry === true
-      ? { details: { code: GatewayErrorDetailCodes.OUTBOUND_DELIVERY_QUEUED } }
-      : undefined,
+    partialDelivery
+      ? { details: { partialDelivery }, retryable: false }
+      : queuedDelivery
+        ? { details: { code: GatewayErrorDetailCodes.OUTBOUND_DELIVERY_QUEUED } }
+        : undefined,
   );
   return createGatewayInflightResult({
     ...params,
@@ -914,12 +930,10 @@ function scheduleDeliveredSourceReplyTranscriptMirror(params: {
 }
 
 export const sendHandlers: GatewayRequestHandlers = {
-  "message.action": async ({ params, respond, context, client }) => {
-    const p = params;
-    if (!assertValidParams(p, validateMessageActionParams, "message.action", respond)) {
+  "message.action": async ({ params: request, respond, context, client }) => {
+    if (!assertValidParams(request, validateMessageActionParams, "message.action", respond)) {
       return;
     }
-    const request = p as MessageActionParams;
     const trustedContext = resolveTrustedMessageActionToolContext({ client, request });
     if (!trustedContext.ok) {
       respond(false, undefined, trustedContext.error);
@@ -929,6 +943,11 @@ export const sendHandlers: GatewayRequestHandlers = {
       client,
       requestedOrigin: request.conversationReadOrigin,
     });
+    const agentRuntimeAuthority = createAgentRuntimeAuthorityGuard(client, context, respond);
+    const assertDirectAdapterHandoff = agentRuntimeAuthority.commitGuard;
+    const onPlatformSendDispatch = assertDirectAdapterHandoff
+      ? async () => assertDirectAdapterHandoff()
+      : undefined;
     await withMessageOperationRoute({
       context,
       prefix: "message.action",
@@ -943,7 +962,7 @@ export const sendHandlers: GatewayRequestHandlers = {
         binding?.reservedRoute?.accountId,
       ],
       conflictMessage: "message.action accountId does not match params.accountId",
-      authorize: () => hasActiveAgentRuntimeAuthority(client, context),
+      authorize: agentRuntimeAuthority.hasActive,
       resolveChannel: async (requestChannel) => {
         const resolved = await resolveRequestedChannel({
           requestChannel,
@@ -958,12 +977,13 @@ export const sendHandlers: GatewayRequestHandlers = {
         const { cfg: selectedCfg, sourceCfg, channel } = resolved;
         const cfg = resolveMessageActionRuntimeConfig({ cfg: selectedCfg, sourceCfg });
         const plugin = resolveOutboundChannelPlugin({ channel, cfg });
-        const canonicalPoll =
-          request.action === "poll" &&
-          Boolean(plugin?.outbound?.sendPoll) &&
+        const canonicalAction =
+          ((request.action === "send" &&
+            Boolean(plugin?.message?.send?.text || plugin?.outbound?.sendText)) ||
+            (request.action === "poll" && Boolean(plugin?.outbound?.sendPoll))) &&
           (!plugin?.actions?.handleAction ||
-            plugin.actions.supportsAction?.({ action: "poll" }) === false);
-        if (!plugin || (!plugin.actions?.handleAction && !canonicalPoll)) {
+            plugin.actions.supportsAction?.({ action: request.action }) === false);
+        if (!plugin || (!plugin.actions?.handleAction && !canonicalAction)) {
           respond(
             false,
             undefined,
@@ -974,9 +994,9 @@ export const sendHandlers: GatewayRequestHandlers = {
           );
           return undefined;
         }
-        return { cfg, channel, plugin, canonicalPoll };
+        return { cfg, channel, plugin, canonicalAction };
       },
-      work: async ({ cfg, channel, canonicalPoll, accountId, dedupeKey, authorize }) => {
+      work: async ({ cfg, channel, plugin, canonicalAction, accountId, dedupeKey, authorize }) => {
         try {
           const sessionKey = normalizeOptionalString(request.sessionKey) ?? undefined;
           const requestedAgentId =
@@ -1015,6 +1035,21 @@ export const sendHandlers: GatewayRequestHandlers = {
           }
           if (accountId) {
             request.params.accountId = accountId;
+          }
+          if (
+            canonicalAction &&
+            request.action === "send" &&
+            !normalizeOptionalString(request.params.target) &&
+            !actionHasTarget("send", request.params, { channel }) &&
+            !resolveImplicitMessageActionTarget(trustedContext.toolContext)
+          ) {
+            // Native sends could use account defaults without a target. Resolve that
+            // owner fact before core routing and source-reply receipts require it.
+            const target = resolveOutboundTarget({ channel, plugin, cfg, accountId });
+            if (!target.ok) {
+              throw target.error;
+            }
+            request.params.to = target.to;
           }
           const resolvedMediaAccess = resolveAgentScopedOutboundMediaAccess({
             cfg,
@@ -1113,13 +1148,31 @@ export const sendHandlers: GatewayRequestHandlers = {
             toolContext: trustedContext.toolContext,
             dryRun: false,
             gatewayClientScopes,
+            ...(request.action === "send"
+              ? {
+                  onPlatformSendDispatch,
+                  assertDirectAdapterHandoff,
+                  // Recovery cannot retain a live run's closure-bound send authority.
+                  skipQueue: client?.internal?.agentRuntimeIdentity !== undefined,
+                }
+              : {}),
           };
           let payload: unknown;
-          if (canonicalPoll) {
+          if (canonicalAction) {
             const { runMessageAction } =
               await import("../../infra/outbound/message-action-runner.js");
             const result = await runMessageAction({
               ...actionContext,
+              gatewayOwnedDelivery: true,
+              ...(request.action === "send"
+                ? {
+                    // This RPC owns source-reply receipts and their transcript mirror.
+                    suppressTranscriptMirror: true,
+                    actionOrigin: trustedContext.runtimeAgentId
+                      ? ("message-tool" as const)
+                      : undefined,
+                  }
+                : {}),
               params: {
                 ...request.params,
                 channel,
@@ -1170,37 +1223,18 @@ export const sendHandlers: GatewayRequestHandlers = {
           });
           return createGatewayInflightSuccess({ context, dedupeKey, payload, channel });
         } catch (err) {
+          if (!authorize()) {
+            return createGatewayInflightAuthorityFailure({ context, dedupeKey, channel });
+          }
           return createGatewayInflightUnavailableFailure({ context, dedupeKey, channel, err });
         }
       },
     });
   },
-  send: async ({ params, respond, context, client }) => {
-    const p = params;
-    if (!assertValidParams(p, validateSendParams, "send", respond)) {
+  send: async ({ params: request, respond, context, client }) => {
+    if (!assertValidParams(request, validateSendParams, "send", respond)) {
       return;
     }
-    const request = p as {
-      to: string;
-      message?: string;
-      mediaUrl?: string;
-      mediaUrls?: string[];
-      buffer?: string;
-      filename?: string;
-      contentType?: string;
-      asVoice?: boolean;
-      gifPlayback?: boolean;
-      channel?: string;
-      accountId?: string;
-      agentId?: string;
-      replyToId?: string;
-      threadId?: string;
-      forceDocument?: boolean;
-      silent?: boolean;
-      parseMode?: "HTML";
-      sessionKey?: string;
-      idempotencyKey: string;
-    };
     const to = normalizeOptionalString(request.to) ?? "";
     const message = request.message?.trim() ? request.message : "";
     const mediaUrl = normalizeOptionalString(request.mediaUrl);
@@ -1418,6 +1452,8 @@ export const sendHandlers: GatewayRequestHandlers = {
               channel,
               accountId,
               route: outboundRoute,
+              creation: resolveSandboxedSessionCreation(client, cfg),
+              sourceSessionKey: client?.internal?.agentRuntimeIdentity?.sessionKey,
             });
           };
           const outboundSession = buildOutboundSessionContext({
@@ -1450,6 +1486,7 @@ export const sendHandlers: GatewayRequestHandlers = {
             // Runtime-bound sends cannot outlive their operational run. Keep
             // recovery from replaying them after the live authority closes.
             onPlatformSendDispatch,
+            assertDirectAdapterHandoff: commitAgentRuntimeAuthority,
             skipQueue: hasAgentRuntimeAuthority,
             mirror: outboundSessionKey
               ? {
@@ -1491,25 +1528,10 @@ export const sendHandlers: GatewayRequestHandlers = {
       },
     });
   },
-  poll: async ({ params, respond, context, client }) => {
-    const p = params;
-    if (!assertValidParams(p, validatePollParams, "poll", respond)) {
+  poll: async ({ params: request, respond, context, client }) => {
+    if (!assertValidParams(request, validatePollParams, "poll", respond)) {
       return;
     }
-    const request = p as {
-      to: string;
-      question: string;
-      options: string[];
-      maxSelections?: number;
-      durationSeconds?: number;
-      durationHours?: number;
-      silent?: boolean;
-      isAnonymous?: boolean;
-      threadId?: string;
-      channel?: string;
-      accountId?: string;
-      idempotencyKey: string;
-    };
     await withMessageOperationRoute({
       context,
       prefix: "poll",

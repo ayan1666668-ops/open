@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildSandboxHostContentSecurityPolicy,
-  buildSandboxHostProxyHtml,
-  decodeSandboxHostCsp,
-} from "../agents/sandbox-host.js";
+import { buildSandboxHostDocument, decodeSandboxHostCsp } from "../agents/sandbox-host.js";
 import type { BoardWidgetDocument } from "../boards/board-store.js";
 import {
   buildBoardWidgetContentSecurityPolicy,
@@ -30,8 +26,9 @@ describe("board widget sandbox CSP", () => {
     const encoded = new URL(path, "https://sandbox.example").searchParams.get("csp");
 
     expect(decodeSandboxHostCsp(encoded)).toEqual({ blockDescendantFrames: true });
-    expect(buildSandboxHostContentSecurityPolicy()).toContain("connect-src 'none'");
-    expect(buildSandboxHostContentSecurityPolicy()).toContain("webrtc 'block'");
+    const policy = buildSandboxHostDocument().headers["Content-Security-Policy"];
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("webrtc 'block'");
     expect(buildBoardWidgetContentSecurityPolicy(document("pending"))).toContain(
       "connect-src 'none'",
     );
@@ -57,7 +54,7 @@ describe("board widget sandbox CSP", () => {
       ],
       blockDescendantFrames: true,
     });
-    expect(buildSandboxHostContentSecurityPolicy(csp)).toContain(
+    expect(buildSandboxHostDocument(csp).headers["Content-Security-Policy"]).toContain(
       "connect-src https://api.open-meteo.com https://status.example:8443 https://[2001:db8::1]:9443",
     );
     expect(
@@ -67,9 +64,9 @@ describe("board widget sandbox CSP", () => {
     );
   });
 
-  it("adds the best-effort descendant-frame guard only for board documents", () => {
-    const proxy = buildSandboxHostProxyHtml({ blockDescendantFrames: true });
-    const genericProxy = buildSandboxHostProxyHtml();
+  it("adds the requested descendant-frame guard before resetting document port offers", () => {
+    const proxy = buildSandboxHostDocument({ blockDescendantFrames: true }).html;
+    const genericProxy = buildSandboxHostDocument().html;
 
     expect(proxy).toContain("const blockDescendantFrames = true");
     expect(proxy).toContain("sandbox descendant browsing contexts are disabled");
@@ -79,7 +76,7 @@ describe("board widget sandbox CSP", () => {
     expect(proxy).toContain('lock(globalThis,\\"open\\",undefined)');
     const guardedHtmlIndex = proxy.indexOf("const guardedHtml = guardDocument(params.html)");
     expect(guardedHtmlIndex).toBeGreaterThan(-1);
-    expect(proxy.indexOf("widgetBridgePortOffered = false", guardedHtmlIndex)).toBeGreaterThan(
+    expect(proxy.indexOf("widgetPortsOffered.clear()", guardedHtmlIndex)).toBeGreaterThan(
       guardedHtmlIndex,
     );
     expect(proxy).toContain("const apply=Reflect.apply");
@@ -95,7 +92,7 @@ describe("board widget sandbox CSP", () => {
     const csp = decodeSandboxHostCsp(encoded);
 
     expect(csp?.blockDescendantFrames).toBe(true);
-    for (const proxy of [buildSandboxHostProxyHtml(csp), buildSandboxHostProxyHtml()]) {
+    for (const { html: proxy } of [buildSandboxHostDocument(csp), buildSandboxHostDocument()]) {
       expect(proxy).toContain('frame.setAttribute("sandbox", "allow-scripts allow-forms")');
       expect(proxy).not.toContain("allow-popups");
     }
