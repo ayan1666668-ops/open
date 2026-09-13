@@ -159,7 +159,10 @@ export function createSessionReconciliation(host: Host) {
       const staged = host.roster.stageManagedResults(
         scope,
         (entry) => reconcileResult(entry.snapshot.result, entry.snapshot.agentId),
-        (entry) => ({ row: entry.row ? reconcileRow(entry.row, entry.target.agentId) : null }),
+        (entry) => ({
+          row: entry.row ? reconcileRow(entry.row, entry.target.agentId) : null,
+          observationRevision: captured.revision,
+        }),
       );
       if (!current()) {
         return;
@@ -543,6 +546,7 @@ export function createSessionReconciliation(host: Host) {
         }
         return {
           row: reduced.row ?? null,
+          observationRevision: eventObservation.revision,
           ...(!reduced.deletedKey ? { invalidateRevision: eventObservation.revision } : {}),
         };
       },

@@ -42,7 +42,7 @@ type RegisteredSessionRow = {
 type RowProjection = (entry: ObservedSessionRow) => {
   row: GatewaySessionRow | null;
   invalidateRevision?: number;
-  readRevision?: number;
+  observationRevision?: number;
 };
 
 type SessionRowAdmission = { row: GatewaySessionRow; revision: number };
@@ -277,7 +277,7 @@ export function createSessionRosterObservations(
           acceptsRow(
             entry,
             projected.row,
-            projected.readRevision ?? rowRevision(projected.row),
+            projected.observationRevision ?? rowRevision(projected.row),
             admitRead,
           ))
           ? projected.row
@@ -409,7 +409,9 @@ export function createSessionRosterObservations(
               ? mergeRow(entry.row, project(matching, agentId), entry.target.agentId)
               : project(matching, agentId)
             : entry.row,
-          ...(!entry.row && matching ? { readRevision: readRevisions.get(matching) ?? 0 } : {}),
+          ...(!entry.row && matching
+            ? { observationRevision: readRevisions.get(matching) ?? 0 }
+            : {}),
         };
       },
       true,
@@ -570,6 +572,7 @@ export function createSessionRosterObservations(
           });
           return {
             row: entry.row && matches ? reconcileRow(entry.target.agentId)(entry.row) : entry.row,
+            observationRevision: event.revision,
             ...(!entry.row && matches ? { invalidateRevision: event.revision } : {}),
           };
         },

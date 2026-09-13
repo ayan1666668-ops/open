@@ -280,12 +280,11 @@ export class SessionDataController implements ReactiveController, SessionCatalog
     const agentChanged = previousAgentId !== null && previousAgentId !== nextAgentId;
     const catalogAgentChanged =
       previousCatalogAgentId !== null && previousCatalogAgentId !== nextCatalogAgentId;
-    const currentCanonicalAgentId = this.sessionsAgentId;
     const ownsCurrentCanonicalList =
       !hasSidebarListFilter(this.host) &&
       nextAgentId !== null &&
-      currentCanonicalAgentId !== null &&
-      normalizeAgentId(currentCanonicalAgentId) === nextAgentId &&
+      this.sessionsAgentId !== null &&
+      normalizeAgentId(this.sessionsAgentId) === nextAgentId &&
       this.sessionsResult === context?.sessions.state.result;
 
     this.sessionScopeAgentId = nextAgentId;
@@ -664,6 +663,9 @@ export class SessionDataController implements ReactiveController, SessionCatalog
 
   private finishChildSessionLoad(parentKey: string): void {
     if (this.childSessionErrorsByParent.has(parentKey)) {
+      const loaded = new Set(this.loadedChildSessionKeys);
+      loaded.delete(parentKey);
+      this.loadedChildSessionKeys = loaded;
       this.childSessionQueries.get(parentKey)?.observation?.dispose();
       this.childSessionQueries.delete(parentKey);
     }
@@ -719,12 +721,10 @@ export class SessionDataController implements ReactiveController, SessionCatalog
   retryChildSessions(sessionKey: string): void {
     const retry = this.childSessionErrorsByParent.has(sessionKey);
     if (retry) {
+      this.finishChildSessionLoad(sessionKey);
       const errors = new Map(this.childSessionErrorsByParent);
       errors.delete(sessionKey);
       this.childSessionErrorsByParent = errors;
-      this.childSessionQueries.get(sessionKey)?.observation?.dispose();
-      this.childSessionQueries.delete(sessionKey);
-      this.requestSessionDataUpdate();
     }
     void this.loadChildSessions(sessionKey, retry);
   }
