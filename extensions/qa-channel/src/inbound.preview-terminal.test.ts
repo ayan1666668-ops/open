@@ -116,7 +116,14 @@ describe("QA preview terminal ownership", () => {
     vi.mocked(editQaBusMessage).mockImplementationOnce(async () => {
       entered.resolve();
       await release.promise;
-      return { message: {} } as Awaited<ReturnType<typeof editQaBusMessage>>;
+      return {
+        message: {
+          ...createQaInboundParams().message,
+          id: "preview-1",
+          direction: "outbound",
+          text: "answer",
+        },
+      };
     });
     const final = turn.delivery.deliver({ text: "answer" }, { kind: "final" });
     await entered.promise;
