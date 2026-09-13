@@ -212,6 +212,7 @@ describeLive("OpenAI subagent yield and operator resume stress", () => {
                 subagents: {
                   allowAgents: ["*"],
                   maxSpawnDepth: 2,
+                  maxChildrenPerAgent: childrenPerBatch,
                   maxConcurrent: Math.max(3, childrenPerBatch),
                   runTimeoutSeconds: 300,
                   announceTimeoutMs: 300_000,
