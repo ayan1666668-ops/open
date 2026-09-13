@@ -6,6 +6,7 @@ import {
 import {
   resolveConversation,
   resolveConversationRegistryScope,
+  runConversationDatabaseWrite,
 } from "../config/sessions/conversation-registry.js";
 import { resolveConversationRouteFingerprint } from "../config/sessions/conversation-route-fingerprint.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -54,17 +55,16 @@ export async function runGatewayConversationSend(
   params.assertSourceCurrent?.();
   const scope = resolveConversationRegistryScope(params);
   try {
-    const prior = deps.getOperation(scope, params.operationId);
-    let operation: ConversationDeliveryRecord | undefined;
-    if (prior) {
-      operation = deps.beginOperation(scope, {
-        operationId: params.operationId,
-        operationKind: "send",
-        conversationRef: params.conversationRef,
-        ...(params.sourceSessionKey ? { sourceSessionKey: params.sourceSessionKey } : {}),
-        message: params.message,
-      }).record;
-    }
+    const operation: ConversationDeliveryRecord | undefined = await runConversationDatabaseWrite(
+      scope,
+      (writeScope) =>
+        deps.getOperation(writeScope, params.operationId, {
+          operationKind: "send",
+          conversationRef: params.conversationRef,
+          ...(params.sourceSessionKey ? { sourceSessionKey: params.sourceSessionKey } : {}),
+          message: params.message,
+        }),
+    );
 
     const conversation = deps.resolveConversation(scope, params.conversationRef);
     if (!conversation) {
@@ -85,6 +85,7 @@ export async function runGatewayConversationSend(
       completed ??
       (await sendGatewayConversationMessage({
         deps,
+        scope,
         context: {
           agentId: params.agentId,
           ...(params.sourceSessionKey ? { sourceSessionKey: params.sourceSessionKey } : {}),
@@ -96,8 +97,9 @@ export async function runGatewayConversationSend(
         operationId: params.operationId,
         operationKind: "send",
         routeFingerprint,
-        onDeliveryAttempt: async () => {
+        assertCurrent: () => {
           params.assertSourceCurrent?.();
+          params.signal?.throwIfAborted();
           assertConversationDeliveryAttemptAuthorized({
             config: params.readCurrentConfig?.() ?? currentConfig,
             agentId: params.agentId,

@@ -1,12 +1,12 @@
 import { createHash, webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createDeferred as deferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import {
   createContext,
   createGateway,
-  deferred,
   type TasksPageTestElement,
 } from "./tasks-page.test-fixtures.ts";
 import "./tasks-page.ts";

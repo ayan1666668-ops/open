@@ -15,16 +15,6 @@ export type TasksPageTestElement = HTMLElement & {
   refreshTasks: () => Promise<void>;
 };
 
-export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
-}
-
 export function createGateway(
   client: GatewayBrowserClient,
   hello: ApplicationGatewaySnapshot["hello"] = null,
