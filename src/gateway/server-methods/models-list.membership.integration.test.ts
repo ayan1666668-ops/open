@@ -181,7 +181,9 @@ it.each([
         await server.close({ reason: "catalog membership test complete" });
       }
     } finally {
-      await new Promise<void>((resolve) => endpoint.close(() => resolve()));
+      await new Promise<void>((resolve) => {
+        endpoint.close(() => resolve());
+      });
       await state.cleanup();
     }
   },
