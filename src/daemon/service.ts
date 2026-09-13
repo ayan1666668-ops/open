@@ -462,9 +462,16 @@ export function describeGatewayServiceRestart(
 }
 
 type SupportedGatewayServicePlatform = "darwin" | "linux" | "win32";
+type ServiceKind = "gateway" | "node";
 
-function createUnsupportedGatewayServiceError(): Error {
+function createUnsupportedGatewayServiceError(kind: ServiceKind): Error {
   if (process.platform === "freebsd") {
+    if (kind === "node") {
+      return new Error(
+        "Node service management is not supported by this CLI on FreeBSD. " +
+          "Run `openclaw node run` for a foreground node host connected to your Gateway.",
+      );
+    }
     return new Error(
       "Gateway service management is not supported by this CLI on FreeBSD. " +
         'For a pkg install, set openclaw_user to your onboarding account and openclaw_enable="YES" in /etc/rc.conf, ' +
@@ -475,11 +482,11 @@ function createUnsupportedGatewayServiceError(): Error {
   return new Error(`Gateway service install not supported on ${process.platform}`);
 }
 
-async function rejectUnsupportedGatewayService(): Promise<never> {
-  throw createUnsupportedGatewayServiceError();
-}
-
-function createUnsupportedGatewayService(): GatewayService {
+function createUnsupportedGatewayService(kind: ServiceKind): GatewayService {
+  // Node hosts share this adapter, but their recovery must never control the Gateway.
+  const rejectUnsupportedGatewayService = async (): Promise<never> => {
+    throw createUnsupportedGatewayServiceError(kind);
+  };
   return {
     label: "Gateway service",
     loadedText: "available",
@@ -494,7 +501,7 @@ function createUnsupportedGatewayService(): GatewayService {
     readCommand: async () => null,
     readRuntime: async () => ({
       status: "unknown",
-      detail: createUnsupportedGatewayServiceError().message,
+      detail: createUnsupportedGatewayServiceError(kind).message,
     }),
   };
 }
@@ -608,9 +615,9 @@ function isSupportedGatewayServicePlatform(
   return Object.hasOwn(GATEWAY_SERVICE_REGISTRY, platform);
 }
 
-export function resolveGatewayService(): GatewayService {
+export function resolveGatewayService(kind: ServiceKind = "gateway"): GatewayService {
   if (isSupportedGatewayServicePlatform(process.platform)) {
     return withGatewayServiceMutationGuards(GATEWAY_SERVICE_REGISTRY[process.platform]);
   }
-  return createUnsupportedGatewayService();
+  return createUnsupportedGatewayService(kind);
 }
