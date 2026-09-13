@@ -85,13 +85,11 @@ export async function updateCommand(inputOpts: UpdateCommandOptions): Promise<vo
     });
   }
   return await withUpdateAdmissionReporting(inputOpts, async () => {
-    const admission = {
+    const env = await resolveUpdateCommandAdmissionEnv({
       opts: inputOpts,
       root: prepared.servicePlan?.rootRedirect?.root ?? prepared.discoveredRoot,
       invocationCwd,
-      timeoutMs: prepared.timeoutMs,
-    };
-    const env = await resolveUpdateCommandAdmissionEnv(admission);
+    });
     const { updateStateNeedsInitialization } = await import("./update-command-initialization.js");
     if (await updateStateNeedsInitialization(env)) {
       return await initializeAndRunUpdate(inputOpts, prepared, recoveryState, invocationCwd, env);
@@ -303,7 +301,8 @@ async function initializeAndRunUpdate(
               fallbackNodeRunner: canRefreshManagedServiceNode ? resolveNodeRunner() : undefined,
             });
             if (!runtime.ok) {
-              return await target.refuseUpdate("node-runtime-preflight", runtime.error);
+              const { error, failureFacts } = runtime;
+              return await target.refuseUpdate("node-runtime-preflight", error, failureFacts);
             }
             target.packageUpdateNodeRunner = runtime.value.nodeRunner;
             if (schemas.state >= OPENCLAW_STATE_SCHEMA_VERSION) {
@@ -431,15 +430,14 @@ async function updateCommandInternal(
     devTarget,
   } = target;
   let { packageUpdateNodeRunner } = target;
-  const refuseUpdate = (reason: string, message?: string) =>
-    reportPreMutationUpdateResult({
-      root,
-      installKind: updateInstallKind,
-      reason,
-      message,
-      opts,
-      controlPlaneUpdateSentinelMeta,
-    });
+  const reportContext = {
+    root,
+    installKind: updateInstallKind,
+    opts,
+    controlPlaneUpdateSentinelMeta,
+  };
+  const refuseUpdate: typeof target.refuseUpdate = (reason, message, failureFacts) =>
+    reportPreMutationUpdateResult({ ...reportContext, reason, message, failureFacts });
 
   recordUpdateRunPhase(
     run.runId,
@@ -490,6 +488,7 @@ async function updateCommandInternal(
   }
 
   const currentCoreFinalization = {
+    legacyConfigPlan,
     root,
     previousInstallRoot: discoveredRoot,
     requestedChannel,
@@ -501,6 +500,7 @@ async function updateCommandInternal(
     startedAt,
     controlPlaneUpdateSentinelMeta,
     packageUpdateNodeRunner: packageUpdateNodeRunner ?? managedServiceNodeRunner,
+    packageInstallSpec,
     runtimeTarget: packageRuntimeTarget,
     managedServiceRootRedirect,
     stop: presentation.stop,
@@ -510,7 +510,6 @@ async function updateCommandInternal(
     const { finishAlreadyCurrentUpdate } = await import("./update-execution.runtime.js");
     return await finishAlreadyCurrentUpdate({
       ...currentCoreFinalization,
-      legacyConfigPlan,
       opts,
       result: {
         status: "skipped",
@@ -554,7 +553,8 @@ async function updateCommandInternal(
       fallbackNodeRunner: canRefreshManagedServiceNode ? resolveNodeRunner() : undefined,
     });
     if (!runtimePreflight.ok) {
-      return await refuseUpdate("node-runtime-preflight", runtimePreflight.error);
+      const { error, failureFacts } = runtimePreflight;
+      return await refuseUpdate("node-runtime-preflight", error, failureFacts);
     }
     const runtimeSelection = runtimePreflight.value;
     packageUpdateNodeRunner = runtimeSelection.nodeRunner;
@@ -664,7 +664,6 @@ async function updateCommandInternal(
       result,
       ownedManagedUpdateEnv: ownedManagedUpdateContext?.env,
       packageUpdateNodeRunner: packageUpdateNodeRunner ?? managedServiceNodeRunner,
-      legacyConfigPlan,
     });
   }
   recoveryState.triageTarget.root = result.root ?? root;

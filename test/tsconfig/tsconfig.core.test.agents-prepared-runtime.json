@@ -5,6 +5,8 @@
   },
   "include": [
     "../../src/agents/prepared-model-runtime*.test.ts",
-    "../../src/agents/prepared-model-runtime*.test.tsx"
+    "../../src/agents/prepared-model-runtime*.test.tsx",
+    "../../src/agents/runtime-plan/**/*.test.ts",
+    "../../src/agents/runtime-plan/**/*.test.tsx"
   ]
 }

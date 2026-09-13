@@ -12,7 +12,6 @@ import {
   configuredOwnersAreRequestVisible,
   registerPreparedRuntimeAuthMaterializationPublisher,
 } from "./prepared-model-runtime-materializations.js";
-import { refreshCommittedProviderCatalogs } from "./prepared-model-runtime.catalog-access.js";
 import { PreparedModelCatalogGenerationRecoveryOwner } from "./prepared-model-runtime.catalog-generation-recovery.js";
 import {
   advancePreparedModelRuntimeOwnersConfig,
@@ -60,6 +59,7 @@ import {
   collectPreparedModelRuntimeInventories,
   isPreparedModelRuntimeOwnerInRefreshScope,
   listConfiguredRefreshInputs,
+  refreshCommittedProviderCatalogs,
   resolveSafeRefreshAgentIds,
   updateOwnersForScopedRefresh,
 } from "./prepared-model-runtime.refresh-scope.js";

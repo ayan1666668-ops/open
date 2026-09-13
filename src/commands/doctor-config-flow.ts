@@ -12,6 +12,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import { withProgress } from "../cli/progress.js";
 import { configIncludeOwnsAgentRoster } from "../config/agent-roster-provenance.js";
 import { readRecentConfigAuditRecords } from "../config/io.audit.js";
+import { hashConfigRaw } from "../config/io.read-helpers.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import { resolveConfigIncludeWriteBoundary } from "../config/mutate.js";
@@ -29,10 +30,8 @@ import {
   noteOpencodeProviderOverrides,
   noteSandboxOriginProxyWarning,
 } from "./doctor-config-analysis.js";
-import {
-  runDoctorConfigPreflight,
-  shouldSkipPluginValidationForDoctorConfigPreflight,
-} from "./doctor-config-preflight.js";
+import { shouldSkipPluginValidationForDoctorConfigPreflight } from "./doctor-config-preflight-plugin-index.js";
+import { runDoctorConfigPreflight } from "./doctor-config-preflight.js";
 import type { DoctorOptions, DoctorPrompter } from "./doctor-prompter.js";
 import { createWorkspaceAliasMigrationRepair } from "./doctor-workspace-alias.js";
 import { cronCodexRuntimePolicyTargetKey } from "./doctor/cron/store-migration.js";
@@ -52,6 +51,7 @@ import { listDoctorConfiguredChannelIds } from "./doctor/shared/configured-chann
 import { containsAuthoredInclude } from "./doctor/shared/include-migration-ownership.js";
 import { normalizeCompatibilityConfigValues } from "./doctor/shared/legacy-config-core-migrate.js";
 import type { DoctorPluginMetadataSnapshotState } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
+import { shouldSkipLegacyUpdateDoctorConfigWrite } from "./doctor/shared/update-phase.js";
 
 function collectInvalidHookTransformsDirWarnings(
   cfg: OpenClawConfig,
@@ -184,6 +184,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   const { importShippedPluginInstallConfigForDoctor } =
     await import("./doctor/shared/plugin-registry-migration.js");
   const pluginInstallConfigImport =
+    !shouldSkipLegacyUpdateDoctorConfigWrite(process.env) &&
     inspectShippedPluginInstallConfigRecords(preflight.snapshot.sourceConfig).status === "valid"
       ? await importShippedPluginInstallConfigForDoctor(preflight.snapshot)
       : undefined;
@@ -391,7 +392,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
       config: state.candidate,
       authoredRoot: snapshot.parsed,
       configPath: snapshot.path,
-      currentHash: snapshot.hash ?? null,
+      currentHash: hashConfigRaw(snapshot.raw),
       auditRecords: readRecentConfigAuditRecords({
         env: process.env,
         homedir,
@@ -693,10 +694,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   if (configuredOpencodePluginIds.length > 0) {
     const { resolveEnabledProviderPluginIds } = await import("../plugins/providers.js");
     activeOpencodePluginIds = runWithCurrentPluginMetadata(cfg, () =>
-      resolveEnabledProviderPluginIds({
-        config: cfg,
-        onlyPluginIds: configuredOpencodePluginIds,
-      }),
+      resolveEnabledProviderPluginIds({ config: cfg, onlyPluginIds: configuredOpencodePluginIds }),
     );
   }
   noteOpencodeProviderOverrides(cfg, {
