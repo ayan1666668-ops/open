@@ -831,6 +831,54 @@ it.for([
 );
 
 describe("Gateway plugin service recovery ownership", () => {
+  it("restores prepared config effects when channel admission cannot pause", async () => {
+    const rollback = vi.fn(async () => {});
+    const fixture = await createRecoveryFixture({ prepareConfigEffects: () => rollback });
+    const failure = new Error("fixture channel pause failed");
+    vi.spyOn(fixture.runtime.channelManager, "pauseChannelStarts").mockImplementationOnce(() => {
+      throw failure;
+    });
+    await expect(fixture.reload()).rejects.toMatchObject({
+      details: { committed: false },
+      cause: failure,
+    });
+    expect(fixture.firstStop).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it.each(["restored", "failed"] as const)(
+    "settles prepared config effects only after plugin rollback is %s",
+    async (restoration) => {
+      const recoveryStarted = createDeferredCore();
+      const releaseRecovery = createDeferredCore();
+      const rollback = vi.fn(async () => {
+        const record = fixture.previousRegistry.plugins.find((plugin) => plugin.id === "first");
+        expect(record && getPluginInstance(record)?.acceptingCalls).toBe(true);
+      });
+      const fixture = await createRecoveryFixture({
+        prepareConfigEffects: () => rollback,
+        recoveryStart: async () => {
+          recoveryStarted.resolve();
+          await releaseRecovery.promise;
+          if (restoration === "failed") {
+            throw new Error("fixture recovery failed");
+          }
+        },
+      });
+      const reloading = fixture.reload().catch((error: unknown) => error);
+      try {
+        await recoveryStarted.promise;
+        expect(rollback).not.toHaveBeenCalled();
+        releaseRecovery.resolve();
+        expect(await reloading).toMatchObject({ details: { committed: false } });
+        expect(rollback).toHaveBeenCalledTimes(restoration === "restored" ? 1 : 0);
+      } finally {
+        releaseRecovery.resolve();
+        await reloading;
+      }
+    },
+  );
+
   it.each(["prepare", "drain", "publish", "committed"] as const)(
     "preserves the committed owner when its invoker closes during %s",
     async (boundary) => {
