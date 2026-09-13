@@ -1,6 +1,7 @@
 // Line plugin module owns the postback encoding for approval decision controls.
 import { buildApprovalResolutionRef } from "openclaw/plugin-sdk/approval-reference-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { isApprovalNotFoundError } from "openclaw/plugin-sdk/error-runtime";
 import type { MessagePresentationAction } from "openclaw/plugin-sdk/interactive-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -79,7 +80,7 @@ export function parseLineApprovalPostbackData(data: string): LineApprovalPostbac
  *
  * A recorded decision stays silent: LINE echoes the chosen label through the action's
  * `displayText`, and the approval runtime publishes the outcome as its own message. A tap
- * that arrives after the approval was resolved is told the outcome that stands.
+ * that changes nothing, because the approval was already decided or is gone, says so.
  * Unreadable data returns nothing so the caller still consumes the reserved namespace.
  */
 export async function resolveLineApprovalPostbackTap(params: {
@@ -121,7 +122,7 @@ export async function resolveLineApprovalPostbackTap(params: {
     if (!result || result.applied) {
       return undefined;
     }
-    // A late tap changes nothing, and LINE cannot remove the buttons that invited it.
+    // A tap that raced the first decision changes nothing; the loser hears what stands.
     const { approval } = result;
     const { formatApprovalDecisionLabel } = await import("openclaw/plugin-sdk/approval-runtime");
     const outcome =
@@ -134,9 +135,15 @@ export async function resolveLineApprovalPostbackTap(params: {
             : "Cancelled";
     return `This approval was already resolved: ${outcome}.`;
   } catch (error) {
+    logVerbose(`line: approval decision could not be recorded: ${String(error)}`);
+    if (isApprovalNotFoundError(error)) {
+      // A resolved approval leaves the pending set within moments, and LINE keeps its
+      // buttons forever, so this is the usual late tap. `/approve` would fail the same
+      // way, and resolved, expired and restarted-away requests look identical here.
+      return "That approval is no longer waiting for a decision.";
+    }
     // The tap is the approver's only signal that anything happened; a swallowed
     // failure would leave the decision looking recorded while the run still waits.
-    logVerbose(`line: approval decision could not be recorded: ${String(error)}`);
     // True whether the request is still pending or was already decided elsewhere: the
     // command answers authoritatively either way, so the notice claims neither.
     return `Could not record that decision. Reply /approve ${callback.approvalId} ${callback.decision} instead.`;

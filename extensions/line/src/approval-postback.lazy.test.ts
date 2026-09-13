@@ -65,8 +65,28 @@ describe("resolveLineApprovalPostbackTap", () => {
     });
   });
 
-  // LINE cannot remove the buttons after the first decision, so a later tap on the
-  // same card must hear what stands instead of looking recorded.
+  // A resolved approval leaves the pending set within moments, so a tap on an old
+  // card usually meets this error. Sending the approver to `/approve` would fail too.
+  it("tells a tap on a card nothing waits for any more, instead of offering /approve", async () => {
+    gateway.resolveApprovalOverGateway.mockRejectedValue(
+      Object.assign(new Error("approval not found"), {
+        gatewayCode: "INVALID_REQUEST",
+        details: { reason: "APPROVAL_NOT_FOUND" },
+      }),
+    );
+
+    await expect(tap("deny")).resolves.toBe("That approval is no longer waiting for a decision.");
+  });
+
+  it("keeps the /approve fallback when the Gateway could not take the decision", async () => {
+    gateway.resolveApprovalOverGateway.mockRejectedValue(new Error("gateway closed"));
+
+    await expect(tap("deny")).resolves.toBe(
+      "Could not record that decision. Reply /approve approval-1 deny instead.",
+    );
+  });
+
+  // Two taps can race the first decision; the loser hears the decision that stands.
   it.each([
     {
       name: "allowed always",
@@ -84,7 +104,7 @@ describe("resolveLineApprovalPostbackTap", () => {
       notice: "This approval was already resolved: Expired.",
     },
   ] satisfies { name: string; approval: ApprovalResolveResult["approval"]; notice: string }[])(
-    "tells a late tap the outcome that stands when the approval was $name",
+    "tells a tap that lost the race the outcome that stands when the approval was $name",
     async ({ approval, notice }) => {
       gateway.resolveApprovalOverGateway.mockResolvedValue({ applied: false, approval });
 
