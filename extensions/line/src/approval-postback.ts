@@ -16,9 +16,9 @@ const DECISION_PARAM = "line.decision";
 // Both params always carry `=`, so the marker cannot collide with the kind param.
 const APPROVAL_MARKER = `${APPROVAL_PARAM}=`;
 
-// The send-time action validator truncates over-limit postback data, which would
-// leave a button pointing at a mangled approval, so the reference has to fit before
-// it reaches that validator. LINE counts this field in UTF-16 units.
+// The send-time action validator replaces over-limit postback data with an
+// "Unavailable" action, which would take the decision off the card, so the reference
+// has to fit before it reaches that validator. LINE counts this field in UTF-16 units.
 function fitsLinePostbackData(data: string): boolean {
   return data.length <= LINE_ACTION_DATA_LIMIT;
 }
@@ -96,8 +96,9 @@ export async function resolveLineApprovalPostbackTap(params: {
   // A tap decides only as a listed approver. Without one, same-chat authorization would
   // let the tap skip the command authorization a typed `/approve` goes through, and a
   // tap without a sender could not name who decided.
+  const senderId = params.senderId;
   if (
-    !params.senderId ||
+    !senderId ||
     getLineApprovalApprovers({ cfg: params.cfg, accountId: params.accountId }).length === 0
   ) {
     return `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;
@@ -105,7 +106,7 @@ export async function resolveLineApprovalPostbackTap(params: {
   const authorization = lineApprovalAuth.authorizeActorAction?.({
     cfg: params.cfg,
     accountId: params.accountId,
-    senderId: params.senderId,
+    senderId,
     action: "approve",
     approvalKind: callback.approvalKind,
   });
@@ -124,9 +125,9 @@ export async function resolveLineApprovalPostbackTap(params: {
       approvalId: callback.approvalId,
       approvalKind: callback.approvalKind,
       decision: callback.decision,
-      ...(params.senderId
-        ? { channel: "line", accountId: params.accountId, senderId: params.senderId }
-        : {}),
+      channel: "line",
+      accountId: params.accountId,
+      senderId,
     });
     if (!result || result.applied) {
       return undefined;

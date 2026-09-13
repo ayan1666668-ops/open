@@ -163,6 +163,11 @@ const { readAllowFromStoreMock, upsertPairingRequestMock } = vi.hoisted(() => ({
 }));
 const downloadLineMediaMock = vi.hoisted(() => vi.fn());
 const getUserDisplayNameMock = vi.hoisted(() => vi.fn(async (userId: string) => userId));
+const resolveLineApprovalPostbackTapMock = vi.hoisted(() =>
+  vi.fn<typeof import("./approval-postback.js").resolveLineApprovalPostbackTap>(
+    async () => undefined,
+  ),
+);
 
 vi.mock("openclaw/plugin-sdk/conversation-runtime", () => ({
   resolvePairingIdLabel: () => "lineUserId",
@@ -211,6 +216,12 @@ vi.mock("./question-postback.js", async (importOriginal) => ({
   // Parsing stays real so the routing decision is the one production makes.
   ...(await importOriginal<typeof import("./question-postback.js")>()),
   resolveLineQuestionPostback: resolveLineQuestionPostbackMock,
+}));
+
+vi.mock("./approval-postback.js", async (importOriginal) => ({
+  // The namespace check stays real so the routing decision is the one production makes.
+  ...(await importOriginal<typeof import("./approval-postback.js")>()),
+  resolveLineApprovalPostbackTap: resolveLineApprovalPostbackTapMock,
 }));
 
 vi.mock("./bot-message-context.js", async (importOriginal) => ({
@@ -1223,6 +1234,36 @@ describe("handleLineWebhookEvents", () => {
       [{ type: "text", text: notice }],
       expect.anything(),
     );
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+
+  it("records an approval decision instead of starting a turn when a card button is tapped", async () => {
+    resolveLineApprovalPostbackTapMock.mockClear();
+    const processMessage = vi.fn();
+    const context = createLineWebhookTestContext({ processMessage, dmPolicy: "open" });
+    const data = "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once";
+
+    await handleLineWebhookEvents(
+      [
+        {
+          type: "postback",
+          replyToken: "reply-token",
+          timestamp: Date.now(),
+          source: { type: "user", userId: "user-one" },
+          mode: "active",
+          webhookEventId: "evt-approval",
+          deliveryContext: { isRedelivery: false },
+          postback: { data },
+        } as never,
+      ],
+      context,
+    );
+
+    expect(resolveLineApprovalPostbackTapMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data, senderId: "user-one" }),
+    );
+    // Approval data must never reach the agent as turn text.
+    expect(buildLinePostbackContextMock).not.toHaveBeenCalled();
     expect(processMessage).not.toHaveBeenCalled();
   });
 

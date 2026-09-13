@@ -18,7 +18,7 @@ import { normalizeLineMessagingTarget } from "./messaging-target.js";
 import { pushFlexMessage, pushMessageLine } from "./send.js";
 
 type LinePreparedTarget = { to: string; accountId?: string };
-type LinePendingEntry = { to: string; accountId?: string; messageId: string };
+type LinePendingEntry = { to: string; accountId?: string; messageId?: string };
 
 // The view already publishes each decision as the command a non-interactive surface
 // would use, so the notice quotes those instead of composing its own syntax.
@@ -104,16 +104,26 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
         });
         return null;
       }
-      const sent = await pushFlexMessage(
-        preparedTarget.to,
-        pendingPayload.altText,
-        pendingPayload.bubble,
-        {
-          cfg,
-          ...(preparedTarget.accountId ? { accountId: preparedTarget.accountId } : {}),
-        },
-      );
-      return { ...preparedTarget, messageId: sent.messageId };
+      try {
+        const sent = await pushFlexMessage(
+          preparedTarget.to,
+          pendingPayload.altText,
+          pendingPayload.bubble,
+          {
+            cfg,
+            ...(preparedTarget.accountId ? { accountId: preparedTarget.accountId } : {}),
+          },
+        );
+        return { ...preparedTarget, messageId: sent.messageId };
+      } catch (error) {
+        // LINE accepted the card and only its receipt was unreadable. The card is on the
+        // approver's screen, so it is tracked like any delivered card: the outcome still
+        // gets published, and the origin is not told the request went undelivered.
+        if (isChannelPartialDeliveryError(error)) {
+          return { ...preparedTarget };
+        }
+        throw error;
+      }
     },
     updateEntry: async ({ cfg, entry, payload }) => {
       await sendLineApprovalText({
@@ -127,11 +137,6 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
   observe: {
     onDeliveryError: ({ accountId, cfg, error, plannedTarget, request, pendingPayload, view }) => {
       logVerbose(`line approvals: failed to deliver request ${request.id}: ${String(error)}`);
-      if (isChannelPartialDeliveryError(error)) {
-        // LINE accepted the card and only its receipt was unreadable. A "could not
-        // deliver" notice would contradict a card the approver can already see.
-        return;
-      }
       const to = normalizeLineMessagingTarget(plannedTarget.target.to);
       if (!to || !pendingPayload) {
         return;

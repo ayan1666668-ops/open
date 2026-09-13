@@ -540,7 +540,7 @@ list the approvers as LINE user IDs:
 - **With approvers listed**, every approver receives the card in their one-to-one chat. A
   request raised in an approver's own chat shows the card there; a group, or another user's
   chat, gets a notice that the request went to LINE DMs. Only listed approvers can then
-  decide these requests, including with typed `/approve`, and any other forwarding target
+  decide these requests from LINE, including with typed `/approve`, and any other forwarding target
   you configure still receives the text prompt.
 - **With forwarding on but no approvers listed** (for example `allowFrom: ["*"]`), no card is
   drawn. The chat that raised the request keeps the `/approve <id> <decision>` text prompt,
@@ -557,7 +557,7 @@ Two behaviors follow from the platform rather than from a choice:
 - **Cards never go to a group, and a button decides only for a listed approver.** A LINE
   postback in a group carries no `userId` (LINE includes it only in message events), so a
   card tapped in a group could not name who decided. A tap from someone who is not a listed
-  approver is refused, and a card tapped after approvers were removed answers with the
+  approver is refused, and a card tapped after every approver was removed answers with the
   `/approve` command to use instead.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons

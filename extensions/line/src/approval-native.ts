@@ -156,14 +156,6 @@ const lineNativeApprovalCapability = createApproverRestrictedNativeApprovalCapab
       action: "approve",
       approvalKind: "exec",
     })?.authorized ?? false,
-  isPluginAuthorizedSender: ({ cfg, accountId, senderId }) =>
-    lineApprovalAuth.authorizeActorAction?.({
-      cfg,
-      accountId,
-      senderId,
-      action: "approve",
-      approvalKind: "plugin",
-    })?.authorized ?? false,
   isNativeDeliveryEnabled: isLineNativeApprovalClientEnabled,
   // A group postback carries no `userId` (`GroupSource.userId` is documented as
   // message-event only), so a card in a group could not name who tapped it. Routing
@@ -184,9 +176,6 @@ const shouldSuppressLineForwardingFallback = createNativeApprovalForwardingFallb
 >({
   channel: "line",
   normalizeForwardTarget: lineApprovalTargetResolvers.normalizeForwardTarget,
-  resolveAccountId: ({ target, request }) =>
-    normalizeOptionalString(target.accountId) ??
-    normalizeOptionalString(request.request.turnSourceAccountId),
   // Native targets carry the account; a forwarding target without one matches them
   // under the account the request resolved to.
   resolveForwardingTargetForMatch: ({ forwardingTarget, accountId }) => ({

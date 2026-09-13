@@ -204,21 +204,29 @@ describe("LINE native approval runtime", () => {
     );
   });
 
-  it("stays quiet when LINE already showed the card and only its receipt failed", () => {
+  // A card LINE accepted is on the approver's screen even when its receipt is
+  // unreadable; without an entry, core would report it undelivered and skip the outcome.
+  it("tracks a card LINE accepted when only its receipt failed", async () => {
     const view = execPendingView();
-    lineApprovalNativeRuntime.observe?.onDeliveryError?.({
-      cfg,
-      accountId: "default",
-      error: Object.assign(new Error("unreadable receipt"), {
+    pushFlexMessage.mockRejectedValueOnce(
+      Object.assign(new Error("unreadable receipt"), {
         code: "CHANNEL_PARTIAL_DELIVERY",
         deliveryResult: { visibleReplySent: true },
       }),
+    );
+
+    const entry = await lineApprovalNativeRuntime.transport.deliverPending({
+      cfg,
+      accountId: "default",
       plannedTarget,
+      preparedTarget: { to: APPROVER, accountId: "default" },
       request,
       approvalKind: "exec",
       view,
       pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
     });
+
+    expect(entry).toEqual({ to: APPROVER, accountId: "default" });
     expect(pushMessageLine).not.toHaveBeenCalled();
   });
 });

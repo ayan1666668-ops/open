@@ -1,4 +1,5 @@
 // Line tests cover the native approval capability routing contract.
+import { isImplicitSameChatApprovalAuthorization } from "openclaw/plugin-sdk/approval-auth-runtime";
 import { buildChannelApprovalNativeTargetKey } from "openclaw/plugin-sdk/approval-native-runtime";
 import {
   createLocalApprovalPromptTestFixture,
@@ -9,6 +10,7 @@ import {
   lineApprovalCapability,
   shouldSuppressLocalLineExecApprovalPrompt,
 } from "./approval-native.js";
+import { linePlugin } from "./channel.js";
 
 const APPROVER = "U0123456789abcdef0123456789abcdef";
 
@@ -102,6 +104,36 @@ describe("line approval capability", () => {
       })?.enabled,
     ).toBe(false);
     expect(suppressLocalSessionPrompt(forwardingOnly, "agent:main:main")).toBe(false);
+    expect(
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg: forwardingOnly,
+        approvalKind: "exec",
+        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
+        request,
+      }),
+    ).toBe(false);
+    expect(
+      lineApprovalCapability.getActionAvailabilityState?.({
+        cfg: buildConfig({ approvals: { plugin: { enabled: true } } }),
+        accountId: "default",
+        action: "approve",
+        approvalKind: "plugin",
+      }),
+    ).toEqual({ kind: "enabled" });
+  });
+
+  // A typed `/approve` without approvers is same-chat authorization, which still has to
+  // pass command authorization; an explicit grant would skip it.
+  it("keeps implicit same-chat authorization when no approvers are configured", () => {
+    const authorization = lineApprovalCapability.authorizeActorAction?.({
+      cfg: buildConfig({ approvals: { exec: { enabled: true } } }),
+      senderId: "U11111111111111111111111111111111",
+      action: "approve",
+      approvalKind: "exec",
+    });
+
+    expect(authorization).toEqual({ authorized: true });
+    expect(isImplicitSameChatApprovalAuthorization(authorization)).toBe(true);
   });
 
   // Native delivery replaces the forwarded prompt only in the chats it reaches; a
@@ -127,16 +159,23 @@ describe("line approval capability", () => {
     expect(suppressed(`line:${APPROVER}`, "target")).toBe(true);
     expect(suppressed(`line:${APPROVER}`, "session")).toBe(true);
 
-    // A group that raised the request gets the routed notice, not a second prompt.
+    // A group that raised the request gets the routed notice, not a second prompt, and
+    // the approver's DM, reached here only as an approver and not as the origin, keeps
+    // just the card.
     const raisingGroup = "line:group:C0123456789abcdef0123456789abcdef";
-    expect(
+    const fromGroup = (to: string, source: "session" | "target") =>
       lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
         cfg,
         approvalKind: "exec",
-        target: { channel: "line", to: raisingGroup, source: "session" },
+        target: { channel: "line", to, source },
         request: buildExecRequest(raisingGroup),
-      }),
-    ).toBe(true);
+      });
+    expect(fromGroup(raisingGroup, "session")).toBe(true);
+    expect(fromGroup(`line:${APPROVER}`, "target")).toBe(true);
+  });
+
+  it("suppresses the local prompt when approvers receive the card", () => {
+    expect(suppressLocalSessionPrompt(configured, "agent:main:main")).toBe(true);
   });
 
   it("sends the card to every listed approver", async () => {
@@ -167,5 +206,24 @@ describe("line approval capability", () => {
     expect(plugin).toContain("`channels.line.accounts.work.allowFrom`");
     // A plugin approval without a route never reaches the Gateway.
     expect(plugin).not.toContain("Web UI");
+  });
+});
+
+// The capability and the local-prompt hook only matter once the plugin registers them.
+describe("line plugin approval wiring", () => {
+  it("registers the approval capability on the LINE plugin", () => {
+    expect(linePlugin.approvalCapability).toBe(lineApprovalCapability);
+  });
+
+  it("suppresses the local prompt through the registered outbound hook", () => {
+    const suppress = linePlugin.outbound?.shouldSuppressLocalPayloadPrompt;
+    expect(suppress).toBeDefined();
+    const { suppressLocalSessionPrompt: throughPlugin } = createLocalApprovalPromptTestFixture({
+      channel: "line",
+      buildConfig,
+      suppress: (input) => suppress?.(input) ?? false,
+    });
+
+    expect(throughPlugin(configured, "agent:main:main")).toBe(true);
   });
 });

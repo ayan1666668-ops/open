@@ -35,8 +35,10 @@ const BODY_SHORTENED_MARKER = "[shortened to fit LINE's card limit]";
  * `commandText` arrives bounded by `sanitizeExecApprovalDisplayText`, but the rationale,
  * its analysis lines, the metadata values, and the plugin/system-agent subject are
  * passed through raw, so the whole body is one shrinkable region rather than any single
- * field. The retained tail keeps the approval id reachable, and the floor always fits:
- * labels are capped at the Flex ceiling and action data at `LINE_ACTION_DATA_LIMIT`.
+ * field. The retained tail keeps the approval id reachable. The floor fits for any
+ * ordinary id, since labels are capped at the Flex ceiling and action data at
+ * `LINE_ACTION_DATA_LIMIT`; an id too long for the bubble leaves it oversized, and the
+ * rejected send falls back to the approval command text.
  */
 function fitApprovalCardBody(
   buildBubble: (body: string) => FlexBubble,
@@ -53,7 +55,11 @@ function fitApprovalCardBody(
   let best = buildBubble(tail.trimStart());
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    const candidate = buildBubble(`${truncateUtf16Safe(body, mid)}${tail}`);
+    const kept = truncateUtf16Safe(body, mid);
+    // The id leads the metadata, so a long metadata value can keep it in the body.
+    const candidate = buildBubble(
+      kept.includes(identityLine) ? `${kept}\n${BODY_SHORTENED_MARKER}` : `${kept}${tail}`,
+    );
     if (fitsLineFlexBubble(candidate)) {
       best = candidate;
       low = mid;

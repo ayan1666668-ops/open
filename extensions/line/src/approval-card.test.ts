@@ -133,10 +133,10 @@ describe("LINE pending approval card", () => {
     ).toBeNull();
   });
 
-  // `commandText` and `commandPreview` arrive already bounded by
-  // `sanitizeExecApprovalDisplayText`, so only the fields the view passes through raw
-  // can overflow a bubble: the auto-review rationale, its analysis lines, the metadata
-  // values, and the plugin/system-agent subject.
+  // The fields the view passes through raw: the auto-review rationale, its analysis
+  // lines, and the metadata values. `commandText` arrives bounded by
+  // `sanitizeExecApprovalDisplayText`, though a long multibyte command can still outgrow
+  // the bubble and takes the same shortening path.
   it.each([
     ["rationale", (size: number) => execView({ warningText: "y".repeat(size) })],
     [
@@ -155,8 +155,8 @@ describe("LINE pending approval card", () => {
     });
     expect(card?.bodyShortened).toBe(true);
     expect(cardText(card!)).toContain("[shortened to fit LINE's card limit]");
-    // The id stays reachable so the approver can still resolve it by command.
-    expect(cardText(card!)).toContain(`Approval ID: ${APPROVAL_ID}`);
+    // The id stays reachable so the approver can still resolve it by command, once.
+    expect(cardText(card!).split(`Approval ID: ${APPROVAL_ID}`)).toHaveLength(2);
     expect(cardPostbackData(card!)).toHaveLength(3);
     expect(Buffer.byteLength(JSON.stringify(card?.bubble), "utf8")).toBeLessThanOrEqual(
       LINE_FLEX_BUBBLE_MAX_BYTES,
