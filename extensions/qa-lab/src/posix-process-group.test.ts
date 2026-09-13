@@ -16,7 +16,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     ...overrides,
-    default: { ...actual.default, ...overrides },
+    default: { ...actual, ...overrides },
   };
 });
 
