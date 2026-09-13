@@ -58,16 +58,12 @@ suite.define(() => {
       const preparedRow = picker.locator('[data-chat-model-option="fixture/prepared"]');
       await expect.poll(() => preparedRow.isVisible()).toBe(true);
       expect(await preparedRow.isEnabled()).toBe(true);
-      await expect
-        .poll(() => picker.locator("[data-chat-model-catalog-state]").textContent())
-        .toContain("Some models could not be refreshed");
 
       await gateway.resolveDeferred("models.list", { models: [prepared, added] });
       await expect
         .poll(() => picker.locator('[data-chat-model-option="fixture/added"]').isVisible())
         .toBe(true);
       expect(await picker.getAttribute("open")).not.toBeNull();
-      expect(await picker.locator("[data-chat-model-catalog-state]").count()).toBe(0);
     } finally {
       await context.close();
     }
