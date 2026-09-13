@@ -589,7 +589,7 @@ describe("normalizeCronJobPatch", () => {
     { label: "nonpositive numbers", input: { outputMaxBytes: 0, toolBudget: -1 }, expected: {} },
     {
       label: "nonfinite numbers",
-      input: { outputMaxBytes: Infinity, toolBudget: NaN },
+      input: { outputMaxBytes: Infinity, toolBudget: Number.NaN },
       expected: {},
     },
     { label: "null limits", input: { outputMaxBytes: null, toolBudget: null }, expected: {} },
