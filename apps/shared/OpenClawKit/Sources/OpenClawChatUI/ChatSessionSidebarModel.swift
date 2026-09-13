@@ -12,10 +12,6 @@ public enum ChatSessionSidebarModel {
         let kind: ActivityKind
         let text: String
 
-        var needsAttention: Bool {
-            self.kind == .attention || self.kind == .failed
-        }
-
         var symbol: String {
             switch self.kind {
             case .attention: "hand.raised.fill"
