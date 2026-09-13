@@ -16,6 +16,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { AuthProfileCredential } from "../src/agents/auth-profiles.js";
+import { fetchWithSsrFGuard, type GuardedFetchResult } from "../src/infra/net/fetch-guard.js";
 import {
   parseBooleanEnv,
   parseStrictIntegerOption,
@@ -413,11 +414,22 @@ async function startAnthropicProxy(params: {
           duplex: "half",
           signal: controller.signal,
         } as RequestInit & { duplex: "half" };
+        let guardedFetch: GuardedFetchResult | undefined;
         try {
-          const upstreamRes = await Promise.race([
-            fetch(upstreamUrl, upstreamInit),
+          guardedFetch = await Promise.race([
+            fetchWithSsrFGuard({
+              url: upstreamUrl,
+              init: upstreamInit,
+              signal: controller.signal,
+              timeoutMs: params.timeoutMs,
+              maxRedirects: 0,
+              requireHttps: true,
+              capture: false,
+              auditContext: "anthropic-prompt-probe",
+            }),
             timeoutPromise,
           ]);
+          const upstreamRes = guardedFetch.response;
           const responseHeaders: Record<string, string> = {};
           for (const [key, value] of upstreamRes.headers.entries()) {
             const lower = key.toLowerCase();
@@ -460,6 +472,7 @@ async function startAnthropicProxy(params: {
           res.end();
         } finally {
           clearTimeout(timeout);
+          await guardedFetch?.release();
         }
       } catch (error) {
         // Once upstream headers are forwarded, a synthetic 502 is invalid.
