@@ -198,7 +198,14 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       const requestedAgentMatches =
         !requestedParamAgentId ||
         normalizeAgentId(requestedParamAgentId) === normalizeAgentId(owner.agentId);
-      const requestedKeyMatches = !requestedKey || scopedRequestedKey === ownerSessionKey;
+      const durableRequestedKey = requestedKey
+        ? resolveScopedAbortKey({
+            cfg,
+            key: requestedKey,
+            agentId: requestedParamAgentId ?? owner.agentId,
+          })
+        : undefined;
+      const requestedKeyMatches = !requestedKey || durableRequestedKey === ownerSessionKey;
       const target = ownerSessionKey
         ? resolveSessionSharingTarget({ cfg, sessionKey: ownerSessionKey, agentId: owner.agentId })
         : null;

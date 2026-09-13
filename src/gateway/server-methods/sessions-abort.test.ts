@@ -485,6 +485,71 @@ test("sessions.abort reports an authorized exact completed run after hot state i
   });
 });
 
+test("sessions.abort preserves opaque run IDs while authorizing retained targets", async () => {
+  const paddedOwner = ensureProfileForEmail("abort-padded-owner@example.test");
+  const trimmedOwner = ensureProfileForEmail("abort-trimmed-owner@example.test");
+  const paddedRunId = " run-retained-opaque ";
+  await seedRecoveredRun({
+    createdProfileId: paddedOwner.id,
+    runId: paddedRunId,
+    sessionId: "session-abort-padded-owner",
+    sessionKey: "agent:main:abort-padded-owner",
+  });
+  await seedRecoveredRun({
+    createdProfileId: trimmedOwner.id,
+    runId: paddedRunId.trim(),
+    sessionId: "session-abort-trimmed-owner",
+    sessionKey: "agent:main:abort-trimmed-owner",
+  });
+
+  const result = await directSessionReq(
+    "sessions.abort",
+    { runId: paddedRunId },
+    {
+      client: profileClient(paddedOwner.id),
+      context: { getRuntimeConfig: () => restrictedProfileConfig() },
+    },
+  );
+
+  expect(result).toMatchObject({
+    ok: true,
+    payload: {
+      ok: true,
+      abortedRunId: null,
+      status: "no-active-run",
+      runState: "completed",
+      terminalStatus: "ok",
+    },
+  });
+});
+
+test("sessions.abort canonicalizes a retained main alias without an explicit agent ID", async () => {
+  const agentId = "main";
+  const sessionKey = "agent:main:main";
+  const sessionId = "session-main-alias-durable";
+  const runId = "run-main-alias-durable";
+  const storePath = path.join(requireStateDir(), "agents", agentId, "sessions", "sessions.json");
+  await replaceSessionEntry({ agentId, sessionKey, storePath }, { sessionId, updatedAt: 42 });
+  writeAgentRunTerminalReceipt({
+    runId,
+    owner: { agentId, sessionKey, sessionId },
+    terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+  });
+
+  const result = await directSessionReq("sessions.abort", { key: "main", runId });
+
+  expect(result).toMatchObject({
+    ok: true,
+    payload: {
+      ok: true,
+      abortedRunId: null,
+      status: "no-active-run",
+      runState: "completed",
+      terminalStatus: "ok",
+    },
+  });
+});
+
 test("sessions.abort resolves a retained completed run through its scoped main alias", async () => {
   const agentId = "work";
   const sessionKey = "agent:work:main";

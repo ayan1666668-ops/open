@@ -64,6 +64,14 @@ function readSessionSharingStringParam(params: unknown, key: string): string | u
   return normalizeOptionalString((params as Record<string, unknown>)[key]);
 }
 
+function readSessionSharingOpaqueStringParam(params: unknown, key: string): string | undefined {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return undefined;
+  }
+  const value = (params as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function resolveSessionGroupMutationTargets(params: {
   getCfg: () => OpenClawConfig;
   requestParams: unknown;
@@ -246,7 +254,7 @@ export function resolveSessionMutationTargets(params: {
   if (params.method !== "sessions.abort") {
     return undefined;
   }
-  const runId = readSessionSharingStringParam(params.requestParams, "runId");
+  const runId = readSessionSharingOpaqueStringParam(params.requestParams, "runId");
   const run = runId ? params.context.chatAbortControllers.get(runId) : undefined;
   if (run) {
     return [{ sessionKey: run.sessionKey, ...(run.agentId ? { agentId: run.agentId } : {}) }];
