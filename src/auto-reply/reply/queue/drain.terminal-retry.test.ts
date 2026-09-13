@@ -107,9 +107,15 @@ describe("followup drain failure ownership", () => {
     await flush();
     await finish();
     expect(attempts).toHaveLength(CAP);
-    expect(attempts.slice(1).map((time, index) => time - attempts[index])).toEqual([
-      500, 1000, 2000, 4000, 8000, 10000,
-    ]);
+    expect(
+      attempts.slice(1).map((time, index) => {
+        const previous = attempts[index];
+        if (previous === undefined) {
+          throw new Error("Missing previous drain attempt");
+        }
+        return time - previous;
+      }),
+    ).toEqual([500, 1000, 2000, 4000, 8000, 10000]);
     expect(delivered).toEqual([]);
     expect(settled).not.toHaveBeenCalled();
     expect(errors.filter((error) => error.includes("queue suspended"))).toHaveLength(1);
