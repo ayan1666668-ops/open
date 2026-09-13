@@ -55,12 +55,7 @@ async function loadTranscriptRows(params: {
   sessionKey: string;
   storePath: string;
 }): Promise<unknown[]> {
-  return await loadTranscriptEvents({
-    agentId: "main",
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    storePath: params.storePath,
-  });
+  return await loadTranscriptEvents({ agentId: "main", ...params });
 }
 
 test("sessions.patch validates persistent session icons", async () => {
