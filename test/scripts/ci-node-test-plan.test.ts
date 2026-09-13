@@ -19,6 +19,7 @@ import {
   packNodeTestGroups,
   resolvePolicyTestTargets,
 } from "../../scripts/lib/ci-node-test-plan.mts";
+import { isRuntimePlacementIncludePatterns } from "../../scripts/lib/ci-test-timings-schema.mts";
 import * as testTimings from "../../scripts/lib/ci-test-timings.mts";
 import { listVitestRuntimeConsumerFiles } from "../../scripts/lib/vitest-build-prerequisites.mts";
 import {
@@ -764,6 +765,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
   );
 
   it("keeps hybrid fallback bounds and unmeasured stripes when other measurements change", () => {
+    vi.spyOn(testTimings, "readRuntimePlacementTimings").mockReturnValue([]);
     const timings = vi.spyOn(testTimings, "readCompactGroupTimings").mockReturnValue({});
     const options = {
       includeReleaseOnlyPluginShards: false,
@@ -1205,6 +1207,15 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       compactMode: "pull-request",
       runnerBackend: "hybrid",
     });
+    const placementTimings = vi
+      .spyOn(testTimings, "readRuntimePlacementTimings")
+      .mockReturnValue([]);
+    const hybridBeforePlacement = createNodeTestShardBundles({
+      includeReleaseOnlyPluginShards: false,
+      compactMode: "pull-request",
+      runnerBackend: "hybrid",
+    });
+    placementTimings.mockRestore();
     const expectedToolingOwnerNames = Array.from(
       { length: 16 },
       (_, index) => `core-tooling-${index + 1}`,
@@ -1452,7 +1463,34 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         expect(exclusiveCount).toBe(shard.groups.length);
         expect(shard.planConcurrency).toBe(1);
       }
-      if (!githubPullRequestCompact.includes(shard) && !exclusiveCount && !shard.requiresDist) {
+      const originalHybridJob = hybridPullRequestCompact.includes(shard)
+        ? expectDefined(
+            hybridBeforePlacement.find((job) => job.checkName === shard.checkName),
+            "original hybrid runner anchor",
+          )
+        : undefined;
+      const promoted = originalHybridJob?.planConcurrency === 2 && shard.planConcurrency === 1;
+      if (promoted) {
+        expect(shard.pretestBuildMode).toBe("runtime");
+        expect(exclusiveCount).toBe(0);
+        expect(shard.requiresDist).toBe(false);
+        for (const original of originalHybridJob.groups) {
+          const retained = expectDefined(
+            shard.groups.find((group) => group.shard_name === original.shard_name),
+            "retained ordinary group",
+          );
+          expect(retained).toEqual({
+            ...original,
+            env: { OPENCLAW_VITEST_MAX_WORKERS: "2", ...original.env },
+          });
+        }
+      }
+      if (
+        !githubPullRequestCompact.includes(shard) &&
+        !exclusiveCount &&
+        !shard.requiresDist &&
+        !promoted
+      ) {
         expect(
           shard.groups.every(
             (group) => Boolean(group.pretestBuildMode) === Boolean(shard.pretestBuildMode),
@@ -1476,11 +1514,13 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           !githubPullRequestCompact.includes(shard) &&
           shard.groups.some((group) => group.shard_name === "agentic-cli");
         expect(shard.runner).toBe(
-          blacksmithTooling || shard.groups[0]?.runner === EXTRA_LARGE_NODE_TEST_RUNNER
-            ? EXTRA_LARGE_NODE_TEST_RUNNER
-            : nativeFullCli
-              ? "blacksmith-16vcpu-ubuntu-2404"
-              : shard.groups[0]?.runner,
+          originalHybridJob
+            ? originalHybridJob.runner
+            : blacksmithTooling || shard.groups[0]?.runner === EXTRA_LARGE_NODE_TEST_RUNNER
+              ? EXTRA_LARGE_NODE_TEST_RUNNER
+              : nativeFullCli
+                ? "blacksmith-16vcpu-ubuntu-2404"
+                : shard.groups[0]?.runner,
         );
       }
     }
@@ -3569,17 +3609,15 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
             parseCompactSplitTimingKey(group.timing_key),
             "parsed compact split timing key",
           );
-          const name = expectDefined(
-            /^(.+)-hosted-([1-9]\d*)$/u.exec(group.shard_name),
-            "numbered hosted group name",
+          const parent = key.parentShardName;
+          const part = key.part;
+          const hostedName = /^(.+)-hosted-([1-9]\d*)$/u.exec(group.shard_name);
+          expect(parent, "timing key parent must match hosted group name").toBe(
+            hostedName?.[1] ?? group.shard_name,
           );
-          const parent = expectDefined(name[1], "hosted group parent");
-          const part = Number(name[2]);
-          expect(
-            key.selectorKey.split("#selector-")[0],
-            "timing key parent must match hosted group name",
-          ).toBe(parent);
-          expect(key.part, "timing key part must match hosted group ordinal").toBe(part);
+          expect(part, "timing key part must match hosted group ordinal").toBe(
+            hostedName ? Number(hostedName[2]) : 1,
+          );
           const family = families.get(parent) ?? [];
           family.push({ group, part });
           families.set(parent, family);
@@ -3589,18 +3627,45 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         }
         return families;
       };
+      const inheritedParallelGroups = new Map(
+        before.flatMap((job) =>
+          job.planConcurrency === 2
+            ? job.groups
+                .filter((group) => group.env?.OPENCLAW_VITEST_MAX_WORKERS === undefined)
+                .map((group): [string, Group] => [group.shard_name, group])
+            : [],
+        ),
+      );
       const expectedTimingKeys = (
         parent: string,
         family: Array<{ group: Group; part: number }>,
+        plan: typeof before,
       ) => {
+        const timingEnv = (group: Group) => {
+          const original = inheritedParallelGroups.get(group.shard_name);
+          const job = plan.find((entry) =>
+            entry.groups.some((candidate) => candidate.shard_name === group.shard_name),
+          );
+          if (
+            original &&
+            job?.planConcurrency === 1 &&
+            group.env?.OPENCLAW_VITEST_MAX_WORKERS === "2"
+          ) {
+            const { OPENCLAW_VITEST_MAX_WORKERS: _workers, ...otherEnv } = group.env;
+            expect(otherEnv).toEqual(original.env ?? {});
+            return original.env;
+          }
+          return group.env;
+        };
         const first = expectDefined(family[0], "first timing family entry").group;
+        const env = timingEnv(first);
         return createCompactSplitTimingGeneration({
           parentShardName: parent,
           configs: first.configs,
-          env: first.env,
+          env,
           stripes: family.map(({ group }) => {
             expect(group.configs).toEqual(first.configs);
-            expect(group.env).toEqual(first.env);
+            expect(timingEnv(group)).toEqual(env);
             const files = expectDefined(group.includePatterns, "timing family group membership");
             expect(files.length).toBeGreaterThan(0);
             return files;
@@ -3613,7 +3678,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
             Array.from({ length: family.length }, (_, index) => index + 1),
           );
           expect(family.map(({ group }) => group.timing_key)).toEqual(
-            expectedTimingKeys(parent, family),
+            expectedTimingKeys(parent, family, plan),
           );
         }
       };
@@ -3624,7 +3689,23 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         return {
           descriptors: nonPlugin
             .filter((group) => !isRepartitionableTooling(group))
-            .map(({ runner: _runner, ...group }) => group)
+            .map(({ runner: _runner, ...group }) => {
+              if (!inheritedParallelGroups.has(group.shard_name)) {
+                return group;
+              }
+              const job = expectDefined(
+                plan.find((jobEntry) =>
+                  jobEntry.groups.some((groupEntry) => groupEntry.shard_name === group.shard_name),
+                ),
+                "ordinary group execution policy",
+              );
+              // The executor preserves this allowance when a job becomes serial.
+              group.env = {
+                ...(job.planConcurrency === 2 ? { OPENCLAW_VITEST_MAX_WORKERS: "2" } : {}),
+                ...group.env,
+              };
+              return group;
+            })
             .toSorted((a, b) => a.shard_name.localeCompare(b.shard_name)),
           // Allocation may change, but every file must retain its complete execution policy.
           tooling: nonPlugin
@@ -3656,10 +3737,43 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       expectTimingFamilies(before);
       expectTimingFamilies(after);
       expect(policies(after)).toEqual(policies(before));
+      if (runnerBackend === "hybrid") {
+        const promoted = structuredClone(before);
+        const recipient = expectDefined(
+          promoted.find(
+            (job) =>
+              job.planConcurrency === 2 &&
+              job.groups.some(
+                (group) => group.timing_key && group.env?.OPENCLAW_VITEST_MAX_WORKERS === undefined,
+              ) &&
+              job.groups.every(
+                (group) =>
+                  group.env?.OPENCLAW_VITEST_MAX_WORKERS !== undefined ||
+                  isRuntimePlacementIncludePatterns(group.includePatterns),
+              ),
+          ),
+          "existing parallel recipient with hosted timing parts",
+        );
+        recipient.planConcurrency = 1;
+        recipient.pretestBuildMode = "runtime";
+        const keys = recipient.groups.map((group) => group.timing_key);
+        for (const group of recipient.groups) {
+          group.env = { OPENCLAW_VITEST_MAX_WORKERS: "2", ...group.env };
+        }
+        expectTimingFamilies(promoted);
+        expect(policies(promoted)).toEqual(policies(before));
+        expect(recipient.groups.map((group) => group.timing_key)).toEqual(keys);
+        const hosted = expectDefined(
+          recipient.groups.find((group) => group.timing_key),
+          "hosted recipient group",
+        );
+        hosted.env = { ...hosted.env, OPENCLAW_VITEST_MAX_WORKERS: "3" };
+        expect(() => expectTimingFamilies(promoted)).toThrow();
+      }
       if (runnerBackend === "github") {
         const regenerateTimingKeys = (plan: typeof before) => {
           for (const [parent, family] of timingFamilies(plan)) {
-            const keys = expectedTimingKeys(parent, family);
+            const keys = expectedTimingKeys(parent, family, plan);
             family.forEach(({ group }, index) => {
               group.timing_key = expectDefined(keys[index], "regenerated family timing key");
             });
@@ -3719,7 +3833,11 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
           const wrongParent = `${parent}-forged`;
           expect(families.has(wrongParent)).toBe(false);
           const ordered = identity === "part" ? family.toReversed() : family;
-          const keys = expectedTimingKeys(identity === "parent" ? wrongParent : parent, ordered);
+          const keys = expectedTimingKeys(
+            identity === "parent" ? wrongParent : parent,
+            ordered,
+            forged,
+          );
           ordered.forEach(({ group }, index) => {
             group.timing_key = expectDefined(keys[index], "forged family timing key");
           });
