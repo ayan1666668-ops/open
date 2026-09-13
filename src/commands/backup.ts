@@ -7,7 +7,8 @@ import {
 import { formatErrorMessage } from "../infra/errors.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
-import { formatBackupCreateSummary, recordBackupOutcomeBestEffort } from "./backup-shared.js";
+import { recordBackupOutcomeBestEffort } from "./backup-shared.js";
+import { formatBackupCreateSummary } from "./backup-summary.js";
 
 type BackupVerifyRuntime = typeof import("./backup-verify.js");
 

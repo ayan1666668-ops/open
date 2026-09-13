@@ -9,7 +9,7 @@ import { describe, expect, it, vi, type MockInstance } from "vitest";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store-runtime.js";
 import type { BackupResourceInventory } from "../commands/backup-resource-inventory.js";
 import { backupRestoreCommand } from "../commands/backup-restore.js";
-import { formatBackupCreateSummary } from "../commands/backup-shared.js";
+import { formatBackupCreateSummary } from "../commands/backup-summary.js";
 import { backupVerifyCommand, verifyBackupArchive } from "../commands/backup-verify.js";
 import { backupCreateCommand } from "../commands/backup.js";
 import { createTestRuntime } from "../commands/test-runtime-config-helpers.js";
