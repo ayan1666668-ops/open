@@ -12,7 +12,6 @@ import {
   createReplyOperation,
   replyRunRegistry,
 } from "./reply-run-registry.js";
-
 import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 
 const state = getFollowupTurnTestState();
