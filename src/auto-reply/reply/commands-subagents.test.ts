@@ -67,6 +67,7 @@ describe("subagents status", () => {
         createdAt: now - ageMs,
         startedAt: now - ageMs,
         endedAt,
+        outcome: endedAt === undefined ? undefined : { status: "ok" },
       });
     }
 
@@ -76,7 +77,7 @@ describe("subagents status", () => {
       now,
     });
 
-    expect(text).toContain("🤖 Subagents: 1 active · 1 ended");
+    expect(text).toContain("🤖 Subagents: 1 active · 1 done");
     expect(text).toContain("live worker");
     expect(text).not.toContain("stale worker");
   });
@@ -180,30 +181,57 @@ describe("subagents status", () => {
       requesterDisplayKey: "main",
       cleanup: "keep" as const,
       createdAt: 1_000,
-      startedAt: 1_000,
       endedAt: 2_000,
     };
     for (const run of [
-      { runId: "done", outcome: { status: "ok" as const } },
+      { runId: "done", startedAt: 1_000, outcome: { status: "ok" as const } },
       {
         runId: "startup-failed",
-        outcome: { status: "error" as const, error: "registration mismatch" },
+        execution: {
+          status: "terminal" as const,
+          endedAt: 2_000,
+          outcome: { status: "error" as const, error: "registration mismatch" },
+        },
       },
-      { runId: "timeout", outcome: { status: "timeout" as const } },
+      { runId: "timeout", startedAt: 1_000, outcome: { status: "timeout" as const } },
       {
-        runId: "cancelled",
-        outcome: { status: "unknown" as const },
+        runId: "cancelled-error",
+        startedAt: 1_000,
+        outcome: { status: "error" as const, error: "operator killed" },
         endedReason: SUBAGENT_ENDED_REASON_KILLED,
+        suppressAnnounceReason: "killed" as const,
       },
       {
-        runId: "done-delivery-blocked",
+        runId: "steer-restart-error",
+        startedAt: 1_000,
+        outcome: { status: "error" as const, error: "restart failed" },
+        endedReason: SUBAGENT_ENDED_REASON_KILLED,
+        suppressAnnounceReason: "steer-restart" as const,
+      },
+      { runId: "unknown-ended", startedAt: 1_000, outcome: { status: "unknown" as const } },
+      {
+        runId: "done-delivery-failed",
+        startedAt: 1_000,
         outcome: { status: "ok" as const },
         delivery: { status: "failed" as const, lastError: "announce failed" },
       },
       {
+        runId: "done-delivery-suspended",
+        startedAt: 1_000,
+        outcome: { status: "ok" as const },
+        delivery: { status: "suspended" as const },
+      },
+      {
         runId: "done-delivery-pending",
+        startedAt: 1_000,
         outcome: { status: "ok" as const },
         delivery: { status: "pending" as const },
+      },
+      {
+        runId: "done-delivery-in-progress",
+        startedAt: 1_000,
+        outcome: { status: "ok" as const },
+        delivery: { status: "in_progress" as const },
       },
     ]) {
       addSubagentRunForTests({
@@ -221,8 +249,30 @@ describe("subagents status", () => {
         now,
       }),
     ).toBe(
-      "🤖 Subagents: 0 active · 3 done · 1 failed · 1 timed out · 1 cancelled · 1 delivery pending · 1 delivery blocked",
+      "🤖 Subagents: 0 active · 5 done · 2 failed · 1 timed out · 1 cancelled · 1 ended · 2 delivery pending · 2 delivery blocked",
     );
+  });
+
+  it("does not claim success for an ended run without a known successful outcome", () => {
+    addSubagentRunForTests({
+      runId: "unknown-ended",
+      childSessionKey: "agent:main:subagent:unknown-ended",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      task: "unknown ended worker",
+      cleanup: "keep",
+      createdAt: 1_000,
+      startedAt: 1_000,
+      endedAt: 2_000,
+    });
+
+    expect(
+      buildSubagentsStatusLine({
+        context: buildControlledSubagentRunsReadContext("agent:main:main"),
+        verboseEnabled: true,
+        now: 10_000,
+      }),
+    ).toBe("🤖 Subagents: 0 active · 1 ended");
   });
 
   it.each([1, 2])(
@@ -248,6 +298,7 @@ describe("subagents status", () => {
           createdAt: now - ageMs,
           startedAt: now - ageMs,
           endedAt: ended ? now - 500 : undefined,
+          outcome: ended ? { status: "ok" } : undefined,
         });
       }
       for (let index = 0; index < children; index++) {
@@ -272,7 +323,7 @@ describe("subagents status", () => {
         }),
       ).toBe(
         [
-          "🤖 Subagents: 4 active · 1 ended",
+          "🤖 Subagents: 4 active · 1 done",
           "  • first worker · 1s",
           "  • tie-b worker · 2s",
           `  • tie-a worker · 2s · ${children} child${children === 1 ? "" : "ren"} active`,

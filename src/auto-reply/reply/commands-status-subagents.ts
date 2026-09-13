@@ -52,14 +52,17 @@ export function buildSubagentsStatusLine(params: {
       detailLines.push(`  • ${label} · ${duration}${descendantText}`);
     } else if (hasSubagentRunEnded(entry) && pendingDescendants === 0) {
       const outcomeStatus = entry.execution.outcome?.status;
-      if (outcomeStatus === "error") {
-        endedCounts.failed += 1;
-      } else if (outcomeStatus === "timeout") {
-        endedCounts.timedOut += 1;
-      } else if (entry.endedReason === SUBAGENT_ENDED_REASON_KILLED) {
+      if (
+        entry.endedReason === SUBAGENT_ENDED_REASON_KILLED &&
+        entry.suppressAnnounceReason !== "steer-restart"
+      ) {
         endedCounts.cancelled += 1;
       } else if (outcomeStatus === "ok") {
         endedCounts.done += 1;
+      } else if (outcomeStatus === "timeout") {
+        endedCounts.timedOut += 1;
+      } else if (outcomeStatus === "error") {
+        endedCounts.failed += 1;
       } else {
         endedCounts.ended += 1;
       }
