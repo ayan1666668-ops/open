@@ -44,6 +44,57 @@ const videoUrl = `data:video/mp4;base64,${readFileSync(
 ).toString("base64")}`;
 
 suite.define(() => {
+  it.each(["unavailable", "rejecting"])(
+    "copies expanded-table TSV when clipboard.writeText is %s",
+    async (clipboardMode) => {
+      await suite.withPage(createControlUiE2eContextOptions(), async ({ context, page }) => {
+        await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+          origin: new URL(suite.server.baseUrl).origin,
+        });
+        await installMockGateway(page, {
+          historyMessages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text: tableMarkdown }],
+              timestamp: 1_700_000_000_000,
+              __openclaw: { id: "fallback-copy-table", seq: 1 },
+            },
+          ],
+        });
+        await page.goto(`${suite.server.baseUrl}chat`);
+        await page.getByRole("button", { name: "Expand table", exact: true }).click();
+        const expandedTable = page.locator(".markdown-table-dialog");
+        await expandedTable.waitFor({ state: "visible" });
+        await page.evaluate(async (mode) => {
+          await navigator.clipboard.writeText("Before modal fallback copy.");
+          // Only the modern write transport is faulted. execCommand and readText stay real.
+          Object.defineProperty(navigator.clipboard, "writeText", {
+            configurable: true,
+            value:
+              mode === "unavailable"
+                ? undefined
+                : async () => {
+                    throw new DOMException("Clipboard write denied", "NotAllowedError");
+                  },
+          });
+        }, clipboardMode);
+
+        await expandedTable.locator("td").first().click({ button: "right" });
+        const menu = page.locator(".chat-reply-context-menu");
+        await menu.getByRole("menuitem", { name: "Copy table", exact: true }).click();
+        await expect
+          .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+          .toBe(tableText);
+        await expect.poll(() => menu.count()).toBe(0);
+        expect(await expandedTable.isVisible()).toBe(true);
+        await expandedTable
+          .getByRole("button", { name: "Close expanded table", exact: true })
+          .click();
+        await expandedTable.waitFor({ state: "detached" });
+      });
+    },
+  );
+
   it("copies clicked chat content through the browser clipboard and preserves native controls", async () => {
     await suite.withPage(createControlUiE2eContextOptions(), async ({ context, page }) => {
       await context.grantPermissions(["clipboard-read", "clipboard-write"], {
