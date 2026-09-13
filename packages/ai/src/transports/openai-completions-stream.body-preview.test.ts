@@ -39,6 +39,18 @@ async function replay(
     yield makeCompletionsChunk({}, "stop");
   }
   let error: unknown;
+  const baseOptions = {
+    ...(enabled === null ? {} : { bodyPreview: enabled }),
+    signal,
+  };
+  const options: Parameters<typeof processCompletionsStream>[4] = direct
+    ? {
+        ...baseOptions,
+        mode: "direct",
+        beforeContentBlock() {},
+        provisionalCommentaryTags: new Map(),
+      }
+    : baseOptions;
   try {
     await processCompletionsStream(
       chunks(),
@@ -47,17 +59,7 @@ async function replay(
       {
         push: (e) => events.push(structuredClone(e)),
       },
-      {
-        ...(enabled === null ? {} : { bodyPreview: enabled }),
-        signal,
-        ...(direct
-          ? {
-              mode: "direct" as const,
-              beforeContentBlock() {},
-              provisionalCommentaryTags: new Map(),
-            }
-          : {}),
-      },
+      options,
     );
   } catch (e) {
     error = e;
