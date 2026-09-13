@@ -488,16 +488,16 @@ export class ToolSearchRuntime {
   callValue = async (id: string, input?: unknown, options?: ToolSearchCallOptions) =>
     unwrapToolResultValue((await this.call(id, input, options)).result);
 
-  hasNetworkContent(parentToolCallId?: string): boolean {
-    return parentToolCallId
-      ? this.networkInvocations.has(parentToolCallId)
-      : this.networkInvocations.size > 0;
-  }
-
   observeNetworkContent(parentToolCallId: string): void {
     const state = this.networkInvocations.get(parentToolCallId) ?? { active: 0, observed: false };
     state.observed = true;
     this.networkInvocations.set(parentToolCallId, state);
+  }
+
+  hasNetworkContent(parentToolCallId?: string): boolean {
+    return parentToolCallId
+      ? this.networkInvocations.has(parentToolCallId)
+      : this.networkInvocations.size > 0;
   }
 
   takeTerminalTargetBatch(parentToolCallId?: string): boolean {
