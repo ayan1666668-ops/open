@@ -5,7 +5,9 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 /**
  * Provisional notification delivery proof; run from the checked-out repo:
- * pnpm tsx scripts/proof-136554-timeout-notification-boundaries.ts
+ * node --import ./scripts/tsx.mjs scripts/proof-136554-timeout-notification-boundaries.ts
+ * Append --profile=combined when both wait-expiry and timeout-disposition topics
+ * are present. The default --profile=standalone pins this topic in isolation.
  *
  * Real: announcement coordinator, direct-delivery classifiers, dispatch, registry
  * singleton and wall-clock retry/grace timers, SQLite session/task/run persistence,
@@ -39,6 +41,16 @@ import type { AgentInternalEvent } from "../src/agents/internal-events.js";
 import type { SubagentAnnounceDeliveryResult } from "../src/agents/subagents/announce/subagent-announce-dispatch.js";
 import type { callGateway } from "../src/gateway/call.js";
 import type { sendMessage } from "../src/infra/outbound/message.js";
+
+// Select expectations from the known topic composition, never from observed results.
+const args = process.argv.slice(2);
+assert.ok(
+  args.length <= 1 &&
+    (args.length === 0 || args[0] === "--profile=standalone" || args[0] === "--profile=combined"),
+  "Usage: pass at most one --profile=standalone or --profile=combined",
+);
+const profile = args[0] === "--profile=combined" ? "combined" : "standalone";
+process.stdout.write(`[profile] ${profile}\n`);
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-provisional-delivery-"));
 process.env.OPENCLAW_STATE_DIR = path.join(root, "state");
@@ -508,12 +520,12 @@ try {
         terminalReply: { disposition: "visible", text: finalText },
       },
     });
-    // The child reports its real result after the wait expired, so it is also
-    // past the 1s run budget this scenario used to force the expiry. Production
-    // therefore settles it as a run timeout that still carries the child's real
-    // terminal text — the point being that a settled notification neither
-    // suppressed the later result nor left the row claiming `still-running`.
-    await until(`${mode}: same child settles`, () => taskStatus() === "timed_out");
+    // Standalone reapplies the expired 1s deadline to the child's later result.
+    // Combined includes wait-expiry's authoritative-completion preservation: an
+    // unconfirmed child retains its later success. Both must carry its real text,
+    // deliver the final, and stop claiming `still-running` after completion.
+    const expectedTaskStatus = profile === "combined" ? "succeeded" : "timed_out";
+    await until(`${mode}: same child settles`, () => taskStatus() === expectedTaskStatus);
     await until(`${mode}: final delivery`, () =>
       observed.some((item) => item.runId === runId && !item.phase),
     );
@@ -523,7 +535,7 @@ try {
     );
     assert.equal(run()?.execution.status, "terminal");
     assert.equal(run()?.endedReason, "subagent-complete");
-    assert.equal(run()?.execution.outcome?.status, "timeout");
+    assert.equal(run()?.execution.outcome?.status, profile === "combined" ? "ok" : "timeout");
     // Absent disposition reads as `exited`: the terminal record stops asserting
     // the provisional `still-running` the expiry notification published.
     assert.equal(run()?.execution.outcome?.disposition, undefined);
