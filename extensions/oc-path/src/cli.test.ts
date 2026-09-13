@@ -142,7 +142,7 @@ async function invokePathCli(args: string[], runtime: TestRuntime): Promise<void
     stdoutWrite.mockRestore();
     stderrWrite.mockRestore();
     // oxlint-disable-next-line no-warning-comments -- replace the pending link after Bun ships the fix.
-    // TODO(bun#pending): Assign undefined once Bun clears a nonzero process.exitCode.
+    // TODO(bun#42607): Assign undefined once Bun clears a nonzero process.exitCode.
     process.exitCode = previousExitCode ?? 0;
   }
 }
