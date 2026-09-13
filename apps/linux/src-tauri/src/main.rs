@@ -1832,8 +1832,8 @@ fn local_recovery_owns_gateway(navigation: &Result<bool, String>) -> bool {
 mod navigation_tests {
     use super::{
         is_active_onboarding_url, is_release_version, local_mode, local_recovery_owns_gateway,
-        GatewayAction, GatewayOperationQueue, GatewaySnapshot, NavigationState, SettingsReturnTarget,
-        Url,
+        GatewayAction, GatewayOperationQueue, GatewaySnapshot, NavigationState,
+        SettingsReturnTarget, Url,
     };
 
     fn remote_target() -> SettingsReturnTarget {
