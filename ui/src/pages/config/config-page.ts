@@ -1371,6 +1371,14 @@ export class ConfigPage extends OpenClawLightDomElement {
       return renderMcp({
         configObject,
         pluginsHref: pathForRoute("plugins", this.context.basePath),
+        configBusy: this.isCuratedConfigMutationDisabled(),
+        onAppsEnabledToggle: (enabled) => {
+          if (!enabled) {
+            this.context.runtimeConfig.removeFormValue(["mcp", "apps", "enabled"]);
+            return;
+          }
+          this.context.runtimeConfig.patchForm(["mcp", "apps", "enabled"], true);
+        },
         editor: renderConfig({
           ...props,
           activeSection: "mcp",

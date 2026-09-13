@@ -166,6 +166,13 @@ export const SETTINGS_SEARCH_TARGETS = {
     searchKeys: [],
     aliases: "env team store",
   },
+  mcp: {
+    routeId: "mcp",
+    labelKey: "tabs.mcp",
+    hash: "",
+    searchKeys: ["mcpPage.servers", "mcpPage.apps.title", "mcpPage.apps.description"],
+    aliases: "model context protocol servers apps prefab tools",
+  },
   system: {
     routeId: "connection",
     labelKey: "quickSettings.system.gatewayHost",

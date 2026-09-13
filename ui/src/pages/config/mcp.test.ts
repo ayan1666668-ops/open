@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { html, render } from "lit";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderMcp } from "./mcp.ts";
 
 type McpViewProps = Parameters<typeof renderMcp>[0];
@@ -25,9 +25,21 @@ function createProps(overrides: Partial<McpViewProps> = {}): McpViewProps {
       },
     },
     pluginsHref: "/settings/plugins",
+    configBusy: false,
+    onAppsEnabledToggle: vi.fn(),
     editor: html`<div class="test-editor"></div>`,
     ...overrides,
   };
+}
+
+function expectRowByTitle(container: Element, text: string): HTMLElement {
+  const row = Array.from(container.querySelectorAll<HTMLElement>(".settings-row")).find(
+    (candidate) => candidate.querySelector(".settings-row__title")?.textContent?.trim() === text,
+  );
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Expected MCP row "${text}"`);
+  }
+  return row;
 }
 
 function buttonByText(container: Element, text: string): HTMLButtonElement {
@@ -67,5 +79,42 @@ describe("renderMcp", () => {
     expect(buttonByText.bind(null, container, "Save")).toThrow();
     expect(buttonByText.bind(null, container, "Save & Publish")).toThrow();
     expect(container.querySelector(".test-editor")).not.toBeNull();
+  });
+
+  it("lets operators toggle MCP Apps and shows it as off by default", () => {
+    const onAppsEnabledToggle = vi.fn();
+    const container = document.createElement("div");
+
+    render(renderMcp(createProps({ onAppsEnabledToggle })), container);
+
+    const appsRow = expectRowByTitle(container, "MCP Apps");
+    const appsSwitch = appsRow.querySelector<HTMLElement & { checked: boolean }>("wa-switch");
+    expect(appsSwitch).toBeInstanceOf(HTMLElement);
+    expect(appsSwitch?.checked).toBe(false);
+    if (!appsSwitch) {
+      throw new Error("Expected MCP Apps switch");
+    }
+    appsSwitch.checked = true;
+    appsSwitch.dispatchEvent(new Event("change"));
+    expect(onAppsEnabledToggle).toHaveBeenCalledWith(true);
+  });
+
+  it("reflects an enabled override and locks the toggle while config is busy", () => {
+    const container = document.createElement("div");
+
+    render(
+      renderMcp(
+        createProps({
+          configObject: { mcp: { apps: { enabled: true } } },
+          configBusy: true,
+        }),
+      ),
+      container,
+    );
+
+    const appsRow = expectRowByTitle(container, "MCP Apps");
+    const appsSwitch = appsRow.querySelector<HTMLElement & { checked: boolean }>("wa-switch");
+    expect(appsSwitch?.checked).toBe(true);
+    expect(appsSwitch?.hasAttribute("disabled")).toBe(true);
   });
 });

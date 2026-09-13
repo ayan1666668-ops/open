@@ -43,6 +43,7 @@ describe("settings search target manifest", () => {
       ["channels", "/settings/channels", "", ""],
       ["security", "/settings/security", "", ""],
       ["secrets", "/settings/secrets", "", ""],
+      ["mcp", "/settings/mcp", "", ""],
       ["system", "/settings/connection", "", "#settings-connection-host"],
       ["personal", "/settings/profile", "", "#settings-profile-identity"],
       ["githubConnections", "/settings/profile", "", "#settings-profile-github-connections"],

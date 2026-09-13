@@ -2803,6 +2803,12 @@ export const en: TranslationMap & {
     parallel: "parallel",
     tlsVerifyOff: "TLS verify off",
     mtls: "mTLS",
+    apps: {
+      title: "MCP Apps",
+      description:
+        "Let configured MCP servers render interactive HTML views for their tool results instead of plain text.",
+      restartRequired: "Gateway restart required.",
+    },
   },
   talkPage: {
     intro: "Configure realtime voice providers, models, and speaker voices.",
