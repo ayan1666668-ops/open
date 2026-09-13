@@ -90,7 +90,7 @@ describe("session resolution metadata", () => {
               undefined,
             );
             expect(
-              parse.mock.calls.some(([value]) => value.includes("retained-resolve-task:")),
+              parse.mock.calls.some(([json]) => json.includes("retained-resolve-task:")),
             ).toBe(false);
           } finally {
             parse.mockRestore();
