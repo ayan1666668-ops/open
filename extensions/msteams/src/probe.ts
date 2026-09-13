@@ -120,7 +120,7 @@ export async function probeMSTeams(
     let delegatedAuth: ProbeMSTeamsResult["delegatedAuth"];
     if (cfg?.delegatedAuth?.enabled) {
       try {
-        const tokens = loadDelegatedTokens({ accountId: params?.accountId });
+        const tokens = await loadDelegatedTokens({ accountId: params?.accountId });
         if (tokens) {
           const isExpired = !isFutureDateTimestampMs(tokens.expiresAt);
           delegatedAuth = {

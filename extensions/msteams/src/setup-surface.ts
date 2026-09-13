@@ -399,7 +399,7 @@ export const msteamsSetupWizard: ChannelSetupWizard = {
           progress.stop();
           throw err;
         }
-        saveDelegatedTokens(tokens, { accountId: resolvedAccountId });
+        await saveDelegatedTokens(tokens, { accountId: resolvedAccountId });
         progress.stop(t("wizard.msteams.delegatedAuthConfigured"));
       }
     }

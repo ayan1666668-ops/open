@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.test-support.js";
+import { buildStatusCommandOverviewRows } from "../commands/status-overview-rows.ts";
 import { collectStatusLocalSnapshot } from "../commands/status.agent-local.js";
+import { createStatusCommandOverviewRowsParams } from "../commands/status.test-support.ts";
 import { clearRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
@@ -17,6 +19,7 @@ import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/sess
 import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { getStatusSummary } from "../status/summary.js";
 import {
   createDirectOutboundTestAdapter,
   createOutboundTestPlugin,
@@ -24,7 +27,6 @@ import {
 } from "../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { getStatusSummary } from "./summary.js";
 
 describe("getStatusSummary read-only session access", () => {
   const previousRegistry = getActivePluginRegistry();
@@ -327,6 +329,58 @@ describe("getStatusSummary read-only session access", () => {
       expect(session?.percentUsed).toBe(44);
     });
   });
+
+  it.each([false, true])(
+    "labels archived and retired shared-store rows as stored (all archived: %s)",
+    async (allArchived) => {
+      await withOpenClawTestState({ prefix: "openclaw-status-stored-count-" }, async (state) => {
+        const storePath = state.path("shared.sqlite");
+        const config = {
+          agents: {
+            defaults: { heartbeat: { every: "0m" } },
+            entries: { main: {}, ops: {} },
+          },
+          session: { store: storePath },
+        };
+        for (const [agentId, name, archived] of [
+          ["main", "current", allArchived],
+          ["main", "history", true],
+          ["ops", "history", true],
+          ["retired", "history", true],
+        ] as const) {
+          replaceSessionEntrySync(
+            { agentId, storePath, sessionKey: `agent:${agentId}:${name}` },
+            {
+              sessionId: `${agentId}-${name}`,
+              updatedAt: 1,
+              ...(archived ? { archivedAt: 2 } : {}),
+            },
+          );
+        }
+        closeOpenClawAgentDatabasesForTest();
+
+        const stored = sessionAccessor.readSessionStoreSummaryReadOnly(
+          { agentId: "main", storePath },
+          { agentIds: ["main", "ops"], recentLimit: 10 },
+        );
+        expect(stored.count).toBe(4);
+        expect(stored.recent.filter(({ entry }) => entry.archivedAt !== undefined)).toHaveLength(
+          allArchived ? 4 : 3,
+        );
+        const summary = await getStatusSummary({ config, includeChannelSummary: false });
+        expect(summary.sessions.count).toBe(4);
+        expect(summary.sessions.paths).toEqual([storePath]);
+        expect(summary.sessions.byAgent.map(({ agentId, count }) => [agentId, count])).toEqual([
+          ["main", 2],
+          ["ops", 1],
+        ]);
+        const rows = buildStatusCommandOverviewRows(
+          createStatusCommandOverviewRowsParams({ summary }),
+        );
+        expect(rows.find(({ Item }) => Item === "Sessions")?.Value).toMatch(/^4 stored · default /);
+      });
+    },
+  );
 
   it("bounds session payload hydration to the recent status window", async () => {
     await withOpenClawTestState({ prefix: "openclaw-status-recent-window-" }, async (state) => {

@@ -172,17 +172,17 @@ export function resolveMSTeamsCredentials(
 // Delegated token storage / resolution
 // ---------------------------------------------------------------------------
 
-export function loadDelegatedTokens(params?: {
+export async function loadDelegatedTokens(params?: {
   accountId?: string | null;
-}): MSTeamsDelegatedTokens | undefined {
-  return loadMSTeamsDelegatedTokens(params?.accountId);
+}): Promise<MSTeamsDelegatedTokens | undefined> {
+  return await loadMSTeamsDelegatedTokens(params?.accountId);
 }
 
-export function saveDelegatedTokens(
+export async function saveDelegatedTokens(
   tokens: MSTeamsDelegatedTokens,
   params?: { accountId?: string | null },
-): void {
-  saveMSTeamsDelegatedTokens(tokens, params?.accountId);
+): Promise<void> {
+  await saveMSTeamsDelegatedTokens(tokens, params?.accountId);
 }
 
 export async function resolveDelegatedAccessToken(params: {
@@ -191,7 +191,7 @@ export async function resolveDelegatedAccessToken(params: {
   clientSecret: string;
   accountId?: string | null;
 }): Promise<string | undefined> {
-  const tokens = loadDelegatedTokens({ accountId: params.accountId });
+  const tokens = await loadDelegatedTokens({ accountId: params.accountId });
   if (!tokens) {
     return undefined;
   }
@@ -210,7 +210,7 @@ export async function resolveDelegatedAccessToken(params: {
       refreshToken: tokens.refreshToken,
       scopes: tokens.scopes,
     });
-    saveDelegatedTokens(refreshed, { accountId: params.accountId });
+    await saveDelegatedTokens(refreshed, { accountId: params.accountId });
     return refreshed.accessToken;
   } catch {
     return undefined;

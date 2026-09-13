@@ -39,6 +39,7 @@ import {
   defineInstallerNpmRetryContract,
   defineInstallerNpmFreshnessContract,
   defineInstallerPnpmContract,
+  defineInstallerShellIsolationContract,
 } from "./install-test-contract.js";
 
 const SCRIPT_PATH = "scripts/install-cli.sh";
@@ -46,12 +47,14 @@ const nodeExecutable = requireNodeTool("node");
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function runInstallCliShell(script: string, env: NodeJS.ProcessEnv = {}) {
-  return spawnSync("/bin/bash", ["-c", script], {
+  return spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", script], {
     encoding: "utf8",
     env: {
       ...process.env,
       OPENCLAW_INSTALL_CLI_SH_NO_RUN: "1",
       ...env,
+      BASH_ENV: "",
+      ENV: "",
     },
   });
 }
@@ -71,6 +74,8 @@ describe("install-cli.sh", () => {
     prefix: true,
     createTempDir: (prefix: string) => tempDirs.make(prefix),
   };
+
+  defineInstallerShellIsolationContract(installerContract);
 
   it("installs only Node into the requested prefix without entering package or service setup", () => {
     const result = runInstallCliShell(`
@@ -637,7 +642,7 @@ fi
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
-  it("bounds stalled curl downloads and propagates timeout failures", () => {
+  it("bounds stalled downloads and propagates timeout failures", () => {
     const result = runInstallCliShell(`
       set -euo pipefail
       source "${SCRIPT_PATH}"
@@ -649,13 +654,23 @@ fi
       set +e
       download_file "https://example.invalid/node.tar.gz" "/tmp/node.tar.gz"
       printf 'status=%s\n' "$?"
+      wget() {
+        printf 'wget=%s\n' "$*"
+        return 4
+      }
+      DOWNLOADER=wget
+      download_file "https://example.invalid/node.tar.gz" "/tmp/node.tar.gz"
+      printf 'wget-status=%s\n' "$?"
     `);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("--speed-limit 1 --speed-time 30");
+    expect(result.stdout).toContain("--speed-limit 1 --speed-time 300");
     expect(result.stdout).not.toContain("--connect-timeout");
+    expect(result.stdout).not.toContain("--max-time");
     expect(result.stdout).toContain("--retry 3 --retry-delay 1 --retry-connrefused");
     expect(result.stdout).toContain("status=28");
+    expect(result.stdout).toContain("--timeout=300");
+    expect(result.stdout).toContain("wget-status=4");
   });
 
   it("does not clean an unrelated legacy checkout during the default npm install", () => {
