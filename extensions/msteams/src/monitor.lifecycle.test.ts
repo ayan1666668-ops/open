@@ -22,6 +22,7 @@ type MSTeamsUserResolution = {
 
 type ResolveMSTeamsTeamsConfigMock = (params: {
   cfg: unknown;
+  accountId?: string | null;
   teamIdMode: "bot-framework" | "graph";
   teams: Record<string, unknown>;
 }) => Promise<{
@@ -32,6 +33,7 @@ type ResolveMSTeamsTeamsConfigMock = (params: {
 
 type ResolveMSTeamsUserAllowlistMock = (params: {
   cfg: unknown;
+  accountId?: string | null;
   entries: string[];
 }) => Promise<MSTeamsUserResolution[]>;
 
@@ -245,6 +247,7 @@ function requireRegisteredMSTeamsMediaMaxBytes(): number {
 
 describe("monitorMSTeamsProvider lifecycle", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     resolveAllowlistMocks.resolveMSTeamsTeamsConfig
       .mockReset()
@@ -368,6 +371,64 @@ describe("monitorMSTeamsProvider lifecycle", () => {
     if (!result.app) {
       throw new Error("expected named Teams monitor app");
     }
+  });
+
+  it("keeps named startup Graph lookups scoped when default environment auth is federated", async () => {
+    vi.stubEnv("MSTEAMS_AUTH_TYPE", "federated");
+    vi.stubEnv("MSTEAMS_APP_ID", "environment-app-id");
+    vi.stubEnv("MSTEAMS_TENANT_ID", "environment-tenant-id");
+    vi.stubEnv("MSTEAMS_CERTIFICATE_PATH", "/environment/default-certificate.pem");
+    const abort = new AbortController();
+    const cfg = {
+      channels: {
+        msteams: {
+          accounts: {
+            support: {
+              appId: "support-app-id",
+              appPassword: "support-app-password",
+              tenantId: "support-tenant-id",
+              dangerouslyAllowNameMatching: true,
+              allowFrom: ["Support Operator"],
+              teams: { "Support Team": {} },
+              webhook: { port: 0, path: "/api/messages" },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const task = monitorMSTeamsProvider({
+      cfg,
+      accountId: "support",
+      runtime: createRuntime(),
+      abortSignal: abort.signal,
+      ...createStores(),
+    });
+
+    await resolveStartedServer();
+    expect(loadMSTeamsSdkWithAuth).toHaveBeenCalledWith(
+      {
+        appId: "support-app-id",
+        appPassword: "support-app-password",
+        tenantId: "support-tenant-id",
+        type: "secret",
+      },
+      expect.any(Object),
+    );
+    expect(resolveAllowlistMocks.resolveMSTeamsUserAllowlist).toHaveBeenCalledWith({
+      cfg: expect.any(Object),
+      accountId: "support",
+      entries: ["Support Operator"],
+    });
+    expect(resolveAllowlistMocks.resolveMSTeamsTeamsConfig).toHaveBeenCalledWith({
+      cfg: expect.any(Object),
+      accountId: "support",
+      teamIdMode: "bot-framework",
+      teams: { "Support Team": {} },
+    });
+
+    abort.abort();
+    await task;
   });
 
   it("prefers the Teams media limit over the agent default", async () => {

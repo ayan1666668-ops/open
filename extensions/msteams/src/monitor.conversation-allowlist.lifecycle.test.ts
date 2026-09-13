@@ -1,7 +1,7 @@
 // Provider startup must preserve Teams thread identities in group-only allowlists.
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig, RuntimeEnv } from "../runtime-api.js";
+import { DEFAULT_ACCOUNT_ID, type OpenClawConfig, type RuntimeEnv } from "../runtime-api.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import type { MSTeamsActivityHandler } from "./monitor-handler.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
@@ -18,10 +18,12 @@ type FakeServer = EventEmitter & {
 type MSTeamsUserResolution = { input: string; resolved: boolean; id?: string };
 type ResolveMSTeamsUserAllowlistMock = (params: {
   cfg: unknown;
+  accountId?: string | null;
   entries: string[];
 }) => Promise<MSTeamsUserResolution[]>;
 type ResolveMSTeamsTeamsConfigMock = (params: {
   cfg: unknown;
+  accountId?: string | null;
   teamIdMode: "bot-framework" | "graph";
   teams: Record<string, unknown>;
 }) => Promise<{
@@ -309,6 +311,7 @@ describe("monitorMSTeamsProvider group conversation allowlist lifecycle", () => 
       ]);
       expect(resolveMSTeamsUserAllowlist).toHaveBeenCalledExactlyOnceWith({
         cfg,
+        accountId: DEFAULT_ACCOUNT_ID,
         entries: ["Alice"],
       });
     });
@@ -330,6 +333,7 @@ describe("monitorMSTeamsProvider group conversation allowlist lifecycle", () => 
       expect(resolveMSTeamsUserAllowlist).not.toHaveBeenCalled();
       expect(resolveMSTeamsTeamsConfig).toHaveBeenCalledWith({
         cfg,
+        accountId: DEFAULT_ACCOUNT_ID,
         teamIdMode: "bot-framework",
         teams: { Product: { channels: { Roadmap: {} } } },
       });
@@ -359,10 +363,12 @@ describe("monitorMSTeamsProvider group conversation allowlist lifecycle", () => 
     await withStartedProvider(cfg, (registeredCfg) => {
       expect(resolveMSTeamsUserAllowlist).toHaveBeenNthCalledWith(1, {
         cfg,
+        accountId: DEFAULT_ACCOUNT_ID,
         entries: ["Alice"],
       });
       expect(resolveMSTeamsUserAllowlist).toHaveBeenNthCalledWith(2, {
         cfg,
+        accountId: DEFAULT_ACCOUNT_ID,
         entries: ["Bob"],
       });
       expect(registeredCfg.channels?.msteams?.allowFrom).toEqual(["alice-aad"]);

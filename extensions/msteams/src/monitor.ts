@@ -133,7 +133,7 @@ export async function monitorMSTeamsProvider(
     if (entries.length === 0) {
       return { additions: [], unresolved: [] };
     }
-    const resolved = await resolveMSTeamsUserAllowlist({ cfg, entries });
+    const resolved = await resolveMSTeamsUserAllowlist({ cfg, accountId, entries });
     const additions: string[] = [];
     const unresolved: string[] = [];
     for (const entry of resolved) {
@@ -170,6 +170,7 @@ export async function monitorMSTeamsProvider(
     if (msteamsCfg.teams && Object.keys(msteamsCfg.teams).length > 0) {
       const resolved = await resolveMSTeamsTeamsConfig({
         cfg,
+        accountId,
         teamIdMode: "bot-framework",
         teams: msteamsCfg.teams,
       });
