@@ -16470,6 +16470,7 @@ public struct SessionsListParams: Codable, Sendable {
     public let sortby: AnyCodable?
     public let includeglobal: Bool?
     public let includeunknown: Bool?
+    public let excludesubagents: Bool?
     public let configuredagentsonly: Bool?
     public let includederivedtitles: Bool?
     public let includelastmessage: Bool?
@@ -16496,6 +16497,7 @@ public struct SessionsListParams: Codable, Sendable {
         sortby: AnyCodable? = nil,
         includeglobal: Bool? = nil,
         includeunknown: Bool? = nil,
+        excludesubagents: Bool? = nil,
         configuredagentsonly: Bool? = nil,
         includederivedtitles: Bool? = nil,
         includelastmessage: Bool? = nil,
@@ -16521,6 +16523,7 @@ public struct SessionsListParams: Codable, Sendable {
         self.sortby = sortby
         self.includeglobal = includeglobal
         self.includeunknown = includeunknown
+        self.excludesubagents = excludesubagents
         self.configuredagentsonly = configuredagentsonly
         self.includederivedtitles = includederivedtitles
         self.includelastmessage = includelastmessage
@@ -16548,6 +16551,7 @@ public struct SessionsListParams: Codable, Sendable {
         case sortby = "sortBy"
         case includeglobal = "includeGlobal"
         case includeunknown = "includeUnknown"
+        case excludesubagents = "excludeSubagents"
         case configuredagentsonly = "configuredAgentsOnly"
         case includederivedtitles = "includeDerivedTitles"
         case includelastmessage = "includeLastMessage"
@@ -19424,6 +19428,8 @@ public struct SystemInfoResult: Codable, Sendable {
     public let loadaverage: [AnyCodable]?
     public let memorytotalbytes: Int
     public let memoryfreebytes: Int
+    public let eventloop: [String: AnyCodable]?
+    public let processmemory: [String: AnyCodable]?
     public let disktotalbytes: Int?
     public let diskavailablebytes: Int?
     public let diskpath: String?
@@ -19448,6 +19454,8 @@ public struct SystemInfoResult: Codable, Sendable {
         loadaverage: [AnyCodable]? = nil,
         memorytotalbytes: Int,
         memoryfreebytes: Int,
+        eventloop: [String: AnyCodable]? = nil,
+        processmemory: [String: AnyCodable]? = nil,
         disktotalbytes: Int? = nil,
         diskavailablebytes: Int? = nil,
         diskpath: String? = nil,
@@ -19471,6 +19479,8 @@ public struct SystemInfoResult: Codable, Sendable {
         self.loadaverage = loadaverage
         self.memorytotalbytes = memorytotalbytes
         self.memoryfreebytes = memoryfreebytes
+        self.eventloop = eventloop
+        self.processmemory = processmemory
         self.disktotalbytes = disktotalbytes
         self.diskavailablebytes = diskavailablebytes
         self.diskpath = diskpath
@@ -19496,6 +19506,8 @@ public struct SystemInfoResult: Codable, Sendable {
         case loadaverage = "loadAverage"
         case memorytotalbytes = "memoryTotalBytes"
         case memoryfreebytes = "memoryFreeBytes"
+        case eventloop = "eventLoop"
+        case processmemory = "processMemory"
         case disktotalbytes = "diskTotalBytes"
         case diskavailablebytes = "diskAvailableBytes"
         case diskpath = "diskPath"
