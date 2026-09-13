@@ -81,10 +81,23 @@ export function createSubagentRegistryListener(config: {
         const endedAt = typeof evt.data?.endedAt === "number" ? evt.data.endedAt : Date.now();
         const startedAt = typeof evt.data?.startedAt === "number" ? evt.data.startedAt : undefined;
         const terminalReply = normalizeAgentRunTerminalReplySnapshot(evt.data?.terminalReply);
+        const terminalOutcome = buildAgentRunTerminalOutcomeFromLifecycleEvent({
+          phase,
+          data: evt.data,
+          startedAt,
+          endedAt,
+        });
         // sessions_yield ends the turn by aborting the run signal, so a yielded
         // terminal can also look aborted. An explicit yield is authoritative — pause,
         // don't kill — else the tracking task settles `cancelled` with a false notice (#92448).
-        if (evt.data?.yielded === true) {
+        // Match the wait observer for collectors: an outer timeout or blocked
+        // outcome can coexist with yield metadata and must not become success.
+        // Ordinary yielded continuations retain their existing pause contract.
+        if (
+          evt.data?.yielded === true &&
+          (entry.collect !== true ||
+            (terminalOutcome.status !== "timeout" && terminalOutcome.reason !== "blocked"))
+        ) {
           // Drop any grace timer from an earlier aborted/error terminal so it can't
           // later fire and settle this now-paused run with a false notice.
           pendingLifecycle.clear(evt.runId);
@@ -121,12 +134,6 @@ export function createSubagentRegistryListener(config: {
           );
           return;
         }
-        const terminalOutcome = buildAgentRunTerminalOutcomeFromLifecycleEvent({
-          phase,
-          data: evt.data,
-          startedAt,
-          endedAt,
-        });
         if (preserveSubagentRunForRestart({ entry, terminal: terminalOutcome, persist })) {
           pendingLifecycle.clear(evt.runId);
           return;

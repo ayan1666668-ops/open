@@ -46,6 +46,7 @@ import {
   setDetachedTaskLifecycleRuntime,
 } from "../../../tasks/task-runtime.test-helpers.js";
 import { findTaskByRunIdForStatus } from "../../../tasks/task-status-access.js";
+import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../../agent-run-terminal-outcome.js";
 import {
   createSessionStore,
   createSubagentRunParams,
@@ -3823,6 +3824,133 @@ describe("subagent registry seam flow", () => {
       // turn the collector yield into a cancellation notice.
       expect(findRequesterRun(runId)?.pauseReason).toBeUndefined();
       expect(findRequesterRun(runId)?.endedReason).not.toBe(SUBAGENT_ENDED_REASON_KILLED);
+    },
+  );
+
+  it.each([
+    { observation: "lifecycle", schema: false, captured: false },
+    { observation: "wait", schema: false, captured: false },
+    { observation: "lifecycle", schema: true, captured: false },
+    { observation: "wait", schema: true, captured: false },
+    { observation: "lifecycle", schema: true, captured: true },
+    { observation: "wait", schema: true, captured: true },
+  ])(
+    "settles forced collector yield through $observation (schema=$schema, captured=$captured)",
+    async ({ observation, schema, captured }) => {
+      const runId = "forced-collector-yield";
+      const childSessionKey = "agent:main:subagent:forced-collector-yield";
+      const terminal = {
+        status: "ok",
+        startedAt: 111,
+        endedAt: 222,
+        yielded: true,
+        livenessState: "paused",
+      };
+      const waitResult = createDeferred<Record<string, unknown>>();
+      if (observation === "wait") {
+        mocks.callGateway.mockImplementation(async () => waitResult.promise);
+      } else {
+        mockPendingAgentWait();
+      }
+      mocks.loadSessionStore.mockReturnValue(
+        createSessionStore({ lifecycleRevision: "forced-yield" }, childSessionKey),
+      );
+      mod.registerSubagentRun({
+        runId,
+        childSessionKey,
+        task: "force the terminal boundary",
+        collect: true,
+        expectsCompletionMessage: false,
+        swarmRequesterSessionKey: "agent:main:main",
+        ...(schema ? { outputSchema: { type: "object" } } : {}),
+      });
+      if (captured) {
+        mod.recordSwarmStructuredOutput(
+          { runId, childSessionKey },
+          { invalidAttempts: 0, structured: { answer: 42 } },
+        );
+      }
+      if (observation === "wait") {
+        waitResult.resolve(terminal);
+      } else {
+        getLifecycleHandler()({ runId, stream: "lifecycle", data: { phase: "end", ...terminal } });
+      }
+      await waitForFast(() => {
+        const entry = findRequesterRun(runId);
+        expect(entry?.execution.status).toBe("terminal");
+        expect(entry?.collectorCompletion?.status).toBe(schema && !captured ? "failed" : "done");
+        expect(entry?.pauseReason).toBeUndefined();
+        if (captured) {
+          expect(entry?.collectorCompletion?.structured).toEqual({ answer: 42 });
+        } else if (schema) {
+          expect(entry?.collectorCompletion?.schemaError).toBe("structured_output was not called");
+        }
+      });
+      expect(mocks.runSubagentAnnounceFlow).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    ["lifecycle", "wait"].flatMap((observation) =>
+      ["timeout", "outer-timeout", "blocked"].map((kind) => ({ observation, kind })),
+    ),
+  )(
+    "preserves $kind alongside forced collector yield through $observation",
+    async ({ observation, kind }) => {
+      const runId = "forced-yield-explicit-timeout";
+      const childSessionKey = "agent:main:subagent:forced-yield-explicit-timeout";
+      const terminal = {
+        startedAt: 111,
+        endedAt: 222,
+        yielded: true,
+        ...(kind === "blocked"
+          ? { status: "error", livenessState: "blocked", error: "blocked execution" }
+          : kind === "outer-timeout"
+            ? { status: "ok", aborted: true, stopReason: "timeout", livenessState: "paused" }
+            : {
+                status: "timeout",
+                aborted: true,
+                stopReason: "timeout",
+                timeoutPhase: "provider",
+                providerStarted: true,
+              }),
+      };
+      const waitResult = createDeferred<Record<string, unknown>>();
+      if (observation === "wait") {
+        mocks.callGateway.mockImplementation(async () => waitResult.promise);
+      } else {
+        mockPendingAgentWait();
+      }
+      mocks.loadSessionStore.mockReturnValue(
+        createSessionStore({ lifecycleRevision: "forced-timeout" }, childSessionKey),
+      );
+      mod.registerSubagentRun({
+        runId,
+        childSessionKey,
+        task: "preserve actual timeout",
+        collect: true,
+        expectsCompletionMessage: false,
+        swarmRequesterSessionKey: "agent:main:main",
+      });
+      if (observation === "wait") {
+        // The Gateway agent-job owner normalizes lifecycle facts before exposing
+        // agent.wait. Its response is not the raw lifecycle event.
+        const normalized = buildAgentRunTerminalOutcomeFromLifecycleEvent({
+          phase: "end",
+          data: terminal,
+        });
+        waitResult.resolve({ ...terminal, status: normalized.status });
+      } else {
+        getLifecycleHandler()({ runId, stream: "lifecycle", data: { phase: "end", ...terminal } });
+      }
+      await vi.advanceTimersByTimeAsync(20_000);
+      await waitForFast(() => {
+        const entry = findRequesterRun(runId);
+        expect(entry?.execution.outcome?.status).toBe(kind === "blocked" ? "error" : "timeout");
+        expect(entry?.collectorCompletion?.status).toBe(kind === "blocked" ? "failed" : "timeout");
+        expect(entry?.pauseReason).toBeUndefined();
+      });
+      expect(mocks.runSubagentAnnounceFlow).not.toHaveBeenCalled();
     },
   );
 
