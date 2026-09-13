@@ -3224,6 +3224,13 @@ export const en: TranslationMap & {
     automationGroup: "{count} automation sessions",
     automation: "Automation",
     inspectRun: "Inspect run",
+    recap: "Session recap",
+    recapMissing: "No recap yet",
+    recapUpdating: "Updating recap…",
+    recapStale: "New activity since this recap",
+    recapUnavailable: "Recap unavailable",
+    recapRetry: "Retry recap",
+    recapUpdated: "Recap updated {time}",
     backToSessions: "Back to sessions",
     channelLabel: "Channel: {value}",
     agentLabel: "Agent: {value}",
@@ -4881,6 +4888,11 @@ export const en: TranslationMap & {
     },
     queue: {
       connectionPending: "Finishing connection recovery. Try sending again when it is ready.",
+      editSourceChanged:
+        "This queued message changed while you were editing. Your edit is still here. Copy it, cancel the edit, and review the queue before trying again.",
+      editStorageFailed:
+        "Your edit could not be saved in this browser. Keep this tab open and copy your edit before freeing browser storage, then try again.",
+      full: "The message queue is full. Wait for a queued message to send or remove one, then try again.",
       initialTurnPending:
         "The initial message is unresolved. Reconnect if needed, then review it before sending another message.",
       notSent: "Not sent",

@@ -34,6 +34,14 @@ require an exact owner match. Rows expire after seven days; writes prune expired
 rows and cap the table at 5,000 newest receipts. Terminal JSON is limited to 64
 KiB of UTF-8 bytes.
 
+### Activity session recaps
+
+[Activity](/web/control-ui/settings#activity-tab) stores one optional `activitySummary` object in the existing `session_nodes.entry_json` session metadata. This is a reconstructible cache; the transcript remains canonical. The [approved persistence design](https://github.com/openclaw/openclaw/issues/147383) adds no SQL table, column, or database schema-version change. Current and `v2026.9.4` metadata serializers preserve unknown optional fields; unknown recap payload versions are treated as cache misses.
+
+Payload version 1 records the recap text, generation time, session ID and lifecycle revision, transcript generation and leaf, chronological coverage, and whether oversized message content was omitted. A rewind or replacement invalidates an incompatible source binding. The Gateway reads bounded transcript chunks outside the metadata write and rechecks the current lifecycle and transcript branch before committing. Recap writes preserve session activity timestamps and ordering.
+
+The latest recap survives restart and archival. Deleting the session removes it; reset or replacement makes the prior lifecycle's recap unusable. Incognito sessions do not persist or generate this cache. A shared, bounded Gateway queue deduplicates generation across viewers, retains the previous recap on failure, and uses only the configured utility route. Disabling that route stops new generation. Removing or ignoring the optional field is a rollback path that leaves session and transcript data intact; removing the feature does not require reversing a database migration.
+
 ### Cold transcript archives
 
 The per-agent `session_transcript_cold_archives` table records cold transcript
