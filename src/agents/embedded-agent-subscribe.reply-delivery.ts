@@ -399,7 +399,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
             options?.retryable !== false &&
             !payload.isReasoning &&
             (state.visibleBlockReplyCount === 0 ||
-              typeof getReplyPayloadMetadata(payload)?.blockSourceText === "string" ||
               (typeof payload.text === "string" && /^\s/u.test(payload.text)))
           ) {
             failedBlockReplies.push({
@@ -433,7 +432,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
         options?.retryable !== false &&
         !payload.isReasoning &&
         (state.visibleBlockReplyCount === 0 ||
-          typeof getReplyPayloadMetadata(payload)?.blockSourceText === "string" ||
           (typeof payload.text === "string" && /^\s/u.test(payload.text)))
       ) {
         failedBlockReplies.push({
@@ -650,17 +648,11 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     if (!options?.retryFailures || failedBlockReplies.length === 0) {
       return;
     }
-    const failed = failedBlockReplies
+    for (const entry of failedBlockReplies
       .splice(0)
-      .toSorted((left, right) => left.deliverySequence - right.deliverySequence);
-    for (const entry of failed) {
-      const blockSourceText = getReplyPayloadMetadata(entry.payload)?.blockSourceText;
-      const retryPayload =
-        typeof blockSourceText === "string"
-          ? { ...entry.payload, text: blockSourceText }
-          : entry.payload;
+      .toSorted((left, right) => left.deliverySequence - right.deliverySequence)) {
       emitBlockReplySafely(
-        retryPayload,
+        entry.payload,
         entry.options,
         entry.onDelivered,
         true,
