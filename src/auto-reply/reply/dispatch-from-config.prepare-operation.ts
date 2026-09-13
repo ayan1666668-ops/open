@@ -1,4 +1,8 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  QuestionAnswerUnconfirmedError,
+  QuestionDispatchRefusedError,
+} from "../../agents/harness/gateway-question-dispatch.js";
 import { resolveAgentIdentity } from "../../agents/identity.js";
 import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { logVerbose } from "../../globals.js";
@@ -12,8 +16,11 @@ import {
 } from "../../plugins/conversation-binding.js";
 import { getGlobalPluginRegistry } from "../../plugins/hook-runner-global.js";
 import type { PluginCommandExecutionReplyOptions } from "../../plugins/plugin-command-runtime.js";
+import { classifySessionStateActor } from "../../sessions/session-state-events.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
+import { hasControlCommand } from "../command-detection.js";
 import type { ReplyPayload } from "../reply-payload.js";
+import { claimPendingReplyQuestionInput } from "./agent-runner-question-input.js";
 import {
   DispatchReplyOperationAbortedError,
   runWithDispatchAbortSignal,
@@ -25,6 +32,7 @@ import {
   loadFastApproveRuntime,
 } from "./dispatch-from-config.runtime-loaders.js";
 import { REPLY_ADMISSION_TICKET } from "./reply-admission-ticket.js";
+import { resolveInboundReplyToolAuthorityOverlay } from "./reply-tool-authority.js";
 import { extractShortModelName } from "./response-prefix-template.js";
 
 export async function prepareDispatchOperation(state: PrepareDispatchOperationContextReadyState) {
@@ -63,7 +71,7 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
   const finishFastCommand = async (fast: {
     payload?: ReplyPayload;
     reason: "fast_abort" | "before_dispatch_handled";
-    logKind: "fast_abort" | "fast_approve";
+    logKind: "fast_abort" | "fast_approve" | "question_answer";
   }) => {
     if (pluginOwnedBinding) {
       getSessionBindingService().touch(pluginOwnedBinding.bindingId, undefined, pluginOwnedBinding);
@@ -151,6 +159,70 @@ export async function prepareDispatchOperation(state: PrepareDispatchOperationCo
         reason: "before_dispatch_handled",
         logKind: "fast_approve",
       });
+    }
+  }
+  const questionText = ctx.commandText.trim();
+  const canClaimQuestion =
+    Boolean(sessionKey) &&
+    Boolean(questionText) &&
+    !ctx.media?.length &&
+    ctx.InboundEventKind !== "room_event" &&
+    classifySessionStateActor({ inputProvenance: ctx.InputProvenance }).actorType === "human" &&
+    !hasControlCommand(questionText, cfg);
+  if (canClaimQuestion && sessionKey) {
+    const authorization = resolveCommandAuthorization({
+      ctx,
+      cfg,
+      commandAuthorized: ctx.CommandAuthorized,
+    });
+    const assertSourceCurrent = () => params.replyOptions?.abortSignal?.throwIfAborted();
+    const adoptClaimedQuestionAnswer = async () => {
+      try {
+        await params.replyOptions?.turnAdoptionLifecycle?.onAdopted();
+      } catch (error) {
+        logVerbose(`question input adoption failed after custody transferred: ${String(error)}`);
+      }
+    };
+    try {
+      const claimed = await claimPendingReplyQuestionInput({
+        sessionKey,
+        text: questionText,
+        caller: resolveInboundReplyToolAuthorityOverlay({
+          ctx,
+          sessionEntry: sessionStoreEntry.entry,
+          senderIsOwner: authorization.senderIsOwner,
+          toolsAllow: params.replyOptions?.toolsAllow,
+          disableTools: params.replyOptions?.disableTools === true,
+        }),
+        assertSourceCurrent,
+      });
+      if (claimed) {
+        await adoptClaimedQuestionAnswer();
+        return await finishFastCommand({
+          reason: "before_dispatch_handled",
+          logKind: "question_answer",
+        });
+      }
+    } catch (error) {
+      if (error instanceof QuestionDispatchRefusedError) {
+        return await finishFastCommand({
+          payload: {
+            text: `The answer was not sent: ${error.message}. Use the question controls in the Control UI, or check the active run and your permissions before retrying.`,
+            isError: true,
+          },
+          reason: "before_dispatch_handled",
+          logKind: "question_answer",
+        });
+      }
+      if (error instanceof QuestionAnswerUnconfirmedError) {
+        await adoptClaimedQuestionAnswer();
+        return await finishFastCommand({
+          payload: { text: error.message, isError: true },
+          reason: "before_dispatch_handled",
+          logKind: "question_answer",
+        });
+      }
+      throw error;
     }
   }
   // Own the session before plugin-bound handlers or message hooks can perform

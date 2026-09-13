@@ -207,8 +207,7 @@ export function prepareEmbeddedAttemptStream(input: {
           );
           return;
         }
-        // A queued user message wins over finalization. Close admission before
-        // awaiting the hook so no later steer can become a child of the draft.
+        // Close admission before awaiting the hook so no later steer joins the finalizing draft.
         acceptingSteerMessages = false;
         if (
           activeQueueAdmissions > 0 ||
@@ -594,6 +593,7 @@ export function prepareEmbeddedAttemptStream(input: {
       attempt.sessionKey,
       composeInjectionGuard(assertCurrent),
       questionAuthority(assertCurrent, authorityKind),
+      attempt.toolAuthorityFingerprint,
     );
   const cancelPendingUserInput = (
     resolvedBy: string,
@@ -615,8 +615,6 @@ export function prepareEmbeddedAttemptStream(input: {
     claimPendingUserInputAnswer,
     cancelPendingUserInput,
   };
-  const heartbeatReplyOperation =
-    attempt.replyOperation?.turnKind === "heartbeat" ? attempt.replyOperation : undefined;
   const applyPermissionMode = input.applyPermissionMode;
   const queueHandle: AttemptStreamQueueHandle = {
     kind: "embedded",
@@ -652,9 +650,10 @@ export function prepareEmbeddedAttemptStream(input: {
       : undefined,
     claimPendingUserInputAnswer,
     cancelPendingUserInput,
-    preemptByVisibleTurn: heartbeatReplyOperation
-      ? () => heartbeatReplyOperation.supersede()
-      : undefined,
+    preemptByVisibleTurn:
+      attempt.replyOperation?.turnKind === "heartbeat"
+        ? () => Boolean(attempt.replyOperation?.supersede())
+        : undefined,
     queueMessage,
     messageInjection,
     messageInjectionV2: messageInjection,

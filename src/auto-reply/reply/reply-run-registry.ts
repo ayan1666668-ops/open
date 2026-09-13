@@ -14,6 +14,7 @@ export type {
 } from "./reply-run-registry.contracts.js";
 export {
   beginReplyMessageInjectionTarget,
+  claimPendingReplyMessageInjectionTarget,
   finalizeReplyMessageInjectionAttempt,
   resolveReplyBackendQueueMessageMismatch,
 } from "./reply-run-registry.message-injection.js";
