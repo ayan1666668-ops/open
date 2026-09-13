@@ -1504,7 +1504,6 @@ openclaw-chat-video-player {
   --task-suggestion-path-bg: color-mix(in srgb, var(--panel-hover) 84%, var(--text) 16%);
   --task-suggestion-prompt-bg: var(--panel);
   --task-suggestion-action-bg: color-mix(in srgb, var(--accent) 82%, var(--panel) 18%);
-  --task-suggestion-action-fg: var(--primary-foreground);
 
   /* Relative, not static: the --stack variant's offset shadow is positioned
      against this box. Geometry otherwise comes from .chat-gutter-stack. */
@@ -1945,7 +1944,6 @@ openclaw-chat-video-player {
   --task-suggestion-path-bg: var(--panel-strong);
   --task-suggestion-prompt-bg: var(--card);
   --task-suggestion-action-bg: color-mix(in srgb, var(--accent) 72%, var(--text-strong) 28%);
-  --task-suggestion-action-fg: var(--primary-foreground);
 }
 
 .task-suggestion__header-action:disabled {

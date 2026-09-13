@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { GATEWAY_SERVER_CAPS } from "../../../packages/gateway-protocol/src/index.js";
+import { createControlUiMockBootstrapConfig } from "../test-helpers/control-ui-e2e.ts";
 import {
   chatSessionListResponse,
   createChatFlowE2eSuite,
@@ -54,6 +55,12 @@ suite.define(() => {
       },
     });
 
+    await page.route("**/control-ui-config.json", (route) =>
+      route.fulfill({
+        json: { ...createControlUiMockBootstrapConfig(), seamColor: "#da7756" },
+      }),
+    );
+
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
       await gateway.waitForRequest("taskSuggestions.list");
@@ -76,6 +83,17 @@ suite.define(() => {
       await options.click();
       await card.getByRole("menuitem", { name: "Start in a new worktree" }).waitFor();
       expect(await gateway.getRequests("taskSuggestions.accept")).toHaveLength(0);
+      const triggerBox = await options.boundingBox();
+      expect(triggerBox).not.toBeNull();
+      const menuBox = await card.getByRole("menu").boundingBox();
+      expect.soft(menuBox?.y).toBeGreaterThanOrEqual(triggerBox!.y + triggerBox!.height);
+      for (const button of [startButton, options]) {
+        const channels = await button.evaluate((element) =>
+          getComputedStyle(element).color.match(/\d+/g)?.map(Number),
+        );
+        expect.soft(channels).toHaveLength(3);
+        expect.soft(channels?.every((channel) => channel >= 240)).toBe(true);
+      }
       await captureUiProof(suite, page, "task-suggestions", `${mode}-menu.png`);
       await page.keyboard.press("Escape");
       await expect
