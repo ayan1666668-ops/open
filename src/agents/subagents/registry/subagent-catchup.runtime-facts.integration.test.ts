@@ -248,4 +248,98 @@ describe("parent runtime facts from retained completion obligations", () => {
     });
     expect(facts.map((fragment) => fragment.text).join("\n")).not.toContain(RESULT);
   });
+  it("keeps requester and controller reads scoped while live ownership overrides disk", async () => {
+    setRuntimeConfigSnapshot({ agents: { entries: { main: {} } } });
+    const controller = "agent:main:controller";
+    const child = makeRestartRecoveryRun({
+      runId: "redirected-result",
+      childSessionKey: CHILD,
+      requesterSessionKey: PARENT,
+      controllerSessionKey: controller,
+      requesterAgentId: "main",
+      execution: { status: "terminal", endedAt: Date.now() - 7_200_000, outcome: { status: "ok" } },
+      completion: { required: true, resultText: RESULT },
+      delivery: { status: "pending" },
+    });
+    saveSubagentRegistryToSqlite(new Map([[child.runId, child]]));
+    const read = async (sessionKey: string) =>
+      (
+        await buildRuntimeFactsContext({
+          cfg: getRuntimeConfig(),
+          agentId: "main",
+          sessionKey,
+          capabilityToolNames: new Set<string>(),
+        })
+      )
+        .map((fragment) => fragment.text)
+        .join("\n");
+    expect(await read(PARENT)).toContain(RESULT);
+    expect(await read(controller)).toContain(RESULT);
+    expect(await read("agent:main:other-parent")).not.toContain(RESULT);
+    subagentRuns.set(child.runId, {
+      ...child,
+      requesterSessionKey: "agent:main:moved",
+      controllerSessionKey: "agent:main:moved",
+    });
+    expect(await read(PARENT)).not.toContain(RESULT);
+    expect(await read(controller)).not.toContain(RESULT);
+  });
+
+  it.each([false, true])(
+    "does not hydrate unrelated retained results when spawn=%s",
+    async (canSpawn) => {
+      setRuntimeConfigSnapshot({ agents: { entries: { main: {} } } });
+      const marker = "UNRELATED_RETAINED_PAYLOAD_CANARY";
+      const rows = new Map<string, ReturnType<typeof makeRestartRecoveryRun>>();
+      for (let index = 0; index < 128; index++) {
+        const row = makeRestartRecoveryRun({
+          runId: `unrelated-${index}`,
+          childSessionKey: `agent:main:subagent:unrelated-${index}`,
+          requesterSessionKey: "agent:main:other-parent",
+          requesterAgentId: "main",
+          task: marker + "x".repeat(32_768),
+          execution: {
+            status: "terminal",
+            endedAt: Date.now() - 7_200_000,
+            outcome: { status: "ok" },
+          },
+          completion: { required: true, resultText: marker },
+          delivery: { status: "pending" },
+        });
+        rows.set(row.runId, row);
+      }
+      const owned = makeRestartRecoveryRun({
+        runId: "scope-owned",
+        childSessionKey: CHILD,
+        requesterSessionKey: PARENT,
+        requesterAgentId: "main",
+        execution: {
+          status: "terminal",
+          endedAt: Date.now() - 7_200_000,
+          outcome: { status: "ok" },
+        },
+        completion: { required: true, resultText: RESULT },
+        delivery: { status: "pending" },
+      });
+      rows.set(owned.runId, owned);
+      saveSubagentRegistryToSqlite(rows);
+      resetSubagentRegistryForTests({ persist: false });
+      const parse = vi.spyOn(JSON, "parse");
+      try {
+        const facts = await buildRuntimeFactsContext({
+          cfg: getRuntimeConfig(),
+          agentId: "main",
+          sessionKey: PARENT,
+          capabilityToolNames: new Set(canSpawn ? ["sessions_spawn"] : []),
+        });
+        expect(facts.map((fragment) => fragment.text).join("\n")).toContain(RESULT);
+        const unrelatedHydrations = parse.mock.calls.filter(
+          ([value]) => typeof value === "string" && value.includes(marker),
+        );
+        expect(unrelatedHydrations.length).toBe(0);
+      } finally {
+        parse.mockRestore();
+      }
+    },
+  );
 });

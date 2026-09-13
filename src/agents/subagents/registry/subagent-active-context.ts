@@ -13,11 +13,15 @@ import {
 } from "../../tools/sessions-helpers.js";
 import { resolveSubagentCompletionResultText } from "../completion/subagent-completion-result.js";
 import { isSubagentRunVisibleToSession } from "./subagent-control-scope.js";
-import { listControlledSubagentRuns } from "./subagent-control.js";
 import { buildSubagentList } from "./subagent-list.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
-import { getSubagentRunsSnapshotForRead } from "./subagent-registry-state.js";
+import { buildSubagentRunReadIndexFromRuns } from "./subagent-registry-queries.js";
+import {
+  getSubagentRunsSnapshotForSession,
+  getSubagentSessionListRunsSnapshotForRead,
+} from "./subagent-registry-state.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
+import { sortSubagentRuns } from "./subagent-run-view.js";
 
 // Prompt data is sanitized then JSON-quoted so active subagent state cannot add
 // executable prompt instructions through labels or task text.
@@ -86,20 +90,27 @@ export function buildActiveSubagentRuntimeContext(params: {
   });
   const agentId = params.controllerAgentId ?? parseAgentSessionKey(controllerSessionKey)?.agentId;
   const snapshot = agentId
-    ? getSubagentRunsSnapshotForRead(subagentRuns, { refreshPersisted: true })
+    ? getSubagentRunsSnapshotForSession(subagentRuns, controllerSessionKey)
     : new Map<string, SubagentRunRecord>();
-  const runs = listControlledSubagentRuns(
-    controllerSessionKey,
-    params.controllerAgentId,
-    params.cfg,
+  const readSnapshot = getSubagentSessionListRunsSnapshotForRead(subagentRuns);
+  for (const [runId, entry] of snapshot) {
+    readSnapshot.set(runId, entry);
+  }
+  const latest = buildSubagentRunReadIndexFromRuns({
+    runs: readSnapshot,
+  }).latestRunsByChildSessionKey;
+  const visible = agentId
+    ? [...snapshot.values()].filter((entry) =>
+        isSubagentRunVisibleToSession(entry, controllerSessionKey, agentId, params.cfg),
+      )
+    : [];
+  const runs = sortSubagentRuns(
+    visible.filter((entry) => latest.get(entry.childSessionKey.trim())?.runId === entry.runId),
   );
   // Read every retained generation through the same visibility policy. A newer
   // execution or a recent-history cutoff cannot acknowledge an older result.
   const pending = agentId
-    ? [...snapshot.values()]
-        .filter((entry) =>
-          isSubagentRunVisibleToSession(entry, controllerSessionKey, agentId, params.cfg),
-        )
+    ? visible
         .filter(hasOutstandingCompletion)
         .toSorted(
           (left, right) =>
@@ -116,6 +127,7 @@ export function buildActiveSubagentRuntimeContext(params: {
     runs,
     recentMinutes,
     taskMaxChars: 96,
+    readSnapshot,
   });
   // buildSubagentList returns recent runs in registry order, so sort before
   // capping to keep the prompt block deterministic across turns.
