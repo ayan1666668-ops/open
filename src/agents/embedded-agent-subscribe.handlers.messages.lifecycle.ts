@@ -617,7 +617,9 @@ export function handleMessageEnd(
     !(
       hasMultiplePhasedTextItems &&
       hadBlockReplyBeforeMessageEnd &&
-      !ctx.blockChunker.hasBuffered()
+      !ctx.blockChunker.hasBuffered() &&
+      !finalTextCorrection &&
+      !finalDirectives.hasMetadata
     ) &&
     hasFinalAssistantReply &&
     onBlockReply &&

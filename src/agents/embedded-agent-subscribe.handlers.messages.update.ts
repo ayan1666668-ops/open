@@ -223,6 +223,7 @@ export function handleMessageUpdate(
       void ctx.flushBlockReplyBuffer({ assistantMessageIndex: ctx.state.assistantMessageIndex });
       ctx.resetAssistantMessageState(ctx.state.assistantTexts.length, {
         preserveMessageTextBaseline: true,
+        preserveReplyDirectiveState: true,
       });
       emitAssistantMessageStart(ctx);
     } else if (
@@ -618,7 +619,11 @@ export function handleMessageUpdate(
       ctx.log.debug(`text_end block reply flush failed: ${String(err)}`);
     };
     try {
-      const pending = ctx.flushBlockReplyBuffer({ assistantMessageIndex, final: finalText });
+      const pending = ctx.flushBlockReplyBuffer({
+        assistantMessageIndex,
+        deferPendingToolMedia: shouldUsePhaseAwareBlockReply,
+        final: finalText,
+      });
       if (pending) {
         return pending.catch(onFlushError);
       }
