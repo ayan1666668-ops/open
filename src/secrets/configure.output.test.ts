@@ -4,6 +4,7 @@ import { createAuthProfileStoreFixture } from "../agents/auth-profiles/credentia
 import { noteCommittedSharedAuthStoreOwnership } from "../agents/auth-profiles/path-resolve.js";
 import { readPersistedSharedAuthProfileStoreRaw } from "../agents/auth-profiles/sqlite.js";
 import { runSecretsCommand } from "../cli/secrets-cli-output.js";
+import { defaultRuntime } from "../runtime.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
@@ -47,20 +48,18 @@ it.each([true, false])(
       }
       const configBefore = await fs.readFile(state.configPath, "utf8");
       const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-      const previousTestRuntimeLog = process.env.OPENCLAW_TEST_RUNTIME_LOG;
       let stdout = "";
       let stderr = "";
-      const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-        stdout += String(chunk);
-        return true;
-      });
+      const stdoutWrite = vi
+        .spyOn(defaultRuntime, "writeJson")
+        .mockImplementation((value, space) => {
+          stdout += `${JSON.stringify(value, null, space && space > 0 ? space : undefined)}\n`;
+        });
       const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
         stderr += String(chunk);
         return true;
       });
       try {
-        // This test intentionally captures structured runtime output under Vitest.
-        process.env.OPENCLAW_TEST_RUNTIME_LOG = "1";
         Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
         await expect(
           runSecretsCommand(
@@ -75,11 +74,6 @@ it.each([true, false])(
       } finally {
         stdoutWrite.mockRestore();
         stderrWrite.mockRestore();
-        if (previousTestRuntimeLog === undefined) {
-          delete process.env.OPENCLAW_TEST_RUNTIME_LOG;
-        } else {
-          process.env.OPENCLAW_TEST_RUNTIME_LOG = previousTestRuntimeLog;
-        }
         if (stdinTTY) {
           Object.defineProperty(process.stdin, "isTTY", stdinTTY);
         } else {
