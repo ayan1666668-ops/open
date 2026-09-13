@@ -1,9 +1,12 @@
 import nodeModule from "node:module";
-import os from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { withMockedPlatform } from "../test-utils/vitest-spies.js";
 
-const loadNative = vi.hoisted(() => vi.fn());
+const { loadNative, endianness } = vi.hoisted(() => ({
+  loadNative: vi.fn(),
+  endianness: vi.fn(),
+}));
+vi.mock("node:os", () => ({ endianness }));
 vi.mock("./freebsd-process-identity-native.ts", () => ({
   loadFreeBsdProcessIdentityNative: loadNative,
 }));
@@ -12,7 +15,7 @@ beforeEach(() => {
   vi.resetModules();
   loadNative.mockReset();
   vi.spyOn(process, "arch", "get").mockReturnValue("x64");
-  vi.spyOn(os, "endianness").mockReturnValue("LE");
+  endianness.mockReset().mockReturnValue("LE");
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -184,7 +187,7 @@ it("does not load for other operating systems, architectures or byte orders", as
   vi.spyOn(process, "arch", "get").mockReturnValue("ia32");
   expect(await read()).toBeNull();
   vi.spyOn(process, "arch", "get").mockReturnValue("x64");
-  vi.spyOn(os, "endianness").mockReturnValue("BE");
+  endianness.mockReturnValue("BE");
   expect(await read()).toBeNull();
   expect(loadNative).not.toHaveBeenCalled();
 });
