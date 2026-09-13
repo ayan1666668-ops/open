@@ -1331,11 +1331,7 @@ extensions/whatsapp/src/targets-runtime.ts	2
 extensions/workboard/browser/lib/workboard/metadata-contract-normalization.ts	1
 extensions/workboard/browser/lib/workboard/normalization.ts	5
 extensions/workboard/browser/pages/workboard/view-card-actions.ts	2
-extensions/workboard/browser/pages/workboard/view-card-details.ts	1
 extensions/workboard/browser/pages/workboard/view-card-modal.ts	1
-extensions/workboard/browser/pages/workboard/view-card.ts	1
-extensions/workboard/browser/pages/workboard/view.ts	1
-extensions/workboard/browser/pages/workboard/workboard-select.ts	1
 extensions/workboard/doctor-contract-api.ts	4
 extensions/workboard/src/cli.ts	2
 extensions/workboard/src/command.ts	1
@@ -1950,7 +1946,7 @@ src/agents/tools/ask-user-tool.ts	8
 src/agents/tools/automations-tool-name.ts	1
 src/agents/tools/chat-history-text.ts	3
 src/agents/tools/common.ts	2
-src/agents/tools/computer-tool-node.ts	2
+src/agents/tools/computer-tool-node.ts	1
 src/agents/tools/computer-tool-request.ts	3
 src/agents/tools/computer-tool.ts	2
 src/agents/tools/conversation-tools.ts	3
@@ -2137,7 +2133,7 @@ src/channels/plugins/bundled-setup-policy.ts	2
 src/channels/plugins/bundled.ts	4
 src/channels/plugins/chat-target-prefixes.ts	2
 src/channels/plugins/config-helpers.ts	7
-src/channels/plugins/config-schema.ts	12
+src/channels/plugins/config-schema.ts	11
 src/channels/plugins/config-write-policy-shared.ts	1
 src/channels/plugins/config-writes.ts	1
 src/channels/plugins/configured-binding-match.ts	1
@@ -2352,7 +2348,7 @@ src/commands/doctor-post-upgrade.ts	1
 src/commands/doctor-prompter.ts	1
 src/commands/doctor-retired-phone-control.ts	1
 src/commands/doctor-sandbox-legacy-registry.ts	8
-src/commands/doctor-sandbox.ts	5
+src/commands/doctor-sandbox.ts	4
 src/commands/doctor-security.ts	3
 src/commands/doctor-session-canonical-keys.ts	1
 src/commands/doctor-session-incognito-key-repair-state.ts	8
@@ -2442,7 +2438,6 @@ src/commands/sessions-lifecycle.ts	3
 src/commands/setup.ts	1
 src/commands/status-all/channels.ts	2
 src/commands/status-all/gateway.ts	1
-src/commands/status.command.ts	1
 src/commands/status.scan.bootstrap-shared.ts	1
 src/commands/status.scan.shared.ts	1
 src/commands/system-agent-with-inference.ts	2
@@ -2897,7 +2892,6 @@ src/infra/clawhub-client.ts	2
 src/infra/clawhub-install-trust.ts	2
 src/infra/control-ui-assets.ts	1
 src/infra/delivery-queue-sqlite-bound.ts	2
-src/infra/delivery-queue-sqlite.ts	2
 src/infra/delivery-queue-sqlite.types.ts	1
 src/infra/delivery-recovery.shared.ts	4
 src/infra/device-pairing-store.ts	5
@@ -3238,7 +3232,7 @@ src/plugins/cli-gateway-nodes-runtime.ts	2
 src/plugins/command-registration.ts	3
 src/plugins/computer-use-contract.ts	3
 src/plugins/config-normalization-shared.ts	1
-src/plugins/config-schema.ts	6
+src/plugins/config-schema.ts	5
 src/plugins/contracts/inventory/bundled-capability-metadata.ts	3
 src/plugins/contracts/registry.ts	1
 src/plugins/contracts/tts-contract-suites.ts	19
@@ -3537,9 +3531,8 @@ src/trajectory/export.ts	22
 src/trajectory/runtime-store.sqlite.ts	1
 src/trajectory/runtime.ts	4
 src/transcripts/config.ts	2
-src/transcripts/store-export-ownership.ts	5
+src/transcripts/store-export-ownership.ts	2
 src/transcripts/store-sqlite.ts	2
-src/transcripts/store.ts	5
 src/tts/openai-compatible-speech-provider.ts	1
 src/tts/status-config.ts	1
 src/tts/tts-auto-mode.ts	2

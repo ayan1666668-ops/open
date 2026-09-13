@@ -19,6 +19,9 @@ export const en: TranslationMap & {
   skillWorkshop: TranslationMap;
 } = {
   pluginUi: {
+    sessionRecentMessages: "Recent messages",
+    sessionHistoryUnavailable: "Session history could not be loaded. Try again.",
+    sessionHistoryEmpty: "No recent messages.",
     customize: "Customize UI",
     selectionScope: "Choose views for this browser window. Built-in views are always available.",
     builtin: "Built-in view",
@@ -1305,6 +1308,8 @@ export const en: TranslationMap & {
     },
     iconEmojiSection: "Emoji",
     iconGlyphSection: "Icons",
+    noIcon: "No icon",
+    noColor: "No color",
     customEmojiCell: "Custom emoji…",
     customEmojiTitle: "Custom emoji",
     customEmojiSet: "Set",

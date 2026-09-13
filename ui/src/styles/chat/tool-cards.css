@@ -222,10 +222,13 @@
   flex-shrink: 0;
 }
 
-.chat-tool-msg-summary__icon img {
+.chat-tool-activity-icon {
   width: 16px;
   height: 16px;
-  object-fit: contain;
+  background: currentColor;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
 }
 
 .chat-tool-msg-summary__icon svg {
