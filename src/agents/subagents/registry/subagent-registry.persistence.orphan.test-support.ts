@@ -203,11 +203,13 @@ export function registerSubagentOrphanTaskCases({
       },
     });
     restartRegistry();
+    await testing.sweepOnceForTests();
     await waitForRegistryWork(() => rejectedWrites > 0);
     await settleSubagentRegistryPersistenceWork();
     expect(findTaskByRunIdForStatus(runId)?.status).toBe("running");
     expect(loadSubagentRegistryFromSqlite().get(runId)?.cleanupCompletedAt).toBeUndefined();
     rejectTerminalWrites = false;
+    await testing.sweepOnceForTests();
     await waitForRegistryWork(() => findTaskByRunIdForStatus(runId)?.status === "failed");
     await waitForRegistryWork(
       () => loadSubagentRegistryFromSqlite().get(runId)?.cleanupCompletedAt !== undefined,
