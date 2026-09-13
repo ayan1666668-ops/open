@@ -12,6 +12,12 @@ import {
   resolveFollowupRunToolAuthorityFingerprint,
 } from "./reply-tool-authority.js";
 
+const executionState = vi.hoisted(() => ({ execute: vi.fn() }));
+vi.mock("./agent-runner-session-reset.js", () => ({ resetReplyRunSession: vi.fn() }));
+vi.mock("./agent-runner-execution.js", () => ({
+  executeAgentTurn: (...args: unknown[]) => executionState.execute(...args),
+}));
+
 const state = getFollowupAdmissionTestState();
 
 describe("queued followup authority", () => {
@@ -93,5 +99,45 @@ describe("queued followup authority", () => {
     expect(() => operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(queued))).toThrow(
       "Reply operation cannot change tool authority after admission",
     );
+  });
+
+  it("executes the admitted followup with its preflight-frozen authority", async () => {
+    const { executeFollowupTurn } = await import("./followup-turn-execution.js");
+    const queued = createRun({ toolsAllow: ["read"] });
+    const operation = createReplyOperation({
+      sessionKey: "main",
+      sessionId: queued.run.sessionId,
+      resetTriggered: false,
+    });
+    state.admitReply.mockResolvedValue({ status: "owned", operation });
+    const route = { provider: "claude-cli", model: "claude" };
+    const expected = resolveFollowupRunToolAuthorityFingerprint(queued, route);
+    state.preflight.mockImplementation(async ({ sessionEntry }) => {
+      expect(operation.bindToolAuthorityRoute(route)).toBe(expected);
+      queued.toolsAllow!.push("exec");
+      return sessionEntry;
+    });
+    executionState.execute.mockImplementation(async ({ replyOperation }) => {
+      expect(replyOperation).toBe(operation);
+      expect(replyOperation.bindToolAuthorityRoute(route)).toBe(expected);
+      return { runId: "queued-run", outcome: { kind: "rejected", payload: { text: "done" } } };
+    });
+    const defaults = createDefaults();
+    const admission = await admitFollowupTurn({ queued, defaults });
+    if (admission.kind !== "admitted") {
+      throw new Error("Queued turn was not admitted");
+    }
+    const result = await executeFollowupTurn({
+      turn: admission.turn,
+      defaults,
+      onToolResult: async () => {},
+      onCompactionNoticePayload: async () => {},
+    });
+    expect(executionState.execute).toHaveBeenCalledOnce();
+    expect(result.execution.outcome).toEqual({ kind: "rejected", payload: { text: "done" } });
+    expect(() => operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(queued))).toThrow(
+      "Reply operation cannot change tool authority after admission",
+    );
+    operation.complete();
   });
 });

@@ -47,6 +47,7 @@ vi.mock("./queue.js", () => ({
 
 vi.mock("../../config/sessions/session-accessor.js", () => ({
   loadSessionEntry: (...args: unknown[]) => state.loadEntry(...args),
+  loadSessionEntryReadOnly: (...args: unknown[]) => state.loadEntry(...args),
 }));
 
 vi.mock("../../sessions/send-policy.js", () => ({
