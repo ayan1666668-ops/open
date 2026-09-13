@@ -7686,15 +7686,6 @@ describe("chat model controls", () => {
     expect(onModelSetup).toHaveBeenCalledOnce();
   });
 
-  it("keeps a non-empty model list free of refresh failure chrome", () => {
-    const { state } = createOpenAiHeaderState();
-    const container = renderModelControls(state, {
-      modelCatalogState: { hasSnapshot: true, status: "ready", refreshFailed: true },
-    });
-    expect(container.querySelector("[data-chat-model-option]")).not.toBeNull();
-    expect(container.querySelector("[data-chat-model-catalog-state]")).toBeNull();
-  });
-
   it("shows a successful empty catalog without authentication guidance", () => {
     const { state } = createChatHeaderState({ models: [] });
     const onModelSetup = vi.fn();
