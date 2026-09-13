@@ -151,7 +151,7 @@ it("projects a stale running row as terminal only when asked", () => {
     hasActiveRun: false,
     status: "running",
   });
-  expect(projectGatewaySessionActiveRun({ active: true, runIds: ["run-1"] }, "running")).toEqual({
+  expect(projectGatewaySessionActiveRun({ active: true }, "running")).toEqual({
     hasActiveRun: true,
     status: "running",
   });

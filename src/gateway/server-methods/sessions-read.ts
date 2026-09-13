@@ -470,7 +470,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
                 // read-only, so only the projection converges; Stop and
                 // chat.history trigger the authoritative lifecycle write.
                 const staleRunning =
-                  activeRunState.active !== true &&
+                  !activeRunState.active &&
                   session.status === "running" &&
                   isStaleRunningSessionAge(session.updatedAt);
                 Object.assign(session, {

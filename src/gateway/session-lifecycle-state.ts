@@ -363,6 +363,7 @@ export async function persistGatewaySessionLifecycleEvent(params: {
     async (storedEntry) => {
       terminalRecovery = undefined;
       failedRun = undefined;
+      // SAFETY: The lifecycle store returns the durable session row persisted under this storePath/sessionKey; its schema-version gate guarantees the SessionEntry shape.
       const entry = storedEntry as SessionEntry;
       if (
         exactCronRun &&
@@ -553,6 +554,7 @@ export async function reconcileStaleRunningSession(params: {
       sessionKey: sessionEntry.canonicalKey,
     },
     (storedEntry) => {
+      // SAFETY: The lifecycle store returns the durable session row persisted under this storePath/sessionKey; its schema-version gate guarantees the SessionEntry shape.
       const current = storedEntry as SessionEntry;
       if (current.status !== "running" || params.hasLiveRun()) {
         return null;
