@@ -4552,15 +4552,34 @@ wa-dropdown.sidebar-identity-menu::part(menu) {
   max-height: 80px;
 }
 
-/* Clear collapsed-sidebar web chrome once, at the reconnect notice or page header.
-   Settings, mobile drawers, and native hosts own different chrome. */
-html:not(.openclaw-native-macos):not(.openclaw-native-nav):not(.openclaw-native-web-chrome)
-  .shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
+/* Clear collapsed-sidebar chrome once, at the reconnect notice or page header.
+   Browsers float the web control cluster in that corner; native macOS hosts
+   put the traffic lights and hosted titlebar buttons there instead, so the
+   clearance follows the app titlebar (52px injected by
+   DashboardWindowController; 50px mirrors .macos-titlebar-controls for older
+   builds). Settings and mobile drawers own different chrome. */
+.shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
   .content:not(.content--chat) {
+  --content-collapsed-chrome-clearance: 48px;
+
   > .connection-action-block,
   &:not(:has(> .connection-action-block)) .content-header {
-    margin-top: 48px;
+    margin-top: var(--content-collapsed-chrome-clearance);
   }
+}
+
+html:is(.openclaw-native-macos, .openclaw-native-nav, .openclaw-native-web-chrome)
+  .shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
+  .content:not(.content--chat) {
+  --content-collapsed-chrome-clearance: var(--openclaw-native-titlebar-height, 50px);
+}
+
+/* Older Mac builds keep the web cluster and drop it below the drag region
+   (top: 52px above), so the browser clearance stacks on that row. */
+html.openclaw-native-macos:not(.openclaw-native-nav):not(.openclaw-native-web-chrome)
+  .shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
+  .content:not(.content--chat) {
+  --content-collapsed-chrome-clearance: calc(52px + 48px);
 }
 
 .content-header--page + * {
