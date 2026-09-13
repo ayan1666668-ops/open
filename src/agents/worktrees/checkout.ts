@@ -39,6 +39,7 @@ type CheckoutOptions = WorktreeFilesystemOptions & {
   destination: string;
   base: string;
   branch?: string;
+  requireSpace: (cloneBytes?: number) => void;
 };
 
 function assertOwned(options: WorktreeFilesystemOptions) {
@@ -65,6 +66,34 @@ async function indexPath(worktree: string, options: WorktreeFilesystemOptions): 
       await requireGit(worktree, ["rev-parse", "--git-path", "index"], gitOptions(options)),
     ),
   );
+}
+
+async function estimateTemplateCloneBytes(
+  template: NonNullable<Awaited<ReturnType<typeof prepareTemplate>>>,
+  options: CheckoutOptions,
+): Promise<number | undefined> {
+  const index = await fs.open(await indexPath(template.record.path, options), "r");
+  try {
+    const header = Buffer.alloc(12);
+    const { bytesRead } = await index.read(header, 0, header.length, 0);
+    const { size } = await index.stat();
+    const version = header.readUInt32BE(4);
+    const entries = header.readUInt32BE(8);
+    // Git already validated the template. Unsupported or incomplete index headers
+    // cannot justify reduced admission; retain the full checkout allowance.
+    if (
+      bytesRead !== 12 ||
+      header.toString("ascii", 0, 4) !== "DIRC" ||
+      version < 2 ||
+      version > 4 ||
+      entries > Math.floor((size - 12) / 62)
+    ) {
+      return undefined;
+    }
+    return template.backend.estimateCloneBytes(entries, size);
+  } finally {
+    await index.close();
+  }
 }
 
 // Path-dependent filters and per-worktree configuration need a fresh checkout.
@@ -206,6 +235,7 @@ async function prepareTemplate(options: CheckoutOptions) {
       return { record: existing, backend };
     }
   }
+  options.requireSpace();
   if (existing) {
     await retireTemplate(options.env, existing, options);
   }
@@ -229,10 +259,15 @@ async function prepareTemplate(options: CheckoutOptions) {
   reserveTemplate(options.env, record, options.commitGuard);
   assertOwned(options);
   await fs.mkdir(directory, { recursive: true });
+  options.requireSpace();
   await backend.createTemplate(record.path, options);
   assertOwned(options);
   await requireGit(options.repoRoot, ["worktree", "add", "--detach", "--", record.path, commit], {
     ...gitOptions(options),
+    beforeRun: () => {
+      assertOwned(options);
+      options.requireSpace();
+    },
     timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
   });
   assertOwned(options);
@@ -243,15 +278,30 @@ async function prepareTemplate(options: CheckoutOptions) {
 /** Git owns registration, branches and indexes; the backend only materializes files. */
 export async function addManagedWorktree(options: CheckoutOptions): Promise<GitResult> {
   let template: Awaited<ReturnType<typeof prepareTemplate>>;
+  let cloneBytes: number | undefined;
   if (options.enabled) {
     try {
       template = await prepareTemplate(options);
+      cloneBytes = template ? await estimateTemplateCloneBytes(template, options) : undefined;
     } catch (error) {
       assertOwned(options);
+      template = undefined;
       log.warn(`worktree acceleration unavailable; using Git checkout: ${String(error)}`);
     }
   }
   assertOwned(options);
+  try {
+    options.requireSpace(cloneBytes);
+  } catch (error) {
+    if (!template) {
+      throw error;
+    }
+    // Tiny source trees can cost less than the conservative clone metadata allowance.
+    // Select Git before registration only when its full checkout budget fits.
+    options.requireSpace();
+    template = undefined;
+    cloneBytes = undefined;
+  }
   const added = await runGit(
     options.repoRoot,
     [
@@ -263,7 +313,14 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
       options.destination,
       options.base,
     ],
-    { ...gitOptions(options), timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS },
+    {
+      ...gitOptions(options),
+      beforeRun: () => {
+        assertOwned(options);
+        options.requireSpace(cloneBytes);
+      },
+      timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+    },
   );
   if (added.code !== 0 || !template) {
     return added;
@@ -281,6 +338,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
     await fs.unlink(markerPath);
     assertOwned(options);
     await fs.rmdir(options.destination);
+    options.requireSpace(cloneBytes);
     await template.backend.cloneTemplate(template.record.path, options.destination, options);
     assertOwned(options);
     // Git marks this file hidden on Windows; opening that clone with O_CREAT
@@ -325,22 +383,36 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
     }
     assertOwned(options);
     log.warn(`worktree snapshot failed; using Git checkout: ${String(error)}`);
-    const checkout = await runGit(options.destination, ["reset", "--hard", "HEAD"], {
-      ...gitOptions(options),
-      timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
-    });
+    let checkout: GitResult;
+    try {
+      checkout = await runGit(options.destination, ["reset", "--hard", "HEAD"], {
+        ...gitOptions(options),
+        beforeRun: () => {
+          assertOwned(options);
+          options.requireSpace();
+        },
+        timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
+      });
+    } catch (fallbackError) {
+      await removeFailedCheckout(options);
+      throw fallbackError;
+    }
     if (checkout.code !== 0) {
-      assertOwned(options);
-      await requireGit(
-        options.repoRoot,
-        ["worktree", "remove", "--force", options.destination],
-        gitOptions(options),
-      );
-      if (options.branch) {
-        assertOwned(options);
-        await requireGit(options.repoRoot, ["branch", "-D", options.branch], gitOptions(options));
-      }
+      await removeFailedCheckout(options);
     }
     return checkout.code === 0 ? added : checkout;
+  }
+}
+
+async function removeFailedCheckout(options: CheckoutOptions): Promise<void> {
+  assertOwned(options);
+  await requireGit(
+    options.repoRoot,
+    ["worktree", "remove", "--force", options.destination],
+    gitOptions(options),
+  );
+  if (options.branch) {
+    assertOwned(options);
+    await requireGit(options.repoRoot, ["branch", "-D", options.branch], gitOptions(options));
   }
 }
