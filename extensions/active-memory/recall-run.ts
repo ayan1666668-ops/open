@@ -241,7 +241,7 @@ async function runRecallSubagent(params: {
       await fs.mkdir(persistedDir, { recursive: true, mode: 0o700 });
       await fs.chmod(persistedDir, 0o700).catch(() => undefined);
     }
-    const prompt = buildRecallPrompt({
+    const { extraSystemPrompt, prompt } = buildRecallPrompt({
       config: params.config,
       query: params.query,
       searchQuery: params.searchQuery,
@@ -273,6 +273,7 @@ async function runRecallSubagent(params: {
         agentDir,
         config: params.runtimeConfig,
         prompt,
+        extraSystemPrompt,
         provider: modelRef.provider,
         model: modelRef.model,
         lane: ACTIVE_MEMORY_RECALL_LANE,
