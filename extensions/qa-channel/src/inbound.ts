@@ -478,7 +478,12 @@ export async function handleQaInbound(params: {
     },
   });
 
-  await channelRuntime.inbound.dispatch({
+  const clearPreview = () =>
+    preview.clear().catch((error: unknown) => {
+      console.warn(`[qa-channel] failed to clear reply preview: ${formatQaErrorForLog(error)}`);
+    });
+
+  const dispatch = channelRuntime.inbound.dispatch({
     cfg: params.config,
     channel: params.channelId,
     accountId: params.account.accountId,
@@ -505,20 +510,20 @@ export async function handleQaInbound(params: {
           ),
         );
         if (!text.trim() && mediaUrls.length === 0) {
-          if ((info?.kind ?? "final") === "final") {
-            await preview.clear();
-          }
           return;
         }
         await preview.deliver(text, info?.kind ?? "final", reply?.isError, mediaUrls);
       },
       onError: (error) => {
-        void preview.clear().catch((clearError: unknown) => {
-          console.warn(
-            `[qa-channel] failed to clear reply preview after dispatch error: ${formatQaErrorForLog(clearError)}`,
-          );
-        });
+        void clearPreview();
         console.warn(`[qa-channel] reply dispatch failed: ${formatQaErrorForLog(error)}`);
+      },
+    },
+    dispatcherOptions: {
+      onSkip: (_payload, info) => {
+        if (info.kind === "final") {
+          void clearPreview();
+        }
       },
     },
     replyOptions: {
@@ -550,4 +555,5 @@ export async function handleQaInbound(params: {
       },
     },
   });
+  await dispatch.finally(clearPreview);
 }
