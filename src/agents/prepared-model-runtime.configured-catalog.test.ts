@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { prepareCapturedRuntimeFacts } from "./prepared-model-runtime.configured-catalog.js";
+import type { PreparedConfiguredRuntimeModel } from "./prepared-model-runtime.types.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 
 describe("configured catalog registry composition", () => {
@@ -138,25 +139,26 @@ describe("configured catalog registry composition", () => {
         workspaceFacts,
         templateModelRegistry: registry,
         configuredRuntimeModels: [
-          {
+          { id: "32k", label: "32K", contextWindow: 32000 },
+          { id: "64k", label: "64K", contextWindow: 64000 },
+        ].map<PreparedConfiguredRuntimeModel>((option) => ({
+          provider: configured.provider,
+          modelId: configured.id,
+          model: {
+            id: configured.id,
+            name: configured.name,
             provider: configured.provider,
-            modelId: configured.id,
-            model: {
-              id: configured.id,
-              name: configured.name,
-              provider: configured.provider,
-              api: "openai-completions",
-              baseUrl: "https://fixture.invalid/v1",
-              reasoning: true,
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: 32000,
-              maxTokens: 4096,
-              contextWindows: [{ id: "32k", label: "32K", contextWindow: 32000 }],
-              contextWindowDefault: "32k",
-            },
+            api: "openai-completions",
+            baseUrl: "https://fixture.invalid/v1",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 32000,
+            maxTokens: 4096,
+            contextWindows: [option],
+            contextWindowDefault: option.id,
           },
-        ],
+        })),
       });
 
       expect(modelCatalog.entries.map((entry) => entry.id)).toEqual(expectedIds);
