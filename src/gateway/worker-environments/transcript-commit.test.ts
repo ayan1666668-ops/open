@@ -8,8 +8,10 @@ import type {
   WorkerTranscriptMessage,
 } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { createNoisyPngBuffer } from "../../../test/helpers/image-fixtures.js";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { makeTextToolResult } from "../../../test/helpers/text-tool-result.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
+import { createZeroUsageFixture } from "../../agents/test-helpers/usage-fixtures.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/io.js";
 import {
   loadSessionEntry,
@@ -60,20 +62,7 @@ const IDENTITY: WorkerConnectionIdentity = {
 
 const ADMITTED_OWNER = { identity: IDENTITY, assertCurrent: () => undefined };
 
-const ZERO_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-  },
-};
+const ZERO_USAGE = createZeroUsageFixture();
 const PROVIDER_REPLAY = {
   v: 1 as const,
   type: "openai-responses-compaction",
@@ -551,14 +540,8 @@ describe("worker transcript commit application", () => {
   });
 
   it("rejects a commit when lifecycle ownership changes in the writer queue", async () => {
-    let releaseOwnerChange = () => {};
-    const ownerChangeGate = new Promise<void>((resolve) => {
-      releaseOwnerChange = resolve;
-    });
-    let markOwnerChangeStarted = () => {};
-    const ownerChangeStarted = new Promise<void>((resolve) => {
-      markOwnerChangeStarted = resolve;
-    });
+    const { promise: ownerChangeGate, resolve: releaseOwnerChange } = createDeferred();
+    const { promise: ownerChangeStarted, resolve: markOwnerChangeStarted } = createDeferred();
     const ownerChange = updateSessionEntry(
       { agentId: "main", sessionKey: SESSION_KEY, storePath },
       async () => {
