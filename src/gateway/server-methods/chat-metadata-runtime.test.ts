@@ -828,6 +828,35 @@ describe("gateway chat metadata runtime", () => {
     expect(harness.buildProjection).toHaveBeenCalledTimes(4);
   });
 
+  test("publishes mutable catalog progress and failure changes once each", async () => {
+    const onChanged = vi.fn();
+    const harness = createChatMetadataHarness(undefined, { onChanged });
+    const catalog = harness.getPreparedOwner()!.modelCatalog;
+    try {
+      await harness.runtime.refresh();
+      expect(onChanged).toHaveBeenCalledOnce();
+
+      catalog.pendingProviders = ["test"];
+      await harness.runtime.refresh();
+      expect(onChanged).toHaveBeenCalledTimes(2);
+      catalog.pendingProviders = ["test"];
+      await harness.runtime.refresh();
+      expect(onChanged).toHaveBeenCalledTimes(2);
+
+      catalog.pendingProviders = undefined;
+      catalog.refreshFailed = true;
+      await harness.runtime.refresh();
+      expect(onChanged).toHaveBeenCalledTimes(3);
+
+      catalog.refreshFailed = undefined;
+      await harness.runtime.refresh();
+      await harness.runtime.refresh();
+      expect(onChanged).toHaveBeenCalledTimes(4);
+    } finally {
+      await harness.runtime.stop();
+    }
+  });
+
   test("waits for replacement only for canonical metadata and session auth projections", async () => {
     const harness = createChatMetadataHarness();
     await harness.runtime.refresh();
@@ -898,9 +927,14 @@ describe("gateway chat metadata runtime", () => {
     expect(await harness.runtime.read({ agentId: "main" })).toEqual(shared);
   });
 
-  test.each(["resolve", "reject"] as const)(
-    "retries a session projection after an invalidated generation's late %s",
-    async (settlement) => {
+  test.each([
+    { settlement: "resolve", explicitInvalidation: true },
+    { settlement: "reject", explicitInvalidation: true },
+    { settlement: "resolve", explicitInvalidation: false },
+    { settlement: "reject", explicitInvalidation: false },
+  ] as const)(
+    "retries a session projection after late $settlement (explicit invalidation: $explicitInvalidation)",
+    async ({ settlement, explicitInvalidation }) => {
       const harness = createChatMetadataHarness();
       await harness.runtime.refresh();
       const releaseProjection = createDeferred();
@@ -915,13 +949,18 @@ describe("gateway chat metadata runtime", () => {
         };
       });
 
-      const read = harness.runtime.read({
-        agentId: "main",
-        sessionEntry: {
-          authProfileOverride: "test:session",
-          authProfileOverrideSource: "user",
-        },
-      });
+      let settled = false;
+      const read = harness.runtime
+        .read({
+          agentId: "main",
+          sessionEntry: {
+            authProfileOverride: "test:session",
+            authProfileOverrideSource: "user",
+          },
+        })
+        .finally(() => {
+          settled = true;
+        });
       await vi.waitFor(() => expect(harness.buildProjection).toHaveBeenCalledTimes(2));
 
       const nextConfig = {
@@ -930,14 +969,31 @@ describe("gateway chat metadata runtime", () => {
       };
       harness.setConfig(nextConfig);
       harness.setOwner(createChatMetadataOwner(nextConfig, "replacement"));
-      harness.runtime.invalidate();
-      await harness.runtime.refresh();
-
-      releaseProjection.resolve();
-      await expect(read).resolves.toMatchObject({
-        models: [expect.objectContaining({ id: "replacement" })],
-        swarmEnabled: true,
+      const releaseCommands = createDeferred();
+      harness.buildCommands.mockImplementationOnce(async () => {
+        await releaseCommands.promise;
+        return { commands: [] };
       });
+      if (explicitInvalidation) {
+        harness.runtime.invalidate();
+      }
+      const refresh = harness.runtime.refresh();
+      void read.catch(() => {});
+      try {
+        releaseProjection.resolve();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        releaseCommands.resolve();
+        await refresh;
+        await expect(read).resolves.toMatchObject({
+          models: [expect.objectContaining({ id: "replacement" })],
+          swarmEnabled: true,
+        });
+      } finally {
+        releaseCommands.resolve();
+        await Promise.allSettled([read, refresh]);
+        await harness.runtime.stop();
+      }
     },
   );
 
