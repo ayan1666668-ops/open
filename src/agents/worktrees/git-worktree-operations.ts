@@ -21,7 +21,7 @@ export type GitWorktreeOperations = {
   };
   "worktree.checkout-transition-size": {
     input: { repoRoot: string; baseRef: string; targetRef: string; replacementRefBase?: string };
-    output: { baseBytes: number; changedBytes: number; checkoutAttributesChanged: boolean };
+    output: { targetBytes: number; changedBytes: number; requiresFullCheckout: boolean };
   };
   "worktree.directory-size": {
     input: { root: string; excludeGit?: boolean };

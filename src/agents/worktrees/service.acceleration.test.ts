@@ -480,34 +480,40 @@ describe("ManagedWorktreeService filesystem acceleration", () => {
     },
   );
 
-  it("restores saved edits while retaining the original source template and Git history", async () => {
-    const created = await service.create({ repoRoot: repo, name: "restore", baseRef: "HEAD" });
-    const template = listTemplates(env)[0];
-    assert(template);
-    const originalCommit = await git(created.path, "rev-parse", "HEAD");
-    await fs.writeFile(path.join(created.path, "README.md"), "saved edit\n");
-    await fs.writeFile(path.join(created.path, "untracked.txt"), "saved new file\n");
-    await service.remove({ id: created.id, reason: "test" });
-    const restored = await service.restore({ id: created.id });
-    expect(listTemplates(env).map((entry) => entry.id)).toEqual([template.id]);
-    expect(backend.cloneTemplate).toHaveBeenCalledTimes(2);
-    expect(await git(restored.path, "rev-parse", "HEAD")).toBe(originalCommit);
-    expect(await git(restored.path, "symbolic-ref", "--short", "HEAD")).toBe(created.branch);
-    expect(await fs.readFile(path.join(restored.path, "README.md"), "utf8")).toBe("saved edit\n");
-    expect(await fs.readFile(path.join(restored.path, "untracked.txt"), "utf8")).toBe(
-      "saved new file\n",
-    );
-    expect(await git(restored.path, "status", "--porcelain")).toContain("M README.md");
-    expect(await git(restored.path, "diff", "--cached", "--name-only")).toBe("");
-    expect(await fs.readFile(path.join(repo, "README.md"), "utf8")).toBe("base\n");
-    expect(await fs.readFile(path.join(template.path, "README.md"), "utf8")).toBe("base\n");
-    await expect(fs.access(path.join(template.path, "untracked.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    const next = await service.create({ repoRoot: repo, name: "after-restore", baseRef: "HEAD" });
-    expect(listTemplates(env).map((entry) => entry.id)).toEqual([template.id]);
-    expect(await git(next.path, "status", "--porcelain")).toBe("");
-  });
+  it.each([false, true])(
+    "restores saved edits and retains the source template (clone failure=%s)",
+    async (cloneFails) => {
+      const created = await service.create({ repoRoot: repo, name: "restore", baseRef: "HEAD" });
+      const template = listTemplates(env)[0];
+      assert(template);
+      const originalCommit = await git(created.path, "rev-parse", "HEAD");
+      await fs.writeFile(path.join(created.path, "README.md"), "saved edit\n");
+      await fs.writeFile(path.join(created.path, "untracked.txt"), "saved new file\n");
+      await service.remove({ id: created.id, reason: "test" });
+      if (cloneFails) {
+        vi.mocked(backend.cloneTemplate).mockRejectedValueOnce(new Error("clone unavailable"));
+      }
+      const restored = await service.restore({ id: created.id });
+      expect(listTemplates(env).map((entry) => entry.id)).toEqual([template.id]);
+      expect(backend.cloneTemplate).toHaveBeenCalledTimes(2);
+      expect(await git(restored.path, "rev-parse", "HEAD")).toBe(originalCommit);
+      expect(await git(restored.path, "symbolic-ref", "--short", "HEAD")).toBe(created.branch);
+      expect(await fs.readFile(path.join(restored.path, "README.md"), "utf8")).toBe("saved edit\n");
+      expect(await fs.readFile(path.join(restored.path, "untracked.txt"), "utf8")).toBe(
+        "saved new file\n",
+      );
+      expect(await git(restored.path, "status", "--porcelain")).toContain("M README.md");
+      expect(await git(restored.path, "diff", "--cached", "--name-only")).toBe("");
+      expect(await fs.readFile(path.join(repo, "README.md"), "utf8")).toBe("base\n");
+      expect(await fs.readFile(path.join(template.path, "README.md"), "utf8")).toBe("base\n");
+      await expect(fs.access(path.join(template.path, "untracked.txt"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const next = await service.create({ repoRoot: repo, name: "after-restore", baseRef: "HEAD" });
+      expect(listTemplates(env).map((entry) => entry.id)).toEqual([template.id]);
+      expect(await git(next.path, "status", "--porcelain")).toBe("");
+    },
+  );
 
   it("applies saved checkout attributes to unchanged blobs without replacing the source template", async () => {
     await git(repo, "config", "core.autocrlf", "false");
@@ -527,6 +533,33 @@ describe("ManagedWorktreeService filesystem acceleration", () => {
     expect(await git(restored.path, "status", "--porcelain")).toBe("?? .gitattributes");
     expect(listTemplates(env).map((entry) => entry.id)).toEqual([template.id]);
     expect(await fs.readFile(path.join(template.path, "README.md"), "utf8")).toBe("base\n");
+  });
+
+  it("restores without checking out a removed file whose old filter is unavailable", async () => {
+    acceleration = false;
+    await fs.writeFile(path.join(repo, ".gitattributes"), "removed.txt filter=unavailable\n");
+    await fs.writeFile(path.join(repo, "removed.txt"), "original file\n");
+    await git(repo, "add", ".gitattributes", "removed.txt");
+    await git(repo, "commit", "-m", "add filtered source");
+    const created = await service.create({
+      repoRoot: repo,
+      name: "removed-filter",
+      baseRef: "HEAD",
+    });
+    await fs.unlink(path.join(created.path, "removed.txt"));
+    await service.remove({ id: created.id, reason: "test" });
+    await git(repo, "config", "filter.unavailable.required", "true");
+    await git(repo, "config", "filter.unavailable.smudge", "openclaw-missing-smudge-command");
+
+    const restored = await service.restore({ id: created.id });
+
+    await expect(fs.access(path.join(restored.path, "removed.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await git(restored.path, "rev-parse", "HEAD")).toBe(
+      await git(repo, "rev-parse", "HEAD"),
+    );
+    expect(await git(restored.path, "diff", "--cached", "--name-only")).toBe("");
   });
 
   it("keeps the snapshot retryable when cancellation follows materializing saved edits", async () => {

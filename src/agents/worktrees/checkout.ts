@@ -39,8 +39,12 @@ type CheckoutOptions = WorktreeFilesystemOptions & {
   destination: string;
   base: string;
   branch?: string;
+  /** Restore reuses a warm template, or materializes its snapshot after registration. */
+  deferGitCheckout?: boolean;
   requireSpace: (cloneBytes?: number) => void;
 };
+
+type CheckoutResult = GitResult & { templateCloned?: true };
 
 function assertOwned(options: WorktreeFilesystemOptions) {
   options.signal?.throwIfAborted();
@@ -254,6 +258,10 @@ async function prepareTemplate(options: CheckoutOptions) {
       return { record: existing, backend, sourceIndex: await indexPath(existing.path, options) };
     }
   }
+  // Restore must not build an obsolete parent tree just to overwrite it with its snapshot.
+  if (options.deferGitCheckout) {
+    return undefined;
+  }
   options.requireSpace();
   if (existing) {
     await retireTemplate(options.env, existing, options);
@@ -295,7 +303,7 @@ async function prepareTemplate(options: CheckoutOptions) {
 }
 
 /** Git owns registration, branches and indexes; the backend only materializes files. */
-export async function addManagedWorktree(options: CheckoutOptions): Promise<GitResult> {
+export async function addManagedWorktree(options: CheckoutOptions): Promise<CheckoutResult> {
   let template: Awaited<ReturnType<typeof prepareTemplate>>;
   let cloneBytes: number | undefined;
   if (options.enabled) {
@@ -326,7 +334,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
     [
       "worktree",
       "add",
-      ...(template ? ["--no-checkout"] : []),
+      ...(template || options.deferGitCheckout ? ["--no-checkout"] : []),
       ...(options.branch ? ["-b", options.branch] : ["--detach"]),
       "--",
       options.destination,
@@ -399,7 +407,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
       ...gitOptions(options),
       timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
     });
-    return added;
+    return { ...added, templateCloned: true };
   } catch (error) {
     // A stale allocator cannot roll back a checkout after lease takeover.
     // Preserve Git's registration for recovery if authority was revoked.
@@ -415,6 +423,10 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
     log.warn(`worktree snapshot failed; using Git checkout: ${String(error)}`);
     let checkout: GitResult;
     try {
+      if (options.deferGitCheckout) {
+        options.requireSpace();
+        return added;
+      }
       checkout = await runGit(options.destination, ["reset", "--hard", "HEAD"], {
         ...gitOptions(options),
         beforeRun: () => {

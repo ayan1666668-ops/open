@@ -1092,7 +1092,7 @@ export class ManagedWorktreeService {
         { cause: error },
       );
     }
-    const { baseBytes, changedBytes, checkoutAttributesChanged } =
+    const { targetBytes, changedBytes, requiresFullCheckout } =
       await estimateWorktreeCheckoutTransitionBytes(record.repoRoot, parent, snapshot, {
         signal: params.signal,
         assertCurrent: params.commitGuard,
@@ -1110,11 +1110,13 @@ export class ManagedWorktreeService {
       destination: record.path,
       base: parent,
       branch: record.branch,
+      deferGitCheckout: true,
       requireSpace: (cloneBytes) =>
         this.requireAllocationSpace(
           record.path,
           repository,
-          (cloneBytes ?? 2 * baseBytes) + 2 * changedBytes + 2 * provisionedBytes,
+          (cloneBytes === undefined ? 2 * targetBytes : cloneBytes + 2 * changedBytes) +
+            2 * provisionedBytes,
         ),
       signal: params.signal,
       commitGuard: () => params.commitGuard?.(),
@@ -1127,6 +1129,7 @@ export class ManagedWorktreeService {
       // Reuse the original source template. Git replaces only snapshot differences,
       // then resets the index so saved additions are untracked and edits unstaged.
       // The synthetic snapshot never becomes the branch's HEAD or a cached template.
+      const materializationBytes = added.templateCloned ? changedBytes : targetBytes;
       const checkoutOptions = {
         ...gitOptions,
         beforeRun: () => {
@@ -1134,12 +1137,12 @@ export class ManagedWorktreeService {
           this.requireAllocationSpace(
             record.path,
             repository,
-            2 * changedBytes + 2 * provisionedBytes,
+            2 * materializationBytes + 2 * provisionedBytes,
           );
         },
         timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS,
       };
-      if (checkoutAttributesChanged) {
+      if (requiresFullCheckout && added.templateCloned) {
         // Even checkout-index --force skips stat-matching files. Remove the owned
         // source files first so Git must apply the snapshot's attributes to every blob.
         await requireGit(

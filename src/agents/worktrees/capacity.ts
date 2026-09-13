@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { formatDiskSpaceBytes, tryReadDiskSpace } from "../../infra/disk-space.js";
 import { runGitWorkerOperation, type GitWorkerOperationOptions } from "../../infra/git-worker.js";
+import type { GitWorktreeOperations } from "./git-worktree-operations.js";
 
 const GiB = 1024 ** 3;
 export const WORKTREE_SETUP_HEADROOM_BYTES = 4 * GiB;
@@ -68,13 +69,13 @@ export async function estimateWorktreeGitBytes(
   );
 }
 
-/** Budget a source checkout plus the destination blobs written by its overlay. */
+/** Budget a full snapshot checkout or the destination blobs written over a source clone. */
 export async function estimateWorktreeCheckoutTransitionBytes(
   repoRoot: string,
   baseRef: string,
   targetRef: string,
   options: Pick<GitWorkerOperationOptions, "signal" | "assertCurrent"> = {},
-): Promise<{ baseBytes: number; changedBytes: number; checkoutAttributesChanged: boolean }> {
+): Promise<GitWorktreeOperations["worktree.checkout-transition-size"]["output"]> {
   return await runGitWorkerOperation(
     {
       type: "worktree.checkout-transition-size",

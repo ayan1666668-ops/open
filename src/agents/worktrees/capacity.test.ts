@@ -133,16 +133,16 @@ describe("worktree Git size estimates", () => {
     await expect(runGit(clone, ["cat-file", "-e", deleted])).resolves.toMatchObject({ code: 1 });
 
     await expect(estimateWorktreeCheckoutTransitionBytes(clone, base, target)).resolves.toEqual({
-      baseBytes: 16_384,
+      targetBytes: 4096,
       changedBytes: 0,
-      checkoutAttributesChanged: false,
+      requiresFullCheckout: false,
     });
 
     await expect(runGit(clone, ["cat-file", "-e", deleted])).resolves.toMatchObject({ code: 0 });
     await expect(estimateWorktreeCheckoutTransitionBytes(clone, target, target)).resolves.toEqual({
-      baseBytes: 4096,
+      targetBytes: 4096,
       changedBytes: 0,
-      checkoutAttributesChanged: false,
+      requiresFullCheckout: false,
     });
   });
 
@@ -160,9 +160,9 @@ describe("worktree Git size estimates", () => {
     const target = await git(source, "rev-parse", "HEAD");
 
     await expect(estimateWorktreeCheckoutTransitionBytes(source, base, target)).resolves.toEqual({
-      baseBytes: 16_384,
+      targetBytes: 24_576,
       changedBytes: 24_576,
-      checkoutAttributesChanged: false,
+      requiresFullCheckout: false,
     });
   });
 
@@ -179,16 +179,16 @@ describe("worktree Git size estimates", () => {
       await expect(
         estimateWorktreeCheckoutTransitionBytes(source, commit, target),
       ).resolves.toEqual({
-        baseBytes: 16_384,
+        targetBytes: 20_480,
         changedBytes: 20_480,
-        checkoutAttributesChanged: true,
+        requiresFullCheckout: true,
       });
       await expect(
         estimateWorktreeCheckoutTransitionBytes(source, target, commit),
       ).resolves.toEqual({
-        baseBytes: 20_480,
+        targetBytes: 16_384,
         changedBytes: 16_384,
-        checkoutAttributesChanged: true,
+        requiresFullCheckout: true,
       });
     },
   );

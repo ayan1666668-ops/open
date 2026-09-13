@@ -2,8 +2,15 @@ import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isMissingPathError } from "../../infra/errors.js";
-import { requireGitCommandOutput } from "../../infra/git-exec.js";
-import { requireGit, requireGitBuffer, runGit, WORKTREE_CHECKOUT_TIMEOUT_MS } from "./git.js";
+import { createGitCommandError, requireGitCommandOutput } from "../../infra/git-exec.js";
+import type { GitWorktreeOperations } from "./git-worktree-operations.js";
+import {
+  requireGit,
+  requireGitBuffer,
+  runGit,
+  runGitBuffered,
+  WORKTREE_CHECKOUT_TIMEOUT_MS,
+} from "./git.js";
 
 async function missingCommitObjects(repoRoot: string, commit: string): Promise<string[]> {
   const objects = (
@@ -149,39 +156,44 @@ export async function estimateCheckoutTransitionBytes(
   baseRef: string,
   targetRef: string,
   replacementRefBase?: string,
-): Promise<{ baseBytes: number; changedBytes: number; checkoutAttributesChanged: boolean }> {
+): Promise<GitWorktreeOperations["worktree.checkout-transition-size"]["output"]> {
   const base = await resolveCommit(repoRoot, baseRef);
   const target = await resolveCommit(repoRoot, targetRef);
-  // The initial checkout can need blobs that the target deletes. Hydrate both
-  // trees, while sharing identical commit facts within this admitted operation.
+  // Template validation can need blobs that the target deletes. Hydrate both
+  // histories, while sharing identical commits within this admitted operation.
   await hydrateCommitObjects(repoRoot, base);
   if (target !== base) {
     await hydrateCommitObjects(repoRoot, target);
   }
-  const baseBytes = await commitObjectBytes(repoRoot, base, replacementRefBase);
+  const targetBytes = await commitObjectBytes(repoRoot, target, replacementRefBase);
   if (target === base) {
-    return { baseBytes, changedBytes: 0, checkoutAttributesChanged: false };
+    return { targetBytes, changedBytes: 0, requiresFullCheckout: false };
   }
-  const changes = (
-    await requireGitBuffer(
-      repoRoot,
-      [
-        "diff-tree",
-        "--no-commit-id",
-        "--raw",
-        "-z",
-        "--no-renames",
-        "--no-abbrev",
-        "-r",
-        base,
-        target,
-        "--",
-      ],
-      { env: { GIT_NO_LAZY_FETCH: "1" } },
-    )
-  )
-    .toString("utf8")
-    .split("\0");
+  const diff = await runGitBuffered(
+    repoRoot,
+    [
+      "diff-tree",
+      "--no-commit-id",
+      "--raw",
+      "-z",
+      "--no-renames",
+      "--no-abbrev",
+      "-r",
+      base,
+      target,
+      "--",
+    ],
+    { env: { GIT_NO_LAZY_FETCH: "1" } },
+  );
+  if (diff.termination === "output-limit") {
+    // A large diff cannot justify a partial allocation estimate or rule out
+    // attribute changes. Keep the buffer bounded and materialize the full target.
+    return { targetBytes, changedBytes: targetBytes, requiresFullCheckout: true };
+  }
+  if (diff.termination !== "exit" || diff.code !== 0) {
+    throw createGitCommandError("git diff-tree", diff);
+  }
+  const changes = diff.stdout.toString("utf8").split("\0");
   if (changes.at(-1) !== "" || changes.length % 2 !== 1) {
     throw new Error(
       "Cannot estimate worktree overlay size; inspect the repository diff and retry.",
@@ -209,13 +221,13 @@ export async function estimateCheckoutTransitionBytes(
   // caller must rematerialize the target so its checkout transforms apply.
   if (checkoutAttributesChanged) {
     return {
-      baseBytes,
-      changedBytes: await commitObjectBytes(repoRoot, target, replacementRefBase),
-      checkoutAttributesChanged: true,
+      targetBytes,
+      changedBytes: targetBytes,
+      requiresFullCheckout: true,
     };
   }
   if (blobs.length === 0) {
-    return { baseBytes, changedBytes: 0, checkoutAttributesChanged: false };
+    return { targetBytes, changedBytes: 0, requiresFullCheckout: false };
   }
   const sizes = (
     await requireGitBuffer(repoRoot, ["cat-file", "--batch-check=%(objecttype) %(objectsize)"], {
@@ -232,9 +244,9 @@ export async function estimateCheckoutTransitionBytes(
     );
   }
   return {
-    baseBytes,
+    targetBytes,
     changedBytes: sizes.reduce((bytes, size) => bytes + allocatedBlobBytes(size.slice(5)), 0),
-    checkoutAttributesChanged: false,
+    requiresFullCheckout: false,
   };
 }
 
