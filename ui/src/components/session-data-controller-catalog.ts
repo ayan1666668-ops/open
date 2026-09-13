@@ -355,10 +355,8 @@ async function discoverHiddenSessionCatalogPages(owner: SessionCatalogDataOwner)
             ? SESSION_CATALOG_CHANGED_REFRESH_MS
             : SESSION_CATALOG_STABLE_REFRESH_MS;
         live.refreshPending = false;
-        live.schedule(
-          delayMs,
-          owner.isSessionDataHostConnected,
-          () => void owner.refreshSessionCatalogs(),
+        live.schedule(delayMs, owner.isSessionDataHostConnected, () =>
+          refreshSessionCatalogsInBackground(owner),
         );
       }
     }

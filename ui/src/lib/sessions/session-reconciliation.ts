@@ -1,3 +1,5 @@
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import {
   projectSessionResultRows,
@@ -400,6 +402,7 @@ export function createSessionReconciliation(host: Host) {
     }
     const previous = state.result;
     const eventInfo = readSessionChangedEvent(payload);
+    const invalidationReason = normalizeOptionalString(asNullableRecord(payload)?.reason);
     if (
       eventInfo &&
       !deletions.acceptsGeneration(
@@ -505,6 +508,9 @@ export function createSessionReconciliation(host: Host) {
         return result.result;
       },
       (entry) => {
+        if (!eventInfo && invalidationReason === "runner-availability") {
+          return { row: entry.row, invalidateRevision: eventObservation.revision };
+        }
         const eventAgentId = eventInfo?.agentId ?? parseAgentSessionKey(eventInfo?.key)?.agentId;
         if (
           !eventInfo ||
@@ -548,6 +554,7 @@ export function createSessionReconciliation(host: Host) {
         primaryPublished && reconciled.admittedRow
           ? [{ row: reconciled.admittedRow, revision: eventObservation.revision }]
           : [],
+        invalidationReason,
       );
     const claimChanged = thinkingClaims.observeEvent(
       eventInfo?.reason === "delete" ? reconciled : (acceptedResult ?? reconciled),

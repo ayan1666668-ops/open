@@ -52,6 +52,7 @@ type LineageScope = {
 type DescriptorBinding = LineageScope & {
   target: SessionRowTarget;
   observation?: SessionRowObservation;
+  refreshRequested: boolean;
 };
 
 type LineageRequest = {
@@ -252,23 +253,35 @@ export class SessionLineageController {
   }
 
   private observe(scope: LineageScope, target: SessionRowTarget): DescriptorBinding {
-    const binding: DescriptorBinding = { ...scope, target };
+    const binding: DescriptorBinding = { ...scope, target, refreshRequested: false };
     // Registration may synchronously deliver a held live row.
     this.binding = binding;
-    binding.observation = scope.sessions.observeRow(target, (row) => {
-      if (this.binding !== binding) {
-        return;
-      }
-      if (!this.bindingIsCurrent(binding)) {
-        this.synchronize();
-        return;
-      }
-      this.publish(binding, row);
-      if (!row && this.request === null) {
-        this.loaded = null;
-      }
-      this.owner.requestSessionDataUpdate();
-    });
+    binding.observation = scope.sessions.observeRow(
+      target,
+      (row) => {
+        if (this.binding !== binding) {
+          return;
+        }
+        if (!this.bindingIsCurrent(binding)) {
+          this.synchronize();
+          return;
+        }
+        this.publish(binding, row);
+        if (!row && this.request === null) {
+          this.loaded = null;
+        }
+        this.owner.requestSessionDataUpdate();
+      },
+      {
+        onInvalidate: (reason) => {
+          if (reason === "runner-availability" && this.bindingIsCurrent(binding)) {
+            binding.refreshRequested = true;
+            this.loaded = null;
+            this.owner.requestSessionDataUpdate();
+          }
+        },
+      },
+    );
     this.synchronize();
     if (!this.bindingIsCurrent(binding)) {
       binding.observation.dispose();
@@ -410,6 +423,7 @@ export class SessionLineageController {
       return Promise.resolve();
     }
     const globalBinding = identity.sessionKey === "global" ? binding : null;
+    const descriptorBinding = globalBinding ?? (binding?.refreshRequested ? binding : null);
     const childScope = this.childScope();
     const request: LineageRequest = {
       identity,
@@ -435,8 +449,8 @@ export class SessionLineageController {
           this.owner.childSessionRowsByParent,
         ),
         isCurrent,
-        ...(globalBinding
-          ? { readSelected: () => this.readDescriptor(globalBinding, isCurrent) }
+        ...(descriptorBinding
+          ? { readSelected: () => this.readDescriptor(descriptorBinding, isCurrent) }
           : {
               publishSelected: (row, reconcile) => {
                 // This walk follows the admitted parent after synchronous observation delivery.
@@ -491,7 +505,7 @@ export class SessionLineageController {
           }
         }, 5_000);
       } else {
-        this.loaded = identity;
+        this.loaded = binding?.refreshRequested ? null : identity;
       }
       this.owner.requestSessionDataUpdate();
     });
@@ -506,20 +520,23 @@ export class SessionLineageController {
     if (!observation || !isCurrent()) {
       return undefined;
     }
-    if (observation.row) {
+    if (observation.row && !binding.refreshRequested) {
       return observation.row;
     }
-    // Only an invalidated empty-lease receipt reissues within this request.
+    // Invalidated receipts reissue within the existing descriptor request.
     // Failures leave through fetchSessionLineage's existing retry policy.
     while (isCurrent()) {
+      binding.refreshRequested = false;
       const reconcile = observation.captureReconcile();
-      const described = await binding.client.request<{ session?: GatewaySessionRow | null }>(
-        "sessions.describe",
-        {
+      const described = await binding.client
+        .request<{ session?: GatewaySessionRow | null }>("sessions.describe", {
           key: binding.key,
           ...(isUiGlobalSessionKey(binding.key) ? { agentId: binding.target.agentId } : {}),
-        },
-      );
+        })
+        .catch((error: unknown) => {
+          binding.refreshRequested = true;
+          throw error;
+        });
       if (!isCurrent()) {
         return undefined;
       }

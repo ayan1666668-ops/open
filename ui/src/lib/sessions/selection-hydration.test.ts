@@ -21,16 +21,28 @@ import {
 const requireRecord = createRequireRecord("object", "expected-label");
 
 describe("session selection hydration", () => {
-  it.each(["main", "research"])(
-    "retires a slow intermediate agent when selection moves main to writer to %s",
-    async (finalAgent) => {
+  it.each([
+    { finalAgent: "main" },
+    { finalAgent: "research" },
+    { finalAgent: "research", queuedExplicit: true },
+    { finalAgent: "research", recover: true },
+    { finalAgent: "research", direct: { append: true, offset: 1 } },
+    { finalAgent: "research", direct: { backgroundHydrate: true } },
+  ])(
+    "retires a slow intermediate agent when selection moves main to writer to $finalAgent (queued explicit: $queuedExplicit, observer recovery: $recover)",
+    async ({ finalAgent, queuedExplicit, recover, direct }) => {
       vi.useFakeTimers();
       const writer = createDeferred<SessionsListResult>();
+      const subscription = createDeferred<{ subscribed: boolean }>();
+      let subscriptions = 0;
       const result = (agentId: string, ts: number) =>
         sessionsResult([{ key: `agent:${agentId}:main`, kind: "direct", updatedAt: ts }], ts);
       const reads: string[] = [];
       const client = createTestGatewayClient(async (method, params) => {
         if (method === "sessions.subscribe") {
+          if (++subscriptions === 1 && recover) {
+            return subscription.promise;
+          }
           return { subscribed: true };
         }
         if (method !== "sessions.list") {
@@ -43,7 +55,7 @@ describe("session selection hydration", () => {
         reads.push(agentId);
         return agentId === "writer" ? writer.promise : result(agentId, reads.length);
       });
-      const { gateway, publish } = createGatewayHarness(client);
+      const { gateway, publish, emitEvent } = createGatewayHarness(client);
       const selection = createAgentSelectionCapability(
         { ...gateway, connection: { gatewayUrl: "ws://gateway.example.test" } },
         {
@@ -69,6 +81,7 @@ describe("session selection hydration", () => {
           publishedAgents.push(state.agentId);
         }
       });
+      let superseded: Promise<void> | undefined;
       try {
         publish(true);
         await vi.advanceTimersByTimeAsync(0);
@@ -76,20 +89,48 @@ describe("session selection hydration", () => {
         selection.set("writer");
         await vi.advanceTimersByTimeAsync(0);
         expect(reads).toEqual(["main", "writer"]);
+        if (queuedExplicit) {
+          superseded = sessions.refresh({ agentId: "writer", force: true });
+        }
+        coordinator.setForegroundRoute(`agent:${finalAgent}:main`);
         selection.set(finalAgent);
         expect(selection.state.selectedId).toBe(finalAgent);
+        emitEvent({
+          type: "event",
+          event: "sessions.changed",
+          payload: { agentId: "writer", reason: "create" },
+        });
+        await vi.advanceTimersByTimeAsync(200);
+        if (recover) {
+          subscription.resolve({ subscribed: false });
+          await vi.advanceTimersByTimeAsync(1_000);
+          expect(subscriptions).toBe(2);
+        }
         writer.resolve(result("writer", 2));
+        subscription.resolve({ subscribed: true });
         await vi.advanceTimersByTimeAsync(0);
         expect.soft(publishedAgents).not.toContain("writer");
-        expect(reads).toEqual(["main", "writer", finalAgent]);
+        expect(reads).toEqual(["main", "writer"]);
+        if (direct) {
+          await sessions.refresh({ agentId: "writer", force: true, ...direct });
+          expect(reads).toEqual(["main", "writer", "writer"]);
+        }
+        coordinator.setForegroundPane(
+          {},
+          { sessionKey: `agent:${finalAgent}:main`, client, ready: true },
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toEqual(["main", "writer", ...(direct ? ["writer"] : []), finalAgent]);
         expect(sessions.state).toMatchObject({
           agentId: finalAgent,
-          result: { ts: 3, sessions: [{ key: `agent:${finalAgent}:main` }] },
+          result: { ts: direct ? 4 : 3, sessions: [{ key: `agent:${finalAgent}:main` }] },
         });
       } finally {
         writer.resolve(result("writer", 2));
+        subscription.resolve({ subscribed: true });
         stop();
         sessions.dispose();
+        await superseded;
         selection.dispose();
         coordinator.reset();
         vi.useRealTimers();

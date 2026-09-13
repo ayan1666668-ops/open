@@ -535,8 +535,10 @@ export class SessionDataController implements ReactiveController, SessionCatalog
     return refreshSidebarSessionList(this, agentId);
   }
 
-  private scheduleSidebarSessions = (): void =>
+  private scheduleSidebarSessions(): void {
+    this.bindFilteredSessions(this.host.expandedAgentId());
     scheduleFilteredSidebarSessions(this, () => this.unsubscribeFilteredSessions);
+  }
 
   loadMoreSidebarSessions(): Promise<void> {
     return refreshSidebarSessionList(this, this.sessionsAgentId, true);

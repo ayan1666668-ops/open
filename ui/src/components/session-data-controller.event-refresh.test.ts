@@ -226,6 +226,30 @@ function createFilteredSessionController(
 }
 
 describe("filtered sidebar session event refresh", () => {
+  it.each(["archived", "all"] as const)(
+    "automatically rebinds the restored %s filter across controller reconnect",
+    async (statusFilter) => {
+      vi.useFakeTimers();
+      const { controller, list } = createFilteredSessionController(statusFilter);
+      try {
+        controller.hostConnected();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(list).toHaveBeenCalledOnce();
+        expect(list).toHaveBeenLastCalledWith(
+          expect.objectContaining({ agentId: "main", archivedFilter: statusFilter }),
+        );
+        expect(controller.sessionsResult?.sessions).toHaveLength(1);
+        controller.hostDisconnected();
+        controller.hostConnected();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(list).toHaveBeenCalledTimes(2);
+        expect(controller.sessionsResult?.sessions).toHaveLength(1);
+      } finally {
+        controller.hostDisconnected();
+      }
+    },
+  );
+
   it.each(["active", "archived", "all"] as const)(
     "keeps membership in the displayed %s query across refresh, pagination, and agent changes",
     async (statusFilter) => {

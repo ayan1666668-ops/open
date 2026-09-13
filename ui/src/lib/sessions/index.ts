@@ -174,9 +174,11 @@ export function createSessionCapability(
       }
       if (previousError !== null && error === null) {
         // Observer outages do not replay events; every held query must close the gap.
-        void background("session-observer-recovery", () =>
-          roster.refresh({ ...roster.lastOptions(), backgroundHydrate: true, force: true }),
-        );
+        void roster.refreshAutomatic({
+          ...roster.lastOptions(),
+          backgroundHydrate: true,
+          force: true,
+        });
         roster.invalidateManagedLists();
       }
     },
@@ -454,22 +456,18 @@ export function createSessionCapability(
         roster.scheduleEvent();
         return;
       }
-      const hydrate = async () => {
-        if (connection.isCurrent(scope)) {
-          await roster.bootstrap({
-            ...roster.lastOptions(), // Keep visible roster filters through reconnect hydration.
-            agentId: agentSelection.state.selectedId ?? undefined,
-            includeDerivedTitles: true,
-            includeLastMessage: true,
-            backgroundHydrate: true,
-            force: true,
-          });
-        }
-      };
       // Register events before delaying bulk metadata; its later read reconciles
       // anything observed while the selected transcript was loading.
       void sessionEventSubscription.ensure(scope);
-      void background("sessions-bootstrap", hydrate)
+      void roster
+        .bootstrap({
+          ...roster.lastOptions(), // Keep visible roster filters through reconnect hydration.
+          agentId: agentSelection.state.selectedId ?? undefined,
+          includeDerivedTitles: true,
+          includeLastMessage: true,
+          backgroundHydrate: true,
+          force: true,
+        })
         .then(() => {
           if (connection.isCurrent(scope)) {
             // Child jobs own their own slots; never wait for them inside a scheduler slot.
