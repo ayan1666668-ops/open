@@ -362,9 +362,9 @@ also fails closed rather than falling back to a direct file copy.
 
 Other SQLite files under state and configured agent roots, including their
 sidecars, are copied as opaque bytes. Creation reports each filename in
-`warnings` with an `opaque` label. Unresolvable unmanaged SQLite symbolic links,
-such as loops, are skipped with a warning naming the link; resolvable links keep
-their existing archive representation.
+`warnings` with an `opaque` label. Unmanaged SQLite symbolic links that exceed
+the link-resolution limit (`ELOOP`), including loops, are skipped with a warning
+naming the link. Other links keep their existing handling.
 Verification and restore preserve those bytes without opening, compacting, or
 validating the database. These copies do not have a live-database consistency or
 deleted-data removal guarantee. Use the owning application's backup procedure

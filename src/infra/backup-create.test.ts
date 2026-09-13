@@ -20,6 +20,7 @@ import {
   createColdPluginFixture,
 } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import type { RuntimeEnv } from "../runtime.js";
+import * as backupRunRecords from "../state/backup-run-records.js";
 import { registerOpenClawAgentDatabase } from "../state/openclaw-agent-db-registry.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseByPath } from "../state/openclaw-state-db-cache.js";
@@ -2529,7 +2530,7 @@ describe("createBackupArchive", () => {
       /belongs to agent Main; requested agent main/iu,
     ],
   ])(
-    "rejects a managed %s database without changing its bytes",
+    "rejects a managed %s database without changing its bytes before outcome recording",
     async (_name, kind, createDatabase, expected) => {
       await withOpenClawTestState(
         { layout: "state-only", prefix: "openclaw-backup-invalid-owner-", scenario: "minimal" },
@@ -2543,14 +2544,32 @@ describe("createBackupArchive", () => {
           }
           await createDatabase(dbPath);
           const sourceBytes = await fs.readFile(dbPath);
-          await expect(
-            backupCreateCommand(createTestRuntime(), {
-              output: outputDir,
-              includeWorkspace: false,
-            }),
-          ).rejects.toThrow(expected);
-          expect(await fs.readFile(dbPath)).toEqual(sourceBytes);
-          expect(await fs.readdir(outputDir)).toEqual([]);
+          const recordOutcome = backupRunRecords.recordBackupRunOutcome;
+          let bytesBeforeOutcome: Buffer | undefined;
+          const outcomeSpy = vi
+            .spyOn(backupRunRecords, "recordBackupRunOutcome")
+            .mockImplementation(async (params) => {
+              bytesBeforeOutcome = await fs.readFile(dbPath);
+              await recordOutcome(params);
+            });
+          try {
+            await expect(
+              backupCreateCommand(createTestRuntime(), {
+                output: outputDir,
+                includeWorkspace: false,
+              }),
+            ).rejects.toThrow(expected);
+            expect(outcomeSpy).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ status: "failed" }),
+            );
+            expect(bytesBeforeOutcome).toEqual(sourceBytes);
+            if (kind === "agent") {
+              expect(await fs.readFile(dbPath)).toEqual(sourceBytes);
+            }
+            expect(await fs.readdir(outputDir)).toEqual([]);
+          } finally {
+            outcomeSpy.mockRestore();
+          }
         },
       );
     },
@@ -2781,20 +2800,38 @@ describe("createBackupArchive", () => {
           createEmptySqliteDatabase(pluginDbPath);
           const sourceBytes = await fs.readFile(databasePath);
 
-          const result = await backupCreateCommand(createTestRuntime(), {
-            output: state.path("older-schema.tar.gz"),
-            includeWorkspace: false,
-          });
-          const entries = await listArchiveEntries(result.archivePath);
-          for (const dbPath of [databasePath, pluginDbPath]) {
-            const suffix = `/state/${path.relative(state.stateDir, dbPath).split(path.sep).join("/")}`;
-            expect(entries.some((entry) => entry.endsWith(suffix))).toBe(true);
-          }
-          await expect(
-            backupVerifyCommand(createTestRuntime(), { archive: result.archivePath }),
-          ).resolves.toMatchObject({ ok: true });
+          const recordOutcome = backupRunRecords.recordBackupRunOutcome;
+          let bytesBeforeOutcome: Buffer | undefined;
+          const outcomeSpy = vi
+            .spyOn(backupRunRecords, "recordBackupRunOutcome")
+            .mockImplementation(async (params) => {
+              bytesBeforeOutcome = await fs.readFile(databasePath);
+              await recordOutcome(params);
+            });
+          try {
+            const result = await backupCreateCommand(createTestRuntime(), {
+              output: state.path("older-schema.tar.gz"),
+              includeWorkspace: false,
+            });
+            const entries = await listArchiveEntries(result.archivePath);
+            for (const dbPath of [databasePath, pluginDbPath]) {
+              const suffix = `/state/${path.relative(state.stateDir, dbPath).split(path.sep).join("/")}`;
+              expect(entries.some((entry) => entry.endsWith(suffix))).toBe(true);
+            }
+            await expect(
+              backupVerifyCommand(createTestRuntime(), { archive: result.archivePath }),
+            ).resolves.toMatchObject({ ok: true });
 
-          expect(await fs.readFile(databasePath)).toEqual(sourceBytes);
+            expect(outcomeSpy).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ status: "ok" }),
+            );
+            expect(bytesBeforeOutcome).toEqual(sourceBytes);
+            if (kind === "agent") {
+              expect(await fs.readFile(databasePath)).toEqual(sourceBytes);
+            }
+          } finally {
+            outcomeSpy.mockRestore();
+          }
         },
       );
     },
