@@ -14,34 +14,42 @@ export type ChatMetadataUpdate =
   | { type: "loading" }
   | { type: "result"; result: ChatMetadataResult }
   | { type: "error"; error: unknown };
-export type ChatMetadataWriter = {
-  pending?: Promise<ChatMetadataResult>;
-  revalidating: boolean;
+export type ChatMetadataPublication = {
+  isCurrent: () => boolean;
+  publish: (
+    result: ChatMetadataResult & { models?: unknown; accountSelection?: unknown },
+  ) => ChatMetadataResult;
+  fail: (error: unknown) => void;
 };
-
+export type ChatMetadataRequest = {
+  promise: Promise<ChatMetadataResult>;
+  publication: ChatMetadataPublication;
+  revalidation: boolean;
+  setStartupRetryDeadline: (deadlineAt?: number) => void;
+  start: () => void;
+};
 export type ChatMetadataRefresh = {
   catalog: Promise<ModelCatalogResult | undefined>;
   completed: Promise<void>;
   isCurrent: () => boolean;
 };
-
 export type ChatMetadataRefreshRecord = ChatMetadataRefresh & {
-  settled: Promise<void>;
   phase: "waiting" | "running" | "settled" | "inactive";
-  failed: boolean;
   revision: number;
+  catalogRevision: number;
   metadataRequired: boolean;
-  catalogRequired: boolean;
   revalidateMetadata?: () => boolean;
-  start: (explicit?: boolean) => void;
+  start: () => void;
 };
-
 export type ChatMetadataEntry = {
   scope: ChatMetadataParams;
   result?: ChatMetadataResult;
+  activeRequest?: ChatMetadataRequest;
+  queuedRequest?: ChatMetadataRequest;
+  writer?: object;
   refreshRevision: number;
+  catalogRevision: number;
   refresh?: ChatMetadataRefreshRecord;
-  writer?: ChatMetadataWriter;
   listeners: Map<(update: ChatMetadataUpdate) => void, () => boolean>;
   release: () => void;
 };

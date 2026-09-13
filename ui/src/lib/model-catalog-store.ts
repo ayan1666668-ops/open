@@ -75,7 +75,7 @@ export function peekModelCatalog(
   const key = modelCatalogKey(modelCatalogParams(options));
   const entry = cache?.get(key);
   if (entry?.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
-    invalidateModelCatalogEntry(entry);
+    invalidateModelCatalogEntry(client, entry);
     // Keep ordering until bounded eviction so an older unresolved read cannot refill this slot.
   }
   if (entry?.invalidated && !allowStale) {
@@ -128,7 +128,6 @@ export async function loadModelCatalog(
     controller,
     subscribers: new Set(),
     resolve: completion.resolve,
-    settled: request,
     promise: completion.promise.finally(() => {
       read.cache.reads.delete(read);
       if (cache.get(key) === entry && entry.pending.get(timeoutMs) === pending) {
@@ -136,11 +135,14 @@ export async function loadModelCatalog(
         if (!entry.result && entry.pending.size === 0) {
           cache.delete(key);
         }
-        trimModelCatalogCache(read.cache);
+        trimModelCatalogCache(client, read.cache);
       }
     }),
   };
+  // Display publication and invalidation may retire pending subscribers before transport ends.
+  read.cache.transports.set(read, request);
   void request
+    .finally(() => read.cache.transports.delete(read))
     .then((result) => {
       publishModelCatalogResult(read, params, result);
       completion.resolve(result);
@@ -149,7 +151,7 @@ export async function loadModelCatalog(
   entry.pending.set(timeoutMs, pending);
   cache.delete(key);
   cache.set(key, entry);
-  trimModelCatalogCache(read.cache);
+  trimModelCatalogCache(client, read.cache);
   return await subscribeToSharedRequest(pending, {}, signal);
 }
 

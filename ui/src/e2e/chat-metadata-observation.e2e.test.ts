@@ -254,6 +254,67 @@ suite.define(() => {
     });
   });
 
+  it("recovers omitted follower startup commands without duplicating its pending catalog", async () => {
+    await suite.withPage({ viewport: { width: 1440, height: 900 } }, async ({ page }) => {
+      const gateway = await installMockGateway(page, {
+        sessionKey: sessionKeys[0],
+        models: [model],
+        methodResponses: { "sessions.list": sessionsResponse() },
+      });
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKeys[0]));
+      const panes = page.locator('openclaw-chat-pane[aria-hidden="false"]');
+      await expectCatalog(panes, model.name);
+      const before = await requestCounts(gateway);
+      for (const method of methods) {
+        await gateway.deferNext(method);
+      }
+      await gateway.emitGatewayEvent("chat.metadata.changed", {});
+      for (const method of methods) {
+        await gateway.waitForRequest(method, { after: before[method] });
+      }
+      await gateway.setMethodResponse("chat.startup", {
+        sessionId: "metadata-session",
+        sessionInfo: { key: sessionKeys[0], kind: "direct" },
+        messages: [],
+        thinkingLevel: null,
+      });
+      await gateway.setMethodResponse("chat.metadata", {
+        commands: [
+          {
+            name: "recovered-metadata",
+            description: "Recovered startup commands",
+            source: "native",
+            scope: "text",
+            acceptsArgs: false,
+          },
+        ],
+      });
+      const startupsBefore = (await gateway.getRequests("chat.startup")).length;
+      await page.getByRole("button", { name: "Open split view", exact: true }).click();
+      await expect.poll(() => panes.count()).toBe(2);
+      await gateway.waitForRequest("chat.startup", { after: startupsBefore });
+      await gateway.resolveDeferred("chat.metadata");
+      const composer = panes.nth(1).locator(".agent-chat__composer-combobox textarea");
+      await composer.fill("/recovered-metadata");
+      await expect
+        .poll(() =>
+          panes
+            .nth(1)
+            .getByRole("option", { name: /recovered-metadata/u })
+            .count(),
+        )
+        .toBe(1);
+      expect(await requestCounts(gateway)).toEqual({
+        "chat.metadata": before["chat.metadata"] + 2,
+        "models.list": before["models.list"] + 1,
+      });
+      await gateway.resolveDeferred("models.list");
+      for (const pane of await panes.all()) {
+        await expectCatalog(pane, model.name);
+      }
+    });
+  });
+
   it.each([
     "single",
     "shared",
