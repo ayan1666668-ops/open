@@ -120,7 +120,10 @@ suite.define(() => {
       await gateway.setSessionsListResponse(sessionResponse(discoveredLevels, 65_536));
       await gateway.setMethodResponse("models.list", { models: [discoveredModel] });
       const sessionListCount = (await gateway.getRequests("sessions.list", rosterMatch)).length;
-      const sessionDescribeCount = (await gateway.getRequests("sessions.describe")).length;
+      const sessionDescribeMatch = { key: sessionKey, agentId: "main" };
+      const sessionDescribeCount = (
+        await gateway.getRequests("sessions.describe", sessionDescribeMatch)
+      ).length;
       expect(await gateway.getRequests("models.list")).toHaveLength(1);
       await gateway.emitGatewayEvent("chat.metadata.changed", {});
       const modelsRequest = await gateway.waitForRequest("models.list", { after: 1 });
@@ -131,6 +134,7 @@ suite.define(() => {
       });
       const refreshedSessionRequest = await gateway.waitForRequest("sessions.describe", {
         after: sessionDescribeCount,
+        match: sessionDescribeMatch,
       });
       expect(refreshedSessionRequest.params).toEqual({ key: sessionKey, agentId: "main" });
       await modelSelect.click();
