@@ -17,6 +17,8 @@ import { encodeWindowsLauncherScript } from "./windows-launcher-encoding.js";
 
 // Match the Windows CLI restart budget, including slow cold starts.
 const TASK_RESTART_WAIT_SECONDS = 180;
+const TASK_RESTART_RETRY_LIMIT = 12;
+const TASK_RESTART_RETRY_DELAY_SEC = 1;
 
 function quotePowerShellSingleQuotedLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -77,9 +79,14 @@ function buildScheduledTaskRestartScript(params: {
     "if errorlevel 1 goto failed",
     `schtasks /Query /TN ${quotedTaskName} >> ${quotedLogPath} 2>&1`,
     "if errorlevel 1 goto fallback",
+    "set /a attempts=0",
+    ":retry",
+    `timeout /t ${TASK_RESTART_RETRY_DELAY_SEC} /nobreak >nul`,
+    "set /a attempts+=1",
     `schtasks /Run /TN ${quotedTaskName} >> ${quotedLogPath} 2>&1`,
-    "if errorlevel 1 goto failed",
-    "goto verify",
+    "if not errorlevel 1 goto verify",
+    `if %attempts% GEQ ${TASK_RESTART_RETRY_LIMIT} goto fallback`,
+    "goto retry",
     ":fallback",
     `>> ${quotedLogPath} 2>&1 echo [%DATE% %TIME%] openclaw restart fallback source=windows-task-handoff`,
   ];

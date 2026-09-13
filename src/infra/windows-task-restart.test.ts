@@ -74,7 +74,12 @@ function runRestartBatch(script: string, command: (line: string) => number): str
       throw new Error("Restart helper did not terminate");
     }
     const line = lines[index];
-    if (!line || line.startsWith(":") || /^(?:@echo off|setlocal|del )/.test(line)) {
+    if (
+      !line ||
+      line === ")" ||
+      line.startsWith(":") ||
+      /^(?:@echo off|setlocal|del )/.test(line)
+    ) {
       continue;
     }
     const branch = /^(?:if (not )?errorlevel (\d+) )?goto (\w+)$/i.exec(line);
@@ -102,7 +107,15 @@ function runRestartBatch(script: string, command: (line: string) => number): str
       output.push(line.slice(line.indexOf(" echo ") + 6));
     } else if (line.startsWith("if not exist ") || line.startsWith("timeout ")) {
       continue;
-    } else if (/^(?:powershell\.exe|schtasks )/.test(line)) {
+    } else if (line.startsWith("if exist ") && line.endsWith(" (")) {
+      if (command(line) !== 0) {
+        const end = lines.indexOf(")", index + 1);
+        if (end < 0) {
+          throw new Error("Missing batch block end");
+        }
+        index = end;
+      }
+    } else if (/^(?:powershell\.exe|schtasks |start )/.test(line)) {
       errorlevel = command(line);
     } else {
       throw new Error(`Unsupported restart batch syntax: ${line}`);
@@ -259,6 +272,24 @@ describe("relaunchGatewayScheduledTask", () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("Cannot identify the Gateway entrypoint and port");
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves verified launcher recovery when a registered task rejects launch", () => {
+    spawnMock.mockImplementation((_file: string, args: string[]) => {
+      createdScriptPaths.add(decodeCmdPathArg(expectDefined(args[3], "helper path")));
+      return { unref: vi.fn() };
+    });
+    expect(relaunchGatewayScheduledTask({}).ok).toBe(true);
+    const scriptPath = expectDefined([...createdScriptPaths][0], "helper path");
+    const commands: string[] = [];
+    const output = runRestartBatch(fs.readFileSync(scriptPath, "utf8"), (line) => {
+      commands.push(line);
+      return line.startsWith("schtasks /Run") ? 1 : 0;
+    });
+    expect(commands.filter((line) => line.startsWith('start ""'))).toHaveLength(1);
+    expect(commands.at(-1)).toContain("Get-NetTCPConnection");
+    expect(output.join("\n")).toContain("restart finished");
+    expect(output.join("\n")).not.toContain("restart failed");
   });
 
   it("prefers OPENCLAW_WINDOWS_TASK_NAME overrides", () => {
