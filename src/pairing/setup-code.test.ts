@@ -515,7 +515,7 @@ describe("pairing setup code", () => {
     await expect(resolvePairingSetupFromConfig(config, options)).rejects.toThrow(expectedError);
   });
 
-  it.each(["none", "trusted-proxy"] as const)(
+  it.each(["none"] as const)(
     "names gateway.auth.mode %s when setup code generation lacks a shared secret",
     async (mode) => {
       await expectResolvedSetupFailureCase({
@@ -526,6 +526,40 @@ describe("pairing setup code", () => {
       expect(issueDevicePairSetupBootstrapTokenMock).not.toHaveBeenCalled();
     },
   );
+
+  it("issues setup codes for trusted-proxy auth without a shared secret", async () => {
+    await expectResolvedSetupSuccessCase({
+      config: createCustomGatewayConfig({ mode: "trusted-proxy" }),
+      options: { env: {}, publicUrl: "wss://gateway.example.test" },
+      expected: {
+        authLabel: "trusted-proxy",
+        url: "wss://gateway.example.test",
+        urlSource: "plugins.entries.device-pair.config.publicUrl",
+      },
+    });
+  });
+
+  it("keeps trusted-proxy setup transport restrictions before issuing credentials", async () => {
+    await expectResolvedSetupFailureCase({
+      config: createCustomGatewayConfig({ mode: "trusted-proxy" }),
+      options: { env: {}, publicUrl: "ws://gateway.example.test" },
+      expectedError: "Tailscale and public mobile pairing require a secure gateway URL",
+    });
+    expect(issueDevicePairSetupBootstrapTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps trusted-proxy plaintext LAN handoff limited", async () => {
+    await expectResolvedSetupSuccessCase({
+      config: createCustomGatewayConfig({ mode: "trusted-proxy" }),
+      options: { env: {}, publicUrl: "ws://192.168.1.20:18789" },
+      expected: {
+        authLabel: "trusted-proxy",
+        url: "ws://192.168.1.20:18789",
+        urlSource: "plugins.entries.device-pair.config.publicUrl",
+        ...limitedPlaintextAccess,
+      },
+    });
+  });
 
   it("keeps the unconfigured-auth error when gateway.auth.mode is unset", async () => {
     await expectResolvedSetupFailureCase({
