@@ -3138,6 +3138,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(stored?.restartRecoveryTerminalDeliveryEvidence).toEqual([
       {
         runId: "image:task-1:agent-loop",
+        transcriptRunId: "image:task-1:agent-loop",
         captured: true,
         payloads: [{ visible: false }, { mediaUrls: ["/tmp/payload.png"], visible: true }],
         deliveryStatus: {
