@@ -43,14 +43,18 @@ export type PackageDistContentInventoryEntry = {
 
 export function createPackageDistContentInventoryEntry(
   relativePath: string,
-  bytes: Uint8Array,
+  content: Uint8Array | { bytes: number; digest: string },
   mode: number,
 ): PackageDistContentInventoryEntry {
+  const hash =
+    content instanceof Uint8Array
+      ? { bytes: content.byteLength, digest: createHash("sha256").update(content).digest("hex") }
+      : content;
   return {
     path: relativePath.replace(/\\/g, "/"),
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: hash.digest,
     mode: mode & 0o777,
-    size: bytes.byteLength,
+    size: hash.bytes,
   };
 }
 

@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sha256Hex } from "../../infra/crypto-digest.js";
+import { sha256File } from "../../infra/directory-durability.js";
+import { root, type Root } from "../../infra/fs-safe.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type {
   PluginHookSkillArtifact,
@@ -24,7 +26,11 @@ type SkillTreeFile = {
   sizeBytes: number;
 };
 
-async function collectSkillTreeFiles(skillDir: string, relativeDir = ""): Promise<SkillTreeFile[]> {
+async function collectSkillTreeFiles(
+  skillDir: string,
+  skillRoot: Root,
+  relativeDir = "",
+): Promise<SkillTreeFile[]> {
   const entries = await fs.readdir(path.join(skillDir, relativeDir), { withFileTypes: true });
   const files: SkillTreeFile[] = [];
   for (const entry of entries.toSorted((left, right) =>
@@ -41,18 +47,19 @@ async function collectSkillTreeFiles(skillDir: string, relativeDir = ""): Promis
       throw new Error(`Skill tree contains unsupported entry ${JSON.stringify(portablePath)}.`);
     }
     if (stat.isDirectory()) {
-      files.push(...(await collectSkillTreeFiles(skillDir, relativePath)));
+      files.push(...(await collectSkillTreeFiles(skillDir, skillRoot, relativePath)));
       continue;
     }
     if (stat.nlink > 1) {
       throw new Error(`Skill tree contains hard-linked file ${JSON.stringify(portablePath)}.`);
     }
-    const content = await fs.readFile(absolutePath);
-    files.push({
-      path: portablePath,
-      sha256: sha256Hex(content),
-      sizeBytes: content.byteLength,
-    });
+    const opened = await skillRoot.open(relativePath);
+    try {
+      const { digest, bytes } = await sha256File(opened.handle);
+      files.push({ path: portablePath, sha256: digest, sizeBytes: bytes });
+    } finally {
+      await opened.handle.close();
+    }
   }
   return files;
 }
@@ -101,7 +108,8 @@ async function snapshotCommittedSkillArtifact(params: {
   sourceVersion?: string;
 }): Promise<PluginHookSkillArtifact> {
   const skillDir = path.resolve(params.skillDir);
-  const files = await collectSkillTreeFiles(skillDir);
+  const skillRoot = await root(skillDir);
+  const files = await collectSkillTreeFiles(skillDir, skillRoot);
   const skillFileEntry = SKILL_FILE_CANDIDATES.map((candidate) =>
     files.find((file) => file.path === candidate),
   ).find((entry) => entry !== undefined);
@@ -109,7 +117,9 @@ async function snapshotCommittedSkillArtifact(params: {
     throw new Error(`Skill tree is missing SKILL.md: ${skillDir}`);
   }
   const skillFile = path.join(skillDir, skillFileEntry.path);
-  const frontmatter = parseSkillArtifactMetadata(await fs.readFile(skillFile));
+  const frontmatter = parseSkillArtifactMetadata(
+    await skillRoot.readBytes(skillFileEntry.path, { maxBytes: Infinity }),
+  );
   const treeSha256 = sha256Hex(JSON.stringify(files));
   return {
     name: frontmatter.name ?? params.skillKey,
