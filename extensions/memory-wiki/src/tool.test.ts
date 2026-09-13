@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import memoryWikiPlugin from "../index.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { lintMemoryWikiVault } from "./lint.js";
 import { parseWikiMarkdown } from "./markdown.js";
@@ -464,6 +465,55 @@ describe("memory-wiki tools", () => {
     const nextDetails = asSchemaObject(nextPage.details);
     expect((nextDetails.items as unknown[]).length).toBe(1);
     expect(nextDetails.hasMore).toBe(false);
+  });
+
+  it("resolves wiki_open_items through real plugin registration, with the lifecycle signal forwarded and live", async () => {
+    // Every other test in this file calls createWikiOpenItemsTool directly.
+    // This one goes through the actual registration path (plugin.register ->
+    // the registered factory -> the started service's lifecycle signal) to
+    // prove the wiring itself, not just the tool in isolation.
+    const { rootDir } = await harness.createVault({ initialize: true });
+    await writeSynthesisPage(rootDir, path.join("syntheses", "registration.md"), [
+      "id: synth-registration",
+      "title: Registration",
+      "questions:",
+      "  - Does registration wiring actually work end to end?",
+    ]);
+
+    const { api, registerTool, registerService } = harness.createPluginApi();
+    api.pluginConfig = { vault: { path: rootDir } };
+
+    memoryWikiPlugin.register(api);
+
+    // Starting the registered service is what creates the real
+    // AbortController that resolveToolContext forwards as `signal` — no
+    // existing test in this suite starts it, which is exactly why the
+    // dropped-signal regression this PR fixed went unnoticed by any test.
+    expect(registerService).toHaveBeenCalledTimes(1);
+    const service = registerService.mock.calls[0]?.[0] as { start: () => Promise<void> };
+    await service.start();
+
+    const registration = registerTool.mock.calls.find(
+      ([, meta]) => meta?.name === "wiki_open_items",
+    );
+    const factory = registration?.[0] as (ctx: {
+      agentId?: string;
+      sessionKey?: string;
+      sandboxed?: boolean;
+    }) => { execute: (id: string, params: unknown) => Promise<{ content: unknown[] }> } | null;
+
+    const tool = factory({ agentId: "main", sessionKey: "agent:main:test", sandboxed: false });
+    expect(tool).not.toBeNull();
+    const result = await tool!.execute("registration-call", {});
+    const text = (
+      result.content.find((part) => (part as { type: string }).type === "text") as
+        | { text: string }
+        | undefined
+    )?.text;
+
+    // Real registration, a real started lifecycle, and a real seeded vault
+    // together produce the real item — not a mock's canned response.
+    expect(text).toContain("Does registration wiring actually work end to end?");
   });
 
   it("excludes foreign and unowned bridge-page items for sandboxed callers", async () => {
