@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as sessionAccessor from "../../../config/sessions/session-accessor.js";
 import { resolveSessionStorePathForScope } from "../../../config/sessions/session-store-path.js";
 import {
   runWithOwnedSessionTranscriptWrite,
@@ -1582,7 +1583,7 @@ describe("subagent registry lifecycle hardening", () => {
     }
   });
 
-  it("does not reject completion when task finalization throws", async () => {
+  it("does not reject completion when optional task tracking is absent and finalization throws", async () => {
     const persist = vi.fn();
     const persistOrThrow = vi.fn();
     const warn = vi.fn();
@@ -3028,6 +3029,9 @@ describe("subagent registry lifecycle hardening", () => {
   });
 
   it("updates replacement task delivery through the durable task run id", async () => {
+    taskExecutorMocks.completeTaskRunByRunId.mockReturnValueOnce([
+      { taskId: "task-before-replacement", status: "succeeded" },
+    ]);
     const entry = createRunEntry({ runId: "run-after-replacement" });
     const controller = createLifecycleController({
       entry,
@@ -3776,6 +3780,7 @@ describe("subagent registry lifecycle hardening", () => {
           expectedLifecycleRevision: "child-lifecycle-revision",
         },
         timeoutMs: 10_000,
+        assertDispatchCurrent: expect.any(Function),
       }),
     );
     await waitForLifecycleState(() =>
@@ -3908,6 +3913,7 @@ describe("subagent registry lifecycle hardening", () => {
           expectedLifecycleRevision: "child-lifecycle-revision",
         },
         timeoutMs: 10_000,
+        assertDispatchCurrent: expect.any(Function),
       }),
     );
     expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
@@ -4947,25 +4953,18 @@ describe("subagent registry lifecycle hardening", () => {
         queued.resolve();
         return result;
       });
-      // Seed the real session-store reader's per-observation cache. Completion,
-      // its retry wrapper, terminal lock and effect owners remain real.
-      const storeCache = new Map([
-        [
-          resolveSessionStorePathForScope({ sessionKey: entry.childSessionKey }),
-          {
-            [entry.childSessionKey]: {
-              sessionId: "child-session-id",
-              status: "failed" as const,
-              startedAt: 2_000,
-              endedAt: 4_000,
-              updatedAt: 4_000,
-            },
-          },
-        ],
-      ]);
+      // Supply the child's persisted observation at the current accessor boundary.
+      // Completion, retry wrapper, terminal lock and effect owners remain real.
+      vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly").mockReturnValue({
+        sessionId: "child-session-id",
+        status: "failed",
+        startedAt: 2_000,
+        endedAt: 4_000,
+        updatedAt: 4_000,
+      });
       const completion = settleSubagentRunFromSessionStore(
         runtime.completeSubagentRunWithRecovery,
-        { runId: entry.runId, entry, now: 6_000, storeCache, source: "session-store-lock-test" },
+        { runId: entry.runId, entry, now: 6_000, source: "session-store-lock-test" },
       );
       try {
         await queued.promise;

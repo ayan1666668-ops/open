@@ -1,9 +1,9 @@
 /**
  * Subagent registry persistence and recovery helpers.
  *
- * Handles frozen result caps, orphan detection, timing persistence, and announce retry logging.
+ * Handles frozen results, attachment cleanup, timing persistence, and announce retry logging.
  */
-import fsSync, { promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { DEFAULT_SUBAGENT_ARCHIVE_AFTER_MINUTES } from "../../../config/agent-limits.js";
@@ -21,15 +21,10 @@ import {
   resolveSessionRunError,
 } from "../../../sessions/session-run-error.js";
 import { truncateUtf8Prefix } from "../../../utils/utf8-truncate.js";
-import {
-  getDeliveryAttemptCount,
-  getDeliveryLastError,
-  hasRetainedRequiredCompletionDelivery,
-} from "./subagent-delivery-state.js";
+import { getDeliveryAttemptCount, getDeliveryLastError } from "./subagent-delivery-state.js";
 import { SUBAGENT_ENDED_REASON_KILLED } from "./subagent-lifecycle-events.js";
 import {
   shouldDeferTerminalCleanupForUnconfirmedChild,
-  shouldDeleteSubagentAttachments,
 } from "./subagent-registry-cleanup.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import {
@@ -37,11 +32,7 @@ import {
   getSubagentSessionStartedAt,
   resolveSubagentSessionStatus,
 } from "./subagent-session-metrics.js";
-import {
-  resolveCompletionFromSessionEntry,
-  resolveSubagentRunOrphanReason,
-  type SubagentRunOrphanReason,
-} from "./subagent-session-reconciliation.js";
+import { resolveCompletionFromSessionEntry } from "./subagent-session-reconciliation.js";
 
 export const PROVISIONAL_KILL_RECONCILIATION_MS = 5 * 60_000;
 export const MIN_ANNOUNCE_RETRY_DELAY_MS = 15_000;
@@ -273,145 +264,6 @@ export async function safeRemoveAttachmentsDir(entry: SubagentRunRecord): Promis
   } catch {
     return false;
   }
-}
-
-function safeRemoveAttachmentsDirSync(entry: SubagentRunRecord): void {
-  // Same fail-closed rule as the async remover, restated at the destructive
-  // call rather than trusted from the caller: attachment removal is the effect
-  // a later promotion can never undo.
-  if (shouldDeferTerminalCleanupForUnconfirmedChild(entry)) {
-    return;
-  }
-  if (!entry.attachmentsDir || !entry.attachmentsRootDir) {
-    return;
-  }
-
-  const resolveReal = (targetPath: string): string | null => {
-    try {
-      return fsSync.realpathSync.native(targetPath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-        return null;
-      }
-      throw err;
-    }
-  };
-
-  try {
-    const rootReal = resolveReal(entry.attachmentsRootDir);
-    const dirReal = resolveReal(entry.attachmentsDir);
-    if (!dirReal) {
-      return;
-    }
-
-    const rootBase = rootReal ?? path.resolve(entry.attachmentsRootDir);
-    if (!isResolvedChildPath({ childPath: dirReal, rootPath: rootBase })) {
-      return;
-    }
-    fsSync.rmSync(dirReal, { recursive: true, force: true });
-  } catch {
-    // best effort
-  }
-}
-
-/** Marks an orphaned registry run finished, cleans attachments, and removes it. */
-export function reconcileOrphanedRun(params: {
-  runId: string;
-  entry: SubagentRunRecord;
-  reason: SubagentRunOrphanReason;
-  source: "restore" | "resume";
-  runs: Map<string, SubagentRunRecord>;
-  resumedRuns: Set<string>;
-}) {
-  if (shouldDeferTerminalCleanupForUnconfirmedChild(params.entry)) {
-    // Every orphan reason this function is called with is derived from the
-    // child's *best-effort* session entry, and the dominant one —
-    // `missing-session-entry` — also fires when that store is simply
-    // unreadable or already pruned. Deleting the row on that evidence is the
-    // one irreversible move in this lifecycle: the map entry is the only thing
-    // a later authoritative stop can promote, so removing it converts "we never
-    // observed the child stop" into "the child is gone" exactly where this
-    // branch says it must not. Restore, resume and the sweeper's stale-active
-    // path all funnel here, so the guard lives on the shared owner rather than
-    // at three call sites that would each have to remember it.
-    //
-    // Trade-off, stated where it is taken: a row whose child never produces
-    // stop evidence is now retained indefinitely, holding its registry row and
-    // any swarm slot. That is deliberate — the sweeper re-reads the child's own
-    // session entry on every pass (`settleSubagentRunFromSessionStore`) and
-    // promotes the row the moment that entry turns terminal — but it is an
-    // availability trade-off a maintainer may want bounded instead.
-    return false;
-  }
-  if (hasRetainedRequiredCompletionDelivery(params.entry)) {
-    return false;
-  }
-  // The third copy of this condition; now the one owner. The sync remover is
-  // reached only from here, so the guard rides the shared decision rather than
-  // being duplicated inside it.
-  if (shouldDeleteSubagentAttachments(params.entry)) {
-    safeRemoveAttachmentsDirSync(params.entry);
-  }
-  const removed = params.runs.delete(params.runId);
-  params.resumedRuns.delete(params.runId);
-  if (!removed) {
-    return false;
-  }
-  defaultRuntime.log(
-    `[warn] Subagent orphan run pruned source=${params.source} run=${params.runId} child=${params.entry.childSessionKey} reason=${params.reason}`,
-  );
-  return true;
-}
-
-/** Reconciles orphaned runs found when restoring persisted subagent registry state. */
-export function reconcileOrphanedRestoredRuns(params: {
-  runs: Map<string, SubagentRunRecord>;
-  resumedRuns: Set<string>;
-}) {
-  const now = Date.now();
-  let changed = false;
-  for (const [runId, entry] of params.runs.entries()) {
-    if (entry.collect && entry.collectorCompletion) {
-      // Waitable collector tombstones intentionally outlive delete-mode sessions.
-      continue;
-    }
-    if (entry.requesterSettleWake) {
-      // Requester-settle outbox rows can intentionally outlive delete-mode
-      // child sessions. Restore replays the obligation before retiring them.
-      continue;
-    }
-    if (
-      entry.killReconciliation ||
-      entry.killIntent ||
-      entry.execution.restartRecovery ||
-      entry.terminalOwner === "interrupted-recovery"
-    ) {
-      // Provider completion or interrupted recovery still owns these rows.
-      // Their bounded reconciliation runs even when the session vanished.
-      continue;
-    }
-    const orphanReason = resolveSubagentRunOrphanReason({
-      entry,
-      includeStaleUnended: true,
-      now,
-    });
-    if (!orphanReason) {
-      continue;
-    }
-    if (
-      reconcileOrphanedRun({
-        runId,
-        entry,
-        reason: orphanReason,
-        source: "restore",
-        runs: params.runs,
-        resumedRuns: params.resumedRuns,
-      })
-    ) {
-      changed = true;
-    }
-  }
-  return changed;
 }
 
 /** Resolves the completed subagent archive delay from config. */

@@ -306,6 +306,7 @@ describe("subagent registry sqlite store", () => {
     await withTempStateEnv(async () => {
       const run = createRun({
         model: "openai/gpt-5.6",
+        swarmRunId: "stable-collector",
         generation: 3,
         sessionStartedAt: 105,
         accumulatedRuntimeMs: 90,
@@ -329,6 +330,7 @@ describe("subagent registry sqlite store", () => {
 
       expect(loadSubagentSessionListRunsFromSqlite().get(run.runId)).toEqual({
         runId: run.runId,
+        swarmRunId: "stable-collector",
         childSessionKey: run.childSessionKey,
         requesterSessionKey: run.requesterSessionKey,
         model: "openai/gpt-5.6",
