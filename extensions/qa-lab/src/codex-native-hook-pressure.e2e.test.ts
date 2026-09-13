@@ -219,14 +219,20 @@ export default {
               );
             }
             const properties = native.tool.parameters?.properties ?? {};
+            expect(Object.hasOwn(properties, "login")).toBe(true);
             for (let i = 0; i < current.count; i++) {
               const command =
                 current.mode === "deny"
                   ? "printf PRESSURE_DENIED > pressure-denied.txt"
                   : `printf PRESSURE_ALLOW_${current.id}_${i}_END; printf PRESSURE_ALLOW_${current.id}_${i}_END > pressure-${current.id}-${i}.txt`;
-              const args = Object.hasOwn(properties, "cmd")
-                ? { cmd: command }
-                : { command: native.tool.name === "shell" ? ["sh", "-c", command] : command };
+              // Host login profiles can leave the granted workspace before the command runs.
+              // Use the advertised non-login option equally for every measured scenario.
+              const args = {
+                ...(Object.hasOwn(properties, "cmd")
+                  ? { cmd: command }
+                  : { command: native.tool.name === "shell" ? ["sh", "-c", command] : command }),
+                login: false,
+              };
               stream.tool({
                 type: "function_call",
                 id: `fc_${current.id}_${i}`,
