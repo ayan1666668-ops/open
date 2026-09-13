@@ -6,6 +6,7 @@ import { getGatewayContextResolver } from "../../../plugins/runtime/gateway-requ
 import { runWithGatewayIndependentRootWorkAdmission } from "../../../process/gateway-work-admission.js";
 import { emitSessionLifecycleEvent } from "../../../sessions/session-lifecycle-events.js";
 import { createLazyImportLoader } from "../../../shared/lazy-promise.js";
+import { reconcileRetiredSubagentCancellation } from "../completion/subagent-completion-admission.store.js";
 import { SUBAGENT_ENDED_REASON_ERROR } from "./subagent-lifecycle-events.js";
 import { shouldSuppressSubagentRecoverySessionEffects } from "./subagent-recovery-state.js";
 import type { createSubagentRegistryCompletionRuntime } from "./subagent-registry-completion-runtime.js";
@@ -303,45 +304,10 @@ export function createSubagentRegistrySweeper(params: {
           // The restored FIFO callback owns this row until durable settlement.
           continue;
         }
-        if (entry.killIntent) {
-          if (
-            await reconcileDurableSubagentKillIntent({
-              runId,
-              entry,
-              runs,
-              getRunsForChildSession: params.getRunsForChildSession,
-              loadKillRuntime: () => killRuntimeLoader.load(),
-              completeSubagentRunWithRecovery: params.completeSubagentRunWithRecovery,
-              retireSupersededRun: params.retireSupersededRun,
-              warn: params.warn,
-            })
-          ) {
-            mutatedRunIds.add(runId);
-          }
-          continue;
-        }
-        if (entry.killReconciliation) {
-          const reconciled = await reconcileProvisionalSubagentKill({
-            runId,
-            entry,
-            now,
-            runs,
-            completeSubagentRunWithRecovery: params.completeSubagentRunWithRecovery,
-            retireSupersededRun: params.retireSupersededRun,
-            startSubagentAnnounceCleanupFlow: params.startSubagentAnnounceCleanupFlow,
-            getRunsForChildSession: params.getRunsForChildSession,
-            warn: params.warn,
-          });
-          if (reconciled) {
-            mutatedRunIds.add(runId);
-            if (
-              runs.get(runId) === entry &&
-              !entry.killReconciliation &&
-              entry.requesterSettleWake
-            ) {
-              params.resumeRequesterSettleWake(runId, entry);
-            }
-          }
+        if (
+          entry.killReconciliation &&
+          reconcileRetiredSubagentCancellation(entry, now) === false
+        ) {
           continue;
         }
         // Yield freezes the parent's wake before its children finish. Keep
@@ -373,6 +339,40 @@ export function createSubagentRegistrySweeper(params: {
               emitSubagentEndedHookForRun: params.emitSubagentEndedHookForRun,
               warn: params.warn,
             });
+            mutatedRunIds.add(runId);
+          }
+          continue;
+        }
+        if (entry.killIntent) {
+          if (
+            await reconcileDurableSubagentKillIntent({
+              runId,
+              entry,
+              runs,
+              getRunsForChildSession: params.getRunsForChildSession,
+              loadKillRuntime: () => killRuntimeLoader.load(),
+              completeSubagentRunWithRecovery: params.completeSubagentRunWithRecovery,
+              retireSupersededRun: params.retireSupersededRun,
+              warn: params.warn,
+            })
+          ) {
+            mutatedRunIds.add(runId);
+          }
+          continue;
+        }
+        if (entry.killReconciliation) {
+          const reconciled = await reconcileProvisionalSubagentKill({
+            runId,
+            entry,
+            now,
+            runs,
+            completeSubagentRunWithRecovery: params.completeSubagentRunWithRecovery,
+            retireSupersededRun: params.retireSupersededRun,
+            startSubagentAnnounceCleanupFlow: params.startSubagentAnnounceCleanupFlow,
+            getRunsForChildSession: params.getRunsForChildSession,
+            warn: params.warn,
+          });
+          if (reconciled) {
             mutatedRunIds.add(runId);
           }
           continue;

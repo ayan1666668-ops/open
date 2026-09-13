@@ -246,11 +246,14 @@ export function reconcileRetiredSubagentCancellation(
   }
   return runOpenClawStateWriteTransaction((database) => {
     const subagent = readSubagentRun(database, expected.runId);
-    if (
-      !subagent ||
-      retiredCancellationEndedAt(subagent, now) !== endedAt ||
-      !ownsRetiredCancellation(database, subagent, expected)
-    ) {
+    if (!subagent || retiredCancellationEndedAt(subagent, now) !== endedAt) {
+      return false;
+    }
+    // Retained tasks still use ordinary cancellation and requester-wake ordering.
+    if (findTaskRecordByRunIdForViewInDatabase(database.db, subagent.taskRunId ?? subagent.runId)) {
+      return undefined;
+    }
+    if (!ownsRetiredCancellation(database, subagent, expected)) {
       return false;
     }
     subagent.killReconciliation = undefined;
