@@ -81,11 +81,8 @@ import {
   QA_SUBAGENT_EMPTY_WORKER_NO_OUTPUT_PROMPT_RE,
   QA_SUBAGENT_SELF_YIELD_FOLLOW_UP_RE,
   QA_SUBAGENT_SELF_YIELD_WORKER_RE,
-  QA_SUBAGENT_PRIVATE_WORKER_RE,
   QA_SUBAGENT_PRIVATE_RESULT_RE,
   QA_SUBAGENT_PRIVATE_SECOND_RESULT,
-  QA_SUBAGENT_TERMINAL_MATRIX_PROMPT_RE,
-  QA_SUBAGENT_TERMINAL_MATRIX_WORKER_RE,
   buildStrandedFinalRecoveryText,
   buildStrandedFinalRetryFailureText,
   isStrandedFinalRetryFailureRequest,
@@ -167,6 +164,7 @@ import {
   extractLastUserText,
   extractLastMatchingUserTurn,
   extractMockSubagentContext,
+  resolveMockSubagentTurn,
   splitMockConversationContext,
   hasToolOutput,
   extractToolOutput,
@@ -924,10 +922,11 @@ async function buildResponsesPayload(
   body: Record<string, unknown>,
   scenarioState: MockScenarioState,
   options: {
+    subagentTurn: ReturnType<typeof resolveMockSubagentTurn>;
     waitForTerminalRequesterSettled?: (caseName: string, childSessionKey: string) => Promise<void>;
     requestKind?: MockOpenAiRequestKind;
     compactionSummaryFaultMode?: MockCompactionSummaryFaultMode;
-  } = {},
+  },
 ) {
   const model = typeof body.model === "string" ? body.model : "";
   const providerVariant = resolveProviderVariant(model);
@@ -1363,7 +1362,8 @@ async function buildResponsesPayload(
       message: "Waiting for the remote job to report back.",
     });
   }
-  const privateWorker = QA_SUBAGENT_PRIVATE_WORKER_RE.exec(prompt)?.[1]?.toLowerCase();
+  const terminalTurn = options.subagentTurn;
+  const privateWorker = terminalTurn?.privateWorker;
   if (privateWorker) {
     const childSessionKey = resolveQaChildSessionKey(input, body);
     if (privateWorker === "first" && childSessionKey) {
@@ -1375,18 +1375,11 @@ async function buildResponsesPayload(
         : QA_SUBAGENT_PRIVATE_SECOND_RESULT,
     );
   }
-  const terminalCompletionCase = extractLastMatchingUserTurn(
-    input,
-    QA_SUBAGENT_TERMINAL_MATRIX_PROMPT_RE,
-  )
-    ?.text.match(QA_SUBAGENT_TERMINAL_MATRIX_PROMPT_RE)?.[1]
-    ?.toLowerCase();
-  // Persisted completion history must neither replay a spawn nor suppress a
-  // later kickoff. Only the latest carrier's current request owns this turn.
-  const latestUser = input.findLast((item) => item.role === "user");
-  const current = splitMockConversationContext(
-    latestUser ? extractAllRequestTexts([latestUser], {}) : "",
-  ).current;
+  const terminalCompletionCase = terminalTurn?.caseName;
+  const current = terminalTurn?.text ?? "";
+  if (terminalCompletionCase && terminalTurn?.kind === "settled") {
+    return buildAssistantEvents("NO_REPLY");
+  }
   if (terminalCompletionCase === "private") {
     const nonce = QA_SUBAGENT_PRIVATE_RESULT_RE.exec(current)?.[0];
     const requestedSecondChild = input.some(
@@ -1394,7 +1387,7 @@ async function buildResponsesPayload(
         (item.type === "function_call" || item.type === "custom_tool_call") &&
         JSON.stringify(item).includes("qa-terminal-private-second"),
     );
-    if (/Internal task completion event/i.test(current)) {
+    if (terminalTurn?.kind === "completion") {
       if (
         !requestedSecondChild &&
         nonce &&
@@ -1410,9 +1403,6 @@ async function buildResponsesPayload(
       }
       return buildAssistantEvents("NO_REPLY");
     }
-    if (/Every subagent spawned from this session has now settled/i.test(current)) {
-      return buildAssistantEvents("NO_REPLY");
-    }
     if (hasCompletedToolOutput) {
       return buildAssistantEvents("Worker started.");
     }
@@ -1425,7 +1415,7 @@ async function buildResponsesPayload(
       });
     }
   }
-  if (terminalCompletionCase && /Internal task completion event/i.test(current)) {
+  if (terminalCompletionCase && terminalTurn?.kind === "completion") {
     const visibleRepresentation =
       terminalCompletionCase === "silent"
         ? QA_SUBAGENT_TERMINAL_MARKERS.silent
@@ -1458,16 +1448,7 @@ async function buildResponsesPayload(
     // replay the historical spawn before that fallback runs.
     return buildAssistantEvents("NO_REPLY");
   }
-  const terminalWorkerCase = Array.from(
-    allInputText.matchAll(
-      new RegExp(
-        QA_SUBAGENT_TERMINAL_MATRIX_WORKER_RE.source,
-        `${QA_SUBAGENT_TERMINAL_MATRIX_WORKER_RE.flags.replaceAll("g", "")}g`,
-      ),
-    ),
-  )
-    .at(-1)?.[1]
-    ?.toLowerCase();
+  const terminalWorkerCase = terminalTurn?.kind === "worker" ? terminalTurn.caseName : undefined;
   if (terminalWorkerCase) {
     const childSessionKey = resolveQaChildSessionKey(input, body);
     if (options.waitForTerminalRequesterSettled && childSessionKey) {
@@ -1484,7 +1465,7 @@ async function buildResponsesPayload(
         content: "empty terminal QA side effect completed\n",
       });
     }
-    return QA_SUBAGENT_EMPTY_WORKER_NO_OUTPUT_PROMPT_RE.test(allInputText)
+    return QA_SUBAGENT_EMPTY_WORKER_NO_OUTPUT_PROMPT_RE.test(current)
       ? buildAssistantEvents("")
       : buildAssistantEvents(
           [
@@ -1507,11 +1488,11 @@ async function buildResponsesPayload(
   if (terminalWorkerCase === "visible" || terminalWorkerCase === "restart") {
     return buildAssistantEvents(QA_SUBAGENT_TERMINAL_MARKERS[terminalWorkerCase]);
   }
-  if (terminalCompletionCase) {
+  if (terminalCompletionCase && terminalTurn?.kind === "kickoff") {
     if (!hasCompletedToolOutput && canCallSessionsSpawn) {
       const task =
         terminalCompletionCase === "empty" &&
-        QA_SUBAGENT_EMPTY_PARENT_VISIBLE_PROMPT_RE.test(prompt)
+        QA_SUBAGENT_EMPTY_PARENT_VISIBLE_PROMPT_RE.test(current)
           ? "Subagent terminal reply QA worker: empty. Return no assistant output after the write."
           : `Subagent terminal reply QA worker: ${terminalCompletionCase}.`;
       return buildToolCallEventsWithArgs("sessions_spawn", {
@@ -1526,7 +1507,7 @@ async function buildResponsesPayload(
       // delegated visible turn alive and hands completion to requester settlement.
       if (
         terminalCompletionCase === "empty" &&
-        QA_SUBAGENT_EMPTY_PARENT_VISIBLE_PROMPT_RE.test(prompt)
+        QA_SUBAGENT_EMPTY_PARENT_VISIBLE_PROMPT_RE.test(current)
       ) {
         return buildAssistantEvents(QA_SUBAGENT_EMPTY_PARENT_VISIBLE_MARKER);
       }
@@ -2761,6 +2742,7 @@ export async function startQaMockOpenAiServer(params?: {
     if (isRemoteCompactionV2Request(input)) {
       return { events: buildRemoteCompactionV2Events(), model };
     }
+    const subagentTurn = resolveMockSubagentTurn(input);
     const prompt = extractLastUserText(input);
     const allInputText = extractAllRequestTexts(input, body);
     const scenarioState = scenarioStateFor(body);
@@ -2859,6 +2841,7 @@ export async function startQaMockOpenAiServer(params?: {
               : buildAssistantEvents("ANTHROPIC-THINKING-ERROR-RECOVERED-OK");
       } else {
         events = await buildResponsesPayload(body, scenarioState, {
+          subagentTurn,
           waitForTerminalRequesterSettled: terminalRequesterSettleGate.waitUntilSettled,
           requestKind,
           compactionSummaryFaultMode,
@@ -2872,12 +2855,8 @@ export async function startQaMockOpenAiServer(params?: {
     }
     const plannedToolIdentity = extractPlannedToolIdentity(events);
     const plannedTool = extractScenarioPlannedTool(events);
-    const terminalRequesterCase = extractLastMatchingUserTurn(
-      input,
-      QA_SUBAGENT_TERMINAL_MATRIX_PROMPT_RE,
-    )
-      ?.text.match(QA_SUBAGENT_TERMINAL_MATRIX_PROMPT_RE)?.[1]
-      ?.toLowerCase();
+    const terminalRequesterCase =
+      subagentTurn?.kind === "kickoff" ? subagentTurn.caseName : undefined;
     const settledTerminalRequester =
       terminalRequesterCase && resolveQaRuntimeSessionId(input, body)
         ? {

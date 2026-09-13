@@ -143,7 +143,7 @@ describe("private subagent completion processing receipts", () => {
       });
       agentCommandMock.mockImplementationOnce(async (input) => {
         await recorder(input).persistApproved();
-        return { payloads: [{ text: "NO_REPLY" }], meta: { durationMs: 1 } };
+        return { payloads: [{ text: "NO_REPLY", mediaUrl: null }], meta: { durationMs: 1 } };
       });
       if (intentional) {
         expect(await dispatch()).toMatchObject({ status: "timeout", stopReason: reason });
@@ -172,7 +172,7 @@ describe("private subagent completion processing receipts", () => {
         }
         processingCount += 1;
         return {
-          payloads: kind === "silent" ? [{ text: "NO_REPLY" }] : [],
+          payloads: kind === "silent" ? [{ text: "NO_REPLY", mediaUrl: null }] : [],
           meta: { durationMs: 1, ...(kind === "yielded" ? { yielded: true } : {}) },
         };
       });
@@ -230,7 +230,7 @@ describe("private subagent completion processing receipts", () => {
     agentCommandMock.mockImplementationOnce(async (input) => {
       await recorder(input).persistApproved();
       processingCount += 1;
-      return { payloads: [{ text: "NO_REPLY" }], meta: { durationMs: 1 } };
+      return { payloads: [{ text: "NO_REPLY", mediaUrl: null }], meta: { durationMs: 1 } };
     });
     expect(await dispatch()).toMatchObject({ status: "ok", inputProcessingCompleted: true });
     expect(processingCount).toBe(1);
@@ -246,7 +246,7 @@ describe("private subagent completion processing receipts", () => {
     );
     agentCommandMock.mockImplementation(async (input) => {
       await recorder(input).persistApproved();
-      return { payloads: [{ text: "NO_REPLY" }], meta: { durationMs: 1 } };
+      return { payloads: [{ text: "NO_REPLY", mediaUrl: null }], meta: { durationMs: 1 } };
     });
     try {
       await expect(dispatch()).rejects.toThrow("synthetic receipt write unavailable");
@@ -276,7 +276,7 @@ describe("private subagent completion processing receipts", () => {
     expect(pending()).toMatchObject([{ state: "interrupted" }]);
     agentCommandMock.mockImplementationOnce(async (input) => {
       await recorder(input).persistApproved();
-      return { payloads: [{ text: "NO_REPLY" }], meta: { durationMs: 1 } };
+      return { payloads: [{ text: "NO_REPLY", mediaUrl: null }], meta: { durationMs: 1 } };
     });
     expect(await dispatch()).toMatchObject({ status: "ok", inputProcessingCompleted: true });
     expect(agentCommandMock).toHaveBeenCalledOnce();
@@ -320,7 +320,7 @@ describe("private subagent completion processing receipts", () => {
       }
       agentCommandMock.mockImplementationOnce(async (input) => {
         await recorder(input).persistApproved();
-        return { payloads: [{ text: "NO_REPLY" }], meta: { durationMs: 1 } };
+        return { payloads: [{ text: "NO_REPLY", mediaUrl: null }], meta: { durationMs: 1 } };
       });
       expect(await dispatch()).toMatchObject({ status: "ok", inputProcessingCompleted: true });
       expect(agentCommandMock).toHaveBeenCalledOnce();

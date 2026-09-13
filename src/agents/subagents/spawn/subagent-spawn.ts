@@ -71,13 +71,11 @@ export { SUBAGENT_SPAWN_CONTEXT_MODES, SUBAGENT_SPAWN_MODES } from "./subagent-s
 
 function sanitizeMountPathHint(value?: string): string | undefined {
   const trimmed = normalizeOptionalString(value);
-  if (!trimmed) {
-    return undefined;
-  }
-  if (hasPromptUnsafeControlCharacter(trimmed)) {
-    return undefined;
-  }
-  if (!/^[A-Za-z0-9._\-/:]+$/.test(trimmed)) {
+  if (
+    !trimmed ||
+    hasPromptUnsafeControlCharacter(trimmed) ||
+    !/^[A-Za-z0-9._\-/:]+$/.test(trimmed)
+  ) {
     return undefined;
   }
   return trimmed;

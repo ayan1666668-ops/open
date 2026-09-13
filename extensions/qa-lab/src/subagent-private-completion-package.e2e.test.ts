@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { promisify } from "node:util";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 import { writeGatewayRestartIntentSync } from "openclaw/plugin-sdk/qa-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeQaHttpServer } from "./bus-server.js";
 import { createQaGatewayChild, type QaGatewayChild } from "./gateway-child.js";
 import { QA_SUBAGENT_TERMINAL_MARKERS } from "./providers/mock-openai/mock-openai-contracts.js";
+import { resolveMockSubagentTurn } from "./providers/mock-openai/mock-openai-input.js";
 import { startQaMockOpenAiServer } from "./providers/mock-openai/server.js";
 import { waitForQaTransportCondition } from "./qa-transport.js";
 
@@ -30,27 +32,37 @@ async function holdProviderRequests(baseUrl: string) {
   let armed = false;
   let childHeld = false;
   let mainHeld = false;
-  const child = Promise.withResolvers<void>();
-  const main = Promise.withResolvers<void>();
+  const child = createDeferred<void>();
+  const main = createDeferred<void>();
   const server = createServer((req, res) => {
     void (async () => {
       const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      for await (const chunk of req) {
+        chunks.push(Buffer.from(chunk));
+      }
       const body = Buffer.concat(chunks).toString();
       const input: unknown = body ? JSON.parse(body).input : undefined;
-      const latestUser = Array.isArray(input)
-        ? input.findLast((item) => item.role === "user")
-        : undefined;
-      const prompt = JSON.stringify(latestUser?.content ?? "");
-      const closed = new Promise<void>((resolve) => res.once("close", resolve));
-      if (armed && /Subagent private completion QA worker: first\./u.test(prompt)) {
+      const currentTurn = resolveMockSubagentTurn(
+        Array.isArray(input)
+          ? input
+          : typeof input === "string"
+            ? [{ role: "user", content: input }]
+            : [],
+      );
+      const prompt = currentTurn?.text ?? "";
+      const closed = new Promise<void>((resolve) => {
+        res.once("close", resolve);
+      });
+      if (armed && currentTurn?.kind === "worker" && currentTurn.privateWorker === "first") {
         childHeld = true;
         await Promise.race([child.promise, closed]);
       } else if (armed && prompt.includes("QA PACKAGE MAIN HOLD")) {
         mainHeld = true;
         await Promise.race([main.promise, closed]);
       }
-      if (res.destroyed) return;
+      if (res.destroyed) {
+        return;
+      }
       const response = await fetch(`${baseUrl}${req.url}`, {
         method: req.method,
         headers: { "content-type": "application/json" },
@@ -68,7 +80,9 @@ async function holdProviderRequests(baseUrl: string) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("provider hold has no port");
+  if (!address || typeof address === "string") {
+    throw new Error("provider hold has no port");
+  }
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     arm: () => {
@@ -93,6 +107,14 @@ function rows(databasePath: string, sql: string, ...args: SQLInputValue[]) {
   } finally {
     db.close();
   }
+}
+
+function requiredSqlValue(row: Record<string, SQLInputValue>, key: string): SQLInputValue {
+  const value = row[key];
+  if (value === undefined) {
+    throw new Error(`missing required SQLite field: ${key}`);
+  }
+  return value;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -142,7 +164,7 @@ async function observeChat(gateway: QaGatewayChild, events: unknown[]) {
 describe.skipIf(!candidateTarball)("private completion installed-package compatibility", () => {
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-  it("keeps ordinary state usable without publishing private completion replies through released-runtime reopen", async () => {
+  it("preserves ordinary state through Doctor upgrade and backup rollback without publishing private replies", async () => {
     const prefix = tempDirs.make("openclaw-private-package-");
     const installedRoot = path.join(prefix, "lib", "node_modules", "openclaw");
     const cli = path.join(installedRoot, "openclaw.mjs");
@@ -339,12 +361,12 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       );
       const children = await waitForQaTransportCondition(
         async () => {
-          const children = await tasks(sessionKey);
-          return children.length === 2 &&
-            children.every(
+          const currentChildren = await tasks(sessionKey);
+          return currentChildren.length === 2 &&
+            currentChildren.every(
               (task) => task.status === "completed" && task.deliveryStatus === "delivered",
             )
-            ? children
+            ? currentChildren
             : undefined;
         },
         120_000,
@@ -417,11 +439,11 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       );
       const child = await waitForQaTransportCondition(
         async () => {
-          const child = (await tasks(sessionKey)).find(
+          const currentChild = (await tasks(sessionKey)).find(
             (task) => task.title === "qa-terminal-silent",
           );
-          return child?.status === "completed" && child.deliveryStatus === "delivered"
-            ? child
+          return currentChild?.status === "completed" && currentChild.deliveryStatus === "delivered"
+            ? currentChild
             : undefined;
         },
         120_000,
@@ -452,10 +474,29 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       return child;
     }
 
-    async function switchPackage(spec: string, interruptedInput?: Record<string, SQLInputValue>) {
+    async function runInstalled(args: string[]) {
+      return await exec(process.execPath, [cli, ...args], {
+        cwd: prefix,
+        env: gateway.runtimeEnv,
+        timeout: 120_000,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+    }
+
+    function assertSchema(version: number) {
+      expect(rows(agentDb, "PRAGMA user_version")[0]?.user_version).toBe(version);
+      expect(rows(agentDb, "SELECT schema_version FROM schema_meta")[0]?.schema_version).toBe(
+        version,
+      );
+      expect(rows(stateDb, "PRAGMA user_version")[0]?.user_version).toBe(17);
+    }
+
+    async function restartState(
+      mutate: (context: { stateDir: string; configPath: string }) => Promise<void>,
+      interruptedInput?: { input_id: SQLInputValue; run_id: SQLInputValue },
+    ) {
       await observer?.stopAndWait();
       observer = undefined;
-      let identity: Awaited<ReturnType<typeof install>> | undefined;
       const originalState = gateway.runtimeEnv.OPENCLAW_STATE_DIR;
       if (interruptedInput) {
         const info = record(await gateway.call("system.info", {}));
@@ -469,8 +510,8 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
           }),
         ).toBe(true);
       }
-      await gateway.restartAfterStateMutation(async ({ stateDir }) => {
-        expect(stateDir).toBe(originalState);
+      await gateway.restartAfterStateMutation(async (context) => {
+        expect(context.stateDir).toBe(originalState);
         if (interruptedInput) {
           const stopped = rows(
             agentDb,
@@ -488,11 +529,10 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
           expect(gateway.logs()).toMatch(/restart shutdown|external-restart/u);
           heldProvider.release();
         }
-        identity = await install(spec);
+        await mutate(context);
       });
       expect(gateway.runtimeEnv.OPENCLAW_STATE_DIR).toBe(originalState);
       observer = await observeChat(gateway, events);
-      return identity;
     }
 
     try {
@@ -521,24 +561,76 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
         "SELECT current_session_id FROM session_nodes WHERE session_key = ?",
         ordinarySession,
       )[0];
+      if (!originalSession || typeof originalSession.current_session_id !== "string") {
+        throw new Error("released ordinary session has no current session ID");
+      }
+      const originalSessionId = originalSession.current_session_id;
       const originalTranscript = rows(
         agentDb,
         "SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq",
-        String(originalSession.current_session_id),
+        originalSessionId,
       );
       expect(originalTranscript.length).toBeGreaterThan(0);
+      async function assertOriginalOrdinaryState() {
+        expect(
+          rows(
+            agentDb,
+            "SELECT current_session_id FROM session_nodes WHERE session_key = ?",
+            ordinarySession,
+          )[0],
+        ).toEqual(originalSession);
+        expect(
+          rows(
+            agentDb,
+            "SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq",
+            originalSessionId,
+          ),
+        ).toEqual(originalTranscript);
+        expect((await tasks(ordinarySession)).some((task) => task.taskId === ordinary.taskId)).toBe(
+          true,
+        );
+      }
       phases.push({
         phase: "released-created-state",
         ...releasedIdentity,
         ordinaryTaskId: ordinary.taskId,
-        sessionId: originalSession.current_session_id,
+        sessionId: originalSessionId,
       });
 
-      const upgradedIdentity = await switchPackage(candidateTarball!);
+      assertSchema(19);
+      const backupPath = path.join(prefix, "pre-upgrade.tar.gz");
+      let upgradedIdentity: Awaited<ReturnType<typeof install>> | undefined;
+      await restartState(async () => {
+        const backup = record(
+          JSON.parse(
+            (await runInstalled(["backup", "create", "--output", backupPath, "--verify", "--json"]))
+              .stdout,
+          ),
+        );
+        expect(backup.verified).toBe(true);
+        const verified = record(
+          JSON.parse((await runInstalled(["backup", "verify", backupPath, "--json"])).stdout),
+        );
+        expect(verified.ok).toBe(true);
+        phases.push({
+          phase: "released-verified-backup",
+          archiveSha256: createHash("sha256")
+            .update(await readFile(backupPath))
+            .digest("hex"),
+          schemaVersion: 19,
+        });
+        upgradedIdentity = await install(candidateTarball!);
+        // Schema 20 predates private completions. The target Doctor owns this
+        // upgrade; a schema-19 build cannot reopen that upgraded database.
+        await runInstalled(["doctor", "--fix", "--non-interactive"]);
+        assertSchema(20);
+      });
+      await assertOriginalOrdinaryState();
       const privateState = await privateChain("agent:qa:package-upgraded-private");
       phases.push({
-        phase: "candidate-upgrade",
+        phase: "candidate-doctor-upgrade",
         ...upgradedIdentity,
+        doctorExitCode: 0,
         privateChildren: privateState.children.length,
         processingReceipts: privateState.receipts.length,
       });
@@ -567,12 +659,24 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
       await waitForQaTransportCondition(() => heldProvider.mainHeld() || undefined, 30_000, 50);
       heldProvider.releaseChild();
       const pendingInput = await waitForQaTransportCondition(
-        () =>
-          rows(
+        () => {
+          const row = rows(
             agentDb,
             "SELECT * FROM session_pending_inputs WHERE session_key = ? AND state = 'queued'",
             pendingSession,
-          ).find((row) => String(row.message_json).includes("QA-PARENT-PRIVATE-CHILD1-")),
+          ).find((row) => String(row.message_json).includes("QA-PARENT-PRIVATE-CHILD1-"));
+          return row
+            ? {
+                ...row,
+                input_id: requiredSqlValue(row, "input_id"),
+                run_id: requiredSqlValue(row, "run_id"),
+                session_id: requiredSqlValue(row, "session_id"),
+                message_json: requiredSqlValue(row, "message_json"),
+                consumed_event_id: requiredSqlValue(row, "consumed_event_id"),
+                state: requiredSqlValue(row, "state"),
+              }
+            : undefined;
+        },
         60_000,
         50,
       );
@@ -607,37 +711,70 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
         consumed: false,
       });
 
-      const requestCursor = record(
+      const pendingChildKey = (await tasks(pendingSession))[0]?.childSessionKey;
+      if (typeof pendingChildKey !== "string") {
+        throw new Error("queued private task has no child session key");
+      }
+      const captured = rows(
+        stateDb,
+        "SELECT * FROM subagent_runs WHERE child_session_key = ?",
+        pendingChildKey,
+      )[0];
+      if (!captured) {
+        throw new Error("queued private task has no registry envelope");
+      }
+      const capturedRow = {
+        ...captured,
+        run_id: requiredSqlValue(captured, "run_id"),
+        child_session_key: requiredSqlValue(captured, "child_session_key"),
+        controller_session_key: requiredSqlValue(captured, "controller_session_key"),
+        requester_session_key: requiredSqlValue(captured, "requester_session_key"),
+        created_at: requiredSqlValue(captured, "created_at"),
+        payload_json: requiredSqlValue(captured, "payload_json"),
+      };
+      const privatePayload = record(
+        record(JSON.parse(String(capturedRow.payload_json))).parentCompletion,
+      );
+      expect(record(privatePayload.execution).status).toBe("terminal");
+      expect(record(privatePayload.completion).required).toBe(true);
+      expect(["pending", "in_progress"]).toContain(record(privatePayload.delivery).status);
+      expect(JSON.stringify(privatePayload.completion)).toMatch(privateMarker);
+      const settledNonce = /QA-PARENT-PRIVATE-CHILD1-[A-F0-9]{32}/u.exec(
+        JSON.stringify(
+          await history(
+            privateState.children.find((child) => child.title === "qa-terminal-private-first")!
+              .childSessionKey as string,
+          ),
+        ),
+      )?.[0];
+      expect(settledNonce).toBeTruthy();
+      const restartCursor = record(
         await (await fetch(`${mock.baseUrl}/debug/request-cursor`)).json(),
       ).cursor;
-      const downgradedIdentity = await switchPackage(`openclaw@${releasedVersion}`, pendingInput);
-      await ordinaryChild("agent:qa:package-downgraded-ordinary");
-      await assertPrivateHistory(privateState.sessionKey);
-      await assertPrivateHistory(pendingSession);
-      for (const sessionKey of [
-        privateState.sessionKey,
-        pendingSession,
-        "agent:qa:package-downgraded-ordinary",
-      ]) {
-        assertPrivateReplies(capturedReplies(sessionKey));
-      }
-      expect(
-        rows(
-          agentDb,
-          "SELECT current_session_id FROM session_nodes WHERE session_key = ?",
-          ordinarySession,
-        )[0],
-      ).toEqual(originalSession);
-      expect(
-        rows(
-          agentDb,
-          "SELECT event_json FROM transcript_events WHERE session_id = ? ORDER BY seq",
-          String(originalSession.current_session_id),
-        ),
-      ).toEqual(originalTranscript);
-      expect((await tasks(ordinarySession)).some((task) => task.taskId === ordinary.taskId)).toBe(
-        true,
+      await restartState(async () => {}, pendingInput);
+      const resumedChildren = await waitForQaTransportCondition(
+        async () => {
+          const children = await tasks(pendingSession);
+          return children.length === 2 &&
+            children.every(
+              (child) => child.status === "completed" && child.deliveryStatus === "delivered",
+            )
+            ? children
+            : undefined;
+        },
+        120_000,
+        100,
       );
+      expect(
+        rows(agentDb, "SELECT * FROM session_pending_inputs WHERE session_key = ?", pendingSession),
+      ).toEqual([]);
+      expect(
+        rows(
+          agentDb,
+          "SELECT succeeded FROM session_input_completions WHERE run_id = ?",
+          pendingInput.run_id,
+        ),
+      ).toEqual([{ succeeded: 1 }]);
       expect(
         rows(
           agentDb,
@@ -645,60 +782,201 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
           privateState.sessionKey,
         ),
       ).toEqual(privateState.receipts);
-      const requests: unknown = await (
-        await fetch(`${mock.baseUrl}/debug/requests?after=${requestCursor}`)
+      expect((await tasks(privateState.sessionKey)).map((task) => task.taskId)).toEqual(
+        privateState.children.map((task) => task.taskId),
+      );
+      const restartRequests = await (
+        await fetch(`${mock.baseUrl}/debug/requests?after=${String(restartCursor)}`)
       ).json();
-      expect(JSON.stringify(requests)).not.toMatch(privateMarker);
+      expect(JSON.stringify(restartRequests)).not.toContain(settledNonce);
+      await assertPrivateHistory(privateState.sessionKey);
+      await assertPrivateHistory(pendingSession);
+      assertPrivateReplies(capturedReplies(privateState.sessionKey));
+      assertPrivateReplies(capturedReplies(pendingSession));
       phases.push({
-        phase: "released-downgrade",
-        ...downgradedIdentity,
+        phase: "candidate-restart-durability",
+        interruptedInputRetried: true,
+        frozenInputPreserved: true,
+        resumedChildren: resumedChildren.length,
+        completedReceiptsPreserved: true,
+        completedPrivateReplayCount: 0,
+      });
+
+      let rollbackIdentity: Awaited<ReturnType<typeof install>> | undefined;
+      await restartState(async ({ stateDir, configPath }) => {
+        rollbackIdentity = await install(`openclaw@${releasedVersion}`);
+        const target = path.join(prefix, "restored-backup");
+        const restored = record(
+          JSON.parse(
+            (await runInstalled(["backup", "restore", backupPath, "--target", target, "--json"]))
+              .stdout,
+          ),
+        );
+        const manifest = record(
+          JSON.parse(
+            await readFile(
+              path.join(target, String(restored.archiveRoot), "manifest.json"),
+              "utf8",
+            ),
+          ),
+        );
+        expect(Array.isArray(manifest.assets)).toBe(true);
+        const assets = (manifest.assets as unknown[]).map(record);
+        expect(assets.filter((asset) => asset.kind === "state")).toHaveLength(1);
+        expect(assets.filter((asset) => asset.kind === "config")).toHaveLength(1);
+        const destinations = new Set([stateDir, configPath, gateway.workspaceDir]);
+        for (const [index, asset] of assets.entries()) {
+          const destination = String(asset.sourcePath);
+          expect(destinations.has(destination)).toBe(true);
+          // Activate verified assets at their original absolute roots. Merely
+          // changing STATE_DIR leaves configured agent/workspace roots stale.
+          await rename(destination, path.join(prefix, `post-upgrade-asset-${index}`));
+          await rename(path.join(target, String(asset.archivePath)), destination);
+        }
+        assertSchema(19);
+      });
+      const rollbackSession = "agent:qa:package-rollback-ordinary";
+      const rollbackChild = await ordinaryChild(rollbackSession);
+      await assertOriginalOrdinaryState();
+      expect(
+        rows(agentDb, "SELECT * FROM session_nodes WHERE session_key = ?", privateState.sessionKey),
+      ).toEqual([]);
+      phases.push({
+        phase: "released-backup-rollback",
+        ...rollbackIdentity,
         ordinaryStatePreserved: true,
-        hiddenInterruptedInput: true,
-        privateReplayCount: 0,
+        postBackupPrivateWorkRestored: false,
         observedOrdinaryReply: true,
       });
 
-      const reopenCursor = record(
+      // Isolate the feature's registry wire format from the unrelated schema-20
+      // boundary. Only this captured envelope is copied into release-owned data.
+      const probeParent = String(capturedRow.requester_session_key);
+      const probeChild = String(capturedRow.child_session_key);
+      await gateway.call("sessions.create", { key: probeParent });
+      await gateway.call("sessions.create", { key: probeChild });
+      const releasedChildEventCursor = events.length;
+      const probeRun = record(
+        await gateway.call("chat.send", {
+          sessionKey: probeChild,
+          idempotencyKey: String(capturedRow.run_id),
+          message: "Subagent private completion QA worker: second. Finish with the private result.",
+        }),
+      );
+      expect(probeRun.runId).toBe(capturedRow.run_id);
+      await waitForQaTransportCondition(
+        () =>
+          events
+            .slice(releasedChildEventCursor)
+            .some(
+              (event) =>
+                isRecord(event) &&
+                event.sessionKey === probeChild &&
+                event.runId === capturedRow.run_id &&
+                event.state === "final" &&
+                privateMarker.test(JSON.stringify(replies([event.message]))),
+            ) || undefined,
+        30_000,
+        100,
+      );
+      const probeCursor = record(
         await (await fetch(`${mock.baseUrl}/debug/request-cursor`)).json(),
       ).cursor;
-      const reopenedIdentity = await switchPackage(candidateTarball!);
-      await ordinaryChild("agent:qa:package-reopened-ordinary");
+      const probeEventCursor = events.length;
+      await restartState(async () => {
+        assertSchema(19);
+        const db = new DatabaseSync(stateDb);
+        try {
+          db.prepare(
+            "INSERT INTO subagent_runs (run_id, child_session_key, controller_session_key, requester_session_key, created_at, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
+          ).run(
+            capturedRow.run_id,
+            capturedRow.child_session_key,
+            capturedRow.controller_session_key,
+            capturedRow.requester_session_key,
+            capturedRow.created_at,
+            capturedRow.payload_json,
+          );
+        } finally {
+          db.close();
+        }
+        expect(
+          rows(stateDb, "SELECT * FROM subagent_runs WHERE run_id = ?", capturedRow.run_id),
+        ).toEqual([capturedRow]);
+      });
+      const atProjection = rows(
+        stateDb,
+        "SELECT * FROM subagent_runs WHERE run_id = ?",
+        capturedRow.run_id,
+      );
+      const projection = record(await gateway.call("sessions.list", { agentId: "qa", limit: 100 }));
+      expect(Array.isArray(projection.sessions)).toBe(true);
+      const listed = projection.sessions as Record<string, unknown>[];
       expect(
-        rows(
-          agentDb,
-          "SELECT * FROM session_input_completions WHERE session_key = ? ORDER BY run_id",
-          privateState.sessionKey,
-        ),
-      ).toEqual(privateState.receipts);
-      await assertPrivateHistory(privateState.sessionKey);
-      for (const sessionKey of [
-        privateState.sessionKey,
-        pendingSession,
-        "agent:qa:package-reopened-ordinary",
-      ]) {
-        assertPrivateReplies(capturedReplies(sessionKey));
-      }
-      expect(
-        rows(
-          agentDb,
-          "SELECT current_session_id FROM session_nodes WHERE session_key = ?",
-          ordinarySession,
-        )[0],
-      ).toEqual(originalSession);
+        listed.find((session) => session.key === rollbackChild.childSessionKey)?.spawnedBy,
+      ).toBe(rollbackSession);
+      const privateChildProjection = listed.find((session) => session.key === probeChild);
+      expect(privateChildProjection).toBeDefined();
+      expect(privateChildProjection?.spawnedBy).toBeUndefined();
+      expect(privateChildProjection?.controlOwnerSessionKey).toBeUndefined();
+      await ordinaryChild("agent:qa:package-reader-ordinary");
+      expect((await tasks(probeParent)).length).toBe(0);
+      await assertPrivateHistory(probeParent);
+      assertPrivateReplies(capturedReplies(probeParent, probeEventCursor));
       expect(
         JSON.stringify(
-          await (await fetch(`${mock.baseUrl}/debug/requests?after=${reopenCursor}`)).json(),
+          await (await fetch(`${mock.baseUrl}/debug/requests?after=${String(probeCursor)}`)).json(),
         ),
       ).not.toMatch(privateMarker);
+      const remainingRows = rows(
+        stateDb,
+        "SELECT * FROM subagent_runs WHERE run_id = ?",
+        capturedRow.run_id,
+      );
+      if (remainingRows.length > 0) {
+        expect(remainingRows).toEqual([capturedRow]);
+      }
       phases.push({
-        phase: "candidate-reopen",
-        ...reopenedIdentity,
-        ordinaryStatePreserved: true,
-        processingReceiptsPreserved: true,
+        phase: "released-registry-reader-probe",
+        ...rollbackIdentity,
+        syntheticRegistryFixture: true,
+        capturedEnvelopeSha256: createHash("sha256")
+          .update(String(capturedRow.payload_json))
+          .digest("hex"),
+        before: capturedRow,
+        atProjection,
+        after: remainingRows,
+        lightweightProjectionSawEnvelope: atProjection.length === 1,
+        ordinaryTopologyObserved: true,
+        privateTopologyCount: 0,
         privateReplayCount: 0,
+        agentSchemaVersion: 19,
+        sharedSchemaVersion: 17,
+      });
+
+      let reopenedIdentity: Awaited<ReturnType<typeof install>> | undefined;
+      await restartState(async () => {
+        // Remove only the synthetic probe if the old writer left it intact.
+        const db = new DatabaseSync(stateDb);
+        try {
+          db.prepare("DELETE FROM subagent_runs WHERE run_id = ?").run(capturedRow.run_id);
+        } finally {
+          db.close();
+        }
+        reopenedIdentity = await install(candidateTarball!);
+        await runInstalled(["doctor", "--fix", "--non-interactive"]);
+        assertSchema(20);
+      });
+      await ordinaryChild("agent:qa:package-reopened-ordinary");
+      await assertOriginalOrdinaryState();
+      phases.push({
+        phase: "candidate-reupgrade-after-rollback",
+        ...reopenedIdentity,
+        doctorExitCode: 0,
+        ordinaryStatePreserved: true,
         observedOrdinaryReply: true,
       });
-      expect(phases).toHaveLength(6);
+      expect(phases).toHaveLength(9);
       passed = true;
     } finally {
       heldProvider.release();
@@ -721,7 +999,7 @@ describe.skipIf(!candidateTarball)("private completion installed-package compati
         }));
       await writeFile(
         path.join(evidenceDir, "verdict.json"),
-        `${JSON.stringify({ passed, sourceTree, candidateSha256, released: published, phases, chatEvents, proof: "actual installed packages, ordinary WebChat and native subagents, interrupted unconsumed private admission, read-only backing-store observations", limitation: "owned restart intent before package switching; abrupt crash-window fault injection is covered separately by Gateway/SQLite tests; downgrade can discard pending private handoffs; chat observers cover connected post-startup intervals, supplemented by durable history and provider request records; child-session events and parent-session tool arguments remain visible to their operator" }, null, 2)}\n`,
+        `${JSON.stringify({ passed, sourceTree, candidateSha256, released: published, phases, chatEvents, proof: "Only entries in phases represent completed assertions. Real installed executables and ordinary WebChat/native-subagent controls qualify each recorded phase.", limitation: "Schema 20 predates this feature; released schema-19 builds cannot reopen it. Rollback restores a verified pre-upgrade backup and loses post-backup work. The released registry-reader probe is synthetic envelope insertion into genuine released data, not a full database downgrade. Same-candidate restart owns receipt/pending-input durability; abrupt crash windows are covered separately by Gateway/SQLite tests. Chat observers cover connected post-startup intervals, supplemented by durable history/provider records. Child-session events and parent-session tool arguments remain operator-visible." }, null, 2)}\n`,
       );
     }
   }, 1_500_000);

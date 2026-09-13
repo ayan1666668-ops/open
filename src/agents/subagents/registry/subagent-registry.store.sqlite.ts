@@ -275,8 +275,8 @@ function readSubagentSessionListRows(): SubagentRunReadSqliteRow[] {
   return executeSqliteQuerySync(
     db,
     stateDb
-      .with("canonical_runs", (db) =>
-        db.selectFrom("subagent_runs").select([
+      .with("canonical_runs", (query) =>
+        query.selectFrom("subagent_runs").select([
           "run_id",
           "child_session_key",
           "controller_session_key",
