@@ -13,10 +13,11 @@ vi.mock("openclaw/plugin-sdk/approval-gateway-runtime", () => ({
 }));
 
 const approver = "U0123456789abcdef0123456789abcdef";
+const lineCredentials = { channelAccessToken: "token", channelSecret: "secret" };
+// Cards are on for exec: forwarding reaches the session and an approver is listed.
 const cfg: OpenClawConfig = {
-  channels: {
-    line: { channelAccessToken: "token", channelSecret: "secret", allowFrom: [approver] },
-  },
+  channels: { line: { ...lineCredentials, allowFrom: [approver] } },
+  approvals: { exec: { enabled: true } },
 };
 const common = {
   id: "approval-1",
@@ -33,7 +34,7 @@ const common = {
 
 function tap(decision: "allow-once" | "allow-always" | "deny") {
   return resolveLineApprovalPostbackTap({
-    cfg,
+    resolveConfig: () => cfg,
     accountId: "default",
     data: `line.approval=approval-1&line.approvalKind=exec&line.decision=${decision}`,
     senderId: approver,
@@ -66,16 +67,26 @@ describe("resolveLineApprovalPostbackTap", () => {
   });
 
   // Same-chat authorization would let a tap skip the command authorization a typed
-  // `/approve` goes through, so a tap never decides without a listed approver.
+  // `/approve` goes through, so a tap decides only where cards restrict deciding to
+  // listed approvers.
   it.each([
-    { name: "no approvers are listed", config: {}, senderId: approver },
+    {
+      name: "no approvers are listed",
+      config: { channels: { line: lineCredentials }, approvals: { exec: { enabled: true } } },
+      senderId: approver,
+    },
+    {
+      name: "cards are off for the account",
+      config: { channels: { line: { ...lineCredentials, allowFrom: [approver] } } },
+      senderId: approver,
+    },
     { name: "the postback names no sender", config: cfg, senderId: undefined },
   ] satisfies { name: string; config: OpenClawConfig; senderId: string | undefined }[])(
     "sends the tap to /approve instead of deciding when $name",
     async ({ config, senderId }) => {
       await expect(
         resolveLineApprovalPostbackTap({
-          cfg: config,
+          resolveConfig: () => config,
           accountId: "default",
           data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
           ...(senderId ? { senderId } : {}),
@@ -87,7 +98,7 @@ describe("resolveLineApprovalPostbackTap", () => {
 
   it("refuses a tap from someone who is not a listed approver", async () => {
     const notice = await resolveLineApprovalPostbackTap({
-      cfg,
+      resolveConfig: () => cfg,
       accountId: "default",
       data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
       senderId: "U11111111111111111111111111111111",

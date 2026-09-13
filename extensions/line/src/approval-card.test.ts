@@ -87,7 +87,17 @@ describe("LINE pending approval card", () => {
     expect(card?.allowedDecisions).toEqual(["allow-once", "allow-always", "deny"]);
     for (const data of cardPostbackData(card!)) {
       await resolveLineApprovalPostbackTap({
-        cfg: { channels: { line: { allowFrom: ["U0123456789abcdef0123456789abcdef"] } } },
+        // Cards on for exec, so the tapping approver decides.
+        resolveConfig: () => ({
+          channels: {
+            line: {
+              channelAccessToken: "token",
+              channelSecret: "secret",
+              allowFrom: ["U0123456789abcdef0123456789abcdef"],
+            },
+          },
+          approvals: { exec: { enabled: true } },
+        }),
         accountId: "default",
         data,
         senderId: "U0123456789abcdef0123456789abcdef",

@@ -31,7 +31,17 @@ const approval = (overrides: Partial<ApprovalDecisionControl> = {}): ApprovalDec
 async function tapped(data: string) {
   gateway.resolveApprovalOverGateway.mockClear();
   const notice = await resolveLineApprovalPostbackTap({
-    cfg: { channels: { line: { allowFrom: ["U0123456789abcdef0123456789abcdef"] } } },
+    // Cards on for every kind (system-agent follows exec), so the tap decides.
+    resolveConfig: () => ({
+      channels: {
+        line: {
+          channelAccessToken: "token",
+          channelSecret: "secret",
+          allowFrom: ["U0123456789abcdef0123456789abcdef"],
+        },
+      },
+      approvals: { exec: { enabled: true }, plugin: { enabled: true } },
+    }),
     accountId: "default",
     data,
     senderId: "U0123456789abcdef0123456789abcdef",

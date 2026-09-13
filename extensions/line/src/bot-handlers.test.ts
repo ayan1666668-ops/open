@@ -1240,7 +1240,11 @@ describe("handleLineWebhookEvents", () => {
   it("records an approval decision instead of starting a turn when a card button is tapped", async () => {
     resolveLineApprovalPostbackTapMock.mockClear();
     const processMessage = vi.fn();
-    const context = createLineWebhookTestContext({ processMessage, dmPolicy: "open" });
+    const arrived = createLineWebhookTestContext({ processMessage, dmPolicy: "open" });
+    // The approver list can change while the event waits, so the tap reads authority from
+    // the current config, not from the config the event arrived with.
+    const current = { ...arrived.cfg, approvals: { exec: { enabled: true } } };
+    const context = { ...arrived, resolveConfig: () => current };
     const data = "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once";
 
     await handleLineWebhookEvents(
@@ -1262,6 +1266,7 @@ describe("handleLineWebhookEvents", () => {
     expect(resolveLineApprovalPostbackTapMock).toHaveBeenCalledWith(
       expect.objectContaining({ data, senderId: "user-one" }),
     );
+    expect(resolveLineApprovalPostbackTapMock.mock.calls[0]?.[0].resolveConfig()).toBe(current);
     // Approval data must never reach the agent as turn text.
     expect(buildLinePostbackContextMock).not.toHaveBeenCalled();
     expect(processMessage).not.toHaveBeenCalled();

@@ -95,6 +95,11 @@ function isDownloadableLineMessageType(
 
 interface LineHandlerContext {
   cfg: OpenClawConfig;
+  /**
+   * Reads the config current at the moment of the call. Authority behind a side effect
+   * is rechecked with it after awaited work; `cfg` is the config the event arrived with.
+   */
+  resolveConfig?: () => OpenClawConfig;
   account: ResolvedLineAccount;
   runtime: RuntimeEnv;
   buildContext?: typeof buildChannelInboundEventContext;
@@ -676,7 +681,7 @@ async function handlePostbackEvent(
   if (hasLineApprovalPostbackData(data)) {
     // Ordinary postback data becomes the agent's turn text; approval data must not.
     const notice = await resolveLineApprovalPostbackTap({
-      cfg: context.cfg,
+      resolveConfig: context.resolveConfig ?? (() => context.cfg),
       accountId: context.account.accountId,
       data: data ?? "",
       ...(userId ? { senderId: userId } : {}),

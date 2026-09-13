@@ -1,4 +1,5 @@
 // Line plugin module wires the native approval capability for LINE accounts.
+import { markImplicitSameChatApprovalAuthorization } from "openclaw/plugin-sdk/approval-auth-runtime";
 import { createApproverRestrictedNativeApprovalCapability } from "openclaw/plugin-sdk/approval-delivery-runtime";
 import { createLazyChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-adapter-runtime";
 import type { ChannelApprovalKind } from "openclaw/plugin-sdk/approval-handler-runtime";
@@ -57,17 +58,45 @@ const lineApprovalRouteGates = createNativeApprovalChannelRouteGates({
   resolveTurnSourceTarget: lineApprovalTargetResolvers.resolveTurnSourceTarget,
 });
 
-/** Whether LINE can deliver native approval cards for one account. */
+/** Whether LINE can deliver native approval cards for one account, for one kind or any. */
 export function isLineNativeApprovalClientEnabled(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
+  approvalKind?: ChannelApprovalKind;
 }): boolean {
-  return (
-    lineApprovalRouteGates.canAnyApprovalPotentiallyRouteToChannel({
-      ...params,
-      nativeSessionOnly: true,
-    }) && getLineApprovalApprovers(params).length > 0
-  );
+  const { approvalKind, ...route } = params;
+  const routed = approvalKind
+    ? lineApprovalRouteGates.canApprovalPotentiallyRouteToChannel({
+        ...route,
+        approvalKind,
+        nativeSessionOnly: true,
+      })
+    : lineApprovalRouteGates.canAnyApprovalPotentiallyRouteToChannel({
+        ...route,
+        nativeSessionOnly: true,
+      });
+  return routed && getLineApprovalApprovers(route).length > 0;
+}
+
+type LineApprovalActorParams = Parameters<
+  NonNullable<ChannelApprovalCapability["authorizeActorAction"]>
+>[0];
+
+/**
+ * Approval actor authorization for LINE.
+ *
+ * `allowFrom` is LINE's DM allowlist long before it names approvers, and LINE chats used
+ * same-chat `/approve` before native cards existed. The approver list therefore restricts
+ * a decision only for an approval kind whose cards are on for the account; everywhere
+ * else the sender's command authorization keeps deciding, as it did.
+ */
+export function authorizeLineApprovalActor(
+  params: LineApprovalActorParams,
+): ReturnType<NonNullable<ChannelApprovalCapability["authorizeActorAction"]>> {
+  const { cfg, accountId, approvalKind } = params;
+  return isLineNativeApprovalClientEnabled({ cfg, accountId, approvalKind })
+    ? lineApprovalAuth.authorizeActorAction(params)
+    : markImplicitSameChatApprovalAuthorization({ authorized: true });
 }
 
 /** Whether one approval request should reach LINE as a native card. */
@@ -127,35 +156,24 @@ const lineLazyApprovalNativeRuntime = createLazyChannelApprovalNativeRuntimeAdap
   },
 });
 
-// Both settings are required: approvers alone leave forwarding off, and forwarding
-// alone has nobody to send the card to.
-function describeLineApprovalSetup(
-  approvalKind: "exec" | "plugin",
-  accountId: string | null | undefined,
-): string {
-  const prefix =
-    accountId && accountId !== "default" ? `channels.line.accounts.${accountId}` : "channels.line";
-  return `LINE supports native approval cards in approvers' one-to-one chats. Set \`approvals.${approvalKind}.enabled\` to \`true\` with \`mode\` \`session\` or \`both\`, and list approver LINE user IDs in \`${prefix}.allowFrom\`.`;
-}
-
-const lineNativeApprovalCapability = createApproverRestrictedNativeApprovalCapability({
+// Setup guidance is left out on purpose: core shows it only for a `disabled` surface, and
+// LINE never reports one (see `lineApprovalCapability`).
+const {
+  getExecInitiatingSurfaceState: _nativeClientSurfaceState,
+  ...lineNativeApprovalCapability
+} = createApproverRestrictedNativeApprovalCapability({
   channel: "line",
   channelLabel: "LINE",
-  describeExecApprovalSetup: ({ accountId }) =>
-    `Approve it from the Web UI or terminal UI for now. ${describeLineApprovalSetup("exec", accountId)}`,
-  // A plugin approval without a route is cancelled before it reaches the Gateway, so
-  // there is nothing to approve elsewhere.
-  describePluginApprovalSetup: ({ accountId }) => describeLineApprovalSetup("plugin", accountId),
   listAccountIds: (cfg) => listLineAccountIds(cfg),
   hasApprovers: ({ cfg, accountId }) => getLineApprovalApprovers({ cfg, accountId }).length > 0,
   isExecAuthorizedSender: ({ cfg, accountId, senderId }) =>
-    lineApprovalAuth.authorizeActorAction?.({
+    authorizeLineApprovalActor({
       cfg,
       accountId,
       senderId,
       action: "approve",
       approvalKind: "exec",
-    })?.authorized ?? false,
+    }).authorized,
   isNativeDeliveryEnabled: isLineNativeApprovalClientEnabled,
   // A group postback carries no `userId` (`GroupSource.userId` is documented as
   // message-event only), so a card in a group could not name who tapped it. Routing
@@ -188,40 +206,16 @@ const shouldSuppressLineForwardingFallback = createNativeApprovalForwardingFallb
   resolveApproverDmTargets: resolveLineApproverDmTargets,
 });
 
-// Availability follows forwarding, as the forwarding-routes builder defines it, not
-// approvers: with forwarding on and no approvers listed, a LINE chat keeps its typed
-// `/approve` prompt instead of being told approvals are not configured while the
-// forwarder sends that same prompt. Cards still require approvers.
-const lineApprovalAvailability: (
-  enabled: boolean,
-) => ReturnType<NonNullable<ChannelApprovalCapability["getExecInitiatingSurfaceState"]>> = (
-  enabled,
-) => (enabled ? { kind: "enabled" } : { kind: "disabled" });
-
 export const lineApprovalCapability: ChannelApprovalCapability = {
   ...lineNativeApprovalCapability,
   delivery: {
     ...lineNativeApprovalCapability.delivery,
     shouldSuppressForwardingFallback: shouldSuppressLineForwardingFallback,
   },
-  getActionAvailabilityState: ({ cfg, accountId, approvalKind }) =>
-    lineApprovalAvailability(
-      approvalKind
-        ? lineApprovalRouteGates.canApprovalPotentiallyRouteToChannel({
-            cfg,
-            accountId,
-            approvalKind,
-          })
-        : lineApprovalRouteGates.canAnyApprovalPotentiallyRouteToChannel({ cfg, accountId }),
-    ),
-  getExecInitiatingSurfaceState: ({ cfg, accountId }) =>
-    lineApprovalAvailability(
-      lineApprovalRouteGates.canApprovalPotentiallyRouteToChannel({
-        cfg,
-        accountId,
-        approvalKind: "exec",
-      }),
-    ),
-  // Preserve implicit same-chat authorization when no explicit approvers exist.
-  authorizeActorAction: (params) => lineApprovalAuth.authorizeActorAction?.(params),
+  // Cards are added on top of same-chat `/approve`, never in place of it. A `disabled`
+  // state would make the Gateway expire a request no other client holds, taking away
+  // the prompt LINE chats had before cards existed. Exec reads this same state because
+  // the exec-specific hook is left out above.
+  getActionAvailabilityState: () => ({ kind: "enabled" }),
+  authorizeActorAction: authorizeLineApprovalActor,
 };

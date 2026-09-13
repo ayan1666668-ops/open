@@ -39,10 +39,79 @@ const configured = buildConfig({
 describe("line approval capability", () => {
   it("subscribes the native runtime to system-agent approval events", checks.systemAgentEvents);
 
-  it(
-    "does not enable exec or plugin native approvals from LINE credentials alone",
-    checks.disabledByDefault,
-  );
+  // LINE chats approved with typed `/approve` before cards existed. A `disabled` state
+  // makes the Gateway expire a request no other client holds, so cards must never turn
+  // that prompt off, whatever is configured. `checks.disabledByDefault` asserts the
+  // opposite for channels that shipped cards from the start, so LINE does not run it.
+  it("keeps same-chat /approve available whether or not cards are on", () => {
+    const configs = [
+      buildConfig(),
+      buildConfig({ channel: { allowFrom: [APPROVER] } }),
+      buildConfig({ approvals: { exec: { enabled: true } } }),
+      configured,
+    ];
+    for (const cfg of configs) {
+      for (const approvalKind of ["exec", "plugin", undefined] as const) {
+        expect(
+          lineApprovalCapability.getActionAvailabilityState?.({
+            cfg,
+            accountId: "default",
+            action: "approve",
+            ...(approvalKind ? { approvalKind } : {}),
+          }),
+        ).toEqual({ kind: "enabled" });
+      }
+    }
+    // Without an exec-specific state, core reads exec availability from the state above.
+    expect(lineApprovalCapability.getExecInitiatingSurfaceState).toBeUndefined();
+  });
+
+  // `allowFrom` is the DM allowlist first. Listing users there must not take `/approve`
+  // away from command-authorized senders until cards are on for that approval kind.
+  it("restricts decisions to listed approvers only for approval kinds whose cards are on", () => {
+    const member = "U11111111111111111111111111111111";
+    const authorize = (
+      cfg: ReturnType<typeof buildConfig>,
+      senderId: string,
+      approvalKind: "exec" | "plugin",
+    ) =>
+      lineApprovalCapability.authorizeActorAction?.({
+        cfg,
+        accountId: "default",
+        senderId,
+        action: "approve",
+        approvalKind,
+      });
+    const deferred = (authorization: ReturnType<typeof authorize>) =>
+      authorization?.authorized === true && isImplicitSameChatApprovalAuthorization(authorization);
+
+    // Cards on for exec: only the listed approver decides, explicitly.
+    expect(authorize(configured, member, "exec")).toMatchObject({ authorized: false });
+    const approverGrant = authorize(configured, APPROVER, "exec");
+    expect(approverGrant).toEqual({ authorized: true });
+    expect(isImplicitSameChatApprovalAuthorization(approverGrant)).toBe(false);
+
+    // Cards off: plugin forwarding is off here, approvers alone turn nothing on,
+    // forwarding without approvers draws no card, and a targets-only route sends text.
+    expect(deferred(authorize(configured, member, "plugin"))).toBe(true);
+    expect(
+      deferred(authorize(buildConfig({ channel: { allowFrom: [APPROVER] } }), member, "exec")),
+    ).toBe(true);
+    expect(
+      deferred(authorize(buildConfig({ approvals: { exec: { enabled: true } } }), member, "exec")),
+    ).toBe(true);
+    const targetsOnly = buildConfig({
+      channel: { allowFrom: [APPROVER] },
+      approvals: {
+        exec: {
+          enabled: true,
+          mode: "targets",
+          targets: [{ channel: "line", to: "line:group:C11111111111111111111111111111111" }],
+        },
+      },
+    });
+    expect(deferred(authorize(targetsOnly, member, "exec"))).toBe(true);
+  });
 
   // A group postback carries no userId, so cards go to approver DMs and the chat that
   // raised the request has to be told where they went.
@@ -81,20 +150,12 @@ describe("line approval capability", () => {
     expect(approverTargets?.map(buildChannelApprovalNativeTargetKey)).toEqual([originKey]);
   });
 
-  // Forwarding without approvers must not answer "not configured" while the forwarder
-  // sends a working `/approve` prompt; that chat keeps the prompt and command
-  // authorization, and no card is drawn.
-  it("keeps the typed /approve path when forwarding is on without approvers", () => {
+  // Forwarding without approvers draws no card, so neither the forwarded prompt nor the
+  // local one may be dropped.
+  it("keeps the text prompts when forwarding is on without approvers", () => {
     const forwardingOnly = buildConfig({ approvals: { exec: { enabled: true } } });
     const request = buildExecRequest(`line:${APPROVER}`);
 
-    expect(
-      lineApprovalCapability.getExecInitiatingSurfaceState?.({
-        cfg: forwardingOnly,
-        accountId: "default",
-        action: "approve",
-      }),
-    ).toEqual({ kind: "enabled" });
     expect(
       lineApprovalCapability.native?.describeDeliveryCapabilities({
         cfg: forwardingOnly,
@@ -112,50 +173,6 @@ describe("line approval capability", () => {
         request,
       }),
     ).toBe(false);
-    expect(
-      lineApprovalCapability.getActionAvailabilityState?.({
-        cfg: buildConfig({ approvals: { plugin: { enabled: true } } }),
-        accountId: "default",
-        action: "approve",
-        approvalKind: "plugin",
-      }),
-    ).toEqual({ kind: "enabled" });
-  });
-
-  // Availability follows forwarding, not approvers: listing approvers alone does not
-  // turn approvals on.
-  it("keeps approvals disabled when approvers are listed but forwarding is off", () => {
-    const approversOnly = buildConfig({ channel: { allowFrom: [APPROVER] } });
-
-    expect(
-      lineApprovalCapability.getExecInitiatingSurfaceState?.({
-        cfg: approversOnly,
-        accountId: "default",
-        action: "approve",
-      }),
-    ).toEqual({ kind: "disabled" });
-    expect(
-      lineApprovalCapability.getActionAvailabilityState?.({
-        cfg: approversOnly,
-        accountId: "default",
-        action: "approve",
-        approvalKind: "plugin",
-      }),
-    ).toEqual({ kind: "disabled" });
-  });
-
-  // A typed `/approve` without approvers is same-chat authorization, which still has to
-  // pass command authorization; an explicit grant would skip it.
-  it("keeps implicit same-chat authorization when no approvers are configured", () => {
-    const authorization = lineApprovalCapability.authorizeActorAction?.({
-      cfg: buildConfig({ approvals: { exec: { enabled: true } } }),
-      senderId: "U11111111111111111111111111111111",
-      action: "approve",
-      approvalKind: "exec",
-    });
-
-    expect(authorization).toEqual({ authorized: true });
-    expect(isImplicitSameChatApprovalAuthorization(authorization)).toBe(true);
   });
 
   // Native delivery replaces the forwarded prompt only in the chats it reaches; a
@@ -213,21 +230,6 @@ describe("line approval capability", () => {
     });
 
     expect(targets?.map((target) => target.to)).toEqual([APPROVER, second]);
-  });
-
-  it("names the forwarding settings cards need, for the account that raised the request", () => {
-    const params = { channel: "line", channelLabel: "LINE", accountId: "work" };
-
-    const exec = lineApprovalCapability.describeExecApprovalSetup?.(params) ?? "";
-    const plugin = lineApprovalCapability.describePluginApprovalSetup?.(params) ?? "";
-
-    expect(exec).toContain("`approvals.exec.enabled`");
-    expect(exec).toContain("`session` or `both`");
-    expect(exec).toContain("`channels.line.accounts.work.allowFrom`");
-    expect(plugin).toContain("`approvals.plugin.enabled`");
-    expect(plugin).toContain("`channels.line.accounts.work.allowFrom`");
-    // A plugin approval without a route never reaches the Gateway.
-    expect(plugin).not.toContain("Web UI");
   });
 });
 

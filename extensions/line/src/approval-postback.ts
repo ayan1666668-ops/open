@@ -1,4 +1,5 @@
 // Line plugin module owns the postback encoding for approval decision controls.
+import { isImplicitSameChatApprovalAuthorization } from "openclaw/plugin-sdk/approval-auth-runtime";
 import { buildApprovalResolutionRef } from "openclaw/plugin-sdk/approval-reference-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isApprovalNotFoundError } from "openclaw/plugin-sdk/error-runtime";
@@ -6,7 +7,7 @@ import type { MessagePresentationAction } from "openclaw/plugin-sdk/interactive-
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
-import { getLineApprovalApprovers, lineApprovalAuth } from "./approval-auth.js";
+import { authorizeLineApprovalActor } from "./approval-native.js";
 
 type LineApprovalPostback = Extract<MessagePresentationAction, { type: "approval" }>;
 
@@ -84,7 +85,8 @@ function parseLineApprovalPostbackData(data: string): LineApprovalPostback | und
  * Unreadable data returns nothing so the caller still consumes the reserved namespace.
  */
 export async function resolveLineApprovalPostbackTap(params: {
-  cfg: OpenClawConfig;
+  /** The config current when called; read after awaited work, just before the decision. */
+  resolveConfig: () => OpenClawConfig;
   accountId: string;
   data: string;
   senderId?: string;
@@ -93,35 +95,39 @@ export async function resolveLineApprovalPostbackTap(params: {
   if (!callback) {
     return undefined;
   }
-  // A tap decides only as a listed approver. Without one, same-chat authorization would
-  // let the tap skip the command authorization a typed `/approve` goes through, and a
-  // tap without a sender could not name who decided.
+  const commandFallback = `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;
   const senderId = params.senderId;
-  if (
-    !senderId ||
-    getLineApprovalApprovers({ cfg: params.cfg, accountId: params.accountId }).length === 0
-  ) {
-    return `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;
-  }
-  const authorization = lineApprovalAuth.authorizeActorAction?.({
-    cfg: params.cfg,
-    accountId: params.accountId,
-    senderId,
-    action: "approve",
-    approvalKind: callback.approvalKind,
-  });
-  if (authorization && !authorization.authorized) {
-    // The approver allowlist owns this wording; it is written to be shown.
-    return authorization.reason;
+  if (!senderId) {
+    // A tap without a sender could not name who decided.
+    return commandFallback;
   }
   try {
     const { resolveApprovalOverGateway } =
       await import("openclaw/plugin-sdk/approval-gateway-runtime");
+    // Authority is checked against the config current now, after the import, so an
+    // approver removed while the event waited cannot still decide.
+    const cfg = params.resolveConfig();
+    const authorization = authorizeLineApprovalActor({
+      cfg,
+      accountId: params.accountId,
+      senderId,
+      action: "approve",
+      approvalKind: callback.approvalKind,
+    });
+    if (isImplicitSameChatApprovalAuthorization(authorization)) {
+      // Same-chat authorization defers to command authorization, which a tap never passes
+      // through; typed `/approve` does.
+      return commandFallback;
+    }
+    if (!authorization.authorized) {
+      // The approver allowlist owns this wording; it is written to be shown.
+      return authorization.reason;
+    }
     // Reviewer identity is all-or-nothing for the gateway, and it is what binds the
     // resolution to this LINE account's approver custody. It also names the sender in
     // the published outcome, so no display name overrides it.
     const result = await resolveApprovalOverGateway({
-      cfg: params.cfg,
+      cfg,
       approvalId: callback.approvalId,
       approvalKind: callback.approvalKind,
       decision: callback.decision,
