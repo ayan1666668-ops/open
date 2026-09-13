@@ -151,7 +151,7 @@ describe("sweeper attribution for runs orphaned by a gateway death", () => {
   });
 
   it("notifies the spawning session instead of silently pruning a run that said nothing", async () => {
-    const { completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
+    const { entry, completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
 
     await sweeper.sweepOnce();
     sweeper.reset();
@@ -161,6 +161,7 @@ describe("sweeper attribution for runs orphaned by a gateway death", () => {
     expect(source).toBe("sweeper-orphaned-by-gateway-death");
     // sendFarewell is what carries the outcome back to the requester session.
     expect(completion.sendFarewell).toBe(true);
+    expect(completion.expectedEntry).toBe(entry);
     expect(completion.recoverInterrupted).toBe(true);
     expect(completion.outcome.status).toBe("error");
     expect(completion.outcome.error).toContain("host rebooted under the gateway");
@@ -216,7 +217,7 @@ describe("sweeper attribution for runs orphaned by a gateway death", () => {
     expect(completion.outcome.error).not.toContain("40m");
   });
 
-  it("leaves the silent prune in place when the boot stopped cleanly", async () => {
+  it("settles an orphan canonically without crash attribution when the boot stopped cleanly", async () => {
     bootSegments.current = [
       segment({
         bootId: "boot-clean",
@@ -226,37 +227,73 @@ describe("sweeper attribution for runs orphaned by a gateway death", () => {
       }),
       segment({ bootId: "boot-next", startedAtMs: GATEWAY_RESTARTED_AT }),
     ];
-    const { completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
+    const { entry, completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
 
     await sweeper.sweepOnce();
     sweeper.reset();
 
-    expect(completeSubagentRunWithRecovery).not.toHaveBeenCalled();
-    expect(runs.has("orphaned-run")).toBe(false);
+    expect(completeSubagentRunWithRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        expectedEntry: entry,
+        endedAt: RUN_REAPED_AT,
+        outcome: { status: "error", error: "subagent run orphaned: missing-session-entry" },
+        sendFarewell: true,
+        triggerCleanup: true,
+      }),
+      "sweeper-lost-context",
+    );
+    expect(completeSubagentRunWithRecovery.mock.calls[0]![0].recoverInterrupted).toBeUndefined();
+    expect(runs.get("orphaned-run")).toBe(entry);
   });
 
   it("keeps the generic wording when no boot history explains the orphan", async () => {
     bootSegments.current = [];
-    const { completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
+    const { entry, completeSubagentRunWithRecovery, runs, sweeper } = createHarness();
 
     await sweeper.sweepOnce();
     sweeper.reset();
 
-    expect(completeSubagentRunWithRecovery).not.toHaveBeenCalled();
-    expect(runs.has("orphaned-run")).toBe(false);
+    expect(completeSubagentRunWithRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        expectedEntry: entry,
+        endedAt: RUN_REAPED_AT,
+        outcome: { status: "error", error: "subagent run orphaned: missing-session-entry" },
+        sendFarewell: true,
+        triggerCleanup: true,
+      }),
+      "sweeper-lost-context",
+    );
+    expect(completeSubagentRunWithRecovery.mock.calls[0]![0].recoverInterrupted).toBeUndefined();
+    expect(runs.get("orphaned-run")).toBe(entry);
   });
 
-  it("does not hijack a run that recorded assistant output", async () => {
-    const { completeSubagentRunWithRecovery, sweeper } = createHarness({
+  it("hands an output-bearing unfinished run to canonical gateway-death settlement", async () => {
+    const { entry, runs, completeSubagentRunWithRecovery, sweeper } = createHarness({
       completion: { required: true, resultText: "here is what I found" },
     });
 
     await sweeper.sweepOnce();
     sweeper.reset();
 
-    // Output-bearing runs keep the existing prune path; the loud notification
-    // is reserved for the case the requester cannot recover from on its own.
-    expect(completeSubagentRunWithRecovery).not.toHaveBeenCalled();
+    // Captured output is not a terminal outcome. Pass the exact output-bearing
+    // row to canonical recovery; that owner controls payload replacement.
+    expect(completeSubagentRunWithRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        expectedEntry: entry,
+        endedAt: GATEWAY_RESTARTED_AT,
+        recoverInterrupted: true,
+        outcome: {
+          status: "error",
+          error: expect.stringContaining("output recorded in the run registry"),
+        },
+        triggerCleanup: true,
+      }),
+      "sweeper-orphaned-by-gateway-death",
+    );
+    expect(completeSubagentRunWithRecovery.mock.calls[0]![0].outcome.error).not.toContain(
+      "no output recorded",
+    );
+    expect(runs.get(entry.runId)?.completion?.resultText).toBe("here is what I found");
   });
 
   it.each([

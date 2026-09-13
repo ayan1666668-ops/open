@@ -328,9 +328,6 @@ async function runScenario(ownership: "current" | "replaced" | "released"): Prom
     runId,
     entry,
     now,
-    runs,
-    resumedRuns: new Set<string>(),
-    storeCache: new Map(),
     completeSubagentRunWithRecovery: runtime.completeSubagentRunWithRecovery,
   });
 

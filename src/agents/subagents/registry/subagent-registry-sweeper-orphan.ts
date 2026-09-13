@@ -14,40 +14,34 @@ import {
   resolveSubagentOrphanAttribution,
   resolveSubagentRunLastActivityMs,
 } from "./subagent-orphan-attribution.js";
-import { reconcileOrphanedRun } from "./subagent-registry-helpers.js";
 import type { SubagentCompletionRequest, SubagentRunRecord } from "./subagent-registry.types.js";
 import {
   loadSubagentSessionEntry,
   resolveCompletionFromSessionEntry,
   resolveSubagentRunOrphanReason,
-  type SubagentSessionStoreCache,
 } from "./subagent-session-reconciliation.js";
 
 const LOST_CONTEXT_ERROR = "subagent run lost active execution context";
 const ORPHAN_COMPLETION_SOURCE = "sweeper-orphaned-by-gateway-death";
 
 /**
- * Reconciles one stale active run. Returns whether the registry was mutated;
- * the caller stops processing this run either way.
+ * Settles one stale active run through the canonical completion owner.
+ * The caller stops processing this run; cleanup never bypasses task settlement.
  */
 export async function reconcileStaleActiveSubagentRun(params: {
   runId: string;
   entry: SubagentRunRecord;
   now: number;
-  runs: Map<string, SubagentRunRecord>;
-  resumedRuns: Set<string>;
-  storeCache: SubagentSessionStoreCache;
   completeSubagentRunWithRecovery: (
     completion: SubagentCompletionRequest,
     source: string,
   ) => Promise<void>;
-}): Promise<boolean> {
+}): Promise<void> {
   const { entry, now, runId } = params;
   const accountId = entry.requesterOrigin?.accountId;
   const runStartedAtMs = entry.execution.startedAt ?? entry.createdAt;
   const sessionEntry = loadSubagentSessionEntry({
     childSessionKey: entry.childSessionKey,
-    storeCache: params.storeCache,
   });
   // A fresh persisted terminal state is the child's authoritative outcome.
   // Resolve it before crash attribution so a later gateway death cannot
@@ -70,7 +64,7 @@ export async function reconcileStaleActiveSubagentRun(params: {
       },
       "sweeper-session-completion",
     );
-    return false;
+    return;
   }
   // The reap happens arbitrarily long after the death — it includes however
   // long the host stayed down. Correlate against boot history before writing
@@ -92,36 +86,8 @@ export async function reconcileStaleActiveSubagentRun(params: {
   const attributedError = attribution ? formatSubagentOrphanErrorMessage(attribution) : undefined;
 
   const orphanReason = resolveSubagentRunOrphanReason({ entry });
-  if (orphanReason) {
-    // Notify the requester when an attributed orphan has no captured output
-    // instead of silently pruning it. Snapshot absence is not evidence that
-    // the transcript is empty.
-    if (attribution && attributedError && !hasRecordedOutput) {
-      await params.completeSubagentRunWithRecovery(
-        {
-          runId,
-          expectedEntry: entry,
-          endedAt: attribution.diedAtMs,
-          outcome: { status: "error", error: attributedError },
-          reason: SUBAGENT_ENDED_REASON_ERROR,
-          recoverInterrupted: true,
-          sendFarewell: true,
-          accountId,
-          triggerCleanup: true,
-        },
-        ORPHAN_COMPLETION_SOURCE,
-      );
-      return true;
-    }
-    return reconcileOrphanedRun({
-      runId,
-      entry,
-      reason: orphanReason,
-      source: "resume",
-      runs: params.runs,
-      resumedRuns: params.resumedRuns,
-    });
-  }
+  // Main now requires canonical task settlement for every orphan; missing
+  // session metadata no longer permits direct row or attachment pruning.
 
   await params.completeSubagentRunWithRecovery(
     {
@@ -129,7 +95,12 @@ export async function reconcileStaleActiveSubagentRun(params: {
       expectedEntry: entry,
       // An attributed death ended when the run died, not when it was found.
       endedAt: attribution?.diedAtMs ?? now,
-      outcome: { status: "error", error: attributedError ?? LOST_CONTEXT_ERROR },
+      outcome: {
+        status: "error",
+        error:
+          attributedError ??
+          (orphanReason ? `subagent run orphaned: ${orphanReason}` : LOST_CONTEXT_ERROR),
+      },
       reason: SUBAGENT_ENDED_REASON_ERROR,
       ...(attribution ? { recoverInterrupted: true as const } : {}),
       sendFarewell: true,
@@ -138,5 +109,4 @@ export async function reconcileStaleActiveSubagentRun(params: {
     },
     attribution ? ORPHAN_COMPLETION_SOURCE : "sweeper-lost-context",
   );
-  return false;
 }
