@@ -50,6 +50,8 @@ import {
   getBrowserSessionTabStore,
   getOptionalBrowserSessionTabStore,
   parseBrowserSessionTabRecord,
+  parseBrowserDashboardStopIntent,
+  readBrowserDashboardStopIntents,
   sameBrowserSessionTabRecord,
   updateBrowserSessionTab,
   withoutBrowserSessionTabCleanup,
@@ -118,6 +120,9 @@ function durableOwnership(params: SessionTabParams): DurableOwnership | undefine
 function deleteInvalidRecord(key: string, onWarn?: (message: string) => void): void {
   try {
     const deleted = deleteBrowserSessionTabIf(key, (current) => {
+      if (parseBrowserDashboardStopIntent(key, current)) {
+        return false;
+      }
       const record = parseBrowserSessionTabRecord(current);
       return !record || browserSessionTabStorageKey(record) !== key;
     });
@@ -139,6 +144,9 @@ function readDurableTabs(onWarn?: (message: string) => void): DurableTab[] {
   }
   const tabs: DurableTab[] = [];
   for (const entry of store.entries()) {
+    if (parseBrowserDashboardStopIntent(entry.key, entry.value)) {
+      continue;
+    }
     const record = parseBrowserSessionTabRecord(entry.value);
     if (!record || browserSessionTabStorageKey(record) !== entry.key) {
       deleteInvalidRecord(entry.key, onWarn);
@@ -577,7 +585,10 @@ export async function closeTrackedBrowserTabsForSessions(
   params: CloseParams & { sessionKeys: Array<string | undefined>; now?: number },
 ): Promise<number> {
   let dashboardClosed = 0;
-  if (readDurableTabs(params.onWarn).some((tab) => tab.dashboard)) {
+  if (
+    readDurableTabs(params.onWarn).some((tab) => tab.dashboard) ||
+    readBrowserDashboardStopIntents().length > 0
+  ) {
     const { reconcileBrowserDashboards } = await import("../browser-dashboard.js");
     dashboardClosed = await reconcileBrowserDashboards(params);
   }
@@ -606,7 +617,10 @@ export async function sweepTrackedBrowserTabs(
 ): Promise<number> {
   const now = params.now ?? Date.now();
   let dashboardClosed = 0;
-  if (readDurableTabs(params.onWarn).some((tab) => tab.dashboard)) {
+  if (
+    readDurableTabs(params.onWarn).some((tab) => tab.dashboard) ||
+    readBrowserDashboardStopIntents().length > 0
+  ) {
     const { reconcileBrowserDashboards } = await import("../browser-dashboard.js");
     dashboardClosed = await reconcileBrowserDashboards(params);
   }

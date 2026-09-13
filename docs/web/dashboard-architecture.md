@@ -305,7 +305,10 @@ per-put view and grant generations; those are a different lifetime.
 Browser owns the tab association and stopped state in its existing
 `browser.session-tabs` SQLite namespace, including the browser/profile
 fingerprints used for safe cleanup. Concurrent views and agent calls share
-materialization for one board instance. Calls resolve the current definition
+materialization for one board instance. Stop before the first open persists a
+typed intent in the same store without a browser target or fingerprints; it
+survives reload and is retired after successful Resume or definition removal.
+Calls resolve the current definition
 and revalidate the association through the existing browser route/profile
 admission before acting. A saved target ID alone is not authority.
 

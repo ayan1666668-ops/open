@@ -3,7 +3,7 @@ import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state
 // Browser plugin runtime state shared across lazy bundles and duplicate SDK module instances.
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import type { PluginRuntime } from "openclaw/plugin-sdk/runtime-store";
-import type { BrowserDashboardDefinition } from "./browser-dashboard-definition.js";
+import type { BrowserDashboardDefinition } from "./browser-dashboard.types.js";
 
 export type BrowserDashboardOperation = {
   promise: Promise<unknown>;

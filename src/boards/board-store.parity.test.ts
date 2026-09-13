@@ -183,72 +183,83 @@ describe("SqliteBoardStore behavior", () => {
     );
   });
 
-  it("preserves grants only for unchanged bytes with equal or narrower declarations", async () => {
-    const store = createStore();
-    const first = await store.putWidget({
-      ...boardSession,
-      name: "scoped",
-      content: { kind: "html", html: "one" },
-      declared: {
-        netOrigins: ["https://one.example", "https://two.example"],
-        tools: ["weather.read", "weather.refresh"],
-      },
-    });
-    await store.grant(boardSession, "scoped", "granted", 1, first.widgets[0]?.instanceId);
+  it.each(["html", "registered"] as const)(
+    "preserves %s grants only for unchanged bytes with equal or narrower declarations",
+    async (kind) => {
+      const documentContent = (text: string) =>
+        kind === "html"
+          ? { kind, html: text }
+          : { kind, contentKind: "diagram", pluginKind: "diagram:diagram", source: text };
+      const store = createStore();
+      const first = await store.putWidget({
+        ...boardSession,
+        name: "scoped",
+        content: documentContent("one"),
+        declared: {
+          netOrigins: ["https://one.example", "https://two.example"],
+          tools: ["weather.read", "weather.refresh"],
+        },
+      });
+      await store.grant(boardSession, "scoped", "granted", 1, first.widgets[0]?.instanceId);
 
-    const equal = await store.putWidget({
-      ...boardSession,
-      name: "scoped",
-      content: { kind: "html", html: "one" },
-      declared: {
-        netOrigins: ["https://one.example", "https://two.example"],
-        tools: ["weather.read", "weather.refresh"],
-      },
-    });
-    expect(equal.widgets[0]).toMatchObject({ revision: 2, grantState: "granted" });
-    expect(await readBoardHtml(store, boardSession, "scoped")).toMatchObject({
-      html: "one",
-      grantState: "granted",
-    });
+      const equal = await store.putWidget({
+        ...boardSession,
+        name: "scoped",
+        content: documentContent("one"),
+        declared: {
+          netOrigins: ["https://one.example", "https://two.example"],
+          tools: ["weather.read", "weather.refresh"],
+        },
+      });
+      expect(equal.widgets[0]).toMatchObject({ revision: 2, grantState: "granted" });
+      expect(
+        await store.useWidgetDocument(boardSession, "scoped", (document) => document),
+      ).toMatchObject({
+        ...(kind === "html" ? { html: "one" } : { source: "one" }),
+        grantState: "granted",
+      });
 
-    const narrower = await store.putWidget({
-      ...boardSession,
-      name: "scoped",
-      content: { kind: "html", html: "one" },
-      declared: {
-        netOrigins: ["https://one.example"],
-        tools: ["weather.read"],
-      },
-    });
-    expect(narrower.widgets[0]).toMatchObject({ revision: 3, grantState: "granted" });
+      const narrower = await store.putWidget({
+        ...boardSession,
+        name: "scoped",
+        content: documentContent("one"),
+        declared: {
+          netOrigins: ["https://one.example"],
+          tools: ["weather.read"],
+        },
+      });
+      expect(narrower.widgets[0]).toMatchObject({ revision: 3, grantState: "granted" });
 
-    const changed = await store.putWidget({
-      ...boardSession,
-      name: "scoped",
-      content: { kind: "html", html: "two" },
-      declared: {
-        netOrigins: ["https://one.example"],
-        tools: ["weather.read"],
-      },
-    });
-    expect(changed.widgets[0]).toMatchObject({ revision: 4, grantState: "pending" });
-    expect(await readBoardHtml(store, boardSession, "scoped")).toMatchObject({
-      html: "two",
-      grantState: "pending",
-    });
-    await store.grant(boardSession, "scoped", "granted", 4, changed.widgets[0]?.instanceId);
+      const changed = await store.putWidget({
+        ...boardSession,
+        name: "scoped",
+        content: documentContent("two"),
+        declared: {
+          netOrigins: ["https://one.example"],
+          tools: ["weather.read"],
+        },
+      });
+      expect(changed.widgets[0]).toMatchObject({ revision: 4, grantState: "pending" });
+      expect(
+        await store.useWidgetDocument(boardSession, "scoped", (document) => document),
+      ).toMatchObject({
+        ...(kind === "html" ? { html: "two" } : { source: "two" }),
+        grantState: "pending",
+      });
+      await store.grant(boardSession, "scoped", "granted", 4, changed.widgets[0]?.instanceId);
 
-    const wider = await store.putWidget({
-      ...boardSession,
-      name: "scoped",
-      content: { kind: "html", html: "two" },
-      declared: {
-        netOrigins: ["https://one.example", "https://three.example"],
-        tools: ["weather.read"],
-      },
-    });
-    expect(wider.widgets[0]).toMatchObject({ revision: 5, grantState: "pending" });
-  });
+      const wider = await store.putWidget({
+        ...boardSession,
+        name: "scoped",
+        content: documentContent("two"),
+        declared: {
+          netOrigins: ["https://one.example", "https://three.example"],
+          tools: ["weather.read"],
+        },
+      });
+      expect(wider.widgets[0]).toMatchObject({ revision: 5, grantState: "pending" });
+    },
+  );
 
   it("requires a fresh grant when an MCP app widget changes servers", async () => {
     const store = createStore();

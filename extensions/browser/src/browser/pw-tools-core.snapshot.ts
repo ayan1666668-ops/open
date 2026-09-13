@@ -49,6 +49,10 @@ import {
   readMainFrameDocumentIdentityForPage,
   withPageScopedCdpClient,
 } from "./pw-session.page-cdp.js";
+import {
+  assertInteractionCurrent,
+  type InteractionTargetOptions,
+} from "./pw-tools-core.interactions.navigation.js";
 import { runPageEmulationTransition, setViewportSizeOnPage } from "./pw-tools-core.state.js";
 import {
   assertBrowserDashboardTabCanClose,
@@ -665,13 +669,13 @@ export async function navigateViaPlaywright(opts: {
 }
 
 /** Resizes the target page viewport within the browser action policy bounds. */
-export async function resizeViewportViaPlaywright(opts: {
-  cdpUrl: string;
-  targetId?: string;
-  width: number;
-  height: number;
-  signal?: AbortSignal;
-}): Promise<void> {
+export async function resizeViewportViaPlaywright(
+  opts: InteractionTargetOptions & {
+    width: number;
+    height: number;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
   const page = await getPageForTargetId(opts);
   const state = ensurePageState(page);
   const viewport = {
@@ -681,15 +685,16 @@ export async function resizeViewportViaPlaywright(opts: {
   await runPageEmulationTransition({
     state,
     signal: opts.signal,
-    run: () => setViewportSizeOnPage(page, state, viewport),
+    run: async () => {
+      await assertInteractionCurrent(opts);
+      opts.signal?.throwIfAborted();
+      await setViewportSizeOnPage(page, state, viewport);
+    },
   });
 }
 
 /** Closes the target Playwright page. */
-export async function closePageViaPlaywright(opts: {
-  cdpUrl: string;
-  targetId?: string;
-}): Promise<void> {
+export async function closePageViaPlaywright(opts: InteractionTargetOptions): Promise<void> {
   const page = await getPageForTargetId(opts);
   ensurePageState(page);
   if (readBrowserDashboardTabs().length > 0) {
@@ -699,6 +704,7 @@ export async function closePageViaPlaywright(opts: {
     }
     assertBrowserDashboardTabCanClose(targetId);
   }
+  await assertInteractionCurrent(opts);
   await page.close();
 }
 

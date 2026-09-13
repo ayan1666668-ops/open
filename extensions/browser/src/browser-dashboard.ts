@@ -2,10 +2,12 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import {
   readBrowserDashboardDefinition,
   sameBrowserDashboardDefinition,
-  type BrowserDashboardDefinition,
-  type BrowserDashboardRequest,
-  type BrowserDashboardResponse,
 } from "./browser-dashboard-definition.js";
+import type {
+  BrowserDashboardDefinition,
+  BrowserDashboardRequest,
+  BrowserDashboardResponse,
+} from "./browser-dashboard.types.js";
 import {
   getBrowserStateRuntime,
   getOptionalBrowserStateRuntime,
@@ -27,7 +29,11 @@ import {
 } from "./browser/session-tab-registry.js";
 import {
   deleteBrowserSessionTabIf,
+  deleteBrowserDashboardStopIntent,
   parseBrowserSessionTabRecord,
+  persistBrowserDashboardStopIntent,
+  readBrowserDashboardStopIntent,
+  readBrowserDashboardStopIntents,
   readBrowserDashboardTabs,
   sameBrowserSessionTabRecord,
   updateBrowserSessionTab,
@@ -97,7 +103,11 @@ function responseFor(
   definition: BrowserDashboardDefinition,
   tab?: DashboardTab,
 ): BrowserDashboardResponse {
-  const paused = tab?.dashboard?.state === "stopped" || tab?.dashboard?.state === "stopping";
+  const paused =
+    tab?.dashboard?.state === "stopped" ||
+    tab?.dashboard?.state === "stopping" ||
+    (!tab &&
+      sameBrowserDashboardDefinition(definition, readBrowserDashboardStopIntent(definition)));
   return {
     sessionKey: definition.sessionKey,
     name: definition.name,
@@ -259,16 +269,9 @@ async function materialize(
   resume: boolean,
   authority: BrowserDashboardAuthority,
 ): Promise<BrowserDashboardResponse> {
-  const runtime = getBrowserStateRuntime();
-  const assertCurrent = () => {
-    assertAuthority(authority);
-    if (getBrowserStateRuntime() !== runtime) {
-      throw new Error("Browser dashboard runtime changed");
-    }
-  };
-  const boundAuthority = { ...authority, assertCurrent };
   const { profile, resolved, ssrfPolicy } = await resolveManagedProfile(definition);
-  assertCurrent();
+  assertAuthority(authority);
+  const stoppedIntent = readBrowserDashboardStopIntent(definition);
   const superseded: { tab: DashboardTab; wasUnreachable: boolean }[] = [];
   for (const tab of tabsForDefinition(definition)) {
     if (!definitionOwnsTab(definition, tab) || tab.dashboard?.state === "released") {
@@ -277,15 +280,15 @@ async function materialize(
     }
     if (tab.dashboard?.state === "stopping" || tab.dashboard?.state === "stopped") {
       if (!resume) {
-        await assertDefinitionCurrent(definition, boundAuthority);
+        await assertDefinitionCurrent(definition, authority);
         return responseFor(definition, tab);
       }
       superseded.push({ tab, wasUnreachable: false });
       continue;
     }
-    const observation = await observeExistingTab(definition, tab, boundAuthority);
+    const observation = await observeExistingTab(definition, tab, authority);
     if (observation === "present") {
-      await assertDefinitionCurrent(definition, boundAuthority);
+      await assertDefinitionCurrent(definition, authority);
       const current = tabsForDefinition(definition).find(
         (candidate) => candidate.storageKey === tab.storageKey,
       );
@@ -296,7 +299,10 @@ async function materialize(
     }
     superseded.push({ tab, wasUnreachable: observation === "unreachable" });
   }
-  await assertDefinitionCurrent(definition, boundAuthority);
+  await assertDefinitionCurrent(definition, authority);
+  if (!resume && stoppedIntent && sameBrowserDashboardDefinition(stoppedIntent, definition)) {
+    return responseFor(definition);
+  }
   const opened = await browserOpenTab(undefined, definition.url, {
     profile: profile.name,
     signal: authority.signal,
@@ -304,7 +310,7 @@ async function materialize(
   });
   const ownership = opened.ownership;
   try {
-    await assertDefinitionCurrent(definition, boundAuthority);
+    await assertDefinitionCurrent(definition, authority);
     if (ownership?.status !== "durable" || opened.resolvedProfile !== profile.name) {
       throw new Error("Browser could not verify durable ownership for this dashboard tab");
     }
@@ -328,7 +334,7 @@ async function materialize(
         definitionOwnsTab(definition, candidate.tab)
       ) {
         await closeStoppingTab(candidate.tab, definition);
-        assertCurrent();
+        assertAuthority(authority);
         const stopped = tabsForDefinition(definition).find(
           (tab) =>
             tab.storageKey === candidate.tab.storageKey && tab.dashboard?.state === "stopped",
@@ -348,9 +354,9 @@ async function materialize(
           "Previous dashboard tab could not be released; retry when its browser is available",
         );
       }
-      assertCurrent();
+      assertAuthority(authority);
     }
-    await assertDefinitionCurrent(definition, boundAuthority);
+    await assertDefinitionCurrent(definition, authority);
     trackSessionBrowserTab({
       sessionKey: definition.sessionKey,
       targetId: ownership.nativeTargetId,
@@ -380,6 +386,9 @@ async function materialize(
       if (previous.dashboard?.state === "stopped") {
         deleteStoppedTab(previous);
       }
+    }
+    if (stoppedIntent) {
+      deleteBrowserDashboardStopIntent(stoppedIntent);
     }
     emitDashboardChanged(definition);
     return responseFor(definition, tab);
@@ -635,7 +644,11 @@ async function stopMaterializedDashboard(
   const current = tabsForDefinition(definition).find(
     (tab) => definitionOwnsTab(definition, tab) && tab.dashboard?.state !== "released",
   );
-  return current ? responseFor(definition, current) : { ...responseFor(definition), paused: true };
+  if (!current) {
+    persistBrowserDashboardStopIntent(definition);
+    emitDashboardChanged(definition);
+  }
+  return responseFor(definition, current);
 }
 
 /** Existing cleanup cycle reconciles dashboard removal, replacement, and explicit stop. */
@@ -675,6 +688,25 @@ export async function reconcileBrowserDashboards(
       params.onWarn?.(
         `Could not reconcile Browser dashboard ${tab.dashboard.name}: ${String(error)}`,
       );
+    }
+  }
+  for (const intent of readBrowserDashboardStopIntents()) {
+    if (params.sessionKeys && !params.sessionKeys.includes(intent.sessionKey)) {
+      continue;
+    }
+    try {
+      const definition = await readBrowserDashboardDefinition(intent);
+      if (
+        !sameBrowserDashboardDefinition(intent, definition) ||
+        (definition &&
+          tabsForDefinition(definition).some(
+            (tab) => tab.dashboard?.state === "active" && definitionOwnsTab(definition, tab),
+          ))
+      ) {
+        deleteBrowserDashboardStopIntent(intent);
+      }
+    } catch (error) {
+      params.onWarn?.(`Could not reconcile Browser dashboard ${intent.name}: ${String(error)}`);
     }
   }
   return closed;

@@ -1,5 +1,10 @@
 import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { z } from "zod";
+import type {
+  BrowserDashboardDefinition,
+  BrowserDashboardIdentity,
+  BrowserDashboardRequest,
+} from "./browser-dashboard.types.js";
 import { getBrowserStateRuntime } from "./browser-runtime-state.js";
 
 const BROWSER_DASHBOARD_WIDGET_KIND = "browser:dashboard";
@@ -46,36 +51,6 @@ const boardSnapshotSchema = z.object({
     }),
   ),
 });
-
-export type BrowserDashboardRequest = {
-  sessionKey: string;
-  agentId?: string;
-  name: string;
-  instanceId?: string;
-};
-
-export type BrowserDashboardDefinition = {
-  sessionKey: string;
-  agentId: string;
-  name: string;
-  instanceId: string;
-  revision: number;
-  title?: string;
-  url: string;
-  profile: string;
-};
-
-export type BrowserDashboardResponse = {
-  sessionKey: string;
-  name: string;
-  instanceId: string;
-  revision: number;
-  paused: boolean;
-  stopping: boolean;
-  url: string;
-  title?: string;
-  browserTab?: { target: "host"; profile: string; targetId: string };
-};
 
 /** Resolve the current board instance; a saved browser target is never authority. */
 export async function readBrowserDashboardDefinition(
@@ -128,8 +103,8 @@ export async function readBrowserDashboardDefinition(
 }
 
 export function sameBrowserDashboardDefinition(
-  left: BrowserDashboardDefinition,
-  right: BrowserDashboardDefinition | undefined,
+  left: BrowserDashboardIdentity,
+  right: BrowserDashboardIdentity | undefined,
 ): boolean {
   return Boolean(
     right &&

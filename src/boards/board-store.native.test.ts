@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  openOpenClawAgentDatabase,
+} from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createTestBoardStore, readBoardHtml } from "./board-store.test-support.js";
 
@@ -109,6 +112,68 @@ describe("SqliteBoardStore native widgets", () => {
         declared: { tools: ["workboard.cards.move"] },
       }),
     ).rejects.toThrow("do not accept sandbox capability declarations");
+  });
+
+  it("adopts a legacy native identity only on put without backfilling reads or layout edits", async () => {
+    const stateDir = tempDirs.make("openclaw-board-legacy-native-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const store = createTestBoardStore({ stateDir });
+    const target = { sessionKey: "agent:main:legacy-native" };
+    const content = {
+      kind: "plugin" as const,
+      pluginKind: "workboard:card",
+      props: { cardId: "legacy-card", compact: true },
+    };
+    await store.applyOps(target, [{ kind: "tab_create", tabId: "status", title: "Status" }]);
+    const initial = await store.putWidget({
+      ...target,
+      name: "legacy",
+      title: "Legacy status",
+      content,
+      presentation: "full-bleed",
+      heightMode: "auto",
+      placement: { tabId: "status", size: "lg" },
+    });
+    const database = openOpenClawAgentDatabase({ agentId: "main", env });
+    database.db
+      .prepare(
+        "UPDATE board_widgets SET manifest = json_remove(manifest, '$.pluginInstanceId') WHERE session_key = ? AND name = 'legacy'",
+      )
+      .run(target.sessionKey);
+    const readPersistedWidget = () =>
+      openOpenClawAgentDatabase({ agentId: "main", env })
+        .db.prepare("SELECT * FROM board_widgets WHERE session_key = ? AND name = 'legacy'")
+        .get(target.sessionKey);
+    const persistedLegacy = readPersistedWidget();
+    const expectedLegacy = { ...initial.widgets[0]! };
+    delete expectedLegacy.instanceId;
+
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    const reopened = createTestBoardStore({ stateDir });
+    expect((await reopened.getSnapshot(target)).widgets).toEqual([expectedLegacy]);
+    expect(readPersistedWidget()).toEqual(persistedLegacy);
+
+    const resized = await reopened.applyOps(target, [
+      { kind: "widget_resize", name: "legacy", sizeW: 9, sizeH: 7 },
+    ]);
+    expect(resized.widgets).toEqual([
+      { ...expectedLegacy, sizeW: 9, sizeH: 7, heightMode: "fixed" },
+    ]);
+    expect((await reopened.getSnapshot(target)).widgets).toEqual(resized.widgets);
+    expect(readPersistedWidget()?.manifest).not.toContain("pluginInstanceId");
+
+    const adopted = await reopened.putWidget({ ...target, name: "legacy", content });
+    const instanceId = adopted.widgets[0]?.instanceId;
+    expect(instanceId).toMatch(/^[a-f0-9]{32}$/u);
+    expect(instanceId).not.toBe(initial.widgets[0]?.instanceId);
+    expect(adopted.widgets).toEqual([{ ...resized.widgets[0], revision: 2, instanceId }]);
+
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    expect((await createTestBoardStore({ stateDir }).getSnapshot(target)).widgets).toEqual(
+      adopted.widgets,
+    );
   });
 
   it("keeps native widget identity across edits and reopen, but renews it after removal", async () => {

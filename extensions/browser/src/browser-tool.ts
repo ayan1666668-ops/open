@@ -7,8 +7,8 @@
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { asNullableRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-import type { BrowserDashboardResponse } from "./browser-dashboard-definition.js";
 import { assertBrowserDashboardTargetCurrent } from "./browser-dashboard.js";
+import type { BrowserDashboardResponse } from "./browser-dashboard.types.js";
 import {
   createBrowserNodeProxyRequest,
   createBrowserNodeSessionTabRoute,

@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PluginRuntime } from "openclaw/plugin-sdk/runtime-store";
 import { z } from "zod";
+import type { BrowserDashboardIdentity } from "../browser-dashboard.types.js";
 import {
   getBrowserStateRuntime,
   getOptionalBrowserStateRuntime,
@@ -15,6 +16,17 @@ const BROWSER_SESSION_TABS_NAMESPACE = "browser.session-tabs";
 const BROWSER_SESSION_TABS_MAX_ENTRIES = 5_000;
 
 const browserSessionTimestampSchema = z.number().finite().nonnegative();
+const browserDashboardStopIntentSchema = z.strictObject({
+  kind: z.literal("dashboard-stop"),
+  version: z.literal(1),
+  stopId: z.uuid(),
+  sessionKey: z.string().min(1),
+  agentId: z.string().min(1),
+  name: z.string().min(1).max(64),
+  instanceId: z.string().min(1),
+  url: z.string().min(1).max(4096),
+  profile: z.string().min(1),
+});
 const browserProfileAliasSchema = z
   .string()
   .min(1)
@@ -71,6 +83,63 @@ const browserSessionTabRecordSchema = z
   });
 
 export type BrowserSessionTabRecord = z.infer<typeof browserSessionTabRecordSchema>;
+export type BrowserDashboardStopIntent = z.infer<typeof browserDashboardStopIntentSchema>;
+
+function browserDashboardStopIntentKey(
+  identity: Pick<BrowserDashboardIdentity, "sessionKey" | "agentId" | "instanceId" | "name">,
+): string {
+  return `dashboard-stop:${createHash("sha256")
+    .update(
+      JSON.stringify([identity.sessionKey, identity.agentId, identity.instanceId, identity.name]),
+    )
+    .digest("hex")}`;
+}
+
+export function parseBrowserDashboardStopIntent(
+  key: string,
+  value: unknown,
+): BrowserDashboardStopIntent | undefined {
+  const parsed = browserDashboardStopIntentSchema.safeParse(value);
+  return parsed.success && browserDashboardStopIntentKey(parsed.data) === key
+    ? parsed.data
+    : undefined;
+}
+
+export function readBrowserDashboardStopIntent(identity: BrowserDashboardIdentity) {
+  const key = browserDashboardStopIntentKey(identity);
+  return parseBrowserDashboardStopIntent(key, getOptionalBrowserSessionTabStore()?.lookup(key));
+}
+
+export function readBrowserDashboardStopIntents(): BrowserDashboardStopIntent[] {
+  return (getOptionalBrowserSessionTabStore()?.entries() ?? []).flatMap(({ key, value }) => {
+    const intent = parseBrowserDashboardStopIntent(key, value);
+    return intent ? [intent] : [];
+  });
+}
+
+export function persistBrowserDashboardStopIntent(identity: BrowserDashboardIdentity): void {
+  const { sessionKey, agentId, name, instanceId, url, profile } = identity;
+  const intent: BrowserDashboardStopIntent = {
+    kind: "dashboard-stop",
+    version: 1,
+    stopId: randomUUID(),
+    sessionKey,
+    agentId,
+    name,
+    instanceId,
+    url,
+    profile,
+  };
+  getBrowserSessionTabStore().register(browserDashboardStopIntentKey(intent), intent);
+}
+
+export function deleteBrowserDashboardStopIntent(intent: BrowserDashboardStopIntent): boolean {
+  const key = browserDashboardStopIntentKey(intent);
+  return deleteBrowserSessionTabIf(
+    key,
+    (current) => parseBrowserDashboardStopIntent(key, current)?.stopId === intent.stopId,
+  );
+}
 
 type BrowserSessionTabStoreRuntime = {
   state: Pick<PluginRuntime["state"], "openSyncKeyedStore">;

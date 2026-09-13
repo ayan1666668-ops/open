@@ -91,30 +91,53 @@ describe("Browser dashboard lifetime", () => {
     expect(browser.closeOwned).not.toHaveBeenCalled();
   });
 
-  it("persists explicit stop without rewriting board props and resumes only on request", async () => {
-    expect((await stopBrowserDashboard(request)).paused).toBe(true);
-    expect(browser.open).not.toHaveBeenCalled();
-    await requestBrowserDashboard(request);
-    expect((await stopBrowserDashboard(request)).paused).toBe(true);
-    expect(fixture.tabs).toEqual([]);
-    expect(readBrowserDashboardTabs()[0]?.dashboard?.state).toBe("stopped");
-    fixture.installRuntime();
-    expect((await requestBrowserDashboard(request)).paused).toBe(true);
-    expect(browser.open).toHaveBeenCalledOnce();
-    const resumed = await requestBrowserDashboard({ ...request, resume: true });
-    expect(resumed.browserTab?.targetId).toBe("target-2");
-    expect(resumed.paused).toBe(false);
-    expect(fixture.widgets[0]?.props).toEqual({ url: "http://service.example/" });
-    expect(readBrowserDashboardTabs()).toHaveLength(1);
-  });
+  it.each(["cold", "warm"] as const)(
+    "persists %s Stop across reload and resumes only on request",
+    async (state) => {
+      if (state === "warm") {
+        await requestBrowserDashboard(request);
+      }
+      expect((await stopBrowserDashboard(request)).paused).toBe(true);
+      expect(fixture.tabs).toEqual([]);
+      expect((await inspectBrowserDashboard(request)).paused).toBe(true);
+      if (state === "cold") {
+        const store = getBrowserSessionTabStore();
+        store.register("dashboard-stop:forged", store.entries()[0]?.value);
+      }
+      await sweepTrackedBrowserTabs({
+        idleMs: 1,
+        maxTabsPerSession: 1,
+        now: Date.now() + 86_400_000,
+      });
+      expect(getBrowserSessionTabStore().entries()).toHaveLength(1);
+      fixture.installRuntime();
+      expect((await requestBrowserDashboard(request)).paused).toBe(true);
+      expect(browser.open).toHaveBeenCalledTimes(state === "cold" ? 0 : 1);
+      if (state === "cold") {
+        expect(readBrowserDashboardTabs()).toEqual([]);
+        expect(getBrowserSessionTabStore().entries()[0]?.value).toMatchObject({
+          kind: "dashboard-stop",
+        });
+      }
+      const resumed = await requestBrowserDashboard({ ...request, resume: true });
+      expect(resumed.browserTab?.targetId).toBe(state === "cold" ? "target-1" : "target-2");
+      expect(resumed.paused).toBe(false);
+      expect(fixture.widgets[0]?.props).toEqual({ url: "http://service.example/" });
+      expect(getBrowserSessionTabStore().entries()).toHaveLength(1);
+    },
+  );
 
   it.each([
     ["stopped", "cancelled"],
     ["stopped", "registration failed"],
     ["stopping", "cancelled"],
     ["stopping", "registration failed"],
+    ["cold", "cancelled"],
+    ["cold", "registration failed"],
   ] as const)("preserves %s intent after Resume failure: %s", async (state, failure) => {
-    await requestBrowserDashboard(request);
+    if (state !== "cold") {
+      await requestBrowserDashboard(request);
+    }
     if (state === "stopping") {
       browser.closeOwned.mockResolvedValueOnce({
         status: "unavailable",
@@ -165,28 +188,91 @@ describe("Browser dashboard lifetime", () => {
     expect(fixture.tabs).toEqual([]);
     expect((await inspectBrowserDashboard(request)).paused).toBe(true);
     expect((await requestBrowserDashboard(request)).paused).toBe(true);
-    expect(browser.open).toHaveBeenCalledTimes(2);
-    expect(readBrowserDashboardTabs()).toHaveLength(1);
-    expect(readBrowserDashboardTabs()[0]?.dashboard?.state).toBe("stopped");
+    expect(browser.open).toHaveBeenCalledTimes(state === "cold" ? 1 : 2);
+    expect(getBrowserSessionTabStore().entries()).toHaveLength(1);
     expect((await requestBrowserDashboard({ ...request, resume: true })).paused).toBe(false);
   });
 
-  it("prefers a committed active target while obsolete stopped-marker retirement retries", async () => {
-    await requestBrowserDashboard(request);
+  it.each(["removed", "session deleted", "replaced", "URL changed", "profile changed"] as const)(
+    "retires cold Stop intent when the definition is %s without starting a browser",
+    async (change) => {
+      await stopBrowserDashboard(request);
+      if (change === "removed" || change === "session deleted") {
+        fixture.widgets = [];
+      } else if (change === "replaced") {
+        fixture.widgets[0]!.instanceId = "instance-two";
+      } else if (change === "URL changed") {
+        fixture.widgets[0]!.props.url = "http://updated.example/";
+      } else {
+        fixture.widgets[0]!.props.profile = "other-managed";
+      }
+      if (change === "session deleted") {
+        await closeTrackedBrowserTabsForSessions({ sessionKeys: [sessionKey] });
+      } else {
+        await sweepTrackedBrowserTabs({ ordinaryCleanup: false });
+      }
+      expect(getBrowserSessionTabStore().entries()).toEqual([]);
+      expect(browser.open).not.toHaveBeenCalled();
+      expect(browser.closeOwned).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["cold", "warm"] as const)(
+    "prefers an active target while %s stopped-marker retirement retries",
+    async (state) => {
+      if (state === "warm") {
+        await requestBrowserDashboard(request);
+      }
+      await stopBrowserDashboard(request);
+      const retirement = vi
+        .spyOn(getBrowserSessionTabStore(), "deleteIf")
+        .mockReturnValueOnce(false);
+      let resumed;
+      try {
+        resumed = await requestBrowserDashboard({ ...request, resume: true });
+      } finally {
+        retirement.mockRestore();
+      }
+      expect(getBrowserSessionTabStore().entries()).toHaveLength(2);
+      expect((await inspectBrowserDashboard(request)).browserTab).toEqual(resumed.browserTab);
+      expect((await requestBrowserDashboard(request)).browserTab).toEqual(resumed.browserTab);
+      await sweepTrackedBrowserTabs({ ordinaryCleanup: false });
+      expect(getBrowserSessionTabStore().entries()).toHaveLength(1);
+      expect(fixture.tabs.map((tab) => tab.targetId)).toEqual([resumed.browserTab?.targetId]);
+    },
+  );
+
+  it("preserves a newer cold Stop when an older reconciliation finishes", async () => {
     await stopBrowserDashboard(request);
-    const retirement = vi.spyOn(getBrowserSessionTabStore(), "deleteIf").mockReturnValueOnce(false);
-    let resumed;
+    fixture.widgets[0]!.props.url = "http://updated.example/";
+    const reading = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.readBoard.mockImplementationOnce(async () => {
+      const snapshot = structuredClone({ sessionKey, widgets: fixture.widgets });
+      reading.resolve();
+      await finish.promise;
+      return snapshot;
+    });
+    const reconciling = sweepTrackedBrowserTabs({ ordinaryCleanup: false });
     try {
-      resumed = await requestBrowserDashboard({ ...request, resume: true });
+      await Promise.race([
+        reading.promise,
+        reconciling.then(() => {
+          throw new Error("Cold-intent cleanup skipped the definition lookup");
+        }),
+      ]);
+      await stopBrowserDashboard(request);
+      const retained = getBrowserSessionTabStore().entries();
+      finish.resolve();
+      await reconciling;
+      expect(getBrowserSessionTabStore().entries()).toEqual(retained);
     } finally {
-      retirement.mockRestore();
+      finish.resolve();
+      await reconciling;
     }
-    expect(readBrowserDashboardTabs()).toHaveLength(2);
-    expect((await inspectBrowserDashboard(request)).browserTab).toEqual(resumed.browserTab);
-    expect((await requestBrowserDashboard(request)).browserTab).toEqual(resumed.browserTab);
-    await sweepTrackedBrowserTabs({ ordinaryCleanup: false });
-    expect(readBrowserDashboardTabs()).toHaveLength(1);
-    expect(fixture.tabs.map((tab) => tab.targetId)).toEqual([resumed.browserTab?.targetId]);
+    fixture.installRuntime();
+    expect((await requestBrowserDashboard(request)).paused).toBe(true);
+    expect(browser.open).not.toHaveBeenCalled();
   });
 
   it.each(["removed", "invalid URL", "invalid profile"] as const)(
@@ -442,6 +528,7 @@ describe("Browser dashboard lifetime", () => {
     let boardChanged: Parameters<OpenClawPluginGatewayEvents["onSessionsChanged"]>[0] | undefined;
     const emit = vi.fn();
     const unsubscribe = vi.fn();
+    const on = vi.fn();
     registerBrowserPlugin(
       createTestPluginApi({
         id: "browser",
@@ -449,6 +536,7 @@ describe("Browser dashboard lifetime", () => {
         source: "test",
         rootDir: fixture.stateDir,
         config: {},
+        on,
         runtime: {
           state: {
             openSyncKeyedStore: (options: OpenKeyedStoreOptions) =>
@@ -480,6 +568,26 @@ describe("Browser dashboard lifetime", () => {
       throw new Error("Browser service was not registered");
     }
     await serviceScope.run("browser-service-instance", async () => await service.start(context));
+    const sessionEnd = on.mock.calls.find(([name]) => name === "session_end")?.[1];
+    if (!sessionEnd) {
+      throw new Error("Browser session_end hook was not registered");
+    }
+    const sessionContext = { agentId: "main", sessionId: "dashboard-proof", sessionKey };
+    await stopBrowserDashboard(request);
+    await sessionEnd({ ...sessionContext, reason: "reset" }, sessionContext);
+    expect(getBrowserSessionTabStore().entries()).toHaveLength(1);
+    const savedWidgets = fixture.widgets;
+    fixture.widgets = [];
+    await sessionEnd({ ...sessionContext, reason: "deleted" }, sessionContext);
+    expect(getBrowserSessionTabStore().entries()).toEqual([]);
+    fixture.widgets = savedWidgets;
+    await stopBrowserDashboard(request);
+    fixture.widgets = [];
+    boardChanged?.({ sessionKey, agentId: "main", reason: "board" });
+    await vi.waitFor(() => expect(getBrowserSessionTabStore().entries()).toEqual([]));
+    expect(browser.open).not.toHaveBeenCalled();
+    fixture.widgets = savedWidgets;
+    emit.mockClear();
     await requestBrowserDashboard(request);
     await requestBrowserDashboard(request);
     expect(await stopBrowserDashboard(request)).toMatchObject({ paused: true, stopping: false });

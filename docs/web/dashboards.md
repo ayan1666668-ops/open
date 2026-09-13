@@ -245,7 +245,9 @@ Hiding the dashboard or resetting its conversation keeps its browser tab.
 Ordinary tab closing and idle cleanup do not close a tab owned by a dashboard.
 Use **Stop browser** to release a running tab and **Resume browser** to open it
 again. Agent equivalents are `browser` with `action: "close"` or `"open"` and
-the `dashboard` selector. Resuming loads the saved URL; unsaved document state
+the `dashboard` selector. Stop also persists before the first open, without
+starting a browser; reopening the dashboard or restarting the Gateway keeps it
+paused until Resume. Resuming loads the saved URL; unsaved document state
 does not survive closing the browser. If closure is temporarily unavailable,
 the dashboard shows that Stop is pending and offers **Retry stop** until closure
 is confirmed. Removing or replacing the widget releases

@@ -15,6 +15,7 @@ import {
   restoreRoleRefsForTarget,
 } from "./pw-session.js";
 import {
+  assertInteractionCurrent,
   awaitNavigationGuardedInteraction,
   createAbortPromiseWithListener,
   type ElementInteractionOptions,
@@ -70,6 +71,7 @@ export async function clickViaPlaywright(
         await locator.hover({ timeout, signal });
         throwIfInteractionAborted(opts.signal);
         await sleepWithAbort(delayMs, opts.signal);
+        await assertInteractionCurrent(opts);
         throwIfInteractionAborted(opts.signal);
       }
       const clickOptions = { timeout, signal, button: opts.button, modifiers: opts.modifiers };
@@ -114,6 +116,7 @@ async function runGuardedPageInteraction<T>(
         page,
         ...interactionNavigationPolicy(opts),
         targetId: opts.targetId,
+        assertCurrent: opts.assertCurrent,
       },
       abortPromise,
       opts.signal,
@@ -236,12 +239,14 @@ export async function typeViaPlaywright(
     async (signal) => {
       if (opts.slowly) {
         await locator.click({ timeout, signal });
+        await assertInteractionCurrent(opts);
         throwIfInteractionAborted(opts.signal);
         await locator.type(text, { timeout, signal, delay: 75 });
       } else {
         await locator.fill(text, { timeout, signal });
       }
       if (opts.submit) {
+        await assertInteractionCurrent(opts);
         throwIfInteractionAborted(opts.signal);
         await locator.press("Enter", { timeout, signal });
       }
@@ -378,6 +383,7 @@ export async function evaluateViaPlaywright(
           page,
           ...navigationPolicy,
           targetId: opts.targetId,
+          assertCurrent: opts.assertCurrent,
         },
         abortPromise,
         signal,
@@ -422,6 +428,7 @@ export async function evaluateViaPlaywright(
         page,
         ...navigationPolicy,
         targetId: opts.targetId,
+        assertCurrent: opts.assertCurrent,
       },
       abortPromise,
       signal,

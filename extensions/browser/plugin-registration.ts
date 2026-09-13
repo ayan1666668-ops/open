@@ -39,6 +39,7 @@ import { getBrowserProfileCapabilities } from "./src/browser/profile-capabilitie
 import {
   initializeBrowserSessionTabStore,
   readBrowserDashboardTabs,
+  readBrowserDashboardStopIntents,
 } from "./src/browser/session-tab-store.js";
 import {
   configureSystemProfileImportStateStore,
@@ -322,8 +323,10 @@ function createLazyBrowserPluginService(): OpenClawPluginService {
           if (stopping || event.reason !== "board") {
             return;
           }
-          for (const tab of readBrowserDashboardTabs()) {
-            const dashboard = tab.dashboard;
+          for (const dashboard of [
+            ...readBrowserDashboardTabs().map((tab) => tab.dashboard),
+            ...readBrowserDashboardStopIntents(),
+          ]) {
             if (
               dashboard &&
               (dashboard.sessionKey === event.sessionKey ||
@@ -396,7 +399,8 @@ export function registerBrowserPlugin(api: OpenClawPluginApi) {
     if (
       event.reason === "deleted" &&
       event.sessionKey &&
-      readBrowserDashboardTabs().some((tab) => tab.dashboard?.sessionKey === event.sessionKey)
+      (readBrowserDashboardTabs().some((tab) => tab.dashboard?.sessionKey === event.sessionKey) ||
+        readBrowserDashboardStopIntents().some((intent) => intent.sessionKey === event.sessionKey))
     ) {
       const { reconcileBrowserDashboards } = await import("./src/browser-dashboard.js");
       await reconcileBrowserDashboards({

@@ -448,7 +448,8 @@ export function registerBrowserAgentActRoutes(
             if (!pw) {
               return;
             }
-            await req.assertCurrent?.(profileCtx.profile);
+            const assertCurrent = req.assertCurrent;
+            await assertCurrent?.(profileCtx.profile);
             const result = await pw.executeActViaPlaywright({
               cdpUrl,
               action,
@@ -456,6 +457,7 @@ export function registerBrowserAgentActRoutes(
               evaluateEnabled,
               ...navigationPolicy,
               signal,
+              assertCurrent: assertCurrent ? () => assertCurrent(profileCtx.profile) : undefined,
             });
             const resultTargetOptions = {
               resolveCurrentTarget: true,

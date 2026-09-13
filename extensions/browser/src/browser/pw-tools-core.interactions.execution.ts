@@ -36,6 +36,8 @@ import {
 } from "./pw-tools-core.interactions.actions.js";
 import { waitForViaPlaywright } from "./pw-tools-core.interactions.content.js";
 import {
+  assertInteractionCurrent,
+  BrowserInteractionAuthorityError,
   type GuardedInteractionOptions,
   hasInteractionNavigationPolicy,
   interactionNavigationPolicy,
@@ -52,6 +54,7 @@ async function executeSingleAction(
   navigationPolicy: BrowserNavigationPolicyOptions = {},
   depth = 0,
   signal?: AbortSignal,
+  assertCurrent?: GuardedInteractionOptions["assertCurrent"],
 ): Promise<unknown> {
   if (depth > ACT_MAX_BATCH_DEPTH) {
     throw new Error(`Batch nesting depth exceeds maximum of ${ACT_MAX_BATCH_DEPTH}`);
@@ -62,7 +65,9 @@ async function executeSingleAction(
     targetId: effectiveTargetId,
     ...navigationPolicy,
     signal,
+    assertCurrent,
   };
+  await assertInteractionCurrent(interaction);
   switch (action.kind) {
     case "click":
       await clickViaPlaywright({
@@ -155,6 +160,7 @@ async function executeSingleAction(
         width: action.width,
         height: action.height,
         signal,
+        assertCurrent,
       });
       break;
     case "wait":
@@ -187,6 +193,7 @@ async function executeSingleAction(
       await closePageViaPlaywright({
         cdpUrl,
         targetId: effectiveTargetId,
+        assertCurrent,
       });
       break;
     case "batch": {
@@ -292,6 +299,7 @@ export async function executeActViaPlaywright(
         stopOnError: opts.action.stopOnError,
         evaluateEnabled: opts.evaluateEnabled,
         signal: dialogAbort.signal,
+        assertCurrent: opts.assertCurrent,
       });
       const newDownloads = await drainDownloads();
       return await withOperationTarget({
@@ -308,6 +316,7 @@ export async function executeActViaPlaywright(
       navigationPolicy,
       0,
       dialogAbort.signal,
+      opts.assertCurrent,
     );
     const newDownloads = await drainDownloads();
     if (opts.action.kind === "evaluate") {
@@ -424,10 +433,14 @@ export async function batchViaPlaywright(
           navigationPolicy,
           depth,
           opts.signal,
+          opts.assertCurrent,
         );
         result = { ok: true };
       } catch (err) {
-        if (isBrowserObservedDialogBlockedError(err)) {
+        if (
+          isBrowserObservedDialogBlockedError(err) ||
+          err instanceof BrowserInteractionAuthorityError
+        ) {
           throw err;
         }
         if (isPolicyDenyNavigationError(err)) {
