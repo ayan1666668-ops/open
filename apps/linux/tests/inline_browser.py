@@ -286,10 +286,29 @@ class GatewayFixture(ThreadingHTTPServer):
             remaining = int((deadline - time.monotonic()) * 1000)
             if remaining <= 0 or app.poll() is not None:
                 raise RuntimeError("Native menu lookup expired or its app exited")
-            return bus.call_sync(
-                service, path, interface, method, arguments, None,
-                Gio.DBusCallFlags.NONE, min(1000, remaining), None,
-            ).unpack()
+            try:
+                return bus.call_sync(
+                    service, path, interface, method, arguments, None,
+                    Gio.DBusCallFlags.NONE, min(1000, remaining), None,
+                ).unpack()
+            except GLib.Error as error:
+                try:
+                    remote_error = Gio.DBusError.get_remote_error(error)
+                    context = {
+                        "stage": "connection-settings-menu",
+                        "service": service[:128],
+                        "path": path[:128],
+                        "interface": interface[:128],
+                        "method": method[:128],
+                        "errorType": "GLib.Error",
+                        "remoteError": remote_error[:128] if isinstance(remote_error, str) else None,
+                    }
+                    message = "NATIVE_MENU_DBUS_ERROR " + json.dumps(context, ensure_ascii=True)
+                    if len(message.encode("ascii")) < 4096:
+                        print(message, flush=True)
+                except Exception:
+                    pass
+                raise
 
         def owner(service):
             return call(
@@ -312,7 +331,12 @@ class GatewayFixture(ThreadingHTTPServer):
             visited.add((service, path))
             if len(visited) > 64:
                 raise RuntimeError("Native menu object tree exceeded 64 paths")
-            xml = call(service, path, "org.freedesktop.DBus.Introspectable", "Introspect")[0]
+            try:
+                xml = call(service, path, "org.freedesktop.DBus.Introspectable", "Introspect")[0]
+            except GLib.Error as error:
+                if Gio.DBusError.get_remote_error(error) == "org.freedesktop.DBus.Error.UnknownMethod":
+                    continue
+                raise
             if len(xml.encode()) > 65536:
                 raise RuntimeError("Native menu introspection exceeded its byte bound")
             node = ElementTree.fromstring(xml)
