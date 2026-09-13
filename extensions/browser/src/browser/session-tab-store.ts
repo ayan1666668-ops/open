@@ -155,7 +155,10 @@ export function initializeBrowserSessionTabStore(runtime: BrowserSessionTabStore
   });
   setBrowserStateRuntime({
     sessionTabs,
-    gateway: runtime.gateway,
+    // Metadata registration must not materialize the broad host runtime.
+    get gateway() {
+      return runtime.gateway;
+    },
     dashboardOperations: new Map(),
   });
   resetDurableTabAliases();
