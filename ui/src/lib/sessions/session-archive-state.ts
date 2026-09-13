@@ -98,7 +98,7 @@ export function createSessionArchiveState(
       if (!normalizedKey || (current && current.sessionId === sessionId)) {
         return null;
       }
-      const token = Symbol();
+      const token = Symbol("session-archive");
       pending.set(normalizedKey, { sessionId, token });
       onChange();
       return () => {
