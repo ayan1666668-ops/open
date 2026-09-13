@@ -5,14 +5,15 @@ import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { hasNonEmptyString } from "@openclaw/normalization-core/string-coerce";
 import { resolveDeliveryQueueMediaDir } from "../config/paths.js";
 import { fileStore } from "./file-store.js";
+import { spoolRelativePath } from "./outbound/delivery-queue-media-paths.js";
 
 type MediaBackup = { sourcePath: string; name: string; sha256: string; size: number };
 
 /** Capture only the spool owner's paths; never read arbitrary legacy paths or fetch URLs. */
-export async function resolveLegacyDeliveryQueueMediaPaths(
+export function resolveLegacyDeliveryQueueMediaPaths(
   entryValue: unknown,
   stateDir: string,
-): Promise<string[]> {
+): string[] {
   const entry = asNullableRecord(entryValue);
   const payloads = Array.isArray(entry?.payloads) ? entry.payloads : [];
   const sources: unknown[] = [];
@@ -27,11 +28,13 @@ export async function resolveLegacyDeliveryQueueMediaPaths(
     sources.push(...entry.expectedMediaUrls);
   }
   const urls = sources.filter(hasNonEmptyString);
-  if (urls.length === 0) {
-    return [];
-  }
-  const { collectEntrySpoolPaths } = await import("./outbound/delivery-queue-media-spool.js");
-  return [...new Set(collectEntrySpoolPaths([{ mediaUrls: urls }], stateDir))];
+  return [
+    ...new Set(
+      urls
+        .filter((source) => path.isAbsolute(source) && spoolRelativePath(source, stateDir))
+        .map((source) => path.resolve(source)),
+    ),
+  ];
 }
 
 async function verifyMediaBackup(

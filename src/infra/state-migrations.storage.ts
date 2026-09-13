@@ -1060,6 +1060,7 @@ export async function migrateLegacyDeliveryQueues(params: {
     }
     const imports: LegacyDeliveryQueueImport[] = [];
     const sourceIds = new Map<string, string>();
+    const unresolvedPendingIds = new Set<string | undefined>();
     const conflicts: string[] = [];
     let imported = 0;
     const deliveredNames = new Set(markerPaths.map((file) => path.basename(file, ".delivered")));
@@ -1115,7 +1116,7 @@ export async function migrateLegacyDeliveryQueues(params: {
             }
           }
           if ((reason && reason !== "delivered") || file.status === "failed") {
-            mediaPaths = await (
+            mediaPaths = (
               await import("./state-migrations.delivery-queue-media.js")
             ).resolveLegacyDeliveryQueueMediaPaths(entry, params.stateDir);
           }
@@ -1141,6 +1142,9 @@ export async function migrateLegacyDeliveryQueues(params: {
           mediaPaths,
         });
       } catch (error) {
+        if (file.status === "pending") {
+          unresolvedPendingIds.add(sourceIds.get(file.sourcePath));
+        }
         refused = true;
         warnings.push(
           `Left malformed ${queue.label} source ${file.sourcePath} in place: ${String(error)}`,
@@ -1254,6 +1258,15 @@ export async function migrateLegacyDeliveryQueues(params: {
       // Keep delivered evidence while its pending twin could still need repair.
       // Unrelated conflicts must not retain already-settled markers.
       const ids = markerIds.get(path.basename(snapshot.sourcePath, ".delivered"));
+      // Opaque markers need their JSON twin's ID until malformed duplicates are resolved.
+      if (
+        reason === "delivered" &&
+        [...unresolvedPendingIds].some(
+          (id) => id === undefined || id === sourceIds.get(snapshot.sourcePath) || ids?.has(id),
+        )
+      ) {
+        continue;
+      }
       if (
         snapshot.sourcePath.endsWith(".delivered") &&
         ids &&

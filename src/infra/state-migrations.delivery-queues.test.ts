@@ -288,6 +288,42 @@ describe("legacy delivery queue file retention", () => {
     },
   );
 
+  it.each(
+    QUEUES.flatMap((queue) =>
+      ["opaque", "canonical"].flatMap((marker) => [
+        { ...queue, marker, malformed: "{broken" },
+        { ...queue, marker, malformed: '{"id":"equal",' },
+      ]),
+    ),
+  )(
+    "$queueName: does not replay a delivered ID with $marker marker after repairing duplicate $malformed",
+    async (queue) => {
+      const first = writeEntry(queue, "one.json", legacyEntry(queue, "equal"));
+      const second = writeEntry(queue, "two.json", legacyEntry(queue, "equal"));
+      fs.writeFileSync(second.sourcePath, queue.malformed);
+      const marker = writeEntry(
+        queue,
+        "one.delivered",
+        queue.marker === "opaque" ? "acknowledged" : { id: "equal" },
+      );
+
+      const result = await migrate();
+      expect(result.warnings.join("\n")).toContain("Left malformed");
+      expect.soft(fs.existsSync(first.sourcePath)).toBe(true);
+      expect(fs.readFileSync(second.sourcePath, "utf8")).toBe(queue.malformed);
+      expect.soft(fs.existsSync(marker.sourcePath)).toBe(true);
+
+      fs.writeFileSync(second.sourcePath, second.bytes);
+      expect((await migrate()).warnings).toEqual([]);
+      expect(database().prepare("SELECT count(*) AS n FROM delivery_queue_entries").get()).toEqual({
+        n: 0,
+      });
+      expectArchived(first);
+      expectArchived(second);
+      expectArchived(marker);
+    },
+  );
+
   it.each(QUEUES)(
     "$queueName: preserves archives in backups and records nonblocking Doctor results",
     async (queue) => {
