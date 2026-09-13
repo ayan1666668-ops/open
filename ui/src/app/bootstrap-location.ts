@@ -1,8 +1,9 @@
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { RouteLocation } from "@openclaw/uirouter";
 import type { SessionsResolveResult } from "../../../packages/gateway-protocol/src/index.js";
 import type { AgentsListResult } from "../api/types.ts";
 import { pathForRoute, pluginSlugCandidate } from "../app-route-paths.ts";
-import { routeIdFromPath } from "../app-routes.ts";
+import { routeIdFromPath, type ApplicationRouter } from "../app-routes.ts";
 import { pathForSession } from "../app-session-path-builder.ts";
 import type { BoardFace } from "../lib/board/settings.ts";
 import { parseCatalogSessionKey } from "../lib/sessions/catalog-key.ts";
@@ -16,7 +17,8 @@ import {
   resolveUiConfiguredMainKey,
   resolveUiDefaultAgentId,
 } from "../lib/sessions/session-key.ts";
-import type { ApplicationGateway } from "./context.ts";
+import { resolveChatSnapshotKey } from "../pages/chat/session-snapshot-key.ts";
+import type { ApplicationContext, ApplicationGateway } from "./context.ts";
 import { waitForGatewayClient } from "./gateway-readiness.ts";
 
 type ReleasedSessionQuery = {
@@ -254,4 +256,60 @@ export async function resolveInitialApplicationLocation(params: {
     row?.agentId ?? agentId,
     mainKey,
   );
+}
+
+/** Bind route and selection facts to the connection scheduler before roster hydration subscribes. */
+export function subscribeForegroundChatBootstrap({
+  router,
+  gateway,
+  agents,
+  agentSelection,
+  connectionBootstrap,
+  initialChatRoute,
+}: Pick<ApplicationContext, "gateway" | "agents" | "agentSelection" | "connectionBootstrap"> & {
+  router: ApplicationRouter;
+  initialChatRoute: boolean;
+}): () => void {
+  connectionBootstrap.setForegroundRoute(initialChatRoute ? undefined : null);
+  const stopConnection = gateway.subscribe((snapshot) => {
+    connectionBootstrap.synchronize({
+      client: snapshot.client,
+      connected: snapshot.phase === "connected",
+    });
+  });
+  const synchronizeRoute = (state: ReturnType<ApplicationRouter["getState"]>) => {
+    const match = state.pendingMatches[0] ?? state.matches[0];
+    if (!match && state.status === "idle") {
+      return;
+    }
+    const data = asOptionalRecord(match?.data);
+    const key =
+      data?.kind === "session" && typeof data.sessionKey === "string" ? data.sessionKey : null;
+    connectionBootstrap.setForegroundRoute(
+      match?.routeId !== "chat"
+        ? null
+        : match.status === "pending"
+          ? undefined
+          : match.status === "success" && key && !parseCatalogSessionKey(key)
+            ? resolveChatSnapshotKey(
+                {
+                  agentsList: agents.state.agentsList,
+                  hello: gateway.snapshot.hello,
+                  assistantAgentId: agentSelection.state.selectedId,
+                },
+                {
+                  sessionKey: key,
+                  agentId: typeof data?.agentId === "string" ? data.agentId : undefined,
+                },
+              )
+            : null,
+    );
+  };
+  const stopRoute = router.subscribe(synchronizeRoute);
+  const stopSelection = agentSelection.subscribe(() => synchronizeRoute(router.getState()));
+  return () => {
+    stopConnection();
+    stopRoute();
+    stopSelection();
+  };
 }

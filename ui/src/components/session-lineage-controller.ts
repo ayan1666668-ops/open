@@ -88,7 +88,7 @@ export class SessionLineageController {
   constructor(
     private readonly owner: LineageOwner,
     private readonly route: () => { routeId: string | undefined; key: string },
-    private readonly childGeneration: () => number,
+    private readonly childScope: () => object,
   ) {}
 
   private selectedAgentId(): string | null {
@@ -410,7 +410,7 @@ export class SessionLineageController {
       return Promise.resolve();
     }
     const globalBinding = identity.sessionKey === "global" ? binding : null;
-    const generation = this.childGeneration();
+    const childScope = this.childScope();
     const request: LineageRequest = {
       identity,
       sourceRevision: sessions.canonicalListRevision,
@@ -425,9 +425,7 @@ export class SessionLineageController {
         this.scopeIsCurrent(scope) &&
         this.identity(key).sessionKey === identity.sessionKey &&
         this.identity(key).agentId === identity.agentId &&
-        (globalBinding
-          ? this.bindingIsCurrent(globalBinding)
-          : generation === this.childGeneration());
+        (globalBinding ? this.bindingIsCurrent(globalBinding) : childScope === this.childScope());
       const lineage = await fetchSessionLineage({
         client,
         sessionKey: key,

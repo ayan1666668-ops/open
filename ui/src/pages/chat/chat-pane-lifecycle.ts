@@ -439,7 +439,12 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     };
     this.addEventListener(WIDGET_PROMPT_EVENT, handleWidgetPrompt);
     chatState.addCleanup(() => this.removeEventListener(WIDGET_PROMPT_EVENT, handleWidgetPrompt));
-    chatState.addCleanup(this.context.gateway.subscribe((next) => this.applyGatewaySnapshot(next)));
+    chatState.addCleanup(
+      this.context.gateway.subscribe((next) => {
+        this.applyGatewaySnapshot(next);
+        this.synchronizeForegroundTranscript();
+      }),
+    );
     chatState.addCleanup(
       this.context.theme.subscribe(() => {
         pageState.settings = {
@@ -452,6 +457,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     chatState.addCleanup(
       this.context.agentSelection.subscribe((next) => {
         applySelectedChatAgent(this.state, this.agentId ?? next.selectedId);
+        this.synchronizeForegroundTranscript();
         if (this.state) {
           void syncSelectedSessionMessageSubscription(this.state);
         }
@@ -512,6 +518,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     chatState.addCleanup(subscribeChatPaneStartup(this.context, () => this.state));
     chatState.addCleanup(subscribeChatPaneSnapshotInvalidation(() => this.state));
     this.applyGatewaySnapshot(this.context.gateway.snapshot);
+    this.synchronizeForegroundTranscript();
     this.composerPresentation = new ChatPaneComposerHandoff(this.context, {
       state: () => this.state,
       owner: () => this.stagedAttachmentGatewayOwner,

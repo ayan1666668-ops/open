@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { SessionsListResult } from "../../api/types.ts";
+import { createConnectionBootstrapCoordinator } from "../../app/connection-bootstrap.ts";
 import { createTestGatewayClient } from "../../test-helpers/gateway-client.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
+import { createSessionCapability } from "./index.ts";
 import {
   createGatewayHarness,
   createSessionCapabilityHarness,
@@ -16,6 +18,93 @@ import {
 const requireRecord = createRequireRecord("object", "expected-label");
 
 describe("session roster refresh", () => {
+  it.each([
+    { owner: "primary", timing: "the pending RPC" },
+    { owner: "managed", timing: "the pending RPC" },
+    { owner: "primary", timing: "response publication" },
+    { owner: "managed", timing: "response publication" },
+  ])("retains invalidation during $timing for the $owner roster", async ({ owner, timing }) => {
+    vi.useFakeTimers();
+    const managed = owner === "managed";
+    const agentId = managed ? "worker" : "main";
+    const key = `agent:${agentId}:tracked`;
+    const parentKey = "agent:main:parent";
+    const query = { agentId, ...(managed ? { spawnedBy: parentKey } : {}) };
+    const result = (revision: number) =>
+      sessionsResult(
+        [{ key, kind: "direct", label: `Revision ${revision}`, updatedAt: revision }],
+        revision,
+      );
+    const slow = createDeferred<SessionsListResult>();
+    let reads = 0;
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "sessions.subscribe") {
+        return { subscribed: true };
+      }
+      if (method !== "sessions.list") {
+        throw new Error(`Unexpected request: ${method}`);
+      }
+      const paramsRecord = requireRecord(params, "sessions.list params");
+      if (paramsRecord.agentId !== agentId || (managed && paramsRecord.spawnedBy !== parentKey)) {
+        return sessionsResult([], 0);
+      }
+      reads += 1;
+      return reads === 2 ? slow.promise : result(reads);
+    });
+    const client = createTestGatewayClient(request);
+    const { gateway, emitEvent } = createGatewayHarness(client);
+    const coordinator = createConnectionBootstrapCoordinator();
+    coordinator.synchronize({ client, connected: true });
+    const sessions = createSessionCapability(
+      gateway,
+      { state: { selectedId: "main" }, subscribe: () => () => undefined },
+      { connectionBootstrap: coordinator },
+    );
+    const invalidate = () =>
+      emitEvent({
+        type: "event",
+        event: "sessions.changed",
+        payload: { sessionKey: key, key, agentId, reason: "patch", spawnedBy: parentKey },
+      });
+    let current: SessionsListResult | null = null;
+    let invalidatedDuringPublication = false;
+    const observe = (next: { result: SessionsListResult | null }) => {
+      current = next.result;
+      if (
+        timing === "response publication" &&
+        next.result?.ts === 2 &&
+        !invalidatedDuringPublication
+      ) {
+        invalidatedDuringPublication = true;
+        invalidate();
+      }
+    };
+    const subscription = managed ? sessions.observeList(query, observe) : null;
+    const stop = subscription ? () => subscription.dispose() : sessions.subscribe(observe);
+    try {
+      await (subscription ? subscription.refresh() : sessions.refresh(query));
+      expect(reads).toBe(1);
+      invalidate();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(reads).toBe(2);
+      if (timing === "the pending RPC") {
+        invalidate();
+        await vi.advanceTimersByTimeAsync(200);
+        expect(reads).toBe(2);
+      }
+      slow.resolve(result(2));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(reads).toBe(3);
+      expect(current).toMatchObject({ ts: 3, sessions: [{ key, label: "Revision 3" }] });
+    } finally {
+      slow.resolve(result(2));
+      stop();
+      sessions.dispose();
+      coordinator.reset();
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["All", "primary"] as const)(
     "uses a newer search observation when an older %s query completes",
     async (owner) => {
@@ -451,19 +540,32 @@ describe("session roster refresh", () => {
     async (retirement) => {
       const activeList = createDeferred<SessionsListResult>();
       const refreshed = sessionsResult([], 2);
-      const request = vi.fn(async (method: string, params?: { search?: string }) => {
-        if (method === "sessions.subscribe") {
-          return { subscribed: true, list: refreshed };
-        }
-        if (method === "sessions.list" && params?.search === "active") {
-          return await activeList.promise;
-        }
-        throw new Error(`Unexpected request: ${method} ${params?.search}`);
-      });
-      const replacementRequest = vi.fn(async (method: string, _params?: { search?: string }) => {
-        expect(method).toBe("sessions.subscribe");
-        return { subscribed: true, list: refreshed };
-      });
+      let firstList = true;
+      const request = vi.fn(
+        async (method: string, params?: { search?: string; agentId?: string }) => {
+          if (method === "sessions.subscribe") {
+            return { subscribed: true };
+          }
+          if (method === "sessions.list") {
+            if (firstList) {
+              firstList = false;
+              expect(params?.search).toBe("active");
+              return activeList.promise;
+            }
+            return refreshed;
+          }
+          throw new Error(`Unexpected request: ${method} ${params?.search}`);
+        },
+      );
+      const replacementRequest = vi.fn(
+        async (method: string, _params?: { search?: string; agentId?: string }) => {
+          if (method === "sessions.subscribe") {
+            return { subscribed: true };
+          }
+          expect(method).toBe("sessions.list");
+          return refreshed;
+        },
+      );
       const client = { request } as unknown as GatewayBrowserClient;
       const replacement = { request: replacementRequest } as unknown as GatewayBrowserClient;
       const { gateway, publish } = createGatewayHarness(client);
@@ -493,10 +595,17 @@ describe("session roster refresh", () => {
 
         activeList.resolve(sessionsResult([], 1));
         await active;
-        expect(request.mock.calls.filter(([method]) => method === "sessions.list")).toHaveLength(1);
-        expect(replacementRequest.mock.calls.some(([method]) => method === "sessions.list")).toBe(
-          false,
+        expect(request.mock.calls.filter(([method]) => method === "sessions.list")).toHaveLength(
+          retirement === "same-client reconnect" ? 2 : 1,
         );
+        expect(
+          replacementRequest.mock.calls.filter(([method]) => method === "sessions.list"),
+        ).toHaveLength(retirement === "replacement-client reconnect" ? 1 : 0);
+        expect(
+          [...request.mock.calls, ...replacementRequest.mock.calls]
+            .filter(([method]) => method === "sessions.list")
+            .map(([, params]) => params?.agentId),
+        ).not.toEqual(expect.arrayContaining([expect.stringMatching(/^unissued-/)]));
         if (retirement.endsWith("reconnect")) {
           expect(sessions.state.result?.ts).toBe(2);
         } else if (retirement === "disconnect") {

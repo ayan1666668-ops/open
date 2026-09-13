@@ -2,13 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // @vitest-environment node
 import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../src/shared/session-list-limits.ts";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts";
+import { createConnectionBootstrapCoordinator } from "../app/connection-bootstrap.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { createSessionCapability, type SessionCapability } from "../lib/sessions/index.ts";
 import type { SessionGateway } from "../lib/sessions/session-capability.ts";
 import type { SessionDataControllerHost } from "./session-data-controller-catalog.ts";
 import { SessionDataController } from "./session-data-controller.ts";
 
+const cleanups: Array<() => void> = [];
+
 afterEach(() => {
+  for (const cleanup of cleanups.splice(0)) {
+    cleanup();
+  }
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -110,7 +116,17 @@ function createFilteredSessionController(
     },
     subscribe: () => () => undefined,
   };
-  const sessions = createSessionCapability(gateway, agentSelection);
+  const connectionBootstrap = createConnectionBootstrapCoordinator();
+  const synchronizeBootstrap = (next: SessionGateway["snapshot"]) =>
+    connectionBootstrap.synchronize({ client: next.client, connected: next.phase === "connected" });
+  synchronizeBootstrap(snapshot);
+  const stopBootstrap = gateway.subscribe(synchronizeBootstrap);
+  const sessions = createSessionCapability(gateway, agentSelection, { connectionBootstrap });
+  cleanups.push(() => {
+    stopBootstrap();
+    sessions.dispose();
+    connectionBootstrap.reset();
+  });
   let selectedStatusFilter = statusFilter;
   let membership = { ownerId: null as string | null, involvingMe: false };
   const agentsState = {
@@ -123,6 +139,7 @@ function createFilteredSessionController(
   };
   const agentListeners = new Set<(state: ApplicationContext["agents"]["state"]) => void>();
   const context = {
+    connectionBootstrap,
     gateway,
     sessions,
     agents: {
