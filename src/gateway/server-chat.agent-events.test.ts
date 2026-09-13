@@ -3220,7 +3220,7 @@ describe("agent event handler", () => {
         expect(delivered.map(([, payload]) => payload.data.diff)).toEqual(
           Array.from({ length: 32 }, (_, index) => ({ added: index + 1, removed: 0 })),
         );
-        expect(delivered.every(([, , recipients]) => recipients.has("conn-selected"))).toBe(true);
+        expect(delivered.every((call) => call[2].has("conn-selected"))).toBe(true);
       } else {
         expect(delivered).toHaveLength(0);
         expect(loadGatewaySessionLifecycleSnapshotMock).not.toHaveBeenCalled();
