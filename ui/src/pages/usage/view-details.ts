@@ -13,7 +13,6 @@ import "../../components/tooltip.ts";
 import {
   createMsFormatter,
   formatDurationCompact,
-  formatDateTimeMs,
   formatMs,
   formatTimeMs,
 } from "../../lib/format.ts";
@@ -503,6 +502,10 @@ function renderTimeSeriesCompact(
   const isCumulative = mode === "cumulative";
   const breakdownByType = mode === "per-turn" && breakdownMode === "by-type";
   const timeZoneOptions: Intl.DateTimeFormatOptions = timeZone === "utc" ? { timeZone: "UTC" } : {};
+  const formatTooltipTimestamp = createMsFormatter(
+    { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", ...timeZoneOptions },
+    "",
+  );
 
   const totalTypeTokens = Object.values(filteredTokens).reduce(
     (total, tokens) => total + tokens,
@@ -617,17 +620,7 @@ function renderTimeSeriesCompact(
             const bh = (val / maxValue) * chartHeight;
             const y = padding.top + chartHeight - bh;
             const tooltipLines = [
-              formatDateTimeMs(
-                p.timestamp,
-                {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  ...timeZoneOptions,
-                },
-                "",
-              ),
+              formatTooltipTimestamp(p.timestamp),
               `${formatUsageTokens(val)} ${normalizeLowercaseStringOrEmpty(t("usage.metrics.tokens"))}`,
             ];
             if (breakdownByType) {
