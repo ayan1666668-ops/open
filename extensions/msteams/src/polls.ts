@@ -4,6 +4,7 @@ import {
   parseStrictNonNegativeInteger,
   parseDateStringTimestampMs,
 } from "openclaw/plugin-sdk/number-runtime";
+import type { PluginStateEntry } from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   isRecord,
   normalizeOptionalString,
@@ -349,10 +350,14 @@ export function createMSTeamsPollStoreState(
     return votes;
   };
 
-  const deletePollVotes = async (pollId: string): Promise<void> => {
-    for (const row of await voteBucketStore.entries()) {
+  const deletePollVotes = async (
+    pollId: string,
+    cachedRows?: Map<string, PluginStateEntry<StoredMSTeamsPollVoteBucket>>,
+  ): Promise<void> => {
+    for (const row of cachedRows?.values() ?? (await voteBucketStore.entries())) {
       if (row.value.pollId === pollId) {
         await voteBucketStore.delete(row.key);
+        cachedRows?.delete(row.key);
       }
     }
   };
@@ -409,11 +414,17 @@ export function createMSTeamsPollStoreState(
   };
 
   const prunePollStoreToLimit = async (): Promise<void> => {
+    let voteRows: Map<string, PluginStateEntry<StoredMSTeamsPollVoteBucket>> | undefined;
+    const deletePrunedPollVotes = async (pollId: string) => {
+      // Poll mutations hold the same lock, and vote buckets have no store TTL.
+      voteRows ??= new Map((await voteBucketStore.entries()).map((row) => [row.key, row]));
+      await deletePollVotes(pollId, voteRows);
+    };
     const rows = [];
     for (const row of await pollStore.entries()) {
       if (!pruneExpired({ [row.key]: row.value })[row.key]) {
         await pollStore.delete(row.key);
-        await deletePollVotes(row.value.id);
+        await deletePrunedPollVotes(row.value.id);
         continue;
       }
       rows.push(row);
@@ -428,7 +439,7 @@ export function createMSTeamsPollStoreState(
     });
     for (const row of sorted.slice(0, rows.length - MSTEAMS_MAX_POLLS)) {
       await pollStore.delete(row.key);
-      await deletePollVotes(row.value.id);
+      await deletePrunedPollVotes(row.value.id);
     }
   };
 
