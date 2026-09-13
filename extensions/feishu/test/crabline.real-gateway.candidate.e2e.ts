@@ -48,7 +48,9 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
     }
     agent.destroy();
     await fs.rm(directory, { recursive: true, force: true });
-    if (errors.length) throw new AggregateError(errors, "Candidate cleanup failed");
+    if (errors.length) {
+      throw new AggregateError(errors, "Candidate cleanup failed");
+    }
   });
   for (const account of accounts) {
     const records: ServerRequestEvent[] = [];
@@ -132,8 +134,9 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
   const wait = async (predicate: () => boolean) => {
     while (!predicate()) {
       signal.throwIfAborted();
-      if (Date.now() >= deadline)
+      if (Date.now() >= deadline) {
         throw new Error(`Native candidate did not complete. ${gateway.logs().slice(-12_000)}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   };
@@ -141,7 +144,9 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
   const loaded = [...gateway.logs().matchAll(/\[plugins\] loading feishu from ([^\r\n]+)/gu)]
     .at(-1)?.[1]
     ?.trim();
-  if (!loaded) throw new Error("Gateway did not report its actual Feishu executable entry");
+  if (!loaded) {
+    throw new Error("Gateway did not report its actual Feishu executable entry");
+  }
   expect(await fs.realpath(loaded)).toBe(builtEntry);
   const entryHash = createHash("sha256")
     .update(await fs.readFile(loaded))
