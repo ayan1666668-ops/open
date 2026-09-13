@@ -635,5 +635,28 @@ describe("task-flow-registry", () => {
         expect(reloaded?.chainId).toBe("chain-reload-abc");
       });
     });
+
+    it("survives a revision-checked update and cached read", async () => {
+      await withFlowRegistryTempDir(async () => {
+        const created = createManagedTaskFlow({
+          ownerKey: "agent:main:main",
+          controllerId: "tests/chain-id-update",
+          goal: "chainId survives ordinary updates",
+          chainId: "chain-update-abc",
+        });
+
+        const resumed = resumeFlow({
+          flowId: created.flowId,
+          expectedRevision: created.revision,
+        });
+
+        expect(resumed.applied).toBe(true);
+        if (!resumed.applied) {
+          throw new Error("Expected resume update to apply");
+        }
+        expect(resumed.flow.chainId).toBe("chain-update-abc");
+        expect(getTaskFlowById(created.flowId)?.chainId).toBe("chain-update-abc");
+      });
+    });
   });
 });

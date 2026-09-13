@@ -10,10 +10,7 @@ import {
   resolveSessionStorePathCore,
   type InternalSessionEntry as SessionEntry,
 } from "../../../config/sessions.js";
-import {
-  listSessionEntriesReadOnly,
-  loadSessionEntryReadOnly,
-} from "../../../config/sessions/session-accessor.js";
+import { loadSessionEntryReadOnly } from "../../../config/sessions/session-accessor.js";
 import { normalizeStoreSessionKey } from "../../../config/sessions/store-entry.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { SubagentRunOutcome } from "../announce/subagent-announce-output.js";
@@ -83,16 +80,24 @@ export function loadSubagentSessionEntry(params: {
   const agentId = resolveAgentIdFromSessionKey(key);
   const cfg = params.cfg ?? getRuntimeConfig();
   const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId });
-  let store = params.storeCache?.get(storePath);
-  if (!store) {
-    store = Object.fromEntries(
-      listSessionEntriesReadOnly({ storePath, clone: false, projection: "list" }).map(
-        ({ sessionKey, entry }) => [sessionKey, entry],
-      ),
-    );
-    params.storeCache?.set(storePath, store);
+  const normalizedKey = normalizeStoreSessionKey(key);
+  const store = params.storeCache?.get(storePath);
+  const cached = store?.[key] ?? store?.[normalizedKey];
+  if (cached) {
+    return cached;
   }
-  return store[key] ?? store[normalizeStoreSessionKey(key)];
+  const entry = loadSessionEntryReadOnly({
+    storePath,
+    sessionKey: key,
+    clone: false,
+  });
+  if (entry && params.storeCache) {
+    const nextStore = store ?? {};
+    nextStore[key] = entry;
+    nextStore[normalizedKey] = entry;
+    params.storeCache.set(storePath, nextStore);
+  }
+  return entry;
 }
 
 /** Resolve a child session entry without depending on the file-backed store shape. */

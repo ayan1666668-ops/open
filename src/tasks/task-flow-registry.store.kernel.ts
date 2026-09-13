@@ -88,6 +88,7 @@ function rowToFlowRecord(row: FlowRegistryRow): TaskFlowRecord {
     flowId: row.flow_id,
     syncMode: rowToSyncMode(row),
     ownerKey: row.owner_key,
+    ...(row.chain_id ? { chainId: row.chain_id } : {}),
     ...(requesterOrigin ? { requesterOrigin } : {}),
     ...(row.controller_id ? { controllerId: row.controller_id } : {}),
     revision: normalizeSqliteNumber(row.revision) ?? 0,
@@ -114,6 +115,7 @@ export function bindTaskFlowRecord(record: TaskFlowRecord): BoundTaskFlowRecord 
     sync_mode: record.syncMode,
     shape: null,
     owner_key: record.ownerKey,
+    chain_id: record.chainId ?? null,
     requester_origin_json: serializeJson(record.requesterOrigin),
     controller_id: record.controllerId ?? null,
     revision: record.revision,
@@ -272,6 +274,7 @@ export function upsertTaskFlowRowInDatabase(db: DatabaseSync, row: BoundTaskFlow
         conflict.column("flow_id").doUpdateSet({
           sync_mode: (eb) => eb.ref("excluded.sync_mode"),
           owner_key: (eb) => eb.ref("excluded.owner_key"),
+          chain_id: (eb) => eb.ref("excluded.chain_id"),
           requester_origin_json: (eb) => eb.ref("excluded.requester_origin_json"),
           controller_id: (eb) => eb.ref("excluded.controller_id"),
           revision: (eb) => eb.ref("excluded.revision"),
