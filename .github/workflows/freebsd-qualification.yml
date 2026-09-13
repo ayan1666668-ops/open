@@ -87,7 +87,12 @@ jobs:
             mkdir -p /usr/local/etc/pkg/repos
             printf '%s\n' 'FreeBSD-ports: { url: "pkg+https://pkg.FreeBSD.org/${ABI}/latest" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
             pkg update -f
-            pkg install -y node24 npm-node24 git
+            # node-gyp uses Python and GNU make for native addon builds on BSD.
+            pkg install -y node24 npm-node24 git python3 gmake
+            python3 --version
+            gmake --version
+            cc --version
+            c++ --version
           run: |
             set -eu
             uname -a
