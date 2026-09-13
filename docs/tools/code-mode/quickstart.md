@@ -151,6 +151,9 @@ const [shipmentTool] = await catalog.search("list shipments");
 return await results.save(await shipmentTool({}));
 ```
 
+Return this descriptor directly as the cell's output. Its preview, shape, and
+count are already prepared; the full fetched value stays in saved storage.
+
 The returned reference contains an `id`, encoded JSON `bytes`, `count`, a
 shallow `shape` sample, and a bounded JSON `preview`. `count` is the array
 length, object key count, or 1 for a scalar. The shape samples the first array

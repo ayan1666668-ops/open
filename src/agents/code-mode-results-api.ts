@@ -17,7 +17,10 @@ const content = `type CodeModeResultReference = {
  * unavailable in restartSafe cells because references are transient.
  */
 declare const results: {
-  /** Save normalized JSON for later cells in this agent run. Returns a preview, never the full value. */
+  /** Save normalized JSON for later cells. Returns the descriptor above: emit it directly;
+   * its preview, shape, and count are already prepared. The full JSON stays stored.
+   * Example: return await results.save(await tool({}));
+   */
   save(value: unknown): Promise<CodeModeResultReference>;
   /** Read a detached JSON copy. Inspect the saved preview before using unknown fields. */
   load(id: string): Promise<unknown>;
