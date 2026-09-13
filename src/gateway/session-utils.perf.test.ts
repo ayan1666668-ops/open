@@ -158,11 +158,14 @@ describe("session list resolver cache", () => {
           return buildRow(params);
         });
       let identityDuringPause: string | undefined;
+      let pauseProbeReads = 0;
       const control = new Promise<void>((resolve) => {
         setImmediate(() => {
           // Replace the whole entry: mutating a shared nested object could hide a leaked cache.
           agents[29] = { identity: { name: "Refreshed owner" } };
+          const readsBeforeProbe = rosterReads;
           identityDuringPause = resolveAgentIdentity(cfg, "agent-29")?.name;
+          pauseProbeReads = rosterReads - readsBeforeProbe;
           resolve();
         });
       });
@@ -186,7 +189,8 @@ describe("session list resolver cache", () => {
         );
         const yields = expectDefined(preparationYields, "row projection reached");
         expect(yields).toBeGreaterThan(0);
-        expect(preparationReads).toBeLessThanOrEqual(agents.length * (yields + 4));
+        const reads = expectDefined(preparationReads, "preparation reads recorded");
+        expect(reads - pauseProbeReads).toBeLessThanOrEqual(agents.length * (yields + 4));
       } finally {
         rows.mockRestore();
         clock.mockRestore();
