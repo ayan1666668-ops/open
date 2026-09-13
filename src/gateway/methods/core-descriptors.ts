@@ -684,13 +684,9 @@ export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS
 
 // Rows are `as const`, so a present policy flag is already the exact literal the spec allows.
 const CORE_GATEWAY_METHOD_SPEC_LIST: readonly CoreGatewayMethodSpec[] =
-  CORE_GATEWAY_METHOD_SPECS.map(([name, family, scope, since, policy]) => {
-    const spec: CoreGatewayMethodSpec = { name, scope, since };
-    if (family) {
-      spec.family = family;
-    }
-    return Object.assign(spec, policy);
-  });
+  CORE_GATEWAY_METHOD_SPECS.map(([name, family, scope, since, policy]) =>
+    Object.assign({ name, scope, since }, family ? { family } : {}, policy),
+  );
 
 const CORE_GATEWAY_METHOD_SPEC_BY_NAME: ReadonlyMap<string, CoreGatewayMethodSpec> = new Map(
   CORE_GATEWAY_METHOD_SPEC_LIST.map((spec) => [spec.name, spec]),

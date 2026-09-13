@@ -34,7 +34,6 @@ import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-even
 import { claimAgentRunContext } from "../../infra/agent-run-registry.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type { SessionWorkAdmissionLease } from "../../sessions/session-lifecycle-admission.js";
-import { recordSessionParticipantBestEffort } from "../../sessions/session-participant-recording.js";
 import { registerChatAbortController, resolveAgentRunExpiresAtMs } from "../chat-abort.js";
 import type { ChatImageContent, OffloadedRef } from "../chat-attachments.js";
 import { errorShapeFromError } from "../error-shape.js";
@@ -49,7 +48,6 @@ import {
   resolveGatewayCronCreatorAuthorityAdmission,
   type GatewayCronCreatorAuthorityAdmission,
 } from "../server-methods/cron-creator-authority-admission.js";
-import { resolveGatewayInputParticipant } from "../session-input-participant.js";
 import { loadSessionEntry, resolveSessionModelRef } from "../session-utils.js";
 import { consumeSubagentCompletionToolHandoff } from "../subagent-completion-tool-handoff.js";
 import { formatForLog } from "../ws-log.js";
@@ -64,6 +62,7 @@ import type { RestoredCronContinuation } from "./agent-handler-helpers.js";
 import { maybeAdmitSupervisedGatewayRoot } from "./agent-run-supervised-root.js";
 import {
   prepareAgentRunUserTurn,
+  recordAcceptedAgentRunParticipant,
   releasePreparedAgentRunUserTurn,
   type PreparedAgentRunUserTurn,
 } from "./agent-run-user-turn.js";
@@ -668,25 +667,7 @@ export async function prepareAgentRunDispatch(params: {
   // may reject its execution after this synchronous ownership transfer.
   assertInputAdmissionCurrent = undefined;
   params.io.emitAcceptance([true, accepted, undefined], { runId: params.runId });
-  const participant = resolveGatewayInputParticipant(params.client, params.inputProvenance);
-  if (
-    participant &&
-    params.resolvedSessionKey &&
-    !params.suppressVisibleSessionEffects &&
-    !userTurn.suppressPromptPersistence
-  ) {
-    recordSessionParticipantBestEffort({
-      identity: participant,
-      promptedAt: params.promptedAt,
-      agentId: params.activeSessionAgentId,
-      sessionKey: params.resolvedSessionKey,
-      storePath: lifecycleStorePath,
-      onError: (error) =>
-        params.context.logGateway.warn(
-          `agent participant persistence failed: ${formatForLog(error)}`,
-        ),
-    });
-  }
+  recordAcceptedAgentRunParticipant(params, userTurn, lifecycleStorePath);
   const cronCreatorAuthority = resolveGatewayCronCreatorAuthorityAdmission({
     runId: params.runId,
     resolvedSessionKey: params.resolvedSessionKey,

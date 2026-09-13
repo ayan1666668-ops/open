@@ -15,6 +15,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { deleteMediaBuffer } from "../../media/store.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
+import { recordSessionParticipantBestEffort } from "../../sessions/session-participant-recording.js";
 import {
   buildRunUserTurnIdempotencyKey,
   createUserTurnTranscriptRecorder,
@@ -30,6 +31,7 @@ import {
 import type { AgentRunRequest } from "../server-methods/agent-request-types.js";
 import { resolveSessionRuntimeCwd } from "../server-methods/agent-session-reset.js";
 import { gatewayClientSenderFields } from "../server-methods/gateway-client-identity.js";
+import { resolveGatewayInputParticipant } from "../session-input-participant.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import {
@@ -263,6 +265,43 @@ export function releasePreparedAgentRunUserTurn(
     releaseExecApprovalFollowupRuntimeHandoff({
       handoffId: prepared.claimedExecApprovalFollowupHandoffId,
       claimId: prepared.execApprovalFollowupHandoffClaimId,
+    });
+  }
+}
+
+/** Record visible user participation only after the run has been accepted. */
+export function recordAcceptedAgentRunParticipant(
+  params: Pick<
+    Parameters<typeof prepareAgentRunUserTurn>[0],
+    | "client"
+    | "inputProvenance"
+    | "resolvedSessionKey"
+    | "activeSessionAgentId"
+    | "suppressVisibleSessionEffects"
+    | "context"
+  > & {
+    promptedAt: number;
+  },
+  userTurn: Pick<PreparedAgentRunUserTurn, "suppressPromptPersistence">,
+  lifecycleStorePath: string,
+): void {
+  const participant = resolveGatewayInputParticipant(params.client, params.inputProvenance);
+  if (
+    participant &&
+    params.resolvedSessionKey &&
+    !params.suppressVisibleSessionEffects &&
+    !userTurn.suppressPromptPersistence
+  ) {
+    recordSessionParticipantBestEffort({
+      identity: participant,
+      promptedAt: params.promptedAt,
+      agentId: params.activeSessionAgentId,
+      sessionKey: params.resolvedSessionKey,
+      storePath: lifecycleStorePath,
+      onError: (error) =>
+        params.context.logGateway.warn(
+          `agent participant persistence failed: ${formatForLog(error)}`,
+        ),
     });
   }
 }
