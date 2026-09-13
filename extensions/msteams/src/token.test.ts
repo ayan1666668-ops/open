@@ -93,6 +93,15 @@ describe("token – secret credentials", () => {
     expect(hasConfiguredMSTeamsCredentials(undefined)).toBe(false);
   });
 
+  it("returns true only when the environment provides complete secret credentials", () => {
+    process.env.MSTEAMS_APP_ID = "env-app-id";
+    expect(hasConfiguredMSTeamsCredentials(undefined)).toBe(false);
+
+    process.env.MSTEAMS_APP_PASSWORD = "env-secret";
+    process.env.MSTEAMS_TENANT_ID = "env-tenant-id";
+    expect(hasConfiguredMSTeamsCredentials(undefined)).toBe(true);
+  });
+
   it("resolves secret credentials from config", () => {
     const cfg = {
       appId: "app-id",

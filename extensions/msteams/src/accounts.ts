@@ -6,7 +6,7 @@ import {
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { tryReadSecretFileSync } from "openclaw/plugin-sdk/secret-file-runtime";
 import type { MSTeamsConfig, OpenClawConfig } from "../runtime-api.js";
-import { resolveMSTeamsCredentials } from "./token.js";
+import { hasConfiguredMSTeamsCredentials, resolveMSTeamsCredentials } from "./token.js";
 
 export type MSTeamsMultiAccountConfig = MSTeamsConfig & {
   accounts?: Record<string, Partial<MSTeamsConfig>>;
@@ -29,10 +29,8 @@ const IDENTITY_FIELDS = ["appId", "appPassword"] as const;
 
 const { listAccountIds, resolveDefaultAccountId } = createAccountListHelpers("msteams", {
   normalizeAccountId,
-  implicitDefaultAccount: {
-    channelKeys: ["appId", "appPassword"],
-    envVars: ["MSTEAMS_APP_ID", "MSTEAMS_APP_PASSWORD", "MSTEAMS_TENANT_ID"],
-  },
+  hasImplicitDefaultAccount: (cfg) =>
+    hasConfiguredMSTeamsCredentials(resolveMSTeamsChannelConfig(cfg)),
 });
 
 export const listMSTeamsAccountIds = listAccountIds;

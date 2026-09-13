@@ -89,9 +89,10 @@ export function hasConfiguredMSTeamsCredentials(cfg?: MSTeamsConfig): boolean {
 
   // "secret" (default) — original logic
   return Boolean(
-    normalizeSecretInputString(cfg?.appId) &&
-    hasConfiguredSecretInput(cfg?.appPassword) &&
-    normalizeSecretInputString(cfg?.tenantId),
+    hasAppId &&
+    hasTenantId &&
+    (hasConfiguredSecretInput(cfg?.appPassword) ||
+      normalizeSecretInputString(process.env.MSTEAMS_APP_PASSWORD)),
   );
 }
 
