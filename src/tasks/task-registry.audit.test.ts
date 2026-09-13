@@ -3,14 +3,13 @@ import { describe, expect, it } from "vitest";
 import { normalizeTaskTimestamps } from "./task-registry-records.js";
 import {
   listTaskAuditFindings,
-  summarizeActionableTaskAuditFindings,
   summarizeRetainedLostTaskAuditFindings,
   summarizeTaskAuditFindings,
 } from "./task-registry.audit.js";
+import { summarizeFullTaskInspection } from "./task-registry.audit.test-support.js";
 import {
   addTaskStatusSummaryRecord,
   createEmptyTaskStatusSummary,
-  summarizeTaskRecords,
 } from "./task-registry.summary.js";
 import type { TaskRecord } from "./task-registry.types.js";
 
@@ -130,7 +129,7 @@ describe("task-registry audit", () => {
     ]);
   });
 
-  it("summarizes future-retained lost tasks separately from actionable audit counts", () => {
+  it("reports future-retained lost tasks alongside full audit counts", () => {
     const now = Date.parse("2026-03-30T01:00:00.000Z");
     const nextCleanupAfter = now + 60_000;
     const findings = listTaskAuditFindings({
@@ -151,14 +150,14 @@ describe("task-registry audit", () => {
       ],
     });
 
-    expect(summarizeActionableTaskAuditFindings(findings, { now })).toEqual({
-      total: 1,
-      warnings: 0,
+    expect(summarizeTaskAuditFindings(findings)).toEqual({
+      total: 2,
+      warnings: 1,
       errors: 1,
       byCode: {
         stale_queued: 0,
         stale_running: 0,
-        lost: 1,
+        lost: 2,
         delivery_failed: 0,
         missing_cleanup: 0,
         inconsistent_timestamps: 0,
@@ -185,7 +184,7 @@ describe("task-registry audit", () => {
       ],
     });
 
-    expect(summarizeActionableTaskAuditFindings(findings, { now }).errors).toBe(1);
+    expect(summarizeTaskAuditFindings(findings).errors).toBe(1);
     expect(summarizeRetainedLostTaskAuditFindings(findings, { now })).toEqual({ count: 0 });
   });
 
@@ -318,16 +317,8 @@ describe("task-registry audit", () => {
       nextCleanupAfter: now + 60_000,
     });
 
-    const tasks = rawTasks.map(normalizeTaskTimestamps);
-    const findings = listTaskAuditFindings({ tasks, now });
-    const fullTaskSummary = summarizeTaskRecords(tasks);
-    expect(summary.tasks).toEqual({
-      ...fullTaskSummary,
-      failures: fullTaskSummary.failures - summary.taskAuditRetainedLost.count,
-    });
-    expect(summary.taskAudit).toEqual(summarizeActionableTaskAuditFindings(findings, { now }));
-    expect(summary.taskAuditRetainedLost).toEqual(
-      summarizeRetainedLostTaskAuditFindings(findings, { now }),
+    expect(summary).toEqual(
+      summarizeFullTaskInspection(rawTasks.map(normalizeTaskTimestamps), now),
     );
   });
 });

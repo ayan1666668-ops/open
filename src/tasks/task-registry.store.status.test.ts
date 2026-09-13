@@ -5,11 +5,7 @@ import { enableNodeSqliteKyselyStatementCache } from "../infra/kysely-sync.js";
 import { readSqliteNumberPragma } from "../infra/sqlite-pragma.test-support.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "../state/openclaw-state-schema.js";
 import { readTaskBackingInstance } from "./task-backing-records.js";
-import {
-  listTaskAuditFindings,
-  summarizeActionableTaskAuditFindings,
-  summarizeRetainedLostTaskAuditFindings,
-} from "./task-registry.audit.js";
+import { summarizeFullTaskInspection } from "./task-registry.audit.test-support.js";
 import {
   bindTaskRecord,
   listTaskRecordsByRuntimeSourceIdInDatabase,
@@ -17,7 +13,7 @@ import {
   upsertTaskRunRowInDatabase,
 } from "./task-registry.store.kernel.js";
 import { readTaskRegistryStatusSnapshot } from "./task-registry.store.status.js";
-import { addTaskStatusSummaryRecord, summarizeTaskRecords } from "./task-registry.summary.js";
+import { addTaskStatusSummaryRecord } from "./task-registry.summary.js";
 import {
   TASK_RUNTIMES,
   type JsonValue,
@@ -83,10 +79,7 @@ it("preserves the full-read counters and audits while bounding retained-history 
   store("malformed-history", { runtime: "subagent", detail: { unused: true } });
   db.prepare("UPDATE task_runs SET detail_json = '{' WHERE task_id = ?").run("malformed-history");
   const records = [...readTaskRegistrySnapshot({ db, path: ":memory:" }).tasks.values()];
-  const findings = listTaskAuditFindings({ tasks: records, now });
-  const retainedLost = summarizeRetainedLostTaskAuditFindings(findings, { now });
-  const expected = summarizeTaskRecords(records);
-  expected.failures -= retainedLost.count;
+  const expected = summarizeFullTaskInspection(records, now);
 
   const result = snapshot();
   expect(result.candidates).toHaveLength(8);
@@ -95,11 +88,7 @@ it("preserves the full-read counters and audits while bounding retained-history 
   for (const candidate of result.candidates) {
     addTaskStatusSummaryRecord(result.summary, candidate, now);
   }
-  expect(result.summary).toEqual({
-    tasks: expected,
-    taskAudit: summarizeActionableTaskAuditFindings(findings, { now }),
-    taskAuditRetainedLost: retainedLost,
-  });
+  expect(result.summary).toEqual(expected);
 });
 
 it("projects only exact subagent backing identities and ignores malformed or unrelated details", () => {

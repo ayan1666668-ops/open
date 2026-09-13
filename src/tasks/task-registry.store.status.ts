@@ -110,12 +110,16 @@ export function readTaskRegistryStatusSnapshot(
   }
   return runSqliteDeferredTransactionSync(db, () => {
     const kysely = getNodeSqliteKysely<DB>(db);
-    // kysely-allow-raw: NOT INDEXED preserves complete summaries even with a stale secondary index.
-    const candidate = sql<boolean>`(status IN ('queued', 'running') OR
+    const candidate = sql`(status IN ('queued', 'running') OR
       (runtime = 'cron' AND status = 'lost' AND instr(lower(coalesce(error, '')), 'backing session missing') > 0))`;
-    const columns = sql.join(AUDIT_COLUMNS.map((column) => sql.ref(column)));
-    // kysely-allow-raw: project only the liveness marker from candidate details, never retained payloads.
-    const candidates = sql<CandidateRow>`SELECT ${columns}, task_id, task_kind, source_id,
+    const columns = sql.join(
+      AUDIT_COLUMNS.map((column) =>
+        /* kysely-allow-raw: identifiers come only from the closed AUDIT_COLUMNS tuple. */ sql.ref(
+          column,
+        ),
+      ),
+    );
+    const candidates = /* kysely-allow-raw: NOT INDEXED preserves completeness; project only candidate liveness metadata. */ sql<CandidateRow>`SELECT ${columns}, task_id, task_kind, source_id,
       owner_key, scope_kind, child_session_key, agent_id, run_id,
       CASE WHEN runtime = 'subagent' AND json_valid(detail_json) THEN
         CASE WHEN json_type(detail_json) = 'object'
@@ -164,8 +168,7 @@ export function readTaskRegistryStatusSnapshot(
         lookup.runIds.set(task.runId, undefined);
       }
     }
-    // kysely-allow-raw: complete metadata scans cannot trust a potentially stale secondary index.
-    const history = sql<HistoryRow>`SELECT ${columns}, task_id, source_id, run_id FROM task_runs NOT INDEXED`;
+    const history = /* kysely-allow-raw: complete metadata scans cannot trust a potentially stale secondary index. */ sql<HistoryRow>`SELECT ${columns}, task_id, source_id, run_id FROM task_runs NOT INDEXED`;
     for (const row of iterateSqliteQuerySync(db, { compile: () => history.compile(kysely) })) {
       const metadata = auditRecord(row);
       if (!candidateIds.has(row.task_id)) {

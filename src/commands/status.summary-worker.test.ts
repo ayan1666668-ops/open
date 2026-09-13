@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db-cache.js";
 import { withArtifactPreservingStateReads } from "../state/openclaw-state-db-readonly.js";
 import {
@@ -93,23 +92,12 @@ it("coalesces overlapping task inspections, separates artifact-preserving reads,
         },
         { database },
       );
-      const entered = createDeferred<void>();
-      const release = createDeferred<void>();
-      const execute = workerStore.runOpenClawStateWorkerOperation;
-      const operations = vi
-        .spyOn(workerStore, "runOpenClawStateWorkerOperation")
-        .mockImplementation(async (context, operation, options) => {
-          entered.resolve();
-          await release.promise;
-          return options ? execute(context, operation, options) : execute(context, operation);
-        });
+      const operations = vi.spyOn(workerStore, "runOpenClawStateWorkerOperation");
       const first = getInspectableTaskStatusSummaryReadOnly();
       const second = getInspectableTaskStatusSummaryReadOnly();
-      await entered.promise;
       expect(operations).toHaveBeenCalledTimes(1);
       const preserving = withArtifactPreservingStateReads(getInspectableTaskStatusSummaryReadOnly);
       expect(operations).toHaveBeenCalledTimes(2);
-      release.resolve();
       const [left, right, privateRead] = await Promise.all([first, second, preserving]);
       expect(left).toEqual(right);
       expect(privateRead).toEqual(left);

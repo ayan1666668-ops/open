@@ -242,16 +242,6 @@ export function summarizeTaskAuditFindings(findings: Iterable<TaskAuditFinding>)
   return summarizeAuditFindings(findings, createEmptyTaskAuditSummary());
 }
 
-export function summarizeActionableTaskAuditFindings(
-  findings: Iterable<TaskAuditFinding>,
-  options: { now?: number } = {},
-): TaskAuditSummary {
-  const now = options.now ?? Date.now();
-  return summarizeTaskAuditFindings(
-    Array.from(findings).filter((finding) => !isRetainedLostTaskAuditFinding(finding, now)),
-  );
-}
-
 export function summarizeRetainedLostTaskAuditFindings(
   findings: Iterable<TaskAuditFinding>,
   options: { now?: number } = {},
