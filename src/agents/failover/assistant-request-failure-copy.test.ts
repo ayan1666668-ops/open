@@ -3,6 +3,7 @@ import { classifyGatewayStorageFailure } from "../../infra/sqlite-error-diagnost
 import { formatUserFacingAssistantErrorText } from "../embedded-agent-helpers/error-text.js";
 import { makeAssistantMessageFixture } from "../test-helpers/assistant-message-fixtures.js";
 import { renderAssistantRequestFailureCopy } from "./assistant-request-failure-copy.js";
+import { buildAssistantRequestFailureContract } from "./assistant-request-failure-copy.js";
 
 describe("renderAssistantRequestFailureCopy", () => {
   const target = { provider: "openai", model: "test-model" };
@@ -128,6 +129,31 @@ describe("renderAssistantRequestFailureCopy", () => {
   it("retains classified guidance without an HTTP status", () => {
     expect(renderAssistantRequestFailureCopy({ ...target, reason: "auth" })).toBe(
       "⚠️ openai/test-model request failed (authentication failed). Re-authenticate the provider and try again.",
+    );
+  });
+
+  it("turns HTTP 502 into an explicit request-preserving recovery contract", () => {
+    expect(
+      buildAssistantRequestFailureContract({
+        ...target,
+        reason: "server_error",
+        status: 502,
+      }),
+    ).toEqual({
+      classification: "provider.server_error",
+      summary: "openai/test-model request failed (provider internal error, HTTP 502).",
+      requestState: "preserved",
+      replayState: "not_replayed",
+      recovery: "OpenClaw did not replay it automatically. Retry the preserved request.",
+    });
+    expect(
+      renderAssistantRequestFailureCopy({
+        ...target,
+        reason: "server_error",
+        status: 502,
+      }),
+    ).toBe(
+      "⚠️ openai/test-model request failed (provider internal error, HTTP 502). Your request remains in this conversation. OpenClaw did not replay it automatically. Retry the preserved request.",
     );
   });
 });
