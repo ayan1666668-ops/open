@@ -46,6 +46,7 @@ import {
   selectChecksForShard,
 } from "../../scripts/run-additional-boundary-checks.mts";
 import { buildVitestRunPlans } from "../../scripts/test-projects.test-support.mts";
+import { resolveTestNodeExecPath } from "../../src/test-utils/node-process.js";
 import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { sharedVitestConfig } from "../vitest/vitest.shared.config.ts";
 import {
@@ -91,6 +92,7 @@ const AMBIGUOUS_MAIN_PUSH_GUARD = `if [ "$GITHUB_EVENT_NAME" = "push" ] && [[ "$
   exit 1
 fi`;
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const testNodeExecPath = resolveTestNodeExecPath();
 const rootPackageManager = (
   JSON.parse(readFileSync("package.json", "utf8")) as {
     packageManager: string;
@@ -6913,12 +6915,12 @@ setImmediate(() => {
     mkdirSync(path.join(workspace, "node_modules"));
     writeFileSync(path.join(workspace, "node_modules", "before"), "");
     writeFileSync(path.join(store, "before"), "");
-    symlinkSync(process.execPath, path.join(bin, "node"));
+    symlinkSync(testNodeExecPath, path.join(bin, "node"));
     const pnpm = path.join(bin, "pnpm");
     writeFileSync(
       pnpm,
       "#!" +
-        process.execPath +
+        testNodeExecPath +
         "\n" +
         String.raw`
 const fs = require("node:fs");
@@ -7468,6 +7470,9 @@ server.listen(0, "127.0.0.1", () => {
       OPENCLAW_BUILD_PRIVATE_QA: "1",
       OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
       OPENCLAW_VITEST_MAX_WORKERS: "2",
+      OPENCLAW_SELECTED_SHA: "${{ inputs.ref }}",
+      OPENCLAW_TOOLING_SHA: "${{ inputs.workflow_sha }}",
+      OPENCLAW_DOCKER_E2E_REPO_ROOT: "${{ github.workspace }}",
     });
     const producer = repoE2eWorkflow.jobs.build;
     const repoE2e = repoE2eWorkflow.jobs.test;

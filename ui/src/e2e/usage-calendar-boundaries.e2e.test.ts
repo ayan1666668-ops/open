@@ -278,6 +278,21 @@ suite.define(() => {
             "Sep 6, 01:00 AM · 100 tokens · Out 0 · In 100 · CW 0 · CR 0",
             "Sep 6, 11:59 PM · 100 tokens · Out 0 · In 100 · CW 0 · CR 0",
           ]);
+        await page.locator(".usage-select").selectOption("utc");
+        await expect
+          .poll(async () => (await gateway.getRequests("sessions.usage")).at(-1)?.params)
+          .toMatchObject({ startDate: date, endDate: date, mode: "utc" });
+        await page.getByRole("button", { name: "Skipped midnight", exact: true }).click();
+        await expect
+          .poll(() =>
+            bars.evaluateAll((elements) =>
+              elements.map((element) => element.getAttribute("aria-label")),
+            ),
+          )
+          .toEqual([
+            "Sep 6, 03:59 AM · 100 tokens · Out 0 · In 100 · CW 0 · CR 0",
+            "Sep 6, 04:00 AM · 100 tokens · Out 0 · In 100 · CW 0 · CR 0",
+          ]);
       },
     );
   });
