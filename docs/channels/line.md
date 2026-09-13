@@ -538,17 +538,25 @@ list the approvers as LINE user IDs:
 ```
 
 - **With forwarding on and approvers listed**, every approver receives the card in their
-  one-to-one chat. A request raised in an approver's own chat shows the card there; a group,
-  or another user's chat, gets a notice that the request went to LINE DMs. Only listed
-  approvers can then decide that approval type from LINE, including with typed `/approve`,
-  and any other forwarding target you configure still receives the text prompt.
+  one-to-one chat for a request raised from a LINE conversation. A request raised in an
+  approver's own chat shows the card there; a group, or another user's chat, gets a notice
+  that the request went to LINE DMs. Only listed approvers can then decide that approval type
+  from LINE, including with typed `/approve`, and any other forwarding target you configure
+  still receives the text prompt. Requests raised elsewhere, such as the Control UI, reach
+  LINE only as the text prompt of a `targets` or `both` forwarding target.
 - **Otherwise** (forwarding off, only `targets` forwarding, or no approvers listed, for
-  example `allowFrom: ["*"]`), no card is drawn and LINE works as it did before cards: the
-  chat that raised the request gets the `/approve <id> <decision>` prompt, and command
+  example `allowFrom: ["*"]`), no card is drawn. A request raised from a LINE chat stays
+  pending, `/approve <id> <decision>` sent from that chat decides it, and command
   authorization decides who can use it. Listing users in `allowFrom` for DM access does not
   limit `/approve` until cards are on for that approval type.
 
-Restart the Gateway after changing forwarding so the LINE account picks it up.
+Typed `/approve` in LINE decides only requests that belong to that LINE account: requests
+raised from it, or forwarded to it. Approve a request raised on another channel or another
+LINE account where it was raised.
+
+Restart the Gateway after changing forwarding so the LINE account picks it up. A change to
+`channels.line`, such as removing an approver, waits for active runs and replies to finish
+before it takes effect; until then the previous configuration still decides.
 
 Two behaviors follow from the platform rather than from a choice:
 
@@ -556,8 +564,9 @@ Two behaviors follow from the platform rather than from a choice:
   postback in a group carries no `userId` (LINE includes it only in message events), so a
   card tapped in a group could not name who decided. A tap from someone who is not a listed
   approver is refused, and a card tapped after cards were turned off or every approver was
-  removed answers with the `/approve` command to use instead. A tap is checked against the
-  configuration in force when the decision is sent, not when the tap arrived.
+  removed answers with the `/approve` command to use instead, if that chat is still allowed
+  to message the bot. A tap is checked against the configuration in force when the decision
+  is sent, not when the tap arrived.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
   stay on screen. The first decision stands; tapping a button on a card that is no longer
