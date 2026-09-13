@@ -162,6 +162,10 @@ describe("projectSettledCodexMessages", () => {
     expect(ids[0]).toBe(ids[1]);
     expect(ids[2]).toBe(ids[3]);
     expect(ids[0]).not.toBe(ids[2]);
+    for (const id of ids) {
+      expect(id.length).toBeLessThanOrEqual(64);
+      expect(id).toMatch(/^call_[A-Za-z0-9_-]{1,59}$/);
+    }
   });
 
   it("rejects at the item limit without draining the rest of the history", () => {
@@ -181,7 +185,8 @@ describe("projectSettledCodexMessages", () => {
     }
 
     expect(() => projectSettledCodexMessages(history(), new Set())).toThrow("item_limit");
-    expect(pulled).toBeLessThan(400);
+    // 200 items fill the projection; the 201st pull is the one that must throw.
+    expect(pulled).toBeLessThanOrEqual(201);
   });
 
   it("keeps a complete transcript when a raw id equals an overlength id's rewrite", () => {

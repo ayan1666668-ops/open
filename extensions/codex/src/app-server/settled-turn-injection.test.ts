@@ -1,6 +1,6 @@
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runBoundedCodexAppServerTurn } from "./bounded-turn.js";
 import {
   createFakeCodexAppServerClient,
@@ -60,6 +60,10 @@ function projectedHistoryItems(messages: AgentMessage[]) {
 const OVERLENGTH_CALL_ID = `call_${"a".repeat(78)}`;
 
 describe("settled-turn injection boundary", () => {
+  afterEach(() => {
+    setManagedCodexPluginRoot(undefined);
+  });
+
   it("puts only contract-length call ids on the thread/inject_items wire", async () => {
     expect(OVERLENGTH_CALL_ID).toHaveLength(83);
     setManagedCodexPluginRoot("/tmp/synthetic-codex-plugin-root");
