@@ -308,7 +308,38 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Normal setup and repair paths are documented across install, CLI, and gateway docs. Platform-specific Windows paths are tracked in the Windows via WSL2 and Native Windows rows.
 
-    <div className="maturity-surface-rollup"><span>Coverage Alpha - 59%</span><span>Quality Stable - 83%</span><span>Completeness Stable - 90%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Stable - 83%</span><span>Completeness Stable - 90%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>83</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Onboarding and Auth Setup / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Onboarding and Auth Setup / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Onboarding and Auth Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin and Channel Setup / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin and Channel Setup / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin and Channel Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Management / Quality</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Management / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Observability / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Observability / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Observability / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Doctor / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Doctor / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Doctor / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates and Upgrades / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates and Upgrades / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates and Upgrades / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -317,7 +348,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI Setup</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -331,7 +362,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Onboarding and Auth Setup</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -345,7 +376,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Plugin and Channel Setup</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -359,7 +390,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Service Management</span>
           <span>7 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>57%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "57%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -373,7 +404,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI Observability</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -387,7 +418,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Doctor</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>10%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "10%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -401,7 +432,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Updates and Upgrades</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -419,7 +450,56 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Core architecture, auth, pairing, protocol docs, daemon docs, and CLI runbooks are broad and current.
 
-    <div className="maturity-surface-rollup"><span>Coverage Alpha - 55%</span><span>Quality Stable - 81%</span><span>Completeness Stable - 89%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 12</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Stable - 81%</span><span>Completeness Stable - 89%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 12</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>81</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approvals and Remote Execution / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approvals and Remote Execution / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approvals and Remote Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>HTTP APIs / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>HTTP APIs / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>HTTP APIs / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Web Surface / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Web Surface / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Web Surface / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway RPC APIs and Events / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway RPC APIs and Events / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway RPC APIs and Events / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Auth and Pairing / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Auth and Pairing / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Auth and Pairing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Access and Discovery / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Access and Discovery / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Access and Discovery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Nodes and Remote Capabilities / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Nodes and Remote Capabilities / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Nodes and Remote Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health, Diagnostics, and Repair / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health, Diagnostics, and Repair / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health, Diagnostics, and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Protocol Compatibility / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Protocol Compatibility / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Protocol Compatibility / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Roles and Permissions / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Roles and Permissions / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Roles and Permissions / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Lifecycle / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Lifecycle / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Lifecycle / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Security Controls / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Security Controls / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Security Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebSocket Connection / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebSocket Connection / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebSocket Connection / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -428,7 +508,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Approvals and Remote Execution</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -442,7 +522,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">HTTP APIs</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -456,7 +536,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Hosted Web Surface</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -470,7 +550,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway RPC APIs and Events</span>
           <span>22 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>82%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "82%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -484,7 +564,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Device Auth and Pairing</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -498,7 +578,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Network Access and Discovery</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>33%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "33%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -512,7 +592,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Nodes and Remote Capabilities</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -526,7 +606,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Health, Diagnostics, and Repair</span>
           <span>7 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -540,7 +620,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Protocol Compatibility</span>
           <span>7 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -554,7 +634,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Roles and Permissions</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -568,7 +648,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Lifecycle</span>
           <span>12 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -582,7 +662,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Security Controls</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -596,7 +676,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">WebSocket Connection</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>90%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "90%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -614,7 +694,44 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Main loop, models, provider routing, and tool streaming are first-class, but provider behavior shifts weekly and needs scenario proof per release.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 24%</span><span>Quality Beta - 78%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 78%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Turn Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Turn Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Turn Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>External Runtimes and Subagents / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>External Runtimes and Subagents / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>External Runtimes and Subagents / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Provider Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Provider Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Provider Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local and Self-hosted Providers / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local and Self-hosted Providers / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local and Self-hosted Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Streaming and Progress / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Streaming and Progress / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Streaming and Progress / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Calls and Response Handling / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Calls and Response Handling / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Calls and Response Handling / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Execution Controls / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Execution Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Execution Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -623,7 +740,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Agent Turn Execution</span>
           <span>31 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>36%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "36%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -637,7 +754,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">External Runtimes and Subagents</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>30%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "30%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -651,7 +768,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Hosted Provider Execution</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -665,7 +782,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Local and Self-hosted Providers</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -679,7 +796,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Model and Runtime Selection</span>
           <span>11 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>9%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "9%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -693,7 +810,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Auth</span>
           <span>17 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -707,7 +824,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Streaming and Progress</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>22%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "22%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -721,7 +838,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Tool Calls and Response Handling</span>
           <span>26 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>35%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "35%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -735,7 +852,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Tool Execution Controls</span>
           <span>12 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -753,7 +870,44 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Strong docs and active implementation. Maturity depends on transcript durability, compaction quality, and cross-client parity.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 27%</span><span>Quality Beta - 77%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 77%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 6</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Session and Transcript Management / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Session and Transcript Management / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Session and Transcript Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Token Management / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Token Management / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Token Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Context Engine / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Context Engine / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Context Engine / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cross-client History and Session Parity / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cross-client History and Session Parity / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cross-client History and Session Parity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics, Maintenance, and Recovery / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics, Maintenance, and Recovery / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics, Maintenance, and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Core Prompts and Context / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Core Prompts and Context / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Core Prompts and Context / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Memory / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Memory / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Memory / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Routing / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Routing / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Routing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Transcript Persistence / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Transcript Persistence / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Transcript Persistence / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -762,7 +916,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI Session and Transcript Management</span>
           <span>2 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -776,7 +930,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Token Management</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -790,7 +944,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Context Engine</span>
           <span>9 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -804,7 +958,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Cross-client History and Session Parity</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -818,7 +972,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Diagnostics, Maintenance, and Recovery</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -832,7 +986,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Core Prompts and Context</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>13%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "13%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -846,7 +1000,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Memory</span>
           <span>22 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>14%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "14%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -860,7 +1014,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Session Routing</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -874,7 +1028,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Transcript Persistence</span>
           <span>2 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -892,7 +1046,41 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Many channels share Gateway delivery and routing contracts, but channel behavior varies by upstream API and account-policy constraints.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 23%</span><span>Quality Beta - 76%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 76%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Actions Commands and Approvals / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Actions Commands and Approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Actions Commands and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Group Thread and Ambient Room Behavior / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Group Thread and Ambient Room Behavior / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Group Thread and Ambient Room Behavior / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Inbound Access and Identity Gates / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Inbound Access and Identity Gates / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Inbound Access and Identity Gates / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Attachments and Rich Channel Data / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Attachments and Rich Channel Data / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Attachments and Rich Channel Data / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Outbound Delivery and Reply Pipeline / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Outbound Delivery and Reply Pipeline / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Outbound Delivery and Reply Pipeline / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status Health and Operator Controls / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status Health and Operator Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status Health and Operator Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -901,7 +1089,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Actions Commands and Approvals</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -915,7 +1103,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup</span>
           <span>7 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -929,7 +1117,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Group Thread and Ambient Room Behavior</span>
           <span>13 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>31%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "31%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -943,7 +1131,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Inbound Access and Identity Gates</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>38%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "38%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -957,7 +1145,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Attachments and Rich Channel Data</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>50%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "50%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -971,7 +1159,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Outbound Delivery and Reply Pipeline</span>
           <span>30 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>13%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "13%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -985,7 +1173,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>31 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>13%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "13%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -999,7 +1187,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Status Health and Operator Controls</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1017,7 +1205,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     OTel, Prometheus, logging, and diagnostics docs exist. Needs a public "what operators should look at first" maturity pass.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 49%</span><span>Quality Beta - 75%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 3</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 75%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 3</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health and Repair / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health and Repair / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Health and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Logging / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Logging / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Logging / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostic Collection / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostic Collection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostic Collection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Telemetry Export / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Telemetry Export / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Telemetry Export / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Diagnostics / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Diagnostics / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1026,7 +1239,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Health and Repair</span>
           <span>18 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1040,7 +1253,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Logging</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1054,7 +1267,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Diagnostic Collection</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>70%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "70%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1068,7 +1281,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Telemetry Export</span>
           <span>26 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1082,7 +1295,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Session Diagnostics</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>25%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "25%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1101,7 +1314,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Web UI is documented with pairing, chat, PWA, Talk, push, and remote Gateway flows. Promote after cross-browser and mobile-PWA scorecards.
 
-    <div className="maturity-surface-rollup"><span>Coverage Alpha - 53%</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Realtime Talk / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Realtime Talk / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Realtime Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Access and Trust / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Access and Trust / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Access and Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser UI / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser UI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat Conversations / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat Conversations / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat Conversations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Operator Console / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Operator Console / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Operator Console / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1110,7 +1351,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Browser Realtime Talk</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1124,7 +1365,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Browser Access and Trust</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1138,7 +1379,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Configuration</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1152,7 +1393,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Browser UI</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>42%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "42%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1166,7 +1407,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">WebChat Conversations</span>
           <span>20 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>10%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "10%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1180,7 +1421,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Operator Console</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>83%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "83%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1198,7 +1439,44 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Broad docs and strong internal runtime evidence exist across manifests, discovery, loading, provider/tool architecture, and approval boundaries. Keep the row at beta until public SDK API/subpaths and external distribution proof are stronger.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 29%</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 7</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 7</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Authoring and Packaging plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Authoring and Packaging plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Authoring and Packaging plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Bundled plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Bundled plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Bundled plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas plugin / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas plugin / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas plugin / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installing and running plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installing and running plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installing and running plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider and tool plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider and tool plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider and tool plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin approvals / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Testing plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Testing plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Testing plugins / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1207,7 +1485,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Authoring and Packaging plugins</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1221,7 +1499,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Bundled plugins</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1235,7 +1513,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Canvas plugin</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1249,7 +1527,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Installing and running plugins</span>
           <span>24 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>29%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "29%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1263,7 +1541,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel plugins</span>
           <span>5 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1277,7 +1555,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider and tool plugins</span>
           <span>22 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>14%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "14%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1291,7 +1569,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Plugin approvals</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1305,7 +1583,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Publishing plugins</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1319,7 +1597,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Testing plugins</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>36%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "36%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1337,7 +1615,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Good docs and hardening surfaces exist. Promote after regular upgrade/security scenario runs prove no setup regressions.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 14%</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approval Policy and Tool Safeguards / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approval Policy and Tool Safeguards / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Approval Policy and Tool Safeguards / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Auth and Remote Access / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Auth and Remote Access / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Auth and Remote Access / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Access Control / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Access Control / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Access Control / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device and Node Pairing / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device and Node Pairing / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device and Node Pairing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Trust / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Trust / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Credential and Secret Hygiene / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Credential and Secret Hygiene / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Credential and Secret Hygiene / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1346,7 +1652,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Approval Policy and Tool Safeguards</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1360,7 +1666,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Auth and Remote Access</span>
           <span>9 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>22%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "22%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1374,7 +1680,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Access Control</span>
           <span>3 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1388,7 +1694,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Device and Node Pairing</span>
           <span>11 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1402,7 +1708,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Plugin Trust</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1416,7 +1722,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Credential and Secret Hygiene</span>
           <span>11 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>46%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "46%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1435,7 +1741,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Cron, hooks, tasks, Task Flow, and durable work surfaces are documented and usable. Scenario proof should cover unattended delivery, recovery, and failure visibility.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 49%</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 72%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cron Jobs / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cron Jobs / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cron Jobs / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Event Ingress / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Event Ingress / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Event Ingress / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Automation Hooks / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Automation Hooks / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Automation Hooks / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Background Tasks and Flows / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Background Tasks and Flows / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Background Tasks and Flows / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Heartbeat / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Heartbeat / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Heartbeat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Polling Controls / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Polling Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Polling Controls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1444,7 +1778,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Cron Jobs</span>
           <span>22 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1458,7 +1792,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Event Ingress</span>
           <span>15 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1472,7 +1806,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Automation Hooks</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1486,7 +1820,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Background Tasks and Flows</span>
           <span>14 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1500,7 +1834,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Heartbeat</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1514,7 +1848,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Polling Controls</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1532,7 +1866,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Broad capability surface exists, but provider variance, file limits, and node/app parity make this not stable yet.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 43%</span><span>Quality Alpha - 64%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 64%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Intake and Access / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Intake and Access / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Intake and Access / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Media Handling / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Media Handling / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Media Handling / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Configuration / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Configuration / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Configuration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Text-to-Speech Delivery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Text-to-Speech Delivery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Text-to-Speech Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Understanding / Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Understanding / Completeness</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Understanding / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation / Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation / Completeness</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1541,7 +1903,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Intake and Access</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>63%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "63%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1555,7 +1917,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Media Handling</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1569,7 +1931,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Configuration</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1583,7 +1945,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Text-to-Speech Delivery</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1597,7 +1959,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Understanding</span>
           <span>14 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>57%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "57%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>69%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "69%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>69%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "69%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1611,7 +1973,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Generation</span>
           <span>21 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>38%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "38%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>69%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "69%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>69%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "69%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1629,7 +1991,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Multiple implementations exist across Control UI, apps, and providers. Needs latency, failure-mode, and setup scorecards before beta.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 2%</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Talk Sessions / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Talk Sessions / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Talk Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Speech and Transcription / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Speech and Transcription / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Speech and Transcription / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native App Talk / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native App Talk / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native App Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice Wake and Routing / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice Wake and Routing / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice Wake and Routing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Observability / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Observability / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Talk Observability / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1638,7 +2028,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Talk Providers</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1652,7 +2042,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Realtime Talk Sessions</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>9%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "9%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1666,7 +2056,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Speech and Transcription</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1680,7 +2070,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native App Talk</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1694,7 +2084,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Voice Wake and Routing</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1708,7 +2098,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Talk Observability</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1726,7 +2116,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Present in docs and source, but less visible as a primary user workflow. Needs explicit scenario definition.
 
-    <div className="maturity-surface-rollup"><span>Coverage Clawesome - 100%</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Runtime Modes / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Runtime Modes / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Runtime Modes / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Input and Commands / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Input and Commands / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Input and Commands / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Management / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Management / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Session Management / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Shell Execution / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Shell Execution / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Shell Execution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Rendering and Output Safety / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Rendering and Output Safety / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Rendering and Output Safety / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1735,7 +2150,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Runtime Modes</span>
           <span>14 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1749,7 +2164,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Input and Commands</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1763,7 +2178,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Session Management</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1777,7 +2192,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Local Shell Execution</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1791,7 +2206,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Rendering and Output Safety</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1809,7 +2224,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Public docs and ecosystem concept exist. Needs install, trust, update, rollback, and compatibility scorecards.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 35%</span><span>Quality Alpha - 58%</span><span>Completeness Alpha - 62%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 58%</span><span>Completeness Alpha - 62%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>62</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing / Completeness</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Publishing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Catalog Discovery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Catalog Discovery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Catalog Discovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility and Trust / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility and Trust / Completeness</span></td><td><span>56</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility and Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle and Health / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle and Health / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle and Health / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1818,7 +2255,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Publishing</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>57%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "57%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1832,7 +2269,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Catalog Discovery</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1846,7 +2283,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Compatibility and Trust</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>8%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "8%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>56%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "56%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1860,7 +2297,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Plugin Lifecycle and Health</span>
           <span>26 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>15%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "15%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1878,7 +2315,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     OpenClaw App SDK is a distinct external app contract separate from Gateway runtime and Plugin SDK. Current scoring shows a real `@openclaw/sdk` path with gaps around public packaging, auto-discovery, approvals, helpers, and compatibility.
 
-    <div className="maturity-surface-rollup"><span>Coverage Alpha - 64%</span><span>Quality Alpha - 54%</span><span>Completeness Alpha - 53%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 54%</span><span>Completeness Alpha - 53%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Client API / Quality</span></td><td><span>51</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Client API / Completeness</span></td><td><span>50</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Client API / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Conversations / Quality</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Conversations / Completeness</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Conversations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Events and Approvals / Quality</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Events and Approvals / Completeness</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Events and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Resource Helpers / Quality</span></td><td><span>62</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Resource Helpers / Completeness</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Resource Helpers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility / Completeness</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1887,7 +2352,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Client API</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>51%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "51%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>50%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "50%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1901,7 +2366,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Access</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1915,7 +2380,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Agent Conversations</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>52%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "52%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>52%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "52%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1929,7 +2394,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Events and Approvals</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>52%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "52%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>52%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "52%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1943,7 +2408,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Resource Helpers</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>62%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "62%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1957,7 +2422,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Compatibility</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>40%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "40%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -1980,7 +2445,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Node runtime is recommended, systemd user service is documented, and VPS/container guidance is broad.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Beta - 75%</span><span>Completeness Stable - 89%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 4</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 75%</span><span>Completeness Stable - 89%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 4</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Host Setup and Updates / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Host Setup and Updates / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Host Setup and Updates / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime and Service Control / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime and Service Control / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime and Service Control / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Security / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Security / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Security / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Targets / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Targets / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Targets / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -1989,7 +2479,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Host Setup and Updates</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2003,7 +2493,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Runtime and Service Control</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2017,7 +2507,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Remote Access and Security</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2031,7 +2521,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Diagnostics and Repair</span>
           <span>4 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2045,7 +2535,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Deployment Targets</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>75%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "75%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>89%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "89%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2063,7 +2553,38 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     LaunchAgent service path, local/remote Gateway modes, CLI install, and app integration are documented.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Beta - 74%</span><span>Completeness Stable - 88%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 74%</span><span>Completeness Stable - 88%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Gateway Integration / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Gateway Integration / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Gateway Integration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Gateway Mode / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Gateway Mode / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Gateway Mode / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Observability / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Observability / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Observability / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Permissions and Native Capabilities / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Permissions and Native Capabilities / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Permissions and Native Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Profiles and Isolation / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Profiles and Isolation / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Profiles and Isolation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2072,7 +2593,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI Setup</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2086,7 +2607,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Local Gateway Integration</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2100,7 +2621,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Remote Gateway Mode</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2114,7 +2635,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Service Lifecycle</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2128,7 +2649,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Diagnostics and Observability</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2142,7 +2663,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Permissions and Native Capabilities</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2156,7 +2677,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Profiles and Isolation</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>88%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "88%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2174,7 +2695,38 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Official Google Play distribution exists, source build/run docs are maintained, and the Android app is documented as a normal companion node for users.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Stable - 80%</span><span>Completeness Stable - 80%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Stable - 80%</span><span>Completeness Stable - 80%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Capture / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Capture / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Capture / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Mobile Chat / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Mobile Chat / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Mobile Chat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Connection Setup / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Connection Setup / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Connection Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Settings / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Settings / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Settings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Runtime / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Runtime / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2183,7 +2735,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Capture</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2197,7 +2749,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Mobile Chat</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2211,7 +2763,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Connection Setup</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2225,7 +2777,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Distribution</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2239,7 +2791,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Settings</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2253,7 +2805,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Voice</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2267,7 +2819,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Device Runtime</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2285,7 +2837,38 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Official App Store distribution exists, relay-backed push is documented, and the iOS app is documented as a normal companion node for users.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Stable - 80%</span><span>Completeness Stable - 80%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Stable - 80%</span><span>Completeness Stable - 80%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Sharing / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Sharing / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Sharing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Setup and Diagnostics / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Setup and Diagnostics / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Setup and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Commands / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Commands / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Device Commands / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Background / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Background / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Background / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2294,7 +2877,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Sharing</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2308,7 +2891,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Chat and Sessions</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2322,7 +2905,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Setup and Diagnostics</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2336,7 +2919,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Distribution</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2350,7 +2933,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Device Commands</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2364,7 +2947,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Notifications and Background</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2378,7 +2961,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Voice</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>80%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "80%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2396,7 +2979,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Install docs exist and are common deployment paths. Promote after recurring release smoke captures upgrade and volume behavior.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 28%</span><span>Quality Beta - 71%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 71%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Setup / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Operations / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Operations / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Container Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Release and Validation / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Release and Validation / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Release and Validation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Sandbox and Tooling / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Sandbox and Tooling / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Agent Sandbox and Tooling / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2405,7 +3010,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Container Setup</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>33%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "33%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2419,7 +3024,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Container Operations</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>18%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "18%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2433,7 +3038,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Image Release and Validation</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>29%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "29%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2447,7 +3052,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Agent Sandbox and Tooling</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>33%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "33%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2465,7 +3070,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Recommended Windows path with systemd/user-service guidance and boot-chain docs. Promote after repeated install/update scorecards.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 69%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 69%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 5</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WSL Setup / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WSL Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WSL Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Service Lifecycle / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access and Exposure / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access and Exposure / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Access and Exposure / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Diagnostics and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser and Control UI / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser and Control UI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser and Control UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2474,7 +3107,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">WSL Setup</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2488,7 +3121,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2502,7 +3135,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Service Lifecycle</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2516,7 +3149,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Access and Exposure</span>
           <span>11 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2530,7 +3163,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Diagnostics and Repair</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2544,7 +3177,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Browser and Control UI</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2563,7 +3196,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Raspberry Pi and ChromeOS/Crostini guides cover supported Linux-based Gateway paths. Needs platform-specific release smoke proof to move higher.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 67%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 67%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Compatibility / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Compatibility / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Auth / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Access and Auth / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Performance and Diagnostics / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Performance and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Performance and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2572,7 +3227,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Setup and Compatibility</span>
           <span>13 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2586,7 +3241,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Remote Access and Auth</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2600,7 +3255,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Runtime</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2614,7 +3269,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Performance and Diagnostics</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2632,7 +3287,41 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Rich menu bar app, permissions, node mode, Canvas, voice wake, WebChat, and remote mode exist. Still fast-moving enough to avoid Stable.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Canvas / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Setup / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Setup / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Settings / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Settings / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Settings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Capabilities / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Capabilities / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Connections / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Connections / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote Connections / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Talk / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Talk / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>WebChat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote WebChat / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote WebChat / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Remote WebChat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2641,7 +3330,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Canvas</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2655,7 +3344,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Local Setup</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2669,7 +3358,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Status and Settings</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2683,7 +3372,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Capabilities</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2697,7 +3386,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Remote Connections</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2711,7 +3400,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Voice and Talk</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2725,7 +3414,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">WebChat</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2739,7 +3428,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Remote WebChat</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2757,7 +3446,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     The Tauri companion ships in stable releases with local and remote Gateway onboarding, managed-runtime setup, hosted Control UI windows, Quick Chat, tray integration, and systemd lifecycle handling; native media capture and some recovery paths remain incomplete.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Beta - 71%</span><span>Completeness Beta - 76%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 71%</span><span>Completeness Beta - 76%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>App Distribution / Quality</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>App Distribution / Completeness</span></td><td><span>84</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>App Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connectivity / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connectivity / Completeness</span></td><td><span>82</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connectivity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / Completeness</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat and Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Capabilities / Quality</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Capabilities / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Diagnostics / Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2766,7 +3480,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">App Distribution</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>76%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "76%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>84%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "84%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2780,7 +3494,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Connectivity</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>82%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "82%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2794,7 +3508,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Chat and Sessions</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>74%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "74%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2808,7 +3522,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Desktop Capabilities</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>64%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "64%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2822,7 +3536,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Status and Diagnostics</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>72%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "72%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2841,7 +3555,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     The Windows App ships signed x64 and ARM64 installers from openclaw/openclaw-windows-node with local or remote Gateway setup, native chat, diagnostics, updates, and opt-in Windows node capabilities.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Experimental - 19%</span><span>Completeness Experimental - 21%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Experimental - 19%</span><span>Completeness Experimental - 21%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installation and Updates / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installation and Updates / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Installation and Updates / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connection / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connection / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Connection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Sessions / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Sessions / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Repair / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Repair / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Status and Repair / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Tools and Permissions / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Tools and Permissions / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Desktop Tools and Permissions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2850,7 +3589,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Installation and Updates</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>19%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "19%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>21%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "21%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2864,7 +3603,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Connection</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>19%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "19%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>21%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "21%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2878,7 +3617,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Chat Sessions</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>19%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "19%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>21%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "21%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2892,7 +3631,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Status and Repair</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>19%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "19%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>21%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "21%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2906,7 +3645,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Desktop Tools and Permissions</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>19%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "19%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>21%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "21%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2924,7 +3663,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Core CLI/Gateway flows work, but docs still recommend WSL2 for the full experience and list native caveats.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 58%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 1</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 58%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 1</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / Completeness</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>CLI / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Management / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Management / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Gateway Management / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Networking / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Networking / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Networking / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Updates / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -2933,7 +3694,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">CLI</span>
           <span>9 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>64%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "64%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2947,7 +3708,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Gateway Management</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2961,7 +3722,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Networking</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2975,7 +3736,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Updates</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -2993,7 +3754,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Kubernetes hosting is a distinct Kustomize-based cluster deployment path. Current scoring shows a real minimal deployment path with gaps around Kubernetes-specific CI, ingress/TLS/NetworkPolicy packaging, backup/restore, and production exposure hardening.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 55%</span><span>Completeness Alpha - 61%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 55%</span><span>Completeness Alpha - 61%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Setup / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Setup / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Deployment Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration and Secrets / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration and Secrets / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Configuration and Secrets / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Exposure / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Exposure / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Exposure / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cluster Lifecycle / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cluster Lifecycle / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Cluster Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3002,7 +3785,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Deployment Setup</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3016,7 +3799,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Configuration and Secrets</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3030,7 +3813,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Exposure</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3044,7 +3827,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Cluster Lifecycle</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>55%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "55%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3062,7 +3845,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Optional install flow. Needs clearer support promise before alpha/beta promotion.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Install Handoff / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Install Handoff / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Install Handoff / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Plugin Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Activation and App UX / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Activation and App UX / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Activation and App UX / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Config and State / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Config and State / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Config and State / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Service Runtime and Guards / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Service Runtime and Guards / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Service Runtime and Guards / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3071,7 +3879,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Install Handoff</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3085,7 +3893,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Plugin Lifecycle</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3099,7 +3907,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Activation and App UX</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3113,7 +3921,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Config and State</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3127,7 +3935,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Service Runtime and Guards</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3145,7 +3953,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Source has Watch app/extension surfaces; public docs do not yet present this as a user feature.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Delivery and Recovery / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Delivery and Recovery / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Delivery and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Exec Approvals / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Exec Approvals / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Exec Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution and Support / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution and Support / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Distribution and Support / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Replies / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Replies / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Notifications and Replies / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Watch App UI / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Watch App UI / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Watch App UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3154,7 +3987,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Delivery and Recovery</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3168,7 +4001,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Exec Approvals</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3182,7 +4015,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Distribution and Support</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3196,7 +4029,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Notifications and Replies</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3210,7 +4043,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Watch App UI</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3233,7 +4066,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Deep docs and broad feature coverage. Voice/delegation paths should stay separately scored as beta/alpha.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 28%</span><span>Quality Beta - 73%</span><span>Completeness Stable - 87%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 4</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 73%</span><span>Completeness Stable - 87%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 4</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3242,7 +4103,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3256,7 +4117,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3270,7 +4131,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>12 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>25%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "25%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3284,7 +4145,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3298,7 +4159,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3312,7 +4173,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Realtime Voice and Calls</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>73%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "73%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-stable"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-stable">Stable</span><span>87%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "87%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3330,7 +4191,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Core channel is mature enough for regular use, but high-variance UX and media edge cases need recurring scenario proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 9%</span><span>Quality Alpha - 68%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-full">Full - 5</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 68%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-full">Full - 5</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3339,7 +4225,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>20%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "20%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3353,7 +4239,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3367,7 +4253,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3381,7 +4267,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3395,7 +4281,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>11 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>27%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "27%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>77%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "77%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3413,7 +4299,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     First-class channel docs and routing surface. Needs workspace install/admin scenario scorecards.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 38%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-full">Full - 5</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-full">Full - 5</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3422,7 +4333,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>10 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>10%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "10%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3436,7 +4347,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>1 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3450,7 +4361,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>7 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>57%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "57%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3464,7 +4375,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3478,7 +4389,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>25%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "25%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3497,7 +4408,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Supported iMessage runs through imsg on a signed-in macOS Messages host. Keep macOS permissions, SSH wrapper, SIP/private API, and legacy BlueBubbles migration caveats visible without presenting the removed transport as an active channel.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3506,7 +4442,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3520,7 +4456,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3534,7 +4470,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3548,7 +4484,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3562,7 +4498,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3580,7 +4516,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Core path is important and documented; upstream Baileys/session volatility keeps it below Stable.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3589,7 +4550,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3603,7 +4564,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3617,7 +4578,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3631,7 +4592,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3645,7 +4606,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3663,7 +4624,35 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Supported via bundled plugin. Needs bridge, auth, and room lifecycle scorecards.
 
-    <div className="maturity-surface-rollup"><span>Coverage Alpha - 67%</span><span>Quality Alpha - 60%</span><span>Completeness Alpha - 67%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 60%</span><span>Completeness Alpha - 67%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Encryption and Verification / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Encryption and Verification / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Encryption and Verification / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3672,7 +4661,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3686,7 +4675,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3700,7 +4689,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3714,7 +4703,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3728,7 +4717,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>33%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "33%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3742,7 +4731,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Encryption and Verification</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-clawesome"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-clawesome">Clawesome</span><span>100%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "100%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>60%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "60%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3760,7 +4749,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Documented channel, but enterprise/admin setup raises maturity risk.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3769,7 +4783,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>16 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3783,7 +4797,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3797,7 +4811,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3811,7 +4825,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3825,7 +4839,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>16 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3843,7 +4857,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Enterprise auth/admin flows need explicit scenario proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3852,7 +4891,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3866,7 +4905,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3880,7 +4919,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3894,7 +4933,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3908,7 +4947,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3926,7 +4965,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Supported channel docs exist; needs stronger install and reconnect proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 59%</span><span>Completeness Alpha - 66%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -3935,7 +4999,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3949,7 +5013,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3963,7 +5027,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3977,7 +5041,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -3991,7 +5055,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Controls and Approvals</span>
           <span>3 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>59%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "59%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4009,7 +5073,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Important regional coverage, but public support level should be calibrated per account type, upstream approval, and maintainer proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 55%</span><span>Completeness Alpha - 58%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 55%</span><span>Completeness Alpha - 58%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4018,7 +5104,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4032,7 +5118,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4046,7 +5132,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4060,7 +5146,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4078,7 +5164,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Supported surfaces exist, but maturity likely varies by upstream and maintainer coverage. Score individually later.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 53%</span><span>Completeness Alpha - 54%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 53%</span><span>Completeness Alpha - 54%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4087,7 +5195,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4101,7 +5209,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4115,7 +5223,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4129,7 +5237,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>53%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "53%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>54%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "54%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4147,7 +5255,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Optional/plugin path with complex realtime behavior. Needs scenario scorecard before public beta.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 10%</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Experimental - 41%</span><span>Completeness Experimental - 44%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Realtime Voice and Calls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4156,7 +5289,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Channel Setup and Operations</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>50%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "50%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4170,7 +5303,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Access and Identity</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4184,7 +5317,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Conversation Routing and Delivery</span>
           <span>1 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4198,7 +5331,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media and Rich Content</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4212,7 +5345,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Realtime Voice and Calls</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>41%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "41%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>44%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "44%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4235,7 +5368,26 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Core tools are documented, but host security and permission UX should stay under active scorecard review.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 42%</span><span>Quality Beta - 75%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 2</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 75%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 2</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Automation / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Automation / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Browser Automation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Invocation and Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Invocation and Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Invocation and Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Sandbox and Tool Policy / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Sandbox and Tool Policy / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Sandbox and Tool Policy / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4244,7 +5396,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Browser Automation</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>25%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "25%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4258,7 +5410,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Tool Invocation and Execution</span>
           <span>8 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>50%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "50%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4272,7 +5424,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Sandbox and Tool Policy</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>50%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "50%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4290,7 +5442,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Deep docs, OAuth/subscription path, realtime voice, image, and compatibility behavior. Provider churn keeps this from Stable without release-scorecard proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 8%</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 3</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-partial">Partial - 3</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Auth / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Auth / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Responses and Tool Compatibility / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Responses and Tool Compatibility / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Responses and Tool Compatibility / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Codex Harness / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Codex Harness / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Codex Harness / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image and Multimodal Input / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image and Multimodal Input / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image and Multimodal Input / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Realtime Audio / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Realtime Audio / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Voice and Realtime Audio / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4299,7 +5476,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Model and Auth</span>
           <span>9 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>22%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "22%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4313,7 +5490,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Responses and Tool Compatibility</span>
           <span>6 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4327,7 +5504,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Codex Harness</span>
           <span>12 capabilities / LTS-supported</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4341,7 +5518,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Image and Multimodal Input</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4355,7 +5532,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Voice and Realtime Audio</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>67%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "67%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4373,7 +5550,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Multiple providers and docs exist. Needs quota/error/SSRF proof per provider family.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 4%</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 74%</span><span>Completeness Beta - 79%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Search Providers / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Search Providers / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Search Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Diagnostics / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Setup and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Availability and Fetch / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Availability and Fetch / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Tool Availability and Fetch / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4382,7 +5581,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Search Providers</span>
           <span>19 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4396,7 +5595,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Setup and Diagnostics</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4410,7 +5609,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Network Safety</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4424,7 +5623,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Tool Availability and Fetch</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>17%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "17%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4442,7 +5641,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     First-class model provider. Needs recurring auth/catalog/tool-call scenario proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Beta - 71%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Beta - 71%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth and Recovery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth and Recovery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Auth and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / Quality</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model and Runtime Selection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Request Transport and Turn Semantics / Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Request Transport and Turn Semantics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Request Transport and Turn Semantics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Cache and Context / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Cache and Context / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Cache and Context / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Inputs / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Inputs / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Inputs / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4451,7 +5675,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Auth and Recovery</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4465,7 +5689,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Model and Runtime Selection</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4479,7 +5703,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Request Transport and Turn Semantics</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>77%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "77%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>79%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "79%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4493,7 +5717,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Prompt Cache and Context</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4507,7 +5731,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Inputs</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4525,7 +5749,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     First-class provider with model and realtime surfaces. Needs separate Live/Talk scoring.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Credentials / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Credentials / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Credentials / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model Routing and Endpoints / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model Routing and Endpoints / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Model Routing and Endpoints / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Direct Gemini Runtime / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Direct Gemini Runtime / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Direct Gemini Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media, Search, and Realtime / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media, Search, and Realtime / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media, Search, and Realtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Caching / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Caching / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Prompt Caching / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4534,7 +5783,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Setup and Credentials</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4548,7 +5797,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Model Routing and Endpoints</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4562,7 +5811,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Direct Gemini Runtime</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4576,7 +5825,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media, Search, and Realtime</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4590,7 +5839,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Prompt Caching</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4608,7 +5857,29 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Unified provider path is documented and valuable, but model-specific behavior varies.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 66%</span><span>Completeness Beta - 78%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Auth / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Auth / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup and Auth / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Runtime and Normalization / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Runtime and Normalization / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Chat Runtime and Normalization / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Recovery and Diagnostics / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Recovery and Diagnostics / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Recovery and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation and Speech / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation and Speech / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Generation and Speech / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4617,7 +5888,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Setup and Auth</span>
           <span>14 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4631,7 +5902,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Chat Runtime and Normalization</span>
           <span>15 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4645,7 +5916,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Recovery and Diagnostics</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4659,7 +5930,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Generation and Speech</span>
           <span>7 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>66%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "66%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-beta"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-beta">Beta</span><span>78%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "78%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4677,7 +5948,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Capability exists across providers, but quality, latency, and parameter compatibility vary too much for beta without per-provider proof.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Routing and Discovery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Routing and Discovery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Media Routing and Discovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Task Lifecycle and Delivery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Task Lifecycle and Delivery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Task Lifecycle and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Image Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Video Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Video Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Video Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Music Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Music Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Music Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4686,7 +5982,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Media Routing and Discovery</span>
           <span>4 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4700,7 +5996,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Task Lifecycle and Delivery</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4714,7 +6010,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Image Generation</span>
           <span>9 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4728,7 +6024,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Video Generation</span>
           <span>11 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4742,7 +6038,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Music Generation</span>
           <span>6 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4760,7 +6056,32 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Useful and documented, but environment variance is high.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 0%</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Provider Plugins / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Provider Plugins / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Native Provider Plugins / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>OpenAI-Compatible Runtime Compatibility / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>OpenAI-Compatible Runtime Compatibility / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>OpenAI-Compatible Runtime Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Memory and Embeddings / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Memory and Embeddings / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Local Memory and Embeddings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety and Prompt Controls / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety and Prompt Controls / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Network Safety and Prompt Controls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4769,7 +6090,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Setup, Lifecycle, and Diagnostics</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4783,7 +6104,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Native Provider Plugins</span>
           <span>10 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4797,7 +6118,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">OpenAI-Compatible Runtime Compatibility</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4811,7 +6132,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Local Memory and Embeddings</span>
           <span>5 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4825,7 +6146,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Network Safety and Prompt Controls</span>
           <span>2 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4843,7 +6164,26 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
 
     Many docs/reference pages exist; score should be generated from provider metadata plus live smoke coverage.
 
-    <div className="maturity-surface-rollup"><span>Coverage Experimental - 8%</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+    <div className="maturity-surface-rollup"><span>Coverage Unscored</span><span>Quality Alpha - 61%</span><span>Completeness Alpha - 68%</span><span><span className="maturity-lts maturity-lts-none">None</span></span></div>
+
+    <details>
+    <summary>Decision context</summary>
+    <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
+    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
+    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted LLM Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted LLM Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted LLM Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Media Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Media Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Hosted Media Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Operations / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Operations / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    <tr><td><span>Provider Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
+    </tbody></table>
+    </details>
 
     <div className="maturity-category-list">
       <div className="maturity-category-row maturity-category-row-header"><span>Area</span><span>Coverage</span><span>Quality</span><span>Completeness</span><span>Docs</span></div>
@@ -4852,7 +6192,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Hosted LLM Providers</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4866,7 +6206,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Hosted Media Providers</span>
           <span>8 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>25%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "25%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
@@ -4880,7 +6220,7 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
           <span className="maturity-category-title">Provider Operations</span>
           <span>12 capabilities</span>
         </div>
-        <div><span className="maturity-score maturity-score-experimental"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-experimental">Experimental</span><span>0%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "0%" }} /></span></span></div>
+        <div><span className="maturity-score maturity-score-unscored"><span className="maturity-score-label"><span>Unscored</span><span>-</span></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>61%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "61%" }} /></span></span></div>
         <div><span className="maturity-score maturity-score-alpha"><span className="maturity-score-label"><span className="maturity-level-pill maturity-level-alpha">Alpha</span><span>68%</span></span><span className="maturity-meter" aria-hidden="true"><span style={{ width: "68%" }} /></span></span></div>
         <div className="maturity-category-docs">
