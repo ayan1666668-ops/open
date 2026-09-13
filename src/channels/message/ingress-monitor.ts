@@ -194,6 +194,7 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
   const getDrain = (): ChannelIngressDrain => {
     drain ??= createChannelIngressDrain<TStoredPayload, TMetadata>({
       ...options.drain,
+      resolvePendingDisposition: options.resolvePendingDisposition,
       queue: getQueue(),
       abortSignal: drainAbortSignal,
       now,

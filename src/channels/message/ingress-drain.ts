@@ -22,6 +22,10 @@ import {
 import { createIngressWriter } from "./ingress-claim-writes.js";
 import type { ChannelIngressDispatchLifecycle } from "./ingress-drain-lifecycle.js";
 import {
+  applyIngressPendingDispositions,
+  type ResolveChannelIngressPendingDisposition,
+} from "./ingress-drain-pending-disposition.js";
+import {
   activeClaimKey,
   createIngressSettleOwner,
   IngressAdoptionLostError,
@@ -76,6 +80,7 @@ export type CreateChannelIngressDrainOptions<
       | ChannelIngressQueueClaim<TPayload, TMetadata>,
     pendingEvent: ChannelIngressQueueClaim<TPayload, TMetadata>,
   ) => IngressSupersedeDecision | Promise<IngressSupersedeDecision>;
+  resolvePendingDisposition?: ResolveChannelIngressPendingDisposition<TPayload, TMetadata>;
   deriveLaneKey?: (record: ChannelIngressQueueRecord<TPayload, TMetadata>) => string | undefined;
   reconcileStoredLaneKey?: (
     record: ChannelIngressQueueRecord<TPayload, TMetadata>,
@@ -572,7 +577,27 @@ export function createChannelIngressDrain<
 
     await recoverStaleClaims();
 
-    const pending = await queue.listPending({ limit: "all", orderBy });
+    let pending = await queue.listPending({ limit: "all", orderBy });
+    let pendingDispositionBlockedLaneKeys = new Set<string>();
+    if (options.resolvePendingDisposition) {
+      const dispositionResult = await applyIngressPendingDispositions({
+        pending,
+        now: now(),
+        queue,
+        resolve: options.resolvePendingDisposition,
+        resolveLaneKey: (record) =>
+          resolveLaneKey(record, options.deriveLaneKey, options.reconcileStoredLaneKey),
+        formatError,
+        log,
+      });
+      pending = dispositionResult.pending;
+      pendingDispositionBlockedLaneKeys = dispositionResult.blockedLaneKeys;
+      if (dispositionResult.errors.length > 0) {
+        for (const error of dispositionResult.errors) {
+          log(`ingress drain: pending disposition rejected: ${formatError(error)}`);
+        }
+      }
+    }
     const claims = await queue.listClaims();
     const activeLaneKeys = new Set(laneOwnerByKey.keys());
     const claimedLaneKeys = new Set(
@@ -611,6 +636,7 @@ export function createChannelIngressDrain<
       ...sortedKeys(activeLaneKeys),
       ...sortedKeys(claimedLaneKeys),
       ...sortedKeys(retryDelayedLaneKeys),
+      ...sortedKeys(pendingDispositionBlockedLaneKeys),
     ]);
 
     // Optional supersede scan: pending events may abort unadopted same-lane work.
