@@ -70,7 +70,8 @@ test("sessions.patch validates persistent session icons", async () => {
   });
   expect(invalid.error).toEqual({
     code: "INVALID_REQUEST",
-    message: "icon must be a single emoji or one of: braces, book, monitor, bot, kanban, coins",
+    message:
+      "icon must be a single emoji, a named icon (braces, book, monitor, bot, kanban, coins), or self-contained SVG markup/data URL up to 16 KiB",
   });
 });
 
