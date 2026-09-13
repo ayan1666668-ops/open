@@ -6,21 +6,49 @@ import { BoundedSerialQueue } from "../../../shared/bounded-serial-queue.js";
 import type { GatewayRole } from "../../role-policy.js";
 import { MAX_PAYLOAD_BYTES } from "../../server-constants.js";
 
-type GatewayReceiver = { _maxPayload?: number; _allowSynchronousEvents?: boolean };
+type PayloadLimited = { _maxPayload?: number };
+type GatewayReceiver = PayloadLimited & {
+  _allowSynchronousEvents?: boolean;
+};
+
+function hasWritablePayloadLimit(target: PayloadLimited | undefined): target is PayloadLimited {
+  return (
+    typeof target?.["_maxPayload"] === "number" &&
+    Object.getOwnPropertyDescriptor(target, "_maxPayload")?.writable === true
+  );
+}
+
+function gatewayReceiver(socket: WebSocket): GatewayReceiver | null {
+  // SAFETY: ws owns these private per-frame fields; validate each before the handoff.
+  const receiver = (socket as WebSocket & { _receiver?: GatewayReceiver })["_receiver"];
+  if (!hasWritablePayloadLimit(receiver)) {
+    return null;
+  }
+  return receiver;
+}
+
+/** Raises the authenticated frame limit after the connection is admitted. */
+export function raiseGatewayReceiverPayloadLimit(socket: WebSocket, maxPayload: number): boolean {
+  const receiver = gatewayReceiver(socket);
+  if (!receiver) {
+    return false;
+  }
+  receiver["_maxPayload"] = maxPayload;
+  return true;
+}
 
 export function prepareGatewayReceiverHandoff(
   socket: WebSocket,
   role: GatewayRole,
 ): (() => void) | null {
-  // SAFETY: ws owns these private per-frame fields; validate each before the handoff.
-  const receiver = (socket as WebSocket & { _receiver?: GatewayReceiver })["_receiver"];
+  const receiver = gatewayReceiver(socket);
+  if (!receiver) {
+    return null;
+  }
   if (
-    !receiver ||
-    typeof receiver["_maxPayload"] !== "number" ||
-    Object.getOwnPropertyDescriptor(receiver, "_maxPayload")?.writable !== true ||
-    (role === "operator" &&
-      (typeof receiver["_allowSynchronousEvents"] !== "boolean" ||
-        Object.getOwnPropertyDescriptor(receiver, "_allowSynchronousEvents")?.writable !== true))
+    role === "operator" &&
+    (typeof receiver["_allowSynchronousEvents"] !== "boolean" ||
+      Object.getOwnPropertyDescriptor(receiver, "_allowSynchronousEvents")?.writable !== true)
   ) {
     return null;
   }

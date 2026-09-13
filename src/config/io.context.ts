@@ -47,6 +47,7 @@ type ValidationPluginMetadataSnapshotLoader = {
 
 export type ConfigIoContext = {
   deps: NormalizedConfigIoDeps;
+  pathResolution: { env: NodeJS.ProcessEnv; homedir?: () => string };
   configPath: string;
   options: ConfigIoFactoryOptions;
   observeLoadConfigSnapshot: (snapshot: ConfigFileSnapshot) => ConfigFileSnapshot;
@@ -56,7 +57,11 @@ export type ConfigIoContext = {
     env: NodeJS.ProcessEnv;
     allowCurrentPluginMetadata?: boolean;
   }) => ValidationPluginMetadataSnapshotLoader;
-  resolveRuntimePreflightSourceConfig: (candidate: OpenClawConfig) => OpenClawConfig;
+  resolveRuntimePreflightSourceConfig: (
+    candidate: OpenClawConfig,
+    includeFileHashes?: Record<string, string>,
+    includeFileTargets?: Record<string, string>,
+  ) => OpenClawConfig;
   prepareRecoveryBackupCandidate: (
     candidate: ConfigRecoveryCandidate,
   ) => ConfigRecoveryCandidatePreparation;
@@ -65,6 +70,9 @@ export type ConfigIoContext = {
 export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): ConfigIoContext {
   const deps = normalizeConfigIoDeps(options);
   const configPath = resolveConfigPathForDeps(deps);
+  // The normalized default homedir already applies OPENCLAW_HOME. Path
+  // resolvers need the original OS-home fallback or relative overrides expand twice.
+  const pathResolution = { env: deps.env, homedir: options.homedir };
 
   function observeLoadConfigSnapshot(snapshot: ConfigFileSnapshot): ConfigFileSnapshot {
     if (deps.observe) {
@@ -74,7 +82,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
   }
 
   function finalizeLoadedRuntimeConfig(cfg: OpenClawConfig): OpenClawConfig {
-    const duplicates = findDuplicateAgentDirs(cfg, { env: deps.env, homedir: deps.homedir });
+    const duplicates = findDuplicateAgentDirs(cfg, pathResolution);
     if (duplicates.length > 0) {
       throw new DuplicateAgentDirError(duplicates);
     }
@@ -127,9 +135,19 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
     };
   }
 
-  function resolveRuntimePreflightSourceConfig(candidate: OpenClawConfig): OpenClawConfig {
+  function resolveRuntimePreflightSourceConfig(
+    candidate: OpenClawConfig,
+    includeFileHashes?: Record<string, string>,
+    includeFileTargets?: Record<string, string>,
+  ): OpenClawConfig {
     const env = { ...deps.env } as NodeJS.ProcessEnv;
-    const resolvedIncludes = resolveConfigIncludesForRead(candidate, configPath, { ...deps, env });
+    const resolvedIncludes = resolveConfigIncludesForRead(
+      candidate,
+      configPath,
+      { ...deps, env },
+      includeFileHashes,
+      includeFileTargets,
+    );
     const resolution = resolveConfigForRead(resolvedIncludes, env, deps.lowerPrecedenceEnv);
     const contextBudgetConfig = migrateLegacyContextBudgetConfig(
       resolution.resolvedConfigRaw,
@@ -196,6 +214,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
         env: candidateEnv,
       });
       const validated = validateConfigObjectWithPlugins(effectiveConfigRaw, {
+        ...pathResolution,
         env: candidateEnv,
         pluginValidation: options.pluginValidation,
         loadPluginMetadataSnapshot: pluginMetadata.load,
@@ -228,6 +247,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
 
   return {
     deps,
+    pathResolution,
     configPath,
     options,
     observeLoadConfigSnapshot,

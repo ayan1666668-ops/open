@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   afterAll,
@@ -17,6 +18,7 @@ import {
 } from "vitest";
 import * as commandRunner from "../../process/exec-runner.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { InvalidWorktreeBaseRefError } from "./base-ref.js";
 import {
   deleteRegistryWorktree,
   finalizeWorktreeRemovalRows,
@@ -31,6 +33,17 @@ import { materializeManagedWorktreeFixture } from "./service.test-support.js";
 
 const execFileAsync = promisify(execFile);
 
+function isWorktreeAdd(argv: readonly string[]): boolean {
+  if (argv[0] !== "git") {
+    return false;
+  }
+  let command = 1;
+  while (argv[command] === "-c" || argv[command] === "-C") {
+    command += 2;
+  }
+  return argv[command] === "worktree" && argv[command + 1] === "add";
+}
+
 function expectCheckoutTimeouts(
   commandSpy: MockInstance<typeof commandRunner.runCommandWithTimeout>,
   checkoutBases: string[],
@@ -38,7 +51,7 @@ function expectCheckoutTimeouts(
   const gitCommands = commandSpy.mock.calls
     .filter(([argv]) => argv[0] === "git")
     .map(([argv, options]) => ({
-      checkout: argv[3] === "worktree" && argv[4] === "add",
+      checkout: isWorktreeAdd(argv) || (argv.includes("read-tree") && argv.includes("-u")),
       base: argv.at(-1),
       timeoutMs: typeof options === "number" ? options : options.timeoutMs,
     }));
@@ -155,7 +168,13 @@ describe("ManagedWorktreeService", () => {
     repo = await fs.realpath(repo);
     env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
     now = 1_700_000_000_000;
-    service = new ManagedWorktreeService({ env, now: () => now });
+    // These cases inject ordinary Git checkout failures; accelerated checkout
+    // and its separate template allocation are covered by service.acceleration.
+    service = new ManagedWorktreeService({
+      env,
+      now: () => now,
+      getConfig: () => ({ worktreeAcceleration: false }),
+    });
   });
 
   afterEach(async () => {
@@ -290,6 +309,21 @@ describe("ManagedWorktreeService", () => {
     expect(await git(created.path, "rev-parse", "HEAD")).toBe(baseCommit);
   });
 
+  it("rejects explicit bases that do not resolve to commits", async () => {
+    const blob = await gitWithInput(repo, ["hash-object", "-w", "--stdin"], "not a commit\n");
+
+    for (const [name, baseRef] of [
+      ["missing-base", "126887"],
+      ["blob-base", blob],
+    ] as const) {
+      await expect(service.create({ repoRoot: repo, name, baseRef })).rejects.toThrow(
+        InvalidWorktreeBaseRefError,
+      );
+    }
+
+    expect(await service.list()).toEqual([]);
+  });
+
   it("normalizes dashed refs and revision expressions before creating branches", async () => {
     const initialCommit = await git(repo, "rev-parse", "HEAD");
     await fs.writeFile(path.join(repo, "history.txt"), "second\n");
@@ -359,7 +393,7 @@ describe("ManagedWorktreeService", () => {
         name: "ambiguous-ref",
         baseRef: "--ambiguous",
       }),
-    ).rejects.toThrow(/git rev-parse --symbolic-full-name --verify failed/);
+    ).rejects.toThrow(InvalidWorktreeBaseRefError);
 
     expect(await git(repo, "branch", "--list", "openclaw/ambiguous-ref")).toBe("");
     expect(await service.list()).toEqual([]);
@@ -372,7 +406,7 @@ describe("ManagedWorktreeService", () => {
       const name = baseRef.slice(2);
 
       await expect(service.create({ repoRoot: repo, name, baseRef })).rejects.toThrow(
-        /git rev-parse --symbolic-full-name --verify failed/,
+        InvalidWorktreeBaseRefError,
       );
 
       expect(await git(repo, "worktree", "list", "--porcelain")).toBe(before);
@@ -460,9 +494,11 @@ describe("ManagedWorktreeService", () => {
       const controller = new AbortController();
       const closed = new Error("admission closed");
       let authorityClosed = false;
+      let checkoutFailed = false;
       commandSpy.mockImplementation(async (...args) => {
         const result = await runCommand(...args);
-        if (args[0][3] === "worktree" && args[0][4] === "add" && result.code !== 0) {
+        if (isWorktreeAdd(args[0]) && result.code !== 0) {
+          checkoutFailed = true;
           if (admission === "aborted") {
             controller.abort(closed);
           }
@@ -484,12 +520,14 @@ describe("ManagedWorktreeService", () => {
         await expect(creation).rejects.toMatchObject(
           admission === "aborted" ? { code: "OPENCLAW_STATE_LEASE_ABORTED" } : closed,
         );
+        expect(checkoutFailed).toBe(true);
         expectCheckoutTimeouts(commandSpy, ["origin/main"]);
         expect(await git(repo, "worktree", "list", "--porcelain")).not.toContain("stale-remote");
         expect(await git(repo, "branch", "--list", "openclaw/stale-remote")).toBe("");
         return;
       }
       const created = await creation;
+      expect(checkoutFailed).toBe(true);
       expect(created.baseRef).toBe("HEAD");
       expect(await git(created.path, "rev-parse", "HEAD")).toBe(
         await git(repo, "rev-parse", "HEAD"),
@@ -669,7 +707,10 @@ describe("ManagedWorktreeService", () => {
     now += IDLE_GC_MS + 1;
     const commandSpy = vi.spyOn(commandRunner, "runCommandWithTimeout");
     const restored = await service.restore({ id: created.id });
-    expectCheckoutTimeouts(commandSpy, [removed.snapshotRef!]);
+    expectCheckoutTimeouts(commandSpy, [
+      originalHead,
+      await git(repo, "rev-parse", removed.snapshotRef!),
+    ]);
     expect(restored.removedAt).toBeUndefined();
     expect(restored.lastActiveAt).toBe(now);
     expect((await service.gc()).removed).toEqual([]);
@@ -702,6 +743,43 @@ describe("ManagedWorktreeService", () => {
     expect(await git(restored.path, "diff", "--cached", "--name-only")).toBe("");
     expect(await git(restored.path, "diff", "--name-only")).toBe("README.md");
   });
+
+  it.each([false, true])(
+    "handles snapshot restore with a shallow snapshot: %s",
+    async (shallowSnapshot) => {
+      await fs.writeFile(path.join(repo, "README.md"), "second commit\n");
+      await git(repo, "commit", "-am", "second");
+      const remote = await addRemote(root, repo);
+      const clone = path.join(root, "shallow");
+      await git(root, "clone", "--depth=1", pathToFileURL(remote).href, clone);
+      const originalHead = await git(clone, "rev-parse", "HEAD");
+      const created = await materializeDownstreamFixture("shallow-restore", { repoRoot: clone });
+      await fs.writeFile(path.join(created.path, "README.md"), "saved changes\n");
+      const removed = await service.remove({ id: created.id, reason: "test" });
+      const snapshotRef = removed.snapshotRef!;
+      const snapshotCommit = await git(clone, "rev-parse", snapshotRef);
+      if (shallowSnapshot) {
+        // A later depth-limited fetch can graft the local snapshot itself. Merely
+        // putting its parent on the boundary does not hide the snapshot's parent.
+        await git(clone, "fetch", "--depth=1", pathToFileURL(clone).href, snapshotRef);
+        await expect(git(clone, "rev-parse", `${snapshotRef}^`)).rejects.toThrow(
+          "unknown revision",
+        );
+        await expect(service.restore({ id: created.id })).rejects.toThrow(
+          `Cannot restore snapshot ${snapshotCommit} in ${clone}: shallow clone boundary; run \`git fetch --unshallow\` in ${clone}`,
+        );
+        expect(getRegistryWorktree(env, created.id)?.snapshotRef).toBe(snapshotRef);
+        await expect(fs.stat(created.path)).rejects.toMatchObject({ code: "ENOENT" });
+      } else {
+        const restored = await service.restore({ id: created.id });
+        expect(await git(restored.path, "rev-parse", "HEAD")).toBe(originalHead);
+        expect(await fs.readFile(path.join(restored.path, "README.md"), "utf8")).toBe(
+          "saved changes\n",
+        );
+        expect(await git(restored.path, "status", "--porcelain")).toBe("M README.md");
+      }
+    },
+  );
 
   it("captures tracked executable-bit changes when core.filemode is disabled", async () => {
     const script = path.join(repo, "tool.sh");

@@ -1,7 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import type { GatewayControlUiPluginTab } from "../api/gateway.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../api/types.ts";
-import { SIDEBAR_NAV_ROUTES, type NavigationRouteId } from "../app-navigation.ts";
+import { SIDEBAR_NAV_ROUTES } from "../app-navigation.ts";
 import type { RouteId } from "../app-route-paths.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { listSelectableAgents } from "../lib/agents/display.ts";
@@ -12,6 +11,7 @@ import {
   resolveSessionWorkContext,
   resolveSessionWorkSubtitle,
 } from "../lib/session-display.ts";
+import { resolveSessionRenameValue } from "../lib/session-rename.ts";
 import { isSessionRunActive } from "../lib/session-run-state.ts";
 import { collectKnownSessionGroups } from "../lib/sessions/grouping.ts";
 import {
@@ -25,11 +25,14 @@ import {
   areUiSessionKeysEquivalent,
   buildAgentMainSessionKey,
   isAcpSessionKey,
+  isSubagentSessionKey,
+  isPinnableUiSessionRow,
   isUiGlobalScopeConfigured,
   normalizeAgentId,
   readSessionDefaults,
   resolveUiConfiguredMainKey,
   resolveUiDefaultAgentId,
+  resolveUiSessionRowAgentId,
   resolveUiSessionNavigationParentKey,
 } from "../lib/sessions/session-key.ts";
 import { reconcileSidebarZone } from "../lib/sidebar-zone.ts";
@@ -39,7 +42,6 @@ import {
   type SidebarSessionSortMode,
   type SidebarSessionStatusFilter,
 } from "./app-sidebar-session-types.ts";
-import type { SidebarWorkboardBoard } from "./app-sidebar-workboard.ts";
 import { resolveCloudWorkerStopAction } from "./cloud-worker-stop.ts";
 import type { SessionAttentionController } from "./session-attention-controller.ts";
 import { sessionSelfOwner, type SessionOwnerOption } from "./session-owner-chip.ts";
@@ -60,35 +62,48 @@ export function resolveSidebarHomeAttention(
   );
 }
 
-export function compareSidebarSessionRowsByMode(input: {
-  a: SessionRow;
-  b: SessionRow;
+type SidebarSessionSortOptions = {
   sortMode: SidebarSessionSortMode;
   owners: SessionsListResult["owners"];
   createdOrder: ReadonlyMap<string, number>;
-}): number {
-  const { a, b } = input;
-  if (input.sortMode !== "people") {
-    return input.sortMode === "updated"
-      ? compareSessionRowsByUpdatedAt(a, b)
-      : compareSidebarSessionRowsByCreatedAt(a, b, input.createdOrder);
-  }
-  const owners = input.owners ?? [];
-  const ownerA = a.owner?.actor;
-  const ownerB = b.owner?.actor;
-  const idA = ownerA?.id?.trim() ?? "";
-  const idB = ownerB?.id?.trim() ?? "";
-  if (idA !== idB) {
-    const facetOwnerA = owners.find((candidate) => candidate.id === idA);
-    const facetOwnerB = owners.find((candidate) => candidate.id === idB);
-    const labelA = facetOwnerA?.label?.trim() || ownerA?.label?.trim() || idA;
-    const labelB = facetOwnerB?.label?.trim() || ownerB?.label?.trim() || idB;
-    const byOwner = labelA.localeCompare(labelB) || idA.localeCompare(idB);
-    if (byOwner !== 0) {
-      return byOwner;
+};
+
+export function createSidebarSessionRowsComparator(
+  readOptions: () => SidebarSessionSortOptions,
+): (a: SessionRow, b: SessionRow) => number {
+  let options: SidebarSessionSortOptions | undefined;
+  let ownerLabels: Map<string, string | undefined> | undefined;
+  return (a, b) => {
+    // An unset agent selection can resolve through navigation itself. Empty
+    // and single-row projections must not ask for sort facts before sorting.
+    const input = (options ??= readOptions());
+    if (input.sortMode !== "people") {
+      return input.sortMode === "updated"
+        ? compareSessionRowsByUpdatedAt(a, b)
+        : compareSidebarSessionRowsByCreatedAt(a, b, input.createdOrder);
     }
-  }
-  return compareSidebarSessionRowsByCreatedAt(a, b, input.createdOrder);
+    const ownerA = a.owner?.actor;
+    const ownerB = b.owner?.actor;
+    const idA = ownerA?.id?.trim() ?? "";
+    const idB = ownerB?.id?.trim() ?? "";
+    if (idA !== idB) {
+      if (!ownerLabels) {
+        ownerLabels = new Map();
+        for (const owner of input.owners ?? []) {
+          if (!ownerLabels.has(owner.id)) {
+            ownerLabels.set(owner.id, owner.label?.trim());
+          }
+        }
+      }
+      const labelA = ownerLabels.get(idA) || ownerA?.label?.trim() || idA;
+      const labelB = ownerLabels.get(idB) || ownerB?.label?.trim() || idB;
+      const byOwner = labelA.localeCompare(labelB) || idA.localeCompare(idB);
+      if (byOwner !== 0) {
+        return byOwner;
+      }
+    }
+    return compareSidebarSessionRowsByCreatedAt(a, b, input.createdOrder);
+  };
 }
 
 function compareSidebarSessionRowsByCreatedAt(
@@ -159,6 +174,10 @@ export function buildSidebarSessionNavigationState(input: {
   resolveAgentStatusNote: (row: GatewaySessionRow) => string | undefined;
 }): SidebarSessionNavigationState {
   const { context } = input;
+  const defaultAgentId = resolveUiDefaultAgentId({
+    agentsList: context?.agents.state.agentsList,
+    hello: context?.gateway.snapshot.hello,
+  });
   const navigation = resolveSessionNavigation({
     result: input.sessionsResult,
     activeSession: input.activeSession,
@@ -184,6 +203,7 @@ export function buildSidebarSessionNavigationState(input: {
     }
     return {
       key: row.key,
+      agentId: resolveUiSessionRowAgentId(row, defaultAgentId),
       sessionId: row.sessionId,
       displayName: row.displayName,
       incognito: row.incognito === true,
@@ -197,6 +217,7 @@ export function buildSidebarSessionNavigationState(input: {
       // a "Subagent:" prefix on named threads is noise (other surfaces keep it).
       label: resolveSessionDisplayName(row.key, row, { includeSubagentPrefix: false }),
       userLabel: row.label,
+      renameValue: resolveSessionRenameValue(row),
       subtitle: resolveSessionWorkSubtitle(row),
       workContext: resolveSessionWorkContext(row),
       active: row.key === navigation.activeRowKey,
@@ -208,6 +229,7 @@ export function buildSidebarSessionNavigationState(input: {
       modelSelectionLocked: row.modelSelectionLocked === true,
       kind: row.kind,
       pinned: row.pinned === true,
+      pinnable: isPinnableUiSessionRow(row),
       archived: row.archived === true,
       visibility: row.visibility,
       draftOwnedBySelf: isSidebarDraftOwnedBySelf(row, context?.gateway.snapshot.selfUser?.id),
@@ -229,6 +251,8 @@ export function buildSidebarSessionNavigationState(input: {
         row.placement && "providerId" in row.placement ? row.placement.providerId : undefined,
       placementProfileId:
         row.placement && "profileId" in row.placement ? row.placement.profileId : undefined,
+      placementMachine:
+        row.placement && "machine" in row.placement ? row.placement.machine : undefined,
       diskSpaceStatus:
         row.placement?.state === "active" ? row.placement.diskSpace?.status : undefined,
       workspaceConflictCount:
@@ -279,10 +303,7 @@ export function buildSidebarSessionNavigationState(input: {
 export function buildReconciledSidebarZone(input: {
   sidebarEntries: readonly string[];
   rows: SidebarRecentSession[];
-  workboardBoards: readonly SidebarWorkboardBoard[];
-  enabledRouteIds: readonly NavigationRouteId[] | undefined;
-  workboardBoardsReady: boolean;
-  controlUiTabs: readonly GatewayControlUiPluginTab[] | undefined;
+  pluginNavigationKeys: ReadonlySet<string>;
 }) {
   const pinnedRows = input.rows.filter((row) => row.pinned);
   // Only loaded rows count as authoritative unpinned state; entries for
@@ -293,15 +314,11 @@ export function buildReconciledSidebarZone(input: {
     pinnedRows,
     SIDEBAR_NAV_ROUTES,
     knownUnpinnedKeys,
-    input.workboardBoards,
-    input.enabledRouteIds?.includes("workboard") ?? true,
-    input.workboardBoardsReady,
-    input.controlUiTabs?.some((tab) => tab.placement === "route:workboard") === true,
+    input.pluginNavigationKeys,
   );
   return {
     ...reconciled,
     sessionRows: new Map(pinnedRows.map((row) => [row.key, row])),
-    workboardRows: new Map(input.workboardBoards.map((board) => [board.id, board])),
   };
 }
 
@@ -408,17 +425,20 @@ export function resolveLatestSidebarAgentSession(input: {
   });
 }
 
-export function collectSidebarSessionCandidateRows(input: {
+export function collectSidebarSessionRowsByKey(input: {
   rows: readonly GatewaySessionRow[];
   childRowsByParent: Readonly<Record<string, readonly GatewaySessionRow[]>>;
-}): GatewaySessionRow[] {
-  return [
-    ...new Map(
-      [...Object.values(input.childRowsByParent).flat(), ...input.rows].map(
-        (row) => [row.key, row] as const,
-      ),
-    ).values(),
-  ];
+}): ReadonlyMap<string, GatewaySessionRow> {
+  const rowsByKey = new Map<string, GatewaySessionRow>();
+  for (const rows of Object.values(input.childRowsByParent)) {
+    for (const row of rows) {
+      rowsByKey.set(row.key, row);
+    }
+  }
+  for (const row of input.rows) {
+    rowsByKey.set(row.key, row);
+  }
+  return rowsByKey;
 }
 
 /**
@@ -439,6 +459,7 @@ export function collectPromotedMainChildRows(input: {
       parentKey != null &&
       input.mainSessionKeys.has(parentKey) &&
       !input.scopedRootKeys.has(row.key) &&
+      !isSubagentSessionKey(row.key) &&
       !row.archived &&
       (input.showCron || !isCronSessionKey(row.key)) &&
       (input.showSystem || !isSystemCreatedSessionRow(row))
@@ -455,6 +476,7 @@ export function collectCategorizedChildRootRows(input: {
   return input.rows.filter(
     (row) =>
       !scopedRootKeys.has(row.key) &&
+      !isSubagentSessionKey(row.key) &&
       normalizeOptionalString(row.category) != null &&
       resolveUiSessionNavigationParentKey(row) != null &&
       sessionMatchesVisibleSessionScope(row, input.visibilityOptions),

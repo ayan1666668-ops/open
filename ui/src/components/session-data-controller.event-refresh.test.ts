@@ -2,13 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // @vitest-environment node
 import { SIDEBAR_SESSION_ROSTER_LIMIT } from "../../../src/shared/session-list-limits.ts";
 import type { GatewayBrowserClient, GatewayEventFrame } from "../api/gateway.ts";
+import { createConnectionBootstrapCoordinator } from "../app/connection-bootstrap.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { createSessionCapability, type SessionCapability } from "../lib/sessions/index.ts";
 import type { SessionGateway } from "../lib/sessions/session-capability.ts";
 import type { SessionDataControllerHost } from "./session-data-controller-catalog.ts";
 import { SessionDataController } from "./session-data-controller.ts";
 
+const cleanups: Array<() => void> = [];
+
 afterEach(() => {
+  for (const cleanup of cleanups.splice(0)) {
+    cleanup();
+  }
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -103,8 +109,24 @@ function createFilteredSessionController(
       return () => eventListeners.delete(listener);
     },
   } as const;
-  const sessions = createSessionCapability(gateway);
   let selectedAgentId = "main";
+  const agentSelection = {
+    get state() {
+      return { selectedId: selectedAgentId, scopeId: selectedAgentId };
+    },
+    subscribe: () => () => undefined,
+  };
+  const connectionBootstrap = createConnectionBootstrapCoordinator();
+  const synchronizeBootstrap = (next: SessionGateway["snapshot"]) =>
+    connectionBootstrap.synchronize({ client: next.client, connected: next.phase === "connected" });
+  synchronizeBootstrap(snapshot);
+  const stopBootstrap = gateway.subscribe(synchronizeBootstrap);
+  const sessions = createSessionCapability(gateway, agentSelection, { connectionBootstrap });
+  cleanups.push(() => {
+    stopBootstrap();
+    sessions.dispose();
+    connectionBootstrap.reset();
+  });
   let selectedStatusFilter = statusFilter;
   let membership = { ownerId: null as string | null, involvingMe: false };
   const agentsState = {
@@ -117,6 +139,7 @@ function createFilteredSessionController(
   };
   const agentListeners = new Set<(state: ApplicationContext["agents"]["state"]) => void>();
   const context = {
+    connectionBootstrap,
     gateway,
     sessions,
     agents: {
@@ -126,16 +149,13 @@ function createFilteredSessionController(
         return () => agentListeners.delete(listener);
       },
     },
-    agentSelection: {
-      get state() {
-        return { selectedId: selectedAgentId, scopeId: selectedAgentId };
-      },
-      subscribe: () => () => undefined,
-    },
+    agentSelection,
   } as unknown as ApplicationContext;
   const host = {
     isConnected: true,
     connected: true,
+    activeRouteId: "sessions",
+    getRouteSessionKey: () => context.gateway.snapshot.sessionKey.trim(),
     sessionDataContext: context,
     addController: () => undefined,
     removeController: () => undefined,
@@ -147,6 +167,7 @@ function createFilteredSessionController(
     selectedAgentIdForSessions: () => selectedAgentId,
     sidebarSessionStatusFilter: () => selectedStatusFilter,
     sidebarSessionOwnerFilter: () => membership,
+    sessionCatalogIdsWithoutVisibleRows: () => [],
     querySelector: () => null,
   } satisfies SessionDataControllerHost;
   const controller = new SessionDataController(host);
@@ -205,6 +226,30 @@ function createFilteredSessionController(
 }
 
 describe("filtered sidebar session event refresh", () => {
+  it.each(["archived", "all"] as const)(
+    "automatically rebinds the restored %s filter across controller reconnect",
+    async (statusFilter) => {
+      vi.useFakeTimers();
+      const { controller, list } = createFilteredSessionController(statusFilter);
+      try {
+        controller.hostConnected();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(list).toHaveBeenCalledOnce();
+        expect(list).toHaveBeenLastCalledWith(
+          expect.objectContaining({ agentId: "main", archivedFilter: statusFilter }),
+        );
+        expect(controller.sessionsResult?.sessions).toHaveLength(1);
+        controller.hostDisconnected();
+        controller.hostConnected();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(list).toHaveBeenCalledTimes(2);
+        expect(controller.sessionsResult?.sessions).toHaveLength(1);
+      } finally {
+        controller.hostDisconnected();
+      }
+    },
+  );
+
   it.each(["active", "archived", "all"] as const)(
     "keeps membership in the displayed %s query across refresh, pagination, and agent changes",
     async (statusFilter) => {
@@ -351,6 +396,9 @@ describe("filtered sidebar session event refresh", () => {
   it("ignores a retired filter's delayed failure after the replacement scope binds", async () => {
     const { controller, list, selectStatusFilter } = createFilteredSessionController("archived");
     controller.hostConnected();
+    // Retire an issued request, not a refresh still queued behind startup.
+    await controller.refreshSidebarSessions();
+    list.mockClear();
     let rejectList!: (error: Error) => void;
     const delayedList = new Promise<Awaited<ReturnType<typeof list>>>((_, reject) => {
       rejectList = reject;
@@ -358,6 +406,7 @@ describe("filtered sidebar session event refresh", () => {
     list.mockImplementationOnce(async () => await delayedList);
 
     const retiredRefresh = controller.refreshSidebarSessions();
+    expect(list).toHaveBeenCalledOnce();
     selectStatusFilter("all");
     rejectList(new Error("Retired archived request failed"));
     await retiredRefresh;

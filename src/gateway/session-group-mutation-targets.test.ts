@@ -3,17 +3,18 @@ import { performance } from "node:perf_hooks";
 import { expect, test, vi } from "vitest";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import * as sqliteIntegrity from "../infra/sqlite-integrity.js";
 import * as sqliteWal from "../infra/sqlite-wal.js";
 import * as agentDatabaseLeases from "../state/openclaw-agent-db-lease.js";
-import * as agentDatabaseSchema from "../state/openclaw-agent-db-schema.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   listOpenClawAgentDatabasesForTest,
-  OPENCLAW_AGENT_DB_OPEN_HANDLE_CAP,
 } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { setStateDirEnv, withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { resolveSessionGroupMutationTargetsByName } from "./session-groups.js";
+
+const EXPECTED_OPEN_HANDLE_CAP = 64;
 
 test("discovers groups across more than the handle cap without writable database maintenance", async () => {
   await withStateDirEnv("openclaw-session-group-readonly-", async ({ stateDir }) => {
@@ -22,7 +23,7 @@ test("discovers groups across more than the handle cap without writable database
     closeOpenClawStateDatabaseForTest();
 
     const agentIds = Array.from(
-      { length: OPENCLAW_AGENT_DB_OPEN_HANDLE_CAP + 1 },
+      { length: EXPECTED_OPEN_HANDLE_CAP + 1 },
       (_, index) => `group-reader-${index}`,
     );
     const config = {
@@ -39,10 +40,7 @@ test("discovers groups across more than the handle cap without writable database
     }
     closeOpenClawAgentDatabasesForTest();
 
-    const integritySpy = vi.spyOn(
-      agentDatabaseSchema,
-      "assertAgentDatabaseIntegrityBeforeMutation",
-    );
+    const integritySpy = vi.spyOn(sqliteIntegrity, "assertSqliteIntegrity");
     const claimSpy = vi.spyOn(agentDatabaseLeases, "claimOpenClawAgentDatabaseLease");
     const releaseSpy = vi.spyOn(agentDatabaseLeases, "releaseOpenClawAgentDatabaseLease");
     const walSpy = vi.spyOn(sqliteWal, "configureSqliteConnectionPragmas");

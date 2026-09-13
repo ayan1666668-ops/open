@@ -106,7 +106,8 @@ export async function createGatewayHttpTransport(params: {
   getRuntimeConfig?: () => import("../config/config.js").OpenClawConfig;
   bindHost: string;
   port: number;
-  controlUiEnabled: boolean;
+  updateCanary?: boolean;
+  controlUiEnabled?: boolean;
   controlUiBasePath: string;
   controlUiRoot?: ControlUiRootState;
   openAiChatCompletionsEnabled?: boolean;
@@ -306,6 +307,10 @@ export async function createGatewayHttpTransport(params: {
     // Yield between buffered frames so one RPC burst cannot monopolize the
     // event loop before other connections and HTTP probes can run.
     allowSynchronousEvents: false,
+    // Browsers compress even tiny requests when this extension is negotiated.
+    // Serial inflate callbacks delay each frame behind busy event-loop turns,
+    // before the bounded request-start scheduler can admit the burst.
+    perMessageDeflate: false,
   });
   const preauthConnectionBudget = createPreauthConnectionBudget();
 
@@ -403,6 +408,9 @@ export async function createGatewayHttpTransport(params: {
   let startListeningPromise: Promise<void> | null = null;
   let startListeningComplete = false;
   const startSandboxHost = async (): Promise<number> => {
+    if (params.updateCanary) {
+      throw new Error("Sandbox host is disabled during update validation");
+    }
     if (sandboxHostStartPromise) {
       return await sandboxHostStartPromise;
     }
@@ -416,6 +424,7 @@ export async function createGatewayHttpTransport(params: {
       const sandboxServers = bindHosts.map(() =>
         createSandboxHostHttpServer(
           params.gatewayTls?.enabled ? params.gatewayTls.tlsOptions : undefined,
+          resolvePluginRouteRegistry,
         ),
       );
       // Register before binding so normal runtime cleanup closes a partially
@@ -546,7 +555,8 @@ export async function createGatewayHttpTransport(params: {
       if (httpBindHosts.length === 0) {
         throw new Error("Gateway HTTP server failed to start");
       }
-      if (params.cfg.mcp?.apps?.enabled === true) {
+      // Published updaters retain the live sandbox port but already pass --update-canary.
+      if (!params.updateCanary && params.cfg.mcp?.apps?.enabled === true) {
         await startSandboxHost();
       }
       startListeningComplete = true;

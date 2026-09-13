@@ -67,7 +67,6 @@ export async function startCodexAttemptTurn(
     appServer,
     attemptStartedAt,
     startupAuthProfileId,
-    abortFromUpstream,
   } = connection;
   const { state, turnIdRef } = turnRuntime;
   const { waitForActiveNativeTurnCompletion } = notifications;
@@ -266,7 +265,17 @@ export async function startCodexAttemptTurn(
       }
       releaseCurrentRoute();
       activateNativePreToolUseFailureFallback();
-      resourceState.nativeHookRelay?.unregister();
+      const relay = resourceState.nativeHookRelay;
+      relay?.unregister();
+      await runAgentCleanupStep({
+        runId: params.runId,
+        sessionId: params.sessionId,
+        step: "codex-turn-start-failure-native-hook-relay",
+        log: embeddedAgentLog,
+        cleanup: async () => {
+          await relay?.drain();
+        },
+      });
       await releaseSandboxExecEnvironment();
       await runAgentCleanupStep({
         runId: params.runId,
@@ -275,7 +284,6 @@ export async function startCodexAttemptTurn(
         log: embeddedAgentLog,
         cleanup: async () => trajectoryRecorder?.flush(),
       });
-      params.abortSignal?.removeEventListener("abort", abortFromUpstream);
       await releaseSharedClientLeaseAndRetireOneShotClient();
       if (usageLimitError) {
         await markCodexAuthProfileBlockedFromRateLimits({

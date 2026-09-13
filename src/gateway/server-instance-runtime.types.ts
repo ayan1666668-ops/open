@@ -1,8 +1,12 @@
 import type { AgentWaitParams } from "../../packages/gateway-protocol/src/index.js";
+import type { RuntimeContextFragment } from "../agents/internal-runtime-context.js";
 import type { SubagentCompletionToolHandoffRegistration } from "../agents/subagents/announce/subagent-announce-handoff.js";
 import type { GatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime.types.js";
 import type { ChannelApprovalKind } from "../infra/approval-types.js";
-import type { InternalAgentTurnFacadeFactory } from "./agent-turn/internal-facade.types.js";
+import type {
+  AgentTurnStartOwner,
+  InternalAgentTurnFacadeFactory,
+} from "./agent-turn/internal-facade.types.js";
 import type { AgentRunRequest } from "./server-methods/agent-request-types.js";
 
 export type GatewayInstanceAgentDispatchOptions = {
@@ -14,8 +18,10 @@ export type GatewayInstanceAgentDispatchOptions = {
   /** Instance-owned dispatch always uses a synthetic client. */
   forceSyntheticClient?: boolean;
   internalDeliveryMediaUrls?: string[];
+  runtimeContextFragments?: RuntimeContextFragment[];
   internalDeliverySuppressText?: boolean;
   onAccepted?: (payload: unknown) => void;
+  onStartOwner?: (owner: AgentTurnStartOwner) => void;
   onExecutionStarted?: () => void;
   onSignalAbort?: () => Promise<void> | void;
   scopes?: string[];
@@ -28,17 +34,24 @@ export type GatewayApprovalEventPublisher = {
   publishResolved: (kind: ChannelApprovalKind, resolved: unknown) => void;
 };
 
+export type GatewayRecoverySessionMethod = "chat.history" | "chat.abort" | "sessions.delete";
+
 export type GatewayRecoveryRuntime = {
-  abortAgent: (
-    params: { agentId: string; runId: string; sessionKey: string },
-    timeoutMs?: number,
-  ) => Promise<{ aborted?: boolean; runIds?: string[] }>;
+  dispatchSessionMethod: <T = unknown>(
+    method: GatewayRecoverySessionMethod,
+    params: unknown,
+    options?: { timeoutMs?: number; signal?: AbortSignal; assertCurrent?: () => void },
+  ) => Promise<T>;
   dispatchAgent: <T = unknown>(
     params: AgentRunRequest,
     timeoutMs?: number,
     options?: GatewayInstanceAgentDispatchOptions,
   ) => Promise<T>;
-  waitForAgent: <T = unknown>(params: AgentWaitParams, timeoutMs?: number) => Promise<T>;
+  waitForAgent: <T = unknown>(
+    params: AgentWaitParams,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ) => Promise<T>;
   sendRecoveryNotice: (params: {
     channel: string;
     to: string;
@@ -46,6 +59,8 @@ export type GatewayRecoveryRuntime = {
     threadId?: string | number;
     text: string;
     idempotencyKey: string;
+    /** Revalidated after lazy runtime loading and immediately before outbound dispatch. */
+    isCurrent?: () => boolean;
   }) => Promise<{
     /** True when delivery produced zero platform results (policy/channel suppression). */
     suppressed: boolean;

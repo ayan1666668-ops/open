@@ -14,7 +14,7 @@ import type {
   SessionWorkspaceHost,
   SessionWorkspaceState,
 } from "./chat-session-workspace-types.ts";
-import type { SidebarContent } from "./chat-sidebar.ts";
+import type { SidebarSelection } from "./chat-sidebar.ts";
 
 function resolvePaneAgent(state: SessionScopeHostWithKey): string {
   const normalizedKey = normalizeOptionalString(state.sessionKey)?.toLowerCase();
@@ -45,18 +45,18 @@ export function clearSessionWorkspaceTimers(state: SessionWorkspaceHost) {
 
 const checkoutSidebarContents = new WeakSet<object>();
 
-export function trackSessionCheckoutSidebar(content: SidebarContent) {
+export function trackSessionCheckoutSidebar(content: SidebarSelection) {
   checkoutSidebarContents.add(content);
 }
 
-export function openSessionCheckoutSidebar(state: SessionWorkspaceHost, content: SidebarContent) {
+export function openSessionCheckoutSidebar(state: SessionWorkspaceHost, content: SidebarSelection) {
   trackSessionCheckoutSidebar(content);
   state.handleOpenSidebar(content);
 }
 
 function clearSessionCheckoutSidebar(state: SessionWorkspaceHost) {
   if (state.sidebarContent && checkoutSidebarContents.has(state.sidebarContent)) {
-    state.handleOpenSidebar(null);
+    state.sidebarContent = null;
   }
 }
 
@@ -69,6 +69,7 @@ function createSessionWorkspaceState(
     agentId: resolvePaneAgent(state),
     browserPath: "",
     browserSearch: "",
+    filter: "all",
     browserSearchTimer: null,
     collapsed: previous?.collapsed ?? true,
     connectionEpoch: state.connectionEpoch,
@@ -136,20 +137,19 @@ export function loadSessionWorkspace(
   const client = state.client;
   void (async () => {
     try {
-      const files = await state.sessions.listFiles(sessionKey, {
-        path: workspace.browserSearch ? "" : workspace.browserPath,
-        search: workspace.browserSearch,
-        agentId,
-      });
-      if (!isCurrentSessionWorkspace(state, workspace)) {
-        return;
-      }
-      const artifacts = await client.request<{
-        artifacts?: SessionWorkspaceListResult["artifacts"];
-      } | null>("artifacts.list", {
-        sessionKey,
-        ...(agentId ? { agentId } : {}),
-      });
+      const [files, artifacts] = await Promise.all([
+        state.sessions.listFiles(sessionKey, {
+          path: workspace.browserSearch ? "" : workspace.browserPath,
+          search: workspace.browserSearch,
+          agentId,
+        }),
+        client.request<{
+          artifacts?: SessionWorkspaceListResult["artifacts"];
+        } | null>("artifacts.list", {
+          sessionKey,
+          ...(agentId ? { agentId } : {}),
+        }),
+      ]);
       if (!isCurrentSessionWorkspace(state, workspace)) {
         return;
       }

@@ -7,6 +7,8 @@ import type {
   CodexThreadListResponse,
   CodexThreadTurnsListParams,
   CodexThreadTurnsListResponse,
+  CodexThreadItemsListParams,
+  CodexThreadItemsListResponse,
 } from "./app-server/protocol.js";
 
 export type CodexCatalogHome = {
@@ -77,6 +79,7 @@ export type CodexSessionCatalogControl = {
   requireEligibleThread(threadId: string): Promise<CodexThread>;
   listDescendantPage(params: CodexThreadListParams): Promise<CodexThreadListResponse>;
   listTurnPage(params: CodexThreadTurnsListParams): Promise<CodexThreadTurnsListResponse>;
+  listItemPage(params: CodexThreadItemsListParams): Promise<CodexThreadItemsListResponse>;
   forkThread(
     params: CodexThreadForkParams,
     assertCurrent?: () => void,
@@ -87,6 +90,12 @@ export type CodexSessionCatalogControl = {
 
 export type CodexSessionCatalogControlFactory = {
   forRequest(agentId: string, source?: CodexCatalogHome): CodexSessionCatalogControl;
+  /** Native default, with the shipped agent selector retained for explicitly configured sources. */
+  forNode(agentId?: string): {
+    control: CodexSessionCatalogControl;
+    sourceHomeId: string;
+    codexHome: string;
+  };
   homesForAgent(agentId: string): readonly CodexCatalogHome[];
   forUpstream(
     agentId: string,
@@ -122,9 +131,8 @@ export type CodexSessionTranscriptPage = {
   hostId: string;
   label: string;
   threadId: string;
-  items: import("./app-server/protocol.js").CodexThreadItem[];
+  items: import("openclaw/plugin-sdk/session-catalog").SessionCatalogTranscriptItem[];
   nextCursor?: string;
-  backwardsCursor?: string;
 };
 
 export type CodexSessionCatalogParams = {

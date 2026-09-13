@@ -2,7 +2,6 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { hostname } from "node:os";
-import { performance } from "node:perf_hooks";
 import type { DatabaseSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { getFileLockProcessStartTime, isPidDefinitelyDead } from "../shared/pid-alive.js";
@@ -12,6 +11,7 @@ import { withOpenClawStateStartupMigrationCheckpointDatabase } from "../state/op
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { assertOpenClawStateWriteAllowed } from "../state/openclaw-state-ownership.js";
 import { VERSION } from "../version.js";
+import { acquireWithWait } from "./acquire-with-wait.js";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -235,26 +235,26 @@ function formatStartupMigrationCheckpoint(params: {
   ].join(STARTUP_MIGRATION_BUILD_SEPARATOR);
 }
 
-function readMigrationCheckpoint(
+function readMigrationCheckpoints(
   env: NodeJS.ProcessEnv,
-  metaKey: MigrationCheckpointMetaKey,
-): string | null {
+  metaKeys: MigrationCheckpointMetaKey[],
+): Array<{ metaKey: string; appVersion: string | null }> {
   return withStartupMigrationCheckpointDatabase(env, (db) => {
     const stateDb = getNodeSqliteKysely<StartupMigrationCheckpointDatabase>(db);
-    const row = executeSqliteQueryTakeFirstSync(
+    const result = executeSqliteQuerySync(
       db,
       stateDb
         .selectFrom("schema_meta")
-        .select("app_version as appVersion")
-        .where("meta_key", "=", metaKey),
+        .select(["meta_key as metaKey", "app_version as appVersion"])
+        .where("meta_key", "in", metaKeys),
     );
-    return row?.appVersion ?? null;
+    return result.rows;
   });
 }
 
 export function readStartupMigrationVersion(env: NodeJS.ProcessEnv = process.env): string | null {
   return (
-    readMigrationCheckpoint(env, STARTUP_MIGRATION_META_KEY)?.split(
+    readMigrationCheckpoints(env, [STARTUP_MIGRATION_META_KEY])[0]?.appVersion?.split(
       STARTUP_MIGRATION_BUILD_SEPARATOR,
       1,
     )[0] ?? null
@@ -292,10 +292,9 @@ export function hasActiveStartupMigrationLease(
   );
 }
 
-function needsMigrationCheckpoint(
-  metaKey: MigrationCheckpointMetaKey,
+export function readMigrationCheckpointStatus(
   params: MigrationCheckpointParams = {},
-): boolean {
+): "stale" | "state-current" | "startup-current" {
   const env = params.env ?? process.env;
   const buildIdentity =
     params.buildIdentity === undefined
@@ -307,22 +306,18 @@ function needsMigrationCheckpoint(
     version: params.version ?? VERSION,
   });
   if (checkpoint === null) {
-    return true;
+    return "stale";
   }
-  return readMigrationCheckpoint(env, metaKey) !== checkpoint;
-}
-
-export function needsStartupMigrationCheckpoint(params: MigrationCheckpointParams = {}): boolean {
-  return needsMigrationCheckpoint(STARTUP_MIGRATION_META_KEY, params);
-}
-
-export function needsStateMigrationCheckpoint(params: MigrationCheckpointParams = {}): boolean {
   // A legacy gateway checkpoint also proves state migrations completed. The inverse is false:
   // state-only commands never certify gateway plugin convergence.
-  return (
-    needsMigrationCheckpoint(STATE_MIGRATION_META_KEY, params) &&
-    needsMigrationCheckpoint(STARTUP_MIGRATION_META_KEY, params)
-  );
+  const current = readMigrationCheckpoints(env, [
+    STATE_MIGRATION_META_KEY,
+    STARTUP_MIGRATION_META_KEY,
+  ]).filter((row) => row.appVersion === checkpoint);
+  if (current.some((row) => row.metaKey === STARTUP_MIGRATION_META_KEY)) {
+    return "startup-current";
+  }
+  return current.length > 0 ? "state-current" : "stale";
 }
 
 export function acquireStartupMigrationLease(
@@ -445,12 +440,6 @@ export async function acquireStartupMigrationLeaseWithWait(
 ): Promise<StartupMigrationLease> {
   const now = params.now ?? Date.now;
   const monotonicNow = params.monotonicNow ?? performance.now.bind(performance);
-  const sleep =
-    params.sleep ??
-    (async (ms: number) =>
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-      }));
   const timeoutMs = Math.max(
     0,
     Math.min(params.timeoutMs ?? STARTUP_MIGRATION_LEASE_TTL_MS, STARTUP_MIGRATION_LEASE_TTL_MS),
@@ -460,30 +449,21 @@ export async function acquireStartupMigrationLeaseWithWait(
     params.pollIntervalMs ?? STARTUP_MIGRATION_LEASE_POLL_INTERVAL_MS,
   );
   const owner = params.owner ?? randomUUID();
-  const deadlineMs = monotonicNow() + timeoutMs;
-
-  while (true) {
-    try {
-      return acquireStartupMigrationLease({
+  return acquireWithWait({
+    deadlineMs: monotonicNow() + timeoutMs,
+    pollIntervalMs,
+    now: monotonicNow,
+    sleep: params.sleep,
+    acquire: () =>
+      acquireStartupMigrationLease({
         env: params.env,
         nowMs: now(),
         owner,
         ownerPid: params.ownerPid,
-      });
-    } catch (error) {
-      if (
-        !(error instanceof StartupMigrationLeaseConflictError) ||
-        !error.canWaitForSameHostOwner
-      ) {
-        throw error;
-      }
-      const remainingMs = deadlineMs - monotonicNow();
-      if (remainingMs <= 0) {
-        throw error;
-      }
-      await sleep(Math.min(pollIntervalMs, remainingMs));
-    }
-  }
+      }),
+    shouldRetry: (error) =>
+      error instanceof StartupMigrationLeaseConflictError && error.canWaitForSameHostOwner,
+  });
 }
 
 function recordSuccessfulMigrationCheckpoints(

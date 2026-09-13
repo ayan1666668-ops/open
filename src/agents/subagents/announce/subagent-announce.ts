@@ -13,6 +13,7 @@ import {
   stripSilentToken,
 } from "../../../auto-reply/tokens.js";
 import { logWarn } from "../../../logger.js";
+import { withPluginRuntimeGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import { defaultRuntime } from "../../../runtime.js";
 import { isCronSessionKey } from "../../../sessions/session-key-utils.js";
 import { createLazyImportLoader } from "../../../shared/lazy-promise.js";
@@ -34,6 +35,7 @@ import {
   type AgentInternalEvent,
 } from "../../internal-events.js";
 import { isAnnounceSkip } from "../../tools/sessions-send-tokens.js";
+import { SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION } from "../completion/subagent-completion-instructions.js";
 import {
   countPendingDescendantRuns,
   getLatestSubagentRunByChildSessionKey,
@@ -69,7 +71,7 @@ import {
   waitForSubagentRunOutcome,
 } from "./subagent-announce-output.js";
 import {
-  callGateway,
+  callSubagentLifecycleGateway,
   dispatchGatewayMethodInProcess,
   isEmbeddedAgentRunActive,
   getRuntimeConfig,
@@ -77,14 +79,14 @@ import {
 } from "./subagent-announce.runtime.js";
 
 type SubagentAnnounceDeps = {
-  callGateway: typeof callGateway;
+  callGateway: typeof callSubagentLifecycleGateway;
   dispatchGatewayMethodInProcess: typeof dispatchGatewayMethodInProcess;
   getRuntimeConfig: typeof getRuntimeConfig;
   loadSubagentRegistryRuntime: typeof loadSubagentRegistryRuntime;
 };
 
 const defaultSubagentAnnounceDeps: SubagentAnnounceDeps = {
-  callGateway,
+  callGateway: callSubagentLifecycleGateway,
   dispatchGatewayMethodInProcess,
   getRuntimeConfig,
   loadSubagentRegistryRuntime,
@@ -124,9 +126,9 @@ function buildAnnounceReplyInstruction(params: {
     return `Convert this completion into a concise internal orchestration update for your parent agent in your own words.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type). If this result is duplicate or no update is needed, reply ONLY: ${SILENT_REPLY_TOKEN}.`;
   }
   if (params.expectsCompletionMessage) {
-    return `A completed ${params.announceType} is ready for parent review. Review/verify the result above before deciding whether the original task is done.${modelRouteInstruction} If additional action is required, continue the task or record a follow-up; otherwise send a truthful user-facing update. Keep this internal context private (don't mention system/log/stats/session details or announce type). Reply ONLY: ${SILENT_REPLY_TOKEN} only when this exact result is already visible to the user in this same turn.`;
+    return `A completed ${params.announceType} is ready for parent review. ${SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION}${modelRouteInstruction} Otherwise send a truthful user-facing update. Keep this internal context private (don't mention system/log/stats/session details or announce type). Reply ONLY: ${SILENT_REPLY_TOKEN} only when this exact result is already visible to the user in this same turn.`;
   }
-  return `A completed ${params.announceType} is ready for parent review. Review/verify the result above before deciding whether the original task is done.${modelRouteInstruction} If additional action is required, continue the task or record a follow-up; otherwise send a truthful user-facing update. Keep this internal context private (don't mention system/log/stats/session details or announce type), and do not copy the internal event text verbatim. Reply ONLY: ${SILENT_REPLY_TOKEN} if this exact result was already delivered to the user in this same turn.`;
+  return `A completed ${params.announceType} is ready for parent review. ${SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION}${modelRouteInstruction} Otherwise send a truthful user-facing update. Keep this internal context private (don't mention system/log/stats/session details or announce type), and do not copy the internal event text verbatim. Reply ONLY: ${SILENT_REPLY_TOKEN} if this exact result was already delivered to the user in this same turn.`;
 }
 
 function buildAnnounceSteerMessage(events: AgentInternalEvent[]): string {
@@ -165,7 +167,7 @@ function stripAndClassifyReply(text: string): string | null {
   return result;
 }
 
-export async function runSubagentAnnounceFlow(params: {
+type SubagentAnnounceFlowParams = {
   childSessionKey: string;
   childRunId: string;
   requesterSessionKey: string;
@@ -203,7 +205,21 @@ export async function runSubagentAnnounceFlow(params: {
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   onBeforeDeleteChildSession?: () => boolean;
   resolveGatewayContext?: import("../../../gateway/server-methods/types.js").GatewayContextResolver;
-}): Promise<SubagentAnnounceFlowOutcome> {
+};
+
+export async function runSubagentAnnounceFlow(
+  params: SubagentAnnounceFlowParams,
+): Promise<SubagentAnnounceFlowOutcome> {
+  return await (params.resolveGatewayContext
+    ? withPluginRuntimeGatewayContextResolver(params.resolveGatewayContext, () =>
+        runSubagentAnnounceFlowBound(params),
+      )
+    : runSubagentAnnounceFlowBound(params));
+}
+
+async function runSubagentAnnounceFlowBound(
+  params: SubagentAnnounceFlowParams,
+): Promise<SubagentAnnounceFlowOutcome> {
   let announceOutcome: SubagentAnnounceFlowOutcome = "retryable";
   const expectsCompletionMessage = params.expectsCompletionMessage === true;
   const announceType = params.announceType ?? "subagent task";
@@ -480,7 +496,8 @@ export async function runSubagentAnnounceFlow(params: {
     const announceSessionId = childSessionEffectsAllowed()
       ? childSessionId || "unknown"
       : "unknown";
-    const findings = childCompletionFindings || reply || "(no output)";
+    const childResultText = childCompletionFindings || reply;
+    const findings = childResultText || "(no output)";
 
     let requesterIsSubagent = requesterIsInternalSession();
     if (requesterIsSubagent) {
@@ -572,6 +589,7 @@ export async function runSubagentAnnounceFlow(params: {
         status: outcome.status,
         statusLabel,
         result: findings,
+        ...(childResultText ? {} : { noVisibleResult: true }),
         modelRouteChange,
         statsLine,
         replyInstruction,
@@ -636,6 +654,7 @@ export async function runSubagentAnnounceFlow(params: {
     ) {
       await deleteSubagentSessionForCleanup({
         callGateway: subagentAnnounceDeps.callGateway,
+        isCurrent: childSessionEffectsAllowed,
         childSessionKey: params.childSessionKey,
         spawnMode: params.spawnMode,
         expectedSessionId: childSessionId,
@@ -649,7 +668,7 @@ export async function runSubagentAnnounceFlow(params: {
 export const testing = {
   setDepsForTest(
     overrides?: Partial<SubagentAnnounceDeps> & {
-      callGateway?: typeof callGateway;
+      callGateway?: typeof callSubagentLifecycleGateway;
     },
   ) {
     const callGatewayOverride = overrides?.callGateway;

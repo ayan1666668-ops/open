@@ -9,6 +9,7 @@ import {
 } from "./sidebar-layout-persistence.ts";
 import {
   activatePanel,
+  ensureSidebarConversation,
   openSlot,
   resizeSidebarPanel,
   setSidebarExpanded,
@@ -50,7 +51,7 @@ describe("sidebar session layout settings", () => {
     let layout = openSlot(openSlot({ columns: [] }, "workspace"), "terminal");
     layout = activatePanel(layout, layout.columns[0]!.panels[0]!.id);
     layout = resizeSidebarPanel(layout, layout.columns[0]!.id, 512);
-    layout = setSidebarExpanded(layout, true);
+    layout = setSidebarExpanded(ensureSidebarConversation(layout), true);
     layout = setSidebarOpen(layout, false);
 
     const persisted = updateSidebarSessionLayout({}, "main", layout).main;
@@ -58,24 +59,34 @@ describe("sidebar session layout settings", () => {
     expect(persisted?.columns[0]?.panels.map((panel) => panel.slot)).toEqual([
       "workspace",
       "terminal",
+      "conversation",
     ]);
     expect(persisted?.columns[0]?.activePanelId).toBe("workspace");
     expect(persisted?.columns[0]?.width).toBe(512);
     expect(persisted).toMatchObject({ open: false, expanded: true });
   });
 
-  it("caps the newest session layouts", () => {
+  it("retains the 500 most recently changed session layouts across reloads", () => {
     let layouts: SidebarSessionLayouts = {};
-    for (let index = 0; index < 55; index += 1) {
+    for (let index = 0; index < 505; index += 1) {
       layouts = updateSidebarSessionLayout(
         layouts,
         `session-${index}`,
         openSlot({ columns: [] }, "discussion"),
       );
     }
-    expect(Object.keys(layouts)).toHaveLength(50);
-    expect(layouts["session-0"]).toBeUndefined();
-    expect(layouts["session-54"]).toBeDefined();
+    const storedLayouts = JSON.stringify(layouts);
+    layouts = normalizeSidebarSessionLayouts(JSON.parse(storedLayouts));
+    expect(Object.keys(layouts)).toHaveLength(500);
+    expect(layouts["session-4"]).toBeUndefined();
+    expect(layouts["session-5"]).toBeDefined();
+    expect(layouts["session-504"]).toBeDefined();
+
+    layouts = updateSidebarSessionLayout(layouts, "session-5", layouts["session-5"]!);
+    layouts = updateSidebarSessionLayout(layouts, "session-505", layouts["session-5"]!);
+    expect(Object.keys(layouts)).toHaveLength(500);
+    expect(layouts["session-5"]).toBeDefined();
+    expect(layouts["session-6"]).toBeUndefined();
   });
 
   it("normalizes and caps collapsed active-panel selections", () => {
@@ -86,15 +97,18 @@ describe("sidebar session layout settings", () => {
     });
     expect(selections).toEqual({ main: "discussion" });
 
-    for (let index = 0; index < 55; index += 1) {
+    for (let index = 0; index < 505; index += 1) {
       selections = updateSidebarSessionActivePanel(
         selections,
         `session-${index}`,
         `panel-${index}`,
       );
     }
-    expect(Object.keys(selections)).toHaveLength(50);
-    expect(selections["session-0"]).toBeUndefined();
-    expect(selections["session-54"]).toBe("panel-54");
+    const storedSelections = JSON.stringify(selections);
+    selections = normalizeSidebarSessionActivePanels(JSON.parse(storedSelections));
+    expect(Object.keys(selections)).toHaveLength(500);
+    expect(selections["session-4"]).toBeUndefined();
+    expect(selections["session-5"]).toBe("panel-5");
+    expect(selections["session-504"]).toBe("panel-504");
   });
 });

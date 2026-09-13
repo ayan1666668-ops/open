@@ -24,7 +24,6 @@ import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-paths";
 import { listMemorySessionTombstones } from "../memory-entry-origins.js";
 import { runInMemoryBackgroundContext } from "./background-context.js";
-import { isMemoryDatabaseReadOnly } from "./manager-db.js";
 import { shouldSyncSessionsForReindex } from "./manager-session-reindex.js";
 import {
   isMemorySessionIndexable,
@@ -75,10 +74,12 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     }
   }
 
-  protected async listSessionCorpusEntries(): Promise<SessionTranscriptCorpusEntry[]> {
-    const readOnly = isMemoryDatabaseReadOnly(this.db);
+  protected async listSessionCorpusEntries(options?: {
+    includeContentRevision?: boolean;
+  }): Promise<SessionTranscriptCorpusEntry[]> {
+    const readOnly = this.database.readOnly;
     const entries = await listSessionTranscriptCorpusEntriesForAgent(this.agentId, {
-      includeContentRevision: !readOnly,
+      includeContentRevision: !readOnly && options?.includeContentRevision !== false,
       readOnly,
     });
     const archivedSessions = new Map(
@@ -165,7 +166,7 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
 
   private async scheduleCorpusSessionFileDirty(sessionFile: string): Promise<void> {
     const resolvedSessionFile = path.resolve(sessionFile);
-    const corpusEntries = await this.listSessionCorpusEntries();
+    const corpusEntries = await this.listSessionCorpusEntries({ includeContentRevision: false });
     if (
       corpusEntries.some(
         (entry) =>
@@ -197,8 +198,8 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     const existingRows = loadMemorySourceFileState({
       db: this.db,
       source: "sessions",
-    }).rows;
-    const readOnly = isMemoryDatabaseReadOnly(this.db);
+    });
+    const readOnly = this.database.readOnly;
     const sqliteCorpusEntries = readOnly
       ? corpusEntries.filter((entry) => entry.transcriptSource === "sqlite")
       : [];

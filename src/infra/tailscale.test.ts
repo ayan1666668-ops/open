@@ -1,8 +1,9 @@
-import { existsSync, symlinkSync, watch } from "node:fs";
+import { symlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // Covers Tailscale whois, Serve, and Funnel helpers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { waitForFixtureFile } from "../../test/helpers/process-wait.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { captureEnv } from "../test-utils/env.js";
 import * as tailscale from "./tailscale.js";
@@ -55,8 +56,8 @@ describe("tailscale helpers", () => {
   beforeEach(() => {
     envSnapshot = captureEnv([
       "OPENCLAW_TEST_TAILSCALE_BINARY",
-      "OPENCLAW_TEST_TAILSCALE_FIXTURE_MARKER",
       "OPENCLAW_TEST_TAILSCALE_SUDO_FIXTURE_MODE",
+      "OPENCLAW_TEST_TAILSCALE_FIXTURE_MARKER",
       "NODE_ENV",
       "PATH",
       "VITEST",
@@ -292,31 +293,55 @@ describe("tailscale helpers", () => {
   it.runIf(process.platform !== "win32")(
     "preserves route diagnostics when startup readiness times out",
     async () => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const fixture = fileURLToPath(
         new URL("../../test/fixtures/tailscale-foreground-fixture.mjs", import.meta.url),
       );
-      const fixtureDir = tempDirs.make("openclaw-tailscale-fixture-");
-      const marker = path.join(fixtureDir, "started");
+      const marker = path.join(tempDirs.make("openclaw-tailscale-fixture-"), "ready");
       process.env.OPENCLAW_TEST_TAILSCALE_BINARY = fixture;
       process.env.OPENCLAW_TEST_TAILSCALE_FIXTURE_MARKER = marker;
-
-      const markerWritten = new Promise<void>((resolve) => {
-        const watcher = watch(fixtureDir, (_event, filename) => {
-          if (`${filename}` === "started") {
-            watcher.close();
-            resolve();
+      const schedule = globalThis.setTimeout;
+      let fireDeadline: (() => void) | undefined;
+      let fires = 0;
+      const timerSpy = vi
+        .spyOn(globalThis, "setTimeout")
+        .mockImplementation((callback, ms, ...args) => {
+          const timer = schedule(callback, ms, ...args);
+          if (ms === 15_000) {
+            timerSpy.mockRestore();
+            fireDeadline = () => {
+              expect(timer.hasRef()).toBe(false);
+              expect(fires).toBe(0);
+              clearTimeout(timer);
+              fires += 1;
+              callback(...args);
+            };
           }
+          return timer;
         });
-      });
-      const claimPromise = claimTailscaleRoute("funnel", 18790, 18790, vi.fn());
-      void claimPromise.catch(() => undefined);
-      await markerWritten;
-      expect(existsSync(marker)).toBe(true);
-
-      await vi.advanceTimersToNextTimerAsync();
-
-      await expect(claimPromise).rejects.toThrow("Funnel is not enabled on your tailnet.");
+      const claim = claimTailscaleRoute("funnel", 18790, 18790, vi.fn());
+      let settled = false;
+      const completion = claim.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      try {
+        await waitForFixtureFile(marker, completion, "ready");
+        expect(settled).toBe(false);
+        if (!fireDeadline) {
+          throw new Error("expected the native 15000ms startup deadline");
+        }
+        fireDeadline();
+        await expect(claim).rejects.toThrow("Funnel is not enabled on your tailnet.");
+        expect(fires).toBe(1);
+      } finally {
+        // Leave the native deadline armed if fixture readiness fails; await real worker cleanup.
+        await completion;
+        timerSpy.mockRestore();
+      }
     },
   );
 

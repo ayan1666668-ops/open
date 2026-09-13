@@ -47,6 +47,7 @@ import { createGatewayAuthenticatedRequestDispatcher } from "./authenticated-req
 import { isStartupNodeConnect } from "./connect-admission.js";
 import { authenticateGatewayConnect } from "./connect-auth.js";
 import { authorizeGatewayConnectDevice } from "./connect-device-pairing.js";
+import { publishConnectModelCatalog } from "./connect-model-catalog.js";
 import { attachAuthenticatedGatewayConnect } from "./connect-session.js";
 import { resolveHandshakeBrowserSecurityContext } from "./handshake-auth-helpers.js";
 import type {
@@ -167,10 +168,14 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
   const runDetachedConnectWork = (run: () => Promise<void>, onError: (error: unknown) => void) => {
     // Connect-triggered mutations outlive hello-ok. Give each tail its own
     // root lease so suspension cannot report ready while one is still active.
-    void runWithGatewayIndependentRootWorkAdmission(run, "ws:preauth").catch(onError);
+    void params.connectionWork
+      .track(() =>
+        runWithGatewayIndependentRootWorkAdmission(run, "ws:preauth", params.connectionWork.signal),
+      )
+      .catch(onError);
   };
 
-  const handleMessage = async (data: RawData) => {
+  const handleMessage = async (data: RawData, admission?: "continuation") => {
     if (isClosed()) {
       return;
     }
@@ -385,9 +390,19 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
           return;
         }
         await attachAuthenticatedGatewayConnect(phaseContext, deviceAuthorized);
+        runDetachedConnectWork(
+          () => publishConnectModelCatalog(params, authenticatedRequestDispatcher),
+          (error) =>
+            logGateway.debug(`connection model catalog unavailable: ${formatForLog(error)}`),
+        );
         return;
       }
-      await authenticatedRequestDispatcher.dispatch(parsed, client, rawDataByteLength(data));
+      await authenticatedRequestDispatcher.dispatch(
+        parsed,
+        client,
+        rawDataByteLength(data),
+        admission,
+      );
     } catch (err) {
       await releasePendingNodePairingCleanup();
       logGateway.error(`parse/handle error: ${String(err)}`);
@@ -472,9 +487,9 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
     return true;
   };
 
-  const handleIncomingMessage = async (data: RawData) => {
+  const handleIncomingMessage = async (data: RawData, requestAdmission?: "continuation") => {
     if (getClient()) {
-      await handleMessage(data);
+      await handleMessage(data, requestAdmission);
       return;
     }
     const admission = tryBeginGatewayRootWorkAdmission("ws:connect");
@@ -523,8 +538,20 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
   };
 
   socket.on("message", (data) => {
-    void runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
-      handleIncomingMessage(data),
-    );
+    // Capture receipt before any await: older requests keep their admitted lifetime,
+    // while shutdown frames may only settle an exact pending node owner.
+    const admission = params.connectionWork.isClosing ? "continuation" : undefined;
+    if (admission && getClient()?.connect.role !== "node") {
+      return;
+    }
+    void params.connectionWork
+      .track(() =>
+        runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
+          handleIncomingMessage(data, admission),
+        ),
+      )
+      .catch((error: unknown) => {
+        logGateway.error(`request dispatch failed conn=${connId}: ${formatForLog(error)}`);
+      });
   });
 }

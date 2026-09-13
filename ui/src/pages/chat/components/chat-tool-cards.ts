@@ -1,5 +1,6 @@
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { html, nothing } from "lit";
+import { stripShellPreamble } from "../../../../../src/agents/tool-display-exec-shell.js";
 import {
   browserTabKey,
   type BrowserTabSelection,
@@ -24,7 +25,8 @@ import {
   resolveToolCardOutcome,
 } from "../../../lib/chat/tool-cards.ts";
 import { resolveToolDisplay } from "../../../lib/chat/tool-display.ts";
-import { getToolCallTitle } from "../tool-titles.ts";
+import { renderPluginSurface } from "../../../plugins/control-ui-view.ts";
+import type { PluginToolIcon } from "../chat-tool-icon-controller.ts";
 import { renderHighlightedCommand } from "./chat-command-highlight.ts";
 import { renderDiffStatChips } from "./chat-diff-render.ts";
 import {
@@ -32,6 +34,7 @@ import {
   toolWorkspacePath,
   type ToolRenderOptions,
 } from "./chat-tool-content.ts";
+import { renderToolFailures } from "./chat-tool-failure.ts";
 import { renderToolPreview } from "./widget-card.ts";
 
 export {
@@ -51,11 +54,8 @@ export function renderBrowserTabPreviews(
   // turn all describe the same tab, and stacked near-identical cards are noise.
   const lastCardForTab = new Map<string, (typeof cards)[number]>();
   for (const card of cards) {
-    if (
-      card.preview?.kind === "browser-tab" &&
-      resolveToolCardOutcome(card, false) === "succeeded"
-    ) {
-      lastCardForTab.set(browserTabKey(card.preview), card);
+    if (card.browserTab && resolveToolCardOutcome(card, false) === "succeeded") {
+      lastCardForTab.set(browserTabKey(card.browserTab), card);
     }
   }
   return [...lastCardForTab.values()].map((card) => {
@@ -87,7 +87,16 @@ export function shouldToggleSelectableDisclosure(event: MouseEvent): boolean {
   );
 }
 
-function renderToolIcon(name: string) {
+export function renderToolIcon(name: string, pluginIcon?: PluginToolIcon) {
+  if (pluginIcon) {
+    return html`<img
+      src=${pluginIcon.url}
+      alt=""
+      width="16"
+      height="16"
+      @error=${pluginIcon.onError}
+    />`;
+  }
   // SAFETY: Unknown display icon names produce undefined and use the fallback.
   return icons[name as IconName] ?? icons.puzzle;
 }
@@ -165,7 +174,7 @@ const TOOL_ROW_ICONS: Partial<Record<ToolCallView["kind"], string>> = {
 };
 
 function firstCommandLine(command: string): string {
-  return command.split("\n")[0]?.trim() ?? "";
+  return (stripShellPreamble(command).command || command).split("\n")[0]?.trim() ?? "";
 }
 
 function compactToolTarget(target: string, kind: ToolCallView["kind"]): string {
@@ -194,6 +203,10 @@ function renderToolRowContent(
   workspaceFilePath: string | null,
   onOpenWorkspaceFile?: (target: { path: string; line?: number | null }) => void,
 ) {
+  if (view.title) {
+    return html`<span class="chat-tool-row__title">${view.title}</span>`;
+  }
+
   if (view.kind === "command" && view.command) {
     const commandPreview = firstCommandLine(view.command);
     return html`
@@ -247,13 +260,6 @@ function renderToolRowContent(
   const displayLabel = formatCollapsedToolSummaryText(summary.label) ?? summary.label;
   const argumentPreview = toolArgumentPreview(card.args);
   const displayName = distinctSummaryText(argumentPreview ?? summary.name, displayLabel);
-  const aiTitle = getToolCallTitle(card.name, card.args);
-  if (aiTitle) {
-    return html`
-      <span class="chat-tool-row__title">${aiTitle}</span>
-      <span class="chat-tool-row__detail">${argumentPreview ?? displayLabel}</span>
-    `;
-  }
   return html`
     <span class="chat-tool-msg-summary__label">${displayLabel}</span>
     ${
@@ -314,7 +320,7 @@ function renderProgressCardReceipt(card: ToolCard, outcome: ToolCardOutcome) {
   return html`<div class="chat-tool-msg-collapse chat-progress-card-receipt">
     <div class="chat-tool-msg-summary chat-tool-row" role="status">
       <span class="chat-tool-msg-summary__icon">${renderToolIcon("listChecks")}</span>
-      <span class="chat-tool-msg-summary__label">${label}</span>
+      <span class="chat-progress-card-receipt__text">${label}</span>
     </div>
   </div>`;
 }
@@ -358,6 +364,9 @@ export function isRunningToolCard(card: ToolCard, runActive: boolean | undefined
 
 export function resolveToolRowText(card: ToolCard, runActive?: boolean): string {
   const view = resolveToolCallView({ name: card.name, args: card.args, details: card.details });
+  if (view.title) {
+    return view.title;
+  }
   if (view.kind === "command" && view.command) {
     return `$ ${firstCommandLine(view.command)}`;
   }
@@ -437,7 +446,7 @@ export function renderToolCard(
   const outcome = resolveToolCardOutcome(card, opts.runActive);
   const progressReceipt = renderProgressCardReceipt(card, outcome);
   if (progressReceipt) {
-    return progressReceipt;
+    return renderPluginToolResult(card, opts, progressReceipt);
   }
   const view = resolveToolCallView({ name: card.name, args: card.args, details: card.details });
   const display = resolveToolDisplay({ name: card.name, args: card.args, detailMode: "explain" });
@@ -447,7 +456,9 @@ export function renderToolCard(
   const workspaceFilePath = toolWorkspacePath(card, view);
   const isFileRow = Boolean(workspaceFilePath);
   const rowContent = html`
-    <span class="chat-tool-msg-summary__icon">${renderToolIcon(icon)}</span>
+    <span class="chat-tool-msg-summary__icon"
+      >${renderToolIcon(icon, opts.pluginToolIcons?.get(card.name))}</span
+    >
     <span class="chat-tool-disclosure__content"
       >${renderToolRowContent(
         card,
@@ -457,54 +468,90 @@ export function renderToolCard(
         opts.onOpenWorkspaceFile,
       )}</span
     >
+    ${expanded ? nothing : renderToolFailures([card], false)}
     <span class="chat-tool-row__chevron" aria-hidden="true">${icons.chevronRight}</span>
   `;
 
-  return html`
-    <div class="chat-tool-msg-collapse chat-tool-msg-collapse--manual ${expanded ? "is-open" : ""}">
-      ${
-        isFileRow
-          ? html`<div
-              class="chat-inline-disclosure chat-tool-msg-summary chat-tool-row chat-tool-row--file ${
-                isRunning ? "chat-tool-row--running" : ""
-              }"
-              @pointerenter=${syncToolDisclosureOverflow}
-              @focusin=${syncToolDisclosureOverflow}
-            >
-              <button
-                class="chat-tool-row__toggle"
+  return renderPluginToolResult(
+    card,
+    opts,
+    html`
+      <div
+        class="chat-tool-msg-collapse chat-tool-msg-collapse--manual ${expanded ? "is-open" : ""}"
+      >
+        ${
+          isFileRow
+            ? html`<div
+                class="chat-inline-disclosure chat-tool-msg-summary chat-tool-row chat-tool-row--file ${
+                  isRunning ? "chat-tool-row--running" : ""
+                }"
+                @pointerenter=${syncToolDisclosureOverflow}
+                @focusin=${syncToolDisclosureOverflow}
+              >
+                <button
+                  class="chat-tool-row__toggle"
+                  type="button"
+                  aria-expanded=${String(expanded)}
+                  aria-label=${resolveToolRowText(card, opts.runActive)}
+                  @click=${() => opts.onToggleExpanded(card.id)}
+                ></button>
+                ${rowContent}
+              </div>`
+            : html`<button
+                class="chat-inline-disclosure chat-tool-msg-summary chat-tool-row ${
+                  isRunning ? "chat-tool-row--running" : ""
+                }"
                 type="button"
                 aria-expanded=${String(expanded)}
-                aria-label=${resolveToolRowText(card, opts.runActive)}
-                @click=${() => opts.onToggleExpanded(card.id)}
-              ></button>
-              ${rowContent}
-            </div>`
-          : html`<button
-              class="chat-inline-disclosure chat-tool-msg-summary chat-tool-row ${
-                isRunning ? "chat-tool-row--running" : ""
-              }"
-              type="button"
-              aria-expanded=${String(expanded)}
-              @pointerenter=${syncToolDisclosureOverflow}
-              @focus=${syncToolDisclosureOverflow}
-              @click=${(event: MouseEvent) => {
-                if (shouldToggleSelectableDisclosure(event)) {
-                  opts.onToggleExpanded(card.id);
-                }
-              }}
-            >
-              ${rowContent}
-            </button>`
-      }
-      ${
-        expanded
-          ? html`
-              <div class="chat-tool-msg-body">${renderExpandedToolCardContent(card, opts)}</div>
-            `
-          : nothing
-      }
-      ${opts.showApprovalReviews === false ? nothing : renderToolApprovalReviews(card)}
-    </div>
-  `;
+                @pointerenter=${syncToolDisclosureOverflow}
+                @focus=${syncToolDisclosureOverflow}
+                @click=${(event: MouseEvent) => {
+                  if (shouldToggleSelectableDisclosure(event)) {
+                    opts.onToggleExpanded(card.id);
+                  }
+                }}
+              >
+                ${rowContent}
+              </button>`
+        }
+        ${
+          expanded
+            ? html`
+                <div class="chat-tool-msg-body">${renderExpandedToolCardContent(card, opts)}</div>
+              `
+            : nothing
+        }
+        ${opts.showApprovalReviews === false ? nothing : renderToolApprovalReviews(card)}
+      </div>
+    `,
+  );
+}
+
+export function renderPluginToolResult(
+  card: ToolCard | null | undefined,
+  opts: ToolRenderOptions & { expanded: boolean },
+  defaultView: unknown,
+) {
+  if (!card) {
+    return defaultView;
+  }
+  return renderPluginSurface(
+    "tool-result",
+    {
+      sessionKey: opts.sessionKey ?? "",
+      agentId: opts.agentId,
+      toolName: card.name,
+      toolCallId: card.callId ?? card.id,
+      input: card.args,
+      output: {
+        text: card.outputText,
+        details: card.details,
+        isError: card.isError,
+        completed: card.completed,
+      },
+      expanded: opts.expanded,
+    },
+    defaultView,
+    opts.presented ?? true,
+  );
 }

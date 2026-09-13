@@ -1,6 +1,6 @@
 import type { RealtimeVoiceGatewayControl } from "openclaw/plugin-sdk/realtime-voice";
+import { findSourceImportBackedges } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, vi } from "vitest";
-import { OPENAI_GPT_LIVE_MODELS } from "./realtime-quicksilver.js";
 import {
   createBroker,
   createCallResponse,
@@ -12,8 +12,17 @@ import {
 } from "./realtime-quicksilver.test-helpers.js";
 
 const AUDIO_ONLY_SDP = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n";
+const OPAQUE_REALTIME_MODEL = "gpt-live-test-canary";
 
 describe("GPT-Live browser session lifecycle", () => {
+  it("keeps broker registration independent of cold SDK host composition", async () => {
+    expect(
+      await findSourceImportBackedges("extensions/openai/realtime-quicksilver-session-owner.ts", [
+        "extensions/openai/realtime-host.ts",
+      ]),
+    ).toEqual([]);
+  });
+
   it("rejects negotiated native control without the modern host binding before reserving", async () => {
     const { realtime, runAgentConsult } = createBroker();
     try {
@@ -22,7 +31,7 @@ describe("GPT-Live browser session lifecycle", () => {
           // @ts-expect-error JavaScript callers must still fail before reserving a native session.
           {
             providerConfig: {},
-            model: OPENAI_GPT_LIVE_MODELS[0],
+            model: OPAQUE_REALTIME_MODEL,
             runAgentConsult,
             clientControl: { owner: "gateway" },
             gatewayControl: { bindBridge: vi.fn() },
@@ -178,7 +187,7 @@ describe("GPT-Live browser session lifecycle", () => {
         const reservation = await realtime.broker.createBrowserSession(
           {
             providerConfig: {},
-            model: OPENAI_GPT_LIVE_MODELS[0],
+            model: OPAQUE_REALTIME_MODEL,
             runAgentConsult,
             clientControl: { owner: "gateway" },
             ownerConnId: "native-media-owner",
@@ -220,7 +229,7 @@ describe("GPT-Live browser session lifecycle", () => {
       realtime.broker.createBrowserSession(
         {
           providerConfig: {},
-          model: OPENAI_GPT_LIVE_MODELS[0],
+          model: OPAQUE_REALTIME_MODEL,
           runAgentConsult,
           ownerConnId,
           clientControl: { owner: "gateway" },
@@ -255,7 +264,7 @@ describe("GPT-Live browser session lifecycle", () => {
       const reservation = await realtime.broker.createBrowserSession(
         {
           providerConfig: {},
-          model: OPENAI_GPT_LIVE_MODELS[0],
+          model: OPAQUE_REALTIME_MODEL,
           runAgentConsult,
           ownerConnId: "native-control-owner",
           clientControl: { owner: "gateway" },

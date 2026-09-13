@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { DatabaseSync } from "node:sqlite";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { Selectable } from "kysely";
 import {
@@ -9,6 +10,7 @@ import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
 } from "../../infra/kysely-sync.js";
+import { stageSqliteTransactionState } from "../../infra/sqlite-post-commit.js";
 import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import type { SessionPendingInputs } from "../../state/openclaw-agent-db.generated.js";
@@ -38,6 +40,7 @@ type PendingInputDatabase = Pick<OpenClawAgentDatabase, "db" | "path">;
 
 export type SessionPendingInputOwner = {
   inputId: string;
+  transcriptInputId: string;
   sessionId: string;
   sessionKey: string;
   databasePath: string;
@@ -46,7 +49,10 @@ export type SessionPendingInputOwner = {
   messageJson: string;
   config?: OpenClawConfig;
   assertCurrent: () => void;
+  /** Published only after the exact input was consumed by a committed transcript write. */
+  consumed?: true;
   finish: (disposition: Exclude<SessionPendingInputState, "queued">) => void;
+  restartRecovered?: true;
   /** Aggregate authority is the exact source closures, never persisted source identifiers. */
   sources?: readonly SessionPendingInputOwner[];
 };
@@ -54,7 +60,17 @@ export type SessionPendingInputOwner = {
 const owners = resolveGlobalSingleton(Symbol.for("openclaw.sessionPendingInputOwners"), () => ({
   live: new Map<string, SessionPendingInputOwner>(),
   current: new AsyncLocalStorage<SessionPendingInputOwner>(),
+  relocation: new AsyncLocalStorage<{
+    owner: SessionPendingInputOwner;
+    sourceInputId: string;
+  }>(),
+  transactionRelocations: new WeakMap<DatabaseSync, Map<SessionPendingInputOwner, string>>(),
 }));
+
+const recoveredDedupeOwners = resolveGlobalSingleton(
+  Symbol.for("openclaw.sessionPendingInputDedupeRecoveries"),
+  () => new WeakSet<SessionPendingInputOwner>(),
+);
 
 registerAgentEventLifecycleRotationHandler("session-pending-inputs", () => {
   const failures: unknown[] = [];
@@ -112,6 +128,26 @@ export function runWithSessionPendingInputPersistence<T>(
   return owners.current.run(owner, persist);
 }
 
+/** A transcript rewrite may move only the exact current user owned by the live admitted turn. */
+export function withSessionPendingInputRelocation<T>(
+  sourceInputId: string,
+  message: unknown,
+  append: () => T,
+): T {
+  const owner = owners.current.getStore();
+  const record = asOptionalRecord(message);
+  const ownsSource = owner?.transcriptInputId === sourceInputId;
+  const claimsOwner = record?.role === "user" && record.idempotencyKey === owner?.idempotencyKey;
+  if (!owner || (!ownsSource && !claimsOwner)) {
+    return append();
+  }
+  assertPendingInputOwnerCurrent(owner);
+  if (JSON.stringify(message) !== owner.messageJson) {
+    throw new Error("Pending input relocation does not match its admitted transcript entry");
+  }
+  return owners.relocation.run({ owner, sourceInputId }, append);
+}
+
 /** Registration owns disposition; execution and promotion check the private operational predicates. */
 export function readSessionPendingInputOwnerIds(
   database: PendingInputDatabase,
@@ -167,6 +203,42 @@ export function projectSessionPendingInput(row: SessionPendingInputRow): Session
   };
 }
 
+/** Only a current recovered source can supersede its previous request receipt, once. */
+export function claimCurrentSessionPendingInputDedupeRecovery(
+  database: PendingInputDatabase,
+  scope: Pick<ResolvedTranscriptScope, "sessionId" | "sessionKey">,
+  runId: string,
+): boolean {
+  const owner = owners.current.getStore();
+  if (
+    !owner ||
+    owner.sources ||
+    owner.restartRecovered !== true ||
+    recoveredDedupeOwners.has(owner) ||
+    owner.databasePath !== database.path ||
+    owner.sessionId !== scope.sessionId ||
+    owner.sessionKey !== scope.sessionKey ||
+    owner.idempotencyKey !== `${runId}:user`
+  ) {
+    return false;
+  }
+  assertPendingInputOwnerCurrent(owner);
+  const row = readSessionPendingInputByKey(database, scope, owner.idempotencyKey);
+  const current = Boolean(
+    row &&
+    row.input_id === owner.inputId &&
+    row.run_id === runId &&
+    row.message_json === owner.messageJson &&
+    row.state === "queued" &&
+    row.consumed_event_id == null &&
+    readSessionPendingInputOwnerIds(database, [row]).has(owner.inputId),
+  );
+  if (current) {
+    recoveredDedupeOwners.add(owner);
+  }
+  return current;
+}
+
 /** Query only the exact physical transcript; copied keys cannot adopt another generation. */
 export function readSessionPendingInputByKey(
   database: PendingInputDatabase,
@@ -192,6 +264,7 @@ export type SessionPendingInputAppend = {
   message: PersistedUserTurnMessage;
   alreadyPromoted: boolean;
   sourceInputIds?: readonly string[];
+  stageRelocation?: (destinationInputId: string) => void;
 };
 
 /** The private call-path owner, not a copied id or durable row, permits promotion. */
@@ -225,6 +298,50 @@ export function resolveSessionPendingInputAppend(
   ) {
     throw new Error("Pending input cannot be appended outside its admitted turn");
   }
+  const relocation = owners.relocation.getStore();
+  const transactionRelocations = owners.transactionRelocations.get(database.db);
+  const transcriptInputId = transactionRelocations?.get(owner) ?? owner.transcriptInputId;
+  if (relocation?.owner === owner && relocation.sourceInputId !== transcriptInputId) {
+    throw new Error("Pending input relocation does not match its admitted transcript entry");
+  }
+  const stageRelocation =
+    relocation?.owner === owner
+      ? (destinationInputId: string) => {
+          let staged = owners.transactionRelocations.get(database.db);
+          const hadPrevious = staged?.has(owner) ?? false;
+          const previous = staged?.get(owner);
+          if (
+            !stageSqliteTransactionState(database.db, {
+              stage: () => {
+                staged ??= new Map();
+                owners.transactionRelocations.set(database.db, staged);
+                staged.set(owner, destinationInputId);
+              },
+              rollback: () => {
+                if (hadPrevious && previous !== undefined) {
+                  staged?.set(owner, previous);
+                } else {
+                  staged?.delete(owner);
+                }
+                if (staged?.size === 0) {
+                  owners.transactionRelocations.delete(database.db);
+                }
+              },
+              commit: () => {
+                owner.transcriptInputId = destinationInputId;
+                if (staged?.get(owner) === destinationInputId) {
+                  staged.delete(owner);
+                }
+                if (staged?.size === 0) {
+                  owners.transactionRelocations.delete(database.db);
+                }
+              },
+            })
+          ) {
+            throw new Error("Pending input relocation requires a transcript write transaction");
+          }
+        }
+      : undefined;
   if (owner.sources) {
     const acceptedByKey = new Map(
       executeSqliteQuerySync(
@@ -261,10 +378,11 @@ export function resolveSessionPendingInputAppend(
       assertPendingInputOwnerCurrent(owner);
     }
     return {
-      inputId: owner.inputId,
+      inputId: transcriptInputId,
       message: parseSessionPendingInputMessage(owner.messageJson),
       alreadyPromoted,
       sourceInputIds: sources.map((source) => source.input_id),
+      ...(alreadyPromoted && stageRelocation ? { stageRelocation } : {}),
     };
   }
   // Terminal mirroring may replay a consumed input after cancellation. The caller
@@ -273,9 +391,10 @@ export function resolveSessionPendingInputAppend(
     assertPendingInputOwnerCurrent(owner);
   }
   return {
-    inputId: owner.inputId,
+    inputId: transcriptInputId,
     message: parseSessionPendingInputMessage(row?.message_json ?? owner.messageJson),
     alreadyPromoted: !row,
+    ...(!row && stageRelocation ? { stageRelocation } : {}),
   };
 }
 
@@ -283,30 +402,52 @@ export function consumeSessionPendingInput(
   database: PendingInputDatabase,
   pending: SessionPendingInputAppend,
 ): void {
-  if (!pending.alreadyPromoted) {
-    if (pending.sourceInputIds) {
-      const updated = executeSqliteQuerySync(
-        database.db,
-        getSessionKysely(database.db)
-          .updateTable("session_pending_inputs")
-          .set({ consumed_event_id: pending.inputId })
-          .where("input_id", "in", [...pending.sourceInputIds])
-          .where("state", "=", "queued")
-          .where("consumed_event_id", "is", null),
-      );
-      if (updated.numAffectedRows !== BigInt(pending.sourceInputIds.length)) {
-        throw new Error("Collected input custody changed during transcript promotion");
-      }
-      return;
+  if (pending.alreadyPromoted) {
+    return;
+  }
+  const owner = owners.current.getStore();
+  const inputIds = new Set(pending.sourceInputIds ?? [pending.inputId]);
+  const consumedOwners = (owner?.sources ?? (owner ? [owner] : [])).filter(
+    (candidate) =>
+      owners.live.get(candidate.inputId) === candidate &&
+      candidate.databasePath === database.path &&
+      inputIds.has(candidate.inputId),
+  );
+  if (pending.sourceInputIds) {
+    const updated = executeSqliteQuerySync(
+      database.db,
+      getSessionKysely(database.db)
+        .updateTable("session_pending_inputs")
+        .set({ consumed_event_id: pending.inputId })
+        .where("input_id", "in", [...pending.sourceInputIds])
+        .where("state", "=", "queued")
+        .where("consumed_event_id", "is", null),
+    );
+    if (updated.numAffectedRows !== BigInt(pending.sourceInputIds.length)) {
+      throw new Error("Collected input custody changed during transcript promotion");
     }
-    executeSqliteQuerySync(
+  } else {
+    const deleted = executeSqliteQuerySync(
       database.db,
       getSessionKysely(database.db)
         .deleteFrom("session_pending_inputs")
         .where("input_id", "=", pending.inputId)
         .where("state", "=", "queued"),
     );
+    if (deleted.numAffectedRows !== 1n) {
+      return;
+    }
   }
+  // Outer commit publishes this fact before observers; rollback leaves finish responsible.
+  stageSqliteTransactionState(database.db, {
+    stage: () => {},
+    rollback: () => {},
+    commit: () => {
+      for (const consumedOwner of consumedOwners) {
+        consumedOwner.consumed = true;
+      }
+    },
+  });
 }
 
 /** Logical deletion also clears custody when transcript windows are retained. */

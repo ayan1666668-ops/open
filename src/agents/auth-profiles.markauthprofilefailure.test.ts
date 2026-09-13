@@ -1,31 +1,32 @@
 /**
  * Auth-profile failure persistence tests.
- * Exercises lock-based usage updates, provider bypasses, and cooldown hook
- * behavior against temporary SQLite-backed stores.
+ * Exercises lock-based usage updates, provider bypasses, and cooldown
+ * persistence against temporary SQLite-backed stores.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { createApiKeyCredential } from "./auth-profiles/credential-fixtures.test-support.js";
 
 vi.mock("./cli-credentials.js", () => ({
   readCodexCliCredentialsCached: () => null,
   readMiniMaxCliCredentialsCached: () => null,
 }));
 
-vi.mock("../plugins/provider-external-auth.js", () => ({
-  resolveExternalAuthProfilesWithPlugins: () => [],
+vi.mock("../plugins/provider-external-auth-core.js", () => ({
+  createProviderExternalAuthResolver: () => ({
+    resolveExternalAuthProfilesWithPlugins: () => [],
+  }),
 }));
 
 import { clearRuntimeAuthProfileStoreSnapshots } from "./auth-profiles/runtime-snapshots.js";
-import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store.js";
+import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store-runtime.js";
 import {
-  calculateAuthProfileCooldownMs,
   markAuthProfileFailure,
   markInlineProviderApiKeyFailure,
   resolveInlineProviderApiKeyUsageId,
-  setAuthProfileFailureHook,
 } from "./auth-profiles/usage.js";
 
 type AuthProfileStore = ReturnType<typeof ensureAuthProfileStore>;
@@ -58,16 +59,8 @@ async function withAuthProfileStore(
     {
       version: 1,
       profiles: {
-        "anthropic:default": {
-          type: "api_key",
-          provider: "anthropic",
-          key: "sk-default",
-        },
-        "openrouter:default": {
-          type: "api_key",
-          provider: "openrouter",
-          key: "sk-or-default",
-        },
+        "anthropic:default": createApiKeyCredential("anthropic", "sk-default"),
+        "openrouter:default": createApiKeyCredential("openrouter", "sk-or-default"),
       },
     },
     agentDir,
@@ -90,11 +83,7 @@ describe("markAuthProfileFailure", () => {
       {
         version: 1,
         profiles: {
-          "openai:default": {
-            type: "api_key",
-            provider: "openai",
-            key: "sk-expired-old",
-          },
+          "openai:default": createApiKeyCredential("openai", "sk-expired-old"),
         },
       },
       agentDir,
@@ -104,11 +93,7 @@ describe("markAuthProfileFailure", () => {
     const staleRuntimeStore: AuthProfileStore = {
       version: 1,
       profiles: {
-        "openai:default": {
-          type: "api_key",
-          provider: "openai",
-          key: "sk-expired-old",
-        },
+        "openai:default": createApiKeyCredential("openai", "sk-expired-old"),
       },
     };
 
@@ -116,11 +101,7 @@ describe("markAuthProfileFailure", () => {
       {
         version: 1,
         profiles: {
-          "openai:default": {
-            type: "api_key",
-            provider: "openai",
-            key: "sk-fresh-new",
-          },
+          "openai:default": createApiKeyCredential("openai", "sk-fresh-new"),
         },
       },
       agentDir,
@@ -150,7 +131,7 @@ describe("markAuthProfileFailure", () => {
     expect(typeof reloaded.usageStats?.["openai:default"]?.cooldownUntil).toBe("number");
   });
 
-  it("disables billing failures for ~5 hours by default", async () => {
+  it("disables billing failures for ~10 minutes by default (#135835)", async () => {
     await withAuthProfileStore(async ({ agentDir, store }) => {
       const startedAt = Date.now();
       await markAuthProfileFailure({
@@ -163,7 +144,7 @@ describe("markAuthProfileFailure", () => {
       const disabledUntil = store.usageStats?.["anthropic:default"]?.disabledUntil;
       expect(typeof disabledUntil).toBe("number");
       const remainingMs = (disabledUntil as number) - startedAt;
-      expectCooldownInRange(remainingMs, 4.5 * 60 * 60 * 1000, 5.5 * 60 * 60 * 1000);
+      expectCooldownInRange(remainingMs, 9 * 60 * 1000, 11 * 60 * 1000);
     });
   });
   it("records billing backoff for inline provider api keys without creating an auth profile", async () => {
@@ -180,9 +161,36 @@ describe("markAuthProfileFailure", () => {
       const stats = store.usageStats?.[usageId];
       expect(store.profiles[usageId]).toBeUndefined();
       expect(stats?.disabledReason).toBe("billing");
+      expect(ensureAuthProfileStore(agentDir).usageStats?.[usageId]?.disabledReason).toBe(
+        "billing",
+      );
       expect(typeof stats?.disabledUntil).toBe("number");
       const remainingMs = (stats?.disabledUntil as number) - startedAt;
-      expectCooldownInRange(remainingMs, 4.5 * 60 * 60 * 1000, 5.5 * 60 * 60 * 1000);
+      expectCooldownInRange(remainingMs, 9 * 60 * 1000, 11 * 60 * 1000);
+    });
+  });
+
+  it("keeps persisted billing disabledUntil unchanged across mid-window retries", async () => {
+    await withAuthProfileStore(async ({ agentDir, store }) => {
+      await markAuthProfileFailure({
+        store,
+        profileId: "anthropic:default",
+        reason: "billing",
+        agentDir,
+      });
+
+      const firstDisabledUntil = store.usageStats?.["anthropic:default"]?.disabledUntil;
+      expect(typeof firstDisabledUntil).toBe("number");
+
+      await markAuthProfileFailure({
+        store,
+        profileId: "anthropic:default",
+        reason: "billing",
+        agentDir,
+      });
+
+      // A retry inside the window must not extend the lockout.
+      expect(store.usageStats?.["anthropic:default"]?.disabledUntil).toBe(firstDisabledUntil);
     });
   });
 
@@ -276,11 +284,7 @@ describe("markAuthProfileFailure", () => {
       {
         version: 1,
         profiles: {
-          "anthropic:default": {
-            type: "api_key",
-            provider: "anthropic",
-            key: "sk-default",
-          },
+          "anthropic:default": createApiKeyCredential("anthropic", "sk-default"),
         },
         usageStats: {
           "anthropic:default": {
@@ -316,11 +320,7 @@ describe("markAuthProfileFailure", () => {
       {
         version: 1,
         profiles: {
-          "anthropic:default": {
-            type: "api_key",
-            provider: "anthropic",
-            key: "sk-default",
-          },
+          "anthropic:default": createApiKeyCredential("anthropic", "sk-default"),
         },
         usageStats: {
           "anthropic:default": {
@@ -373,100 +373,5 @@ describe("markAuthProfileFailure", () => {
       const reloaded = ensureAuthProfileStore(agentDir);
       expect(reloaded.usageStats?.["openrouter:default"]).toBeUndefined();
     });
-  });
-
-  it("fires the auth profile failure hook so callers can self-heal", async () => {
-    await withAuthProfileStore(async ({ agentDir, store }) => {
-      const hook = vi.fn();
-      setAuthProfileFailureHook(hook);
-      try {
-        await markAuthProfileFailure({
-          store,
-          profileId: "anthropic:default",
-          reason: "auth",
-          agentDir,
-        });
-        expect(hook).toHaveBeenCalledTimes(1);
-      } finally {
-        setAuthProfileFailureHook(undefined);
-      }
-    });
-  });
-
-  it("fires the auth profile failure hook for inline provider api key failures", async () => {
-    await withAuthProfileStore(async ({ agentDir, store }) => {
-      const hook = vi.fn();
-      setAuthProfileFailureHook(hook);
-      try {
-        await markInlineProviderApiKeyFailure({
-          store,
-          provider: "anthropic",
-          reason: "billing",
-          agentDir,
-        });
-        expect(hook).toHaveBeenCalledTimes(1);
-      } finally {
-        setAuthProfileFailureHook(undefined);
-      }
-    });
-  });
-
-  it("does not break failure recording when the hook throws", async () => {
-    await withAuthProfileStore(async ({ agentDir, store }) => {
-      const throwingHook = vi.fn(() => {
-        throw new Error("boom");
-      });
-      setAuthProfileFailureHook(throwingHook);
-      try {
-        await markAuthProfileFailure({
-          store,
-          profileId: "anthropic:default",
-          reason: "auth",
-          agentDir,
-        });
-        expect(throwingHook).toHaveBeenCalledTimes(1);
-        // Failure still got recorded despite the hook throwing.
-        expect(store.usageStats?.["anthropic:default"]?.errorCount ?? 0).toBeGreaterThan(0);
-      } finally {
-        setAuthProfileFailureHook(undefined);
-      }
-    });
-  });
-
-  it("does not break inline failure recording when the hook throws", async () => {
-    await withAuthProfileStore(async ({ agentDir, store }) => {
-      const throwingHook = vi.fn(() => {
-        throw new Error("boom");
-      });
-      setAuthProfileFailureHook(throwingHook);
-      try {
-        await expect(
-          markInlineProviderApiKeyFailure({
-            store,
-            provider: "anthropic",
-            reason: "billing",
-            agentDir,
-          }),
-        ).resolves.toBeUndefined();
-        expect(throwingHook).toHaveBeenCalledTimes(1);
-        const usageId = resolveInlineProviderApiKeyUsageId("anthropic");
-        expect(store.usageStats?.[usageId]?.disabledReason).toBe("billing");
-        expect(ensureAuthProfileStore(agentDir).usageStats?.[usageId]?.disabledReason).toBe(
-          "billing",
-        );
-      } finally {
-        setAuthProfileFailureHook(undefined);
-      }
-    });
-  });
-});
-
-describe("calculateAuthProfileCooldownMs", () => {
-  it("applies stepped backoff with a 5-min cap", () => {
-    expect(calculateAuthProfileCooldownMs(1)).toBe(30_000); // 30 seconds
-    expect(calculateAuthProfileCooldownMs(2)).toBe(60_000); // 1 minute
-    expect(calculateAuthProfileCooldownMs(3)).toBe(5 * 60_000); // 5 minutes
-    expect(calculateAuthProfileCooldownMs(4)).toBe(5 * 60_000); // 5 minutes (cap)
-    expect(calculateAuthProfileCooldownMs(5)).toBe(5 * 60_000); // 5 minutes (cap)
   });
 });

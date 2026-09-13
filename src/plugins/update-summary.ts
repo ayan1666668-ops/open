@@ -2,7 +2,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   attachPluginInstallOwnerMigrations,
   resolvePluginInstallTransaction,
-  resolvePluginInstallTransactionSink,
+  resolvePluginInstallTransactionRequest,
   settlePluginInstallTransactions,
   type PluginInstallTransaction,
 } from "./install-transaction.js";
@@ -65,7 +65,7 @@ export function createPluginUpdateTransactionState(params: object) {
   return {
     transactions: [] as PluginInstallTransaction[],
     installOwnerMigrations: {} as Record<string, string>,
-    transactionSink: resolvePluginInstallTransactionSink(params),
+    transactionSink: resolvePluginInstallTransactionRequest(params)?.transactionSink,
   };
 }
 
@@ -102,7 +102,9 @@ export async function finalizePluginUpdateSummary(params: {
           logger: params.logger,
         })) || changed;
     } catch (error) {
-      await settlePluginInstallTransactions(params.transactionState.transactions, "rollback");
+      await settlePluginInstallTransactions(params.transactionState.transactions, "rollback", {
+        error,
+      });
       throw error;
     }
   }

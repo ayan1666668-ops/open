@@ -54,6 +54,8 @@ import {
 } from "../infra/state-migrations.legacy-session-store.js";
 import { listConfiguredChannelIdsForReadOnlyScope } from "../plugins/channel-plugin-ids.js";
 import { normalizeAgentId } from "../routing/session-key.js";
+import { readAgentDatabaseAdmissionRefusal } from "../state/agent-database-admission.js";
+import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import { shortenHomePath } from "../utils.js";
 import { repairHeartbeatPoisonedMainSession } from "./doctor-heartbeat-main-session-repair.js";
 import { describeHeartbeatSessionTargetIssues } from "./doctor-heartbeat-session-target.js";
@@ -217,6 +219,11 @@ function listOrphanAgentDirs(cfg: OpenClawConfig, stateDir: string): OrphanAgent
         if (!hasNestedAgentDir) {
           return false;
         }
+        // Reserved system agent ids own a state dir but can never appear in
+        // agents.list, so their directories are never orphans.
+        if (isReservedSystemAgentId(agentId)) {
+          return false;
+        }
         if (
           isSharedAuthStoreOwner({
             ownership: sharedAuthOwnership,
@@ -324,16 +331,7 @@ function countJsonlLines(filePath: string): number {
 }
 
 function isPathUnderRoot(targetPath: string, rootPath: string): boolean {
-  const normalizedTarget = path.resolve(targetPath);
-  const normalizedRoot = path.resolve(rootPath);
-  const rootToken = path.parse(normalizedRoot).root;
-  if (normalizedRoot === rootToken) {
-    return normalizedTarget.startsWith(rootToken);
-  }
-  return (
-    normalizedTarget === normalizedRoot ||
-    normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)
-  );
+  return isPathUnderRootWithPathOps(targetPath, rootPath, path);
 }
 
 const tryResolveRealPath = safeRealpathSync;
@@ -485,6 +483,32 @@ function tryReadLinuxMountInfo(): string | null {
   }
 }
 
+function resolveLinuxStateMount(
+  stateDir: string,
+  deps?: {
+    mountInfo?: string;
+    resolveRealPath?: (targetPath: string) => string | null;
+  },
+): LinuxSdBackedStateDir | null {
+  const linuxPath = path.posix;
+  const resolveRealPath = deps?.resolveRealPath ?? tryResolveRealPath;
+  const resolvedStatePath =
+    resolvePathThroughExistingAncestor(stateDir, resolveRealPath, linuxPath) ??
+    linuxPath.resolve(stateDir);
+  const mountInfo = deps?.mountInfo ?? tryReadLinuxMountInfo();
+  const mountEntry = mountInfo
+    ? findLinuxMountInfoEntryForPath(resolvedStatePath, parseLinuxMountInfo(mountInfo), linuxPath)
+    : null;
+  return mountEntry
+    ? {
+        path: linuxPath.resolve(resolvedStatePath),
+        mountPoint: linuxPath.resolve(mountEntry.mountPoint),
+        fsType: mountEntry.fsType,
+        source: mountEntry.source,
+      }
+    : null;
+}
+
 /** Detects Linux state directories mounted from SD/eMMC-style block devices. */
 export function detectLinuxSdBackedStateDir(
   stateDir: string,
@@ -500,29 +524,15 @@ export function detectLinuxSdBackedStateDir(
     return null;
   }
   const linuxPath = path.posix;
-
-  const resolveRealPath = deps?.resolveRealPath ?? tryResolveRealPath;
-  const resolvedStatePath =
-    resolvePathThroughExistingAncestor(stateDir, resolveRealPath, linuxPath) ??
-    linuxPath.resolve(stateDir);
-  const mountInfo = deps?.mountInfo ?? tryReadLinuxMountInfo();
-  if (!mountInfo) {
+  const stateMount = resolveLinuxStateMount(stateDir, deps);
+  if (!stateMount) {
     return null;
   }
 
-  const mountEntry = findLinuxMountInfoEntryForPath(
-    resolvedStatePath,
-    parseLinuxMountInfo(mountInfo),
-    linuxPath,
-  );
-  if (!mountEntry) {
-    return null;
-  }
-
-  const sourceCandidates = [mountEntry.source];
-  if (mountEntry.source.startsWith("/dev/")) {
+  const sourceCandidates = [stateMount.source];
+  if (stateMount.source.startsWith("/dev/")) {
     const resolvedDevicePath = (deps?.resolveDeviceRealPath ?? tryResolveRealPath)(
-      mountEntry.source,
+      stateMount.source,
     );
     if (resolvedDevicePath) {
       sourceCandidates.push(linuxPath.resolve(resolvedDevicePath));
@@ -532,12 +542,7 @@ export function detectLinuxSdBackedStateDir(
     return null;
   }
 
-  return {
-    path: linuxPath.resolve(resolvedStatePath),
-    mountPoint: linuxPath.resolve(mountEntry.mountPoint),
-    fsType: mountEntry.fsType,
-    source: mountEntry.source,
-  };
+  return stateMount;
 }
 
 /** Formats the warning for state stored on SD/eMMC media. */
@@ -559,11 +564,7 @@ export function formatLinuxSdBackedStateDirWarning(
   ].join("\n");
 }
 
-type LinuxVolatileStateDir = {
-  path: string;
-  mountPoint: string;
-  fsType: string;
-};
+type LinuxVolatileStateDir = Omit<LinuxSdBackedStateDir, "source">;
 
 /** Filesystems whose state disappears on reboot. Docker overlayfs is intentionally excluded. */
 const VOLATILE_FS_TYPES = new Set(["tmpfs", "ramfs"]);
@@ -581,31 +582,12 @@ export function detectLinuxVolatileStateDir(
   if (platform !== "linux") {
     return null;
   }
-  const linuxPath = path.posix;
-
-  const resolveRealPath = deps?.resolveRealPath ?? tryResolveRealPath;
-  const resolvedStatePath =
-    resolvePathThroughExistingAncestor(stateDir, resolveRealPath, linuxPath) ??
-    linuxPath.resolve(stateDir);
-  const mountInfo = deps?.mountInfo ?? tryReadLinuxMountInfo();
-  if (!mountInfo) {
+  const stateMount = resolveLinuxStateMount(stateDir, deps);
+  if (!stateMount || !VOLATILE_FS_TYPES.has(stateMount.fsType)) {
     return null;
   }
-
-  const mountEntry = findLinuxMountInfoEntryForPath(
-    resolvedStatePath,
-    parseLinuxMountInfo(mountInfo),
-    linuxPath,
-  );
-  if (!mountEntry || !VOLATILE_FS_TYPES.has(mountEntry.fsType)) {
-    return null;
-  }
-
-  return {
-    path: linuxPath.resolve(resolvedStatePath),
-    mountPoint: linuxPath.resolve(mountEntry.mountPoint),
-    fsType: mountEntry.fsType,
-  };
+  const { source: _source, ...volatileStateMount } = stateMount;
+  return volatileStateMount;
 }
 
 /** Formats the warning for state stored on a volatile Linux filesystem. */
@@ -751,7 +733,7 @@ export function detectStateIntegrityHealthIssues(
     ? resolveSessionTranscriptsDirForAgent(agentId, env, homedir)
     : undefined;
   const storePath = agentId
-    ? resolveSessionStorePathCore(cfg.session?.store, { agentId })
+    ? resolveSessionStorePathCore(cfg.session?.store, { agentId, env })
     : undefined;
   const storeDir = storePath ? path.dirname(storePath) : undefined;
   const requireOAuthDir = shouldRequireOAuthDir(cfg, env);
@@ -1470,6 +1452,9 @@ export async function noteStateIntegrity(
   // Scan that file once under the compatibility owner so full-store work is not repeated.
   const inspectedLegacyStores = new Set<string>();
   for (const target of sessionTargets) {
+    if (readAgentDatabaseAdmissionRefusal(target.agentId, { env })) {
+      continue;
+    }
     const legacyStorePath = path.resolve(target.storePath);
     const inspectLegacyStore =
       !legacyStorePath.endsWith(".sqlite") && !inspectedLegacyStores.has(legacyStorePath);
@@ -1497,7 +1482,7 @@ export function collectWorkspaceBackupTip(workspaceDir: string): string | null {
   if (!resolvedWorkspaceDir || findGitRoot(resolvedWorkspaceDir)) {
     return null;
   }
-  return "- Tip: back up the agent workspace in a private git repo; keep ~/.openclaw out of git (credentials, sessions). Details: /concepts/agent-workspace#git-backup-recommended";
+  return "- Tip: back up the agent workspace in a private git repo; keep ~/.openclaw out of git (credentials, sessions). Details: /concepts/agent-workspace#git-backup-recommended-private";
 }
 
 /** Emits the workspace backup tip when applicable. */

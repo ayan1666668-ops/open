@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildControlUiFocusPath,
@@ -8,6 +9,7 @@ import { beforeEach, expect, it } from "vitest";
 import { ConnectErrorDetailCodes } from "../../../packages/gateway-protocol/src/connect-error-details.js";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
+import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
   defaultControlUiFeatureMethods,
   installMockGateway,
@@ -45,6 +47,7 @@ const suite = createControlUiE2eSuite({
 async function installChunkFailure(page: Page, chunk: RegExp, manualProbe?: Promise<void>) {
   let headCount = 0;
   let chunkRequestCount = 0;
+  let failedChunkUrl: string | undefined;
   await page.route("**/*", async (route) => {
     if (route.request().method() !== "HEAD") {
       await route.fallback();
@@ -59,6 +62,13 @@ async function installChunkFailure(page: Page, chunk: RegExp, manualProbe?: Prom
     await route.fallback();
   });
   await page.route(chunk, async (route: Route) => {
+    // A shared module can have both a facade and implementation matching the
+    // prefix. Count retries of the injected failure, not its other dependencies.
+    failedChunkUrl ??= route.request().url();
+    if (route.request().url() !== failedChunkUrl) {
+      await route.fallback();
+      return;
+    }
     chunkRequestCount += 1;
     if (chunkRequestCount === 1) {
       await route.abort("internetdisconnected");
@@ -273,6 +283,9 @@ suite.define(() => {
                 )) >= 2,
             )
             .toBe(true);
+          // A generic automatic retry used to wake one second after this
+          // first settled frame. Close must remain authoritative beyond it.
+          await page.waitForTimeout(1_500);
           if (documentRequests > 1) {
             await reloaded;
           }
@@ -358,10 +371,12 @@ suite.define(() => {
       await expect.poll(failure.headCount).toBe(1);
       expect(failure.chunkRequestCount()).toBe(1);
       if (captureUiProof) {
-        await page.screenshot({
-          fullPage: true,
-          path: path.join(artifactDir, "failure.png"),
-        });
+        await writeFile(
+          path.join(artifactDir, "failure.png"),
+          await takeControlUiViewportScreenshot(page, error, [
+            error.getByRole("button", { name: "Retry", exact: true }),
+          ]),
+        );
       }
 
       await retryThroughReload(page, error);
@@ -370,11 +385,12 @@ suite.define(() => {
       await expect.poll(failure.chunkRequestCount).toBe(2);
       expect(await page.locator("openclaw-command-palette").count()).toBe(1);
       if (captureUiProof) {
-        await page.screenshot({
-          animations: "disabled",
-          fullPage: true,
-          path: path.join(artifactDir, "recovered.png"),
-        });
+        await writeFile(
+          path.join(artifactDir, "recovered.png"),
+          await takeControlUiViewportScreenshot(page, page.locator(".cmd-palette"), [
+            page.getByRole("combobox", { name: "Search chats and commands…" }),
+          ]),
+        );
       }
     } finally {
       await suite.closeBrowserContext(context);
@@ -479,6 +495,15 @@ suite.define(() => {
         if (testCase.webChrome) {
           await installNativeWebChrome(page);
         }
+        if (testCase.preserveCollapsedNavigation) {
+          // Bootstrap consumes this one-shot intent; seed each recovered document
+          // before its router can canonicalize the URL during the retry probe.
+          await page.addInitScript(() => {
+            const url = new URL(window.location.href);
+            url.searchParams.set("nav", "collapsed");
+            window.history.replaceState(window.history.state, "", url);
+          });
+        }
         const failure = await installChunkFailure(page, testCase.chunk);
         await installMockGateway(page, {
           featureMethods: ["chat.metadata", "chat.startup", "sessions.create"],
@@ -497,13 +522,6 @@ suite.define(() => {
           });
         }
 
-        if (testCase.preserveCollapsedNavigation) {
-          await page.evaluate(() => {
-            const url = new URL(window.location.href);
-            url.searchParams.set("nav", "collapsed");
-            window.history.replaceState(window.history.state, "", url);
-          });
-        }
         await retryThroughReload(page, error);
         if (testCase.webChrome) {
           const toolbar = page.locator(".macos-titlebar-controls");

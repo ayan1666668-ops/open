@@ -13,13 +13,12 @@ import {
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import { formatCliCommand } from "openclaw/plugin-sdk/setup-tools";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
+import { fetchWithSsrFGuard, isLoopbackHost } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   normalizeOptionalString,
   normalizeLowercaseStringOrEmpty,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getRuntimeConfig } from "../config/config.js";
-import { isLoopbackHost } from "../gateway/net.js";
 import { getBridgeAuthForPort } from "./bridge-auth-registry.js";
 import { resolveBrowserConfig, resolveProfile } from "./config.js";
 import { resolveBrowserControlAuth } from "./control-auth.js";
@@ -31,6 +30,7 @@ import {
   type BrowserNoDisplayErrorDetails,
 } from "./errors.js";
 import { resolveBrowserRateLimitMessage } from "./rate-limit-message.js";
+import { getBrowserRequestScope } from "./request-scope.js";
 
 // Application-level error from the browser control service (service is reachable
 // but returned an error response). Must NOT be wrapped with "Can't reach ..." messaging.
@@ -429,9 +429,13 @@ export async function fetchBrowserJson<T>(
   init?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
   const timeoutMs = resolveBrowserFetchTimeoutMs(init?.timeoutMs);
+  const scope = getBrowserRequestScope();
   let isDispatcherPath = false;
   try {
     if (isAbsoluteHttp(url)) {
+      if (scope) {
+        throw new Error("Dashboard browser requests must stay on the local managed browser");
+      }
       const httpInit = withLoopbackBrowserAuth(url, init);
       return await fetchHttpJson<T>(url, { ...httpInit, timeoutMs });
     }
@@ -441,6 +445,9 @@ export async function fetchBrowserJson<T>(
     const query: Record<string, unknown> = {};
     for (const [key, value] of parsed.searchParams.entries()) {
       query[key] = value;
+    }
+    if (scope) {
+      query.managedOnly = true;
     }
     let body = init?.body;
     if (typeof body === "string") {
@@ -492,6 +499,7 @@ export async function fetchBrowserJson<T>(
       query,
       body,
       signal: abortCtrl.signal,
+      ...(scope ? { assertCurrent: scope.assertCurrent } : {}),
     });
 
     const result = await Promise.race([dispatchPromise, abortPromise]).finally(() => {

@@ -17,6 +17,7 @@ import { SessionPersonSchema } from "./session-participant.js";
 /** One gateway-visible presence record for a node/client/runtime. */
 export const PresenceEntrySchema = closedObject({
   host: Type.Optional(NonEmptyString),
+  clientId: Type.Optional(NonEmptyString),
   ip: Type.Optional(NonEmptyString),
   version: Type.Optional(NonEmptyString),
   platform: Type.Optional(NonEmptyString),
@@ -247,6 +248,8 @@ export const SnapshotSchema = closedObject({
   configPath: Type.Optional(NonEmptyString),
   stateDir: Type.Optional(NonEmptyString),
   sessionDefaults: Type.Optional(SessionDefaultsSchema),
+  /** Credential-free browser sign-in endpoint advertised to authenticated operators. */
+  controlUiIdentityUrl: Type.Optional(NonEmptyString),
   authMode: Type.Optional(
     Type.Union([
       Type.Literal("none"),

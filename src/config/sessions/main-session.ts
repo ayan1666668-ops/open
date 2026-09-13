@@ -106,17 +106,29 @@ export function canonicalizeMainSessionAlias(params: {
     return raw;
   }
 
-  const agentId = normalizeAgentId(params.agentId);
   const mainKey = normalizeMainKey(params.cfg?.session?.mainKey);
-  const agentMainSessionKey = `agent:${agentId}:${mainKey}`;
-  const agentMainAliasKey = `agent:${agentId}:main`;
+  // Ordinary session keys cannot match a main alias; avoid constructing all four aliases.
+  if (
+    raw !== "main" &&
+    raw !== mainKey &&
+    !raw.endsWith(":main") &&
+    !(raw.endsWith(mainKey) && raw[raw.length - mainKey.length - 1] === ":")
+  ) {
+    return raw;
+  }
+  const agentId = normalizeAgentId(params.agentId);
+  const agentMainSessionKey = buildAgentMainSessionKey({ agentId, mainKey });
+  const agentMainAliasKey = buildAgentMainSessionKey({ agentId, mainKey: "main" });
 
   // Also recognize legacy keys built with the hardcoded DEFAULT_AGENT_ID ("main")
   // when the configured agent differs. resolveSessionKey() historically used
   // DEFAULT_AGENT_ID="main" for all write paths, producing "agent:main:<mainKey>"
   // even when the configured agent is e.g. "ops". See #29683.
-  const legacyMainKey = `agent:${FALLBACK_DEFAULT_AGENT_ID}:${mainKey}`;
-  const legacyMainAliasKey = `agent:${FALLBACK_DEFAULT_AGENT_ID}:main`;
+  const legacyMainKey = buildAgentMainSessionKey({ agentId: FALLBACK_DEFAULT_AGENT_ID, mainKey });
+  const legacyMainAliasKey = buildAgentMainSessionKey({
+    agentId: FALLBACK_DEFAULT_AGENT_ID,
+    mainKey: "main",
+  });
 
   const isMainAlias =
     raw === "main" ||

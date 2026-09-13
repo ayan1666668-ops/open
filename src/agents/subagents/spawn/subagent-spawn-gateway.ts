@@ -92,6 +92,14 @@ async function callSubagentGatewayWithDispatchMode(
     const isChildRunLaunch = request.method === "agent";
     const forceSyntheticClient = isChildRunLaunch || scopes != null;
     const dispatch = async (workerIdentity?: WorkerTurnExecutionIdentity) => {
+      // Cleanup can lose its worker claim while awaiting a session lifecycle drain.
+      const assertDispatchCurrent = workerIdentity
+        ? () => {
+            request.assertDispatchCurrent?.();
+            workerIdentity.receiptAuthority();
+          }
+        : request.assertDispatchCurrent;
+      assertDispatchCurrent?.();
       const operationalRunInstance = gatewayCaller?.workerTurnClaim
         ? workerIdentity?.operationalRunInstance
         : gatewayCaller?.operationalRunInstance;
@@ -121,6 +129,7 @@ async function callSubagentGatewayWithDispatchMode(
         withInProcessAgentRuntimeIdentity(
           {
             expectFinal: request.expectFinal,
+            sessionMutationCommitGuard: assertDispatchCurrent,
             ...(allowModelOverride ? { allowSyntheticModelOverride: true } : {}),
             ...(options?.agentRunTracking ? { agentRunTracking: options.agentRunTracking } : {}),
             ...(gatewayContextResolver ? { resolveGatewayContext: gatewayContextResolver } : {}),
@@ -141,7 +150,7 @@ async function callSubagentGatewayWithDispatchMode(
             gatewayCaller.operationalRunInstance !== identity.operationalRunInstance ||
             gatewayCaller.executionIdentityToken !== identity.executionIdentityToken ||
             gatewayCaller.workerTurnClaim !== identity.turnClaim ||
-            parentExecutionIdentityToken !== identity.executionIdentityToken
+            (isChildRunLaunch && parentExecutionIdentityToken !== identity.executionIdentityToken)
           ) {
             throw new Error("worker child admission identity changed");
           }
@@ -150,8 +159,9 @@ async function callSubagentGatewayWithDispatchMode(
       : await dispatch();
     return { response, dispatchMode: "in_process" };
   }
-  const dispatchAgentRequest = (timeoutMs?: number | null) =>
-    sessionSpawnContext && gatewayCaller?.operationalRunInstance
+  const dispatchAgentRequest = (timeoutMs?: number | null) => {
+    request.assertDispatchCurrent?.();
+    return sessionSpawnContext && gatewayCaller?.operationalRunInstance
       ? runWithGatewaySessionSpawnContext(sessionSpawnContext, () =>
           runWithGatewaySessionSpawnParentExecutionIdentity(parentExecutionIdentityToken, () =>
             callGatewayTool(
@@ -162,11 +172,21 @@ async function callSubagentGatewayWithDispatchMode(
                 expectFinal: request.expectFinal,
                 scopes,
                 requireAgentRuntimeIdentity: true,
+                ...(request.assertDispatchCurrent
+                  ? {
+                      dispatchAuthority: {
+                        version: 2,
+                        kind: "source-bound",
+                        assertCurrent: request.assertDispatchCurrent,
+                      },
+                    }
+                  : {}),
               },
             ),
           ),
         )
       : deps.callGateway(typeof timeoutMs === "number" ? { ...request, timeoutMs } : request);
+  };
   // Only agent launches have an idempotency key backed by authoritative Gateway state.
   // Other methods must not repeat after a transport-ambiguous failure.
   const response =

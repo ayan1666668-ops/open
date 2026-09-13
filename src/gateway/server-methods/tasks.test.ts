@@ -25,8 +25,8 @@ import {
   markTaskTerminalById,
   recordTaskProgressByRunId,
 } from "../../tasks/runtime-internal.js";
+import { updateTaskStateByRunId } from "../../tasks/task-registry-record-api.js";
 import { reloadTaskRegistryFromStore } from "../../tasks/task-registry.js";
-import { saveTaskRegistryStateToSqlite } from "../../tasks/task-registry.store.sqlite.js";
 import type { TaskRecord } from "../../tasks/task-registry.types.js";
 import {
   resetTaskRegistryControlRuntimeForTests,
@@ -34,8 +34,13 @@ import {
   setTaskRegistryControlRuntimeForTests,
 } from "../../tasks/task-runtime.test-helpers.js";
 import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
-import { tasksHandlers } from "./tasks.js";
-import type { GatewayClient, RespondFn } from "./types.js";
+import { seedTaskRegistryRowsForTests } from "../../test-utils/task-registry-sqlite.js";
+import {
+  createContext,
+  createSnapshotTask,
+  identifiedClient,
+  runTaskHandler,
+} from "./tasks.test-helpers.js";
 
 const stateDirEnvSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
 const cancelSessionMock = vi.fn();
@@ -44,14 +49,6 @@ const mainSessionTaskScope = {
   ownerKey: "agent:main:main",
   scopeKind: "session",
 } as const;
-type TaskResponsePayload = {
-  tasks?: Array<Record<string, unknown>>;
-  task?: Record<string, unknown>;
-  found?: boolean;
-  cancelled?: boolean;
-  nextCursor?: string;
-  results?: Array<{ taskId?: string; ok?: boolean; reason?: string }>;
-};
 
 let stateDir: string;
 
@@ -87,84 +84,6 @@ afterEach(async () => {
   closeOpenClawStateDatabaseForTest();
   await fs.rm(stateDir, { recursive: true, force: true });
 });
-
-function identifiedClient(scopes: string[], profileId = "viewer@example.com"): GatewayClient {
-  return {
-    connId: `conn-${profileId}-${scopes.join("-")}`,
-    connect: {
-      minProtocol: 1,
-      maxProtocol: 1,
-      client: { id: "openclaw-control-ui", version: "test", platform: "test", mode: "webchat" },
-      role: "operator",
-      scopes,
-    },
-    authenticatedUserId: "viewer@example.com",
-    authenticatedUserProfile: {
-      profileId,
-      displayName: null,
-      hasAvatar: false,
-      updatedAt: 1,
-    },
-  };
-}
-
-function captureRespond() {
-  const calls: Parameters<RespondFn>[] = [];
-  const respond: RespondFn = (...args) => {
-    calls.push(args);
-  };
-  return { calls, respond };
-}
-
-function createContext(config: Record<string, unknown> = {}) {
-  return {
-    getRuntimeConfig: () => config,
-  } as never;
-}
-
-function createSnapshotTask(overrides: Partial<TaskRecord>): TaskRecord {
-  return {
-    taskId: "task-snapshot",
-    runtime: "cli",
-    requesterSessionKey: "agent:main:main",
-    ownerKey: "agent:main:main",
-    scopeKind: "session",
-    runId: "run-snapshot",
-    task: "Snapshot task",
-    status: "running",
-    deliveryStatus: "pending",
-    notifyPolicy: "done_only",
-    createdAt: 1_000,
-    startedAt: 1_010,
-    lastEventAt: 1_010,
-    ...overrides,
-  };
-}
-
-async function runTaskHandler(
-  method: "tasks.list" | "tasks.get" | "tasks.cancel" | "tasks.retry" | "tasks.dismiss",
-  params: Record<string, unknown>,
-  config: Record<string, unknown> = {},
-  client: GatewayClient | null = null,
-  context = createContext(config),
-) {
-  const { calls, respond } = captureRespond();
-  await expectDefined(
-    tasksHandlers[method],
-    "tasksHandlers[method] test invariant",
-  )({
-    req: { type: "req", id: `req-${method}`, method },
-    params,
-    respond,
-    context,
-    client,
-    isWebchatConnect: () => false,
-  });
-  return {
-    calls,
-    payload: calls[0]?.[1] as TaskResponsePayload | undefined,
-  };
-}
 
 async function getTaskPayload(taskId: string) {
   const { calls, payload } = await runTaskHandler("tasks.get", { taskId });
@@ -310,13 +229,7 @@ describe("tasks gateway handlers", () => {
       lastEventAt: base - 2_000,
       endedAt: base - 3_000,
     });
-    saveTaskRegistryStateToSqlite({
-      tasks: new Map([
-        [justFinished.taskId, justFinished],
-        [finishedEarlier.taskId, finishedEarlier],
-      ]),
-      deliveryStates: new Map(),
-    });
+    seedTaskRegistryRowsForTests([justFinished, finishedEarlier]);
     reloadTaskRegistryFromStore();
 
     const { payload } = await runTaskHandler("tasks.list", {});
@@ -349,13 +262,7 @@ describe("tasks gateway handlers", () => {
       lastEventAt: base - 4_000,
       endedAt: base - 500,
     });
-    saveTaskRegistryStateToSqlite({
-      tasks: new Map([
-        [laterActivity.taskId, laterActivity],
-        [laterCompletion.taskId, laterCompletion],
-      ]),
-      deliveryStates: new Map(),
-    });
+    seedTaskRegistryRowsForTests([laterActivity, laterCompletion]);
     reloadTaskRegistryFromStore();
 
     const { payload } = await runTaskHandler("tasks.list", {});
@@ -485,13 +392,7 @@ describe("tasks gateway handlers", () => {
       runId: "run-a",
       lastEventAt: sharedActivityAt,
     });
-    saveTaskRegistryStateToSqlite({
-      tasks: new Map([
-        [laterId.taskId, laterId],
-        [earlierId.taskId, earlierId],
-      ]),
-      deliveryStates: new Map(),
-    });
+    seedTaskRegistryRowsForTests([laterId, earlierId]);
     reloadTaskRegistryFromStore();
 
     const { payload } = await runTaskHandler("tasks.list", {});
@@ -981,7 +882,7 @@ describe("tasks gateway handlers", () => {
     expect(terminal.payload?.task?.progressSummary).toBe("Milestone remains authoritative");
   });
 
-  it("cancels running task records and returns the updated task", async () => {
+  it("does not report cancellation for an ordinary task without a live owner", async () => {
     const task = createTaskRecord({
       runtime: "cli",
       requesterSessionKey: "agent:main:main",
@@ -1000,16 +901,63 @@ describe("tasks gateway handlers", () => {
 
     expect(calls[0]?.[0]).toBe(true);
     expect(payload?.found).toBe(true);
-    expect(payload?.cancelled).toBe(true);
+    expect(payload?.cancelled).toBe(false);
     expect(payload?.task?.id).toBe(task.taskId);
-    expect(payload?.task?.status).toBe("cancelled");
-    expect(payload?.task?.error).toBe("user stopped task");
+    expect(payload?.task?.status).toBe("running");
+    expect(payload?.task?.error).toBeUndefined();
   });
+
+  it.each([
+    ["succeeded", "completed"],
+    ["failed", "failed"],
+    ["timed_out", "timed_out"],
+    ["lost", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const)(
+    "tasks.cancel preserves ACP %s and explains refused cancellation",
+    async (status, wireStatus) => {
+      const runId = "run-acp-cancel-race";
+      const task = createSnapshotTask({
+        runtime: "acp",
+        runId,
+        notifyPolicy: "silent",
+        childSessionKey: "agent:main:acp:cancel-race",
+        agentId: "main",
+      });
+      seedTaskRegistryRowsForTests([task]);
+      reloadTaskRegistryFromStore();
+      cancelSessionMock.mockImplementationOnce(async () => {
+        updateTaskStateByRunId({
+          runId,
+          runtime: "acp",
+          sessionKey: task.childSessionKey,
+          status,
+          endedAt: 2_000,
+        });
+      });
+
+      const { calls, payload } = await runTaskHandler("tasks.cancel", { taskId: task.taskId });
+
+      expect(calls[0]?.[0]).toBe(true);
+      expect(payload).toMatchObject({ found: true, cancelled: status === "cancelled" });
+      if (status === "cancelled") {
+        expect(payload).not.toHaveProperty("reason");
+      } else {
+        expect(payload).toHaveProperty(
+          "reason",
+          `Task became ${status} while cancellation was in progress.`,
+        );
+      }
+      expect(payload?.task).toMatchObject({ id: task.taskId, status: wireStatus, endedAt: 2_000 });
+      expect(getTaskById(task.taskId)).toMatchObject({ status, endedAt: 2_000 });
+    },
+  );
 
   it("cancels ACP tasks through the live Gateway handler and control runtime", async () => {
     const task = createSnapshotTask({
       taskId: "task-acp-primary",
       runtime: "acp",
+      notifyPolicy: "silent",
       childSessionKey: "agent:codex:acp:child",
       agentId: "codex",
       runId: "run-cancel-acp-gateway",
@@ -1018,6 +966,7 @@ describe("tasks gateway handlers", () => {
     const siblingTask = createSnapshotTask({
       taskId: "task-acp-sibling",
       runtime: "acp",
+      notifyPolicy: "silent",
       childSessionKey: "agent:codex:acp:child",
       agentId: "codex",
       runId: "run-cancel-acp-gateway",
@@ -1026,13 +975,7 @@ describe("tasks gateway handlers", () => {
       startedAt: 1_011,
       lastEventAt: 1_011,
     });
-    saveTaskRegistryStateToSqlite({
-      tasks: new Map([
-        [task.taskId, task],
-        [siblingTask.taskId, siblingTask],
-      ]),
-      deliveryStates: new Map(),
-    });
+    seedTaskRegistryRowsForTests([task, siblingTask]);
     reloadTaskRegistryFromStore();
     cancelSessionMock.mockResolvedValue(undefined);
 

@@ -1,6 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 type QueuedProviderList = {
   start: () => void;
 };
+
+type QueuedProviderListOutcome<T> = { kind: "started"; result: Promise<T> } | { kind: "cancelled" };
 
 class SessionCatalogListBusyError extends Error {
   readonly code = "catalog_busy";
@@ -27,20 +31,45 @@ export class SessionCatalogListAdmission {
     }
   }
 
-  run<T>(task: () => Promise<T>): Promise<T> {
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     if (this.active < this.maxConcurrent) {
-      return this.start(task);
+      return await this.start(task);
     }
     if (this.queue.length >= this.maxQueued) {
-      return Promise.reject(new SessionCatalogListBusyError(this.maxConcurrent, this.maxQueued));
+      throw new SessionCatalogListBusyError(this.maxConcurrent, this.maxQueued);
     }
-    return new Promise<T>((resolve, reject) => {
-      this.queue.push({
+    // A released slot runs the next caller's plugin and root scope, never the
+    // preceding provider's context inherited by the queue drain.
+    const runInAsyncContext = AsyncLocalStorage.snapshot();
+    const outcome = await new Promise<QueuedProviderListOutcome<T>>((resolve) => {
+      const queued: QueuedProviderList = {
         start: () => {
-          void this.start(task).then(resolve, reject);
+          signal?.removeEventListener("abort", onAbort);
+          resolve({ kind: "started", result: runInAsyncContext(() => this.start(task)) });
         },
-      });
+      };
+      const onAbort = () => {
+        const index = this.queue.indexOf(queued);
+        if (index < 0) {
+          return;
+        }
+        this.queue.splice(index, 1);
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ kind: "cancelled" });
+      };
+      // Admission settles separately so cancellation cannot release a started provider.
+      this.queue.push(queued);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+      }
     });
+    if (outcome.kind === "cancelled") {
+      signal?.throwIfAborted();
+      throw new Error("Cancelled session catalog admission has no aborted owner signal");
+    }
+    return await outcome.result;
   }
 
   private async start<T>(task: () => Promise<T>): Promise<T> {

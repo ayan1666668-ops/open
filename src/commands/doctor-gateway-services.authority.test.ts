@@ -1,3 +1,4 @@
+import fsNode from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +77,7 @@ describe.skipIf(process.platform === "win32")("Doctor native repair authority or
   ) {
     state = await createOpenClawTestState({ prefix: "doctor-authority-" });
     const { root, home, stateDir, configPath } = state;
+    await fs.chmod(stateDir, 0o700);
     const installedStateDir = blockedTarget ? path.join(root, "installed-state") : stateDir;
     const unitPath = path.join(home, ".config/systemd/user/openclaw-gateway.service");
     const environmentPath = path.join(stateDir, "gateway.systemd.env");
@@ -152,12 +154,17 @@ describe.skipIf(process.platform === "win32")("Doctor native repair authority or
     const events: string[] = [];
     const nativeActions: string[] = [];
     const unexpectedProcesses: string[] = [];
+    const renameSync = fsNode.renameSync;
+    vi.spyOn(fsNode, "renameSync").mockImplementation((source, destination) => {
+      renameSync(source, destination);
+      if (destination === configPath) {
+        events.push("config-published");
+      }
+    });
     const rename = fs.rename.bind(fs);
     vi.spyOn(fs, "rename").mockImplementation(async (source, destination) => {
       await rename(source, destination);
-      if (destination === configPath) {
-        events.push("config-published");
-      } else if (
+      if (
         [unitPath, `${unitPath}.bak`, environmentPath, installedEnvironmentPath].includes(
           String(destination),
         )
@@ -171,7 +178,11 @@ describe.skipIf(process.platform === "win32")("Doctor native repair authority or
         throw new Error("Unexpected fixture runtime process");
       }
       return {
-        stdout: JSON.stringify({ nodeVersion: "24.15.0", sqliteVersion: "3.51.3" }),
+        stdout: JSON.stringify({
+          nodeVersion: "24.16.0",
+          sqliteVersion: "3.51.3",
+          sqliteProbe: { available: true, version: "3.51.3", text: true, blob: true, json: true },
+        }),
         stderr: "",
       };
     });
@@ -413,6 +424,9 @@ describe.skipIf(process.platform === "win32")("Doctor native repair authority or
     expect(errors).toEqual([]);
     expect(observations.embeddedTokenPersisted).toBe(true);
     expect(observations.unitBytesPreserved).toBe(false);
+    expect(observations.events).toEqual(
+      expect.arrayContaining(["config-published", "service-published"]),
+    );
     expect(observations.events.indexOf("config-published")).toBeLessThan(
       observations.events.indexOf("service-published"),
     );
