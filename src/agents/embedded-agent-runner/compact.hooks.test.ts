@@ -1774,6 +1774,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
 
     await compactEmbeddedAgentSessionDirect(
       wrappedCompactionArgs({
+        config: { tools: { exec: { mode: "deny" } } },
         permissionMode: "full",
         sessionRoot: join(TEST_WORKSPACE_DIR, "captured-workspace"),
         sessionEntry: {
@@ -1814,12 +1815,10 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       }),
     );
 
-    expectRecordFields(mockCallArg(createOpenClawCodingToolsMock), {
-      sessionPermissionPolicy: {
-        mode: "workspace",
-        root: TEST_WORKSPACE_DIR,
-      },
+    const toolOptions = expectRecordFields(mockCallArg(createOpenClawCodingToolsMock), {
+      sessionPermissionPolicy: undefined,
     });
+    expect(toolOptions.exec).not.toEqual(expect.objectContaining({ mode: expect.anything() }));
   });
 
   it.each([
@@ -1857,6 +1856,14 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
   it("defaults rootless compaction permissions to the canonical agent workspace", async () => {
     const workspaceDir = tempDirs.make("openclaw-rootless-compaction-permission-");
     const canonicalWorkspace = await realpath(workspaceDir);
+    await replaceSessionEntry(
+      { agentId: "main", sessionKey: TEST_SESSION_KEY, storePath: defaultStorePath },
+      {
+        sessionId: TEST_SESSION_ID,
+        updatedAt: 2,
+        permissionMode: "workspace",
+      },
+    );
 
     await compactEmbeddedAgentSessionDirect(
       wrappedCompactionArgs({

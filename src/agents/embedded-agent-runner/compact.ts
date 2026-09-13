@@ -277,7 +277,7 @@ export async function compactEmbeddedAgentSessionDirect(
       Boolean(transcriptBytePreflightAuthority),
     ),
     sessionEntry: entry ? projectPublicSessionEntry(entry) : paramsBase.sessionEntry,
-    permissionMode: entry ? (entry.permissionMode ?? "workspace") : paramsBase.permissionMode,
+    permissionMode: entry ? entry.permissionMode : paramsBase.permissionMode,
     sessionRoot: entry ? entry.sessionRoot : paramsBase.sessionRoot,
     agentHarnessId: lockedHarnessRuntime ?? paramsBase.agentHarnessId,
     modelSelectionLocked: entry?.modelSelectionLocked ?? paramsBase.modelSelectionLocked,
