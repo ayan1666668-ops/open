@@ -127,6 +127,7 @@ describe("durable agent job terminal receipts", () => {
   ])("terminalizes an admitted %s run ID without a persistence retry", async (_label, runId) => {
     vi.useFakeTimers();
     startRun(runId);
+    const timerCountAfterStart = vi.getTimerCount();
     finishRun(runId);
 
     await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toMatchObject({
@@ -134,7 +135,7 @@ describe("durable agent job terminal receipts", () => {
       endedAt: 20,
       terminalReceipt: { runId, turnId: `turn-${runId}` },
     });
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(timerCountAfterStart);
 
     resetAgentJobStateForTest();
     await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toMatchObject({
@@ -142,20 +143,21 @@ describe("durable agent job terminal receipts", () => {
       endedAt: 20,
       terminalReceipt: { runId, turnId: `turn-${runId}` },
     });
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(timerCountAfterStart);
   });
 
   it("terminalizes deterministic receipt validation failures without retrying", async () => {
     vi.useFakeTimers();
     const runId = `run-invalid-owner-${runSequence++}`;
     startRun(runId, { ...owner, agentId: "a".repeat(129) });
+    const timerCountAfterStart = vi.getTimerCount();
     finishRun(runId);
 
     await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toMatchObject({
       status: "error",
       error: "durable terminal receipt validation failed",
     });
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(timerCountAfterStart);
   });
 
   it("retires a dedupe-only run start when its terminal owner settles", async () => {

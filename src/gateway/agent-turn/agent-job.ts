@@ -11,13 +11,9 @@ import {
   hasExecutionSettlement,
   isStickyAgentRunTerminalOutcome,
   mergeAgentRunTerminalOutcome,
-  type AgentRunTerminalOutcome,
 } from "../../agents/agent-run-terminal-outcome.js";
 import { normalizeAgentRunTerminalReceipt } from "../../agents/agent-run-terminal-receipt.js";
-import {
-  mergeAgentRunTerminalReplySnapshot,
-  normalizeAgentRunTerminalReplySnapshot,
-} from "../../agents/agent-run-terminal-reply.js";
+import { normalizeAgentRunTerminalReplySnapshot } from "../../agents/agent-run-terminal-reply.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessageForDisplay } from "../../infra/error-diagnostics.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -36,6 +32,12 @@ import {
   type AgentRunSnapshot,
   type PendingDurableAgentRunTerminal,
 } from "./agent-job-durable-terminal.js";
+import {
+  mergeAgentJobSnapshot as mergeSnapshot,
+  shouldPreserveAgentJobTerminalSnapshot as shouldPreserveTerminalSnapshot,
+  terminalOutcomeFromAgentJobSnapshot as terminalOutcomeFromSnapshot,
+  toPublicAgentJobSnapshot as publicSnapshot,
+} from "./agent-job-snapshots.js";
 
 export type { AgentJobTerminalSnapshot } from "./agent-job-durable-terminal.js";
 
@@ -159,70 +161,6 @@ function enforceAgentRunCacheMaxEntries() {
     agentJobs.delete(runId);
     removed += 1;
   }
-}
-
-function terminalOutcomeFromSnapshot(
-  snapshot: AgentJobTerminalSnapshot,
-): AgentRunTerminalOutcome | undefined {
-  if (snapshot.pendingError) {
-    return undefined;
-  }
-  return buildAgentRunTerminalOutcome(snapshot);
-}
-
-function shouldPreserveTerminalSnapshot(
-  existing: AgentJobTerminalSnapshot,
-  incoming: AgentJobTerminalSnapshot,
-): boolean {
-  const existingOutcome = terminalOutcomeFromSnapshot(existing);
-  const incomingOutcome = terminalOutcomeFromSnapshot(incoming);
-  if (!existingOutcome || !incomingOutcome) {
-    return false;
-  }
-  return mergeAgentRunTerminalOutcome(existingOutcome, incomingOutcome) === existingOutcome;
-}
-
-function mergeSnapshot(
-  existing: AgentRunSnapshot | undefined,
-  incoming: AgentRunSnapshot,
-): AgentRunSnapshot {
-  if (!existing) {
-    return incoming;
-  }
-  const terminalReply = mergeAgentRunTerminalReplySnapshot(
-    existing.terminalReply,
-    incoming.terminalReply,
-  );
-  const terminalDelivery = incoming.terminalDelivery ?? existing.terminalDelivery;
-  const terminalReceipt = incoming.terminalReceipt ?? existing.terminalReceipt;
-  const existingOutcome = terminalOutcomeFromSnapshot(existing);
-  const incomingOutcome = terminalOutcomeFromSnapshot(incoming);
-  const preservesProvisionalFailure =
-    existing.executionSettled !== true &&
-    incoming.executionSettled === true &&
-    existingOutcome !== undefined &&
-    existingOutcome.status !== "ok" &&
-    incomingOutcome?.reason === "completed";
-  const incomingSettlesAfterProvisional =
-    existing.executionSettled !== true && incoming.executionSettled === true;
-  const canonical =
-    existing.executionSettled === true ||
-    (incomingSettlesAfterProvisional
-      ? preservesProvisionalFailure
-      : shouldPreserveTerminalSnapshot(existing, incoming))
-      ? existing
-      : incoming;
-  // Terminal status, execution settlement, and producer evidence are independent.
-  return {
-    ...canonical,
-    executionSettled: existing.executionSettled === true || incoming.executionSettled === true,
-    ...(terminalDelivery ? { terminalDelivery } : {}),
-    ...(terminalReceipt ? { terminalReceipt } : {}),
-    ...(terminalReply ? { terminalReply } : {}),
-    cachedAt: incoming.cachedAt,
-    recordedAt: incoming.recordedAt,
-    version: incoming.version,
-  };
 }
 
 function publishAgentRunSnapshot(
@@ -656,24 +594,6 @@ function addAgentRunWaiter(runId: string, waiter: AgentJobWaiter): () => void {
         recordAgentRunSnapshot(pendingError.snapshot, pendingError.snapshot.version);
       }
     }
-  };
-}
-
-function publicSnapshot(snapshot: AgentRunObservation): AgentJobTerminalSnapshot {
-  return {
-    status: snapshot.status,
-    startedAt: snapshot.startedAt,
-    endedAt: snapshot.endedAt,
-    error: snapshot.error,
-    stopReason: snapshot.stopReason,
-    livenessState: snapshot.livenessState,
-    yielded: snapshot.yielded,
-    pendingError: snapshot.pendingError,
-    timeoutPhase: snapshot.timeoutPhase,
-    providerStarted: snapshot.providerStarted,
-    ...(snapshot.terminalDelivery ? { terminalDelivery: snapshot.terminalDelivery } : {}),
-    terminalReceipt: snapshot.terminalReceipt,
-    terminalReply: snapshot.terminalReply,
   };
 }
 
