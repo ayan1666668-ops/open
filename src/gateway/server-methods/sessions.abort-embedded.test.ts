@@ -142,6 +142,7 @@ it("exact embedded Stop cancels running and queued collectors without dispatchin
       ok: true,
       abortedRunId: "parent",
       status: "aborted",
+      runState: "active",
     });
     expect(parentAbort).toHaveBeenCalledOnce();
     await settleSubagentRegistryPersistenceWork();
@@ -219,7 +220,12 @@ it.each(["missing", "replaced", "finalizing", "throwing", "unreadable child"])(
       }
       expect(respond.mock.calls[0]?.slice(0, 2)).toEqual([
         true,
-        { ok: true, abortedRunId: null, status: "no-active-run" },
+        {
+          ok: true,
+          abortedRunId: null,
+          status: "no-active-run",
+          runState: state === "missing" || state === "replaced" ? "unknown" : "active",
+        },
       ]);
       expect(abort).toHaveBeenCalledTimes(state === "throwing" ? 1 : 0);
       expect(replacementAbort).not.toHaveBeenCalled();
@@ -335,6 +341,7 @@ it.each([
               ok: true,
               abortedRunId: finalizing ? null : "parent",
               status: finalizing ? "no-active-run" : "aborted",
+              runState: "active",
             },
       ]);
       expect(registration.controller.signal.aborted).toBe(!finalizing);
