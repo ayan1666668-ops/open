@@ -1,4 +1,5 @@
 // Line tests cover the native approval capability routing contract.
+import { buildChannelApprovalNativeTargetKey } from "openclaw/plugin-sdk/approval-native-runtime";
 import {
   createLocalApprovalPromptTestFixture,
   createNativeApprovalTestFixture,
@@ -10,29 +11,25 @@ import {
 } from "./approval-native.js";
 
 const APPROVER = "U0123456789abcdef0123456789abcdef";
-const OTHER_USER = "U11111111111111111111111111111111";
-const GROUP = "C0123456789abcdef0123456789abcdef";
 
-const { buildConfig, buildExecRequest, describeDelivery, checks } = createNativeApprovalTestFixture(
-  {
-    channel: "line",
-    capability: lineApprovalCapability,
-    buildConfig: ({ channel, approvals } = {}) => ({
-      channels: {
-        line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
-      },
-      approvals,
-    }),
-  },
-);
+const { buildConfig, buildExecRequest, checks } = createNativeApprovalTestFixture({
+  channel: "line",
+  capability: lineApprovalCapability,
+  buildConfig: ({ channel, approvals } = {}) => ({
+    channels: {
+      line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
+    },
+    approvals,
+  }),
+});
+
 const { suppressLocalSessionPrompt } = createLocalApprovalPromptTestFixture({
   channel: "line",
   buildConfig,
   suppress: shouldSuppressLocalLineExecApprovalPrompt,
 });
 
-const forwardingOnly = buildConfig({ approvals: { exec: { enabled: true } } });
-const withApprover = buildConfig({
+const configured = buildConfig({
   channel: { allowFrom: [APPROVER] },
   approvals: { exec: { enabled: true } },
 });
@@ -45,9 +42,50 @@ describe("line approval capability", () => {
     checks.disabledByDefault,
   );
 
-  // Forwarding without explicit approvers is a working setup on LINE: the card returns
-  // to the one-to-one chat that raised the request and same-chat authorization applies.
-  it("keeps approvals available and in-chat when forwarding is on without approvers", () => {
+  // A group postback carries no userId, so cards go to approver DMs and the chat that
+  // raised the request has to be told where they went.
+  it("delivers to approver DMs and notifies the originating chat", () => {
+    const request = buildExecRequest("line:group:C0123456789abcdef0123456789abcdef");
+
+    expect(
+      lineApprovalCapability.native?.describeDeliveryCapabilities({
+        cfg: configured,
+        accountId: "default",
+        approvalKind: "exec",
+        request,
+      }),
+    ).toMatchObject({
+      enabled: true,
+      preferredSurface: "approver-dm",
+      notifyOriginWhenDmOnly: true,
+    });
+  });
+
+  // The route coordinator compares these keys to decide whether the originating chat
+  // already has the card; a mismatch sends a "sent to DMs" notice into that same chat.
+  it("treats a card sent to the approver who raised the request as delivered to its origin", async () => {
+    const input = {
+      cfg: configured,
+      accountId: "default",
+      approvalKind: "exec" as const,
+      request: buildExecRequest(`line:${APPROVER}`),
+    };
+    const origin = await lineApprovalCapability.native?.resolveOriginTarget?.(input);
+    const approverTargets = await lineApprovalCapability.native?.resolveApproverDmTargets?.(input);
+
+    const originKey = origin ? buildChannelApprovalNativeTargetKey(origin) : undefined;
+
+    expect(originKey).toBeDefined();
+    expect(approverTargets?.map(buildChannelApprovalNativeTargetKey)).toEqual([originKey]);
+  });
+
+  // Forwarding without approvers must not answer "not configured" while the forwarder
+  // sends a working `/approve` prompt; that chat keeps the prompt and command
+  // authorization, and no card is drawn.
+  it("keeps the typed /approve path when forwarding is on without approvers", () => {
+    const forwardingOnly = buildConfig({ approvals: { exec: { enabled: true } } });
+    const request = buildExecRequest(`line:${APPROVER}`);
+
     expect(
       lineApprovalCapability.getExecInitiatingSurfaceState?.({
         cfg: forwardingOnly,
@@ -55,49 +93,30 @@ describe("line approval capability", () => {
         action: "approve",
       }),
     ).toEqual({ kind: "enabled" });
-    expect(describeDelivery(forwardingOnly, buildExecRequest(`line:${OTHER_USER}`))).toMatchObject({
-      enabled: true,
-      preferredSurface: "origin",
+    expect(
+      lineApprovalCapability.native?.describeDeliveryCapabilities({
+        cfg: forwardingOnly,
+        accountId: "default",
+        approvalKind: "exec",
+        request,
+      })?.enabled,
+    ).toBe(false);
+    expect(suppressLocalSessionPrompt(forwardingOnly, "agent:main:main")).toBe(false);
+  });
+
+  it("sends the card to every listed approver", async () => {
+    const second = "U11111111111111111111111111111111";
+    const targets = await lineApprovalCapability.native?.resolveApproverDmTargets?.({
+      cfg: buildConfig({
+        channel: { allowFrom: [APPROVER, second] },
+        approvals: { exec: { enabled: true } },
+      }),
+      accountId: "default",
+      approvalKind: "exec",
+      request: buildExecRequest("line:group:C0123456789abcdef0123456789abcdef"),
     });
-  });
 
-  // A group postback carries no userId and a non-approver cannot approve, so neither
-  // chat may host the card; approvers get it in their DMs and the chat is told so.
-  it.each([
-    {
-      name: "a group without approvers keeps its text prompt",
-      cfg: forwardingOnly,
-      to: `line:group:${GROUP}`,
-      expected: { enabled: false },
-    },
-    {
-      name: "a group with approvers routes to approver DMs",
-      cfg: withApprover,
-      to: `line:group:${GROUP}`,
-      expected: { enabled: true, preferredSurface: "approver-dm", notifyOriginWhenDmOnly: true },
-    },
-    {
-      name: "a non-approver's chat routes to approver DMs",
-      cfg: withApprover,
-      to: `line:${OTHER_USER}`,
-      expected: { enabled: true, preferredSurface: "approver-dm", notifyOriginWhenDmOnly: true },
-    },
-    {
-      name: "an approver's own chat keeps the card",
-      cfg: withApprover,
-      to: `line:${APPROVER}`,
-      expected: { enabled: true, preferredSurface: "origin" },
-    },
-  ])("$name", ({ cfg, to, expected }) => {
-    expect(describeDelivery(cfg, buildExecRequest(to))).toMatchObject(expected);
-  });
-
-  it("suppresses the local prompt only where a card or routed notice replaces it", () => {
-    expect(suppressLocalSessionPrompt(forwardingOnly, "agent:main:main")).toBe(true);
-    expect(suppressLocalSessionPrompt(forwardingOnly, `agent:main:line:group:${GROUP}`)).toBe(
-      false,
-    );
-    expect(suppressLocalSessionPrompt(withApprover, `agent:main:line:group:${GROUP}`)).toBe(true);
+    expect(targets?.map((target) => target.to)).toEqual([APPROVER, second]);
   });
 
   it("names the forwarding settings cards need, for the account that raised the request", () => {
@@ -110,6 +129,7 @@ describe("line approval capability", () => {
     expect(exec).toContain("`session` or `both`");
     expect(exec).toContain("`channels.line.accounts.work.allowFrom`");
     expect(plugin).toContain("`approvals.plugin.enabled`");
+    expect(plugin).toContain("`channels.line.accounts.work.allowFrom`");
     // A plugin approval without a route never reaches the Gateway.
     expect(plugin).not.toContain("Web UI");
   });

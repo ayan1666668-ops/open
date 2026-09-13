@@ -65,6 +65,26 @@ describe("resolveLineApprovalPostbackTap", () => {
     });
   });
 
+  // Same-chat authorization would let a tap skip the command authorization a typed
+  // `/approve` goes through, so a tap never decides without a listed approver.
+  it.each([
+    { name: "no approvers are listed", config: {}, senderId: approver },
+    { name: "the postback names no sender", config: cfg, senderId: undefined },
+  ] satisfies { name: string; config: OpenClawConfig; senderId: string | undefined }[])(
+    "sends the tap to /approve instead of deciding when $name",
+    async ({ config, senderId }) => {
+      await expect(
+        resolveLineApprovalPostbackTap({
+          cfg: config,
+          accountId: "default",
+          data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
+          ...(senderId ? { senderId } : {}),
+        }),
+      ).resolves.toBe("Reply /approve approval-1 allow-once to decide this approval.");
+      expect(gateway.resolveApprovalOverGateway).not.toHaveBeenCalled();
+    },
+  );
+
   // A resolved approval leaves the pending set within moments, so a tap on an old
   // card usually meets this error. Sending the approver to `/approve` would fail too.
   it("tells a tap on a card nothing waits for any more, instead of offering /approve", async () => {

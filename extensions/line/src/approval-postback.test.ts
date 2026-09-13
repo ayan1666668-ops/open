@@ -31,7 +31,7 @@ const approval = (overrides: Partial<ApprovalDecisionControl> = {}): ApprovalDec
 async function tapped(data: string) {
   gateway.resolveApprovalOverGateway.mockClear();
   const notice = await resolveLineApprovalPostbackTap({
-    cfg: {},
+    cfg: { channels: { line: { allowFrom: ["U0123456789abcdef0123456789abcdef"] } } },
     accountId: "default",
     data,
     senderId: "U0123456789abcdef0123456789abcdef",

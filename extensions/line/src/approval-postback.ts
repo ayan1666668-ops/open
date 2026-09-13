@@ -6,7 +6,7 @@ import type { MessagePresentationAction } from "openclaw/plugin-sdk/interactive-
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
-import { lineApprovalAuth } from "./approval-auth.js";
+import { getLineApprovalApprovers, lineApprovalAuth } from "./approval-auth.js";
 
 type LineApprovalPostback = Extract<MessagePresentationAction, { type: "approval" }>;
 
@@ -92,6 +92,15 @@ export async function resolveLineApprovalPostbackTap(params: {
   const callback = parseLineApprovalPostbackData(params.data);
   if (!callback) {
     return undefined;
+  }
+  // A tap decides only as a listed approver. Without one, same-chat authorization would
+  // let the tap skip the command authorization a typed `/approve` goes through, and a
+  // tap without a sender could not name who decided.
+  if (
+    !params.senderId ||
+    getLineApprovalApprovers({ cfg: params.cfg, accountId: params.accountId }).length === 0
+  ) {
+    return `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;
   }
   const authorization = lineApprovalAuth.authorizeActorAction?.({
     cfg: params.cfg,
