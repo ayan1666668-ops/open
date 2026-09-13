@@ -19,7 +19,7 @@ function sha256(bytes: Buffer | string): string {
 const root = realpathSync(required("CRABLINE_CANDIDATE_ROOT"));
 const files: string[] = [];
 function inventory(directory: string): void {
-  for (const name of readdirSync(directory).sort()) {
+  for (const name of readdirSync(directory).toSorted()) {
     const file = path.join(directory, name);
     const stat = lstatSync(file);
     if (stat.isDirectory()) {
@@ -35,7 +35,7 @@ function inventory(directory: string): void {
   }
 }
 inventory(root);
-if (sha256(files.sort().join("")) !== required("CRABLINE_CANDIDATE_PACKAGE_SHA256")) {
+if (sha256(files.toSorted().join("")) !== required("CRABLINE_CANDIDATE_PACKAGE_SHA256")) {
   throw new Error("Crabline installed package byte identity differs from the verified archive");
 }
 if (
