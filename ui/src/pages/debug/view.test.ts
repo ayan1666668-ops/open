@@ -424,8 +424,8 @@ describe("DebugPage", () => {
         }
         await vi.advanceTimersByTimeAsync(0);
         expectSnapshots(page, "current");
-        for (const [, , options] of heldCalls) {
-          expect(options?.signal?.aborted).toBe(true);
+        for (const call of heldCalls) {
+          expect(call[2]?.signal?.aborted).toBe(true);
         }
         pending.resolve();
         await vi.advanceTimersByTimeAsync(0);
