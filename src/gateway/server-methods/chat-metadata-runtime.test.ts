@@ -981,7 +981,9 @@ describe("gateway chat metadata runtime", () => {
       void read.catch(() => {});
       try {
         releaseProjection.resolve();
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
         expect(settled).toBe(false);
         releaseCommands.resolve();
         await refresh;
