@@ -127,30 +127,6 @@ async function readLogSlice(params: {
 
   const handle = await fs.open(params.file, "r");
   try {
-    const contexts = params.redaction.patterns.map((pattern) =>
-      pattern instanceof RegExp ? undefined : pattern.createContext?.(),
-    );
-    const consume = (text: string) => {
-      for (const context of contexts) {
-        context?.consume(text);
-      }
-    };
-    if (start > 0 && contexts.some(Boolean)) {
-      // Reconstruct matching context without retaining or tokenizing old file contents.
-      const prefixBuffer = Buffer.alloc(Math.min(start, DEFAULT_MAX_BYTES));
-      const decoder = new StringDecoder("utf8");
-      let offset = 0;
-      while (offset < start) {
-        const length = Math.min(prefixBuffer.length, start - offset);
-        const { bytesRead } = await handle.read(prefixBuffer, 0, length, offset);
-        if (bytesRead === 0) {
-          break;
-        }
-        consume(decoder.write(prefixBuffer.subarray(0, bytesRead)));
-        offset += bytesRead;
-      }
-      consume(decoder.end());
-    }
     let prefix = "";
     if (start > 0) {
       const prefixBuf = Buffer.alloc(1);
@@ -162,16 +138,15 @@ async function readLogSlice(params: {
     const buffer = Buffer.alloc(length);
     const bytesRead = await readFileWindowFully(handle, buffer, start);
     const text = buffer.toString("utf8", 0, bytesRead);
-    const lines = text.split("\n");
+    let lines = text.split("\n");
     lines.pop();
+    let lineOffset = 0;
     if (start > 0 && prefix !== "\n") {
       // Drop the first partial line when starting in the middle of a file.
-      const partial = lines.shift();
-      if (partial !== undefined) {
-        consume(`${partial}\n`);
-      }
+      lines.shift();
+      lineOffset = buffer.subarray(0, bytesRead).indexOf(0x0a) + 1;
     }
-    const selected = lines.map((line) => params.filter?.(line) ?? true);
+    let selected = lines.map((line) => params.filter?.(line) ?? true);
     let selectedCount = selected.filter(Boolean).length;
     if (selectedCount > limit) {
       truncated = true;
@@ -182,6 +157,75 @@ async function readLogSlice(params: {
         }
       }
     }
+    const firstSelected = selected.indexOf(true);
+    if (firstSelected > 0) {
+      for (let index = 0; index < firstSelected; index += 1) {
+        lineOffset = buffer.indexOf(0x0a, lineOffset) + 1;
+      }
+      lines = lines.slice(firstSelected);
+      selected = selected.slice(firstSelected);
+    }
+
+    const contexts = params.redaction.patterns.map((pattern) =>
+      pattern instanceof RegExp ? undefined : pattern.createContext?.(),
+    );
+    let pending = contexts.filter((context) => context !== undefined);
+    let contextEnd = start + lineOffset;
+    if (selectedCount > 0 && contextEnd > 0 && pending.length > 0) {
+      const prefixBuffer = Buffer.alloc(Math.min(contextEnd, DEFAULT_MAX_BYTES));
+      let blockBytes = Math.min(4096, prefixBuffer.length);
+      let cached: { offset: number; length: number } | undefined;
+      const readPrefix = async (offset: number, byteCount: number): Promise<Buffer> => {
+        if (offset >= start && offset + byteCount <= start + bytesRead) {
+          return buffer.subarray(offset - start, offset - start + byteCount);
+        }
+        if (
+          cached &&
+          offset >= cached.offset &&
+          offset + byteCount <= cached.offset + cached.length
+        ) {
+          return prefixBuffer.subarray(offset - cached.offset, offset - cached.offset + byteCount);
+        }
+        const chunk = prefixBuffer.subarray(0, byteCount);
+        if ((await readFileWindowFully(handle, chunk, offset)) !== byteCount) {
+          throw new Error("Log file changed while reading redaction context");
+        }
+        cached = { offset, length: byteCount };
+        return chunk;
+      };
+      while (contextEnd > 0 && pending.length > 0) {
+        let search = Math.max(0, contextEnd - blockBytes);
+        let chunk = await readPrefix(search, contextEnd - search);
+        let newline = chunk.indexOf(0x0a);
+        let blockStart = search === 0 ? 0 : search + newline + 1;
+        // Locate a whole-line boundary without retaining an arbitrarily long line.
+        while (search > 0 && (newline < 0 || blockStart === contextEnd)) {
+          const end = search;
+          blockBytes = Math.min(prefixBuffer.length, blockBytes * 2);
+          search = Math.max(0, end - blockBytes);
+          chunk = await readPrefix(search, end - search);
+          newline = chunk.lastIndexOf(0x0a);
+          blockStart = search === 0 && newline < 0 ? 0 : search + newline + 1;
+        }
+        const blocks = pending.map((context) => ({ context, block: context.prepend() }));
+        const decoder = new StringDecoder("utf8");
+        for (let offset = blockStart; offset < contextEnd;) {
+          const byteCount = Math.min(prefixBuffer.length, contextEnd - offset);
+          const prefixText = decoder.write(await readPrefix(offset, byteCount));
+          for (const { block } of blocks) {
+            block.consume(prefixText);
+          }
+          offset += byteCount;
+        }
+        const finalText = decoder.end();
+        for (const { block } of blocks) {
+          block.consume(finalText);
+        }
+        pending = blocks.filter(({ block }) => !block.finish()).map(({ context }) => context);
+        contextEnd = blockStart;
+        blockBytes = Math.min(prefixBuffer.length, blockBytes * 2);
+      }
+    }
 
     // Keep an unterminated record pending so a later read can emit it whole.
     const lastNewline = buffer.subarray(0, bytesRead).lastIndexOf(0x0a);
@@ -190,16 +234,19 @@ async function readLogSlice(params: {
     return {
       cursor,
       size,
-      lines: redactSensitiveLines(
-        lines,
-        {
-          ...params.redaction,
-          patterns: params.redaction.patterns.map(
-            (pattern, index) => contexts[index]?.pattern ?? pattern,
-          ),
-        },
-        selected,
-      ),
+      lines:
+        selectedCount === 0
+          ? []
+          : redactSensitiveLines(
+              lines,
+              {
+                ...params.redaction,
+                patterns: params.redaction.patterns.map(
+                  (pattern, index) => contexts[index]?.pattern ?? pattern,
+                ),
+              },
+              selected,
+            ),
       truncated,
       reset,
       skippedBytes,

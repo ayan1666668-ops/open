@@ -37,8 +37,9 @@ type RedactMatcher = {
   readonly source: string;
   readonly exec: (text: string) => Iterable<RedactMatch>;
   readonly createContext?: () => {
-    consume: (text: string) => void;
     pattern: ResolvedRedactPattern;
+    /** Prepend one complete, newline-bounded source block; true means older input cannot matter. */
+    prepend: () => { consume: (text: string) => void; finish: () => boolean };
   };
 };
 export type ResolvedRedactPattern = RegExp | RedactMatcher;

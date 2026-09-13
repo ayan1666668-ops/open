@@ -217,6 +217,36 @@ it.each(["raw", "JSON"])(
   },
 );
 
+it("logs.tail preserves ambiguous and long PEM prefix context at a byte cursor", async () => {
+  const dir = tempDirs.make("openclaw-gateway-log-prefix-");
+  const file = path.join(dir, "stored.log");
+  setLoggerOverride({ file, level: "silent", consoleLevel: "silent" });
+  try {
+    for (const inherited of [false, true]) {
+      const prefix =
+        (inherited ? `${pem[0]}\n` : "") +
+        "ordinary padding\n".repeat(500) +
+        `${pem[0]}${pem[2]}\n`;
+      await fs.writeFile(file, `${prefix}following value\n`);
+      const response = await rpcReq<LogTailPayload>(ws, "logs.tail", {
+        cursor: Buffer.byteLength(prefix),
+      });
+      expect(response.ok).toBe(true);
+      expect(response.payload?.lines).toEqual([inherited ? "following value" : "…redacted…"]);
+    }
+    const prefix = `-----BEGIN ${"A".repeat(300_000)} PRIVATE KEY-----\n`;
+    await fs.writeFile(file, `${prefix}long body\n`);
+    const response = await rpcReq<LogTailPayload>(ws, "logs.tail", {
+      cursor: Buffer.byteLength(prefix),
+    });
+    expect(response.ok).toBe(true);
+    expect(response.payload?.lines).toEqual(["…redacted…"]);
+    expect(response.payload?.cursor).toBe(Buffer.byteLength(`${prefix}long body\n`));
+  } finally {
+    setLoggerOverride({ level: "silent", consoleLevel: "silent" });
+  }
+});
+
 it("tails configured rolling placeholders through authenticated Gateway RPC", async () => {
   const tempDir = tempDirs.make("openclaw-gateway-log-tail-");
   setLoggerOverride({

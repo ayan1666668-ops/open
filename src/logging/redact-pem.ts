@@ -173,19 +173,41 @@ export const PEM_REDACT_MATCHER = {
     return matchPem(text, createState(), false);
   },
   createContext(): {
-    consume: (text: string) => void;
     pattern: ResolvedRedactPattern;
+    prepend: () => { consume: (text: string) => void; finish: () => boolean };
   } {
-    const state = createState();
+    let whenClosed = false;
+    let whenOpen = true;
     return {
-      consume(text) {
-        for (const delimiter of readDelimiters(text, state.scanner)) {
-          consumeDelimiter(state, delimiter);
-        }
+      prepend() {
+        const closed = createState();
+        const open = createState();
+        open.open = { start: -1, end: -1 };
+        return {
+          consume(text) {
+            for (const delimiter of readDelimiters(text, closed.scanner)) {
+              consumeDelimiter(closed, delimiter);
+              consumeDelimiter(open, delimiter);
+            }
+          },
+          finish() {
+            // At a newline boundary only open/closed survives. Compose this earlier
+            // block with the suffix for both possible histories, including overlaps.
+            const nextClosed = closed.open ? whenOpen : whenClosed;
+            const nextOpen = open.open ? whenOpen : whenClosed;
+            whenClosed = nextClosed;
+            whenOpen = nextOpen;
+            return whenClosed === whenOpen;
+          },
+        };
       },
       pattern: {
         source: PEM_REDACT_PATTERN_SOURCE,
         exec(text) {
+          const state = createState();
+          if (whenClosed) {
+            state.open = { start: -1, end: -1 };
+          }
           return matchPem(text, state, true);
         },
       },
