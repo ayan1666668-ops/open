@@ -146,6 +146,8 @@ unless they alias a canonical OpenClaw database. Backup reports each opaque
 SQLite file and sidecar in `warnings`; verification and restore preserve its bytes
 without applying SQLite validation or compaction. Merely placing a database
 under the state or agent directory does not opt it into managed snapshots.
+Unresolvable undeclared SQLite links are skipped with filename warnings; declared
+database links still fail closed if they cannot be captured safely.
 
 ```json
 {

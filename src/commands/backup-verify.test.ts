@@ -590,7 +590,9 @@ describe("backupVerifyCommand", () => {
         ],
       },
       async (archivePath) => {
-        await expect(verifyBackupArchive(archivePath)).resolves.toMatchObject({ ok: true });
+        await expect(
+          backupVerifyCommand(createTestRuntime(), { archive: archivePath }),
+        ).resolves.toMatchObject({ ok: true });
       },
     );
   });

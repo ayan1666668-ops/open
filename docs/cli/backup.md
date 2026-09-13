@@ -319,9 +319,9 @@ ordinary workspace sources, not configured agent directories.
 `--only-config` skips state, agent, credentials-directory, workspace, and
 plugin-resource discovery and archives only the active config file path.
 
-OpenClaw builds one immutable, configuration-derived ownership inventory before
-planning sources, SQLite snapshots, exclusions, results, and the embedded
-manifest. Paths are canonicalized: config, credentials, workspaces, and agents
+OpenClaw first plans resources from configuration. It captures the root SQLite
+database online, then derives and freezes registered-agent ownership from that
+private snapshot for database discovery and archive traversal. Paths are canonicalized: config, credentials, workspaces, and agents
 already covered by another included root are not duplicated as top-level
 sources. A custom agent root becomes a distinct `agent` asset only when no
 existing asset covers it; the manifest still records its agent id and root when
@@ -348,7 +348,7 @@ These rules do not filter workspace files outside the state directory. They also
 Chromium singleton entries coordinate one running browser on one host and are recreated when that profile starts; the rest of the profile's `user-data/` remains in the archive. Sandbox skills workspaces are generated copies of current skill sources and are materialized again when OpenClaw prepares the next sandbox context after restore; adjacent sandbox registry and other durable state remain included.
 
 Managed SQLite snapshots cover the shared OpenClaw database, per-agent databases
-recorded in the durable agent registry, and SQLite files under activated plugins'
+recorded in the captured durable agent registry, and SQLite files under activated plugins'
 declared `backupResources` with `disposition: "include"`. A file's location under
 the state directory or an agent directory alone does not make it managed.
 
@@ -362,7 +362,9 @@ also fails closed rather than falling back to a direct file copy.
 
 Other SQLite files under state and configured agent roots, including their
 sidecars, are copied as opaque bytes. Creation reports each filename in
-`warnings` with an `opaque` label.
+`warnings` with an `opaque` label. Unresolvable unmanaged SQLite symbolic links,
+such as loops, are skipped with a warning naming the link; resolvable links keep
+their existing archive representation.
 Verification and restore preserve those bytes without opening, compacting, or
 validating the database. These copies do not have a live-database consistency or
 deleted-data removal guarantee. Use the owning application's backup procedure

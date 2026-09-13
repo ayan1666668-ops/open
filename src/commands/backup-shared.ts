@@ -33,10 +33,10 @@ import { recordBackupRunOutcome } from "../state/backup-run-records.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { pathExists, resolveUserPath, shortenHomePath } from "../utils.js";
 import {
-  createBackupResourceInventory,
+  createBackupResourcePlan,
   type BackupAgentRoot,
   type BackupRegenerableKind,
-  type BackupResourceInventory,
+  type BackupResourcePlan,
 } from "./backup-resource-inventory.js";
 import { buildCleanupPlan, isPathWithin } from "./cleanup-utils.js";
 import { resolveStartupConfigSnapshot } from "./doctor/shared/automatic-startup-config-repair.js";
@@ -96,7 +96,7 @@ type BackupPlan = {
   configPath: string;
   oauthDir: string;
   workspaceDirs: string[];
-  inventory: BackupResourceInventory;
+  resources: BackupResourcePlan;
   included: BackupAsset[];
   skipped: SkippedBackupAsset[];
 };
@@ -211,7 +211,7 @@ async function resolveBackupPlanFromPaths(params: {
   const canonicalStateDir = await canonicalizePathForContainment(stateDir);
   const configSourcePath = await canonicalizePathForContainment(configPath);
   const oauthSourcePath = await canonicalizePathForContainment(oauthDir);
-  const inventory = await createBackupResourceInventory({
+  const resources = await createBackupResourcePlan({
     stateDir: canonicalStateDir,
     configPaths: [
       configPath,
@@ -250,7 +250,7 @@ async function resolveBackupPlanFromPaths(params: {
         configPath,
         oauthDir,
         workspaceDirs: [],
-        inventory,
+        resources,
         included: [],
         skipped: [
           {
@@ -269,7 +269,7 @@ async function resolveBackupPlanFromPaths(params: {
       configPath,
       oauthDir,
       workspaceDirs: [],
-      inventory,
+      resources,
       included: [
         {
           kind: "config",
@@ -285,7 +285,7 @@ async function resolveBackupPlanFromPaths(params: {
   const isOwnedPathCoveredBy = (sourcePath: string, sourceRoot: string): boolean => {
     let ancestor = sourcePath;
     while (isPathWithin(ancestor, sourceRoot)) {
-      if (inventory.isVolatile(ancestor)) {
+      if (resources.isVolatile(ancestor)) {
         return false;
       }
       if (ancestor === sourceRoot) {
@@ -424,9 +424,9 @@ async function resolveBackupPlanFromPaths(params: {
     });
   }
 
-  const regenerableRoots = inventory.regenerableRoots.filter(
+  const regenerableRoots = resources.regenerableRoots.filter(
     (resource) =>
-      !inventory.isIncluded(resource.sourcePath) &&
+      !resources.isIncluded(resource.sourcePath) &&
       included.some((asset) => isPathWithin(resource.sourcePath, asset.sourcePath)),
   );
   const regenerableResourceExists = await Promise.all(
@@ -460,7 +460,7 @@ async function resolveBackupPlanFromPaths(params: {
     oauthDir,
     workspaceDirs: workspaceDirs.map((entry) => path.resolve(entry)),
     configCapture: params.configCapture,
-    inventory,
+    resources,
     included,
     skipped,
   };

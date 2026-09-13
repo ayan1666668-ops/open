@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { backupRestoreCommand } from "../commands/backup-restore.js";
+import { buildBackupArchivePath } from "../commands/backup-shared.js";
 import { backupCreateCommand } from "../commands/backup.js";
 import { createTestRuntime } from "../commands/test-runtime-config-helpers.js";
 import {
@@ -74,19 +76,23 @@ describe("backup SQLite ownership", () => {
     },
   );
 
-  it("refuses an agent registered after the archive inventory was frozen", async () => {
+  it("restores an agent registered immediately before the root snapshot with its registry row", async () => {
     await withOpenClawTestState(
       { layout: "state-only", prefix: "backup-late-agent-owner-", scenario: "minimal" },
       async (state) => {
         const agentPath = state.path("external-agent", "openclaw-agent.sqlite");
         const registration = { agentId: "main", path: agentPath, env: state.env };
-        openOpenClawAgentDatabase(registration);
+        const agent = openOpenClawAgentDatabase(registration);
+        agent.db.exec(`
+          CREATE TABLE durable_records (value TEXT NOT NULL);
+          INSERT INTO durable_records VALUES ('registered-before-root-capture');
+        `);
         closeOpenClawAgentDatabasesForTest();
         unregisterOpenClawAgentDatabase(registration);
         closeOpenClawStateDatabase();
         expect(inspectOpenClawRegisteredAgentDatabases({ env: state.env })).toEqual([]);
         const globalPath = resolveOpenClawStateSqlitePath(state.env);
-        const output = state.path("rejected.tar.gz");
+        const output = state.path("registered-agent.tar.gz");
         const capture = sqliteSnapshot.createVerifiedSqliteSnapshot;
         let registered = false;
         const snapshot = vi
@@ -100,11 +106,47 @@ describe("backup SQLite ownership", () => {
             return await capture(options);
           });
         try {
-          await expect(
-            backupCreateCommand(createTestRuntime(), { output, includeWorkspace: false }),
-          ).rejects.toThrow(/agent database registry changed during backup/iu);
+          const runtime = createTestRuntime();
+          const archive = await backupCreateCommand(runtime, {
+            output,
+            includeWorkspace: false,
+            verify: true,
+          });
           expect(registered).toBe(true);
-          await expect(fs.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+          expect(archive.verified).toBe(true);
+          expect(archive.warnings ?? []).toEqual([]);
+          const restored = await backupRestoreCommand(runtime, {
+            archive: archive.archivePath,
+            target: state.path("restored"),
+          });
+          const sqlite = requireNodeSqlite();
+          const restoredGlobal = new sqlite.DatabaseSync(
+            path.join(restored.targetPath, buildBackupArchivePath(archive.archiveRoot, globalPath)),
+            { readOnly: true },
+          );
+          try {
+            expect(
+              restoredGlobal.prepare("SELECT agent_id, path FROM agent_databases").all(),
+            ).toEqual([{ agent_id: "main", path: agentPath }]);
+          } finally {
+            restoredGlobal.close();
+          }
+          const restoredAgent = new sqlite.DatabaseSync(
+            path.join(restored.targetPath, buildBackupArchivePath(archive.archiveRoot, agentPath)),
+            { readOnly: true },
+          );
+          try {
+            expect(
+              restoredAgent
+                .prepare("SELECT role, agent_id FROM schema_meta WHERE meta_key = 'primary'")
+                .get(),
+            ).toEqual({ role: "agent", agent_id: "main" });
+            expect(restoredAgent.prepare("SELECT value FROM durable_records").all()).toEqual([
+              { value: "registered-before-root-capture" },
+            ]);
+          } finally {
+            restoredAgent.close();
+          }
         } finally {
           snapshot.mockRestore();
         }

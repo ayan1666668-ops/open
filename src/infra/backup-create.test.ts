@@ -69,7 +69,7 @@ function createBackupClassificationInventory(stateDir: string): BackupResourceIn
     stateDir,
     agentRoots: [],
     coreDatabases: [],
-    resolveSqliteOwner: () => ({ role: "plugin" }),
+    resolveSqliteSource: () => ({ role: "plugin" }),
     regenerableRoots: [],
     isIncluded: () => true,
     isTraversable: () => true,
@@ -2544,7 +2544,10 @@ describe("createBackupArchive", () => {
           await createDatabase(dbPath);
           const sourceBytes = await fs.readFile(dbPath);
           await expect(
-            createBackupArchive({ output: outputDir, includeWorkspace: false }),
+            backupCreateCommand(createTestRuntime(), {
+              output: outputDir,
+              includeWorkspace: false,
+            }),
           ).rejects.toThrow(expected);
           expect(await fs.readFile(dbPath)).toEqual(sourceBytes);
           expect(await fs.readdir(outputDir)).toEqual([]);
@@ -2778,7 +2781,7 @@ describe("createBackupArchive", () => {
           createEmptySqliteDatabase(pluginDbPath);
           const sourceBytes = await fs.readFile(databasePath);
 
-          const result = await createBackupArchive({
+          const result = await backupCreateCommand(createTestRuntime(), {
             output: state.path("older-schema.tar.gz"),
             includeWorkspace: false,
           });
