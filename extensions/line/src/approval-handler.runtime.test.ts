@@ -103,7 +103,7 @@ describe("LINE native approval runtime", () => {
     ).toBeNull();
   });
 
-  it("pushes the card and records the message it can annotate later", async () => {
+  it("pushes the card and tracks the approver chat for the outcome", async () => {
     const view = execPendingView();
     const pendingPayload = buildLinePendingApprovalCard({ view, nowMs: NOW_MS });
     const entry = await lineApprovalNativeRuntime.transport.deliverPending({
@@ -116,7 +116,7 @@ describe("LINE native approval runtime", () => {
       view,
       pendingPayload,
     });
-    expect(entry).toEqual({ to: APPROVER, accountId: "default", messageId: "m-1" });
+    expect(entry).toEqual({ to: APPROVER, accountId: "default" });
     expect(pushFlexMessage).toHaveBeenCalledWith(
       APPROVER,
       pendingPayload?.altText,
@@ -162,7 +162,7 @@ describe("LINE native approval runtime", () => {
       request,
       resolved: { id: APPROVAL_ID, decision: "allow-once", resolvedBy: APPROVER, ts: NOW_MS },
       view: resolvedView,
-      entry: { to: APPROVER, accountId: "default", messageId: "m-1" },
+      entry: { to: APPROVER, accountId: "default" },
     });
     if (final.kind !== "update") {
       throw new Error("Expected a LINE terminal approval update");
@@ -171,7 +171,7 @@ describe("LINE native approval runtime", () => {
     await lineApprovalNativeRuntime.transport.updateEntry?.({
       cfg,
       accountId: "default",
-      entry: { to: APPROVER, accountId: "default", messageId: "m-1" },
+      entry: { to: APPROVER, accountId: "default" },
       request,
       approvalKind: "exec",
       payload: final.payload,
@@ -202,6 +202,26 @@ describe("LINE native approval runtime", () => {
       expect.stringContaining(`/approve ${APPROVAL_ID}`),
       expect.objectContaining({ accountId: "default" }),
     );
+  });
+
+  // A rejected card must fail the delivery, or core would count it delivered and the
+  // approver would get neither the card nor the command fallback.
+  it("fails the delivery when LINE rejects the card", async () => {
+    const view = execPendingView();
+    pushFlexMessage.mockRejectedValueOnce(new Error("400 Bad Request"));
+
+    await expect(
+      lineApprovalNativeRuntime.transport.deliverPending({
+        cfg,
+        accountId: "default",
+        plannedTarget,
+        preparedTarget: { to: APPROVER, accountId: "default" },
+        request,
+        approvalKind: "exec",
+        view,
+        pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+      }),
+    ).rejects.toThrow("400 Bad Request");
   });
 
   // A card LINE accepted is on the approver's screen even when its receipt is

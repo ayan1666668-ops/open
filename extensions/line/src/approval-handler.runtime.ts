@@ -18,7 +18,6 @@ import { normalizeLineMessagingTarget } from "./messaging-target.js";
 import { pushFlexMessage, pushMessageLine } from "./send.js";
 
 type LinePreparedTarget = { to: string; accountId?: string };
-type LinePendingEntry = { to: string; accountId?: string; messageId?: string };
 
 // The view already publishes each decision as the command a non-interactive surface
 // would use, so the notice quotes those instead of composing its own syntax.
@@ -53,7 +52,7 @@ async function sendLineApprovalText(params: {
 export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapter<
   LinePendingApprovalCard | null,
   LinePreparedTarget,
-  LinePendingEntry,
+  LinePreparedTarget,
   never,
   { text: string }
 >({
@@ -105,25 +104,19 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
         return null;
       }
       try {
-        const sent = await pushFlexMessage(
-          preparedTarget.to,
-          pendingPayload.altText,
-          pendingPayload.bubble,
-          {
-            cfg,
-            ...(preparedTarget.accountId ? { accountId: preparedTarget.accountId } : {}),
-          },
-        );
-        return { ...preparedTarget, messageId: sent.messageId };
+        await pushFlexMessage(preparedTarget.to, pendingPayload.altText, pendingPayload.bubble, {
+          cfg,
+          ...(preparedTarget.accountId ? { accountId: preparedTarget.accountId } : {}),
+        });
       } catch (error) {
         // LINE accepted the card and only its receipt was unreadable. The card is on the
         // approver's screen, so it is tracked like any delivered card: the outcome still
         // gets published, and the origin is not told the request went undelivered.
-        if (isChannelPartialDeliveryError(error)) {
-          return { ...preparedTarget };
+        if (!isChannelPartialDeliveryError(error)) {
+          throw error;
         }
-        throw error;
       }
+      return { ...preparedTarget };
     },
     updateEntry: async ({ cfg, entry, payload }) => {
       await sendLineApprovalText({

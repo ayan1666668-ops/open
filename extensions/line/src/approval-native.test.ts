@@ -122,6 +122,28 @@ describe("line approval capability", () => {
     ).toEqual({ kind: "enabled" });
   });
 
+  // Availability follows forwarding, not approvers: listing approvers alone does not
+  // turn approvals on.
+  it("keeps approvals disabled when approvers are listed but forwarding is off", () => {
+    const approversOnly = buildConfig({ channel: { allowFrom: [APPROVER] } });
+
+    expect(
+      lineApprovalCapability.getExecInitiatingSurfaceState?.({
+        cfg: approversOnly,
+        accountId: "default",
+        action: "approve",
+      }),
+    ).toEqual({ kind: "disabled" });
+    expect(
+      lineApprovalCapability.getActionAvailabilityState?.({
+        cfg: approversOnly,
+        accountId: "default",
+        action: "approve",
+        approvalKind: "plugin",
+      }),
+    ).toEqual({ kind: "disabled" });
+  });
+
   // A typed `/approve` without approvers is same-chat authorization, which still has to
   // pass command authorization; an explicit grant would skip it.
   it("keeps implicit same-chat authorization when no approvers are configured", () => {
