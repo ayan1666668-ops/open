@@ -49,6 +49,32 @@ const PLUGIN_ORIGIN_RANK: Readonly<Record<PluginOrigin, number>> = {
 
 const CHANNEL_HEARTBEAT_VISIBILITY_JSON_SCHEMA =
   ChannelHeartbeatVisibilitySchema.unwrap().toJSONSchema({ target: "draft-07" });
+const CHANNEL_CONFIG_SCHEMA_MAX_TRAVERSAL_DEPTH = 256;
+
+function assertChannelConfigSchemaTraversalDepth(schema: Record<string, unknown>): void {
+  const pending: Array<{ depth: number; value: unknown }> = [{ depth: 0, value: schema }];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (!current.value || typeof current.value !== "object" || seen.has(current.value)) {
+      continue;
+    }
+    if (current.depth > CHANNEL_CONFIG_SCHEMA_MAX_TRAVERSAL_DEPTH) {
+      throw new Error(
+        `channel config schema exceeds maximum traversal depth of ${CHANNEL_CONFIG_SCHEMA_MAX_TRAVERSAL_DEPTH}`,
+      );
+    }
+    seen.add(current.value);
+    const children = Array.isArray(current.value)
+      ? current.value
+      : isRecord(current.value)
+        ? Object.values(current.value)
+        : [];
+    for (const value of children) {
+      pending.push({ depth: current.depth + 1, value });
+    }
+  }
+}
 
 function normalizeCoreOwnedChannelSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const normalized = structuredClone(schema);
@@ -175,17 +201,22 @@ function prepareChannelConfigSchema(
   channelId: string,
   schema: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (origin === "bundled") {
-    return widenOfficialExternalChannelSecretSchema({ channelId, schema });
-  }
   try {
+    if (schema !== undefined) {
+      assertChannelConfigSchemaTraversalDepth(schema);
+    }
+    if (origin === "bundled") {
+      return widenOfficialExternalChannelSecretSchema({ channelId, schema });
+    }
     const coreOwnedSchema = schema === undefined ? schema : normalizeCoreOwnedChannelSchema(schema);
     return widenOfficialExternalChannelSecretSchema({ channelId, schema: coreOwnedSchema });
-  } catch {
+  } catch (error) {
+    if (origin === "bundled") {
+      throw error;
+    }
     // Normalization and official-channel widening both clone and walk the schema, so a deeply
-    // nested external manifest overflows here, before any validator runs. Surfacing the raw
-    // schema keeps metadata collection total and leaves the diagnostic to the one owner of it,
-    // validatePluginSchemaValue.
+    // nested external manifest is rejected here, before any validator runs. Surfacing the raw
+    // schema keeps metadata collection total and leaves the diagnostic to the validation owner.
     return schema;
   }
 }
