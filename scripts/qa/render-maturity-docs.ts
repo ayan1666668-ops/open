@@ -528,7 +528,6 @@ function renderDecisionContext(entries: DecisionContext[]): string[] {
     "<details>",
     "<summary>Decision context</summary>",
     "<p>Missing history is unknown. Differences are non-gating and do not change current values.</p>",
-    "<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>",
     ...entries.map(({ label, current, decision }) => {
       const context = decision
         ? [
@@ -542,9 +541,8 @@ function renderDecisionContext(entries: DecisionContext[]): string[] {
             .map((field) => `<div>${text(field)}</div>`)
             .join("")
         : text("Unknown (not recorded)");
-      return `<tr><td>${text(label)}</td><td>${text(current ?? "Unknown")}</td><td>${context}</td></tr>`;
+      return `<div><p><strong>${text(label)}</strong></p><p>Current value: ${text(current ?? "Unknown")}</p><div>Recorded decision: ${context}</div></div>`;
     }),
-    "</tbody></table>",
     "</details>",
   ];
 }
@@ -1219,14 +1217,16 @@ function renderMaturityScorecard({
     "",
     "## Decision context",
     "",
-    ...surfaces.flatMap((surface) => [
+  );
+  for (const surface of surfaces) {
+    lines.push(
       `### ${markdownEscape(surface.name)}`,
       "",
       ...renderDecisionContext(surfaceDecisionContext(surface, scoreSurfaces.get(surface.id))),
       "",
-    ]),
-    ...renderEvidenceSection(evidenceSummaries, surfaceNames),
-  );
+    );
+  }
+  lines.push(...renderEvidenceSection(evidenceSummaries, surfaceNames));
   if (updatedDate) {
     lines.push(`> Last updated: ${updatedDate}`, "");
   }

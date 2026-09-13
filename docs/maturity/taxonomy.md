@@ -313,32 +313,30 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>83</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Onboarding and Auth Setup / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Onboarding and Auth Setup / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Onboarding and Auth Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin and Channel Setup / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin and Channel Setup / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin and Channel Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Management / Quality</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Management / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Observability / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Observability / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Observability / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Doctor / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Doctor / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Doctor / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates and Upgrades / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates and Upgrades / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates and Upgrades / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>83</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / Quality</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Onboarding and Auth Setup / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Onboarding and Auth Setup / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Onboarding and Auth Setup / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin and Channel Setup / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin and Channel Setup / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin and Channel Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Management / Quality</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Management / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Management / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Observability / Quality</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Observability / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Observability / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Doctor / Quality</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Doctor / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Doctor / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates and Upgrades / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates and Upgrades / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates and Upgrades / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -455,50 +453,48 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>81</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approvals and Remote Execution / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approvals and Remote Execution / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approvals and Remote Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>HTTP APIs / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>HTTP APIs / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>HTTP APIs / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Web Surface / Quality</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Web Surface / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Web Surface / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway RPC APIs and Events / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway RPC APIs and Events / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway RPC APIs and Events / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Auth and Pairing / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Auth and Pairing / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Auth and Pairing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Access and Discovery / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Access and Discovery / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Access and Discovery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Nodes and Remote Capabilities / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Nodes and Remote Capabilities / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Nodes and Remote Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health, Diagnostics, and Repair / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health, Diagnostics, and Repair / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health, Diagnostics, and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Protocol Compatibility / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Protocol Compatibility / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Protocol Compatibility / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Roles and Permissions / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Roles and Permissions / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Roles and Permissions / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Lifecycle / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Lifecycle / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Lifecycle / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Security Controls / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Security Controls / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Security Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebSocket Connection / Quality</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebSocket Connection / Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebSocket Connection / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>81</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approvals and Remote Execution / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approvals and Remote Execution / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approvals and Remote Execution / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>HTTP APIs / Quality</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>HTTP APIs / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>HTTP APIs / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Web Surface / Quality</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Web Surface / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Web Surface / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway RPC APIs and Events / Quality</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway RPC APIs and Events / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway RPC APIs and Events / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Auth and Pairing / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Auth and Pairing / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Auth and Pairing / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Access and Discovery / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Access and Discovery / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Access and Discovery / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Nodes and Remote Capabilities / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Nodes and Remote Capabilities / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Nodes and Remote Capabilities / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health, Diagnostics, and Repair / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health, Diagnostics, and Repair / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health, Diagnostics, and Repair / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Protocol Compatibility / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Protocol Compatibility / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Protocol Compatibility / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Roles and Permissions / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Roles and Permissions / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Roles and Permissions / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Lifecycle / Quality</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Lifecycle / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Lifecycle / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Security Controls / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Security Controls / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Security Controls / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebSocket Connection / Quality</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebSocket Connection / Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebSocket Connection / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -699,38 +695,36 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Turn Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Turn Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Turn Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>External Runtimes and Subagents / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>External Runtimes and Subagents / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>External Runtimes and Subagents / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Provider Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Provider Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Provider Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local and Self-hosted Providers / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local and Self-hosted Providers / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local and Self-hosted Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Streaming and Progress / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Streaming and Progress / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Streaming and Progress / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Calls and Response Handling / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Calls and Response Handling / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Calls and Response Handling / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Execution Controls / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Execution Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Execution Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Turn Execution / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Turn Execution / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Turn Execution / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>External Runtimes and Subagents / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>External Runtimes and Subagents / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>External Runtimes and Subagents / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Provider Execution / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Provider Execution / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Provider Execution / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local and Self-hosted Providers / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local and Self-hosted Providers / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local and Self-hosted Providers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Streaming and Progress / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Streaming and Progress / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Streaming and Progress / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Calls and Response Handling / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Calls and Response Handling / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Calls and Response Handling / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Execution Controls / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Execution Controls / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Execution Controls / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -875,38 +869,36 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Session and Transcript Management / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Session and Transcript Management / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Session and Transcript Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Token Management / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Token Management / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Token Management / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Context Engine / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Context Engine / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Context Engine / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cross-client History and Session Parity / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cross-client History and Session Parity / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cross-client History and Session Parity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics, Maintenance, and Recovery / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics, Maintenance, and Recovery / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics, Maintenance, and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Core Prompts and Context / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Core Prompts and Context / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Core Prompts and Context / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Memory / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Memory / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Memory / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Routing / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Routing / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Routing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Transcript Persistence / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Transcript Persistence / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Transcript Persistence / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>77</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Session and Transcript Management / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Session and Transcript Management / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Session and Transcript Management / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Token Management / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Token Management / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Token Management / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Context Engine / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Context Engine / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Context Engine / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cross-client History and Session Parity / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cross-client History and Session Parity / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cross-client History and Session Parity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics, Maintenance, and Recovery / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics, Maintenance, and Recovery / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics, Maintenance, and Recovery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Core Prompts and Context / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Core Prompts and Context / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Core Prompts and Context / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Memory / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Memory / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Memory / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Routing / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Routing / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Routing / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Transcript Persistence / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Transcript Persistence / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Transcript Persistence / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1051,35 +1043,33 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Actions Commands and Approvals / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Actions Commands and Approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Actions Commands and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Group Thread and Ambient Room Behavior / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Group Thread and Ambient Room Behavior / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Group Thread and Ambient Room Behavior / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Inbound Access and Identity Gates / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Inbound Access and Identity Gates / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Inbound Access and Identity Gates / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Attachments and Rich Channel Data / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Attachments and Rich Channel Data / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Attachments and Rich Channel Data / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Outbound Delivery and Reply Pipeline / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Outbound Delivery and Reply Pipeline / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Outbound Delivery and Reply Pipeline / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status Health and Operator Controls / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status Health and Operator Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status Health and Operator Controls / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>76</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Actions Commands and Approvals / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Actions Commands and Approvals / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Actions Commands and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Group Thread and Ambient Room Behavior / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Group Thread and Ambient Room Behavior / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Group Thread and Ambient Room Behavior / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Inbound Access and Identity Gates / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Inbound Access and Identity Gates / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Inbound Access and Identity Gates / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Attachments and Rich Channel Data / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Attachments and Rich Channel Data / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Attachments and Rich Channel Data / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Outbound Delivery and Reply Pipeline / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Outbound Delivery and Reply Pipeline / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Outbound Delivery and Reply Pipeline / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status Health and Operator Controls / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status Health and Operator Controls / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status Health and Operator Controls / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1210,26 +1200,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health and Repair / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health and Repair / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Health and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Logging / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Logging / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Logging / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostic Collection / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostic Collection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostic Collection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Telemetry Export / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Telemetry Export / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Telemetry Export / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Diagnostics / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Diagnostics / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health and Repair / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health and Repair / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Health and Repair / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Logging / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Logging / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Logging / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostic Collection / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostic Collection / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostic Collection / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Telemetry Export / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Telemetry Export / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Telemetry Export / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Diagnostics / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Diagnostics / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Diagnostics / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1319,29 +1307,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Realtime Talk / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Realtime Talk / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Realtime Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Access and Trust / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Access and Trust / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Access and Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser UI / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser UI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat Conversations / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat Conversations / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat Conversations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Operator Console / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Operator Console / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Operator Console / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Realtime Talk / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Realtime Talk / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Realtime Talk / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Access and Trust / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Access and Trust / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Access and Trust / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser UI / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser UI / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser UI / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat Conversations / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat Conversations / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat Conversations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Operator Console / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Operator Console / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Operator Console / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1444,38 +1430,36 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Authoring and Packaging plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Authoring and Packaging plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Authoring and Packaging plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Bundled plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Bundled plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Bundled plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas plugin / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas plugin / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas plugin / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installing and running plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installing and running plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installing and running plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider and tool plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider and tool plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider and tool plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin approvals / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing plugins / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing plugins / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Testing plugins / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Testing plugins / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Testing plugins / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Authoring and Packaging plugins / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Authoring and Packaging plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Authoring and Packaging plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Bundled plugins / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Bundled plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Bundled plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas plugin / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas plugin / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas plugin / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installing and running plugins / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installing and running plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installing and running plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel plugins / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider and tool plugins / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider and tool plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider and tool plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin approvals / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin approvals / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin approvals / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing plugins / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing plugins / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Testing plugins / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Testing plugins / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Testing plugins / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1620,29 +1604,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approval Policy and Tool Safeguards / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approval Policy and Tool Safeguards / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Approval Policy and Tool Safeguards / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Auth and Remote Access / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Auth and Remote Access / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Auth and Remote Access / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Access Control / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Access Control / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Access Control / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device and Node Pairing / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device and Node Pairing / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device and Node Pairing / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Trust / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Trust / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Credential and Secret Hygiene / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Credential and Secret Hygiene / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Credential and Secret Hygiene / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approval Policy and Tool Safeguards / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approval Policy and Tool Safeguards / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Approval Policy and Tool Safeguards / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Auth and Remote Access / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Auth and Remote Access / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Auth and Remote Access / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Access Control / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Access Control / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Access Control / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device and Node Pairing / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device and Node Pairing / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device and Node Pairing / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Trust / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Trust / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Trust / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Credential and Secret Hygiene / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Credential and Secret Hygiene / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Credential and Secret Hygiene / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1746,29 +1728,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cron Jobs / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cron Jobs / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cron Jobs / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Event Ingress / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Event Ingress / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Event Ingress / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Automation Hooks / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Automation Hooks / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Automation Hooks / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Background Tasks and Flows / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Background Tasks and Flows / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Background Tasks and Flows / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Heartbeat / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Heartbeat / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Heartbeat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Polling Controls / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Polling Controls / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Polling Controls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cron Jobs / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cron Jobs / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cron Jobs / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Event Ingress / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Event Ingress / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Event Ingress / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Automation Hooks / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Automation Hooks / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Automation Hooks / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Background Tasks and Flows / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Background Tasks and Flows / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Background Tasks and Flows / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Heartbeat / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Heartbeat / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Heartbeat / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Polling Controls / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Polling Controls / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Polling Controls / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1871,29 +1851,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Intake and Access / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Intake and Access / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Intake and Access / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Media Handling / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Media Handling / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Media Handling / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Configuration / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Configuration / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Configuration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Text-to-Speech Delivery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Text-to-Speech Delivery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Text-to-Speech Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Understanding / Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Understanding / Completeness</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Understanding / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation / Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation / Completeness</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>64</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Intake and Access / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Intake and Access / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Intake and Access / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Media Handling / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Media Handling / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Media Handling / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Configuration / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Configuration / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Configuration / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Text-to-Speech Delivery / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Text-to-Speech Delivery / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Text-to-Speech Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Understanding / Quality</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Understanding / Completeness</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Understanding / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation / Quality</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation / Completeness</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -1996,29 +1974,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Talk Sessions / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Talk Sessions / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Talk Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Speech and Transcription / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Speech and Transcription / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Speech and Transcription / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native App Talk / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native App Talk / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native App Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice Wake and Routing / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice Wake and Routing / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice Wake and Routing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Observability / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Observability / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Talk Observability / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Providers / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Providers / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Providers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Talk Sessions / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Talk Sessions / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Talk Sessions / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Speech and Transcription / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Speech and Transcription / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Speech and Transcription / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native App Talk / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native App Talk / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native App Talk / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice Wake and Routing / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice Wake and Routing / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice Wake and Routing / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Observability / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Observability / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Talk Observability / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2121,26 +2097,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Runtime Modes / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Runtime Modes / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Runtime Modes / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Input and Commands / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Input and Commands / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Input and Commands / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Management / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Management / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Session Management / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Shell Execution / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Shell Execution / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Shell Execution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Rendering and Output Safety / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Rendering and Output Safety / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Rendering and Output Safety / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Runtime Modes / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Runtime Modes / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Runtime Modes / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Input and Commands / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Input and Commands / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Input and Commands / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Management / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Management / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Session Management / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Shell Execution / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Shell Execution / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Shell Execution / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Rendering and Output Safety / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Rendering and Output Safety / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Rendering and Output Safety / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2229,23 +2203,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>62</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing / Completeness</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Publishing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Catalog Discovery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Catalog Discovery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Catalog Discovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility and Trust / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility and Trust / Completeness</span></td><td><span>56</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility and Trust / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle and Health / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle and Health / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle and Health / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>62</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing / Quality</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing / Completeness</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Publishing / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Catalog Discovery / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Catalog Discovery / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Catalog Discovery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility and Trust / Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility and Trust / Completeness</span></strong></p><p>Current value: <span>56</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility and Trust / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle and Health / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle and Health / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle and Health / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2320,29 +2292,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Client API / Quality</span></td><td><span>51</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Client API / Completeness</span></td><td><span>50</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Client API / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Conversations / Quality</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Conversations / Completeness</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Conversations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Events and Approvals / Quality</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Events and Approvals / Completeness</span></td><td><span>52</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Events and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Resource Helpers / Quality</span></td><td><span>62</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Resource Helpers / Completeness</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Resource Helpers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility / Completeness</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Client API / Quality</span></strong></p><p>Current value: <span>51</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Client API / Completeness</span></strong></p><p>Current value: <span>50</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Client API / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Conversations / Quality</span></strong></p><p>Current value: <span>52</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Conversations / Completeness</span></strong></p><p>Current value: <span>52</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Conversations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Events and Approvals / Quality</span></strong></p><p>Current value: <span>52</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Events and Approvals / Completeness</span></strong></p><p>Current value: <span>52</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Events and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Resource Helpers / Quality</span></strong></p><p>Current value: <span>62</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Resource Helpers / Completeness</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Resource Helpers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility / Quality</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility / Completeness</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Compatibility / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2450,26 +2420,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Host Setup and Updates / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Host Setup and Updates / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Host Setup and Updates / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime and Service Control / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime and Service Control / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime and Service Control / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Security / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Security / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Security / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Targets / Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Targets / Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Targets / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Host Setup and Updates / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Host Setup and Updates / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Host Setup and Updates / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime and Service Control / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime and Service Control / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime and Service Control / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Security / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Security / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Security / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Targets / Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Targets / Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Targets / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2558,32 +2526,30 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Gateway Integration / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Gateway Integration / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Gateway Integration / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Gateway Mode / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Gateway Mode / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Gateway Mode / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Observability / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Observability / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Observability / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Permissions and Native Capabilities / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Permissions and Native Capabilities / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Permissions and Native Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Profiles and Isolation / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Profiles and Isolation / Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Profiles and Isolation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Gateway Integration / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Gateway Integration / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Gateway Integration / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Gateway Mode / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Gateway Mode / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Gateway Mode / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Observability / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Observability / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Observability / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Permissions and Native Capabilities / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Permissions and Native Capabilities / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Permissions and Native Capabilities / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Profiles and Isolation / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Profiles and Isolation / Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Profiles and Isolation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2700,32 +2666,30 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Capture / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Capture / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Capture / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Mobile Chat / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Mobile Chat / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Mobile Chat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Connection Setup / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Connection Setup / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Connection Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Settings / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Settings / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Settings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Runtime / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Runtime / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Capture / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Capture / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Capture / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Mobile Chat / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Mobile Chat / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Mobile Chat / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Connection Setup / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Connection Setup / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Connection Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Settings / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Settings / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Settings / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Runtime / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Runtime / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Runtime / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2842,32 +2806,30 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Sharing / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Sharing / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Sharing / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Setup and Diagnostics / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Setup and Diagnostics / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Setup and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Commands / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Commands / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Device Commands / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Background / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Background / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Background / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Sharing / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Sharing / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Sharing / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Setup and Diagnostics / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Setup and Diagnostics / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Setup and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Commands / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Commands / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Device Commands / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Background / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Background / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Background / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -2984,23 +2946,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Setup / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Operations / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Operations / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Container Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Release and Validation / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Release and Validation / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Release and Validation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Sandbox and Tooling / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Sandbox and Tooling / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Agent Sandbox and Tooling / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Setup / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Setup / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Operations / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Operations / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Container Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Release and Validation / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Release and Validation / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Release and Validation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Sandbox and Tooling / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Sandbox and Tooling / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Agent Sandbox and Tooling / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3075,29 +3035,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WSL Setup / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WSL Setup / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WSL Setup / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Service Lifecycle / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access and Exposure / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access and Exposure / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Access and Exposure / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Diagnostics and Repair / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser and Control UI / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser and Control UI / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser and Control UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WSL Setup / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WSL Setup / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WSL Setup / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Service Lifecycle / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access and Exposure / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access and Exposure / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Access and Exposure / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Diagnostics and Repair / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser and Control UI / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser and Control UI / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser and Control UI / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3201,23 +3159,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Compatibility / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Compatibility / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Auth / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Access and Auth / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Performance and Diagnostics / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Performance and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Performance and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Compatibility / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Compatibility / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Compatibility / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Auth / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Auth / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Access and Auth / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Runtime / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Performance and Diagnostics / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Performance and Diagnostics / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Performance and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3292,35 +3248,33 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Canvas / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Setup / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Setup / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Settings / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Settings / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Settings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Capabilities / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Capabilities / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Connections / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Connections / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote Connections / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Talk / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Talk / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Talk / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>WebChat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote WebChat / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote WebChat / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Remote WebChat / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Canvas / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Setup / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Setup / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Settings / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Settings / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Settings / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Capabilities / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Capabilities / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Capabilities / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Connections / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Connections / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote Connections / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Talk / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Talk / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Talk / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>WebChat / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote WebChat / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote WebChat / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Remote WebChat / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3451,26 +3405,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>App Distribution / Quality</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>App Distribution / Completeness</span></td><td><span>84</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>App Distribution / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connectivity / Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connectivity / Completeness</span></td><td><span>82</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connectivity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / Completeness</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat and Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Capabilities / Quality</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Capabilities / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Capabilities / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Diagnostics / Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>76</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>App Distribution / Quality</span></strong></p><p>Current value: <span>76</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>App Distribution / Completeness</span></strong></p><p>Current value: <span>84</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>App Distribution / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connectivity / Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connectivity / Completeness</span></strong></p><p>Current value: <span>82</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connectivity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / Completeness</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat and Sessions / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Capabilities / Quality</span></strong></p><p>Current value: <span>64</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Capabilities / Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Capabilities / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Diagnostics / Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Diagnostics / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3560,26 +3512,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installation and Updates / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installation and Updates / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Installation and Updates / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connection / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connection / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Connection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Sessions / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Sessions / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Sessions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Repair / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Repair / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Status and Repair / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Tools and Permissions / Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Tools and Permissions / Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Desktop Tools and Permissions / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installation and Updates / Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installation and Updates / Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Installation and Updates / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connection / Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connection / Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Connection / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Sessions / Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Sessions / Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Sessions / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Repair / Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Repair / Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Status and Repair / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Tools and Permissions / Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Tools and Permissions / Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Desktop Tools and Permissions / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3668,23 +3618,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / Completeness</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>CLI / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Management / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Management / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Gateway Management / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Networking / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Networking / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Networking / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Updates / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / Quality</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / Completeness</span></strong></p><p>Current value: <span>64</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>CLI / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Management / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Management / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Gateway Management / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Networking / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Networking / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Networking / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Updates / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3759,23 +3707,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Setup / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Setup / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Deployment Setup / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration and Secrets / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration and Secrets / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Configuration and Secrets / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Exposure / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Exposure / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Exposure / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cluster Lifecycle / Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cluster Lifecycle / Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Cluster Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Setup / Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Setup / Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Deployment Setup / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration and Secrets / Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration and Secrets / Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Configuration and Secrets / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Exposure / Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Exposure / Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Exposure / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cluster Lifecycle / Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cluster Lifecycle / Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Cluster Lifecycle / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3850,26 +3796,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Install Handoff / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Install Handoff / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Install Handoff / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Plugin Lifecycle / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Activation and App UX / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Activation and App UX / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Activation and App UX / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Config and State / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Config and State / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Config and State / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Service Runtime and Guards / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Service Runtime and Guards / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Service Runtime and Guards / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Install Handoff / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Install Handoff / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Install Handoff / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Plugin Lifecycle / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Activation and App UX / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Activation and App UX / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Activation and App UX / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Config and State / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Config and State / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Config and State / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Service Runtime and Guards / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Service Runtime and Guards / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Service Runtime and Guards / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -3958,26 +3902,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Delivery and Recovery / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Delivery and Recovery / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Delivery and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Exec Approvals / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Exec Approvals / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Exec Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution and Support / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution and Support / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Distribution and Support / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Replies / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Replies / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Notifications and Replies / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Watch App UI / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Watch App UI / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Watch App UI / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Delivery and Recovery / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Delivery and Recovery / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Delivery and Recovery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Exec Approvals / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Exec Approvals / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Exec Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution and Support / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution and Support / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Distribution and Support / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Replies / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Replies / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Notifications and Replies / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Watch App UI / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Watch App UI / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Watch App UI / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4071,29 +4013,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4196,26 +4136,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>77</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4304,26 +4242,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4413,26 +4349,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4521,26 +4455,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4629,29 +4561,27 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Encryption and Verification / Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Encryption and Verification / Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Encryption and Verification / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Encryption and Verification / Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Encryption and Verification / Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Encryption and Verification / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4754,26 +4684,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4862,26 +4790,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -4970,26 +4896,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Controls and Approvals / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Controls and Approvals / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5078,23 +5002,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5169,23 +5091,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5260,26 +5180,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Channel Setup and Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Access and Identity / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Conversation Routing and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media and Rich Content / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Realtime Voice and Calls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Channel Setup and Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Access and Identity / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Conversation Routing and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media and Rich Content / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Realtime Voice and Calls / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5373,20 +5291,18 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Automation / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Automation / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Browser Automation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Invocation and Execution / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Invocation and Execution / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Invocation and Execution / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Sandbox and Tool Policy / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Sandbox and Tool Policy / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Sandbox and Tool Policy / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Automation / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Automation / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Browser Automation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Invocation and Execution / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Invocation and Execution / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Invocation and Execution / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Sandbox and Tool Policy / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Sandbox and Tool Policy / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Sandbox and Tool Policy / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5447,26 +5363,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Auth / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Auth / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Auth / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Responses and Tool Compatibility / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Responses and Tool Compatibility / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Responses and Tool Compatibility / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Codex Harness / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Codex Harness / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Codex Harness / LTS</span></td><td><span>true</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image and Multimodal Input / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image and Multimodal Input / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image and Multimodal Input / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Realtime Audio / Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Realtime Audio / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Voice and Realtime Audio / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Auth / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Auth / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Auth / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Responses and Tool Compatibility / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Responses and Tool Compatibility / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Responses and Tool Compatibility / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Codex Harness / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Codex Harness / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Codex Harness / LTS</span></strong></p><p>Current value: <span>true</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image and Multimodal Input / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image and Multimodal Input / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image and Multimodal Input / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Realtime Audio / Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Realtime Audio / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Voice and Realtime Audio / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5555,23 +5469,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Search Providers / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Search Providers / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Search Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Diagnostics / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Diagnostics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Setup and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety / Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Availability and Fetch / Quality</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Availability and Fetch / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Tool Availability and Fetch / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Search Providers / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Search Providers / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Search Providers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Diagnostics / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Diagnostics / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Setup and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety / Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Availability and Fetch / Quality</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Availability and Fetch / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Tool Availability and Fetch / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5646,26 +5558,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth and Recovery / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth and Recovery / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Auth and Recovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / Quality</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model and Runtime Selection / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Request Transport and Turn Semantics / Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Request Transport and Turn Semantics / Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Request Transport and Turn Semantics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Cache and Context / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Cache and Context / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Cache and Context / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Inputs / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Inputs / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Inputs / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth and Recovery / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth and Recovery / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Auth and Recovery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / Quality</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model and Runtime Selection / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Request Transport and Turn Semantics / Quality</span></strong></p><p>Current value: <span>77</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Request Transport and Turn Semantics / Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Request Transport and Turn Semantics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Cache and Context / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Cache and Context / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Cache and Context / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Inputs / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Inputs / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Inputs / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5754,26 +5664,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Credentials / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Credentials / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Credentials / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model Routing and Endpoints / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model Routing and Endpoints / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Model Routing and Endpoints / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Direct Gemini Runtime / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Direct Gemini Runtime / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Direct Gemini Runtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media, Search, and Realtime / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media, Search, and Realtime / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media, Search, and Realtime / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Caching / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Caching / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Prompt Caching / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Credentials / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Credentials / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Credentials / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model Routing and Endpoints / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model Routing and Endpoints / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Model Routing and Endpoints / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Direct Gemini Runtime / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Direct Gemini Runtime / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Direct Gemini Runtime / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media, Search, and Realtime / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media, Search, and Realtime / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media, Search, and Realtime / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Caching / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Caching / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Prompt Caching / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5862,23 +5770,21 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Auth / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Auth / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup and Auth / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Runtime and Normalization / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Runtime and Normalization / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Chat Runtime and Normalization / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Recovery and Diagnostics / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Recovery and Diagnostics / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Recovery and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation and Speech / Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation and Speech / Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Generation and Speech / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Auth / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Auth / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup and Auth / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Runtime and Normalization / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Runtime and Normalization / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Chat Runtime and Normalization / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Recovery and Diagnostics / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Recovery and Diagnostics / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Recovery and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation and Speech / Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation and Speech / Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Generation and Speech / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -5953,26 +5859,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Routing and Discovery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Routing and Discovery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Media Routing and Discovery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Task Lifecycle and Delivery / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Task Lifecycle and Delivery / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Task Lifecycle and Delivery / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Image Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Video Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Video Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Video Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Music Generation / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Music Generation / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Music Generation / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Routing and Discovery / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Routing and Discovery / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Media Routing and Discovery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Task Lifecycle and Delivery / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Task Lifecycle and Delivery / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Task Lifecycle and Delivery / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Generation / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Generation / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Image Generation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Video Generation / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Video Generation / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Video Generation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Music Generation / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Music Generation / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Music Generation / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -6061,26 +5965,24 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Setup, Lifecycle, and Diagnostics / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Provider Plugins / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Provider Plugins / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Native Provider Plugins / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>OpenAI-Compatible Runtime Compatibility / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>OpenAI-Compatible Runtime Compatibility / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>OpenAI-Compatible Runtime Compatibility / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Memory and Embeddings / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Memory and Embeddings / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Local Memory and Embeddings / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety and Prompt Controls / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety and Prompt Controls / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Network Safety and Prompt Controls / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup, Lifecycle, and Diagnostics / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup, Lifecycle, and Diagnostics / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Setup, Lifecycle, and Diagnostics / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Provider Plugins / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Provider Plugins / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Native Provider Plugins / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>OpenAI-Compatible Runtime Compatibility / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>OpenAI-Compatible Runtime Compatibility / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>OpenAI-Compatible Runtime Compatibility / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Memory and Embeddings / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Memory and Embeddings / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Local Memory and Embeddings / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety and Prompt Controls / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety and Prompt Controls / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Network Safety and Prompt Controls / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">
@@ -6169,20 +6071,18 @@ A surface is a product area such as Gateway runtime, Discord, or the macOS app. 
     <details>
     <summary>Decision context</summary>
     <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-    <table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-    <tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted LLM Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted LLM Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted LLM Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Media Providers / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Media Providers / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Hosted Media Providers / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Operations / Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Operations / Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    <tr><td><span>Provider Operations / LTS</span></td><td><span>false</span></td><td><span>Unknown (not recorded)</span></td></tr>
-    </tbody></table>
+    <div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted LLM Providers / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted LLM Providers / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted LLM Providers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Media Providers / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Media Providers / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Hosted Media Providers / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Operations / Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Operations / Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+    <div><p><strong><span>Provider Operations / LTS</span></strong></p><p>Current value: <span>false</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
     </details>
 
     <div className="maturity-category-list">

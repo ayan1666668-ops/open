@@ -188,11 +188,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>83</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>90</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>83</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>90</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Gateway runtime
@@ -200,11 +198,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>81</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>81</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Linux Gateway host
@@ -212,11 +208,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>89</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>89</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### macOS Gateway host
@@ -224,11 +218,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>88</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>88</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Discord
@@ -236,11 +228,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>73</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>87</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>73</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>87</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Android app
@@ -248,11 +238,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### iOS app
@@ -260,11 +248,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>stable</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>80</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>stable</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>80</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Agent Runtime
@@ -272,11 +258,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Session, memory, and context engine
@@ -284,11 +268,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>77</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>77</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Channel framework
@@ -296,11 +278,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>76</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Browser automation, exec, and sandbox tools
@@ -308,11 +288,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Observability
@@ -320,11 +298,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>75</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>75</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### OpenAI and Codex provider path
@@ -332,11 +308,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Control UI
@@ -344,11 +318,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Web search tools
@@ -356,11 +328,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>74</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>74</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Plugins
@@ -368,11 +338,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Security, auth, pairing, and secrets
@@ -380,11 +348,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Automation and durable work
@@ -392,11 +358,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>72</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>72</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Docker and Podman hosting
@@ -404,11 +368,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Windows via WSL2
@@ -416,11 +378,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>69</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>69</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### ChromeOS, Raspberry Pi, and small Linux devices
@@ -428,11 +388,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>79</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>79</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Anthropic provider path
@@ -440,11 +398,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Telegram
@@ -452,11 +408,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Slack
@@ -464,11 +418,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Google provider path
@@ -476,11 +428,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### iMessage
@@ -488,11 +438,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### macOS companion app
@@ -500,11 +448,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### OpenRouter provider path
@@ -512,11 +458,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### WhatsApp
@@ -524,11 +468,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>78</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>78</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Linux companion app
@@ -536,11 +478,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>71</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>76</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>71</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>76</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Windows App / Node
@@ -548,11 +488,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>beta</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>19</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>21</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>beta</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>19</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>21</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Media understanding and media generation
@@ -560,11 +498,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>64</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>64</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Image, video, and music generation tools
@@ -572,11 +508,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Local model providers: Ollama, vLLM, SGLang, LM Studio
@@ -584,11 +518,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Long-tail hosted providers
@@ -596,11 +528,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Voice and realtime talk
@@ -608,11 +538,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>68</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>68</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Matrix
@@ -620,11 +548,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>60</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>67</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>60</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>67</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Google Chat
@@ -632,11 +558,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Microsoft Teams
@@ -644,11 +568,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Signal
@@ -656,11 +578,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### TUI
@@ -668,11 +588,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>59</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>59</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Native Windows
@@ -680,11 +598,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>66</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>66</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### ClawHub
@@ -692,11 +608,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>62</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>62</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Kubernetes hosting
@@ -704,11 +618,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>61</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>61</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Feishu, QQ Bot, WeChat, Yuanbao, Zalo, Zalo Personal, regional channels
@@ -716,11 +628,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>55</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>58</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>55</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>58</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Mattermost, LINE, IRC, Nextcloud Talk, Nostr, Twitch, Tlon, Synology Chat
@@ -728,11 +638,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### OpenClaw App SDK
@@ -740,11 +648,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>alpha</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>54</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>53</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>alpha</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>54</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>53</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Nix install path
@@ -752,11 +658,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### Voice Call channel
@@ -764,11 +668,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ### watchOS companion surfaces
@@ -776,11 +678,9 @@ Surfaces are ordered by maturity level, completeness, and quality. LTS support i
 <details>
 <summary>Decision context</summary>
 <p>Missing history is unknown. Differences are non-gating and do not change current values.</p>
-<table><thead><tr><th>Judgment</th><th>Current value</th><th>Recorded decision</th></tr></thead><tbody>
-<tr><td><span>Level</span></td><td><span>experimental</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Quality</span></td><td><span>41</span></td><td><span>Unknown (not recorded)</span></td></tr>
-<tr><td><span>Completeness</span></td><td><span>44</span></td><td><span>Unknown (not recorded)</span></td></tr>
-</tbody></table>
+<div><p><strong><span>Level</span></strong></p><p>Current value: <span>experimental</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Quality</span></strong></p><p>Current value: <span>41</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
+<div><p><strong><span>Completeness</span></strong></p><p>Current value: <span>44</span></p><div>Recorded decision: <span>Unknown (not recorded)</span></div></div>
 </details>
 
 ## QA evidence summary

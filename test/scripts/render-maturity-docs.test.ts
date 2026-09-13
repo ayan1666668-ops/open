@@ -865,10 +865,16 @@ describe("maturity docs renderer CLI", () => {
       const taxonomy = fs.readFileSync(path.join(dir, "maturity/taxonomy.md"), "utf8");
       for (const markdown of [scorecard, taxonomy]) {
         expect(markdown).toContain("<summary>Decision context</summary>");
+        const decisionBlocks =
+          markdown.match(/<details>\s*<summary>Decision context<\/summary>[\s\S]*?<\/details>/gu) ??
+          [];
+        expect(decisionBlocks.length).toBeGreaterThan(0);
+        for (const block of decisionBlocks) {
+          // Native labelled flow avoids forbidden table elements and conflicting ARIA roles.
+          expect(block).not.toMatch(/<\/?(?:table|thead|tbody|tr|th|td)(?:\s|>)|\srole=/u);
+          expect(block).not.toMatch(/<p>(?:(?!<\/p>)[\s\S])*<div>/u);
+        }
         expect(markdown).toContain("Coverage Experimental - 0%");
-        expect(markdown).toContain("<td><span>experimental</span></td>");
-        expect(markdown).toContain("<td><span>70</span></td>");
-        expect(markdown).toContain("<td><span>80</span></td>");
         const md = createDocsMarkdown();
         const document = parseDocsDocument(markdown, md);
         expect(document.collisions).toEqual([]);
@@ -885,6 +891,13 @@ describe("maturity docs renderer CLI", () => {
         });
         parser.end(md.renderer.render(document.tokens, md.options, document.env));
         const textContent = visibleText.join("");
+        for (const [label, value] of [
+          ["Level", "experimental"],
+          ["Quality", "70"],
+          ["Completeness", "80"],
+        ]) {
+          expect(textContent).toContain(`${label}Current value: ${value}Recorded decision: `);
+        }
         expect(tags).not.toContain("review");
         expect(markdown.includes("Non-gating mismatch")).toBe(mismatch);
         expect(markdown.includes("Unknown (not recorded)")).toBe(!reviewed);
@@ -904,7 +917,7 @@ describe("maturity docs renderer CLI", () => {
       }
       expect(scorecard).toContain('<span className="maturity-summary-value">75%</span>');
       expect(taxonomy).toContain("<span>Review / LTS</span>");
-      expect(taxonomy).toContain("<td><span>false</span></td>");
+      expect(taxonomy).toContain("<p>Current value: <span>false</span></p>");
       expect(taxonomy).not.toContain(" / LTS-supported");
       expect(taxonomy.match(/Non-gating mismatch/g) ?? []).toHaveLength(mismatch ? 6 : 0);
       expect(scorecard.match(/Non-gating mismatch/g) ?? []).toHaveLength(mismatch ? 3 : 0);
