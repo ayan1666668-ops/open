@@ -584,7 +584,7 @@ describe("CI changed Node test plan", () => {
     "src/plugin-sdk/config-runtime.test.ts",
     "src/plugins/contracts/registry.retry.test.ts",
     "src/channels/plugins/config-schema.test.ts",
-    "src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts",
+    "src/tasks/task-registry.test.ts",
   ])("keeps exact test leaf %s focused while retaining boundary coverage", (target) => {
     expect(hasCoreExtensionImpact([target])).toBe(false);
     expect(createChangedExtensionFallbackShards([target])).toEqual([]);
@@ -610,7 +610,10 @@ describe("CI changed Node test plan", () => {
 
   it.each([
     ["src/plugins/contracts/registry.retry.test.ts", "contracts-plugins"],
-    ["src/channels/plugins/contracts/session-key-artifact.contract.test.ts", "contracts-channels"],
+    [
+      "src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts",
+      "contracts-channels",
+    ],
   ])("leaves covered contract target %s to its dedicated matrix", (target, task) => {
     const before = createChangedNodeTestShards([target]);
     const dedicatedContractShards = [{ task, includePatterns: [target] }];

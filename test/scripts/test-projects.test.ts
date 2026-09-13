@@ -2148,13 +2148,6 @@ describe("scripts/test-projects changed-target routing", () => {
     },
   );
 
-  it("retains database consumers when source selection expands to contract configs", () => {
-    const plans = buildVitestRunPlans(["test/vitest/vitest.contracts-paths.mjs"]);
-    expect(
-      plans.find((plan) => plan.config === "test/vitest/vitest.infra.config.ts")?.includePatterns,
-    ).toEqual(["src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts"]);
-  });
-
   it.each([
     ["src/agents/**/*.test.ts", "test/vitest/vitest.agents.config.ts"],
     ["test/plugins", "test/vitest/vitest.tooling.config.ts"],
@@ -2216,20 +2209,19 @@ describe("scripts/test-projects changed-target routing", () => {
     );
   });
 
-  it.each([
-    "src/plugin-state",
-    "src/plugin-sdk",
-    "src/agents",
-    "src/channels/plugins/contracts",
-    "test/plugins",
-  ])("retains database worker ownership for directory and glob target %s", (directory) => {
-    const expected = databaseWorkerCoreTestFiles.filter((file) => file.startsWith(`${directory}/`));
-    for (const target of [directory, `${directory}/**/*.test.ts`]) {
-      const plans = buildVitestRunPlans([target]);
-      const infra = plans.find((plan) => plan.config === "test/vitest/vitest.infra.config.ts");
-      expect(infra?.includePatterns).toEqual(expected);
-    }
-  });
+  it.each(["src/plugin-state", "src/plugin-sdk", "src/agents", "test/plugins"])(
+    "retains database worker ownership for directory and glob target %s",
+    (directory) => {
+      const expected = databaseWorkerCoreTestFiles.filter((file) =>
+        file.startsWith(`${directory}/`),
+      );
+      for (const target of [directory, `${directory}/**/*.test.ts`]) {
+        const plans = buildVitestRunPlans([target]);
+        const infra = plans.find((plan) => plan.config === "test/vitest/vitest.infra.config.ts");
+        expect(infra?.includePatterns).toEqual(expected);
+      }
+    },
+  );
 
   it.each(agentVitestProjectOwners.coreIsolated.include)(
     "routes isolated agent test %s to the isolated agents-core shard",
@@ -3011,12 +3003,8 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/vitest/vitest.contracts-channel-config.config.ts",
       "test/vitest/vitest.contracts-channel-registry.config.ts",
       "test/vitest/vitest.contracts-channel-session.config.ts",
-      "test/vitest/vitest.infra.config.ts",
     ]);
-    expect(plans.slice(0, 4).every((plan) => plan.includePatterns === null)).toBe(true);
-    expect(plans[4]?.includePatterns).toEqual([
-      "src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts",
-    ]);
+    expect(plans.every((plan) => plan.includePatterns === null)).toBe(true);
   });
 
   it("routes the plugin contracts directory to the plugin contracts lane", () => {

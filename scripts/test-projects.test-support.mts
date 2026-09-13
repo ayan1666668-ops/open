@@ -3950,10 +3950,6 @@ export function buildVitestRunPlans(
   const impliedDatabaseWorkerTargets = databaseWorkerCoreTestFiles.filter((file) =>
     [...requestedTargetArgs, ...activeTargetArgs].some((targetArg) => {
       const relative = toRepoRelativeTarget(targetArg, cwd);
-      const contractPatterns = CHANNEL_CONTRACT_CONFIG_PATTERNS.get(relative);
-      if (contractPatterns && !requestedTargetArgs.includes(targetArg)) {
-        return contractPatterns.some((pattern) => includePatternMatchesAnyFile(pattern, [file]));
-      }
       return (
         (isTestFileTarget(relative) ||
           isGlobTarget(relative) ||
@@ -3973,10 +3969,7 @@ export function buildVitestRunPlans(
     (!explicitConfigTargets.includes(PACKAGE_CONTRACT_VITEST_CONFIG) &&
       hasPackageFileTarget &&
       collectVitestFileFilters(["run", ...nonTargetArgs]).length > 0);
-  if (
-    explicitConfigTargets.every(isVitestConfigFileTarget) &&
-    impliedDatabaseWorkerTargets.length === 0
-  ) {
+  if (explicitConfigTargets.every(isVitestConfigFileTarget)) {
     if (watchMode && explicitConfigTargets.length > 1) {
       throw new Error(
         "watch mode with mixed test suites is not supported; target one suite at a time or use a dedicated suite command",

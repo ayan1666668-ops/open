@@ -37,7 +37,6 @@ import { createAgentsVitestConfig } from "../vitest/vitest.agents.config.ts";
 import { cliProcessTestFiles } from "../vitest/vitest.cli-process-paths.mjs";
 import { createCliProcessVitestConfig } from "../vitest/vitest.cli-process.config.ts";
 import { createCommandsVitestConfig } from "../vitest/vitest.commands.config.ts";
-import { createContractsChannelSessionVitestConfig } from "../vitest/vitest.contracts-channel-session.config.ts";
 import { databaseWorkerCoreTestFiles } from "../vitest/vitest.database-worker-core-paths.mjs";
 import { createGatewayClientVitestConfig } from "../vitest/vitest.gateway-client.config.ts";
 import { createGatewayCoreVitestConfig } from "../vitest/vitest.gateway-core.config.ts";
@@ -3028,7 +3027,6 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         createPluginSdkVitestConfig({}),
         createPluginsVitestConfig({}),
         createTasksVitestConfig({}),
-        createContractsChannelSessionVitestConfig({}, []),
         createToolingVitestConfig({}),
       ].flatMap(listMatchedTestFiles),
     );
