@@ -54,6 +54,7 @@ function readTranscriptMessageSenderIsOwner(message: unknown): boolean | undefin
 /** Project one transcript message into the exact payload emitted as session.message. */
 export function projectSessionMessagePayload(params: {
   agentId?: string;
+  historyDelta?: boolean;
   message: unknown;
   messageId?: string;
   messageSeq?: number;
@@ -64,7 +65,11 @@ export function projectSessionMessagePayload(params: {
   runId?: string;
   sessionKey: string;
   sessionSnapshot?: Record<string, unknown>;
-}): { payload?: Record<string, unknown>; projectionState: SessionMessageProjectionState } {
+}): {
+  payload?: Record<string, unknown>;
+  projectionState: SessionMessageProjectionState;
+  requiresHistoryReset?: true;
+} {
   const idempotencyKey = readTranscriptMessageIdempotencyKey(params.message);
   const senderIsOwner = readTranscriptMessageSenderIsOwner(params.message);
   const rawMessage = attachOpenClawTranscriptMeta(params.message, {
@@ -74,21 +79,48 @@ export function projectSessionMessagePayload(params: {
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(params.messageSeq !== undefined ? { seq: params.messageSeq } : {}),
   });
-  const projected = params.projectionState
+  const historyProjection = params.historyDelta
     ? projectChatDisplayMessagesWithState([rawMessage], {
+        ...params.projectionState,
+        includeCommentaryFallbacks: true,
         redactInlineMedia: params.redactInlineMedia,
-        assistantErrorPending: params.projectionState.assistantErrorPending,
-        turnBoundaryPending: params.projectionState.turnBoundaryPending,
       })
-    : {
-        messages: [
-          projectChatDisplayMessage(rawMessage, {
+    : undefined;
+  if (
+    historyProjection?.messages.some(
+      (message) => asOptionalRecord(message.openclawStreamFallback)?.source === "segment",
+    )
+  ) {
+    // A single-message envelope cannot carry a commentary/tool split; let full history
+    // reconcile both rows.
+    return {
+      projectionState: {
+        assistantErrorPending: historyProjection.assistantErrorPending,
+        turnBoundaryPending: historyProjection.turnBoundaryPending,
+      },
+      requiresHistoryReset: true,
+    };
+  }
+  // A fallback can consume a pending turn boundary before final sanitation removes it.
+  // Reproject those rows from the incoming state, even when no segment remains visible.
+  const projected =
+    historyProjection && !historyProjection.commentaryFallbacksObserved
+      ? historyProjection
+      : params.projectionState
+        ? projectChatDisplayMessagesWithState([rawMessage], {
             redactInlineMedia: params.redactInlineMedia,
-          }),
-        ],
-        assistantErrorPending: false,
-        turnBoundaryPending: false,
-      };
+            assistantErrorPending: params.projectionState.assistantErrorPending,
+            turnBoundaryPending: params.projectionState.turnBoundaryPending,
+          })
+        : {
+            messages: [
+              projectChatDisplayMessage(rawMessage, {
+                redactInlineMedia: params.redactInlineMedia,
+              }),
+            ],
+            assistantErrorPending: false,
+            turnBoundaryPending: false,
+          };
   const projectionState = {
     assistantErrorPending: projected.assistantErrorPending,
     turnBoundaryPending: projected.turnBoundaryPending,
