@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { addSessionMember } from "../config/sessions/session-sharing-store.js";
+import { writeAgentRunTerminalReceipt } from "../state/agent-run-terminal-receipts.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { resetAgentJobStateForTest } from "./agent-turn/agent-job.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 import {
   allowedSessionVisibilities,
@@ -23,7 +26,11 @@ import {
   rolePolicyConfig,
 } from "./session-sharing.test-utils.js";
 
-afterEach(() => closeOpenClawAgentDatabasesForTest());
+afterEach(() => {
+  resetAgentJobStateForTest();
+  closeOpenClawAgentDatabasesForTest();
+  closeOpenClawStateDatabaseForTest();
+});
 
 type SharingTarget = Parameters<typeof resolveSessionSharingRole>[0]["target"];
 
@@ -725,6 +732,57 @@ describe("session sharing policy", () => {
           context,
         }).error,
       ).toBeNull();
+    });
+  });
+
+  it("resolves a run-only abort target from a retained terminal receipt", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = rolePolicyConfig();
+      const owner = roleClient("none", "durable-abort-owner");
+      const outsider = roleClient("none", "durable-abort-outsider");
+      const sessionKey = "agent:main:durable-abort-authorization";
+      const sessionId = "session-durable-abort-authorization";
+      const runId = "run-durable-abort-authorization";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: owner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "main", sessionKey, sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      resetAgentJobStateForTest();
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: owner,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toBeNull();
+      expect(
+        resolveSessionMutationAuthorization({
+          client: outsider,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("not found") });
     });
   });
 

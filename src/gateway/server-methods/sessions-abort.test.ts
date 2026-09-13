@@ -485,6 +485,33 @@ test("sessions.abort reports an authorized exact completed run after hot state i
   });
 });
 
+test("sessions.abort resolves a retained completed run through its scoped main alias", async () => {
+  const agentId = "work";
+  const sessionKey = "agent:work:main";
+  const sessionId = "session-work-main-durable";
+  const runId = "run-work-main-durable";
+  const storePath = path.join(requireStateDir(), "agents", agentId, "sessions", "sessions.json");
+  await replaceSessionEntry({ agentId, sessionKey, storePath }, { sessionId, updatedAt: 42 });
+  writeAgentRunTerminalReceipt({
+    runId,
+    owner: { agentId, sessionKey, sessionId },
+    terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+  });
+
+  const result = await directSessionReq("sessions.abort", { key: "main", agentId, runId });
+
+  expect(result).toMatchObject({
+    ok: true,
+    payload: {
+      ok: true,
+      abortedRunId: null,
+      status: "no-active-run",
+      runState: "completed",
+      terminalStatus: "ok",
+    },
+  });
+});
+
 test("sessions.abort rejects a recovered run after its session key is reused", async () => {
   const agentId = "main";
   const sessionKey = "agent:main:durable-reused";

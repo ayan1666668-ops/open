@@ -167,6 +167,11 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
     const requestedRunId = readStringValue(p.runId);
     const requestedKey = normalizeOptionalString(p.key);
     const requestedParamAgentId = normalizeOptionalString(p.agentId);
+    const scopedRequestedKey = resolveScopedAbortKey({
+      cfg,
+      key: requestedKey,
+      agentId: requestedParamAgentId,
+    });
     const clearQueued = p.clearQueued === true;
     const workerRunSessionId = requestedRunId
       ? asWorkerInferenceControl(context.workerEnvironmentService)?.resolveInferenceSessionForRunId(
@@ -193,7 +198,7 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       const requestedAgentMatches =
         !requestedParamAgentId ||
         normalizeAgentId(requestedParamAgentId) === normalizeAgentId(owner.agentId);
-      const requestedKeyMatches = !requestedKey || requestedKey === ownerSessionKey;
+      const requestedKeyMatches = !requestedKey || scopedRequestedKey === ownerSessionKey;
       const target = ownerSessionKey
         ? resolveSessionSharingTarget({ cfg, sessionKey: ownerSessionKey, agentId: owner.agentId })
         : null;
@@ -227,11 +232,6 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       return;
     }
     const embeddedRunSessionKey = embeddedRun?.sessionKey;
-    const scopedRequestedKey = resolveScopedAbortKey({
-      cfg,
-      key: requestedKey,
-      agentId: requestedParamAgentId,
-    });
     if (requestedKey && requestedParamAgentId && !scopedRequestedKey) {
       respond(
         false,
