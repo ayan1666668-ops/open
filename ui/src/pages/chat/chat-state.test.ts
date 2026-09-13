@@ -3207,7 +3207,7 @@ describe("ChatStateController render lifecycle", () => {
     expect(
       state.sidebarLayout.columns.flatMap((column) => column.panels.map((panel) => panel.slot)),
     ).toEqual(["detail", "workspace"]);
-    expect(state.attachmentSidebarContent?.kind).toBe("attachment");
+    expect(state.sessionWorkspaceState?.previews.at(-1)?.content.kind).toBe("attachment");
     expect(state.sidebarContent).toBe(detailContent);
 
     state.sidebarLayout = activatePanel(state.sidebarLayout, "detail");
@@ -3216,13 +3216,13 @@ describe("ChatStateController render lifecycle", () => {
     expect(
       state.sidebarLayout.columns.flatMap((column) => column.panels.map((panel) => panel.slot)),
     ).toEqual(["workspace"]);
-    expect(state.attachmentSidebarContent?.kind).toBe("attachment");
+    expect(state.sessionWorkspaceState?.previews.at(-1)?.content.kind).toBe("attachment");
     expect(state.sidebarContent).toBe(detailContent);
 
     state.handleCloseSidebar("workspace");
 
     expect(state.sidebarLayout.columns.flatMap((column) => column.panels)).toHaveLength(0);
-    expect(state.attachmentSidebarContent).toBeNull();
+    expect(state.sessionWorkspaceState?.previews ?? []).toEqual([]);
     expect(state.sidebarContent).toBe(detailContent);
   });
 
@@ -4462,22 +4462,28 @@ describe("refreshChatMetadata", () => {
   });
 
   it.each([
-    { pickerPending: false, scopedAfterGlobal: false },
-    { pickerPending: true, scopedAfterGlobal: false },
-    { pickerPending: false, scopedAfterGlobal: true },
+    { pickerPending: false, scopedAfterGlobal: false, metadataPending: false },
+    { pickerPending: true, scopedAfterGlobal: false, metadataPending: false },
+    { pickerPending: false, scopedAfterGlobal: true, metadataPending: false },
+    { pickerPending: false, scopedAfterGlobal: true, metadataPending: true },
   ])(
-    "converges catalog invalidation with pending picker=$pickerPending and scoped follow-up=$scopedAfterGlobal",
-    async ({ pickerPending, scopedAfterGlobal }) => {
+    "converges catalog invalidation with pending picker=$pickerPending, metadata=$metadataPending and scoped follow-up=$scopedAfterGlobal",
+    async ({ pickerPending, scopedAfterGlobal, metadataPending }) => {
       const prepared = { id: "model", name: "Model", provider: "test", contextWindow: 8_192 };
       const discovered = { ...prepared, contextWindow: 262_144 };
       const catalog = createDeferred<{ models: (typeof prepared)[] }>();
+      const metadata = createDeferred<{ commands: [] }>();
       let invalidated = false;
       const request = vi.fn((method: string) =>
-        method === "chat.metadata" || method === "sessions.describe"
-          ? Promise.resolve({ commands: [] })
-          : invalidated
-            ? catalog.promise
-            : Promise.resolve({ models: [prepared] }),
+        method === "chat.metadata"
+          ? metadataPending && invalidated
+            ? metadata.promise
+            : Promise.resolve({ commands: [] })
+          : method === "sessions.describe"
+            ? Promise.resolve({})
+            : invalidated
+              ? catalog.promise
+              : Promise.resolve({ models: [prepared] }),
       );
       const state = createMetadataState(request);
       const invalidateSessions = vi
@@ -4506,7 +4512,10 @@ describe("refreshChatMetadata", () => {
         await picker;
 
         expect(state.chatModelCatalog).toEqual([discovered]);
+        metadata.resolve({ commands: [] });
+        await refreshChatMetadata(state);
       } finally {
+        metadata.resolve({ commands: [] });
         retireChatMetadataRequests(state);
       }
     },
