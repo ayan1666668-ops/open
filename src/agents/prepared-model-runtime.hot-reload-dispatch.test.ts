@@ -194,7 +194,7 @@ describe("Gateway plugin reload run admission", () => {
           }),
         ]);
         if (arrival === "during drainage") {
-          admit();
+          void admit();
         } else {
           finishCatalog.resolve();
         }
