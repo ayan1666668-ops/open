@@ -28,7 +28,7 @@ import {
   resolveSandboxFsPathWithMounts,
   type SandboxResolvedFsPath,
 } from "./fs-paths.js";
-import { normalizeContainerPathCore } from "./path-utils.js";
+import { isPathInsideContainerRoot, normalizeContainerPathCore } from "./path-utils.js";
 
 type RunCommandOptions = {
   args?: string[];
@@ -87,19 +87,36 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
   [SANDBOX_FILE_POLICY_PATH](params: { filePath: string; cwd?: string }): string {
     const target = this.resolveResolvedPath(params);
     const identity = resolveIdentityPathViaExistingAncestorSync(target.hostPath);
-    return this.policyPathForHostIdentity(identity, target.containerPath);
+    return this.policyPathForHostIdentity(identity, target);
   }
 
-  private policyPathForHostIdentity(identity: string, requestedPath: string): string {
-    const resolvedMount = this.mounts
-      .map((mount) => ({
-        mount,
-        canonicalHostRoot: resolveIdentityPathViaExistingAncestorSync(mount.hostRoot),
-      }))
-      .toSorted((left, right) => right.canonicalHostRoot.length - left.canonicalHostRoot.length)
-      .find(({ canonicalHostRoot }) => isPathInside(canonicalHostRoot, identity));
+  private policyPathForHostIdentity(identity: string, target: SandboxResolvedFsPath): string {
+    const mountIdentities = this.mounts.map((mount) => ({
+      mount,
+      canonicalHostRoot: resolveIdentityPathViaExistingAncestorSync(mount.hostRoot),
+    }));
+    const requestedMount = mountIdentities
+      .filter(({ mount }) => isPathInsideContainerRoot(mount.containerRoot, target.containerPath))
+      .toSorted((left, right) => right.mount.containerRoot.length - left.mount.containerRoot.length)
+      .find(({ mount, canonicalHostRoot }) => {
+        if (
+          !isPathInside(mount.hostRoot, target.hostPath) ||
+          !isPathInside(canonicalHostRoot, identity)
+        ) {
+          return false;
+        }
+        return !this.hostPathTraversesAlias(mount.hostRoot, target.hostPath);
+      });
+    // Preserve the caller-selected mount when canonicalization did not redirect
+    // the path. Overlapping host mounts are distinct supported policy namespaces;
+    // longest-host-root selection is only appropriate after a real alias hop.
+    const resolvedMount =
+      requestedMount ??
+      mountIdentities
+        .toSorted((left, right) => right.canonicalHostRoot.length - left.canonicalHostRoot.length)
+        .find(({ canonicalHostRoot }) => isPathInside(canonicalHostRoot, identity));
     if (!resolvedMount) {
-      throw new Error(`Sandbox path escapes allowed mounts: ${requestedPath}`);
+      throw new Error(`Sandbox path escapes allowed mounts: ${target.containerPath}`);
     }
     const relativeHost = path.relative(resolvedMount.canonicalHostRoot, identity);
     const relativePosix = relativeHost ? relativeHost.split(path.sep).join(path.posix.sep) : "";
@@ -108,6 +125,26 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
         ? path.posix.join(resolvedMount.mount.containerRoot, relativePosix)
         : resolvedMount.mount.containerRoot,
     );
+  }
+
+  private hostPathTraversesAlias(mountRoot: string, targetPath: string): boolean {
+    const relativePath = path.relative(mountRoot, targetPath);
+    let cursor = mountRoot;
+    for (const segment of relativePath.split(path.sep).filter(Boolean)) {
+      cursor = path.join(cursor, segment);
+      try {
+        if (fs.lstatSync(cursor).isSymbolicLink()) {
+          return true;
+        }
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        if (code === "ENOENT" || code === "ENOTDIR") {
+          return false;
+        }
+        throw error;
+      }
+    }
+    return false;
   }
 
   async resolvePinnedMutationTarget(
@@ -409,7 +446,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     const opened = await this.pathGuard.openReadableFile(target);
     try {
       this.assertExpectedPolicyPath(
-        this.policyPathForHostIdentity(opened.path, target.containerPath),
+        this.policyPathForHostIdentity(opened.path, target),
         expectedPolicyPath,
         target.containerPath,
       );

@@ -85,6 +85,42 @@ describe("sandbox fs bridge boundary validation", () => {
     });
   });
 
+  it.runIf(process.platform !== "win32")(
+    "preserves an explicitly requested mount when host roots overlap",
+    async () => {
+      await withTempDir("openclaw-fs-policy-overlapping-mounts-", async (stateDir) => {
+        const workspaceDir = path.join(stateDir, "workspace");
+        const nestedDir = path.join(workspaceDir, "sub");
+        await fs.mkdir(nestedDir, { recursive: true });
+        await fs.writeFile(path.join(nestedDir, "note.txt"), "allowed");
+        await fs.symlink(nestedDir, path.join(workspaceDir, "alias"), "dir");
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({
+            workspaceDir,
+            agentWorkspaceDir: workspaceDir,
+            docker: {
+              ...createSandbox().docker,
+              binds: [`${nestedDir}:/reference:ro`],
+            },
+          }),
+        });
+
+        await expect(
+          resolveSandboxFilePolicyPath({
+            bridge,
+            filePath: "/workspace/sub/note.txt",
+          }),
+        ).resolves.toBe("/workspace/sub/note.txt");
+        await expect(
+          resolveSandboxFilePolicyPath({
+            bridge,
+            filePath: "/workspace/alias/note.txt",
+          }),
+        ).resolves.toBe("/reference/note.txt");
+      });
+    },
+  );
+
   it.runIf(process.platform === "win32")(
     "maps differently cased host paths back to canonical policy paths",
     async () => {
