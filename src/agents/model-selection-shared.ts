@@ -24,7 +24,6 @@ import { DEFAULT_PROVIDER } from "./defaults.js";
 import { findModelCatalogEntry } from "./model-catalog-lookup.js";
 import { overlayCatalogMetadata } from "./model-catalog-metadata.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
-import { modelTransportRoutesMatch } from "./model-compat-catalog.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
   createConfiguredProviderCatalogModelIdNormalizer,
@@ -973,11 +972,17 @@ function prepareModelPolicy(params: ModelPolicyPreparationParams) {
     primary: params.catalog,
     secondary: configuredCatalog,
   }).map((entry) => applyModelCatalogMetadata({ entry, metadata }));
+  const capturedByKey = indexFirstByKey(params.catalog, modelCatalogEntryKey);
   return {
     visibility,
     policyAliasIndex,
     selectionAliasIndex,
-    configuredCatalog,
+    configuredCatalog: configuredCatalog.map((entry) =>
+      applyModelCatalogMetadata({
+        entry: capturedByKey.get(modelCatalogEntryKey(entry)) ?? entry,
+        metadata,
+      }),
+    ),
     metadata,
     catalog,
   };
@@ -1343,16 +1348,6 @@ export function buildConfiguredModelCatalog(params: {
       );
       const api = model.api ?? accepted?.api ?? provider.api;
       const baseUrl = model.baseUrl ?? accepted?.baseUrl ?? provider.baseUrl;
-      // Session-selectable context windows are catalog facts a config row cannot author.
-      const contextWindowSelection =
-        accepted?.contextWindows && modelTransportRoutesMatch(accepted, { api, baseUrl })
-          ? {
-              contextWindows: accepted.contextWindows,
-              ...(accepted.contextWindowDefault
-                ? { contextWindowDefault: accepted.contextWindowDefault }
-                : {}),
-            }
-          : {};
       const name = normalizeOptionalString(model?.name) || id;
       const contextWindow =
         typeof model?.contextWindow === "number" && model.contextWindow > 0
@@ -1379,7 +1374,6 @@ export function buildConfiguredModelCatalog(params: {
         api,
         ...(baseUrl ? { baseUrl } : {}),
         contextWindow,
-        ...contextWindowSelection,
         contextTokens,
         reasoning,
         ...(typeof model?.reasoning === "boolean" ? { configuredReasoning: model.reasoning } : {}),

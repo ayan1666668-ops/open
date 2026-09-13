@@ -456,15 +456,7 @@ export async function buildPreparedModelCatalogSnapshot(
     logStage("plugin-models-merged", `entries=${models.length}`);
 
     if (configuredModels.length > 0) {
-      // Config cannot author these choices. Keep the current route donor's pair,
-      // not the captured options inherited before provider augmentation.
-      const configuredOverrides = buildConfiguredModelCatalog(configuredCatalogParams).map(
-        ({
-          contextWindows: _contextWindows,
-          contextWindowDefault: _contextWindowDefault,
-          ...entry
-        }) => entry,
-      );
+      const configuredOverrides = buildConfiguredModelCatalog(configuredCatalogParams);
       // Augmentation may mutate borrowed rows. Reindex before configured overlays so
       // route lookup keeps the first current donor, including duplicate keys.
       routeVariants.indexByKey.clear();

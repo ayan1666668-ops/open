@@ -1,9 +1,10 @@
 import type { ModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
-import { dedupeByKey } from "../shared/dedupe-by-key.js";
+import { dedupeByKey, indexFirstByKey } from "../shared/dedupe-by-key.js";
 import type { InlineModelEntry } from "./embedded-agent-runner/model.inline-provider.js";
 import { modelCatalogRowToEntry } from "./model-catalog-entry.js";
+import { overlayCatalogMetadata } from "./model-catalog-metadata.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "./model-catalog.types.js";
 import { modelTransportRoutesMatch } from "./model-compat-catalog.js";
 import { buildConfiguredModelCatalog } from "./model-selection-shared.js";
@@ -43,27 +44,35 @@ function createConfiguredModelCatalogSnapshot(params: {
     donors.push(entry);
     runtimeByIdentity.set(key, donors);
   }
-  const catalog = (replace ? [] : params.templateModelRegistry.getAll()).map(
-    modelCatalogRowToEntry,
-  );
-  for (const entry of catalog) {
-    if (entry.contextWindows) {
-      continue;
-    }
-    const donor = runtimeByIdentity
-      .get(keyOf(entry))
-      ?.find((candidate) => modelTransportRoutesMatch(candidate, entry));
-    if (donor) {
-      entry.contextWindows = donor.contextWindows;
-      entry.contextWindowDefault = donor.contextWindowDefault;
-    }
-  }
+  const catalog = [
+    ...(replace ? [] : params.templateModelRegistry.getAll().map(modelCatalogRowToEntry)),
+    ...runtimeEntries,
+  ];
+  const catalogByIdentity = indexFirstByKey(catalog, keyOf);
   const configuredEntries = dedupeByKey(
     [
       ...buildConfiguredModelCatalog({
         cfg: params.agentFacts.input.config,
-        catalog: [...catalog, ...runtimeEntries],
+        catalog,
         manifestPlugins: params.workspaceFacts.pluginMetadataSnapshot,
+      }).map((entry) => {
+        const key = keyOf(entry);
+        const accepted = catalogByIdentity.get(key);
+        if (!accepted || !modelTransportRoutesMatch(accepted, entry)) {
+          return entry;
+        }
+        const donor = accepted.contextWindows
+          ? accepted
+          : runtimeByIdentity
+              .get(key)
+              ?.find((candidate) => modelTransportRoutesMatch(candidate, accepted));
+        return donor?.contextWindows
+          ? overlayCatalogMetadata(entry, {
+              ...entry,
+              contextWindows: donor.contextWindows,
+              contextWindowDefault: donor.contextWindowDefault,
+            })
+          : entry;
       }),
       ...runtimeEntries,
       ...(replace
