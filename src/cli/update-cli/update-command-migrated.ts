@@ -12,6 +12,7 @@ import {
   updateStateSchemaVersionsMatch,
 } from "../../infra/update-candidate-state.js";
 import type { UpdateRunStep } from "../../infra/update-run-record.js";
+import { resolveUpdateFinalizationTimeoutMs } from "../../infra/update-run-timeouts.js";
 import { runUtf8CommandWithTimeout } from "../../process/exec.js";
 import { defaultRuntime } from "../../runtime.js";
 import type { OpenClawSchemaVersions } from "../../state/openclaw-schema-versions.js";
@@ -38,10 +39,7 @@ import {
 } from "./update-command-service-env.js";
 import { createWindowsTaskAutoStartGuard } from "./update-command-service-maintenance.js";
 
-export type {
-  MigratedUpdateFinalizationInput,
-  MigratedUpdateFinalizationResult,
-} from "./update-command-migrated-types.js";
+export type { MigratedUpdateFinalizationResult } from "./update-command-migrated-types.js";
 
 /** Inspect private state copies without reopening migrated state through the previous runtime. */
 export async function inspectActivatedUpdateState(
@@ -227,7 +225,7 @@ export async function continueMigratedUpdateInFreshProcess(
         beforeInput,
         // This continuation includes bounded plugin steps as well as service
         // verification; the whole-process bound must exceed one step's budget.
-        timeoutMs: Math.max(30 * 60_000, params.updateStepTimeoutMs * 6),
+        timeoutMs: resolveUpdateFinalizationTimeoutMs(params.updateStepTimeoutMs),
         killProcessTree: true,
         requireProcessTreeExtinction: true,
         killGraceMs: 500,

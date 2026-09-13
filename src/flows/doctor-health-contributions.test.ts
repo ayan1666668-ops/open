@@ -2578,7 +2578,7 @@ describe("doctor health contributions", () => {
     );
   });
 
-  it.each(["warning", "refused"] as const)(
+  it.each(["warning", "deferred", "refused"] as const)(
     "prints legacy state migration notices and records only advisories (%s)",
     async (outcome) => {
       const contribution = requireDoctorContribution("doctor:legacy-state");
@@ -2617,7 +2617,7 @@ describe("doctor health contributions", () => {
         "Doctor notices",
       );
       expect(ctx.updateWarnings ?? []).toEqual(
-        outcome === "warning" ? ["Legacy cleanup deferred; run openclaw doctor --fix"] : [],
+        outcome !== "refused" ? ["Legacy cleanup deferred; run openclaw doctor --fix"] : [],
       );
     },
   );
@@ -3818,7 +3818,8 @@ describe("doctor health contributions", () => {
     expect(ctx.cfg).toEqual({ updated: true });
     expect(ctx.cfgForPersistence).toEqual({});
     expect(ctx.runtime.error).toHaveBeenCalledWith("structured warning");
-    expect(ctx.runtime.log).toHaveBeenCalledWith("changed from structured health");
+    expect(ctx.runtime.log).not.toHaveBeenCalledWith("changed from structured health");
+    expect(ctx.configResult.pendingChangePanels).toEqual(["changed from structured health"]);
   });
 
   it.each([

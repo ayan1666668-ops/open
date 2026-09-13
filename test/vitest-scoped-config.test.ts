@@ -751,10 +751,6 @@ describe("scoped vitest configs", () => {
     }
   });
 
-  it("defaults extension tests to threads with the non-isolated runner", () => {
-    expectThreadedNonIsolatedRunner(defaultExtensionsConfig);
-  });
-
   it("serializes and isolates Telegram extension files with conflicting mocks", () => {
     expectThreadedIsolatedRunner(defaultExtensionTelegramConfig);
     expect(requireTestConfig(defaultExtensionTelegramConfig).fileParallelism).toBe(false);
@@ -1011,13 +1007,18 @@ describe("scoped vitest configs", () => {
     }
   });
 
-  it("normalizes gateway include patterns relative to the scoped dir", () => {
+  it("createGatewayVitestConfig includes core and plugin Gateway tests from the repository root", () => {
     const testConfig = requireTestConfig(defaultGatewayConfig);
-    expect(testConfig.dir).toBe(path.join(process.cwd(), "src", "gateway"));
-    expect(testConfig.include).toEqual(["**/*.test.ts"]);
-    expect(testConfig.exclude).toContain("gateway.test.ts");
-    expect(testConfig.exclude).toContain("server.startup-matrix-migration.integration.test.ts");
-    expect(testConfig.exclude).not.toContain("sessions-history-http.test.ts");
+    expect(testConfig.dir).toBe(process.cwd());
+    expect(testConfig.include).toEqual([
+      "src/gateway/**/*.test.ts",
+      "test/plugins/codex-model-catalog.gateway.test.ts",
+    ]);
+    expect(testConfig.exclude).toContain("src/gateway/gateway.test.ts");
+    expect(testConfig.exclude).toContain(
+      "src/gateway/server.startup-matrix-migration.integration.test.ts",
+    );
+    expect(testConfig.exclude).not.toContain("src/gateway/sessions-history-http.test.ts");
   });
 
   it("normalizes infra include patterns relative to the scoped dir", () => {

@@ -8,7 +8,10 @@ import {
 import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
-import { classifyUpdateOutcome } from "../../shared/update-outcome.js";
+import {
+  classifyUpdateOutcome,
+  UPDATE_ACTIVATION_TIMEOUT_REASON,
+} from "../../shared/update-outcome.js";
 import { convergeUpdatePlugins } from "./update-command-convergence.js";
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { retireStandaloneGitWrapper } from "./update-command-git.js";
@@ -110,7 +113,9 @@ export async function finishUpdate(params: FinishUpdateParams): Promise<UpdateRu
   // Finalization owns the complete outcome, including recovery, restart, and completion work.
   const completedResult = (result: UpdateRunResult): UpdateRunResult => ({
     ...result,
-    ...(result.status === "error" && params.rollbackBlockedReason
+    ...(result.status === "error" &&
+    result.reason !== UPDATE_ACTIVATION_TIMEOUT_REASON &&
+    params.rollbackBlockedReason
       ? { reason: params.rollbackBlockedReason }
       : {}),
     durationMs: Math.max(0, Date.now() - params.startedAt),
@@ -128,16 +133,16 @@ export async function finishUpdate(params: FinishUpdateParams): Promise<UpdateRu
   const publishFinalResult = async (failure?: unknown): Promise<UpdateRunResult> => {
     const settled = await resolveSettledUpdateCommandResult(params, pendingResult, failure);
     const result = completedResult(settled.result);
+    result.recovery = settled.settlementFailed ? undefined : result.recovery;
+    const reportDowntime = !settled.settlementFailed && pendingRestartAtMs === undefined;
     if (pendingNotify) {
-      await writeControlPlaneUpdateRestartSentinelBestEffort({
-        meta: params.controlPlaneUpdateSentinelMeta,
-        result,
-        jsonMode: Boolean(params.opts.json),
-      });
+      const meta = params.controlPlaneUpdateSentinelMeta;
+      const jsonMode = Boolean(params.opts.json);
+      await writeControlPlaneUpdateRestartSentinelBestEffort({ meta, result, jsonMode });
     }
     return publishUpdateCommandTerminalResult(params, result, {
       rolledBack: rolledBack && !settled.settlementFailed,
-      downtimeMs: pendingRestartAtMs === undefined ? completedDowntimeMs : undefined,
+      downtimeMs: reportDowntime ? completedDowntimeMs : undefined,
     });
   };
   const deferredTerminal = deferUpdateCommandTerminalResult(params.opts.run, publishFinalResult);
