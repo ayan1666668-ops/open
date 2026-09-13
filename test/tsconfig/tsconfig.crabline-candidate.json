@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.test.json",
+  "files": [
+    "../../extensions/feishu/test/crabline.real-gateway.candidate.e2e.ts"
+  ],
+  "include": [
+    "../../src/**/*.d.ts",
+    "../../ui/**/*.d.ts",
+    "../../extensions/**/*.d.ts",
+    "../../packages/**/*.d.ts"
+  ]
+}
