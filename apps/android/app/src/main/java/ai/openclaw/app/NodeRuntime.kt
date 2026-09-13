@@ -1396,6 +1396,11 @@ class NodeRuntime private constructor(
   // Preserve an explicit user choice across metadata refreshes. Gateway reconnects
   // clear it so the newly connected gateway's canonical main agent wins again.
   @Volatile private var selectedChatAgentId: String? = null
+
+  // Per-gateway chat agent selection kept for the lifetime of this runtime
+  // instance only (#139277): it survives gateway scope changes and reconnects,
+  // while a fresh app start still begins from the gateway default agent.
+  private val chatAgentSelectionByGatewayKey = ConcurrentHashMap<String, String>()
   private val chatSelectionSeq = AtomicLong(0)
   private val _cronStatus = MutableStateFlow(GatewayCronStatus(enabled = false, jobs = 0, nextWakeAtMs = null))
   val cronStatus: StateFlow<GatewayCronStatus> = _cronStatus.asStateFlow()
@@ -5038,9 +5043,9 @@ class NodeRuntime private constructor(
           prefs.clearGatewayCustomHeaders(normalized)
           prefs.clearGatewayTlsFingerprint(normalized)
           prefs.clearNotificationForwardingSessionKey(normalized)
-          // The persisted chat agent selection is gateway-owned; forgetting the
+          // The remembered chat agent selection is gateway-owned; forgetting the
           // gateway must not resurrect it when the same endpoint is re-added.
-          prefs.remove(chatAgentSelectionPrefKey(normalized))
+          chatAgentSelectionByGatewayKey.remove(chatAgentGatewaySelectionKey(normalized))
         }.onFailure { err ->
           runCatching { clientDatabases.cancelGatewayRemoval(normalized) }
           Log.e("OpenClawRuntime", "Failed to retire forgotten gateway authentication", err)
@@ -5368,7 +5373,7 @@ class NodeRuntime private constructor(
       // Agent selection owns every main-session consumer; switching chat alone would
       // leave Talk mode bound to the previous agent.
       selectedChatAgentId = normalizedAgentId
-      prefs.putString(chatAgentSelectionPrefKey(prefs.gatewayRegistry.activeStableId.value), normalizedAgentId)
+      chatAgentSelectionByGatewayKey[chatAgentGatewaySelectionKey(prefs.gatewayRegistry.activeStableId.value)] = normalizedAgentId
       selectMainSessionKey(normalizedAgentId)
       selectedMainSessionKey = mainSessionKey.value
     }
@@ -5389,8 +5394,9 @@ class NodeRuntime private constructor(
     }
   }
 
-  /** Persists the chat agent selection per gateway so Talk survives reconnects (#139277). */
-  private fun chatAgentSelectionPrefKey(stableId: String?): String = "chat.selectedAgentId." + (stableId?.trim()?.ifEmpty { null } ?: "default")
+  /** Remembers the chat agent selection per gateway so Talk survives reconnects (#139277). */
+  private fun chatAgentGatewaySelectionKey(stableId: String?): String =
+    stableId?.trim()?.ifEmpty { null } ?: "default"
 
   private fun chatAgentSessionSelectionOwner(agentId: String): ChatAgentSessionSelectionOwner =
     ChatAgentSessionSelectionOwner(
@@ -6573,13 +6579,17 @@ class NodeRuntime private constructor(
       publishGatewayData(gatewayScope) {
         updateGatewayDefaultAgentId(defaultAgentId)
         _gatewayAgents.value = agents
-        val stableId = prefs.gatewayRegistry.activeStableId.value
-        val persistedAgentId = prefs.getString(chatAgentSelectionPrefKey(stableId))?.trim()?.ifEmpty { null }
+        val selectionKey = chatAgentGatewaySelectionKey(prefs.gatewayRegistry.activeStableId.value)
+        val rememberedAgentId = chatAgentSelectionByGatewayKey[selectionKey]?.trim()?.ifEmpty { null }
         val selectedAgentId =
-          (selectedChatAgentId ?: persistedAgentId)?.takeIf { id -> agents.any { it.id == id } }
+          (selectedChatAgentId ?: rememberedAgentId)?.takeIf { id -> agents.any { it.id == id } }
         selectedChatAgentId = selectedAgentId
-        if (persistedAgentId != selectedAgentId) {
-          prefs.putString(chatAgentSelectionPrefKey(stableId), selectedAgentId ?: "")
+        if (rememberedAgentId != selectedAgentId) {
+          if (selectedAgentId == null) {
+            chatAgentSelectionByGatewayKey.remove(selectionKey)
+          } else {
+            chatAgentSelectionByGatewayKey[selectionKey] = selectedAgentId
+          }
         }
         val previousSessionKey = mainSessionKey.value
         syncMainSessionKey(selectedAgentId ?: resolveAgentIdFromMainSessionKey(mainKey) ?: gatewayDefaultAgentId.value)
