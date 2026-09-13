@@ -143,7 +143,7 @@ function captureGenerationFacts(deps: ChatMetadataRuntimeDeps): PreparedGenerati
       if (fullModelCatalog && !fullCatalogAuth) {
         throw new Error("prepared full model catalog omitted its auth generation");
       }
-      const modelCatalog = fullModelCatalog ?? owner.modelCatalog;
+      const catalog = fullModelCatalog ?? owner.modelCatalog;
       return {
         agentId,
         owner,
@@ -154,12 +154,9 @@ function captureGenerationFacts(deps: ChatMetadataRuntimeDeps): PreparedGenerati
           },
         authModes: fullCatalogAuth?.authModes ?? owner.authModes,
         authStoreRevision: `${deps.getAuthStoreRevision(owner.agentDir)}:${deps.getAuthStoreRevision(owner.inheritedAuthDir)}`,
-        modelCatalog,
+        modelCatalog: catalog,
         // Catalog inventory is immutable; attempt progress and failure are live getters.
-        catalogStatusKey: JSON.stringify([
-          modelCatalog.pendingProviders,
-          modelCatalog.refreshFailed,
-        ]),
+        catalogStatusKey: JSON.stringify([catalog.pendingProviders, catalog.refreshFailed]),
         skillsVersion: deps.getSkillsVersion(workspaceDir),
       };
     });
@@ -195,19 +192,6 @@ function generationFactsMatch(
   });
 }
 
-async function defaultBuildCommands(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-}): Promise<{ commands?: unknown[] }> {
-  const { buildCommandsListResult } = await import("./commands-list-result.js");
-  return buildCommandsListResult({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    includeArgs: true,
-    scope: "text",
-  });
-}
-
 export function createGatewayChatMetadataRuntime(params: {
   getConfig: () => OpenClawConfig;
   getContext: () => GatewayRequestContext;
@@ -236,7 +220,10 @@ export function createGatewayChatMetadataRuntime(params: {
     getAuthStoreRevision: getRuntimeAuthProfileStoreSnapshotRevision,
     getSkillsVersion: getSkillsSnapshotVersion,
     getPluginRegistryVersion: getActivePluginRegistryVersion,
-    buildCommands: defaultBuildCommands,
+    buildCommands: async ({ cfg, agentId }) => {
+      const { buildCommandsListResult } = await import("./commands-list-result.js");
+      return buildCommandsListResult({ cfg, agentId, includeArgs: true, scope: "text" });
+    },
     buildProjection: prepareChatMetadataModelProjection,
     ...params.deps,
   };
