@@ -3,7 +3,6 @@ import { classifyGatewayStorageFailure } from "../../infra/sqlite-error-diagnost
 import { formatUserFacingAssistantErrorText } from "../embedded-agent-helpers/error-text.js";
 import { makeAssistantMessageFixture } from "../test-helpers/assistant-message-fixtures.js";
 import { renderAssistantRequestFailureCopy } from "./assistant-request-failure-copy.js";
-import { buildAssistantRequestFailureContract } from "./assistant-request-failure-copy.js";
 
 describe("renderAssistantRequestFailureCopy", () => {
   const target = { provider: "openai", model: "test-model" };
@@ -132,20 +131,7 @@ describe("renderAssistantRequestFailureCopy", () => {
     );
   });
 
-  it("turns HTTP 502 into an explicit request-preserving recovery contract", () => {
-    expect(
-      buildAssistantRequestFailureContract({
-        ...target,
-        reason: "server_error",
-        status: 502,
-      }),
-    ).toEqual({
-      classification: "provider.server_error",
-      summary: "openai/test-model request failed (provider internal error, HTTP 502).",
-      requestState: "preserved",
-      replayState: "not_replayed",
-      recovery: "OpenClaw did not replay it automatically. Retry the preserved request.",
-    });
+  it("turns HTTP 502 into explicit request-preserving recovery copy", () => {
     expect(
       renderAssistantRequestFailureCopy({
         ...target,

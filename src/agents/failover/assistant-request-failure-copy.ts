@@ -10,7 +10,7 @@ type AssistantRequestFailureCopyFacts = {
   code?: string;
 };
 
-export type AssistantRequestFailureContract = {
+type AssistantRequestFailureContract = {
   classification: string;
   summary: string;
   requestState: "preserved";
@@ -63,7 +63,7 @@ function renderFailureContract(contract: AssistantRequestFailureContract): strin
 }
 
 /** Build a redacted, actionable failure contract from trusted classified facts. */
-export function buildAssistantRequestFailureContract(
+function buildAssistantRequestFailureContract(
   facts: AssistantRequestFailureCopyFacts,
 ): AssistantRequestFailureContract | undefined {
   if (facts.storageFailure) {
