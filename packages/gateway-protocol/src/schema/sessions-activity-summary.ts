@@ -4,6 +4,8 @@ import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
 
 export const SessionActivitySummarySchema = closedObject({
+  /** Caller-specific participation permission; operator.write is required separately. */
+  canEnsure: Type.Optional(Type.Boolean()),
   text: Type.Optional(Type.String({ maxLength: 900 })),
   updatedAt: Type.Optional(Type.Integer({ minimum: 0 })),
   state: Type.Union([

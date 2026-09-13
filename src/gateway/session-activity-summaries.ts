@@ -23,6 +23,7 @@ import {
   isSubagentSessionKey,
   parseAgentSessionKey,
 } from "../routing/session-key.js";
+import { isSessionLifecycleMutationActive } from "../sessions/session-lifecycle-admission.js";
 import {
   onSessionIdentityMutation,
   type SessionLifecycleEvent,
@@ -211,6 +212,8 @@ export function createSessionActivitySummaries(deps: {
       entry.initializationPending ||
       entry.sessionId !== state.sessionId ||
       entry.lifecycleRevision !== state.lifecycleRevision ||
+      // Deletion and reset retain exact-row snapshots across awaited preparation.
+      isSessionLifecycleMutationActive(state.storePath, [state.key, state.sessionId]) ||
       modelRef(state) !== expectedModel ||
       state.controller?.signal.aborted
     ) {

@@ -26,6 +26,15 @@ function summaryRowKey(row: Pick<GatewaySessionRow, "key" | "agentId">): string 
   return JSON.stringify([row.agentId ?? parseAgentSessionKey(row.key)?.agentId, row.key]);
 }
 
+function summaryRevision(row: GatewaySessionRow): string {
+  return JSON.stringify([
+    row.sessionId,
+    row.updatedAt,
+    row.lastActivityAt,
+    row.activitySummary?.updatedAt,
+  ]);
+}
+
 /** The Activity query owns its page; selecting a person must not replace the sidebar roster. */
 export class SessionActivityController implements ReactiveController {
   result?: SessionsListResult;
@@ -98,12 +107,25 @@ export class SessionActivityController implements ReactiveController {
   }
 
   retrySummary(row: GatewaySessionRow): void {
-    if (!this.result?.sessions.includes(row)) {
+    if (
+      !this.canEnsureSummaries ||
+      row.activitySummary?.canEnsure !== true ||
+      !this.result?.sessions.includes(row)
+    ) {
       return;
     }
     this.summaryAttempts.delete(summaryRowKey(row));
     this.summaryRetries.add(summaryRowKey(row));
     void this.ensureSummaries();
+  }
+
+  private needsSummary(row: GatewaySessionRow): boolean {
+    const key = summaryRowKey(row);
+    return (
+      row.activitySummary?.canEnsure === true &&
+      (this.summaryRetries.has(key) || row.activitySummary.state === "stale") &&
+      this.summaryAttempts.get(key) !== summaryRevision(row)
+    );
   }
 
   private async ensureSummaries(): Promise<void> {
@@ -119,35 +141,18 @@ export class SessionActivityController implements ReactiveController {
     ) {
       return;
     }
-    const visible = new Set(this.result.sessions.map(summaryRowKey));
-    for (const key of this.summaryAttempts.keys()) {
+    const visible = new Set(
+      this.result.sessions
+        .filter((row) => row.activitySummary?.canEnsure === true)
+        .map(summaryRowKey),
+    );
+    for (const key of new Set([...this.summaryAttempts.keys(), ...this.summaryRetries])) {
       if (!visible.has(key)) {
         this.summaryAttempts.delete(key);
         this.summaryRetries.delete(key);
       }
     }
-    const candidates = this.result.sessions.filter((row) => {
-      const key = summaryRowKey(row);
-      if (
-        !this.summaryRetries.has(key) &&
-        row.activitySummary &&
-        row.activitySummary.state !== "stale"
-      ) {
-        return false;
-      }
-      const revision = JSON.stringify([
-        row.sessionId,
-        row.updatedAt,
-        row.lastActivityAt,
-        row.activitySummary?.updatedAt,
-      ]);
-      if (this.summaryAttempts.get(key) === revision) {
-        return false;
-      }
-      this.summaryAttempts.set(key, revision);
-      this.summaryRetries.delete(key);
-      return true;
-    });
+    const candidates = this.result.sessions.filter((row) => this.needsSummary(row));
     if (candidates.length === 0) {
       return;
     }
@@ -161,7 +166,25 @@ export class SessionActivityController implements ReactiveController {
       !pending.signal.aborted;
     try {
       for (let offset = 0; offset < candidates.length && current(); offset += SUMMARY_BATCH_SIZE) {
-        const rows = candidates.slice(offset, offset + SUMMARY_BATCH_SIZE);
+        const latestRows = new Map<string, GatewaySessionRow>(
+          this.result.sessions.map((row) => [summaryRowKey(row), row]),
+        );
+        const rows: GatewaySessionRow[] = candidates
+          .slice(offset, offset + SUMMARY_BATCH_SIZE)
+          .flatMap((candidate) => {
+            const row = latestRows.get(summaryRowKey(candidate));
+            return row && row.sessionId === candidate.sessionId && this.needsSummary(row)
+              ? [row]
+              : [];
+          });
+        if (rows.length === 0) {
+          continue;
+        }
+        for (const row of rows) {
+          const key = summaryRowKey(row);
+          this.summaryAttempts.set(key, summaryRevision(row));
+          this.summaryRetries.delete(key);
+        }
         try {
           const result = await client.request<{
             sessions: Array<Pick<GatewaySessionRow, "key" | "agentId" | "activitySummary">>;

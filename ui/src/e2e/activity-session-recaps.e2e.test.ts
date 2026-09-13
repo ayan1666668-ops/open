@@ -18,7 +18,7 @@ const session = (state: "current" | "stale" | "updating" | "unavailable", text =
   agentId: "main",
   sessionId: "activity-recap-fixture",
   updatedAt: Date.now() - 60_000,
-  activitySummary: { state, text, updatedAt: Date.now() - 120_000 },
+  activitySummary: { state, canEnsure: true, text, updatedAt: Date.now() - 120_000 },
 });
 
 suite.define(() => {

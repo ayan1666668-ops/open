@@ -12754,21 +12754,25 @@ public struct SendParams: Codable, Sendable {
 }
 
 public struct SessionActivitySummary: Codable, Sendable {
+    public let canensure: Bool?
     public let text: String?
     public let updatedat: Int?
     public let state: AnyCodable
 
     public init(
+        canensure: Bool? = nil,
         text: String? = nil,
         updatedat: Int? = nil,
         state: AnyCodable)
     {
+        self.canensure = canensure
         self.text = text
         self.updatedat = updatedat
         self.state = state
     }
 
     private enum CodingKeys: String, CodingKey {
+        case canensure = "canEnsure"
         case text
         case updatedat = "updatedAt"
         case state

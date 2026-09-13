@@ -39,7 +39,9 @@ export function renderSessionActivitySummary(
         ? html`<div class="activity-feed__recap-feedback">
             <span>${feedback}</span>
             ${
-              onRetry && (state === "unavailable" || state === "stale")
+              onRetry &&
+              summary?.canEnsure === true &&
+              (state === "unavailable" || state === "stale")
                 ? html`<button class="activity-feed__recap-retry" @click=${() => onRetry(row)}>
                     ${t("activityFeed.recapRetry")}
                   </button>`

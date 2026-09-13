@@ -1,6 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { backup } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
+import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
   loadSessionEntryReadOnly,
   appendTranscriptEvent,
@@ -19,6 +21,7 @@ import { normalizePersistedSessionEntryShape } from "../config/sessions/store-en
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { registerAgentRunContext, clearAgentRunContext } from "../infra/agent-run-registry.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
+import { runExclusiveSessionLifecycleMutation } from "../sessions/session-lifecycle-admission.js";
 import type { DB } from "../state/openclaw-agent-db.generated.js";
 import {
   openOpenClawAgentDatabase,
@@ -37,6 +40,24 @@ import {
 import { projectSessionActivitySummary } from "./session-activity-summary-state.js";
 import { listSessionFixture } from "./session-list.test-support.js";
 import type { defaultCompleteModel } from "./session-observer-model.js";
+
+const archiveMaterializationHook = vi.hoisted(() => ({
+  beforeMaterialize: undefined as (() => Promise<void>) | undefined,
+}));
+
+vi.mock("../config/sessions/session-accessor.sqlite-archive.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../config/sessions/session-accessor.sqlite-archive.js")>();
+  return {
+    ...actual,
+    materializeSessionStateDeletePlans: async (
+      ...args: Parameters<typeof actual.materializeSessionStateDeletePlans>
+    ) => {
+      await archiveMaterializationHook.beforeMaterialize?.();
+      return await actual.materializeSessionStateDeletePlans(...args);
+    },
+  };
+});
 
 const target = { key: "agent:main:recap", agentId: "main" };
 const scope = { sessionKey: target.key, agentId: target.agentId, sessionId: "recap-session" };
@@ -118,6 +139,7 @@ describe("Activity recap lifecycle with the canonical session store", () => {
     });
   });
   afterEach(async () => {
+    archiveMaterializationHook.beforeMaterialize = undefined;
     clearAgentRunContext("recap-context-run");
     await service.dispose();
     await testState.cleanup();
@@ -223,6 +245,53 @@ describe("Activity recap lifecycle with the canonical session store", () => {
       expect(read()?.activitySummary).toBeUndefined();
     },
   );
+
+  it("keeps a delayed recap from invalidating deletion while its archive is prepared", async () => {
+    await messages(2);
+    service.ensure(target);
+    await vi.waitFor(() => expect(view()?.state).toBe("current"));
+    await messages(2, 2);
+    const completion = createDeferred<ReturnType<typeof result>>();
+    complete.mockImplementationOnce(() => completion.promise);
+    service.ensure(target);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
+
+    const materializationStarted = createDeferred();
+    const materializationReleased = createDeferred();
+    archiveMaterializationHook.beforeMaterialize = async () => {
+      materializationStarted.resolve();
+      await materializationReleased.promise;
+    };
+    const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: target.agentId });
+    const capturedEntry = read();
+    const deletion = runExclusiveSessionLifecycleMutation({
+      scope: storePath,
+      identities: [target.key, scope.sessionId],
+      run: () =>
+        deleteSessionEntryLifecycle({
+          agentId: target.agentId,
+          archiveTranscript: true,
+          expectedEntry: capturedEntry,
+          storePath,
+          target: { canonicalKey: target.key, storeKeys: [target.key] },
+        }),
+    });
+    let entryDuringDeletion: ReturnType<typeof read>;
+    try {
+      await materializationStarted.promise;
+      completion.resolve(result("This later recap must not interrupt deletion."));
+      await vi.waitFor(() => expect(view()?.state).not.toBe("updating"));
+      entryDuringDeletion = read();
+    } finally {
+      completion.resolve(result("This later recap must not interrupt deletion."));
+      materializationReleased.resolve();
+      await deletion;
+    }
+    expect(entryDuringDeletion).toEqual(capturedEntry);
+    await expect(deletion).resolves.toMatchObject({ deleted: true });
+    await service.dispose();
+    expect(read()).toBeUndefined();
+  });
 
   it("invalidates cached projection after an offline branch change without changing activity ordering", async () => {
     await messages(3);
@@ -372,7 +441,7 @@ describe("Activity recap lifecycle with the canonical session store", () => {
     expect(prepare).not.toHaveBeenCalled();
     await invoke({ sessions: [target] });
     expect(respond).toHaveBeenLastCalledWith(true, {
-      sessions: [{ ...target, activitySummary: { state: "updating" } }],
+      sessions: [{ ...target, activitySummary: { state: "updating", canEnsure: true } }],
     });
     await vi.waitFor(() => expect(view()?.state).toBe("current"));
     expect(complete).toHaveBeenCalledTimes(1);
