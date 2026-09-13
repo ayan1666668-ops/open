@@ -379,11 +379,12 @@ describe("DebugPage", () => {
       const context = createDebugApplicationContext(request);
       const source = createApplicationGateway(context.gateway.snapshot);
       Object.assign(source.gateway, { eventLog: [], subscribeEventLog: () => () => undefined });
-      const listeners = new Set<() => void>();
+      type SelectionListener = Parameters<ApplicationContext["agentSelection"]["subscribe"]>[0];
+      const listeners = new Set<SelectionListener>();
       const selection = {
         ...context.agentSelection,
         state: { ...context.agentSelection.state },
-        subscribe: (listener: () => void) => {
+        subscribe: (listener: SelectionListener) => {
           listeners.add(listener);
           return () => {
             listeners.delete(listener);
@@ -418,7 +419,7 @@ describe("DebugPage", () => {
         } else {
           selection.state.selectedId = "worker";
           for (const listener of listeners) {
-            listener();
+            listener(selection.state);
           }
         }
         await vi.advanceTimersByTimeAsync(0);
