@@ -57,6 +57,7 @@ const telemetryState = vi.hoisted(() => {
 });
 
 const traceProviderCtor = vi.hoisted(() => vi.fn());
+const traceProviderGetTracer = vi.hoisted(() => vi.fn(() => telemetryState.tracer));
 const traceProviderShutdown = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const meterProviderCtor = vi.hoisted(() => vi.fn());
 const meterProviderShutdown = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -213,7 +214,7 @@ vi.mock("@opentelemetry/sdk-trace-base", () => ({
       traceProviderCtor(options);
     }
 
-    getTracer = () => telemetryState.tracer;
+    getTracer = traceProviderGetTracer;
     shutdown = traceProviderShutdown;
   },
   BatchSpanProcessor: function BatchSpanProcessor(exporter?: unknown, options?: unknown) {
@@ -888,6 +889,7 @@ describe("diagnostics-otel service", () => {
     telemetryState.meter.createCounter.mockClear();
     telemetryState.meter.createHistogram.mockClear();
     traceProviderCtor.mockClear();
+    traceProviderGetTracer.mockClear();
     traceProviderShutdown.mockClear();
     meterProviderCtor.mockClear();
     meterProviderShutdown.mockClear();
