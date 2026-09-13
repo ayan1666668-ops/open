@@ -89,9 +89,9 @@ describe("session resolution metadata", () => {
               expect.objectContaining({ ok: true, key, agentId: "main" }),
               undefined,
             );
-            expect(
-              parse.mock.calls.some(([json]) => json.includes("retained-resolve-task:")),
-            ).toBe(false);
+            expect(parse.mock.calls.some(([json]) => json.includes("retained-resolve-task:"))).toBe(
+              false,
+            );
           } finally {
             parse.mockRestore();
             clearSubagentRunsReadCacheForTest();
