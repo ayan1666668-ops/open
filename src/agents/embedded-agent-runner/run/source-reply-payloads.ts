@@ -25,7 +25,6 @@ type EmbeddedRunReplyItem = {
   interactive?: ReplyPayload["interactive"];
   channelData?: Record<string, unknown>;
   sourceReplyMirror?: { idempotencyKey?: string; transcriptOwner?: true };
-  preserveTextWhitespace?: boolean;
 };
 
 /** Builds transcript mirrors and completion evidence for message-tool source replies. */
@@ -39,7 +38,6 @@ export function buildSourceReplyPayloadState(params: {
   replyItems: EmbeddedRunReplyItem[];
   hasSourceReplyPayload: boolean;
   deliveredSourceReplyViaMessageTool: boolean;
-  explicitFinalSourceReply: boolean | undefined;
   completedSourceReplyViaMessageTool: boolean;
 } {
   const sourceReplyPayloads = params.payloads ?? [];
@@ -93,7 +91,6 @@ export function buildSourceReplyPayloadState(params: {
     replyItems,
     hasSourceReplyPayload,
     deliveredSourceReplyViaMessageTool,
-    explicitFinalSourceReply,
     completedSourceReplyViaMessageTool:
       explicitFinalSourceReply ?? (hasSourceReplyPayload || deliveredSourceReplyViaMessageTool),
   };

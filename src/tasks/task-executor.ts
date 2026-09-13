@@ -1,4 +1,3 @@
-// Executes task records through configured runtimes and updates registry state.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type {
@@ -29,11 +28,11 @@ import {
   isProvisionalSubagentKillTask,
   isTaskFlowCancellationPending,
 } from "./task-cancellation-state.js";
-import {
-  hasStoredDelegateAttachmentState,
-  isContinuationDelegateFlow,
-  scrubStoredDelegateAttachmentState,
-} from "./task-flow-continuation-state.js";
+// Executes task records through configured runtimes and updates registry state.
+import type {
+  RunTaskInFlowParams,
+  RunTaskInFlowResult,
+} from "./task-flow-managed-run-task.types.js";
 import { getTaskFlowByIdForOwner } from "./task-flow-owner-access.js";
 import { isTerminalTaskFlow, type TaskFlowRecord } from "./task-flow-registry.types.js";
 import {
@@ -43,11 +42,11 @@ import {
   requestFlowCancel,
   updateFlowRecordByIdExpectedRevision,
 } from "./task-flow-runtime-internal.js";
+import { withTaskRegistryMutation } from "./task-registry-state.js";
 import { summarizeTaskRecords } from "./task-registry.summary.js";
 import type {
   TaskDeliveryState,
   TaskDeliveryStatus,
-  TaskNotifyPolicy,
   TaskRecord,
   TaskRegistrySummary,
   TaskRuntime,
@@ -142,25 +141,6 @@ export function findTaskByRunId(runId: string): TaskRecord | undefined {
   return findTaskByRunIdInRegistry(runId);
 }
 
-type RunTaskInFlowParams = {
-  flowId: string;
-  runtime: TaskRuntime;
-  sourceId?: string;
-  childSessionKey?: string;
-  parentTaskId?: string;
-  agentId?: string;
-  runId?: string;
-  label?: string;
-  task: string;
-  notifyPolicy?: TaskNotifyPolicy;
-  deliveryStatus?: TaskDeliveryStatus;
-  preferMetadata?: boolean;
-  status?: "queued" | "running";
-  startedAt?: number;
-  lastEventAt?: number;
-  progressSummary?: string | null;
-};
-
 export function startTaskRunByRunIdCore(params: {
   runId: string;
   runtime?: TaskRuntime;
@@ -227,14 +207,6 @@ type CancelFlowResult = {
   tasks?: TaskRecord[];
 };
 
-type RunTaskInFlowResult = {
-  found: boolean;
-  created: boolean;
-  reason?: string;
-  flow?: TaskFlowRecord;
-  task?: TaskRecord;
-};
-
 function markFlowCancelRequested(flow: TaskFlowRecord): TaskFlowRecord | FlowUpdateFailure {
   if (flow.cancelRequestedAt != null) {
     return flow;
@@ -286,30 +258,6 @@ function cancelManagedFlowAfterChildrenSettle(
       waitJson: null,
       endedAt,
       updatedAt: endedAt,
-    },
-  });
-  if (result.applied) {
-    return result.flow;
-  }
-  return {
-    reason: describeFlowUpdateFailure(result.reason),
-    flow: result.current ?? getTaskFlowById(flow.flowId),
-  };
-}
-
-function scrubContinuationFlowBeforeCancellation(
-  flow: TaskFlowRecord,
-): TaskFlowRecord | FlowUpdateFailure {
-  if (!isContinuationDelegateFlow(flow) || !hasStoredDelegateAttachmentState(flow.stateJson)) {
-    return flow;
-  }
-  // Cancellation can enter through CLI, plugin, or owner-scoped paths. Scrub
-  // at their shared boundary so no terminal or cancel-pending row keeps input.
-  const result = updateFlowRecordByIdExpectedRevision({
-    flowId: flow.flowId,
-    expectedRevision: flow.revision,
-    patch: {
-      stateJson: scrubStoredDelegateAttachmentState(flow.stateJson),
     },
   });
   if (result.applied) {
@@ -478,42 +426,55 @@ function runTaskInFlow(params: RunTaskInFlowParams): RunTaskInFlowResult {
 export function runTaskInFlowForOwner(
   params: RunTaskInFlowParams & { callerOwnerKey: string },
 ): RunTaskInFlowResult {
-  const flow = getTaskFlowByIdForOwner({
-    flowId: params.flowId,
-    callerOwnerKey: params.callerOwnerKey,
-  });
-  if (!flow) {
-    return {
-      found: false,
-      created: false,
-      reason: "Flow not found.",
-    };
-  }
-  return runTaskInFlow({
-    flowId: flow.flowId,
-    runtime: params.runtime,
-    sourceId: params.sourceId,
-    childSessionKey: params.childSessionKey,
-    parentTaskId: params.parentTaskId,
-    agentId: params.agentId,
-    runId: params.runId,
-    label: params.label,
-    task: params.task,
-    preferMetadata: params.preferMetadata,
-    notifyPolicy: params.notifyPolicy,
-    deliveryStatus: params.deliveryStatus,
-    status: params.status,
-    startedAt: params.startedAt,
-    lastEventAt: params.lastEventAt,
-    progressSummary: params.progressSummary,
-  });
+  return withTaskRegistryMutation(
+    () => {
+      const flow = getTaskFlowByIdForOwner({
+        flowId: params.flowId,
+        callerOwnerKey: params.callerOwnerKey,
+      });
+      if (!flow) {
+        return {
+          found: false,
+          created: false,
+          reason: "Flow not found.",
+        };
+      }
+      return runTaskInFlow({
+        flowId: flow.flowId,
+        runtime: params.runtime,
+        sourceId: params.sourceId,
+        childSessionKey: params.childSessionKey,
+        parentTaskId: params.parentTaskId,
+        agentId: params.agentId,
+        runId: params.runId,
+        label: params.label,
+        task: params.task,
+        preferMetadata: params.preferMetadata,
+        notifyPolicy: params.notifyPolicy,
+        deliveryStatus: params.deliveryStatus,
+        status: params.status,
+        startedAt: params.startedAt,
+        lastEventAt: params.lastEventAt,
+        progressSummary: params.progressSummary,
+      });
+    },
+    () => {
+      const flow = getTaskFlowByIdForOwner(params);
+      return {
+        found: Boolean(flow),
+        created: false,
+        reason: flow ? "Task persistence failed." : "Flow not found.",
+        ...(flow ? { flow } : {}),
+      };
+    },
+  );
 }
 
 export async function cancelFlowById(params: {
   cfg: OpenClawConfig;
   flowId: string;
 }): Promise<CancelFlowResult> {
-  let flow = getTaskFlowById(params.flowId);
+  const flow = getTaskFlowById(params.flowId);
   if (!flow) {
     return {
       found: false,
@@ -521,17 +482,6 @@ export async function cancelFlowById(params: {
       reason: "Flow not found.",
     };
   }
-  const scrubbedFlow = scrubContinuationFlowBeforeCancellation(flow);
-  if ("reason" in scrubbedFlow) {
-    return {
-      found: true,
-      cancelled: false,
-      reason: scrubbedFlow.reason,
-      flow: scrubbedFlow.flow,
-      tasks: listTasksForFlowId(flow.flowId),
-    };
-  }
-  flow = scrubbedFlow;
   if (isTerminalTaskFlow(flow)) {
     const provisionalTasks = listTasksForFlowId(flow.flowId).filter(isProvisionalSubagentKillTask);
     if (flow.status === "cancelled" && provisionalTasks.length > 0) {

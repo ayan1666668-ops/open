@@ -51,7 +51,7 @@ import {
   registerIdempotentCleanup,
   waitForOutputAfter,
 } from "./tui-pty-local-test-support.js";
-import { startPty, waitFor, type PtyRun } from "./tui-pty-test-support.js";
+import { startRuntimePty, waitFor, type PtyRun } from "./tui-pty-test-support.js";
 
 type MockModelServer = {
   baseUrl: string;
@@ -633,12 +633,16 @@ async function startLocalModeTui(
       writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8"),
     ]);
 
-    run = startPty(process.execPath, buildTuiProcessArgs(opts.cliArgs ?? ["tui", "--local"]), {
-      cwd: process.cwd(),
-      env,
-      exitTimeoutMs: LOCAL_EXIT_TIMEOUT_MS,
-      outputTimeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
-    });
+    run = await startRuntimePty(
+      process.execPath,
+      buildTuiProcessArgs(opts.cliArgs ?? ["tui", "--local"]),
+      {
+        cwd: process.cwd(),
+        env,
+        exitTimeoutMs: LOCAL_EXIT_TIMEOUT_MS,
+        outputTimeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
+      },
+    );
   } catch (error) {
     let cleanupFailure: unknown;
     try {
@@ -800,7 +804,7 @@ async function startSharedGatewayFixture(): Promise<SharedGatewayFixture> {
       key: initialSessionKey,
       agentId: initialScenario.agentId,
     });
-    run = startPty(
+    run = await startRuntimePty(
       process.execPath,
       buildTuiProcessArgs([
         "tui",
@@ -993,7 +997,7 @@ async function startIsolatedGatewayPty(params: {
     if (sessionKey) {
       cliArgs.push("--session", sessionKey);
     }
-    run = startPty(process.execPath, buildTuiProcessArgs(cliArgs), {
+    run = await startRuntimePty(process.execPath, buildTuiProcessArgs(cliArgs), {
       cwd: process.cwd(),
       env: {
         ...gateway.env,
@@ -1203,7 +1207,7 @@ describe("TUI PTY real backends", () => {
   it(
     "rejects Gateway options on a local TUI alias through a real PTY",
     async ({ onTestFinished }) => {
-      const run = startPty(
+      const run = await startRuntimePty(
         process.execPath,
         buildTuiProcessArgs(["chat", "--url", "ws://127.0.0.1:1"]),
         {
@@ -1244,11 +1248,13 @@ describe("TUI PTY real backends", () => {
         );
         const databasePath = resolveOpenClawAgentSqlitePath({ agentId, env: fixture.env });
         const selectedSession = { agentId, sessionKey, storePath: databasePath };
-        let refreshOwner: ReturnType<typeof acquireSessionCostUsageRefreshLock> | undefined;
+        let refreshOwner:
+          | Awaited<ReturnType<typeof acquireSessionCostUsageRefreshLock>>
+          | undefined;
         // Repeated teardown must not reopen the removed root through release().
         cleanupState.run = createIdempotentCleanup(() =>
           runQaGatewayFixture(
-            async () => withEnv(fixture.env, () => refreshOwner?.release()),
+            async () => withEnvAsync(fixture.env, async () => await refreshOwner?.release()),
             () => fixture.run.dispose(),
             () =>
               withEnvAsync(fixture.env, () =>
@@ -1260,14 +1266,14 @@ describe("TUI PTY real backends", () => {
         await runQaGatewayFixture(
           async () => {
             await fixture.run.waitForOutput("local ready", LOCAL_STARTUP_TIMEOUT_MS);
-            withEnv(fixture.env, () => {
+            await withEnvAsync(fixture.env, async () => {
               // An empty existing row still makes the direct Session reader wait.
               expect(loadSessionEntry(selectedSession)).toBeUndefined();
               if (cacheState === "refreshing") {
-                refreshOwner = acquireSessionCostUsageRefreshLock(agentId, databasePath);
+                refreshOwner = await acquireSessionCostUsageRefreshLock(agentId, databasePath);
                 expect(refreshOwner.acquired).toBe(true);
               }
-              expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(
+              expect(await isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(
                 cacheState === "refreshing",
               );
             });
@@ -1297,9 +1303,9 @@ describe("TUI PTY real backends", () => {
             ].join(" ");
             expect(text).toContain(expected);
             expect(fixture.mockModel.requests()).toHaveLength(0);
-            withEnv(fixture.env, () => {
+            await withEnvAsync(fixture.env, async () => {
               expect(loadSessionEntry(selectedSession)).toBeUndefined();
-              expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(
+              expect(await isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(
                 cacheState === "refreshing",
               );
             });
@@ -2037,46 +2043,6 @@ export default {
   }
 
   registerValidationLoopTest("local");
-
-  it(
-    "recovers the first printable after an ordinary local Escape abort",
-    async ({ onTestFinished }) => {
-      const fixture = await startLocalModeTui(onTestFinished, {
-        holdFirstResponse: true,
-        followupReplyText: "LOCAL_ESCAPE_FOLLOWUP",
-      });
-      try {
-        await fixture.run.waitForOutput("local ready", LOCAL_STARTUP_TIMEOUT_MS);
-        await fixture.run.write("slow local turn\r");
-        await waitFor({
-          timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
-          read: () => (fixture.mockModel.requests().length === 1 ? true : null),
-          onTimeout: () => new Error("local Escape target did not reach the mock provider"),
-        });
-
-        await fixture.run.write("\u001b", { delay: false });
-        await fixture.run.waitForOutput("run aborted", LOCAL_OUTPUT_TIMEOUT_MS);
-        fixture.mockModel.releaseFirstResponse("gpt-5.5");
-
-        await fixture.run.write("\u001bp", { delay: false });
-        await fixture.run.write("rompt after ordinary local abort\r");
-        await waitFor({
-          timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,
-          read: () => (fixture.mockModel.requests().length === 2 ? true : null),
-          onTimeout: () => new Error("post-Escape prompt did not reach the mock provider"),
-        });
-        expect(JSON.stringify(fixture.mockModel.requests()[1]?.body)).toContain(
-          "prompt after ordinary local abort",
-        );
-        await fixture.run.waitForOutput("LOCAL_ESCAPE_FOLLOWUP", LOCAL_OUTPUT_TIMEOUT_MS);
-        await fixture.run.write("/exit\r", { delay: false });
-        expect((await fixture.run.waitForExit()).exitCode).toBe(0);
-      } finally {
-        await fixture.cleanup();
-      }
-    },
-    LOCAL_TEST_TIMEOUT_MS,
-  );
 
   // Register every Gateway case inside the nested suite so targeted runs retain
   // the fixture's separate startup timeout.

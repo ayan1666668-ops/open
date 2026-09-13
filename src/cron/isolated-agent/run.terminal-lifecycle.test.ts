@@ -291,11 +291,9 @@ describe("runCronIsolatedAgentTurn terminal lifecycle", () => {
         onBlockReply: undefined,
         onBlockReplyFlush: undefined,
         sandboxSessionKey: sessionKey,
-        subscriptionToolTrust: {
-          builtinToolNames: new Set(),
-          replaySafeToolNames: new Set(),
-          trustedLocalMediaToolNames: new Set(),
-        },
+        builtinToolNames: new Set(),
+        replaySafeToolNames: new Set(),
+        trustedLocalMediaToolNames: new Set(),
       });
       const emitAssistantEnd = (message: ReturnType<typeof makeAssistantMessageFixture>) => {
         native.emit({ type: "message_start", message });

@@ -1274,7 +1274,7 @@ CREATE INDEX IF NOT EXISTS idx_plugin_state_expiry
   WHERE expires_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_plugin_state_listing
-  ON plugin_state_entries(plugin_id, namespace, created_at, entry_key);
+  ON plugin_state_entries(plugin_id, namespace, created_at, entry_key, expires_at);
 
 CREATE TABLE IF NOT EXISTS channel_ingress_events (
   queue_name TEXT NOT NULL,
@@ -1494,6 +1494,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cron_run_receipts_active_job
 CREATE INDEX IF NOT EXISTS idx_cron_run_receipts_job_history
   ON cron_run_receipts(store_key, job_id, started_at_ms DESC, receipt_id DESC);
 
+-- Retirement follows the receipt's retention without changing its released shape.
+CREATE TABLE IF NOT EXISTS cron_run_trigger_state_retirements (
+  receipt_id TEXT PRIMARY KEY
+    REFERENCES cron_run_receipts(receipt_id) ON DELETE CASCADE
+) STRICT;
+
 -- Runtime-private authority is independent of job_json so downgraded writers
 -- can rewrite recognized job config without erasing or silently widening it.
 CREATE TABLE IF NOT EXISTS cron_job_runtime_authorities (
@@ -1629,130 +1635,6 @@ CREATE INDEX IF NOT EXISTS idx_subagent_runs_requester_session_key
 CREATE INDEX IF NOT EXISTS idx_subagent_runs_controller_session_key
   ON subagent_runs(controller_session_key, created_at DESC, run_id);
 
-CREATE TABLE IF NOT EXISTS delegate_artifact_policies (
-  flow_id TEXT NOT NULL PRIMARY KEY,
-  producer_session_key TEXT NOT NULL,
-  producer_session_id TEXT,
-  producer_run_id TEXT NOT NULL UNIQUE,
-  origin_parent_session_key TEXT NOT NULL,
-  origin_parent_session_id TEXT NOT NULL,
-  policy_version INTEGER NOT NULL CHECK (policy_version = 1),
-  dispatch_revision INTEGER NOT NULL,
-  dispatch_accepted_at INTEGER NOT NULL,
-  scheduled_at INTEGER,
-  not_before INTEGER,
-  artifact_mode TEXT NOT NULL CHECK (artifact_mode IN ('optional', 'required')),
-  recipient_context TEXT,
-  recipients_json TEXT NOT NULL,
-  route_json TEXT NOT NULL,
-  output_root TEXT NOT NULL,
-  max_artifact_count INTEGER NOT NULL,
-  max_artifact_bytes INTEGER NOT NULL,
-  max_total_bytes INTEGER NOT NULL,
-  allowed_mimes_json TEXT NOT NULL,
-  retention_deadline INTEGER NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('active', 'staged', 'completed', 'failed')),
-  completion_id TEXT,
-  completion_finalization_key TEXT,
-  completed_at INTEGER,
-  completion_status TEXT,
-  completion_delivery_mode TEXT CHECK (
-    completion_delivery_mode IS NULL OR completion_delivery_mode IN ('announced', 'silent')
-  ),
-  completion_disposition TEXT
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_delegate_artifact_policies_producer
-  ON delegate_artifact_policies(producer_run_id, status);
-
-CREATE INDEX IF NOT EXISTS idx_delegate_artifact_policies_retention
-  ON delegate_artifact_policies(retention_deadline);
-
-CREATE TABLE IF NOT EXISTS delegate_artifact_claims (
-  claim_id TEXT NOT NULL PRIMARY KEY,
-  flow_id TEXT NOT NULL,
-  publication_key TEXT NOT NULL,
-  publication_index INTEGER NOT NULL,
-  ordinal INTEGER NOT NULL,
-  artifact_type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  mime_type TEXT,
-  size_bytes INTEGER NOT NULL,
-  sha256 TEXT NOT NULL,
-  backing BLOB,
-  status TEXT NOT NULL CHECK (
-    status IN ('pending', 'staged', 'available', 'expired', 'revoked', 'orphaned', 'purged')
-  ),
-  created_at INTEGER NOT NULL,
-  finalized_at INTEGER,
-  UNIQUE (flow_id, ordinal),
-  UNIQUE (flow_id, publication_key, publication_index),
-  FOREIGN KEY (flow_id) REFERENCES delegate_artifact_policies(flow_id) ON DELETE CASCADE,
-  CHECK (backing IS NULL OR length(backing) = size_bytes)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_delegate_artifact_claims_flow
-  ON delegate_artifact_claims(flow_id, status, ordinal);
-
-CREATE TABLE IF NOT EXISTS delegate_artifact_recipient_outcomes (
-  flow_id TEXT NOT NULL,
-  recipient_session_key TEXT NOT NULL,
-  recipient_session_id TEXT NOT NULL,
-  recipient_relation TEXT NOT NULL CHECK (recipient_relation IN ('parent', 'inter_session')),
-  purpose TEXT,
-  outcome TEXT NOT NULL CHECK (outcome IN ('available', 'unavailable')),
-  unavailable_reason TEXT,
-  decided_at INTEGER NOT NULL,
-  first_delivery_at INTEGER,
-  replayed_at INTEGER,
-  delivery_acknowledged_at INTEGER,
-  delivery_terminal_reason TEXT,
-  PRIMARY KEY (flow_id, recipient_session_key, recipient_session_id),
-  FOREIGN KEY (flow_id) REFERENCES delegate_artifact_policies(flow_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS delegate_artifact_bindings (
-  claim_id TEXT NOT NULL,
-  recipient_session_key TEXT NOT NULL,
-  recipient_session_id TEXT NOT NULL,
-  recipient_relation TEXT NOT NULL CHECK (recipient_relation IN ('parent', 'inter_session')),
-  purpose TEXT,
-  status TEXT NOT NULL CHECK (status IN ('available', 'materialized', 'discarded', 'unavailable')),
-  unavailable_reason TEXT,
-  arrived_at INTEGER,
-  replayed_at INTEGER,
-  materialized_at INTEGER,
-  discarded_at INTEGER,
-  last_delivery_attempt_at INTEGER,
-  delivery_acknowledged_at INTEGER,
-  PRIMARY KEY (claim_id, recipient_session_key, recipient_session_id),
-  FOREIGN KEY (claim_id) REFERENCES delegate_artifact_claims(claim_id) ON DELETE CASCADE
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_delegate_artifact_bindings_recipient
-  ON delegate_artifact_bindings(
-    recipient_session_key,
-    recipient_session_id,
-    status,
-    arrived_at,
-    claim_id
-  );
-
-CREATE TABLE IF NOT EXISTS delegate_artifact_audit (
-  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-  action TEXT NOT NULL,
-  outcome TEXT NOT NULL,
-  claim_id TEXT,
-  flow_id TEXT,
-  recipient_session_key TEXT NOT NULL,
-  recipient_session_id TEXT NOT NULL,
-  destination TEXT,
-  occurred_at INTEGER NOT NULL
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_delegate_artifact_audit_recipient
-  ON delegate_artifact_audit(recipient_session_key, recipient_session_id, occurred_at, sequence);
-
 CREATE TABLE IF NOT EXISTS current_conversation_bindings (
   binding_key TEXT NOT NULL PRIMARY KEY,
   binding_id TEXT NOT NULL,
@@ -1803,7 +1685,6 @@ CREATE TABLE IF NOT EXISTS flow_runs (
   shape TEXT,
   sync_mode TEXT NOT NULL DEFAULT 'managed',
   owner_key TEXT NOT NULL,
-  chain_id TEXT,
   requester_origin_json TEXT,
   controller_id TEXT,
   revision INTEGER NOT NULL DEFAULT 0,
@@ -1965,6 +1846,21 @@ CREATE TABLE IF NOT EXISTS worktree_provisioned_file_chunks (
   PRIMARY KEY (worktree_id, path, chunk_index)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS worktree_templates (
+  cache_key TEXT NOT NULL PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  repo_root TEXT NOT NULL,
+  common_dir TEXT NOT NULL,
+  worktree_root TEXT NOT NULL,
+  path TEXT NOT NULL,
+  backend TEXT NOT NULL,
+  source_commit TEXT NOT NULL,
+  content_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('preparing', 'ready')),
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT NOT NULL PRIMARY KEY,
   display_name TEXT NOT NULL,
@@ -2001,6 +1897,26 @@ CREATE TABLE IF NOT EXISTS worker_environments (
   provider_id TEXT NOT NULL,
   profile_id TEXT NOT NULL,
   profile_snapshot_json TEXT NOT NULL,
+  last_activated_at_ms INTEGER,
+  preparation_key TEXT,
+  preparation_purpose TEXT,
+  preparation_demand_at_ms INTEGER,
+  preparation_expires_at_ms INTEGER,
+  preparation_consumed_at_ms INTEGER CHECK (
+    (preparation_key IS NULL AND preparation_demand_at_ms IS NULL
+      AND preparation_expires_at_ms IS NULL AND preparation_consumed_at_ms IS NULL)
+    OR
+    (preparation_key IS NOT NULL AND length(preparation_key) = 64
+      AND preparation_key NOT GLOB '*[^0-9a-f]*'
+      AND preparation_demand_at_ms IS NOT NULL
+      AND preparation_demand_at_ms BETWEEN 0 AND 9007199254740991
+      AND preparation_expires_at_ms IS NOT NULL
+      AND preparation_expires_at_ms > preparation_demand_at_ms
+      AND preparation_expires_at_ms <= 9007199254740991
+      AND (preparation_consumed_at_ms IS NULL
+        OR (preparation_consumed_at_ms >= preparation_demand_at_ms
+          AND preparation_consumed_at_ms < preparation_expires_at_ms)))
+  ),
   provision_operation_id TEXT NOT NULL UNIQUE,
   lease_id TEXT,
   node_setup_id TEXT,
@@ -2048,6 +1964,51 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_environments_provider_lease
 
 CREATE INDEX IF NOT EXISTS idx_worker_environments_terminal_changed
   ON worker_environments(state_changed_at_ms, environment_id);
+
+-- A dedicated node registers its fixed build paths before ready, then binds
+-- them once. The environment belongs to the Gateway's separate database.
+CREATE TABLE IF NOT EXISTS node_worker_prepared_workspaces (
+  preparation_key TEXT NOT NULL PRIMARY KEY CHECK (
+    length(preparation_key) = 64 AND preparation_key NOT GLOB '*[^0-9a-f]*'
+  ),
+  cache_key TEXT NOT NULL CHECK (
+    length(cache_key) = 64 AND cache_key NOT GLOB '*[^0-9a-f]*'
+  ),
+  gateway_namespace TEXT NOT NULL CHECK (length(gateway_namespace) > 0),
+  workspace_dir TEXT NOT NULL UNIQUE CHECK (length(workspace_dir) > 0),
+  home_dir TEXT NOT NULL CHECK (length(home_dir) > 0),
+  source_manifest_ref TEXT NOT NULL CHECK (
+    length(source_manifest_ref) = 71 AND substr(source_manifest_ref, 1, 7) = 'sha256:'
+      AND substr(source_manifest_ref, 8) NOT GLOB '*[^0-9a-f]*'
+  ),
+  prepared_manifest_ref TEXT NOT NULL CHECK (
+    length(prepared_manifest_ref) = 71 AND substr(prepared_manifest_ref, 1, 7) = 'sha256:'
+      AND substr(prepared_manifest_ref, 8) NOT GLOB '*[^0-9a-f]*'
+  ),
+  state TEXT NOT NULL CHECK (state IN ('available', 'bound', 'retiring', 'retired')),
+  environment_id TEXT NOT NULL CHECK (length(environment_id) > 0),
+  session_id TEXT,
+  session_key TEXT,
+  owner_epoch INTEGER CHECK (owner_epoch BETWEEN 1 AND 9007199254740991),
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms BETWEEN 0 AND 9007199254740991),
+  bound_at_ms INTEGER CHECK (bound_at_ms BETWEEN created_at_ms AND 9007199254740991),
+  retired_at_ms INTEGER CHECK (
+    retired_at_ms BETWEEN coalesce(bound_at_ms, created_at_ms) AND 9007199254740991
+  ),
+  CHECK (
+    (session_id IS NULL AND session_key IS NULL AND owner_epoch IS NULL AND bound_at_ms IS NULL)
+    OR
+    (session_id IS NOT NULL AND length(session_id) > 0
+      AND session_key IS NOT NULL AND length(session_key) > 0
+      AND owner_epoch IS NOT NULL AND bound_at_ms IS NOT NULL)
+  ),
+  CHECK (
+    (state = 'available' AND bound_at_ms IS NULL AND retired_at_ms IS NULL)
+    OR (state = 'bound' AND bound_at_ms IS NOT NULL AND retired_at_ms IS NULL)
+    OR (state = 'retiring' AND retired_at_ms IS NULL)
+    OR (state = 'retired' AND retired_at_ms IS NOT NULL)
+  )
+) STRICT;
 
 -- Provider-advertised fallback ports preserve stable retry order separately
 -- from the downgrade-sensitive canonical worker environment row.

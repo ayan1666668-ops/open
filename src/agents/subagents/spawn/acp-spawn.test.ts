@@ -40,8 +40,7 @@ import { createOperationalRunInstanceRef } from "../../admitted-run-context.js";
 import { reserveChildAdmissionSlot } from "../../child-admission.js";
 import { withGatewayToolCallerIdentity } from "../../tools/gateway-caller-context.js";
 import { withParentExecutionIdentity } from "./execution-identity-spawn-context.js";
-import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
-import { testing as subagentSpawnTesting } from "./subagent-spawn.test-support.js";
+import { setSubagentSpawnDepsForTest } from "./subagent-spawn-deps.js";
 
 type SessionBindingAdapterCapabilities = NonNullable<SessionBindingAdapter["capabilities"]>;
 
@@ -86,7 +85,6 @@ const hoisted = vi.hoisted(() => {
   const resolveStorePathMock = vi.fn();
   const resolveSessionTranscriptFileMock = vi.fn();
   const areHeartbeatsEnabledMock = vi.fn();
-  const requestHeartbeatNowMock = vi.fn();
   const normalizeChannelIdMock = vi.fn((channelId: string) => {
     const normalized = channelId.trim().toLowerCase();
     return normalized || null;
@@ -95,7 +93,6 @@ const hoisted = vi.hoisted(() => {
   const closeRuntimeOnFailureMock = vi.fn();
   const registerSubagentRunMock = vi.fn();
   const countActiveRunsForSessionMock = vi.fn();
-  const countActiveDescendantRunsMock = vi.fn();
   const getSubagentRunByChildSessionKeyMock = vi.fn();
   const listTasksForOwnerKeyMock = vi.fn();
   const upsertSessionEntryMock = vi.fn();
@@ -136,7 +133,7 @@ const hoisted = vi.hoisted(() => {
       return Object.entries(store).map(([sessionKey, entry]) => ({ sessionKey, entry }));
     };
     return {
-      listSessionEntriesCore: listMockEntries,
+      listSessionEntries: listMockEntries,
       listSessionEntriesReadOnly: listMockEntries,
       loadSessionEntry: loadMockEntry,
       loadSessionEntryReadOnly: loadMockEntry,
@@ -184,13 +181,11 @@ const hoisted = vi.hoisted(() => {
     resolveStorePathMock,
     resolveSessionTranscriptFileMock,
     areHeartbeatsEnabledMock,
-    requestHeartbeatNowMock,
     normalizeChannelIdMock,
     cleanupFailedAcpSpawnMock,
     closeRuntimeOnFailureMock,
     registerSubagentRunMock,
     countActiveRunsForSessionMock,
-    countActiveDescendantRunsMock,
     getSubagentRunByChildSessionKeyMock,
     listTasksForOwnerKeyMock,
     upsertSessionEntryMock,
@@ -250,7 +245,6 @@ vi.mock("../../../gateway/call.js", () => ({
 
 vi.mock("../../../infra/heartbeat-wake.js", () => ({
   areHeartbeatsEnabled: hoisted.areHeartbeatsEnabledMock,
-  requestHeartbeatNow: hoisted.requestHeartbeatNowMock,
 }));
 
 vi.mock("./acp-spawn-parent-stream.js", () => ({
@@ -260,24 +254,10 @@ vi.mock("./acp-spawn-parent-stream.js", () => ({
 vi.mock("../registry/subagent-registry.js", () => ({
   countActiveRunsForSession: hoisted.countActiveRunsForSessionMock,
   // ACP registration deliberately moved behind the shared spawn pipeline.
-  registerSubagentRun: (record: Record<string, unknown>) => {
-    const result = hoisted.registerSubagentRunMock(record);
-    return (
-      result ?? {
-        status: "new-row-committed",
-        attempted: {
-          runId: String(record.runId),
-          childSessionKey: String(record.childSessionKey),
-          generation: 1,
-          createdAt: 1,
-        },
-      }
-    );
-  },
+  registerSubagentRun: hoisted.registerSubagentRunMock,
 }));
 
 vi.mock("../registry/subagent-registry-read.js", () => ({
-  countActiveDescendantRuns: hoisted.countActiveDescendantRunsMock,
   getSubagentRunByChildSessionKey: hoisted.getSubagentRunByChildSessionKeyMock,
 }));
 
@@ -731,12 +711,10 @@ describe("spawnAcpDirect", () => {
     acpRuntimeRegistryTesting.resetAcpRuntimeBackendsForTests();
     replaceSpawnConfig(createDefaultSpawnConfig());
     hoisted.areHeartbeatsEnabledMock.mockReset().mockReturnValue(true);
-    hoisted.requestHeartbeatNowMock.mockReset();
     hoisted.cleanupFailedAcpSpawnMock.mockReset().mockResolvedValue(undefined);
     hoisted.closeRuntimeOnFailureMock.mockReset().mockResolvedValue(undefined);
     hoisted.registerSubagentRunMock.mockReset();
     hoisted.countActiveRunsForSessionMock.mockReset().mockReturnValue(0);
-    hoisted.countActiveDescendantRunsMock.mockReset().mockReturnValue(0);
     hoisted.getSubagentRunByChildSessionKeyMock.mockReset().mockReturnValue(null);
     hoisted.listTasksForOwnerKeyMock.mockReset().mockReturnValue([]);
     hoisted.upsertSessionEntryMock
@@ -1053,10 +1031,8 @@ describe("spawnAcpDirect", () => {
     });
     const operationalRunInstance = createOperationalRunInstanceRef("parent-run");
     const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
-    const productionDeps = getSubagentSpawnDeps();
-    const defaultDeps = { ...productionDeps };
     let capturedIdentity: AgentRuntimeIdentity | undefined;
-    subagentSpawnTesting.setDepsForTest({
+    setSubagentSpawnDepsForTest({
       hasInProcessGatewayContext: () => true,
       dispatchGatewayMethodInProcess: async <T>(
         _method: string,
@@ -1096,9 +1072,7 @@ describe("spawnAcpDirect", () => {
       );
     } finally {
       releaseAgentRunDelegatedAuthority(authority);
-      subagentSpawnTesting.setDepsForTest();
-      expect(getSubagentSpawnDeps()).toBe(productionDeps);
-      expect(productionDeps).toEqual(defaultDeps);
+      setSubagentSpawnDepsForTest();
     }
   });
 
@@ -1451,6 +1425,8 @@ describe("spawnAcpDirect", () => {
     globalSubagentThinking?: ThinkLevel;
     thinking?: ThinkLevel;
     expectedThinking?: ThinkLevel;
+    expectedThinkingExplicit?: boolean;
+    backend?: string;
   }>([
     {
       scenario: "configured primary model with global thinking default",
@@ -1492,6 +1468,28 @@ describe("spawnAcpDirect", () => {
       expectedThinking: "high",
     },
     {
+      scenario: "explicit max thinking for Codex",
+      globalSubagentThinking: "low",
+      thinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: true,
+    },
+    {
+      scenario: "inherited max thinking for Codex",
+      model: "openai/gpt-5.6-sol",
+      globalSubagentThinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: false,
+    },
+    {
+      scenario: "inherited max thinking for Codex on another ACP backend",
+      model: "openai/gpt-5.6-sol",
+      globalSubagentThinking: "max",
+      expectedThinking: "max",
+      expectedThinkingExplicit: false,
+      backend: "alternate",
+    },
+    {
       scenario: "harness defaults without an owner or model override",
       globalThinking: "high",
     },
@@ -1506,6 +1504,8 @@ describe("spawnAcpDirect", () => {
       globalSubagentThinking,
       thinking,
       expectedThinking,
+      expectedThinkingExplicit,
+      backend,
     }) => {
       replaceSpawnConfig({
         ...createDefaultSpawnConfig(),
@@ -1513,7 +1513,10 @@ describe("spawnAcpDirect", () => {
           list: [
             {
               id: "codex-acp",
-              runtime: { type: "acp", acp: { agent: "codex" } },
+              runtime: {
+                type: "acp",
+                acp: { agent: "codex", ...(backend ? { backend } : {}) },
+              },
               model,
               thinkingDefault: ownerThinking,
               subagents: { thinking: subagentThinking },
@@ -1541,6 +1544,10 @@ describe("spawnAcpDirect", () => {
       expectAcceptedSpawn(result);
       expectInitializeSessionFields({
         agent: "codex",
+        backendId: backend ?? "acpx",
+        ...(expectedThinkingExplicit !== undefined
+          ? { thinkingExplicit: expectedThinkingExplicit }
+          : {}),
         runtimeOptions:
           model || expectedThinking
             ? {

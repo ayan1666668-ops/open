@@ -12,10 +12,6 @@ import {
   EXEC_APPROVAL_FOLLOWUP_HANDOFF_MESSAGE,
 } from "../../agents/bash-tools.exec-approval-output.js";
 import {
-  registerSubagentTraceparentHandoff,
-  resetSubagentTraceparentHandoffsForTests,
-} from "../../agents/subagent-traceparent-handoff.js";
-import {
   onDiagnosticEvent,
   waitForDiagnosticEventsDrained,
   type DiagnosticEventPayload,
@@ -54,7 +50,6 @@ import {
   cronMediaCompletionEvent,
   setupCronContinuationReleaseFixture,
   invokeGatewaySuspendPrepare,
-  operatorWriteGatewayClient,
   operatorWriteCliClient,
   waitForAgentCommandCall,
   invokeAgent,
@@ -64,207 +59,7 @@ import {
 const mocks = getAgentTestMocks();
 
 describe("gateway agent handler", () => {
-  afterEach(() => {
-    describe0AfterEach0();
-    resetSubagentTraceparentHandoffsForTests();
-  });
-
-  it("uses the same-process subagent traceparent handoff when the request field is missing", async () => {
-    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-    const sessionKey = "agent:main:subagent:child-trace";
-    const idempotencyKey = "child-trace-run";
-    registerSubagentTraceparentHandoff({
-      idempotencyKey,
-      sessionKey,
-      traceparent,
-    });
-    const existingEntry = buildExistingMainStoreEntry({
-      spawnedBy: "agent:main:main",
-    });
-    mocks.loadSessionEntry.mockReturnValue({
-      cfg: {},
-      storePath: "/tmp/sessions.json",
-      entry: existingEntry,
-      canonicalKey: sessionKey,
-    });
-    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
-      const store: Record<string, Record<string, unknown>> = {
-        [sessionKey]: { ...existingEntry },
-      };
-      return await updater(store);
-    });
-    mocks.agentCommand.mockResolvedValue({
-      payloads: [{ text: "ok" }],
-      meta: { durationMs: 100 },
-    });
-
-    await invokeAgent(
-      {
-        message: "child task",
-        agentId: "main",
-        sessionKey,
-        idempotencyKey,
-      },
-      { client: backendGatewayClient() },
-    );
-
-    expect((await waitForAgentCommandCall()).traceparent).toBe(traceparent);
-  });
-
-  it("uses the provisional child session traceparent when the request field is missing across process", async () => {
-    const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-    const sessionKey = "agent:main:subagent:child-session-trace";
-    const idempotencyKey = "child-session-trace-run";
-    const existingEntry = buildExistingMainStoreEntry({
-      spawnedBy: "agent:main:main",
-      continuationTraceparent: traceparent,
-    });
-    let persistedEntry: Record<string, unknown> | undefined;
-    mocks.loadSessionEntry.mockReturnValue({
-      cfg: {},
-      storePath: "/tmp/sessions.json",
-      entry: existingEntry,
-      canonicalKey: sessionKey,
-    });
-    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
-      const store: Record<string, Record<string, unknown>> = {
-        [sessionKey]: { ...existingEntry },
-      };
-      const result = await updater(store);
-      persistedEntry = result as Record<string, unknown>;
-      return result;
-    });
-    mocks.agentCommand.mockResolvedValue({
-      payloads: [{ text: "ok" }],
-      meta: { durationMs: 100 },
-    });
-
-    await invokeAgent(
-      {
-        message: "child task",
-        agentId: "main",
-        sessionKey,
-        idempotencyKey,
-      },
-      { client: backendGatewayClient() },
-    );
-
-    expect((await waitForAgentCommandCall()).traceparent).toBe(traceparent);
-    expect(persistedEntry?.continuationTraceparent).toBeUndefined();
-  });
-
-  it("forwards continuation metadata to the ingress agent command for backend callers", async () => {
-    primeMainAgentRun();
-
-    await invokeAgent(
-      {
-        message: "delegate finished",
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        continuationTrigger: "delegate-return",
-        drainsContinuationDelegateQueue: true,
-        idempotencyKey: "test-continuation-trigger-forward",
-      },
-      { reqId: "continuation-trigger-1", client: backendGatewayClient() },
-    );
-
-    const call = await waitForAgentCommandCall<{
-      continuationTrigger?: string;
-      drainsContinuationDelegateQueue?: boolean;
-    }>();
-    expect(call.continuationTrigger).toBe("delegate-return");
-    expect(call.drainsContinuationDelegateQueue).toBe(true);
-  });
-
-  it("ignores internal continuation controls from non-backend callers", async () => {
-    primeMainAgentRun();
-
-    await invokeAgent(
-      {
-        message: "delegate finished",
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        continuationTrigger: "delegate-return",
-        drainsContinuationDelegateQueue: true,
-        traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-        idempotencyKey: "test-continuation-trigger-non-backend",
-      },
-      { reqId: "continuation-trigger-non-backend", client: operatorWriteGatewayClient() },
-    );
-
-    const call = await waitForAgentCommandCall<{
-      continuationTrigger?: string;
-      drainsContinuationDelegateQueue?: boolean;
-      traceparent?: string;
-    }>();
-    expect(call.continuationTrigger).toBeUndefined();
-    expect(call.drainsContinuationDelegateQueue).toBeUndefined();
-    expect(call.traceparent).toBeUndefined();
-  });
-
-  it("preserves core-spawned continuation controls with same-process traceparent handoff", async () => {
-    primeMainAgentRun();
-    const sessionKey = "agent:main:subagent:trusted-continuation";
-    const idempotencyKey = "trusted-continuation-handoff";
-    const traceparent = "00-2af7651916cd43dd8448eb211c80319c-d7ad6b7169203331-01";
-    registerSubagentTraceparentHandoff({ idempotencyKey, sessionKey, traceparent });
-    const existingEntry = buildExistingMainStoreEntry({
-      spawnedBy: "agent:main:main",
-    });
-    mocks.loadSessionEntry.mockReturnValue({
-      cfg: {},
-      storePath: "/tmp/sessions.json",
-      entry: existingEntry,
-      canonicalKey: sessionKey,
-    });
-    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
-      const store: Record<string, Record<string, unknown>> = {
-        [sessionKey]: { ...existingEntry },
-      };
-      return await updater(store);
-    });
-
-    await invokeAgent(
-      {
-        message: "trusted continuation child",
-        agentId: "main",
-        sessionKey,
-        continuationTrigger: "delegate-return",
-        drainsContinuationDelegateQueue: true,
-        idempotencyKey,
-      },
-      { reqId: "trusted-continuation-handoff", client: operatorWriteGatewayClient() },
-    );
-
-    const call = await waitForAgentCommandCall<{
-      continuationTrigger?: string;
-      drainsContinuationDelegateQueue?: boolean;
-      traceparent?: string;
-    }>();
-    expect(call.continuationTrigger).toBe("delegate-return");
-    expect(call.drainsContinuationDelegateQueue).toBe(true);
-    expect(call.traceparent).toBe(traceparent);
-  });
-
-  it("honors a request traceparent from backend callers", async () => {
-    primeMainAgentRun();
-    const traceparent = "00-1af7651916cd43dd8448eb211c80319c-c7ad6b7169203331-01";
-
-    await invokeAgent(
-      {
-        message: "delegate finished",
-        agentId: "main",
-        sessionKey: "agent:main:main",
-        traceparent,
-        idempotencyKey: "test-continuation-traceparent-backend",
-      },
-      { reqId: "continuation-traceparent-backend", client: backendGatewayClient() },
-    );
-
-    expect((await waitForAgentCommandCall<{ traceparent?: string }>()).traceparent).toBe(
-      traceparent,
-    );
-  });
+  afterEach(describe0AfterEach0);
 
   it("stops continuation release recovery after gateway generation rotation", async () => {
     vi.useFakeTimers();
@@ -1406,7 +1201,7 @@ describe("gateway agent handler", () => {
     ).toBeUndefined();
   });
 
-  it("releases an exec approval handoff when setup fails before dispatch", async () => {
+  it("releases an exec approval handoff when input admission fails", async () => {
     const sessionKey = "agent:main:telegram:direct:123";
     const registration = registerExecApprovalFollowupRuntimeHandoff({
       approvalId: "req-output-setup-failure",
@@ -1422,21 +1217,7 @@ describe("gateway agent handler", () => {
       lastChannel: "telegram",
       lastTo: "123",
     });
-    mocks.getLatestSubagentRunByChildSessionKey.mockReturnValueOnce({
-      runId: "previous-run",
-      childSessionKey: sessionKey,
-      controllerSessionKey: sessionKey,
-      ownerKey: sessionKey,
-      scopeKind: "session",
-      requesterDisplayKey: "main",
-      task: "old task",
-      cleanup: "keep",
-      createdAt: 1,
-      startedAt: 2,
-      endedAt: 3,
-      outcome: { status: "ok" },
-    });
-    mocks.replaceSubagentRunAfterSteer.mockRejectedValueOnce(new Error("reactivate boom"));
+    mocks.stageSessionPendingInput.mockRejectedValueOnce(new Error("input admission failed"));
 
     const respond = await invokeAgent(
       {
@@ -1457,11 +1238,7 @@ describe("gateway agent handler", () => {
       },
     );
 
-    const errorCall = respond.mock.calls.find((call: unknown[]) => call[0] === false);
-    expectRecordFields(requireValue(errorCall, "error response missing")[1], {
-      runId: registration.idempotencyKey,
-      status: "error",
-    });
+    expectRespondError(respond, { message: "input admission failed" });
     expect(mocks.agentCommand).toHaveBeenCalledTimes(agentCommandCallsBefore);
     expect(
       claimExecApprovalFollowupRuntimeHandoff({

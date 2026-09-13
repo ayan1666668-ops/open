@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 import { buildCliRespawnPlan, runCliRespawnPlan } from "./entry.respawn.js";
 
 const EXPERIMENTAL_WARNING_FLAG = "--disable-warning=ExperimentalWarning";
-const DARWIN_NODE_EXEC_PATH = "/usr/local/bin/node";
 const OPENCLAW_NODE_EXTRA_CA_CERTS_READY = "OPENCLAW_NODE_EXTRA_CA_CERTS_READY";
 const OPENCLAW_NODE_OPTIONS_READY = "OPENCLAW_NODE_OPTIONS_READY";
 
@@ -175,7 +174,6 @@ describe("buildCliRespawnPlan", () => {
       argv: ["node", "openclaw", "cron", "list", "--json"],
       env: { NODE_USE_SYSTEM_CA: "1" },
       execArgv: [],
-      execPath: DARWIN_NODE_EXEC_PATH,
       autoNodeExtraCaCerts: undefined,
       platform: "darwin",
     });
@@ -200,7 +198,6 @@ describe("buildCliRespawnPlan", () => {
         argv: [...argv],
         env: { NODE_USE_SYSTEM_CA: "1" },
         execArgv: [],
-        execPath: DARWIN_NODE_EXEC_PATH,
         autoNodeExtraCaCerts: undefined,
         platform: "darwin",
       }),
@@ -216,7 +213,6 @@ describe("buildCliRespawnPlan", () => {
           [OPENCLAW_NODE_OPTIONS_READY]: "1",
         },
         execArgv: [EXPERIMENTAL_WARNING_FLAG],
-        execPath: DARWIN_NODE_EXEC_PATH,
         autoNodeExtraCaCerts: undefined,
         platform: "darwin",
       }),

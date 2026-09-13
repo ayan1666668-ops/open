@@ -41,7 +41,10 @@ import {
 } from "./agent-tool-metadata.js";
 import type { ToolOutcomeObserver } from "./agent-tools.before-tool-call.js";
 import { finalizeAgentTools } from "./agent-tools.finalize.js";
-import { filterToolsByMessageProvider } from "./agent-tools.message-provider-policy.js";
+import {
+  filterToolsByMessageProvider,
+  messageProviderExcludesTool,
+} from "./agent-tools.message-provider-policy.js";
 import {
   type SkillInstructionDeliveryCache,
   wrapToolMemoryFlushAppendOnlyWrite,
@@ -88,6 +91,7 @@ import { createMemoryWriteProvenanceObserver } from "./memory-write-provenance.j
 import type { ModelAuthMode } from "./model-auth.js";
 import { resolveOpenClawPluginToolsForOptions } from "./openclaw-plugin-tools.js";
 import { createOpenClawTools, filterToolsByClientCaps } from "./openclaw-tools.js";
+import { filterRequesterYieldTools } from "./openclaw-tools.requester-yield.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.js";
 import type { SandboxContext } from "./sandbox.js";
 import { resolveSandboxFileIdentity } from "./sandbox/file-mutation-identity.js";
@@ -132,7 +136,6 @@ import {
 import type { CronToolOptions } from "./tools/cron-tool.types.js";
 import { wrapToolWithGatewayCallerIdentity } from "./tools/gateway-caller-context.js";
 import type { QuestionPromptDelivery } from "./tools/question-prompt-send.js";
-import type { RequestCompactionToolOpts } from "./tools/request-compaction-tool.js";
 
 const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "write"]);
 
@@ -234,6 +237,10 @@ type OpenClawCodingToolsOptions = {
   requesterThinkingLevel?: ThinkLevel;
   /** Exact admitted run instance for lifecycle-bound subprocess capabilities. */
   operationalRunInstance?: OperationalRunInstanceRef;
+  /** Session-owned desktop resolved before optional paired-node discovery. */
+  computerTransport?: import("./tools/computer-tool.js").ComputerToolTransport | null;
+  /** Host-prepared effective paired-node Computer Use surface. */
+  pairedNodeComputerUse?: import("./computer-use-node-capabilities.js").PreparedPairedComputerUse;
   /** Device-scoped operator session allowed to review approvals initiated by this run. */
   approvalReviewerDeviceId?: string;
   /** Diagnostic trace context for hook/log correlation during this run. */
@@ -329,16 +336,6 @@ type OpenClawCodingToolsOptions = {
   hasRepliedRef?: { value: boolean };
   /** Allow plugin tools for this run to late-bind the gateway subagent. */
   allowGatewaySubagentBinding?: boolean;
-  /** Whether this run consumes the continue_delegate staging queue. */
-  drainsContinuationDelegateQueue?: boolean;
-  /** Internal maintenance/model-only runs that cannot schedule post-turn continuation work. */
-  disableContinuationTools?: boolean;
-  /** Callback for continue_work to request a post-turn continuation. */
-  continueWorkOpts?: {
-    requestContinuation: (
-      request: import("./tools/continue-work-tool.js").ContinueWorkRequest,
-    ) => void;
-  };
   /** Runtime-scoped explicit allowlist used to materialize matching plugin tools. */
   runtimeToolAllowlist?: string[];
   /** Host-prepared proof that this exact session can request Gateway publication. */
@@ -400,12 +397,6 @@ type OpenClawCodingToolsOptions = {
   authProfileStore?: AuthProfileStore;
   /** Callback invoked when sessions_yield tool is called. */
   onYield?: (message: string, acknowledgment?: string) => Promise<void> | void;
-  /** Continuation: request_compaction tool opts (injected from execution context). */
-  requestCompactionOpts?: {
-    sessionId?: string;
-    getContextUsage: () => number | null;
-    triggerCompaction: RequestCompactionToolOpts["triggerCompaction"];
-  };
   /** Side-effect-free runtime completion claimant composed with the durable subagent claim. */
   claimYieldCompletion?: () => boolean | Promise<boolean>;
   /** Optional instrumentation callback for tool preparation stage timing. */
@@ -434,7 +425,6 @@ type OpenClawCodingToolsOptions = {
 function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions): AnyAgentTool[] {
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
   const isMemoryFlushRun = options?.trigger === "memory";
-  const disableContinuationTools = options?.disableContinuationTools === true || isMemoryFlushRun;
   if (isMemoryFlushRun && !options?.memoryFlushWritePath) {
     throw new Error("memoryFlushWritePath required for memory-triggered tool runs");
   }
@@ -695,6 +685,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
       config: execRuntimeConfig,
       preparedRunEnvironment,
       reviewer: options?.exec?.reviewer ?? execConfig.reviewer,
+      reviewTranscript: options?.exec?.reviewTranscript,
       trigger: options?.trigger,
       node: options?.exec?.node ?? execConfig.node,
       pathPrepend: mergeGatewayAgentCliPath(options?.exec?.pathPrepend ?? execConfig.pathPrepend),
@@ -917,7 +908,6 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             sandboxRoot,
             sandboxContainerWorkdir: sandbox?.containerWorkdir,
             sandboxFsBridge,
-            sandboxWritable: sandbox ? sandbox.workspaceAccess === "rw" : undefined,
             stagedMediaPaths: options?.stagedMediaPaths,
             sandboxWorkspaceMediaReadAllowed,
             fsPolicy,
@@ -938,6 +928,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             toolBindings: options?.toolBindings,
             pluginToolAllowlist,
             pluginToolDenylist,
+            gatewayConfigReadAllowed: capabilityProfile.policy.gatewayConfigReadAllowed,
             runtimeToolAllowlist: options?.runtimeToolAllowlist,
             githubPublicationAvailable: options?.githubPublicationAvailable,
             cronCreatorToolAllowlist,
@@ -959,7 +950,12 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             hasRepliedRef: options?.hasRepliedRef,
             modelHasVision: options?.modelHasVision,
             computerContextEpoch: options?.computerContextEpoch,
-            computerTransport: resolveSessionPlacementComputer(options?.operationalRunInstance),
+            computerTransport:
+              options?.computerTransport === null
+                ? null
+                : (options?.computerTransport ??
+                  resolveSessionPlacementComputer(options?.operationalRunInstance)),
+            pairedNodeComputerUse: options?.pairedNodeComputerUse,
             registerRunCleanup: options?.registerRunCleanup,
             requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
             sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode,
@@ -985,10 +981,6 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             onYield: options?.onYield,
             claimYieldCompletion: options?.claimYieldCompletion,
             allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
-            drainsContinuationDelegateQueue: options?.drainsContinuationDelegateQueue,
-            disableContinuationTools,
-            continueWorkOpts: options?.continueWorkOpts,
-            requestCompactionOpts: options?.requestCompactionOpts,
             recordToolPrepStage: options?.recordToolPrepStage,
           }),
         )
@@ -1100,6 +1092,27 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   replaceWithEffectiveCronCreatorToolAllowlist(cronCreatorToolAllowlist, authorizedTools, (tool) =>
     getPluginToolMeta(tool),
   );
+  if (
+    isMemoryFlushRun &&
+    memoryFlushWritePath &&
+    !authorizedTools.some((tool) => tool.name === "write") &&
+    // A transport whose allowlist never carries `write`, such as node, is an intended
+    // configuration, not a lost writer, so it stays quiet instead of warning per flush.
+    !messageProviderExcludesTool(
+      options?.toolPolicyMessageProvider ?? options?.messageProvider,
+      "write",
+    )
+  ) {
+    // Checked on the final authorized list, not the earlier flush surface: tools.deny,
+    // the model-provider policy and the rest of the pipeline all run after that surface
+    // is built, so a flush can hold `write` there and lose it here.
+    // Otherwise the run completes normally, the model reports the save as done, and the
+    // memory is lost with no record that it was never persisted. The text names no
+    // single config key because any of those filters can be the one that removed it.
+    logWarn(
+      `memory flush cannot persist ${memoryFlushWritePath}: no write tool survived this agent's tool policy, so this run will not save anything.`,
+    );
+  }
   options?.recordToolPrepStage?.("authorization-policy");
   const turnSourceChannel = options?.messageChannel ?? options?.messageProvider;
   const turnSourceTo = options?.currentMessagingTarget ?? options?.currentChannelId;
@@ -1139,7 +1152,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   };
   // NOTE: Keep canonical (lowercase) tool names here. Provider transports remap on the wire.
   return finalizeAgentTools({
-    tools: authorizedTools,
+    tools: filterRequesterYieldTools(authorizedTools, executionSessionKey),
     modelProvider: options?.modelProvider,
     modelId: options?.modelId,
     modelCompat: options?.modelCompat,

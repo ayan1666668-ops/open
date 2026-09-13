@@ -4,7 +4,6 @@
 import { asOptionalRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { createInlineCodeState } from "../../packages/markdown-core/src/code-spans.js";
-import { stripContinuationSignal } from "../auto-reply/continuation/signal.js";
 import {
   parseReplyDirectives,
   type ReplyDirectiveParseResult,
@@ -12,7 +11,6 @@ import {
 import { splitTrailingDirective } from "../auto-reply/reply/streaming-directives.js";
 import type { AssistantMessage } from "../llm/types.js";
 import { parseAssistantTextSignature } from "../shared/chat-message-content.js";
-import { normalizeTextForComparison } from "./embedded-agent-helpers.js";
 import { runBestEffortCallback } from "./embedded-agent-subscribe.callback.js";
 import { hasReplyDirectiveMetadata } from "./embedded-agent-subscribe.handlers.messages.replies.js";
 import type {
@@ -212,6 +210,7 @@ export function emitAssistantCommentaryStreamData(
   ctx: EmbeddedAgentSubscribeContext,
   message: AssistantMessage,
   finalMessage = false,
+  preparedText?: string,
 ) {
   const isResponsesCommentary = isResponsesApiAssistantMessage(message);
   const { lastAssistantStreamContentIndex: index, lastAssistantStreamItemId: itemId } = ctx.state;
@@ -219,7 +218,10 @@ export function emitAssistantCommentaryStreamData(
   const commentaryMessage = isResponsesCommentary
     ? scopeAssistantMessageToStreamBlock(message, index, itemId)
     : message;
-  const text = extractAssistantCommentaryText(commentaryMessage);
+  const text =
+    !isResponsesCommentary && preparedText !== undefined
+      ? preparedText
+      : extractAssistantCommentaryText(commentaryMessage);
   if (text && (finalMessage || !isResponsesCommentary || ctx.state.deltaBuffer !== text)) {
     // Generic commentary must carry the identity the phase tagger generated so
     // the Control UI can key the live row to the persisted fallback row; without
@@ -281,44 +283,12 @@ export function hasMessageToolOnlySourceDelivery(ctx: EmbeddedAgentSubscribeCont
   );
 }
 
-export function resolveCurrentSourceMessagingToolPartial(
-  state: Pick<
-    EmbeddedAgentSubscribeState,
-    "currentSourceMessagingToolHeldPartial" | "currentSourceMessagingToolSentTextsNormalized"
-  >,
-  params: {
-    evtType: "text_delta" | "text_start" | "text_end";
-    text: string;
-    visibleDelta: string;
-  },
-): { hold: boolean; text: string } {
-  const held = state.currentSourceMessagingToolHeldPartial;
-  const text =
-    held && params.evtType === "text_delta" && !params.text.startsWith(held)
-      ? `${held}${params.visibleDelta || params.text}`
-      : params.text;
-  const normalized = state.currentSourceMessagingToolSentTextsNormalized.length
-    ? normalizeTextForComparison(text)
-    : "";
-  if (!normalized) {
-    state.currentSourceMessagingToolHeldPartial = undefined;
-    return { hold: false, text };
-  }
-  // A confirmed current-source tool send already made this prefix visible.
-  // Hold it until the assistant either repeats the sent text or diverges with new content.
-  const hold = state.currentSourceMessagingToolSentTextsNormalized.some(
-    (sentText) => sentText === normalized || sentText.startsWith(normalized),
-  );
-  state.currentSourceMessagingToolHeldPartial = hold ? text : undefined;
-  return { hold, text };
-}
-
 export function replaceBlockReplyBuffer(
   ctx: EmbeddedAgentSubscribeContext,
   text: string,
   sourceOffset = 0,
 ) {
-  if (ctx.blockChunker.consumedLength === 0 && ctx.state.lastBlockReplyText == null) {
+  if (ctx.blockChunker.consumedLength === 0) {
     ctx.resetBlockReplyDirectives();
   }
   ctx.blockChunker.replace(text, sourceOffset);
@@ -359,40 +329,28 @@ export function resolveStreamingReply(params: {
   visibleDelta: string;
   appendDelta: string | null;
   parsedStreamDirectives: ReplyDirectiveParseResult | null;
-}): { text: string; delta: string; replace: boolean; hasText: boolean } {
+}): {
+  text: string;
+  delta: string;
+  replace: boolean;
+  hasText: boolean;
+  replyDirectives: ReplyDirectiveParseResult | null;
+} {
   if (!params.parsedStreamDirectives && params.evtType === "text_delta") {
     const text = params.previousCleaned;
-    return { text, delta: "", replace: false, hasText: Boolean(text.trim()) };
+    return {
+      text,
+      delta: "",
+      replace: false,
+      hasText: Boolean(text.trim()),
+      replyDirectives: null,
+    };
   }
-  return resolveOptimizedStreamingReplyText(params);
-}
 
-/** Removes a completed continuation signal from text bound for a display stream. */
-export function stripContinuationSignalFromDisplayText(text: string): string {
-  const stripped = stripContinuationSignal(text);
-  if (stripped.signal) {
-    return stripped.text;
-  }
-  const trailing = splitTrailingDirective(text);
-  return /^\s*(?:\[\[\s*)?CONT/iu.test(trailing.tail) ? trailing.text : text;
-}
-
-function parseFullStreamingReplyText(text: string): string {
-  return stripContinuationSignalFromDisplayText(parseReplyDirectives(text).text);
-}
-
-function resolveOptimizedStreamingReplyText(params: {
-  evtType: "text_delta" | "text_start" | "text_end";
-  next: string;
-  previousText: string;
-  previousCleaned: string;
-  visibleDelta: string;
-  appendDelta: string | null;
-  parsedStreamDirectives: ReplyDirectiveParseResult | null;
-}) {
   let text: string | undefined;
   let delta: string | undefined;
   let isAppend = false;
+  let replyDirectives = params.parsedStreamDirectives;
   if (
     params.evtType !== "text_end" &&
     params.parsedStreamDirectives &&
@@ -409,9 +367,22 @@ function resolveOptimizedStreamingReplyText(params: {
     isAppend = true;
   }
 
-  text ??= parseFullStreamingReplyText(
-    params.evtType === "text_end" ? params.next : splitTrailingDirective(params.next).text,
-  );
+  if (text === undefined) {
+    const parsed = parseReplyDirectives(
+      params.evtType === "text_end" ? params.next : splitTrailingDirective(params.next).text,
+    );
+    text = parsed.text;
+    if (replyDirectives) {
+      // Reply targeting needs the same code context as visible text. Audio stays
+      // scoped to its streaming chunk rather than replaying earlier voice tags.
+      replyDirectives = {
+        ...replyDirectives,
+        replyToId: parsed.replyToId,
+        replyToCurrent: parsed.replyToCurrent,
+        replyToTag: parsed.replyToTag,
+      };
+    }
+  }
   const replace = Boolean(
     !isAppend && params.previousCleaned && !text.startsWith(params.previousCleaned),
   );
@@ -420,5 +391,6 @@ function resolveOptimizedStreamingReplyText(params: {
     delta: replace ? "" : (delta ?? text.slice(params.previousCleaned.length)),
     replace,
     hasText: Boolean(isAppend ? text : text.trim()),
+    replyDirectives,
   };
 }

@@ -4,14 +4,16 @@ import { createInlineCodeState } from "../../packages/markdown-core/src/code-spa
  * Subscribes to embedded-agent sessions and streams formatted replies/events.
  */
 import { formatToolAggregate } from "../auto-reply/tool-meta.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseInlineDirectives } from "../utils/directive-tags.js";
+import { isDeliverableMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
 import { EmbeddedBlockChunker } from "./embedded-agent-block-chunker.js";
+import { MAX_MESSAGING_HISTORY_ENTRIES } from "./embedded-agent-messaging-history.js";
 import { hasCommittedMessagingToolDeliveryEvidence } from "./embedded-agent-runner/delivery-evidence.js";
 import { mergeEmbeddedRunReplayState } from "./embedded-agent-runner/replay-state.js";
 import { consumeEmbeddedToolReceipt } from "./embedded-agent-runner/tool-send-receipts.js";
 import type { EmbeddedRunLivenessState } from "./embedded-agent-runner/types.js";
 import { runBestEffortCallback } from "./embedded-agent-subscribe.callback.js";
-import { createCompactionRetryTracker } from "./embedded-agent-subscribe.compaction-retry.js";
 import { createEmbeddedAgentSessionEventHandler } from "./embedded-agent-subscribe.handlers.js";
 import { readPendingToolMediaReply } from "./embedded-agent-subscribe.handlers.messages.replies.js";
 import { cleanupRunToolStartData } from "./embedded-agent-subscribe.handlers.tools.js";
@@ -19,7 +21,6 @@ import type {
   EmbeddedAgentSubscribeContext,
   EmbeddedAgentSubscribeState,
 } from "./embedded-agent-subscribe.handlers.types.js";
-import { resolveEmbeddedAgentSessionLogger } from "./embedded-agent-subscribe.logger.js";
 import { createEmbeddedModelState } from "./embedded-agent-subscribe.model-state.js";
 import { createReplyDelivery } from "./embedded-agent-subscribe.reply-delivery.js";
 import { createEmbeddedAgentSubscribeState } from "./embedded-agent-subscribe.run-state.js";
@@ -32,6 +33,16 @@ import {
 } from "./embedded-agent-tool-media.js";
 import { stripDowngradedToolCallText } from "./embedded-agent-utils.js";
 import { setSessionModelUsageSink } from "./sessions/session-model-usage.js";
+
+const embeddedLog = createSubsystemLogger("agent/embedded");
+
+function resolveEmbeddedAgentSessionLogger(messageChannel?: string) {
+  const normalizedChannel = normalizeMessageChannel(messageChannel);
+  if (normalizedChannel && isDeliverableMessageChannel(normalizedChannel)) {
+    return createSubsystemLogger(`gateway/channels/${normalizedChannel}`);
+  }
+  return embeddedLog;
+}
 
 export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSessionParams) {
   const log = resolveEmbeddedAgentSessionLogger(params.messageChannel);
@@ -55,8 +66,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
   const messagingToolSentTargets = state.messagingToolSentTargets;
   const messagingToolSentMediaUrls = state.messagingToolSentMediaUrls;
   const messagingToolSourceReplyPayloads = state.messagingToolSourceReplyPayloads;
-  const pendingMessagingTexts = state.pendingMessagingTexts;
-  const pendingMessagingTargets = state.pendingMessagingTargets;
   const replyDelivery = createReplyDelivery({ params, state, log });
   const {
     clearAssistantStream,
@@ -69,42 +78,30 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     releaseDeferredReplies,
   } = replyDelivery;
 
-  // ── Messaging tool duplicate detection ──────────────────────────────────────
-  // Track texts sent via messaging tools to suppress duplicate block replies.
-  // Only committed (successful) texts are checked - pending texts are tracked
-  // to support commit logic but not used for suppression (avoiding lost messages on tool failure).
-  // These tools can send messages via sendMessage/threadReply actions (or sessions_send with message).
-  const MAX_MESSAGING_SENT_TEXTS = 200;
-  const MAX_CURRENT_SOURCE_MESSAGING_SENT_TEXTS = 200;
-  const MAX_MESSAGING_SENT_TARGETS = 200;
-  const MAX_MESSAGING_SENT_MEDIA_URLS = 200;
-  const MAX_MESSAGING_SOURCE_REPLY_PAYLOADS = 200;
+  // Suppress duplicate block replies only after confirmed messaging-tool delivery.
   const trimMessagingToolSent = () => {
-    if (messagingToolSentTexts.length > MAX_MESSAGING_SENT_TEXTS) {
-      const overflow = messagingToolSentTexts.length - MAX_MESSAGING_SENT_TEXTS;
+    if (messagingToolSentTexts.length > MAX_MESSAGING_HISTORY_ENTRIES) {
+      const overflow = messagingToolSentTexts.length - MAX_MESSAGING_HISTORY_ENTRIES;
       messagingToolSentTexts.splice(0, overflow);
       messagingToolSentTextsNormalized.splice(0, overflow);
     }
     if (
-      state.currentSourceMessagingToolSentTextsNormalized.length >
-      MAX_CURRENT_SOURCE_MESSAGING_SENT_TEXTS
+      state.currentSourceMessagingToolSentTextsNormalized.length > MAX_MESSAGING_HISTORY_ENTRIES
     ) {
       const overflow =
-        state.currentSourceMessagingToolSentTextsNormalized.length -
-        MAX_CURRENT_SOURCE_MESSAGING_SENT_TEXTS;
+        state.currentSourceMessagingToolSentTextsNormalized.length - MAX_MESSAGING_HISTORY_ENTRIES;
       state.currentSourceMessagingToolSentTextsNormalized.splice(0, overflow);
     }
-    if (messagingToolSentTargets.length > MAX_MESSAGING_SENT_TARGETS) {
-      const overflow = messagingToolSentTargets.length - MAX_MESSAGING_SENT_TARGETS;
+    if (messagingToolSentTargets.length > MAX_MESSAGING_HISTORY_ENTRIES) {
+      const overflow = messagingToolSentTargets.length - MAX_MESSAGING_HISTORY_ENTRIES;
       messagingToolSentTargets.splice(0, overflow);
     }
-    if (messagingToolSentMediaUrls.length > MAX_MESSAGING_SENT_MEDIA_URLS) {
-      const overflow = messagingToolSentMediaUrls.length - MAX_MESSAGING_SENT_MEDIA_URLS;
+    if (messagingToolSentMediaUrls.length > MAX_MESSAGING_HISTORY_ENTRIES) {
+      const overflow = messagingToolSentMediaUrls.length - MAX_MESSAGING_HISTORY_ENTRIES;
       messagingToolSentMediaUrls.splice(0, overflow);
     }
-    if (messagingToolSourceReplyPayloads.length > MAX_MESSAGING_SOURCE_REPLY_PAYLOADS) {
-      const overflow =
-        messagingToolSourceReplyPayloads.length - MAX_MESSAGING_SOURCE_REPLY_PAYLOADS;
+    if (messagingToolSourceReplyPayloads.length > MAX_MESSAGING_HISTORY_ENTRIES) {
+      const overflow = messagingToolSourceReplyPayloads.length - MAX_MESSAGING_HISTORY_ENTRIES;
       messagingToolSourceReplyPayloads.splice(0, overflow);
     }
   };
@@ -124,6 +121,11 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     }
   };
 
+  const noteCompactionRetry = () => {
+    state.pendingCompactionRetry += 1;
+    ensureCompactionPromise();
+  };
+
   const resolveCompactionPromiseIfIdle = () => {
     if (state.pendingCompactionRetry !== 0 || state.compactionInFlight) {
       return;
@@ -134,12 +136,13 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.compactionRetryPromise = null;
   };
 
-  const { noteCompactionReplacementActivity, noteCompactionRetry, resolveCompactionRetry } =
-    createCompactionRetryTracker({
-      state,
-      ensureCompactionPromise,
-      resolveCompactionPromiseIfIdle,
-    });
+  const resolveCompactionRetry = () => {
+    if (state.pendingCompactionRetry <= 0) {
+      return;
+    }
+    state.pendingCompactionRetry -= 1;
+    resolveCompactionPromiseIfIdle();
+  };
 
   const maybeResolveCompactionWait = () => {
     resolveCompactionPromiseIfIdle();
@@ -251,14 +254,12 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     blockChunker,
     emitBlockReply: replyDelivery.emitBlockReply,
     flushAssistantStream,
-    settleBlockReplyDeliveries: replyDelivery.settleBlockReplyDeliveries,
-    currentPendingBlockReplyTasks: replyDelivery.currentPendingBlockReplyTasks,
+    pendingBlockReplyTasks: replyDelivery.pendingBlockReplyTasks,
     pushAssistantText: replyDelivery.pushAssistantText,
     shouldSkipAssistantText: replyDelivery.shouldSkipAssistantText,
   });
   const {
     consumePartialReplyDirectives,
-    consumeReplyDirectives,
     emitBlockChunk,
     emitReasoningStream,
     flushBlockReplyBuffer,
@@ -268,21 +269,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     stripBlockTags,
   } = streamRendering;
 
-  const invalidateBlockReplyDeliveries = () => {
-    replyDelivery.invalidateBlockReplyDeliveries();
-  };
-
-  const invalidateBlockReplyDeliveriesForCompactionRetry = () => {
-    invalidateBlockReplyDeliveries();
-    return replyDelivery.getBlockReplyDeliveryGeneration();
-  };
-
-  const resetForCompactionRetry = (invalidatedDeliveryGeneration?: number) => {
-    if (invalidatedDeliveryGeneration === undefined) {
-      invalidateBlockReplyDeliveries();
-    }
-    replyDelivery.resetBlockReplyFailures();
-
+  const resetForCompactionRetry = () => {
     state.hadDeterministicSideEffect =
       state.hadDeterministicSideEffect === true ||
       hasCommittedMessagingToolDeliveryEvidence({
@@ -316,10 +303,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.currentSourceMessagingToolSentTextsNormalized.length = 0;
     messagingToolSentTargets.length = 0;
     messagingToolSentMediaUrls.length = 0;
-    pendingMessagingTexts.clear();
-    pendingMessagingTargets.clear();
-    state.heartbeatToolResponse = undefined;
-    state.pendingMessagingMediaUrls.clear();
     state.pendingToolMediaUrls = [];
     state.pendingToolMediaAttachments = [];
     state.pendingToolMediaTrustByUrl.clear();
@@ -330,15 +313,9 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.deferBlockReplyDelivery = typeof params.onBeforeTerminalDelivery === "function";
     clearAssistantStream();
     clearDeferredBlockReplies();
-    state.pendingAssistantReplyDirectives = undefined;
-    state.deferredAssistantReplyDirectives = undefined;
-    state.lastDeliveredAssistantReplyDirectives = undefined;
     state.deterministicApprovalPromptPending = false;
     state.deterministicApprovalPromptSent = false;
     state.lastDeliveredBlockReplyText = undefined;
-    state.deliveredBlockReplyTexts = [];
-    state.attemptedBlockReplyTexts = [];
-    state.deferredBlockReplyTexts = [];
     state.toolExecutionSinceLastBlockReply = false;
     state.replayState = mergeEmbeddedRunReplayState(state.replayState, params.initialReplayState);
     state.livenessState = "working";
@@ -398,7 +375,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     stripBlockTags,
     emitBlockChunk,
     flushBlockReplyBuffer,
-    settleBlockReplyDeliveries: replyDelivery.settleBlockReplyDeliveries,
     emitAssistantStreamData,
     emitBlockReply,
     flushAssistantStream,
@@ -407,12 +383,9 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     clearDeferredBlockReplies,
     emitReasoningStream,
     consumePartialReplyDirectives,
-    consumeReplyDirectives,
     resetBlockReplyDirectives,
     resetPartialReplyDirectives,
     resetAssistantMessageState,
-    getBlockReplyDeliveryGeneration: replyDelivery.getBlockReplyDeliveryGeneration,
-    invalidateBlockReplyDeliveriesForCompactionRetry,
     resetForCompactionRetry,
     finalizeAssistantTexts,
     trimMessagingToolSent,
@@ -420,7 +393,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
       consumeEmbeddedToolReceipt(params.session.sessionManager, toolCallId),
     ensureCompactionPromise,
     noteCompactionRetry,
-    noteCompactionReplacementActivity,
     resolveCompactionRetry,
     maybeResolveCompactionWait,
     captureModelEvent,
@@ -432,7 +404,6 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     getLastCompactionTokensAfter: () => state.lastCompactionTokensAfter,
   };
 
-  const runToolLifecycle = createEmbeddedToolLifecycleRunner(ctx);
   const sessionUnsubscribe = params.session.subscribe(createEmbeddedAgentSessionEventHandler(ctx));
   setSessionModelUsageSink(params.session.sessionManager, recordAuxiliaryUsage);
 
@@ -484,7 +455,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
       state.latestMcpAppChannelView ? { ...state.latestMcpAppChannelView } : undefined,
     getLatestMcpConnectAction: () =>
       state.latestMcpConnectAction ? { ...state.latestMcpConnectAction } : undefined,
-    runToolLifecycle,
+    runToolLifecycle: createEmbeddedToolLifecycleRunner(ctx),
     unsubscribe,
     setTerminalLifecycleMeta: (meta: {
       replayInvalid?: boolean;

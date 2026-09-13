@@ -116,6 +116,7 @@ export async function prepareEmbeddedAttemptSystemPrompt(params: {
     userDate,
   } = await resolveAgentRuntimePrompt({
     config: attempt.config,
+    preparedGitCoauthorPrompt: attempt.gitCoauthorPrompt,
     agentId: params.setup.sessionAgentId,
     workspaceDir: params.setup.effectiveWorkspace,
     cwd: params.setup.effectiveCwd,
@@ -273,7 +274,6 @@ export async function prepareEmbeddedAttemptSystemPrompt(params: {
       projectMemoryBootstrap,
       activeProjectKeys,
       promptContribution,
-      continuationEnabled: attempt.config?.agents?.defaults?.continuation?.enabled === true,
     },
     providerTransform: {
       provider: attempt.provider,

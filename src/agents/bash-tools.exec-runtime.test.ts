@@ -35,7 +35,7 @@ const supervisorMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../infra/heartbeat-wake.js", () => ({
-  requestHeartbeatRaw: requestHeartbeatMock,
+  requestHeartbeat: requestHeartbeatMock,
 }));
 
 vi.mock("../infra/system-events.js", () => ({

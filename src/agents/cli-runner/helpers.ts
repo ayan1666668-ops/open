@@ -169,12 +169,11 @@ export function buildCliAgentSystemPrompt(params: {
     }),
     runtimeInfo,
     toolNames: params.tools.map((tool) => tool.name),
+    messageTool: params.tools.find((tool) => tool.name.trim().toLowerCase() === "message"),
     skillsPrompt: params.skillsPrompt,
     userTimezone,
     userDate,
     contextFiles: params.contextFiles,
-    memoryCitationsMode: params.config?.memory?.citations,
-    continuationEnabled: params.config?.agents?.defaults?.continuation?.enabled === true,
     bootstrapMode: params.bootstrapMode,
     bootstrapTruncationNotice: params.bootstrapTruncationNotice,
   });

@@ -475,6 +475,8 @@ export const startSubagentAnnounceCleanupFlow = (
             params.persist(runId);
             const sessionCleanup = await deleteSubagentSessionForCleanup({
               callGateway: params.callGateway,
+              gatewayBinding: { resolveGatewayContext: getGatewayContextResolver(entry) },
+              isCurrent: childSessionEffectsAllowed,
               childSessionKey: entry.childSessionKey,
               spawnMode: entry.spawnMode,
               expectedSessionId: cleanupSessionIdentity.sessionId,
@@ -516,17 +518,10 @@ export const startSubagentAnnounceCleanupFlow = (
       await retireSupersededCleanupIfNeeded(context, runId, entry, cleanupGeneration);
       return;
     }
-    // An accepted wake owns the child session after announce started. Preserve
-    // its registry row; retiring here would orphan the authoritative dispatch.
-    if (cleanup === "delete" && entry.acceptedSteerDispatch) {
-      params.persist(runId);
-      return;
-    }
     const hasDeliveryMirror =
       announceOutcome !== "delivered" &&
       entry.delivery?.status !== "delivered" &&
       (await hasPriorRequesterDeliveryMirror(params, entry));
-
     if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {
       await retireSupersededCleanupIfNeeded(context, runId, entry, cleanupGeneration);
       return;
@@ -581,7 +576,7 @@ export const startSubagentAnnounceCleanupFlow = (
     onBeforeDeleteChildSession:
       cleanup === "delete"
         ? () => {
-            if (!childSessionEffectsAllowed() || entry.acceptedSteerDispatch) {
+            if (!childSessionEffectsAllowed()) {
               return false;
             }
             const previousDelivery = entry.delivery

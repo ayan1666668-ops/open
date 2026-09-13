@@ -329,13 +329,6 @@ export interface SessionProgressCards {
   updated_at: number;
 }
 
-export interface SessionRecipientAuthority {
-  created_at: number;
-  epoch: string;
-  session_key: string;
-  updated_at: number;
-}
-
 export interface SessionSuggestions {
   author_id: string;
   author_label: string | null;
@@ -371,6 +364,20 @@ export interface SessionTranscriptArchives {
   reason: string;
   session_id: string;
   session_key: string;
+}
+
+export interface SessionTranscriptColdArchives {
+  archive_blob: Uint8Array | null;
+  archive_bytes: number;
+  archive_name: string;
+  archive_sha256: string;
+  archived_at: number;
+  event_count: number;
+  generation: string;
+  last_seq: number;
+  raw_bytes: number;
+  session_id: string;
+  storage: string;
 }
 
 export interface SessionTranscriptFts {
@@ -555,10 +562,10 @@ export interface DB {
   session_participants: SessionParticipants;
   session_pending_inputs: SessionPendingInputs;
   session_progress_cards: SessionProgressCards;
-  session_recipient_authority: SessionRecipientAuthority;
   session_suggestions: SessionSuggestions;
   session_transcript_active_events: SessionTranscriptActiveEvents;
   session_transcript_archives: SessionTranscriptArchives;
+  session_transcript_cold_archives: SessionTranscriptColdArchives;
   session_transcript_fts: SessionTranscriptFts;
   session_transcript_fts_config: SessionTranscriptFtsConfig;
   session_transcript_fts_content: SessionTranscriptFtsContent;

@@ -1,13 +1,14 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
 import { hasVisibleCommittedMessagingToolDeliveryEvidence } from "../../agents/embedded-agent-runner/delivery-evidence.js";
+import { MODEL_FALLBACK_SKIPPED_CODE } from "../../agents/model-fallback.types.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
+import { areRuntimeModelRefsEquivalent } from "../../agents/model-runtime-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   resolveSessionPluginStatusLines,
   resolveSessionPluginTraceLines,
   type SessionEntry,
-  type SessionPostCompactionDelegate,
 } from "../../config/sessions.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { TypingMode } from "../../config/types.js";
@@ -19,7 +20,6 @@ import {
   type DeliveryContext,
   normalizeDeliveryContext,
 } from "../../utils/delivery-context.shared.js";
-import { stagePostCompactionDelegate } from "../continuation/delegate-store-post-compaction.js";
 import { resolveFallbackTransition } from "../fallback-state.js";
 import {
   isReplyPayloadTerminalContent,
@@ -30,6 +30,7 @@ import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import type { RuntimeFallbackAttempt } from "./agent-runner-execution.types.js";
 import {
   buildKnownAgentRunFailureReplyPayload,
   buildTerminalAgentRunFailureReplyPayload,
@@ -40,7 +41,7 @@ import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { sanitizePendingFinalDeliveryText } from "./pending-final-delivery-state.js";
 import { type FollowupRun, type QueueSettings, scheduleFollowupDrain } from "./queue.js";
-import { normalizeReplyPayloadDirectives } from "./reply-delivery.js";
+import { normalizeReplyPayloadDirectives, type DirectBlockDelivery } from "./reply-delivery.js";
 import { isReplyOperationSuperseded } from "./reply-operation-abort.js";
 import { type ReplyOperation, runAfterReplyOperationClear } from "./reply-run-registry.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
@@ -80,6 +81,8 @@ export function markBeforeAgentRunBlockedPayloads(payloads: ReplyPayload[]): Rep
 export function buildSilentFallbackFailurePayload(params: {
   fallbackTransition: ReturnType<typeof resolveFallbackTransition>;
   fallbackFailureKnown: boolean;
+  fallbackAttempts: readonly RuntimeFallbackAttempt[];
+  cfg: OpenClawConfig;
   isHeartbeat: boolean;
   hasSuccessfulTerminalDelivery: boolean;
   allowEmptyAssistantReplyAsSilent?: boolean;
@@ -97,10 +100,35 @@ export function buildSilentFallbackFailurePayload(params: {
   ) {
     return undefined;
   }
+  const selected = params.fallbackTransition.selectedModelRef;
+  const active = params.fallbackTransition.activeModelRef;
+  const attempts = params.fallbackAttempts;
+  const selectedAttempts = attempts.filter((attempt) =>
+    areRuntimeModelRefsEquivalent(`${attempt.provider}/${attempt.model}`, selected, {
+      config: params.cfg,
+    }),
+  );
+  let primary = `⚠️ The configured model backend ${selected} produced no usable reply. `;
+  // Local skips retain old failure reasons, not evidence of a new backend attempt.
+  if (
+    selectedAttempts.length > 0 &&
+    selectedAttempts.every((attempt) => attempt.code !== MODEL_FALLBACK_SKIPPED_CODE) &&
+    attempts.every((attempt) => attempt.provider.trim() && attempt.model.trim())
+  ) {
+    if (
+      selectedAttempts.every(({ reason }) =>
+        ["timeout", "server_error", "overloaded", "tls_certificate"].includes(reason),
+      )
+    ) {
+      primary = `⚠️ I couldn't reach the configured model backend ${selected}. `;
+    } else if (
+      selectedAttempts.every(({ reason }) => reason === "format" || reason === "empty_response")
+    ) {
+      primary = `⚠️ The configured model backend ${selected} responded but produced no usable reply. `;
+    }
+  }
   return markReplyPayloadForSourceSuppressionDelivery({
-    text:
-      `⚠️ I couldn't reach the configured model backend ${params.fallbackTransition.selectedModelRef}. ` +
-      `Fallback used ${params.fallbackTransition.activeModelRef}, but it produced no visible reply.`,
+    text: `${primary}Fallback used ${active}, but it produced no visible reply.`,
     isError: true,
   });
 }
@@ -169,7 +197,7 @@ export function hasSuccessfulSourceReplyDelivery(params: {
   messagingToolSentTargets?: unknown[];
 }): boolean {
   return (
-    (params.blockReplyPipeline?.didStream() && !params.blockReplyPipeline.isAborted()) ||
+    params.blockReplyPipeline?.didStream() ||
     (params.directlySentBlockKeys?.size ?? 0) > 0 ||
     hasVisibleCommittedMessagingToolDeliveryEvidence(params)
   );
@@ -180,17 +208,17 @@ export function hasSuccessfulTerminalSourceReplyDelivery(params: {
     didStreamTerminalReply?: () => boolean;
     isAborted: () => boolean;
   } | null;
-  directlySentBlockPayloads?: ReplyPayload[];
+  directBlockDeliveries?: DirectBlockDelivery[];
 }): boolean {
-  const sentTerminalBlock = params.directlySentBlockPayloads?.some(
-    (payload) =>
+  const sentTerminalBlock = params.directBlockDeliveries?.some(
+    ({ payload, outcome, pending }) =>
+      outcome === "delivered" &&
+      !pending &&
       isReplyPayloadTerminalContent(payload) &&
       normalizeReplyPayload(payload, { applyChannelTransforms: false }) !== null,
   );
   return (
-    (params.blockReplyPipeline?.didStreamTerminalReply?.() === true &&
-      !params.blockReplyPipeline.isAborted()) ||
-    sentTerminalBlock === true
+    params.blockReplyPipeline?.didStreamTerminalReply?.() === true || sentTerminalBlock === true
   );
 }
 
@@ -390,7 +418,6 @@ export async function handleReplyAgentRunError(
 export async function cleanupReplyAgentRun(context: {
   blockReplyPipeline: BlockReplyPipeline | null;
   clearRestartRecoveryDeliveryClaim: () => Promise<void>;
-  postCompactionDelegatesToPreserve: SessionPostCompactionDelegate[];
   providedReplyOperation: ReplyOperation | undefined;
   queueKey: string;
   replyOperation: ReplyOperation;
@@ -402,7 +429,6 @@ export async function cleanupReplyAgentRun(context: {
   const {
     blockReplyPipeline,
     clearRestartRecoveryDeliveryClaim,
-    postCompactionDelegatesToPreserve,
     providedReplyOperation,
     queueKey,
     replyOperation,
@@ -435,27 +461,6 @@ export async function cleanupReplyAgentRun(context: {
   }
   blockReplyPipeline?.stop();
   typing.markRunComplete();
-  // do NOT consume/claim queued delegates in cleanup. consume APIs are
-  // TaskFlow claims (queued -> running), not deletes; claiming here and
-  // discarding the returned rows would strand a delegate matured/queued during
-  // a failed turn in `running` until restart recovery. Durable queued delegates
-  // must survive a failed turn and be dispatched by the next turn's dispatcher
-  // or restart recovery — so leave them queued. Only re-stage the in-memory
-  // preserve list (delegates a durable handoff could not persist), which would
-  // otherwise be lost with the process. Guard the TaskFlow call: a throw here
-  // runs inside the finally, so it would both mask the original run error and
-  // skip markDispatchIdle() below, leaking the typing keepalive loop (I4).
-  if (sessionKey && postCompactionDelegatesToPreserve.length > 0) {
-    try {
-      for (const delegate of postCompactionDelegatesToPreserve) {
-        stagePostCompactionDelegate(sessionKey, delegate);
-      }
-    } catch (drainError) {
-      logVerbose(
-        `failed to re-stage preserved post-compaction delegates for ${sessionKey}: ${String(drainError)}`,
-      );
-    }
-  }
   // Safety net: the dispatcher's onIdle callback normally fires
   // markDispatchIdle(), but if the dispatcher exits early, errors,
   // or the reply path doesn't go through it cleanly, the second
@@ -500,6 +505,5 @@ export type RunReplyAgentParams = {
   typingMode: TypingMode;
   resetTriggered?: boolean;
   replyThreadingOverride?: TemplateContext["ReplyThreading"];
-  isContinuationWake?: boolean;
   replyOperation?: ReplyOperation;
 };

@@ -36,7 +36,6 @@ type RateLimitAuthProfileContext = {
   failoverProvider: string;
   failoverModel: string;
   logFallbackDecision: (decision: "fallback_model", extra?: { status?: number }) => void;
-  timeout?: FailoverError["timeout"];
 };
 
 export function createEmbeddedRunFailoverRetryController(input: {
@@ -165,8 +164,6 @@ export function createEmbeddedRunFailoverRetryController(input: {
             sessionId: input.getSessionId(),
             lane: globalLane,
             status,
-            // Cap throws before handleAssistantFailover; keep the owner's timeout object.
-            timeout: context.timeout,
           },
         );
       }
@@ -269,12 +266,19 @@ export function createEmbeddedRunFailoverRetryController(input: {
         delayMs,
         reason: retry.reason,
       });
-      // Provider floors can exceed one native timer; the shared helper owns abort errors.
-      let remainingMs = delayMs;
-      while (remainingMs > 0) {
-        const chunkMs = Math.min(remainingMs, RETRY_SLEEP_CHUNK_MS);
-        await sleepWithAbort(chunkMs, params.abortSignal);
-        remainingMs -= chunkMs;
+      const closeRetryWait = params.onRetryWait?.(Date.now() + delayMs, params.abortSignal);
+      let completed = false;
+      try {
+        // Provider floors can exceed one native timer; protect the whole wait.
+        let remainingMs = delayMs;
+        while (remainingMs > 0) {
+          const chunkMs = Math.min(remainingMs, RETRY_SLEEP_CHUNK_MS);
+          await sleepWithAbort(chunkMs, params.abortSignal);
+          remainingMs -= chunkMs;
+        }
+        completed = true;
+      } finally {
+        closeRetryWait?.(completed);
       }
       transientRetryCount += 1;
       return true;

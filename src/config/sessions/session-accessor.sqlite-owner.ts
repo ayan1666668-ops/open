@@ -7,9 +7,7 @@ import {
 import { ensureColumn } from "../../state/openclaw-state-db-schema-helpers.js";
 import type { SessionAccessScope } from "./session-accessor.sqlite-contract.js";
 import { publishSessionEntryCacheInvalidation } from "./session-accessor.sqlite-entry-cache.js";
-import { readSessionEntryRow } from "./session-accessor.sqlite-entry-store.js";
 import { hasSqliteSessionOwnerColumns } from "./session-accessor.sqlite-owner-projection.js";
-import { advanceSessionRecipientAuthorityInTransaction } from "./session-accessor.sqlite-recipient-authority.js";
 import {
   getSessionKysely,
   resolveSqliteScope,
@@ -69,15 +67,7 @@ export function assignSessionOwner(
   const updated = runOpenClawAgentWriteTransaction(
     (database) => {
       params.assertCurrent?.();
-      const entry = readSessionEntryRow(database, resolved.sessionKey)?.entry;
-      const previousOwner = entry?.owner?.actor ?? entry?.createdActor;
-      const ownerChanged =
-        previousOwner?.type !== owner.actor.type || previousOwner?.id !== owner.actor.id;
-      const replaced = replaceSessionOwnerInTransaction(database, resolved.sessionKey, owner);
-      if (replaced && ownerChanged) {
-        advanceSessionRecipientAuthorityInTransaction(database, resolved.sessionKey);
-      }
-      return replaced;
+      return replaceSessionOwnerInTransaction(database, resolved.sessionKey, owner);
     },
     options,
     { operationLabel: "sessions.assign-owner" },

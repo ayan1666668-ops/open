@@ -39,7 +39,6 @@ import {
   type HeartbeatToolResponse,
   type MessagingToolSend,
   type MessagingToolSourceReplyPayload,
-  type ToolResultFailureKind,
   wrapToolWithBeforeToolCallHook,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
@@ -68,6 +67,7 @@ import {
   sliceUtf16Safe,
 } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { CodexDynamicToolsLoading } from "./config.js";
+import { createCodexAutomationsToolsAllowResolver } from "./dynamic-tool-automations-allowlist.js";
 import { finalizeCodexToolAvailability } from "./dynamic-tool-availability.js";
 import {
   createCodexDynamicToolSpecs,
@@ -87,6 +87,7 @@ import type {
   CodexDynamicToolCallOutputContentItem,
   CodexDynamicToolCallParams,
   CodexDynamicToolCallResponse,
+  CodexDynamicToolDiagnosticTerminalReason,
   CodexDynamicToolDiagnosticTerminalType,
   CodexDynamicToolSpec,
 } from "./protocol.js";
@@ -536,6 +537,17 @@ export function createCodexDynamicToolBridge(params: {
     availableProjection.tools.filter((entry) => registrationNames.has(entry.name)),
   );
   const availableTools = finalized.tools;
+  const pluginLocalMediaTrustByToolName = new Map<string, ReadonlySet<string>>();
+  for (const { name, tool } of availableTools) {
+    const pluginMeta = getPluginToolMeta(tool);
+    if (pluginMeta) {
+      // Bind path trust to the concrete plugin tool so core-name collisions fail closed.
+      pluginLocalMediaTrustByToolName.set(
+        name,
+        new Set(pluginMeta.trustedLocalMedia === true ? [name] : []),
+      );
+    }
+  }
   availableProjection.quarantinedTools.push(...finalized.quarantinedTools);
   const toolMap = new Map(availableTools.map((entry) => [entry.name, entry]));
   const quarantinedAvailableToolNames = new Set(
@@ -596,6 +608,14 @@ export function createCodexDynamicToolBridge(params: {
   };
   const executionSnapshotStates = new Map<string, ExecutionSnapshotState>();
   const directToolNames = params.directToolNames;
+  const specs =
+    inheritedSpecs ??
+    createCodexDynamicToolSpecs({
+      entries: registeredSpecTools,
+      loading: params.loading ?? "searchable",
+      directToolNames,
+    });
+  const resolveAutomationsToolsAllow = createCodexAutomationsToolsAllowResolver(specs);
   let readRemoteWorkspaceFile: CodexRemoteWorkspaceFileReader | undefined;
   return {
     availableTools: availableTools.map((entry) => entry.tool),
@@ -612,13 +632,7 @@ export function createCodexDynamicToolBridge(params: {
           loading: params.loading ?? "searchable",
           directToolNames,
         }),
-    specs:
-      inheritedSpecs ??
-      createCodexDynamicToolSpecs({
-        entries: registeredSpecTools,
-        loading: params.loading ?? "searchable",
-        directToolNames,
-      }),
+    specs,
     resultContentSourceForTool: (toolName) => toolMap.get(toolName)?.tool.resultContentSource,
     sideEffectOwnerKeyForTool: (toolName) => {
       const tool = toolMap.get(toolName)?.tool;
@@ -664,7 +678,8 @@ export function createCodexDynamicToolBridge(params: {
         });
       }
       const { tool, name: toolName } = toolEntry;
-      const rawArguments = call.arguments;
+      const rawArguments =
+        toolName === "automations" ? resolveAutomationsToolsAllow(call.arguments) : call.arguments;
       const args = asNonArrayRecord(rawArguments);
       const startedAt = Date.now();
       const signal = composeAbortSignals(params.signal, options?.signal);
@@ -713,8 +728,8 @@ export function createCodexDynamicToolBridge(params: {
                 signal,
               })
             : toolArgs;
-        const preparedToolArgs = isRecord(preparedArgs) ? preparedArgs : args;
-        executedArgs = structuredClone(preparedToolArgs);
+        const telemetryArgs = isRecord(preparedArgs) ? preparedArgs : args;
+        executedArgs = structuredClone(telemetryArgs);
         const messagingContext = {
           config: params.hookContext?.config,
           currentChannelId: params.hookContext?.currentChannelId,
@@ -754,14 +769,6 @@ export function createCodexDynamicToolBridge(params: {
         const telemetryRawResult = sanitizeToolResult(rawResult);
         const rawIsError = isToolResultError(rawResult);
         const rawResultFailureKind = resolveToolResultFailureKind(rawResult);
-        // The native agentToolResultMiddleware runner observes OpenClaw's
-        // executed args (preparedToolArgs merged with before_tool_call
-        // adjustments), matching the after_tool_call hook view. The legacy
-        // codex app-server extension runner keeps its historical contract of
-        // observing the tool's prepared call args, before before_tool_call
-        // rewrites them. Feeding the merged view to the legacy runner makes a
-        // contract extension's args diverge from the invoked call, so its
-        // assertion throws and its transformed result is silently discarded.
         const middlewareResult = await middlewareRunner.applyToolResultMiddleware({
           threadId: call.threadId,
           turnId: call.turnId,
@@ -776,7 +783,7 @@ export function createCodexDynamicToolBridge(params: {
           turnId: call.turnId,
           toolCallId: call.callId,
           toolName,
-          args: structuredClone(preparedToolArgs),
+          args: structuredClone(executedArgs),
           result: middlewareResult,
         });
         const resultIsError = rawIsError || isToolResultError(result);
@@ -915,6 +922,7 @@ export function createCodexDynamicToolBridge(params: {
           coreTtsToolResult: autoDeliveryTtsMediaUrls?.length ? rawResult : undefined,
           messagingTarget: confirmedMessagingTarget,
           sourceReplyFinal,
+          trustedLocalMediaToolNames: pluginLocalMediaTrustByToolName.get(toolName),
         });
         if (deliveredSourceReply || receiptConfirmedSourceReply || toolConfirmedSourceReply) {
           telemetry.didDeliverSourceReplyViaMessageTool = true;
@@ -1101,7 +1109,7 @@ function notifyAgentToolResult(
 
 function failedToolResult(
   message: string,
-  status: ToolResultFailureKind = "failed",
+  status: "blocked" | CodexDynamicToolDiagnosticTerminalReason = "failed",
 ): AgentToolResult<unknown> {
   return {
     content: [{ type: "text", text: message }],
@@ -1190,6 +1198,7 @@ function collectToolTelemetry(params: {
   coreTtsToolResult?: object;
   messagingTarget?: MessagingToolSend;
   sourceReplyFinal?: boolean;
+  trustedLocalMediaToolNames?: ReadonlySet<string>;
 }): MessagingToolSend | MessagingToolSourceReplyPayload | undefined {
   if (params.isError) {
     return undefined;
@@ -1210,7 +1219,8 @@ function collectToolTelemetry(params: {
       const mediaUrls = filterToolResultMediaUrls(
         params.toolName,
         media.mediaUrls,
-        params.mediaTrustResult ?? params.result,
+        params.coreTtsToolResult ?? params.mediaTrustResult ?? params.result,
+        params.trustedLocalMediaToolNames,
       );
       const seen = new Set(params.telemetry.toolMediaUrls);
       const autoDeliveryMediaUrls = new Set(params.telemetry.toolAutoDeliveryMediaUrls);
@@ -1351,7 +1361,7 @@ function withDiagnosticTerminalType<T extends CodexDynamicToolCallResponse>(
 }
 function withDiagnosticFailureDisposition<T extends CodexDynamicToolCallResponse>(
   response: T,
-  disposition: ToolResultFailureKind | undefined,
+  disposition: "blocked" | CodexDynamicToolDiagnosticTerminalReason | undefined,
 ): T {
   if (!disposition) {
     return response;

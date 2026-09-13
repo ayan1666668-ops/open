@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import type { CurrentInboundPromptContext } from "../../agents/embedded-agent-runner/run/params.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -28,7 +27,6 @@ import {
 } from "./compaction-notice.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import { refreshActiveGoalContext } from "./inbound-meta.js";
-import { evaluateNoOpRearmAdmission, type NoOpRearmWakeClass } from "./no-op-rearm-guard.js";
 import {
   admitFollowupRunLifecycle,
   isFollowupRunAborted,
@@ -81,10 +79,8 @@ export type AdmittedFollowupTurn = {
   config: OpenClawConfig;
   session: FollowupSessionOwner;
   sessionStore?: Record<string, SessionEntry>;
-  currentInboundContext?: CurrentInboundPromptContext;
   sendPolicy: "allow" | "deny";
   preflightCompactionApplied: boolean;
-  noOpRearmWakeClass?: NoOpRearmWakeClass;
   preflightFailurePayload?: ReplyPayload;
   preflightError?: unknown;
 };
@@ -94,7 +90,7 @@ type FollowupAdmissionResult =
   | { kind: "deferred"; reason: "active-run" }
   | {
       kind: "skipped";
-      reason: "aborted" | "lifecycle-invalidated" | "no-op-rearm-suppressed";
+      reason: "aborted" | "lifecycle-invalidated";
       operation?: ReplyOperation;
     };
 
@@ -117,7 +113,7 @@ function isSameSessionGeneration(
   );
 }
 
-/** Resolves one queued item into an immutable admitted turn. */
+/** Resolves one queued item into an admitted turn. */
 export async function admitFollowupTurn(params: {
   queued: FollowupRun;
   defaults: FollowupRunnerParams;
@@ -187,27 +183,6 @@ export async function admitFollowupTurn(params: {
         autoFallbackPrimaryProbe: undefined,
         modelSelectionLocked: false,
       };
-    }
-    let noOpRearmWakeClass: NoOpRearmWakeClass | undefined;
-    const noOpRearmSessionKey = replySessionKey ?? run.sessionKey ?? "";
-    if (noOpRearmSessionKey) {
-      const noOpRearmAdmission = evaluateNoOpRearmAdmission({
-        sessionKey: noOpRearmSessionKey,
-        provenance: run.inputProvenance,
-        inboundEventKind: params.queued.currentInboundEventKind,
-        messageId: resolveFollowupCurrentMessageId(params.queued) ?? params.queued.messageId,
-        eventTimestampMs: params.queued.currentInboundEventTimestampMs,
-        isHeartbeat: params.defaults.opts?.isHeartbeat === true,
-      });
-      noOpRearmWakeClass = noOpRearmAdmission.wake;
-      if (!noOpRearmAdmission.admit) {
-        if (noOpRearmAdmission.diagnostic) {
-          defaultRuntime.log?.(noOpRearmAdmission.diagnostic.message);
-        }
-        await settleQueuedFollowupPresentation(params.defaults);
-        queuedFollowupAdmitted = false;
-        return { kind: "skipped", reason: "no-op-rearm-suppressed", operation };
-      }
     }
     const admittedEntry = replySessionKey
       ? params.defaults.storePath
@@ -322,10 +297,8 @@ export async function admitFollowupTurn(params: {
       config,
       session,
       sessionStore,
-      currentInboundContext,
       sendPolicy: resolveTurnSendPolicy(activeEntry),
       preflightCompactionApplied: false,
-      noOpRearmWakeClass,
     };
     const refreshTurnSessionState = (entry: SessionEntry | undefined) => {
       const refreshedInboundContext =
@@ -333,7 +306,6 @@ export async function admitFollowupTurn(params: {
           ? params.queued.currentInboundContext
           : refreshActiveGoalContext(params.queued.currentInboundContext, entry);
       turn.sendPolicy = resolveTurnSendPolicy(entry, turn.queued);
-      turn.currentInboundContext = refreshedInboundContext;
       turn.queued = { ...turn.queued, currentInboundContext: refreshedInboundContext };
     };
     const readTurnSessionEntry = () =>

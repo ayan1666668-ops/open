@@ -24,7 +24,6 @@ import { extractTextFromChatContent } from "../../shared/chat-content.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SkillWorkshopProposalRevisionConstraint } from "../../skills/workshop/types.js";
 import { isOperatorUiClient } from "../../utils/message-channel.js";
-import type { ChatTerminalState } from "../chat-abort.js";
 import { discardPreparedInboundMedia } from "../chat-attachments.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../operator-role-policy.js";
 import type { ChatRunTiming } from "../server-chat-state.js";
@@ -145,17 +144,6 @@ async function handleChatSendWithOptions(
     finishAbortedChatSend();
     return;
   }
-  const markTerminalBroadcasted = (state: ChatTerminalState) => {
-    if (!activeRunAbort.entry) {
-      context.logGateway.warn(
-        `chat terminal state was not recorded because the run entry was already cleared: runId=${clientRunId} state=${state}`,
-      );
-      return;
-    }
-    activeRunAbort.entry.chatTerminalBroadcasted = true;
-    activeRunAbort.entry.chatTerminalState = state;
-  };
-
   // Attachment preparation can suspend. Recheck immediately before the
   // synchronous ACK path so aborts and hot routing reloads cannot cross it.
   if (sessionRoutingChanged(context.getRuntimeConfig())) {
@@ -438,6 +426,7 @@ async function handleChatSendWithOptions(
     }
     const beginCapturedMessageInjection = createChatSendMessageInjectionStarter({
       target: messageInjectionTarget,
+      abortSignal: activeRunAbort.controller.signal,
       request: normalizedRequest.value,
       session: preparedSession.value,
       admittedSessionSettings: admitted.value.admittedSessionSettings,
@@ -445,6 +434,7 @@ async function handleChatSendWithOptions(
       imageOrder,
       documentContext: steerDocumentContext,
       userTurnTranscriptRecorder: userTurnRecorder,
+      logGateway: context.logGateway,
     });
     const preAckReplyContextPromise =
       messageInjectionTarget && !isInternalTextSlashCommandTurn
@@ -558,7 +548,6 @@ async function handleChatSendWithOptions(
         preAckReplyContextPromise,
         replyContextFieldsPromise,
       },
-      markTerminalBroadcasted,
       request: normalizedRequest.value,
       session: preparedSession.value,
       terminalizeRestartSafeAdmission,
@@ -577,7 +566,6 @@ async function handleChatSendWithOptions(
       admission: admitted.value,
       context,
       error: err,
-      markTerminalBroadcasted,
       respond,
       session: preparedSession.value,
       terminalizeRestartSafeAdmission,

@@ -5,7 +5,6 @@ import {
   appendLocalMediaParentRoots,
   getAgentScopedMediaLocalRoots,
 } from "../../media/local-roots.js";
-import type { ChatTerminalState } from "../chat-abort.js";
 import { appendChatCanvasBlocksToMessage } from "../chat-display-projection.canvas.js";
 import { attachManagedOutgoingMediaToMessage } from "../managed-image-attachments.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -14,7 +13,6 @@ import {
   buildAssistantReplyContent,
   combineNonStreamingReplyParts,
   extractAssistantDisplayText,
-  extractAssistantDisplayTextFromContent,
   hasAssistantDisplayMediaContent,
   hasVisibleAssistantFinalMessage,
   stripManagedOutgoingAssistantContentBlocks,
@@ -142,7 +140,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
   deliveredReplies: readonly DeliveredReply[];
   emitFirstAssistantServerTiming: () => void;
   foldCommandBlocks: boolean;
-  markTerminalBroadcasted: (state: ChatTerminalState) => void;
   persistUserTurnTranscript: () => Promise<void>;
   session: Pick<
     PreparedChatSendSession,
@@ -159,7 +156,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
     deliveredReplies,
     emitFirstAssistantServerTiming,
     foldCommandBlocks,
-    markTerminalBroadcasted,
     persistUserTurnTranscript,
     session,
     suppressReplies,
@@ -179,7 +175,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
         ts: Date.now(),
       },
     });
-    markTerminalBroadcasted("final");
     broadcastChatFinal({
       context,
       runId: clientRunId,
@@ -202,7 +197,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
     context.logGateway.warn(
       "webchat settled final reply skipped: session writer changed before finalization",
     );
-    markTerminalBroadcasted("final");
     broadcastChatFinal({ context, runId: clientRunId, sessionKey, agentId });
     return;
   }
@@ -302,8 +296,7 @@ export async function finalizeChatSendDispatchedReplies(params: {
       ? mediaMessage?.content
       : assistantContent;
   const displayReply =
-    extractAssistantDisplayTextFromContent(assistantContent) ??
-    buildTranscriptReplyText(finalPayloads);
+    extractAssistantDisplayText(assistantContent) ?? buildTranscriptReplyText(finalPayloads);
   const transcriptDisplayReply = displayReply?.trim() ?? "";
   const transcriptReply =
     mediaMessage?.transcriptText ||
@@ -326,7 +319,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
     context.logGateway.warn(
       "webchat settled final reply skipped: session writer changed before transcript append",
     );
-    markTerminalBroadcasted("final");
     broadcastChatFinal({ context, runId: clientRunId, sessionKey, agentId });
     return;
   }
@@ -393,7 +385,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
     context.logGateway.warn(
       "webchat settled final reply skipped: session writer changed before broadcast",
     );
-    markTerminalBroadcasted("final");
     broadcastChatFinal({ context, runId: clientRunId, sessionKey, agentId });
     return;
   }
@@ -406,7 +397,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
   if (hasVisibleAssistantFinalMessage(message)) {
     emitFirstAssistantServerTiming();
   }
-  markTerminalBroadcasted(params.state);
   broadcastChatTerminal({
     context,
     runId: clientRunId,

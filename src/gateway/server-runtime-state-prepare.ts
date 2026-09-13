@@ -9,6 +9,7 @@ import { isTruthyEnvValue } from "../infra/env.js";
 import { loadGatewayTlsServerRuntime } from "../infra/tls/gateway.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import { runtimeForLogger } from "../logging/subsystem.js";
+import type { createPluginRegistryOwner } from "../plugins/runtime.js";
 import { isGatewayDraining } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { getActiveSecretsRuntimeConfigSnapshot } from "../secrets/runtime-state.js";
@@ -19,10 +20,8 @@ import { resolveGatewayAuth } from "./auth.js";
 import { createDesktopSessionRegistry } from "./desktop/session-registry.js";
 import { isLoopbackHost } from "./net.js";
 import { createNodeReapprovalCoordinator } from "./node-reapproval-coordinator.js";
-import { resolveGatewayPluginConfig } from "./runtime-plugin-config.js";
 import { createGatewayConnectionState } from "./server-connection-state.js";
 import { createGatewayControlUiRootLifecycle } from "./server-control-ui-root.js";
-import type { GatewayServerExtraHttpRoute } from "./server-extra-handlers.js";
 import type { GatewayInstanceRuntime } from "./server-instance-runtime.types.js";
 import type { GatewayServerLiveState } from "./server-live-state.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
@@ -44,9 +43,9 @@ type ChannelRuntime = ReturnType<
 export async function prepareGatewayKernelState(params: {
   bootstrap: GatewayBootstrap;
   bootId: string;
+  pluginRegistryOwner: ReturnType<typeof createPluginRegistryOwner>;
   port: number;
   opts: GatewayBootstrap["opts"];
-  serverExtraHttpRoutes: readonly GatewayServerExtraHttpRoute[];
   log: GatewayLogger;
   logChannels: GatewayLogger;
   logHooks: GatewayLogger;
@@ -65,7 +64,6 @@ export async function prepareGatewayKernelState(params: {
     bootId,
     port,
     opts,
-    serverExtraHttpRoutes,
     log,
     logChannels,
     logHooks,
@@ -88,12 +86,11 @@ export async function prepareGatewayKernelState(params: {
     pluginGatewayContext,
     resolvePluginGatewayContext,
   } = bootstrap;
-  const pluginRuntime = {
-    registry: pluginBootstrap.pluginRegistry,
+  const pluginRuntime = Object.assign(params.pluginRegistryOwner, {
     baseGatewayMethods: pluginBootstrap.baseGatewayMethods,
-  };
-  const listGatewayStartupChannelPlugins = () =>
-    listLoadedChannelPluginsForRegistry(pluginRuntime.registry);
+  });
+  const listGatewayStartupChannelPlugins = (registry = pluginRuntime.registry) =>
+    listLoadedChannelPluginsForRegistry(registry);
   // The core device provider is configuration-free, so every full Gateway owns the
   // worker service even when no plugin-backed cloud profile has been configured.
   const shouldStartWorkerEnvironmentService = Boolean(workerEnvironmentStartup);
@@ -238,9 +235,9 @@ export async function prepareGatewayKernelState(params: {
   const channelRuntimeEnvs: Partial<Record<ChannelId, RuntimeEnv>> = Object.fromEntries(
     Object.entries(channelLogs).map(([id, logger]) => [id, runtimeForLogger(logger)]),
   );
-  const listStartupChannelGatewayMethods = () => {
+  const listStartupChannelGatewayMethods = (registry = pluginRuntime.registry) => {
     const methods: string[] = [];
-    for (const plugin of listGatewayStartupChannelPlugins()) {
+    for (const plugin of listGatewayStartupChannelPlugins(registry)) {
       methods.push(...(plugin.gatewayMethods ?? []));
       for (const descriptor of plugin.gatewayMethodDescriptors ?? []) {
         methods.push(descriptor.name);
@@ -391,12 +388,7 @@ export async function prepareGatewayKernelState(params: {
     () => import("./server-channels.js"),
   );
   const channelManager = createChannelManager({
-    getRuntimeConfig: () => {
-      const runtimeConfigLocal = getRuntimeConfig();
-      return resolveGatewayPluginConfig({
-        config: runtimeConfigLocal,
-      });
-    },
+    getRuntimeConfig,
     channelLogs,
     channelRuntimeEnvs,
     resolveChannelRuntime: getChannelRuntime,
@@ -479,7 +471,6 @@ export async function prepareGatewayKernelState(params: {
     handleNodeWorkerBundleTransferRequest,
     handleWorkerBootstrapArtifactTransferRequest,
     handleNodeWorkspaceTransferRequest,
-    serverExtraHttpRoutes,
     workerIngressEnabled: Boolean(workerEnvironmentService),
     desktopSessionRegistry,
     nodeDesktopStreamBroker,

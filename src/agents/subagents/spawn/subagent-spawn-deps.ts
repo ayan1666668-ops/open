@@ -7,7 +7,7 @@ import {
   getGlobalHookRunner,
   getRuntimeConfig,
   hasInProcessGatewayContext,
-  loadPreparedModelCatalog,
+  readPreparedModelCatalog,
   resolveProviderRefOwnership,
   resolveContextEngine,
 } from "./subagent-spawn.runtime.js";
@@ -20,12 +20,12 @@ type SubagentSpawnDeps = {
   getRuntimeConfig: typeof getRuntimeConfig;
   hasInProcessGatewayContext: typeof hasInProcessGatewayContext;
   ensureContextEnginesInitialized: typeof ensureContextEnginesInitialized;
-  loadPreparedModelCatalog: typeof loadPreparedModelCatalog;
+  readPreparedModelCatalog: typeof readPreparedModelCatalog;
   resolveProviderRefOwnership: typeof resolveProviderRefOwnership;
   resolveContextEngine: typeof resolveContextEngine;
 };
 
-const subagentSpawnDeps: SubagentSpawnDeps = {
+const defaultSubagentSpawnDeps: SubagentSpawnDeps = {
   callGateway,
   dispatchGatewayMethodInProcess,
   forkSessionEntryFromParent,
@@ -33,11 +33,22 @@ const subagentSpawnDeps: SubagentSpawnDeps = {
   getRuntimeConfig,
   hasInProcessGatewayContext,
   ensureContextEnginesInitialized,
-  loadPreparedModelCatalog,
+  readPreparedModelCatalog,
   resolveProviderRefOwnership,
   resolveContextEngine,
 };
 
+let subagentSpawnDeps = defaultSubagentSpawnDeps;
+
 export function getSubagentSpawnDeps(): SubagentSpawnDeps {
   return subagentSpawnDeps;
+}
+
+export function setSubagentSpawnDepsForTest(overrides?: Partial<SubagentSpawnDeps>): void {
+  subagentSpawnDeps = overrides
+    ? {
+        ...defaultSubagentSpawnDeps,
+        ...overrides,
+      }
+    : defaultSubagentSpawnDeps;
 }

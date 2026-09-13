@@ -100,51 +100,6 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "message")).toBe(false);
   });
 
-  // The raw gateway catalog must reflect the FULL
-  // continuation surface, not just continue_delegate, so /status, doctor, policy
-  // and child-inheritance see all three. Registration cannot depend on runner
-  // closures this path never supplies; this path uses stub callbacks so the
-  // catalog is complete. (The MCP loopback further EXCLUDES continue_work +
-  // request_compaction as internal/non-CLI-invocable — see mcp-http.runtime.test.ts;
-  // that filtering is downstream of this raw resolution.)
-  it("registers the full continuation surface in the raw gateway catalog when continuation is enabled", () => {
-    const result = resolveGatewayScopedTools({
-      cfg: {
-        agents: { defaults: { continuation: { enabled: true } } },
-      } as OpenClawConfig,
-      sessionKey: "agent:main:telegram:group:-100123",
-      messageProvider: "telegram",
-      inboundEventKind: "user_request",
-      surface: "loopback",
-    });
-
-    const names = result.tools.map((tool) => tool.name);
-    expect(names).toContain("continue_delegate");
-    expect(names).toContain("continue_work");
-    expect(names).toContain("request_compaction");
-  });
-
-  // Registration honors per-tool bans:
-  // the continuation trio gates on continuation.enabled, then a banned tool drops
-  // out through the policy denylist → 2 register instead of 3.
-  it("honors a per-tool ban — continuation registers the trio minus the banned tool", () => {
-    const result = resolveGatewayScopedTools({
-      cfg: {
-        agents: { defaults: { continuation: { enabled: true } } },
-        gateway: { tools: { deny: ["continue_work"] } },
-      } as OpenClawConfig,
-      sessionKey: "agent:main:telegram:group:-100123",
-      messageProvider: "telegram",
-      inboundEventKind: "user_request",
-      surface: "loopback",
-    });
-
-    const names = result.tools.map((tool) => tool.name);
-    expect(names).not.toContain("continue_work");
-    expect(names).toContain("continue_delegate");
-    expect(names).toContain("request_compaction");
-  });
-
   it("keeps default-agent credentials out of unbound gateway calls", () => {
     const cfg = {
       agents: { defaults: { imageModel: { primary: "openai/gpt-5.4-mini" } } },
@@ -230,6 +185,42 @@ describe("resolveGatewayScopedTools", () => {
     expect(result.tools.some((tool) => tool.name === "sessions_list")).toBe(false);
     expect(result.tools.some((tool) => tool.name === "sessions_history")).toBe(true);
   });
+
+  it.each([
+    { tools: { profile: "coding" }, actions: ["update.run"] },
+    {
+      tools: { profile: "full" },
+      actions: ["config.get", "config.schema.lookup", "update.run"],
+    },
+    {
+      tools: { profile: "messaging", alsoAllow: ["gateway"] },
+      actions: ["config.get", "config.schema.lookup", "update.run"],
+    },
+  ] satisfies Array<{ tools: OpenClawConfig["tools"]; actions: string[] }>)(
+    "limits gateway actions to the borrowed runtime policy: $tools",
+    ({ tools, actions }) => {
+      const result = resolveGatewayScopedTools({
+        cfg: {
+          plugins: { enabled: false },
+          agents: {
+            ownership: "explicit",
+            entries: { main: { tools: { profile: "full" } }, worker: { tools } },
+          },
+        },
+        sessionKey: "agent:main:main",
+        agentId: "main",
+        runtimePolicySessionKey: "agent:worker:main",
+        runtimePolicyAgentId: "worker",
+        senderIsOwner: true,
+        surface: "loopback",
+      });
+
+      expect(result.tools.find((tool) => tool.name === "gateway")?.parameters).toHaveProperty(
+        "properties.action.enum",
+        actions,
+      );
+    },
+  );
 
   it("rejects a runtime policy agent that conflicts with its session key", () => {
     const cfg = {

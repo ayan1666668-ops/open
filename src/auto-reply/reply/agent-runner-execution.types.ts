@@ -2,7 +2,6 @@ import type { CompactionAccountingFact } from "../../agents/embedded-agent-runne
 import type { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import type { FailoverReason } from "../../agents/failover/signal.js";
 import type { CompactionRequestBudget } from "../../agents/sessions/compaction/request-budget.js";
-import type { ContinueWorkRequest } from "../../agents/tools/continue-work-tool.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
@@ -10,6 +9,7 @@ import type { ReplyPayload } from "../types.js";
 import type { BlockReplyPipeline } from "./block-reply-pipeline.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import type { FollowupRun } from "./queue.js";
+import type { DirectBlockDelivery } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import type { TypingSignaler } from "./typing-mode.js";
@@ -28,24 +28,6 @@ export type RuntimeFallbackAttempt = {
   status?: number;
   code?: string;
 };
-
-export type ContinuationWrappedRunResult = {
-  result: EmbeddedAgentRunResult;
-  continueWorkRequests?: ContinueWorkRequest[];
-  compactionTraceparent?: string;
-  rawContinuationText?: string;
-};
-
-export function isContinuationWrappedRunResult(
-  result: unknown,
-): result is ContinuationWrappedRunResult {
-  return (
-    typeof result === "object" &&
-    result !== null &&
-    "result" in result &&
-    "continueWorkRequests" in result
-  );
-}
 
 /** Presentation counts include target-less events; only captured durable facts may be persisted. */
 export type AgentTurnCompaction = {
@@ -73,13 +55,10 @@ export type AgentTurnInternalResult =
       fallbackAttempts: RuntimeFallbackAttempt[];
       didLogHeartbeatStrip: boolean;
       autoCompactionCount: number;
-      compactionTraceparent?: string;
-      continueWorkRequests?: ContinueWorkRequest[];
-      rawContinuationText?: string;
       /** Payload keys sent directly (not via pipeline) during tool flush. */
       directlySentBlockKeys?: Set<string>;
-      /** Payloads successfully sent directly during tool flush. */
-      directlySentBlockPayloads?: ReplyPayload[];
+      /** Delivery receipts for direct tool-flush payloads, including retry custody. */
+      directBlockDeliveries?: DirectBlockDelivery[];
       /** Prepared terminal failure, appended only after delivery evidence settles. */
       terminalFailurePayload?: ReplyPayload;
       postCompactionModelFailure?: true;
@@ -96,16 +75,13 @@ type SettledAgentTurnBase = {
   maintenanceAuthProfile?: CompletedAgentAuthSelection;
   compactionRequestBudget?: CompactionRequestBudget;
   result: Awaited<ReturnType<typeof runEmbeddedAgent>>;
-  continueWorkRequests?: ContinueWorkRequest[];
-  compactionTraceparent?: string;
-  rawContinuationText?: string;
   resolved: { provider: string; model: string };
   fallback: { exhausted: boolean; attempts: RuntimeFallbackAttempt[] };
   autoCompactionCount: number;
   compaction?: AgentTurnCompaction;
   didLogHeartbeatStrip: boolean;
   directlySentBlockKeys?: Set<string>;
-  directlySentBlockPayloads?: ReplyPayload[];
+  directBlockDeliveries?: DirectBlockDelivery[];
 };
 
 export type SettledAgentTurn = SettledAgentTurnBase &
@@ -139,6 +115,8 @@ export type AgentTurnExecutionResult = {
 
 /** Inputs shared by direct and queued agent-turn execution. */
 export type AgentTurnParams = {
+  /** The admitted queued delivery owner settles every terminal outcome. */
+  completionSource?: "reply-dispatch";
   commandBody: string;
   transcriptCommandBody?: string;
   followupRun: FollowupRun;
@@ -163,7 +141,6 @@ export type AgentTurnParams = {
   pendingToolTasks: Set<Promise<void>>;
   resetSessionAfterRoleOrderingConflict: (reason: string) => Promise<boolean>;
   isHeartbeat: boolean;
-  hookTrigger?: "heartbeat" | "user";
   sessionKey?: string;
   runtimePolicySessionKey?: string;
   getActiveSessionEntry: () => SessionEntry | undefined;

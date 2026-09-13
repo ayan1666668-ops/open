@@ -132,14 +132,13 @@ export type CompactEmbeddedAgentSessionParams = Pick<
   preflightRequired?: boolean;
   /** Diagnostic trigger that made preflight compaction mandatory. */
   preflightCompactionTrigger?: "tokens" | "transcript_bytes";
-  trigger?: "budget" | "overflow" | "manual" | "volitional";
+  trigger?: "budget" | "overflow" | "manual";
   /**
    * Preflight callers can allow native/current-session harness compaction but
    * move plugin-owned budget compaction onto background turn maintenance.
    */
   deferOwningContextEngineCompaction?: boolean;
   diagId?: string;
-  traceparent?: string;
   attempt?: number;
   maxAttempts?: number;
   lane?: string;

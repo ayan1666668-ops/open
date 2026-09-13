@@ -21,7 +21,6 @@ export type CodexRunAttemptOptions = {
     hookTimeoutSec?: number;
   };
   clientFactory?: CodexAppServerClientFactory;
-  allowProviderRuntimePluginLoad?: boolean;
 };
 
 export type CodexRunAttemptInput = {

@@ -8,14 +8,14 @@ import {
   resolveAttemptSpawnWorkspaceDir,
   resolveModelAuthMode,
   resolveSandboxContext,
-  registerNativeHookRelay,
+  runAgentCleanupStep,
   supportsModelTools,
   type AnyAgentTool,
   type AgentHarnessSideQuestionParamsV2,
   type AgentHarnessSideQuestionResult,
   type EmbeddedRunAttemptParamsV2,
   type NativeHookRelayEvent,
-  type NativeHookRelayRegistrationHandle,
+  type registerNativeHookRelay,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { resolveAgentWorkspaceDir } from "openclaw/plugin-sdk/agent-runtime";
 import { resolveSessionAgentIdsStrict } from "openclaw/plugin-sdk/agent-scope-runtime";
@@ -24,6 +24,7 @@ import {
   resolveCodexMcpToolOverridesForAgent,
 } from "openclaw/plugin-sdk/codex-mcp-projection";
 import { loadExecApprovals } from "openclaw/plugin-sdk/exec-approvals-runtime";
+import { registerNativeHookRelayForBundledRuntime } from "openclaw/plugin-sdk/native-hook-relay-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import { readStringField as readString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -70,8 +71,8 @@ import {
 } from "./dynamic-tool-build.js";
 import {
   emitDynamicToolErrorDiagnostic,
+  emitDynamicToolStartedDiagnostic,
   emitDynamicToolTerminalDiagnostic,
-  startDynamicToolDiagnosticExecution,
 } from "./dynamic-tool-diagnostics.js";
 import {
   handleDynamicToolCallWithTimeout,
@@ -468,7 +469,7 @@ export async function runCodexAppServerSideQuestion(
   let sandboxEnvironment: CodexSandboxExecEnvironment | undefined;
   let sandboxDisconnectError: Error | undefined;
   let sandboxEnvironmentClient: CodexAppServerClient | undefined;
-  let nativeHookRelay: NativeHookRelayRegistrationHandle | undefined;
+  let nativeHookRelay: ReturnType<typeof registerNativeHookRelayForBundledRuntime> | undefined;
   const activeDynamicToolCalls = new Set<Promise<unknown>>();
   const releaseSandboxEnvironment = async () => {
     if (!sandboxEnvironment) {
@@ -634,22 +635,19 @@ export async function runCodexAppServerSideQuestion(
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
       };
-      const diagnosticExecution = startDynamicToolDiagnosticExecution(diagnosticContext, () =>
-        handleDynamicToolCallWithTimeout({
-          call,
-          toolBridge,
-          signal,
-          timeoutMs,
-          observeToolTerminal: sideRunParams.observeToolTerminal,
-        }),
-      );
-      const toolCall = diagnosticExecution.execution;
+      emitDynamicToolStartedDiagnostic(diagnosticContext);
+      const toolCall = handleDynamicToolCallWithTimeout({
+        call,
+        toolBridge,
+        signal,
+        timeoutMs,
+        observeToolTerminal: sideRunParams.observeToolTerminal,
+      });
       activeDynamicToolCalls.add(toolCall);
       try {
         const response = await toolCall;
         emitDynamicToolTerminalDiagnostic({
           ...diagnosticContext,
-          trace: diagnosticExecution.trace,
           response,
           durationMs: Math.max(0, Date.now() - toolStartedAt),
         });
@@ -660,7 +658,6 @@ export async function runCodexAppServerSideQuestion(
       } catch (error) {
         emitDynamicToolErrorDiagnostic({
           ...diagnosticContext,
-          trace: diagnosticExecution.trace,
           durationMs: Math.max(0, Date.now() - toolStartedAt),
           terminalReason: signal.aborted ? resolveCodexToolAbortTerminalReason(signal) : "failed",
         });
@@ -721,6 +718,8 @@ export async function runCodexAppServerSideQuestion(
           },
         })
       : undefined;
+    await nativeHookRelay?.prepareInvocation();
+    assertCurrent();
     const nativeHookRelayConfig = nativeHookRelay
       ? buildCodexNativeHookRelayConfig({
           relay: nativeHookRelay,
@@ -1048,6 +1047,15 @@ export async function runCodexAppServerSideQuestion(
       } finally {
         releaseCodexAppServerClientLease(clientLease);
         nativeHookRelay?.unregister();
+        await runAgentCleanupStep({
+          runId: sideRunParams.runId,
+          sessionId: sideRunParams.sessionId,
+          step: "codex-side-native-hook-relay-release",
+          log: embeddedAgentLog,
+          cleanup: async () => {
+            await nativeHookRelay?.drain();
+          },
+        });
       }
     }
   }
@@ -1087,11 +1095,11 @@ function registerCodexSideNativeHookRelay(params: {
   hostCapabilities: EmbeddedRunAttemptParamsV2["hostCapabilities"];
   assertCurrent: () => void;
   onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void;
-}): NativeHookRelayRegistrationHandle | undefined {
+}): ReturnType<typeof registerNativeHookRelayForBundledRuntime> | undefined {
   if (params.options.enabled === false) {
     return undefined;
   }
-  return registerNativeHookRelay({
+  return registerNativeHookRelayForBundledRuntime({
     provider: "codex",
     ...(params.agentId ? { agentId: params.agentId } : {}),
     sessionId: params.sessionId,
@@ -1273,7 +1281,6 @@ async function createCodexSideToolBridge(input: {
       config: input.params.cfg,
       preparedModelRuntime: input.params.preparedModelRuntime,
       abortSignal: input.signal,
-      disableContinuationTools: true,
       modelProvider: runtimeModel.provider,
       modelId: input.params.model,
       modelCompat:

@@ -1,10 +1,9 @@
 // Gateway HTTP/WebSocket runtime state factory.
 // Builds one server runtime with lazy plugin route handlers.
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from "node:http";
-import { createRequire } from "node:module";
-import path from "node:path";
 import type { Duplex } from "node:stream";
 import type { WebSocketServer } from "ws";
+import { WebSocketServer as NpmWebSocketServer } from "../../packages/gateway-client/src/websocket.js";
 import { resolveSandboxHostPort } from "../agents/sandbox-host.js";
 import { isCoreCanvasHostEnabled } from "../canvas/config.js";
 import { resolveCanvasNodeCapability } from "../canvas/constants.js";
@@ -29,8 +28,7 @@ import {
 import { createSandboxHostHttpServer } from "./mcp-app-sandbox-http.js";
 import { isLoopbackHost, resolveGatewayListenHosts } from "./net.js";
 import { createGatewayPortalService, type GatewayPortalService } from "./portals/portal-service.js";
-import { MAX_PREAUTH_PAYLOAD_BYTES, WS_COMPRESSION_THRESHOLD_BYTES } from "./server-constants.js";
-import type { GatewayServerExtraHttpRoute } from "./server-extra-handlers.js";
+import { MAX_PREAUTH_PAYLOAD_BYTES } from "./server-constants.js";
 import { attachGatewayUpgradeHandler, createGatewayHttpServer } from "./server-http.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import type { HookClientIpConfig, HooksRequestHandler } from "./server/hooks-request-handler.js";
@@ -52,13 +50,6 @@ import type { GatewayWsClient } from "./server/ws-types.js";
 import type { NodeWorkerBundleTransferHttpCallback } from "./worker-environments/node-worker-bundle-transfer-http.js";
 import type { NodeWorkspaceTransferHttpCallback } from "./worker-environments/node-workspace-transfer-http.js";
 import type { WorkerBootstrapArtifactTransferHttpCallback } from "./worker-environments/worker-bootstrap-artifact-transfer-http.js";
-
-// Gateway admission changes receiver frame limits after authentication. Load the
-// installed ws entry so Bun cannot substitute its receiver-less built-in adapter.
-const require = createRequire(import.meta.url);
-const { WebSocketServer: NpmWebSocketServer }: typeof import("ws") = require(
-  path.join(path.dirname(require.resolve("ws/package.json")), "index.js"),
-);
 
 type GatewayPluginRequestHandler = (
   req: IncomingMessage,
@@ -107,6 +98,7 @@ export async function createGatewayHttpTransport(params: {
   getRuntimeConfig?: () => import("../config/config.js").OpenClawConfig;
   bindHost: string;
   port: number;
+  updateCanary?: boolean;
   controlUiEnabled?: boolean;
   controlUiBasePath: string;
   controlUiRoot?: ControlUiRootState;
@@ -136,7 +128,6 @@ export async function createGatewayHttpTransport(params: {
   handleNodeWorkerBundleTransferRequest?: NodeWorkerBundleTransferHttpCallback;
   handleWorkerBootstrapArtifactTransferRequest?: WorkerBootstrapArtifactTransferHttpCallback;
   handleNodeWorkspaceTransferRequest?: NodeWorkspaceTransferHttpCallback;
-  serverExtraHttpRoutes?: readonly GatewayServerExtraHttpRoute[];
   workerIngressEnabled?: boolean;
   desktopSessionRegistry?: DesktopSessionRegistry;
   nodeDesktopStreamBroker?: NodeDesktopStreamBroker;
@@ -219,21 +210,12 @@ export async function createGatewayHttpTransport(params: {
 
   let loadedPluginRequestHandler: GatewayPluginRequestHandler | null = null;
   let loadedPluginUpgradeHandler: GatewayPluginUpgradeHandler | null = null;
-  const findServerExtraHttpRoute = (pathContext: PluginRoutePathContext | undefined) =>
-    params.serverExtraHttpRoutes?.find((route) => route.path === pathContext?.pathname);
   const handlePluginRequest: GatewayPluginRequestHandler = async (
     req,
     res,
     pathContext,
     dispatchContext,
   ) => {
-    const serverExtraHttpRoute = findServerExtraHttpRoute(pathContext);
-    if (serverExtraHttpRoute) {
-      if (dispatchContext?.gatewayAuthSatisfied !== true) {
-        return false;
-      }
-      return await serverExtraHttpRoute.handler(req, res);
-    }
     if (loadedPluginRequestHandler) {
       return await loadedPluginRequestHandler(req, res, pathContext, dispatchContext);
     }
@@ -276,15 +258,9 @@ export async function createGatewayHttpTransport(params: {
     return await loadedPluginUpgradeHandler(req, socket, head, pathContext, dispatchContext);
   };
   const shouldEnforcePluginGatewayAuth = (pathContext: PluginRoutePathContext): boolean => {
-    if (findServerExtraHttpRoute(pathContext)) {
-      return true;
-    }
     return shouldEnforceGatewayAuthForPluginPath(resolvePluginRouteRegistry(), pathContext);
   };
   const isPluginAuthenticatedRoute = (pathContext: PluginRoutePathContext): boolean => {
-    if (findServerExtraHttpRoute(pathContext)) {
-      return true;
-    }
     return isPluginAuthenticatedRoutePath(resolvePluginRouteRegistry(), pathContext);
   };
   const resolvePluginNodeCapabilityRoute = (pathContext: PluginRoutePathContext) => {
@@ -323,16 +299,10 @@ export async function createGatewayHttpTransport(params: {
     // Yield between buffered frames so one RPC burst cannot monopolize the
     // event loop before other connections and HTTP probes can run.
     allowSynchronousEvents: false,
-    // Peers that offer permessage-deflate (browsers, ws clients) get large frames
-    // compressed. No context takeover keeps zlib memory per connection at one reset
-    // stream instead of a retained sliding window, and the threshold keeps small
-    // frames raw. The extension inherits maxPayload for inflated frames, so the
-    // post-auth receiver handoff must raise it too (prepareGatewayReceiverHandoff).
-    perMessageDeflate: {
-      serverNoContextTakeover: true,
-      clientNoContextTakeover: true,
-      threshold: WS_COMPRESSION_THRESHOLD_BYTES,
-    },
+    // Browsers compress even tiny requests when this extension is negotiated.
+    // Serial inflate callbacks delay each frame behind busy event-loop turns,
+    // before the bounded request-start scheduler can admit the burst.
+    perMessageDeflate: false,
   });
   const preauthConnectionBudget = createPreauthConnectionBudget();
 
@@ -430,6 +400,9 @@ export async function createGatewayHttpTransport(params: {
   let startListeningPromise: Promise<void> | null = null;
   let startListeningComplete = false;
   const startSandboxHost = async (): Promise<number> => {
+    if (params.updateCanary) {
+      throw new Error("Sandbox host is disabled during update validation");
+    }
     if (sandboxHostStartPromise) {
       return await sandboxHostStartPromise;
     }
@@ -574,7 +547,8 @@ export async function createGatewayHttpTransport(params: {
       if (httpBindHosts.length === 0) {
         throw new Error("Gateway HTTP server failed to start");
       }
-      if (params.cfg.mcp?.apps?.enabled === true) {
+      // Published updaters retain the live sandbox port but already pass --update-canary.
+      if (!params.updateCanary && params.cfg.mcp?.apps?.enabled === true) {
         await startSandboxHost();
       }
       startListeningComplete = true;

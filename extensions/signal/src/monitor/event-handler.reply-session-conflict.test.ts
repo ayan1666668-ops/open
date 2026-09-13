@@ -82,44 +82,14 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/channel-inbound")>(
     "openclaw/plugin-sdk/channel-inbound",
   );
-  type RunParams = Parameters<typeof actual.runChannelInboundEvent>[0];
+  const { createSignalPreparedDispatchRunner } = await import("./event-handler.test-harness.js");
   return {
     ...actual,
-    runChannelInboundEvent: async (params: RunParams) => {
-      const input = await params.adapter.ingest(params.raw);
-      if (!input) {
-        return { admission: { kind: "drop" as const, reason: "ingest-null" }, dispatched: false };
-      }
-      const eventClass = (await params.adapter.classify?.(input)) ?? {
-        kind: "message" as const,
-        canStartAgentTurn: true,
-      };
-      const preflight = (await params.adapter.preflight?.(input, eventClass)) ?? {};
-      const resolved = await params.adapter.resolveTurn(
-        input,
-        eventClass,
-        "kind" in preflight ? { admission: preflight } : preflight,
-      );
-      if (!("route" in resolved) || !("delivery" in resolved)) {
-        throw new Error("expected assembled Signal channel turn plan");
-      }
-      const result = await actual.runPreparedInboundReply({
-        channel: resolved.channel,
-        accountId: resolved.accountId,
-        routeSessionKey: resolved.route.sessionKey,
-        storePath: "/tmp/openclaw/signal-sessions.json",
-        ctxPayload: resolved.ctxPayload,
-        recordInboundSession: recordInboundSessionMock,
-        afterRecord: resolved.afterRecord,
-        record: resolved.record,
-        history: resolved.history,
-        admission: resolved.admission,
-        botLoopProtection: resolved.botLoopProtection,
-        runDispatch: async () => await dispatchInboundMessageMock({ ctx: resolved.ctxPayload }),
-      });
-      await params.adapter.onFinalize?.(result);
-      return result;
-    },
+    runChannelInboundEvent: createSignalPreparedDispatchRunner(
+      actual.runChannelInboundEvent,
+      recordInboundSessionMock,
+      async (resolved) => await dispatchInboundMessageMock({ ctx: resolved.ctxPayload }),
+    ),
   };
 });
 
@@ -568,79 +538,6 @@ describe("signal reply session init conflict retry", () => {
       expect(dispatchedBodies[1]).toContain("older failed message");
       expect(dispatchedBodies[1]).not.toContain("newer buffered message");
       expect(dispatchedBodies[2]).toContain("newer buffered message");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  // Ported from the continuation assembly: `164a462adfb` made a merged abort
-  // release only still-live sibling claims. Expressed through the canonical
-  // channel-inbound seam so it follows upstream's ingress architecture.
-  it("abandons merged siblings when any durable claim is reclaimed", async () => {
-    // A fanned-in ingress lifecycle aborts as soon as ANY constituent claim is
-    // reclaimed, so the flush fails carrying that claim's abort reason. Only the
-    // still-live sibling may be released; the reclaimed claim keeps drain ownership.
-    const reclaimed = new Error("claim reclaimed");
-    const firstClaimAbort = new AbortController();
-    const secondClaimAbort = new AbortController();
-    dispatchInboundMessageMock.mockImplementationOnce(async () => {
-      secondClaimAbort.abort(reclaimed);
-      throw reclaimed;
-    });
-    const tracked = createTrackedTaskHarness();
-    const errorLogs: string[] = [];
-    const baseRuntime = createBaseSignalEventHandlerDeps().runtime;
-    const firstOnAbandoned = vi.fn();
-    const secondOnAbandoned = vi.fn();
-    const handler = createSignalEventHandler(
-      createBaseSignalEventHandlerDeps({
-        cfg: { messages: { inbound: { debounceMs: 10 } } } as OpenClawConfig,
-        runTrackedTask: tracked.runTrackedTask,
-        runtime: {
-          ...baseRuntime,
-          error: (...args: unknown[]) => {
-            errorLogs.push(String(args[0]));
-          },
-        } as SignalEventHandlerDeps["runtime"],
-      }),
-    );
-
-    vi.useFakeTimers();
-    try {
-      const firstHandled = handler(
-        createSignalReceiveEvent({
-          dataMessage: { message: "first claimed part", attachments: [] },
-        }),
-        {
-          abortSignal: firstClaimAbort.signal,
-          onAdopted: vi.fn(),
-          onDeferred: vi.fn(),
-          onAdoptionFinalizing: vi.fn(),
-          onAbandoned: firstOnAbandoned,
-        },
-      );
-      const secondHandled = handler(
-        createSignalReceiveEvent({
-          timestamp: 1700000000002,
-          dataMessage: { message: "second claimed part", attachments: [] },
-        }),
-        {
-          abortSignal: secondClaimAbort.signal,
-          onAdopted: vi.fn(),
-          onDeferred: vi.fn(),
-          onAdoptionFinalizing: vi.fn(),
-          onAbandoned: secondOnAbandoned,
-        },
-      );
-      await vi.advanceTimersByTimeAsync(10);
-      await Promise.all([firstHandled, secondHandled]);
-      await vi.advanceTimersByTimeAsync(10_000);
-      await Promise.all(tracked.tasks);
-
-      expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
-      expect(firstOnAbandoned).toHaveBeenCalledOnce();
-      expect(secondOnAbandoned).not.toHaveBeenCalled();
-      // The reclaim is an expected ownership transfer, not a flush error.
-      expect(errorLogs).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

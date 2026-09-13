@@ -19,6 +19,7 @@ import {
 import reconcileSessionStoreCompactionCountAfterSuccess from "./embedded-agent-subscribe.handlers.compaction.runtime.js";
 import type { EmbeddedAgentSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import type { AgentMessage } from "./runtime/index.js";
+import { createZeroUsageFixture } from "./test-helpers/usage-fixtures.js";
 import { makeZeroUsageSnapshot, type AssistantUsageSnapshot } from "./usage.js";
 
 function createCompactionContext(params: {
@@ -68,18 +69,9 @@ function createCompactionContext(params: {
 
 function makeUsageSnapshot(totalTokens: number): AssistantUsageSnapshot {
   return {
+    ...createZeroUsageFixture(),
     input: totalTokens,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
     totalTokens,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
   };
 }
 
@@ -414,19 +406,9 @@ describe("handleCompactionEnd", () => {
         expect(subscription.getCompactionCount()).toBe(2);
         expect(subscription.getLastCompactionTokensAfter()).toBe(50);
         expect(onAgentEvent).toHaveBeenCalledTimes(2);
-        expect(onAgentEvent).toHaveBeenNthCalledWith(2, {
+        expect(onAgentEvent).toHaveBeenCalledWith({
           stream: "compaction",
-          data: {
-            phase: "end",
-            completed: true,
-            willRetry: false,
-            outcome: "completed",
-            trigger: "budget",
-            sessionKey,
-            compactionCountBefore: 1,
-            compactionCountAfter: 2,
-            compactionCountDelta: 1,
-          },
+          data: { phase: "end", completed: true, willRetry: false, outcome: "completed" },
         });
         const events = listSessionStateEventsSince(sessionKey, agentId, 0).events.filter(
           (event) => event.runId === runId,

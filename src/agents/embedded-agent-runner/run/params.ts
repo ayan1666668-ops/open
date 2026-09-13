@@ -62,7 +62,6 @@ import type { ScheduledToolPolicyContext } from "../../scheduled-tool-policy.js"
 import type { SessionManager } from "../../sessions/index.js";
 import type { TrustedSubagentCompletionHandoff } from "../../subagents/announce/subagent-announce-handoff.js";
 import type { SilentReplyPromptMode, PromptMode } from "../../system-prompt.types.js";
-import type { RequestCompactionToolOpts } from "../../tools/request-compaction-tool.js";
 import type { EmbeddedAgentExecutionPhase } from "../execution-phase.js";
 import type { BlockReplyFlushContext } from "../types.js";
 import type { AuthProfileFailurePolicy } from "./auth-profile-failure-policy.types.js";
@@ -213,8 +212,6 @@ export type RunEmbeddedAgentParams = {
   skillWorkshopProposalMutationBudget?: SkillWorkshopProposalMutationBudget;
   /** Optional state environment for isolated Skill Workshop proposal persistence. */
   skillWorkshopProposalEnv?: NodeJS.ProcessEnv;
-  /** Shared completion latch for proposal-only review runs that checkpoint their batch. */
-  skillWorkshopProposalReviewCompletion?: SkillWorkshopRunOptions["proposalReviewCompletion"];
   /** Bind an operator-requested revision turn to the exact proposal revision they reviewed. */
   skillWorkshopProposalRevision?: SkillWorkshopRunOptions["proposalRevision"];
   skillLibraryAuthoring?: SkillWorkshopRunOptions["libraryAuthoring"];
@@ -228,16 +225,6 @@ export type RunEmbeddedAgentParams = {
   forceHeartbeatTool?: boolean;
   /** Allow runtime plugins for this run to late-bind the gateway subagent. */
   allowGatewaySubagentBinding?: boolean;
-  /** Whether this run drains continue_delegate work staged during the turn. */
-  drainsContinuationDelegateQueue?: boolean;
-  /** Runs whose lifecycle owner cannot execute any same-session continuation tools. */
-  disableContinuationTools?: boolean;
-  /** Callback for continue_work to request a post-turn continuation. */
-  continueWorkOpts?: {
-    requestContinuation: (
-      request: import("../../tools/continue-work-tool.js").ContinueWorkRequest,
-    ) => void;
-  };
   /** @deprecated Use sessionTarget plus sessionId/sessionKey/agentId for runtime identity. */
   sessionFile?: string;
   workspaceDir: string;
@@ -287,6 +274,8 @@ export type RunEmbeddedAgentParams = {
   modelHasVision?: boolean;
   /** Session-selected context-window option id carried by the run owner. */
   contextWindow?: string;
+  /** Caller-owned upper bound for this run's effective context budget. */
+  contextTokenBudget?: number;
   /** Route-bound thinking capability resolved from the selected prepared catalog row. */
   modelThinkingCapability?: PreparedModelThinkingCapability;
   /** Effective model fallback chain for this session attempt. Undefined uses config defaults. */
@@ -303,6 +292,8 @@ export type RunEmbeddedAgentParams = {
   expectedAgentHarnessRuntimeArtifact?: ExpectedAgentHarnessRuntimeArtifact;
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
+  /** Disable fallback from the user-selected auth profile for a verification run. */
+  allowAuthProfileFallback?: boolean;
   thinkLevel?: ThinkLevel;
   fastMode?: FastMode;
   /** Stable outer-run start time for auto fast-mode cutoff across retries/fallbacks. */
@@ -422,6 +413,7 @@ export type RunEmbeddedAgentParams = {
   lane?: string;
   enqueue?: CommandQueueEnqueueFn;
   extraSystemPrompt?: string;
+  gitCoauthorPrompt?: string;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   taskSuggestionDeliveryMode?: TaskSuggestionDeliveryMode;
   silentReplyPromptMode?: SilentReplyPromptMode;
@@ -487,12 +479,6 @@ export type RunEmbeddedAgentParams = {
    * exit promptly after emitting the final JSON result.
    */
   cleanupBundleMcpOnRunEnd?: boolean;
-  /** Continuation: request_compaction tool opts (injected from execution context). */
-  requestCompactionOpts?: {
-    sessionId?: string;
-    getContextUsage: () => number | null;
-    triggerCompaction: RequestCompactionToolOpts["triggerCompaction"];
-  };
   /** Mark explicit one-shot local CLI runs so plugin tools can release resources promptly. */
   oneShotCliRun?: boolean;
 };
@@ -552,6 +538,7 @@ export type EmbeddedForegroundPromptContext = Pick<
   | "forceHeartbeatTool"
   | "allowGatewaySubagentBinding"
   | "extraSystemPrompt"
+  | "gitCoauthorPrompt"
   | "sourceReplyDeliveryMode"
   | "taskSuggestionDeliveryMode"
   | "silentReplyPromptMode"

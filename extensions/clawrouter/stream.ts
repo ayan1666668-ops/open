@@ -137,22 +137,18 @@ function createClawRouterStreamWrapper(ctx: ProviderWrapStreamFnContext): Stream
   if (!underlying) {
     return undefined;
   }
-  let modelRequestOrdinal = 0;
   return (model, context, options) => {
     const apiKey = options?.apiKey?.trim();
     const preparedModel = prepareClawRouterRequestModel(model);
     const hasExplicitRequestId =
       findHeader(options?.headers ?? {}, REQUEST_ID_HEADER) !== undefined;
-    const requestId =
-      options?.requestId ??
-      (options?.sessionId ? `${options.sessionId}:model:${++modelRequestOrdinal}` : undefined);
     return underlying(
       {
         ...preparedModel,
         headers: withClawRouterHeaders(preparedModel.headers, {
           agentId: ctx.agentId,
           apiKey: apiKey && apiKey !== ENV_API_KEY_MARKER ? apiKey : undefined,
-          requestId: hasExplicitRequestId ? undefined : requestId,
+          requestId: hasExplicitRequestId ? undefined : options?.requestId,
           sessionId: options?.sessionId,
         }),
       },

@@ -1,11 +1,11 @@
 // Imessage tests cover reaction system event plugin behavior.
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
-import { enqueuePluginSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
+import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { enqueueIMessageReactionSystemEvent } from "./reaction-system-event.js";
 
 vi.mock("openclaw/plugin-sdk/system-event-runtime", () => ({
-  enqueuePluginSystemEvent: vi.fn(() => true),
+  enqueueSystemEvent: vi.fn(() => true),
 }));
 
 describe("enqueueIMessageReactionSystemEvent", () => {
@@ -29,7 +29,7 @@ describe("enqueueIMessageReactionSystemEvent", () => {
     });
 
     expect(queued).toBe(true);
-    expect(enqueuePluginSystemEvent).toHaveBeenCalledWith(
+    expect(enqueueSystemEvent).toHaveBeenCalledWith(
       "iMessage reaction added: 👎 by +15555550123 on msg lobster-reply-guid",
       {
         sessionKey: "agent:main:main",

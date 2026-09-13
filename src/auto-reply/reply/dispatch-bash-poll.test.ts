@@ -10,7 +10,7 @@ import { createProcessSessionFixture } from "../../agents/bash-process-registry.
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   drainSystemEventEntries,
-  enqueueSystemEventEntryRaw as enqueueSystemEventEntry,
+  enqueueSystemEventEntry,
   enqueueSystemEventWithReceipt,
   peekSystemEventEntries,
 } from "../../infra/system-events.js";
@@ -105,7 +105,13 @@ function fixture(alias = "!poll") {
   commandParams.ctx = ctx;
   commandParams.sessionKey = sessionKey;
   const replyResolver = vi.fn(async () => {
-    const result = await handleCommands(commandParams);
+    const result = await handleCommands({
+      ...commandParams,
+      resolveModelLevels: async () => ({
+        resolvedThinkLevel: commandParams.resolvedThinkLevel,
+        resolvedReasoningLevel: commandParams.resolvedReasoningLevel,
+      }),
+    });
     expect(result.shouldContinue).toBe(false);
     expect(result.reply?.text).toContain("Completed synthetic work");
     return markCommandReplyForDelivery(result.reply);

@@ -1,13 +1,11 @@
 import crypto from "node:crypto";
 import type { SessionEntry } from "../../config/sessions.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
-import { emitContinuationCompactionReleasedSpan } from "../../infra/continuation-tracer.js";
-import { defaultRuntime } from "../../runtime.js";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../heartbeat.js";
 import { setReplyPayloadMetadata } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
-import { scheduleReplyContinuation } from "./agent-runner-continuation-schedule.js";
 import {
   markBeforeAgentRunBlockedPayloads,
   resolveReplyRunDeliveryContext,
@@ -24,7 +22,7 @@ import {
   normalizePendingFinalDeliveryPayloads,
   normalizePendingFinalRecoveryPayloads,
 } from "./pending-final-delivery.js";
-import { dispatchPostCompactionDelegates } from "./post-compaction-delegate-dispatch.js";
+import { readPostCompactionContext } from "./post-compaction-context.js";
 import { warnPrivateMessageToolFinal } from "./private-message-tool-final.js";
 import { enqueueFollowupRun, refreshQueuedFollowupSession } from "./queue.js";
 import {
@@ -38,7 +36,6 @@ type PreparedReplyAgentPayloads = {
   completedSourceReplyDelivery: boolean;
   guardedReplyPayloads: ReplyPayload[];
   responseUsageLine: string | undefined;
-  wasSilentContinuation: boolean;
 };
 
 export async function completeReplyAgentRun(input: {
@@ -51,10 +48,7 @@ export async function completeReplyAgentRun(input: {
     activeIsNewSession,
     activeSessionStore,
     cfg,
-    continuation,
-    execution,
     followupRun,
-    getActiveSessionEntry,
     isHeartbeat,
     opts,
     preflightCompactionApplied,
@@ -67,27 +61,10 @@ export async function completeReplyAgentRun(input: {
     runtimePolicySessionKey,
     sessionCtx,
     sessionKey,
-    setActiveSessionEntry,
     storePath,
   } = context;
-  const {
-    autoCompactionCount,
-    continuationExtractionFromBracket,
-    continuationWorkReason,
-    effectiveContinuationSignal,
-    effectiveContinueWorkRequests,
-    internalBracketTraceparent,
-    runId,
-    runResult,
-    usage,
-    verboseEnabled,
-  } = accounting;
-  const {
-    completedSourceReplyDelivery,
-    guardedReplyPayloads,
-    responseUsageLine,
-    wasSilentContinuation,
-  } = prepared;
+  const { autoCompactionCount, runResult, verboseEnabled } = accounting;
+  const { completedSourceReplyDelivery, guardedReplyPayloads, responseUsageLine } = prepared;
   let { activeSessionEntry } = prepared;
 
   // Prepend verbose operational notices. Model fallback notices are prepared
@@ -114,31 +91,15 @@ export async function completeReplyAgentRun(input: {
       });
     }
 
-    // Inject post-compaction workspace context for the next agent turn,
-    // and dispatch any staged continuation post-compaction delegates.
-    // The dispatch helper internally awaits readPostCompactionContext
-    // against followupRun.run.workspaceDir and enqueues the resulting system
-    // event, so we don't call it again here. That await also carries upstream's
-    // sequencing fix (context injection is no longer fire-and-forget).
+    // Inject post-compaction workspace context for the next agent turn
     if (sessionKey) {
-      const releasedCount = activeSessionEntry?.pendingPostCompactionDelegates?.length ?? 0;
-      await dispatchPostCompactionDelegates({
+      const contextContent = await readPostCompactionContext(followupRun.run.workspaceDir, {
         cfg,
-        compactionCount: count,
-        continuationSignalKind: effectiveContinuationSignal?.kind,
-        followupRun,
-        postCompactionDelegatesToPreserve: continuation.postCompactionDelegatesToPreserve,
-        sessionEntry: activeSessionEntry,
-        sessionKey,
-        sessionStore: activeSessionStore,
-        storePath,
+        agentId: followupRun.run.agentId,
       });
-      emitContinuationCompactionReleasedSpan({
-        releasedCount,
-        compactionId: count,
-        traceparent: execution.compactionTraceparent,
-        log: (message) => defaultRuntime.log(message),
-      });
+      if (contextContent) {
+        enqueueSystemEvent(contextContent, { sessionKey });
+      }
     }
 
     if (verboseEnabled) {
@@ -146,69 +107,33 @@ export async function completeReplyAgentRun(input: {
       prefixNotices.push({ text: `🧹 Auto-compaction complete${suffix}.` });
     }
   }
-  // Skip verbose/usage augmentation for silent continuations — a bare
-  // CONTINUE_WORK should produce no user-visible output.
+  const prefixPayloads = [...prefixNotices];
+  const trailingPluginStatusPayload = await buildReplyDiagnosticsPayload({
+    activeSessionEntry,
+    followupRun,
+    accounting,
+    cfg,
+    storePath,
+    userText: sessionCtx.commandText || sessionCtx.agentText,
+    resolvedVerboseLevel,
+    resolvedBlockStreamingBreak,
+    preflightCompactionApplied,
+  });
   const isHookBlockedRun = runResult.meta?.error?.kind === "hook_block";
   const rawAssistantText = isHookBlockedRun
     ? undefined
     : (runResult.meta?.finalAssistantRawText ?? runResult.meta?.finalAssistantVisibleText);
-  if (!wasSilentContinuation) {
-    const prefixPayloads = [...prefixNotices];
-    const trailingPluginStatusPayload = await buildReplyDiagnosticsPayload({
-      activeSessionEntry,
-      followupRun,
-      accounting,
-      cfg,
-      storePath,
-      userText:
-        sessionCtx.commandText ||
-        sessionCtx.agentText ||
-        sessionCtx.CommandBody ||
-        sessionCtx.RawBody ||
-        sessionCtx.BodyForAgent ||
-        sessionCtx.Body,
-      resolvedVerboseLevel,
-      resolvedBlockStreamingBreak,
-      preflightCompactionApplied,
-    });
-    if (prefixPayloads.length > 0) {
-      finalPayloads = [...prefixPayloads, ...finalPayloads];
-    }
-    if (trailingPluginStatusPayload) {
-      finalPayloads = [...finalPayloads, trailingPluginStatusPayload];
-    }
-    if (responseUsageLine) {
-      finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
-    }
-    if (isHookBlockedRun) {
-      finalPayloads = markBeforeAgentRunBlockedPayloads(finalPayloads);
-    }
+  if (prefixPayloads.length > 0) {
+    finalPayloads = [...prefixPayloads, ...finalPayloads];
   }
-
-  setActiveSessionEntry(activeSessionEntry);
-  await scheduleReplyContinuation({
-    cfg,
-    sessionKey,
-    followupRun,
-    runId,
-    usage,
-    effectiveContinuationSignal,
-    continuationExtractionFromBracket,
-    effectiveContinueWorkRequests,
-    continuationWorkReason,
-    internalBracketTraceparent,
-    continuation,
-    getActiveSessionEntry,
-  });
-  activeSessionEntry = getActiveSessionEntry() ?? activeSessionEntry;
-
-  // Silent continuations should produce no user-visible output.
-  if (wasSilentContinuation) {
-    return returnWithQueuedFollowupDrain(undefined);
+  if (trailingPluginStatusPayload) {
+    finalPayloads = [...finalPayloads, trailingPluginStatusPayload];
   }
-
-  if (finalPayloads.length === 0 && effectiveContinuationSignal) {
-    return returnWithQueuedFollowupDrain(undefined);
+  if (responseUsageLine) {
+    finalPayloads = appendUsageLine(finalPayloads, responseUsageLine);
+  }
+  if (isHookBlockedRun) {
+    finalPayloads = markBeforeAgentRunBlockedPayloads(finalPayloads);
   }
 
   // Capture only policy-visible final payloads in session store to support
@@ -236,6 +161,7 @@ export async function completeReplyAgentRun(input: {
     // recovering here would duplicate that message.
     const recovery = resolveStrandedReplyRecovery({
       base: followupRun,
+      payloads: finalPayloads,
       finalText: assistantFinalText,
       sourceReplyDeliveryMode: sourceReplyPolicy.sourceReplyDeliveryMode,
       sendPolicyDenied: sourceReplyPolicy.sendPolicyDenied,

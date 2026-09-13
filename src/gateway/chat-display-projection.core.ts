@@ -1,10 +1,13 @@
+import { STREAM_ERROR_FALLBACK_TEXT } from "@openclaw/ai/internal/shared";
 import { GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT } from "@openclaw/gateway-protocol/gateway-error-details";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeLowercaseStringOrEmpty as normalizeErrorSignal } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty as normalizeErrorSignal,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { renderAssistantRequestFailureCopy } from "../agents/failover/assistant-request-failure-copy.js";
 import { isContextOverflowError } from "../agents/failover/classify.js";
-import { STREAM_ERROR_FALLBACK_TEXT } from "../agents/stream-message-shared.js";
-import { hasRawToolValidationOutput } from "../agents/tool-error-summary.js";
+import { renderAssistantFormatFailureCopy } from "../agents/failover/user-copy.js";
 import { readTranscriptSenderIdentity } from "../chat/sender-identity.js";
 import { classifyGatewayStorageFailure } from "../infra/sqlite-error-diagnostics.js";
 import {
@@ -117,6 +120,7 @@ type ChatDisplayProjectionResult = {
   turnBoundaryPending: boolean;
   assistantErrorPending: boolean;
   assistantErrorRecoveryObserved: boolean;
+  commentaryFallbacksObserved?: true;
 };
 
 const GATEWAY_ASSISTANT_CONTEXT_OVERFLOW_FALLBACK_TEXT =
@@ -147,6 +151,7 @@ function getAssistantErrorFallbackText(message: Record<string, unknown>): string
       storageFailure: classifyGatewayStorageFailure(message),
       code: typeof message.errorCode === "string" ? message.errorCode : undefined,
     }) ??
+    renderAssistantFormatFailureCopy(message) ??
     (isContextOverflowAssistantError(message)
       ? GATEWAY_ASSISTANT_CONTEXT_OVERFLOW_FALLBACK_TEXT
       : GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT)
@@ -193,9 +198,10 @@ function sanitizeAssistantErrorDisplayMessage(
   if (typeof next.text === "string" && next.text.startsWith(STREAM_ERROR_FALLBACK_TEXT)) {
     next.text = next.text.slice(STREAM_ERROR_FALLBACK_TEXT.length);
   }
-  const terminalCopy = renderAssistantRequestFailureCopy({
-    code: typeof message.errorCode === "string" ? message.errorCode : undefined,
-  });
+  const terminalCopy =
+    renderAssistantRequestFailureCopy({
+      code: typeof message.errorCode === "string" ? message.errorCode : undefined,
+    }) ?? renderAssistantFormatFailureCopy(message);
   if (terminalCopy) {
     // Apply the normal visibility rules before adding host-owned failure copy.
     // Put it first in surviving text so phase filtering and display caps retain it.
@@ -393,41 +399,15 @@ function projectEmptyAssistantErrorMessages(
     if (message.role !== "assistant" || message.stopReason !== "error") {
       return message;
     }
-    const sanitized = sanitizeChatHistoryMessage(message, Number.MAX_SAFE_INTEGER)
-      .message as Record<string, unknown>;
-    const visibleTexts: string[] = [];
-    if (typeof sanitized.content === "string") {
-      visibleTexts.push(sanitized.content);
-    } else if (Array.isArray(sanitized.content)) {
-      for (const block of sanitized.content) {
-        const entry = asOptionalRecord(block);
-        if (!entry) {
-          continue;
-        }
-        if (isAssistantTextContentType(entry.type) && typeof entry.text === "string") {
-          visibleTexts.push(entry.text);
-        }
-      }
-    }
-    if (typeof sanitized.text === "string") {
-      visibleTexts.push(sanitized.text);
-    }
-    const nonEmptyVisibleTexts = visibleTexts.map((text) => text.trim()).filter(Boolean);
-    const hasUnsafeValidationOutput = nonEmptyVisibleTexts.some(hasRawToolValidationOutput);
     const hasDisplayableStructuredContent =
       hasAssistantDisplayableNonTextContent(message) || hasTranscriptMediaFacts(message);
-    if (hasDisplayableStructuredContent && !hasUnsafeValidationOutput) {
+    if (hasDisplayableStructuredContent) {
       changed = true;
       return sanitizeAssistantErrorDisplayMessage(message);
     }
-    const hasVisibleReplyText = nonEmptyVisibleTexts.some(
-      (text) => text !== STREAM_ERROR_FALLBACK_TEXT && !isSuppressedControlReplyText(text),
-    );
-    if (
-      !hasUnsafeValidationOutput &&
-      !shouldDropAssistantHistoryMessage(sanitized) &&
-      hasVisibleReplyText
-    ) {
+    const sanitized = sanitizeChatHistoryMessage(message, Number.MAX_SAFE_INTEGER)
+      .message as Record<string, unknown>;
+    if (!shouldDropAssistantHistoryMessage(sanitized) && hasVisibleAssistantReplyText(sanitized)) {
       changed = true;
       return sanitizeAssistantErrorDisplayMessage(message);
     }
@@ -452,7 +432,15 @@ export function projectChatDisplayMessagesWithState(
   messages: unknown[],
   options?: ChatDisplayProjectionOptions,
 ): ChatDisplayProjectionResult {
-  const projectedActivity = messages.map((message) => {
+  const projectedMessages = messages.map((message) => {
+    const entry = asOptionalRecord(message);
+    if (entry?.role === "custom" && entry.customType === "run-failed-before-reply") {
+      const runId = normalizeOptionalString(asOptionalRecord(entry.details)?.runId);
+      if (runId) {
+        // Retain failure correlation before sanitation removes private report details.
+        return { ...entry, __openclaw: { ...asOptionalRecord(entry["__openclaw"]), runId } };
+      }
+    }
     const activity = readNestedToolActivity(message);
     if (!activity) {
       return message;
@@ -476,29 +464,33 @@ export function projectChatDisplayMessagesWithState(
   });
   const source =
     options?.stripEnvelope === false
-      ? projectedActivity
-      : stripEnvelopeFromMessages(projectedActivity);
+      ? projectedMessages
+      : stripEnvelopeFromMessages(projectedMessages);
   const mirrored = mirrorMessageToolVisibleReplies(source);
   const recoveredErrors = projectRecoveredAssistantErrors(
     toProjectedMessages(mirrored),
     options?.assistantErrorPending,
   );
   const projectedErrors = projectEmptyAssistantErrorMessages(recoveredErrors.messages);
+  const sanitizedMessages = toProjectedMessages(
+    sanitizeChatHistoryMessages(projectedErrors, Number.MAX_SAFE_INTEGER, {
+      includeCommentaryFallbacks: options?.includeCommentaryFallbacks,
+    }),
+  );
+  const commentaryFallbacksObserved =
+    options?.includeCommentaryFallbacks === true &&
+    sanitizedMessages.some(
+      (message) => asOptionalRecord(message.openclawStreamFallback)?.source === "segment",
+    );
   const filtered = filterVisibleProjectedHistoryMessages(
-    projectSessionsSendInterSessionMessages(
-      toProjectedMessages(
-        sanitizeChatHistoryMessages(projectedErrors, Number.MAX_SAFE_INTEGER, {
-          includeCommentaryFallbacks: options?.includeCommentaryFallbacks,
-        }),
-      ),
-    ),
+    projectSessionsSendInterSessionMessages(sanitizedMessages),
     options?.turnBoundaryPending,
   );
   const displayMessages = sanitizeChatHistoryMessages(
     mergeTtsSupplementMessages(filtered.messages),
     options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
   ) as Array<Record<string, unknown>>;
-  return {
+  const result: ChatDisplayProjectionResult = {
     messages: projectCurrentUserProfileAvatars(
       displayMessages,
       options?.resolveCurrentUserProfileDisplay,
@@ -507,6 +499,10 @@ export function projectChatDisplayMessagesWithState(
     assistantErrorPending: recoveredErrors.pending,
     assistantErrorRecoveryObserved: recoveredErrors.recoveryObserved,
   };
+  if (commentaryFallbacksObserved) {
+    result.commentaryFallbacksObserved = true;
+  }
+  return result;
 }
 
 export function projectChatDisplayMessages(

@@ -46,9 +46,8 @@ describe("queue health collector", () => {
       prefix: "openclaw-health-dq-",
     });
     try {
-      const { upsertDeliveryQueueEntry } = await import("../../infra/delivery-queue-sqlite.js");
-      const { moveDeliveryQueueEntryToFailedForTest } =
-        await import("../../infra/delivery-queue-test-support.js");
+      const { moveDeliveryQueueEntryToFailed, upsertDeliveryQueueEntry } =
+        await import("../../infra/delivery-queue-sqlite.js");
       const clean = await collectHealth();
       expect(clean.deliveryQueues).toBeUndefined();
 
@@ -56,7 +55,7 @@ describe("queue health collector", () => {
         queueName: "outbound",
         entry: { id: "dead-1", enqueuedAt: 1_000, retryCount: 5, retainOnFailure: true },
       });
-      moveDeliveryQueueEntryToFailedForTest("outbound", "dead-1");
+      moveDeliveryQueueEntryToFailed("outbound", "dead-1");
       const { createChannelIngressQueue } = await import("../../channels/message/ingress-queue.js");
       const ingressQueue = createChannelIngressQueue<{ text: string }>({
         channelId: "telegram",

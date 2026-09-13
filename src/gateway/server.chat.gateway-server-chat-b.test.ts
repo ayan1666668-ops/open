@@ -2218,7 +2218,10 @@ describe("gateway server chat", () => {
                 string,
                 Promise<{
                   modelCatalog: ModelCatalogEntry[];
-                  metadata: { models: unknown[]; swarmEnabled: boolean };
+                  metadata: {
+                    models: import("../../packages/gateway-protocol/src/index.js").ModelChoice[];
+                    swarmEnabled: boolean;
+                  };
                 }>
               >();
               const projectAgent = (
@@ -3640,6 +3643,78 @@ describe("gateway server chat", () => {
       releaseMutation.resolve();
       releaseTerminalMutation.resolve();
       resetDirectChatSession();
+    }
+  });
+
+  test("chat.send exposes inline image uploads as managed media without duplicating vision input", async () => {
+    openDirectChatSession();
+    try {
+      testState.agentConfig = { model: { primary: "test-provider/vision-model" } };
+      await writeStoredMainSession({
+        modelProvider: "test-provider",
+        model: "vision-model",
+      });
+
+      const context = createDirectChatContext({
+        getRuntimeConfig,
+        loadGatewayModelCatalogSnapshot: vi
+          .fn<GatewayRequestContext["loadGatewayModelCatalogSnapshot"]>()
+          .mockResolvedValue(createChatVisionModelCatalogSnapshot()),
+      });
+      const pngB64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
+      let captured: { ctx?: Record<string, unknown>; replyOptions?: GetReplyOptions } | undefined;
+      dispatchInboundMessageMock.mockImplementation(async (...args: unknown[]) => {
+        const [params] = args as [
+          {
+            ctx: Record<string, unknown>;
+            replyOptions?: GetReplyOptions;
+          },
+        ];
+        if (params.replyOptions?.runId === "idem-inline-image-managed-media") {
+          captured = {
+            ctx: params.ctx,
+            replyOptions: params.replyOptions,
+          };
+        }
+      });
+
+      const responses: Array<{ ok: boolean; payload?: unknown; error?: unknown }> = [];
+      await callDirectChat("chat.send", {
+        id: "inline-image-managed-media",
+        params: makeChatSendParams({
+          message: "inspect the uploaded file",
+          idempotencyKey: "idem-inline-image-managed-media",
+          attachments: [
+            {
+              type: "image",
+              mimeType: "image/png",
+              fileName: "dot.png",
+              content: pngB64,
+            },
+          ],
+        }),
+        respond: captureChatResponse(responses),
+        context,
+      });
+
+      expect(responses[0]?.ok).toBe(true);
+      await waitForFast(() => expect(captured).toBeDefined(), FAST_WAIT_OPTS);
+      expect(captured?.replyOptions?.images).toEqual([
+        { type: "image", data: pngB64, mimeType: "image/png", sourceIndex: 0 },
+      ]);
+      expect(captured?.ctx?.media).toEqual([
+        expect.objectContaining({
+          path: expect.any(String),
+          contentType: "image/png",
+          hydrationSuppressed: true,
+        }),
+      ]);
+      await waitForFast(() => expect(context.removeChatRun).toHaveBeenCalledTimes(1));
+    } finally {
+      dispatchInboundMessageMock.mockReset();
+      testState.agentConfig = undefined;
+      testState.sessionStorePath = undefined;
     }
   });
 
@@ -5209,230 +5284,6 @@ describe("gateway server chat", () => {
     });
   });
 
-  test("chat.send terminalizes returned validation errors as safe aborts", async () => {
-    await withDirectChatSession(async () => {
-      await writeSessionStore({
-        entries: {
-          main: {
-            sessionId: "sess-main",
-            updatedAt: Date.now(),
-          },
-        },
-      });
-
-      const runId = "idem-validation-loop";
-      const validationSummary = "edit tool validation failed: invalid arguments";
-      const broadcast = vi.fn<GatewayRequestContext["broadcast"]>();
-      const context = createDirectChatContext({
-        loadGatewayModelCatalog: vi.fn<GatewayRequestContext["loadGatewayModelCatalog"]>(),
-        broadcast,
-        getRuntimeConfig: () => ({}),
-      });
-      dispatchInboundMessageMock.mockImplementationOnce(async (args: unknown) => {
-        const dispatch = args as {
-          dispatcher?: {
-            sendFinalReply: (payload: { text: string; isError: true }) => boolean;
-            markComplete: () => void;
-            waitForIdle: () => Promise<void>;
-          };
-          replyOptions?: GetReplyOptions;
-        };
-        dispatch.replyOptions?.onAgentRunStart?.(runId);
-        const active = context.chatAbortControllers.get(runId);
-        expect(active).toBeDefined();
-        if (active) {
-          active.toolErrorSummary = validationSummary;
-        }
-        const dispatcher = expectDefined(
-          dispatch.dispatcher,
-          "chat.send projected reply dispatcher",
-        );
-        dispatcher.sendFinalReply({ text: "LLM request failed.", isError: true });
-        dispatcher.markComplete();
-        await dispatcher.waitForIdle();
-        return {};
-      });
-
-      const { chatHandlers } = await import("./server-methods/chat.js");
-      await expectDefined(
-        chatHandlers["chat.send"],
-        'chatHandlers["chat.send"] test invariant',
-      )({
-        req: {
-          type: "req",
-          id: "validation-loop",
-          method: "chat.send",
-          params: {
-            sessionKey: "main",
-            message: "trigger malformed edit calls",
-            idempotencyKey: runId,
-          },
-        },
-        params: {
-          sessionKey: "main",
-          message: "trigger malformed edit calls",
-          idempotencyKey: runId,
-        },
-        client: {
-          connect: {
-            client: {
-              id: GATEWAY_CLIENT_NAMES.TUI,
-              mode: GATEWAY_CLIENT_MODES.UI,
-            },
-            scopes: ["operator.write", "operator.admin"],
-          },
-        } as never,
-        isWebchatConnect: () => true,
-        respond: vi.fn() as RespondFn,
-        context,
-      });
-
-      await waitForFast(
-        () => {
-          expect(broadcast).toHaveBeenCalledWith(
-            "chat",
-            expect.objectContaining({
-              runId,
-              sessionKey: "agent:main:main",
-              state: "aborted",
-              errorMessage: validationSummary,
-            }),
-            { sessionKeys: ["agent:main:main"] },
-          );
-        },
-        { timeout: 10_000, interval: 1 },
-      );
-      expect(broadcast).not.toHaveBeenCalledWith(
-        "chat",
-        expect.objectContaining({ runId, state: "error" }),
-        expect.anything(),
-      );
-      expect(JSON.stringify(broadcast.mock.calls)).not.toContain("LLM request failed");
-      expect(context.dedupe.get(`chat:${runId}`)).toMatchObject({
-        ok: false,
-        payload: {
-          runId,
-          status: "error",
-          summary: validationSummary,
-        },
-        error: {
-          message: validationSummary,
-        },
-      });
-    });
-  });
-
-  test("chat.send does not rebroadcast lifecycle-owned returned errors", async () => {
-    await withDirectChatSession(async () => {
-      await writeSessionStore({
-        entries: {
-          main: {
-            sessionId: "sess-main",
-            updatedAt: Date.now(),
-          },
-        },
-      });
-
-      const runId = "idem-lifecycle-owned-error";
-      const errorMessage = "LLM request failed.";
-      const sessionKey = "agent:main:main";
-      const broadcast = vi.fn<GatewayRequestContext["broadcast"]>();
-      const context = createDirectChatContext({
-        loadGatewayModelCatalog: vi.fn<GatewayRequestContext["loadGatewayModelCatalog"]>(),
-        broadcast,
-        getRuntimeConfig: () => ({}),
-      });
-      dispatchInboundMessageMock.mockImplementationOnce(async (args: unknown) => {
-        const dispatch = args as {
-          dispatcher?: {
-            sendFinalReply: (payload: { text: string; isError: true }) => boolean;
-            markComplete: () => void;
-            waitForIdle: () => Promise<void>;
-          };
-          replyOptions?: GetReplyOptions;
-        };
-        dispatch.replyOptions?.onAgentRunStart?.(runId);
-        const active = context.chatAbortControllers.get(runId);
-        expect(active).toBeDefined();
-        if (active) {
-          active.chatTerminalBroadcasted = true;
-        }
-        broadcast(
-          "chat",
-          {
-            runId,
-            sessionKey,
-            seq: 4,
-            state: "error",
-            errorMessage,
-          },
-          { sessionKeys: [sessionKey] },
-        );
-        const dispatcher = expectDefined(
-          dispatch.dispatcher,
-          "chat.send projected reply dispatcher",
-        );
-        dispatcher.sendFinalReply({ text: errorMessage, isError: true });
-        dispatcher.markComplete();
-        await dispatcher.waitForIdle();
-        return {};
-      });
-
-      const { chatHandlers } = await import("./server-methods/chat.js");
-      await expectDefined(
-        chatHandlers["chat.send"],
-        'chatHandlers["chat.send"] test invariant',
-      )({
-        req: {
-          type: "req",
-          id: "lifecycle-owned-error",
-          method: "chat.send",
-          params: {
-            sessionKey: "main",
-            message: "trigger provider failure",
-            idempotencyKey: runId,
-          },
-        },
-        params: {
-          sessionKey: "main",
-          message: "trigger provider failure",
-          idempotencyKey: runId,
-        },
-        client: {
-          connect: {
-            client: {
-              id: GATEWAY_CLIENT_NAMES.TUI,
-              mode: GATEWAY_CLIENT_MODES.UI,
-            },
-            scopes: ["operator.write", "operator.admin"],
-          },
-        } as never,
-        isWebchatConnect: () => true,
-        respond: vi.fn() as RespondFn,
-        context,
-      });
-
-      await waitForFast(() => {
-        expect(context.dedupe.get(`chat:${runId}`)).toMatchObject({
-          ok: false,
-          payload: {
-            runId,
-            status: "error",
-            summary: errorMessage,
-          },
-        });
-      });
-      expect(
-        broadcast.mock.calls.filter(
-          ([event, payload]) =>
-            event === "chat" &&
-            (payload as { runId?: string; state?: string }).runId === runId &&
-            (payload as { state?: string }).state === "error",
-        ),
-      ).toHaveLength(1);
-    });
-  });
-
   test("chat.send terminalizes the client run when a followup is queued", async () => {
     await withDirectChatSession(async (_sessionDir, storePath) => {
       await writeStoredMainSession({});
@@ -5499,6 +5350,7 @@ describe("gateway server chat", () => {
       expect(onQueuedFollowupReplyBatch).toBeTypeOf("function");
       await onQueuedFollowupReplyBatch?.({
         kind: "queued-followup",
+        completion: { kind: "completed" },
         runId: "queued-followup-agent-run",
         originatingChannel: "webchat",
         payloads: [{ text: "queued follow-up answer" }],
@@ -5569,10 +5421,19 @@ describe("gateway server chat", () => {
       turnAdoptionLifecycle?.onSettled?.();
       expect(context.chatQueuedTurns.has("idem-queued-followup")).toBe(false);
       expect(isSessionWorkAdmissionActive(storePath, ["agent:main:main", "sess-main"])).toBe(false);
-      await waitForFast(
-        () => expect(context.removeChatRun).toHaveBeenCalledTimes(1),
-        FAST_WAIT_OPTS,
-      );
+      await waitForFast(() => {
+        expect(context.removeChatRun).toHaveBeenCalledTimes(2);
+        expect(context.removeChatRun).toHaveBeenCalledWith(
+          "idem-queued-followup",
+          "idem-queued-followup",
+          "agent:main:main",
+        );
+        expect(context.removeChatRun).toHaveBeenCalledWith(
+          "queued-followup-agent-run",
+          "queued-followup-agent-run",
+          "agent:main:main",
+        );
+      }, FAST_WAIT_OPTS);
 
       let failedDispatchLifecycle: GetReplyOptions["turnAdoptionLifecycle"];
       dispatchInboundMessageMock.mockImplementationOnce(async (args: unknown) => {
@@ -5593,10 +5454,14 @@ describe("gateway server chat", () => {
         context,
       });
 
-      await waitForFast(
-        () => expect(context.removeChatRun).toHaveBeenCalledTimes(2),
-        FAST_WAIT_OPTS,
-      );
+      await waitForFast(() => {
+        expect(context.removeChatRun).toHaveBeenCalledTimes(3);
+        expect(context.removeChatRun).toHaveBeenCalledWith(
+          "idem-queued-followup-post-error",
+          "idem-queued-followup-post-error",
+          "agent:main:main",
+        );
+      }, FAST_WAIT_OPTS);
       const acceptedErrorEvents = broadcast.mock.calls.filter(
         ([event, payload]) =>
           event === "chat" &&
@@ -5970,7 +5835,15 @@ describe("gateway server chat", () => {
         );
 
         const history = await rpcReq<{
-          messages?: Array<{ role?: unknown; content?: unknown }>;
+          messages?: Array<{
+            role?: unknown;
+            content?: unknown;
+            __openclaw?: {
+              importedFrom?: unknown;
+              externalId?: unknown;
+              cliSessionId?: unknown;
+            };
+          }>;
         }>(ws, "chat.history", makeMainSessionParams({ limit: 100 }));
         expect(history.ok).toBe(true);
         const assistantMessages = (history.payload?.messages ?? []).filter(
@@ -5989,6 +5862,13 @@ describe("gateway server chat", () => {
           ),
         ).toHaveLength(1);
         expect(contentBlocks.filter((block) => block.type === "audio")).toHaveLength(1);
+        expect(assistantMessages[0]?.["__openclaw"]).toEqual(
+          expect.objectContaining({
+            importedFrom: "claude-cli",
+            externalId: "assistant-delivery-ready",
+            cliSessionId,
+          }),
+        );
         expect(JSON.stringify(assistantMessages)).not.toContain("[[reply_to:");
       } finally {
         homeEnvSnapshot.restore();

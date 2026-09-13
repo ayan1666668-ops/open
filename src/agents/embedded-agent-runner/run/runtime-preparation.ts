@@ -420,15 +420,10 @@ export async function prepareEmbeddedRunRuntime(input: {
         continue;
       }
       const prepared = await prepareAuthAttempt(candidateAttempt);
-      const previousRuntimeProvider = models.runtime.provider;
       authController.stopRuntimeAuthRefreshTimer();
       authState.apiKeyInfo = null;
       authState.runtimeAuthState = null;
       prepared.commit();
-      if (prepared.authRequirement === "subscription") {
-        // Subscription auth is harness-owned; do not expose the prior host key to the next attempt.
-        authStorage.removeRuntimeApiKey(previousRuntimeProvider);
-      }
       authState.lastProfileId = candidate;
       authState.thinkLevel = initialThinkLevel;
       attemptedThinking.clear();
@@ -569,6 +564,7 @@ export async function prepareEmbeddedRunRuntime(input: {
       agentHarness,
       pluginHarnessOwnsTransport,
       effectiveModel: models.effective,
+      modelContextWindow: models.runtime.contextWindow,
       contextTokenBudget,
       authoredContextTokenCap,
       contextWindowInfo,

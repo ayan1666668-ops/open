@@ -2,13 +2,12 @@
  * Builds embedded-agent payload objects from attempt inputs and outcomes.
  */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { buildCodexLoginRecovery } from "../../../auto-reply/codex-login-recovery.js";
-import { stripContinuationSignal } from "../../../auto-reply/continuation/signal.js";
 import type { SourceReplyDeliveryMode } from "../../../auto-reply/get-reply-options.types.js";
 import {
   createHeartbeatToolResponsePayload,
   type HeartbeatToolResponse,
 } from "../../../auto-reply/heartbeat-tool-response.js";
+import { buildProviderLoginRecovery } from "../../../auto-reply/provider-login-recovery.js";
 import {
   copyReplyPayloadMetadata,
   getReplyPayloadMetadata,
@@ -28,7 +27,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { hasReplyPayloadContent } from "../../../interactive/payload.js";
 import type { AssistantMessage } from "../../../llm/types.js";
 import {
-  extractAssistantTextPartsForPhase,
+  extractAssistantTextForPhase,
   parseAssistantTextSignature,
 } from "../../../shared/chat-message-content.js";
 import {
@@ -61,37 +60,16 @@ import { buildFailureWarning } from "./tool-error-warning.js";
 function isAssistantTextContentBlockType(value: unknown): boolean {
   return value === "text" || value === "input_text" || value === "output_text";
 }
-
-function sanitizeCanonicalAssistantItemText(
-  text: string,
-  sanitize: (value: string) => string,
-): string {
-  const sanitized = sanitize(text);
-  if (!sanitized) {
+function resolveRawAssistantAnswerText(lastAssistant: AssistantMessage | undefined): string {
+  if (!lastAssistant) {
     return "";
   }
-  const sanitizedIndex = text.indexOf(sanitized);
-  if (
-    sanitizedIndex >= 0 &&
-    text.slice(0, sanitizedIndex).trim().length === 0 &&
-    text.slice(sanitizedIndex + sanitized.length).trim().length === 0
-  ) {
-    return text;
-  }
-  return sanitized;
-}
-
-function resolveRawAssistantAnswerParts(lastAssistant: AssistantMessage | undefined): string[] {
-  if (!lastAssistant) {
-    return [];
-  }
-  const finalAnswerParts = extractAssistantTextPartsForPhase(lastAssistant, {
+  const finalAnswerText = extractAssistantTextForPhase(lastAssistant, {
     phase: "final_answer",
-    sanitizeText: (text) =>
-      sanitizeCanonicalAssistantItemText(text, sanitizeAssistantFinalAnswerText),
+    sanitizeText: sanitizeAssistantFinalAnswerText,
   });
-  if (normalizeOptionalString(finalAnswerParts.join("\n"))) {
-    return finalAnswerParts;
+  if (finalAnswerText) {
+    return normalizeOptionalString(finalAnswerText) ?? "";
   }
   if (Array.isArray(lastAssistant.content)) {
     const hasExplicitPhasedTextBlock = lastAssistant.content.some((block) => {
@@ -120,21 +98,22 @@ function resolveRawAssistantAnswerParts(lastAssistant: AssistantMessage | undefi
           ) {
             return null;
           }
-          const text = sanitizeCanonicalAssistantItemText(
-            record.text,
-            sanitizeAssistantFinalAnswerText,
-          );
+          const text = sanitizeAssistantFinalAnswerText(record.text);
           return text.trim() ? text : null;
         })
         .filter((value): value is string => typeof value === "string");
       if (signedUnphasedParts.length) {
-        return signedUnphasedParts;
+        return normalizeOptionalString(signedUnphasedParts.join("\n")) ?? "";
       }
     }
   }
-  return extractAssistantTextPartsForPhase(lastAssistant, {
-    sanitizeText: (text) => sanitizeCanonicalAssistantItemText(text, sanitizeAssistantVisibleText),
-  });
+  return (
+    normalizeOptionalString(
+      extractAssistantTextForPhase(lastAssistant, {
+        sanitizeText: sanitizeAssistantVisibleText,
+      }),
+    ) ?? ""
+  );
 }
 
 /**
@@ -192,7 +171,6 @@ export function buildEmbeddedRunPayloads(params: {
     replyItems,
     hasSourceReplyPayload,
     deliveredSourceReplyViaMessageTool,
-    explicitFinalSourceReply,
     completedSourceReplyViaMessageTool,
   } = buildSourceReplyPayloadState({
     payloads: params.messagingToolSourceReplyPayloads,
@@ -235,7 +213,7 @@ export function buildEmbeddedRunPayloads(params: {
     ? normalizeOptionalString(assistantForPayload?.errorMessage)
     : undefined;
   const oauthRefreshFailure = rawErrorMessage ? classifyOAuthRefreshFailure(rawErrorMessage) : null;
-  const codexLoginRecovery = buildCodexLoginRecovery({
+  const providerLoginRecovery = buildProviderLoginRecovery({
     provider: oauthRefreshFailure?.provider ?? params.provider,
     oauthReason: oauthRefreshFailure?.reason,
   });
@@ -244,7 +222,7 @@ export function buildEmbeddedRunPayloads(params: {
       ? suppressFailureArtifacts
         ? undefined
         : lastAssistantErrored || rawErrorMessage
-          ? (codexLoginRecovery?.hint ??
+          ? (providerLoginRecovery?.hint ??
             formatUserFacingAssistantErrorText(assistantForPayload, {
               cfg: params.config,
               sessionKey: params.sessionKey,
@@ -273,7 +251,7 @@ export function buildEmbeddedRunPayloads(params: {
     const errorPayload = {
       text: errorText,
       isError: true,
-      ...(codexLoginRecovery ? { presentation: codexLoginRecovery.presentation } : {}),
+      ...(providerLoginRecovery ? { presentation: providerLoginRecovery.presentation } : {}),
     };
     replyItems.push(setReplyPayloadMetadata(errorPayload, { terminalProviderError: true }));
   }
@@ -286,119 +264,103 @@ export function buildEmbeddedRunPayloads(params: {
   if (reasoningText) {
     replyItems.push({ text: reasoningText, isReasoning: true });
   }
-  const fallbackAnswerText = assistantForPayload
-    ? extractAssistantVisibleText(assistantForPayload)
-    : "";
-  const fallbackRawAnswerParts = resolveRawAssistantAnswerParts(assistantForPayload);
-  const fallbackRawAnswerText = normalizeOptionalString(fallbackRawAnswerParts.join("\n")) ?? "";
-  const rawAnswerDirectiveState = fallbackRawAnswerText
-    ? parseReplyDirectives(fallbackRawAnswerText)
-    : null;
-  const rawAnswerHasMedia =
-    (rawAnswerDirectiveState?.mediaUrls?.length ?? 0) > 0 || rawAnswerDirectiveState?.audioAsVoice;
-  const rawAnswerHasContinuation = fallbackRawAnswerParts.some(
-    (part) => stripContinuationSignal(part).signal !== null,
-  );
-  const rawAnswerHasEarlierContinuation = fallbackRawAnswerParts
-    .slice(0, -1)
-    .some((part) => stripContinuationSignal(part).signal !== null);
-  const assistantTextsHaveMedia = params.assistantTexts.some((text) => {
-    const parsed = parseReplyDirectives(text);
-    return (parsed.mediaUrls?.length ?? 0) > 0 || parsed.audioAsVoice;
-  });
-  const normalizedAssistantTexts =
-    rawAnswerHasMedia && nonEmptyAssistantTexts.length > 0 && !assistantTextsHaveMedia
-      ? normalizeTextForComparison(nonEmptyAssistantTexts.join("\n\n"))
-      : "";
-  const normalizedRawAnswerText = normalizeTextForComparison(rawAnswerDirectiveState?.text ?? "");
-  const shouldPreferRawAnswerText =
-    rawAnswerHasContinuation ||
-    (rawAnswerHasMedia &&
-      (!nonEmptyAssistantTexts.length ||
-        (!assistantTextsHaveMedia &&
-          normalizedAssistantTexts.length > 0 &&
-          normalizedAssistantTexts === normalizedRawAnswerText)));
-  // Keep raw canonical text when streamed delivery lost media directives or
-  // continuation markers that must remain available to the post-run extractor.
-  const fallbackAnswerSourceText =
-    shouldPreferRawAnswerText && fallbackRawAnswerText ? fallbackRawAnswerText : fallbackAnswerText;
-  const fallbackAnswerDirectiveState =
-    fallbackAnswerSourceText === fallbackRawAnswerText
-      ? rawAnswerDirectiveState
-      : fallbackAnswerSourceText
-        ? parseReplyDirectives(fallbackAnswerSourceText)
-        : null;
-  const normalizedFallbackAnswerSourceText = fallbackAnswerDirectiveState
-    ? normalizeTextForComparison(fallbackAnswerDirectiveState.text)
-    : "";
-  const shouldUseCanonicalFinalAnswer =
-    !lastAssistantNeedsErrorSurface &&
-    fallbackAnswerSourceText.length > 0 &&
-    normalizedFallbackAnswerSourceText.length > 0;
-  const canonicalFinalAnswerTexts =
-    rawAnswerHasEarlierContinuation && shouldPreferRawAnswerText
-      ? fallbackRawAnswerParts.filter((part) => part.trim().length > 0)
-      : [fallbackAnswerSourceText];
-  const preserveCanonicalItemWhitespace =
-    rawAnswerHasEarlierContinuation && shouldPreferRawAnswerText;
-  const hasAssistantTextPayload = nonEmptyAssistantTexts.length > 0;
-  const answerTexts =
-    suppressAssistantArtifacts || runAborted || lastAssistantNeedsErrorSurface
-      ? []
-      : shouldUseCanonicalFinalAnswer
-        ? canonicalFinalAnswerTexts
-        : shouldPreferRawAnswerText && fallbackRawAnswerText
-          ? [fallbackRawAnswerText]
-          : hasAssistantTextPayload
-            ? nonEmptyAssistantTexts
-            : fallbackAnswerText
-              ? [fallbackAnswerText]
-              : [];
-  const preparedAnswerDirectives =
-    answerTexts.length === 1 &&
-    (shouldUseCanonicalFinalAnswer || shouldPreferRawAnswerText || !hasAssistantTextPayload)
-      ? fallbackAnswerDirectiveState
-      : null;
   let hasUserFacingReply =
     Boolean(errorText) ||
     completedSourceReplyViaMessageTool ||
     params.heartbeatToolResponse?.notify === true;
-  for (const text of answerTexts) {
-    const {
-      text: cleanedText,
-      mediaUrls,
-      audioAsVoice,
-      replyToId,
-      replyToTag,
-      replyToCurrent,
-    } = preparedAnswerDirectives ?? parseReplyDirectives(text);
-    const ttsFacts = shouldUseCanonicalFinalAnswer ? storedDelivery?.tts : undefined;
-    const delivery = shouldUseCanonicalFinalAnswer
-      ? {
-          audioAsVoice: storedDelivery?.audioAsVoice,
-          replyToCurrent: storedDelivery?.replyToCurrent,
-          replyToId: storedDelivery?.replyToId,
-          replyToTag: Boolean(storedDelivery?.replyToCurrent || storedDelivery?.replyToId),
-        }
-      : { audioAsVoice, replyToId, replyToTag, replyToCurrent };
-    if (
-      !cleanedText &&
-      (!mediaUrls || mediaUrls.length === 0) &&
-      !delivery.audioAsVoice &&
-      !ttsFacts
-    ) {
-      continue;
+  if (!suppressAssistantArtifacts && !runAborted && !lastAssistantNeedsErrorSurface) {
+    const fallbackAnswerText = assistantForPayload
+      ? extractAssistantVisibleText(assistantForPayload)
+      : "";
+    const fallbackRawAnswerText = resolveRawAssistantAnswerText(assistantForPayload);
+    const rawAnswerDirectiveState = fallbackRawAnswerText
+      ? parseReplyDirectives(fallbackRawAnswerText)
+      : null;
+    const rawAnswerHasMedia =
+      (rawAnswerDirectiveState?.mediaUrls?.length ?? 0) > 0 ||
+      rawAnswerDirectiveState?.audioAsVoice;
+    const normalizedAssistantTexts =
+      rawAnswerHasMedia &&
+      nonEmptyAssistantTexts.length > 0 &&
+      !params.assistantTexts.some((text) => {
+        const parsed = parseReplyDirectives(text);
+        return (parsed.mediaUrls?.length ?? 0) > 0 || parsed.audioAsVoice;
+      })
+        ? normalizeTextForComparison(nonEmptyAssistantTexts.join("\n\n"))
+        : "";
+    const shouldPreferRawAnswerText =
+      rawAnswerHasMedia &&
+      (!nonEmptyAssistantTexts.length ||
+        (normalizedAssistantTexts.length > 0 &&
+          normalizedAssistantTexts ===
+            normalizeTextForComparison(rawAnswerDirectiveState?.text ?? "")));
+    // When streamed text lost media directives but the canonical assistant answer
+    // still contains them, keep the raw answer so attachments are not dropped.
+    const fallbackAnswerSourceText =
+      shouldPreferRawAnswerText && fallbackRawAnswerText
+        ? fallbackRawAnswerText
+        : fallbackAnswerText;
+    const fallbackAnswerDirectiveState =
+      fallbackAnswerSourceText === fallbackRawAnswerText
+        ? rawAnswerDirectiveState
+        : fallbackAnswerSourceText
+          ? parseReplyDirectives(fallbackAnswerSourceText)
+          : null;
+    const normalizedFallbackAnswerSourceText = fallbackAnswerDirectiveState
+      ? normalizeTextForComparison(fallbackAnswerDirectiveState.text)
+      : "";
+    const shouldUseCanonicalFinalAnswer =
+      fallbackAnswerSourceText.length > 0 && normalizedFallbackAnswerSourceText.length > 0;
+    const hasAssistantTextPayload = nonEmptyAssistantTexts.length > 0;
+    const answerTexts = shouldUseCanonicalFinalAnswer
+      ? [fallbackAnswerSourceText]
+      : shouldPreferRawAnswerText && fallbackRawAnswerText
+        ? [fallbackRawAnswerText]
+        : hasAssistantTextPayload
+          ? nonEmptyAssistantTexts
+          : fallbackAnswerText
+            ? [fallbackAnswerText]
+            : [];
+    const preparedAnswerDirectives =
+      shouldUseCanonicalFinalAnswer || shouldPreferRawAnswerText || !hasAssistantTextPayload
+        ? fallbackAnswerDirectiveState
+        : null;
+    for (const text of answerTexts) {
+      const {
+        text: cleanedText,
+        mediaUrls,
+        audioAsVoice,
+        replyToId,
+        replyToTag,
+        replyToCurrent,
+      } = preparedAnswerDirectives ?? parseReplyDirectives(text);
+      const ttsFacts = shouldUseCanonicalFinalAnswer ? storedDelivery?.tts : undefined;
+      const delivery = shouldUseCanonicalFinalAnswer
+        ? {
+            audioAsVoice: storedDelivery?.audioAsVoice,
+            replyToCurrent: storedDelivery?.replyToCurrent,
+            replyToId: storedDelivery?.replyToId,
+            replyToTag: Boolean(storedDelivery?.replyToCurrent || storedDelivery?.replyToId),
+          }
+        : { audioAsVoice, replyToId, replyToTag, replyToCurrent };
+      if (
+        !cleanedText &&
+        (!mediaUrls || mediaUrls.length === 0) &&
+        !delivery.audioAsVoice &&
+        !ttsFacts
+      ) {
+        continue;
+      }
+      const replyPayload = {
+        text: cleanedText,
+        media: mediaUrls,
+        ...delivery,
+      };
+      replyItems.push(
+        ttsFacts ? setReplyPayloadMetadata(replyPayload, { tts: ttsFacts }) : replyPayload,
+      );
+      hasUserFacingReply = true;
     }
-    const replyPayload = {
-      text: cleanedText,
-      media: mediaUrls,
-      ...delivery,
-      preserveTextWhitespace: preserveCanonicalItemWhitespace,
-    };
-    replyItems.push(
-      ttsFacts ? setReplyPayloadMetadata(replyPayload, { tts: ttsFacts }) : replyPayload,
-    );
-    hasUserFacingReply = true;
   }
   if (params.lastToolError) {
     // A restart intentionally aborts the active tool while the Gateway takes over.
@@ -444,11 +406,7 @@ export function buildEmbeddedRunPayloads(params: {
   return replyItems
     .map((item) => {
       const payload: ReplyPayload = copyReplyPayloadMetadata(item, {
-        text: item.preserveTextWhitespace
-          ? item.text.trim().length > 0
-            ? item.text
-            : undefined
-          : normalizeOptionalString(item.text),
+        text: normalizeOptionalString(item.text),
       });
       const mediaUrl = item.mediaUrl ?? item.media?.[0];
       if (mediaUrl) {
@@ -472,7 +430,7 @@ export function buildEmbeddedRunPayloads(params: {
       if (
         item.isError === true &&
         params.sourceReplyDeliveryMode === "message_tool_only" &&
-        explicitFinalSourceReply === false
+        !suppressFailureArtifacts
       ) {
         markReplyPayloadForSourceSuppressionDelivery(payload);
       }

@@ -196,6 +196,8 @@ export type ReplyPayloadMetadata = {
   /** The model failed after a committed recovery compaction in the same turn. */
   postCompactionModelFailure?: true;
   assistantMessageIndex?: number;
+  /** Visible source represented by this block, excluding synthetic chunk wrappers. */
+  blockSourceText?: string;
   /** Persisted assistant speech facts; never serialized into channel payloads. */
   tts?: AssistantDeliveryTtsFacts;
   /** Structured message-tool speech is an explicit request, independent of auto-TTS mode. */
@@ -248,8 +250,6 @@ export type ReplyPayloadMetadata = {
    * are message-tool-only; sendPolicy deny still wins.
    */
   deliverDespiteSourceReplySuppression?: boolean;
-  /** Host-authored terminal failure copy, distinct from agent/tool warning payloads. */
-  agentRunFailureReply?: boolean;
   /**
    * A message-tool reply to the active internal UI source. The final payload is
    * still the live delivery vehicle; this mirror makes the reply durable for

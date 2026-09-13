@@ -13,16 +13,18 @@ import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/c
 import { createTestAdmittedRunContext } from "./admitted-run-context.test-support.js";
 import {
   buildBlockedToolResult,
-  peekAdjustedParamsForToolCall,
   recordAdjustedParamsForToolCall,
   recordStructuredReplayTrustForToolCall,
 } from "./agent-tools.before-tool-call.js";
-import { recordToolExecutionTracked } from "./agent-tools.before-tool-call.state.js";
+import {
+  adjustedParamsByToolCallId,
+  buildAdjustedParamsKey,
+  recordToolExecutionTracked,
+} from "./agent-tools.before-tool-call.state.js";
 import { addSession, deleteSession, markExited } from "./bash-process-registry.js";
 import { createProcessSessionFixture } from "./bash-process-registry.test-helpers.js";
 import { createProcessTool } from "./bash-tools.process.js";
 import { projectEmbeddedMessageDeliveryFact } from "./embedded-agent-message-delivery.js";
-import type { MessagingToolSend } from "./embedded-agent-messaging.types.js";
 import { buildEmbeddedRunPayloads } from "./embedded-agent-runner/run/payloads.js";
 import {
   handleToolExecutionEnd,
@@ -138,6 +140,8 @@ afterEach(async () => {
   resetPendingAskUserQuestionsForTest();
 });
 
+const beforeToolCallTesting = { adjustedParamsByToolCallId, buildAdjustedParamsKey };
+
 function createTestContext(): {
   ctx: ToolHandlerContext;
   warn: ReturnType<typeof vi.fn>;
@@ -158,7 +162,6 @@ function createTestContext(): {
   const trace = vi.fn();
   const isEnabled = vi.fn(() => false);
   const ctx: ToolHandlerContext = {
-    getBlockReplyDeliveryGeneration: () => 0,
     params: {
       runId: "run-test",
       sessionKey: "agent:unit-session",
@@ -187,9 +190,6 @@ function createTestContext(): {
       itemActiveIds: new Set<string>(),
       itemStartedCount: 0,
       itemCompletedCount: 0,
-      pendingMessagingTargets: new Map<string, MessagingToolSend>(),
-      pendingMessagingTexts: new Map<string, string>(),
-      pendingMessagingMediaUrls: new Map<string, string[]>(),
       pendingToolMediaUrls: [],
       pendingToolMediaTrustByUrl: new Map(),
       toolAutoDeliveryMediaUrls: new Set(),
@@ -351,7 +351,8 @@ describe("progress_card compatibility plan events", () => {
         phase: "update",
         title: "Plan updated",
         source: "openclaw",
-        explanation: "Progress updated",
+        explanation: "Checking safe candidates.",
+        explanationFormat: "plain",
         steps: [],
       },
     });
@@ -1680,6 +1681,28 @@ describe("handleToolExecutionEnd sessions_spawn terminal success tracking", () =
 });
 
 describe("handleToolExecutionEnd mutating failure recovery", () => {
+  it("keeps an earlier message error when the next delivery is intentionally suppressed", async () => {
+    const { ctx } = createTestContext();
+    await executeTool(ctx, {
+      toolName: "message",
+      toolCallId: "message-failed",
+      args: { action: "send", channel: "telegram", target: "123", message: "failed" },
+      isError: true,
+      result: { details: { status: "error", error: "Telegram transport failed" } },
+    });
+    await executeTool(ctx, {
+      toolName: "message",
+      toolCallId: "message-suppressed",
+      args: { action: "send", channel: "telegram", target: "123", message: "omitted" },
+      isError: false,
+      result: { details: { status: "suppressed", reason: "cancelled_by_message_sending_hook" } },
+    });
+    expect(ctx.state.lastToolError).toMatchObject({
+      toolName: "message",
+      error: "Telegram transport failed",
+    });
+  });
+
   it("marks middleware failures on the last tool error", async () => {
     const { ctx } = createTestContext();
 
@@ -1888,14 +1911,14 @@ describe("handleToolExecutionEnd mutating failure recovery", () => {
   it("uses hook-adjusted args for replay safety", async () => {
     const { ctx } = createTestContext();
     const toolCallId = "tool-cron-hook-rewrite";
-    recordAdjustedParamsForToolCall(
+    const adjustedParamsKey = beforeToolCallTesting.buildAdjustedParamsKey({
+      runId: "run-test",
       toolCallId,
-      {
-        action: "add",
-        job: { name: "rewritten mutation" },
-      },
-      "run-test",
-    );
+    });
+    beforeToolCallTesting.adjustedParamsByToolCallId.set(adjustedParamsKey, {
+      action: "add",
+      job: { name: "rewritten mutation" },
+    });
 
     await executeTool(ctx, {
       toolName: "cron",
@@ -1910,7 +1933,7 @@ describe("handleToolExecutionEnd mutating failure recovery", () => {
       hadPotentialSideEffects: true,
     });
     expect(ctx.state.successfulCronAdds).toBe(1);
-    expect(peekAdjustedParamsForToolCall(toolCallId, "run-test")).toBeUndefined();
+    expect(beforeToolCallTesting.adjustedParamsByToolCallId.has(adjustedParamsKey)).toBe(false);
   });
 
   it("snapshots hook-adjusted args before result middleware can mutate them", async () => {
@@ -1949,17 +1972,17 @@ describe("handleToolExecutionEnd mutating failure recovery", () => {
   it("uses hook-adjusted message arguments for delivery telemetry", async () => {
     const { ctx } = createTestContext();
     const toolCallId = "tool-message-hook-rewrite";
-    recordAdjustedParamsForToolCall(
+    const adjustedParamsKey = beforeToolCallTesting.buildAdjustedParamsKey({
+      runId: "run-test",
       toolCallId,
-      {
-        action: "send",
-        provider: "telegram",
-        to: "chat-rewritten",
-        text: "rewritten delivery",
-        mediaUrl: "/tmp/rewritten.png",
-      },
-      "run-test",
-    );
+    });
+    beforeToolCallTesting.adjustedParamsByToolCallId.set(adjustedParamsKey, {
+      action: "send",
+      provider: "telegram",
+      to: "chat-rewritten",
+      text: "rewritten delivery",
+      mediaUrl: "/tmp/rewritten.png",
+    });
 
     await executeTool(ctx, {
       toolName: "message",
@@ -2913,58 +2936,6 @@ describe("handleToolExecutionEnd timeout metadata", () => {
 });
 
 describe("handleToolExecutionEnd exec approval prompts", () => {
-  it("does not restore approval suppression state after generation invalidation", async () => {
-    const { ctx } = createTestContext();
-    let deliveryGeneration = 0;
-    let resolveToolResult: (() => void) | undefined;
-    ctx.params.onToolResult = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveToolResult = resolve;
-        }),
-    );
-    (
-      ctx as typeof ctx & {
-        getBlockReplyDeliveryGeneration: () => number;
-      }
-    ).getBlockReplyDeliveryGeneration = () => deliveryGeneration;
-
-    const task = handleToolExecutionEnd(
-      ctx as never,
-      {
-        type: "tool_execution_end",
-        toolName: "exec",
-        toolCallId: "tool-exec-stale-approval",
-        isError: false,
-        result: {
-          details: {
-            status: "approval-pending",
-            approvalId: "12345678-1234-1234-1234-123456789012",
-            approvalSlug: "12345678",
-            expiresAtMs: 1_800_000_000_000,
-            host: "gateway",
-            command: "npm view diver name version description",
-            cwd: "/tmp/work",
-            warningText: "Approval required.",
-          },
-        },
-      } as never,
-      { deliveryGeneration },
-    );
-
-    await vi.waitFor(() => {
-      expect(ctx.params.onToolResult).toHaveBeenCalledTimes(1);
-    });
-    deliveryGeneration += 1;
-    ctx.state.deterministicApprovalPromptPending = false;
-    ctx.state.deterministicApprovalPromptSent = false;
-    resolveToolResult?.();
-    await task;
-
-    expect(ctx.state.deterministicApprovalPromptPending).toBe(false);
-    expect(ctx.state.deterministicApprovalPromptSent).toBe(false);
-  });
-
   it("emits a deterministic approval payload and marks assistant output suppressed", async () => {
     const { ctx } = createTestContext();
     const onToolResult = vi.fn();
@@ -3734,7 +3705,7 @@ describe("messaging tool media URL tracking", () => {
     ctx.params.currentThreadId = "171.222";
     ctx.params.replyToMode = "all";
 
-    await startTool(ctx, {
+    await executeTool(ctx, {
       toolName: "message",
       toolCallId: "tool-threaded-message",
       args: {
@@ -3742,13 +3713,16 @@ describe("messaging tool media URL tracking", () => {
         to: "user:U1",
         content: "hi",
       },
+      isError: false,
+      result: { details: { messageId: "message-threaded" } },
     });
 
-    expect(ctx.state.pendingMessagingTargets.get("tool-threaded-message")).toMatchObject({
+    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
       provider: "slack",
       to: "user:u1",
       threadId: "171.222",
       threadImplicit: true,
+      text: "hi",
     });
   });
 
@@ -3790,8 +3764,6 @@ describe("messaging tool media URL tracking", () => {
       toolCallId,
       args: { action: "send", to: "1234", message: "thread ownership" },
     });
-
-    expect(ctx.state.pendingMessagingTargets.get(toolCallId)?.threadId).toBe(currentThreadId);
 
     await endTool(ctx, {
       toolName: "message",
@@ -3927,21 +3899,7 @@ describe("messaging tool media URL tracking", () => {
     });
   });
 
-  it("tracks media arg from messaging tool as pending", async () => {
-    const { ctx } = createTestContext();
-
-    const evt: ToolExecutionStartEvent = {
-      toolName: "message",
-      toolCallId: "tool-m1",
-      args: { action: "send", to: "channel:123", content: "hi", media: "file:///img.jpg" },
-    };
-
-    await startTool(ctx, evt);
-
-    expect(ctx.state.pendingMessagingMediaUrls.get("tool-m1")).toEqual(["file:///img.jpg"]);
-  });
-
-  it("commits pending media URL on tool success", async () => {
+  it("commits media URL on tool success", async () => {
     const { ctx } = createTestContext();
 
     // Simulate start
@@ -3969,7 +3927,6 @@ describe("messaging tool media URL tracking", () => {
       text: "hi",
       mediaUrls: ["file:///img.jpg"],
     });
-    expect(ctx.state.pendingMessagingMediaUrls.has("tool-m2")).toBe(false);
   });
 
   it("commits mediaUrls from tool result payload", async () => {
@@ -4024,7 +3981,6 @@ describe("messaging tool media URL tracking", () => {
       },
       provider: "discord",
       mediaUrls: ["/tmp/generated-song.mp3"],
-      verifyPendingMedia: true,
     },
     {
       name: "commits message attachment aliases as delivery evidence",
@@ -4051,12 +4007,9 @@ describe("messaging tool media URL tracking", () => {
       provider: "discord",
       mediaUrls: ["/tmp/generated-song.mp3"],
     },
-  ])("$name", async ({ toolCallId, args, provider, mediaUrls, verifyPendingMedia }) => {
+  ])("$name", async ({ toolCallId, args, provider, mediaUrls }) => {
     const { ctx } = createTestContext();
     await startTool(ctx, { toolName: "message", toolCallId, args });
-    if (verifyPendingMedia) {
-      expect(ctx.state.pendingMessagingMediaUrls.get(toolCallId)).toEqual(mediaUrls);
-    }
     await endTool(ctx, {
       toolName: "message",
       toolCallId,
@@ -4070,9 +4023,6 @@ describe("messaging tool media URL tracking", () => {
       text: "track ready",
       mediaUrls,
     });
-    if (verifyPendingMedia) {
-      expect(ctx.state.pendingMessagingMediaUrls.has(toolCallId)).toBe(false);
-    }
   });
 
   it("commits internal-ui source replies from successful message sends", async () => {
@@ -4355,7 +4305,7 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.messagingToolSentMediaUrls).not.toContain("file:///img-0.jpg");
   });
 
-  it("discards pending media URL on tool error", async () => {
+  it("does not commit media URL on tool error", async () => {
     const { ctx } = createTestContext();
 
     const startEvt: ToolExecutionStartEvent = {
@@ -4376,7 +4326,6 @@ describe("messaging tool media URL tracking", () => {
     await endTool(ctx, endEvt);
 
     expect(ctx.state.messagingToolSentMediaUrls).toHaveLength(0);
-    expect(ctx.state.pendingMessagingMediaUrls.has("tool-m3")).toBe(false);
   });
 });
 

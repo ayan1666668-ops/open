@@ -203,6 +203,38 @@ describe("Microsoft Teams drain claim ownership", () => {
     expect(second.abandonedCount()).toBe(0);
   });
 
+  it("dispatches HTML-only text through the immediate debounce flush without double stripping", async () => {
+    const handler = createHandler({
+      channels: { msteams: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    const lifecycle = createLifecycle();
+
+    await handler(
+      context({
+        ...directActivity("activity-html", ""),
+        attachments: [
+          {
+            contentType: "text/html",
+            content: "<at>Bot</at><p>Use x &lt; 5 &copy;; literal &lt;at&gt;Alice&lt;/at&gt;</p>",
+          },
+        ],
+      }),
+      lifecycle,
+    );
+
+    expect(
+      runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher,
+    ).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({
+          BodyForAgent: expect.stringContaining("Use x < 5 ©; literal <at>Alice</at>"),
+        }),
+      }),
+    );
+    expect(lifecycle.adoptedCount()).toBe(1);
+    expect(lifecycle.abandonedCount()).toBe(0);
+  });
+
   it("completes a gated no-dispatch turn instead of stalling its claim", async () => {
     const { deps } = createMessageHandlerDeps(
       {
@@ -325,33 +357,25 @@ describe("Microsoft Teams drain claim ownership", () => {
       const threshold = createIntegratedIngress();
       threshold.start();
       await threshold.accept(incoming);
-      const failedCeiling = {
-        id: "activity-abandon",
-        reason: "retry-limit-exceeded",
-        message: "turn-abandoned",
-        // fail() never increments; the claim-time budget is what is retained.
-        attempts: DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS - 1,
-      };
-      await vi.waitFor(async () => {
-        expect(await queue.listPending({ limit: "all" })).toEqual([]);
-        expect(await queue.listFailed?.({ limit: "all" })).toEqual([
-          expect.objectContaining(failedCeiling),
-        ]);
-      });
+      const thresholdAttempt = await expectPendingAttempt(DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS);
       expect(dispatchMock).toHaveBeenCalledTimes(3);
       await threshold.stop();
 
-      vi.setSystemTime(secondAttempt.lastAttemptAt + 192_001);
+      vi.setSystemTime(thresholdAttempt.lastAttemptAt + 128_001);
       const beyond = createIntegratedIngress();
       beyond.start();
       await beyond.accept(incoming);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(dispatchMock).toHaveBeenCalledTimes(3);
-      expect(await queue.listPending({ limit: "all" })).toEqual([]);
-      expect(await queue.listFailed?.({ limit: "all" })).toEqual([
-        expect.objectContaining(failedCeiling),
-      ]);
+      const beyondAttempt = await expectPendingAttempt(DEFAULT_INGRESS_RETRY_MAX_ATTEMPTS + 1);
+      expect(dispatchMock).toHaveBeenCalledTimes(4);
       await beyond.stop();
+
+      vi.setSystemTime(beyondAttempt.lastAttemptAt + 1_000);
+      const blockedRestart = createIntegratedIngress();
+      blockedRestart.start();
+      await blockedRestart.accept(incoming);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dispatchMock).toHaveBeenCalledTimes(4);
+      await blockedRestart.stop();
     } finally {
       dispatchMock.mockReset();
       if (priorImplementation) {

@@ -66,7 +66,7 @@ import {
   testing as registryTesting,
 } from "../registry/subagent-registry.test-helpers.js";
 import * as acpSpawnRuntime from "./acp-spawn-runtime.js";
-import { testing as subagentSpawnTesting } from "./subagent-spawn.test-support.js";
+import { setSubagentSpawnDepsForTest } from "./subagent-spawn-deps.js";
 
 const parentSessionKey = "agent:main:main";
 const parentRunId = "acp-spawn-parent";
@@ -134,7 +134,7 @@ afterEach(async () => {
     await cleanupSessionStateForTest({ stateDir });
   } finally {
     registryTesting.setDepsForTest();
-    subagentSpawnTesting.setDepsForTest();
+    setSubagentSpawnDepsForTest();
     vi.restoreAllMocks();
     clearRuntimeConfigSnapshot();
     clearConfigCache();
@@ -319,7 +319,7 @@ describe("pending ACP spawn authority", () => {
       };
       registerAcpRuntimeBackend({ id: backendId, runtime });
       const dispatch = vi.fn();
-      subagentSpawnTesting.setDepsForTest({
+      setSubagentSpawnDepsForTest({
         dispatchGatewayMethodInProcess: async <T>(
           method: string,
           params: Record<string, unknown>,

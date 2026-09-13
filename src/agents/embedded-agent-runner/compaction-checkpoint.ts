@@ -18,7 +18,7 @@ export async function persistCompactionCheckpoint(params: {
   config?: OpenClawConfig;
   sessionKey?: string;
   sessionId: string;
-  trigger?: "budget" | "overflow" | "manual" | "volitional";
+  trigger?: "budget" | "overflow" | "manual";
   snapshot?: CapturedCompactionCheckpointSnapshot | null;
   summary?: string;
   firstKeptEntryId?: string;

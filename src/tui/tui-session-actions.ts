@@ -21,6 +21,7 @@ import {
   formatTuiErrorMessage,
   isCommandMarkedMessage,
 } from "./tui-formatters.js";
+import { extractTuiImageSources } from "./tui-images.js";
 import { readTuiSessionUserMessage } from "./tui-session-events.js";
 import {
   sessionInfoUiEquals,
@@ -36,14 +37,10 @@ import {
 import * as submit from "./tui-submit-state.js";
 import type { TuiHistoryLoadResult, TuiOptions, TuiStateAccess } from "./tui-types.js";
 
-type SessionActionBtwPresenter = {
-  clear: () => void;
-};
-
 type SessionActionContext = {
   client: TuiBackend;
   chatLog: ChatLog;
-  btw: SessionActionBtwPresenter;
+  btw: { clear: () => void };
   tui: TUI;
   opts: TuiOptions;
   state: TuiStateAccess;
@@ -557,9 +554,17 @@ export function createSessionActions(context: SessionActionContext) {
             } else if (entry.live && liveUserMessage) {
               chatLog.addLiveUser(text, liveUserMessage);
             } else if (liveUserMessage) {
-              chatLog.addUser(text, { messageId: liveUserMessage.messageId });
+              chatLog.addUser(text, {
+                messageId: liveUserMessage.messageId,
+                ...(liveUserMessage.images ? { images: liveUserMessage.images } : {}),
+              });
             } else {
-              chatLog.addUser(text);
+              const images = extractTuiImageSources(message);
+              if (images.length > 0) {
+                chatLog.addUser(text, { images });
+              } else {
+                chatLog.addUser(text);
+              }
             }
           }
           continue;
@@ -569,7 +574,12 @@ export function createSessionActions(context: SessionActionContext) {
             includeThinking: state.showThinking,
           });
           if (text) {
-            chatLog.finalizeAssistant(text);
+            const images = extractTuiImageSources(message);
+            if (images.length > 0) {
+              chatLog.finalizeAssistant(text, undefined, images);
+            } else {
+              chatLog.finalizeAssistant(text);
+            }
           }
           continue;
         }
@@ -651,8 +661,7 @@ export function createSessionActions(context: SessionActionContext) {
     }
   };
 
-  /** Resolves true only when this call actually aborted the current selection. */
-  const abortActive = async (params?: { preferActive?: boolean }): Promise<boolean> => {
+  const abortActive = async (params?: { preferActive?: boolean }) => {
     if (
       opts.local === true &&
       state.activityStatus === "finishing context" &&
@@ -661,7 +670,7 @@ export function createSessionActions(context: SessionActionContext) {
     ) {
       chatLog.addSystem("agent is finishing context; wait for it to finish before aborting");
       tui.requestRender();
-      return false;
+      return;
     }
     const selection = captureSessionSelection();
     const sessionId = state.currentSessionId;
@@ -689,12 +698,12 @@ export function createSessionActions(context: SessionActionContext) {
         ...(!parseAgentSessionKey(selection.sessionKey) ? { agentId: selection.agentId } : {}),
       });
       if (!isCurrentAbort()) {
-        return false;
+        return;
       }
       if (!result.aborted) {
         chatLog.addSystem("no active run", { coalesceConsecutive: true });
         tui.requestRender();
-        return false;
+        return;
       }
       for (const runId of result.runIds ?? []) {
         const stillTracked =
@@ -715,15 +724,13 @@ export function createSessionActions(context: SessionActionContext) {
       }
       setActivityStatus("aborted");
     } catch (err) {
-      if (isCurrentAbort()) {
-        chatLog.addSystem(`abort failed: ${formatTuiErrorMessage(err)}`);
-        setActivityStatus("abort failed");
-        tui.requestRender();
+      if (!isCurrentAbort()) {
+        return;
       }
-      return false;
+      chatLog.addSystem(`abort failed: ${formatTuiErrorMessage(err)}`);
+      setActivityStatus("abort failed");
     }
     tui.requestRender();
-    return true;
   };
 
   return {

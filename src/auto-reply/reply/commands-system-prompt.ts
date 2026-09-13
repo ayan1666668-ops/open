@@ -18,7 +18,6 @@ import {
   resolveSandboxRuntimeStatus,
 } from "../../agents/sandbox.js";
 import { buildConfiguredAgentSystemPrompt } from "../../agents/system-prompt-config.js";
-import { buildInventoryContinuationToolOpts } from "../../agents/tools/continuation-inventory-opts.js";
 import type { WorkspaceBootstrapFile } from "../../agents/workspace.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -88,17 +87,24 @@ async function resolveCommandSkillsPrompt(params: {
 }): Promise<string> {
   let skillsSnapshot: SkillSnapshot;
   try {
-    skillsSnapshot = resolveReusableWorkspaceSkillSnapshot({
-      workspaceDir: resolveAgentWorkspaceDir(params.config, params.agentId),
-      executionWorkspaceDir: params.executionWorkspaceDir,
-      config: params.config,
-      agentId: params.agentId,
-      eligibility: params.eligibility,
-      existingSnapshot: params.skillsSnapshot,
-      skillFilter: params.skillsSnapshot?.skillFilter,
-      skillOverrides: params.skillsSnapshot?.skillOverrides,
-      watch: false,
-    }).snapshot;
+    skillsSnapshot = (
+      await resolveReusableWorkspaceSkillSnapshot({
+        workspaceDir: resolveAgentWorkspaceDir(params.config, params.agentId),
+        executionWorkspaceDir: params.executionWorkspaceDir,
+        config: params.config,
+        agentId: params.agentId,
+        resolveEligibility: () => ({
+          ...params.eligibility,
+          remote: getRemoteSkillEligibility({
+            advertiseExecNode: params.eligibility?.nodeSkills?.canExec ?? false,
+          }),
+        }),
+        existingSnapshot: params.skillsSnapshot,
+        skillFilter: params.skillsSnapshot?.skillFilter,
+        skillOverrides: params.skillsSnapshot?.skillOverrides,
+        watch: false,
+      })
+    ).snapshot;
   } catch {
     return "";
   }
@@ -144,7 +150,7 @@ async function resolveCommandSkillsPrompt(params: {
           skillsSnapshot,
         });
         const { shouldLoadSkillEntries, skillEntries, preserveEntryOrder } =
-          resolveEmbeddedRunSkillEntries({
+          await resolveEmbeddedRunSkillEntries({
             workspaceDir: skillsWorkspaceDir,
             config: params.config,
             agentId: params.agentId,
@@ -157,7 +163,7 @@ async function resolveCommandSkillsPrompt(params: {
           skillsWorkspaceDir,
           skillsPromptWorkspaceDir,
         });
-        return resolveSkillsPrompt({
+        return await resolveSkillsPrompt({
           skillsSnapshot: skillsSnapshotForRun,
           entries: promptSkillEntries,
           config: params.config,
@@ -225,9 +231,6 @@ export async function resolveCommandsSystemPromptBundle(
     executionWorkspaceDir: targetSessionEntry?.worktree?.canonicalWorkspaceDir ?? workspaceDir,
     skillsSnapshot: targetSessionEntry?.skillsSnapshot,
   });
-  const continuationToolOpts = buildInventoryContinuationToolOpts(
-    params.cfg?.agents?.defaults?.continuation?.enabled === true,
-  );
   const tools = (() => {
     try {
       return createOpenClawCodingTools({
@@ -247,7 +250,6 @@ export async function resolveCommandsSystemPromptBundle(
         senderE164: params.ctx.SenderE164,
         modelProvider: params.provider,
         modelId: params.model,
-        ...continuationToolOpts,
       });
     } catch {
       return [];

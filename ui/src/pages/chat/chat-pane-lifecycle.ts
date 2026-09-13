@@ -381,6 +381,9 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
       }
     }
     chatState.attach(pageState);
+    chatState.addCleanup(
+      this.context.agentIdentity.subscribe(() => void pageState.loadAssistantIdentity()),
+    );
     chatState.restoreComposer({ preserveCurrent: true });
     const sessionHandoff = this.takeSessionHandoff(pageState.sessionKey);
     if (sessionHandoff?.restore) {
@@ -436,7 +439,12 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     };
     this.addEventListener(WIDGET_PROMPT_EVENT, handleWidgetPrompt);
     chatState.addCleanup(() => this.removeEventListener(WIDGET_PROMPT_EVENT, handleWidgetPrompt));
-    chatState.addCleanup(this.context.gateway.subscribe((next) => this.applyGatewaySnapshot(next)));
+    chatState.addCleanup(
+      this.context.gateway.subscribe((next) => {
+        this.applyGatewaySnapshot(next);
+        this.synchronizeForegroundTranscript();
+      }),
+    );
     chatState.addCleanup(
       this.context.theme.subscribe(() => {
         pageState.settings = {
@@ -448,7 +456,17 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     );
     chatState.addCleanup(
       this.context.agentSelection.subscribe((next) => {
+        const previousAgentId = this.state?.assistantAgentId;
         applySelectedChatAgent(this.state, this.agentId ?? next.selectedId);
+        const agentChanged = this.state?.assistantAgentId !== previousAgentId;
+        if (agentChanged) {
+          this.swarmHydrator?.dispose();
+          this.swarmHydrator = null;
+        }
+        this.synchronizeForegroundTranscript();
+        if (agentChanged) {
+          this.refreshSwarmRoster();
+        }
         if (this.state) {
           void syncSelectedSessionMessageSubscription(this.state);
         }
@@ -481,7 +499,6 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
             state.mediaPolicyEpoch = (state.mediaPolicyEpoch ?? 0) + 1;
             state.requestUpdate?.();
             chatAvatars.invalidateChatAvatarCache(state);
-            state.assistantIdentityRequestVersion += 1;
             void chatAvatars.refreshChatAvatar(state).finally(() => state.requestUpdate?.());
           }
           handleQuestionPromptEvent(this.questionPromptState, event);
@@ -510,6 +527,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     chatState.addCleanup(subscribeChatPaneStartup(this.context, () => this.state));
     chatState.addCleanup(subscribeChatPaneSnapshotInvalidation(() => this.state));
     this.applyGatewaySnapshot(this.context.gateway.snapshot);
+    this.synchronizeForegroundTranscript();
     this.composerPresentation = new ChatPaneComposerHandoff(this.context, {
       state: () => this.state,
       owner: () => this.stagedAttachmentGatewayOwner,

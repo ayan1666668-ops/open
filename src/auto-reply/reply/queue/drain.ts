@@ -419,7 +419,7 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
   ]);
 }
 
-export function resolveFollowupReplyAnchor(run: FollowupRun): string | undefined {
+function resolveFollowupReplyAnchor(run: FollowupRun): string | undefined {
   if (run.originatingReplyToMode === "off") {
     return undefined;
   }
@@ -556,7 +556,6 @@ function collectQueuedPromptMedia(
 type FollowupRuntimeMetadata = Pick<
   FollowupRun,
   | "currentInboundEventKind"
-  | "currentInboundEventTimestampMs"
   | "currentInboundAudio"
   | "currentInboundContext"
   | "explicitSkillSelections"
@@ -845,7 +844,6 @@ function collectRuntimeMetadata(
   ];
   return {
     currentInboundEventKind: currentTurnSource?.currentInboundEventKind,
-    currentInboundEventTimestampMs: currentTurnSource?.currentInboundEventTimestampMs,
     currentInboundAudio: currentTurnSource?.currentInboundAudio,
     currentInboundContext: collectCurrentInboundContext(items),
     explicitSkillSelections:

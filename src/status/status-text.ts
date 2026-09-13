@@ -1,4 +1,3 @@
-import path from "node:path";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import {
   resolveAgentConfig,
@@ -7,12 +6,12 @@ import {
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
 } from "../agents/agent-scope.js";
+import { ensureAuthProfileStore } from "../agents/auth-profiles/store-runtime.js";
 import { waitForContextWindowCacheLoad } from "../agents/context.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import { resolveAgentHarnessAutoSelectionHint } from "../agents/harness/auto-selection.js";
 import { resolveAgentHarnessPolicy } from "../agents/harness/policy.js";
 import { listRegisteredAgentHarnesses } from "../agents/harness/registry.js";
-import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
 import { findModelInCatalog } from "../agents/model-catalog-lookup.js";
 import {
   areRuntimeModelRefsEquivalent,
@@ -21,14 +20,10 @@ import {
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
-import { getVolitionalCompactionCount } from "../agents/tools/request-compaction-tool.js";
 import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "../agents/tools/sessions-helpers.js";
-import { resolveContinuationRuntimeConfig } from "../auto-reply/continuation/config.js";
-import { stagedPostCompactionDelegateCount } from "../auto-reply/continuation/delegate-store-post-compaction.js";
-import { pendingDelegateCount } from "../auto-reply/continuation/delegate-store.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
@@ -66,14 +61,12 @@ import {
   shouldUseCodexSyntheticUsageForRuntime,
 } from "./codex-synthetic-usage.js";
 import { resolveActiveFallbackState } from "./fallback-notice-state.js";
-import { resolveCodexSyntheticUsageAuthProfileId } from "./status-codex-auth-profile.js";
-import { formatStatusTextContinuationLine } from "./status-continuation-line.js";
+import { readSessionFallbackModel } from "./session-fallback-model.js";
 import type { StatusMessageParts } from "./status-message.js";
+import { createStatusModelAuthResolver } from "./status-model-auth.js";
 import { formatCompactPluginHealthLine } from "./status-plugin-health.js";
 import { appendSessionCostLine, buildStatusUptimeValue } from "./status-runtime-lines.js";
 import type { BuildStatusTextParams } from "./status-text.types.js";
-
-export { formatStatusTextContinuationLine };
 
 // Status text assembly gathers runtime/model/session/task facts, then delegates
 // final formatting to status-message.runtime through lazy imports.
@@ -83,7 +76,6 @@ const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "google-gemini-cli",
   "openai",
 ]);
-const CODEX_APP_SERVER_HOME_DIRNAME = "codex-home";
 
 function resolveStatusChannelFeatureLine(params: {
   cfg: OpenClawConfig;
@@ -153,6 +145,34 @@ function shouldLoadUsageSummary(params: {
     auth?.startsWith("oauth") ||
     auth?.startsWith("token"),
   );
+}
+
+function resolveCodexSyntheticUsageAuthProfileId(params: {
+  profileId: string | undefined;
+  cfg: OpenClawConfig;
+  agentDir?: string;
+}): string | undefined {
+  const normalizedProfileId = params.profileId?.trim();
+  if (!normalizedProfileId) {
+    return undefined;
+  }
+  try {
+    const store = ensureAuthProfileStore(params.agentDir, {
+      allowKeychainPrompt: false,
+      config: params.cfg,
+      readOnly: true,
+      syncExternalCli: false,
+    });
+    const credential = store.profiles[normalizedProfileId];
+    if (!credential) {
+      return undefined;
+    }
+    return normalizeOptionalLowercaseString(credential.provider) === "openai"
+      ? normalizedProfileId
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function formatSessionTaskLine(sessionKey: string, agentId: string): string | undefined {
@@ -241,15 +261,6 @@ function resolveStatusRuntimeProvider(params: {
   return params.provider;
 }
 
-function resolveStatusCodexCliCredentialsHome(params: {
-  agentDir: string;
-  effectiveHarness?: string;
-}): string | undefined {
-  return normalizeOptionalLowercaseString(params.effectiveHarness) === "codex"
-    ? path.join(params.agentDir, CODEX_APP_SERVER_HOME_DIRNAME)
-    : undefined;
-}
-
 function formatAgentTaskCountsLine(agentId: string): string | undefined {
   const snapshot = buildTaskStatusSnapshot(listTasksForAgentIdForStatus(agentId));
   if (snapshot.totalCount === 0) {
@@ -310,11 +321,15 @@ export async function buildStatusReplyParts(
   const parseSelectedProvider = Boolean(
     sessionEntry?.modelOverride?.trim() && !sessionEntry?.providerOverride?.trim(),
   );
+  const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
+  const activeModel = readSessionFallbackModel({
+    ...modelParams,
+    config: cfg,
+    sessionScope: { agentId: statusAgentId, sessionKey, storePath },
+  });
   const modelRefs = resolveSelectedAndActiveModel({
-    selectedProvider,
-    selectedModel,
-    sessionEntry,
-    parseSelectedProvider,
+    ...modelParams,
+    sessionEntry: activeModel ?? sessionEntry,
   });
   const selectedLookupProvider = modelRefs.selected.provider || selectedProvider || provider;
   const selectedLookupModel = modelRefs.selected.model || selectedModel || model;
@@ -328,9 +343,23 @@ export async function buildStatusReplyParts(
       sessionKey,
       sessionEntry,
     }));
-  const codexCliCredentialsHome = resolveStatusCodexCliCredentialsHome({
+  const { getPreparedModelCatalogOwnerSnapshot, materializePreparedModelCatalogOwner } =
+    await import("../agents/prepared-model-catalog.js");
+  const preparedOwner = getPreparedModelCatalogOwnerSnapshot({
+    config: cfg,
+    agentId: statusAgentId,
     agentDir: statusAgentDir,
-    effectiveHarness,
+    workspaceDir: statusWorkspaceDir,
+    readOnly: true,
+  });
+  // This lookup borrows existing facts; status never starts inventory discovery.
+  const resolveAuth = createStatusModelAuthResolver({
+    cfg,
+    agentId: statusAgentId,
+    agentDir: statusAgentDir,
+    workspaceDir: statusWorkspaceDir,
+    sessionEntry,
+    owner: preparedOwner ? materializePreparedModelCatalogOwner(preparedOwner) : undefined,
   });
   const selectedStatusProvider = resolveStatusRuntimeProvider({
     provider: selectedLookupProvider,
@@ -353,28 +382,20 @@ export async function buildStatusReplyParts(
   });
   let selectedModelAuth = Object.hasOwn(params, "modelAuthOverride")
     ? params.modelAuthOverride
-    : resolveModelAuthLabel({
+    : await resolveAuth({
         provider: selectedStatusProvider,
+        model: selectedLookupModel,
+        runtimeId: effectiveHarness,
         acceptedProviderIds: selectedAuthProviders,
-        cfg,
-        sessionEntry,
-        agentDir: statusAgentDir,
-        workspaceDir: statusWorkspaceDir,
-        codexCliCredentialsHome,
-        includeExternalProfiles: false,
       });
   const activeModelAuth = Object.hasOwn(params, "activeModelAuthOverride")
     ? params.activeModelAuthOverride
     : modelRefs.activeDiffers
-      ? resolveModelAuthLabel({
+      ? await resolveAuth({
           provider: activeStatusProvider,
+          model: modelRefs.active.model || model,
+          runtimeId: effectiveHarness,
           acceptedProviderIds: activeAuthProviders,
-          cfg,
-          sessionEntry,
-          agentDir: statusAgentDir,
-          workspaceDir: statusWorkspaceDir,
-          codexCliCredentialsHome,
-          includeExternalProfiles: false,
         })
       : selectedModelAuth;
   const runtimeAliasModelEquivalent = areRuntimeModelRefsEquivalent(
@@ -525,22 +546,6 @@ export async function buildStatusReplyParts(
       verboseEnabled,
     });
   }
-  let continuationLine: string | undefined;
-  const continuation = cfg.agents?.defaults?.continuation;
-  if (continuation?.enabled && sessionKey) {
-    const chainCount = sessionEntry?.continuationChainCount ?? 0;
-    const { maxChainLength } = resolveContinuationRuntimeConfig(cfg);
-    const pending = pendingDelegateCount(sessionKey);
-    const staged = stagedPostCompactionDelegateCount(sessionKey);
-    const volitional = getVolitionalCompactionCount(sessionKey);
-    continuationLine = formatStatusTextContinuationLine({
-      maxChainLength,
-      chainCount,
-      pending,
-      staged,
-      volitional,
-    });
-  }
   const groupActivation = isGroup
     ? (normalizeGroupActivation(sessionEntry?.groupActivation) ?? defaultGroupActivation())
     : undefined;
@@ -645,6 +650,8 @@ export async function buildStatusReplyParts(
     },
     agentId: statusAgentId,
     configuredDefaultModelLabel,
+    modelRefs,
+    activeModel,
     selectedContextWindow: selectedCatalogEntry?.contextWindow,
     selectedContextTokens:
       selectedCatalogEntry?.contextTokens ??
@@ -652,7 +659,9 @@ export async function buildStatusReplyParts(
     thinkingCatalog,
     runtimeContextProvider: activeRuntimeIsAuthoritative ? activeStatusProvider : undefined,
     runtimeContextTokens:
-      activeRuntimeIsAuthoritative && (initialActiveCatalogEntry || fallbackState.active)
+      activeRuntimeIsAuthoritative &&
+      (initialActiveCatalogEntry || fallbackState.active) &&
+      (!activeModel || (activeModel.modelProvider === provider && activeModel.model === model))
         ? preparedContextTokens
         : undefined,
     sessionEntry,
@@ -681,7 +690,6 @@ export async function buildStatusReplyParts(
     },
     subagentsLine,
     taskLine,
-    continuationLine,
     pluginHealthLine,
     channelFeatureLine,
     mediaDecisions: params.mediaDecisions,

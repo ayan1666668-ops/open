@@ -78,7 +78,7 @@ type CommandHandlerContext = {
   loadHistory: () => Promise<unknown>;
   setSession: (key: string, agentId?: string) => Promise<void>;
   refreshAgents: (ownsRefresh?: () => boolean) => Promise<Result<void, string>>;
-  abortActive: (params?: { preferActive?: boolean }) => Promise<unknown>;
+  abortActive: (params?: { preferActive?: boolean }) => Promise<void>;
   setActivityStatus: (text: string) => void;
   formatSessionKey: (key: string) => string;
   applySessionInfoFromPatch: (result: SessionsPatchResult) => void;
@@ -93,6 +93,7 @@ type CommandHandlerContext = {
   consumeCompletedRunForPendingSend?: (runId: string) => boolean;
   isRunObserved?: (runId: string) => boolean;
   flushPendingHistoryRefreshIfIdle?: () => void;
+  reopenQuestion?: () => void | Promise<void>;
   runAuthFlow?: (params: { provider?: string }) => Promise<{
     exitCode: number | null;
     signal: NodeJS.Signals | null;
@@ -353,13 +354,30 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         return {
           value: ref,
           label: ref,
-          description: model.name && model.name !== model.id ? model.name : "",
+          description: [
+            model.name !== model.id ? model.name : "",
+            model.available === false ? (model.unavailableReason ?? "unavailable") : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
         };
       });
       openSelector(
         createSearchableSelectList(items, 9),
-        (value) =>
-          applySessionSetting({ model: value }, `model set to ${value}`, "model set failed"),
+        async (value) => {
+          const model = models.find((entry) => modelKey(entry.provider, entry.id) === value);
+          if (model?.available === false) {
+            const guidance =
+              model.unavailableReason === "cooldown"
+                ? "Wait and retry, or choose another model."
+                : "Run openclaw models auth login or choose another model.";
+            chatLog.addSystem(
+              `model unavailable: ${model.unavailableReason ?? "unavailable"}. ${guidance}`,
+            );
+            return;
+          }
+          await applySessionSetting({ model: value }, `model set to ${value}`, "model set failed");
+        },
         request,
       );
     } catch (err) {
@@ -841,15 +859,20 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         finishSessionTransition();
       }
     },
-    abort: async () => {
-      await abortActive();
-    },
+    abort: async () => await abortActive(),
     stop: async () => {
       // Queued client runs can terminalize before the followup executes, so
       // local run ids are not a complete stop target inventory.
       await abortActive({ preferActive: true });
     },
     settings: () => openSettings(),
+    question: async () => {
+      if (context.reopenQuestion) {
+        await context.reopenQuestion();
+      } else {
+        chatLog.addSystem("no pending question");
+      }
+    },
     exit: () => requestExit(),
   } satisfies Record<TuiCommandHandlerName, CommandHandler>;
 

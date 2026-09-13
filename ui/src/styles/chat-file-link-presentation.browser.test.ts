@@ -1,4 +1,7 @@
 // Control UI tests cover how recognized workspace file links present in chat.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { chromium, type Browser } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readStyleSheet } from "../../../test/helpers/ui-style-fixtures.js";
@@ -167,9 +170,11 @@ async function probeWrap(
   readonly samples: readonly WrapSample[];
   readonly separation: readonly SeparationSample[];
 }> {
+  const fixtureFile = path.join(fixtureDirectory, `${themeMode}-${container}-wrap.html`);
+  fs.writeFileSync(fixtureFile, wrapFixtureDocument(themeMode, container), "utf8");
   const page = await browser.newPage();
   try {
-    await page.setContent(wrapFixtureDocument(themeMode, container));
+    await page.goto(`file://${fixtureFile}`);
     // No explicit type argument: a lone one binds `evaluate`'s `Arg` to `void`
     // and the case ids arrive untyped. Inference reads both from the call.
     return await page.evaluate(
@@ -260,22 +265,33 @@ type PresentationProbe = {
 };
 
 let browser: Browser;
+let fixtureDirectory: string;
 
 beforeAll(async () => {
   if (!canRunPlaywrightChromium(chromiumExecutablePath)) {
     return;
   }
+  // Resolve the temp root: macOS hands back a /var symlink and the file:// URL
+  // must be the canonical path.
+  fixtureDirectory = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "chat-file-link-presentation-")),
+  );
   browser = await chromium.launch({ executablePath: chromiumExecutablePath, headless: true });
 });
 
 afterAll(async () => {
   await browser?.close();
+  if (fixtureDirectory) {
+    fs.rmSync(fixtureDirectory, { force: true, recursive: true });
+  }
 });
 
 async function probe(themeMode: "dark" | "light"): Promise<PresentationProbe> {
+  const fixtureFile = path.join(fixtureDirectory, `${themeMode}.html`);
+  fs.writeFileSync(fixtureFile, fixtureDocument(themeMode), "utf8");
   const page = await browser.newPage();
   try {
-    await page.setContent(fixtureDocument(themeMode));
+    await page.goto(`file://${fixtureFile}`);
     // The probe builds its snapshots from CHIP_PROPERTIES at runtime, so the
     // shape is asserted here rather than inferred from Object.fromEntries.
     const probed = await page.evaluate((properties: readonly string[]) => {

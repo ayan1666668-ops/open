@@ -13,7 +13,7 @@ import {
   withTempHeartbeatSandbox,
 } from "./heartbeat-runner.test-utils.js";
 import {
-  enqueueSystemEventRaw as enqueueSystemEvent,
+  enqueueSystemEvent,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "./system-events.js";

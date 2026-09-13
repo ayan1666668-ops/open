@@ -42,9 +42,6 @@ export type TuiHistoryLoadResult =
   | { loaded: true; runOutcome: TuiHistoryRunOutcome; activeRunIds?: string[] }
   | { loaded: false };
 
-/** Why the local backend aborted a run; never inferred from diagnostic text. */
-export type TuiChatAbortOrigin = "tool-validation";
-
 export type ChatEvent = {
   runId: string;
   sessionKey: string;
@@ -53,7 +50,6 @@ export type ChatEvent = {
   state: "delta" | "final" | "aborted" | "error";
   message?: unknown;
   errorMessage?: string;
-  abortOrigin?: TuiChatAbortOrigin;
 };
 
 export type BtwEvent = {

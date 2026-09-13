@@ -9,7 +9,7 @@ import {
   setRuntimeConfigSnapshot,
 } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import {
-  enqueuePluginSystemEvent,
+  enqueueSystemEvent,
   peekSystemEventEntries,
 } from "openclaw/plugin-sdk/system-event-runtime";
 import { peekSystemEvents, resetSystemEventsForTest } from "openclaw/plugin-sdk/test-fixtures";
@@ -478,11 +478,10 @@ describe("agent components", () => {
       const replay = createInteractionForKind("interaction-1");
 
       await enqueueSystemEventMock.withImplementation(
-        (...args) =>
-          enqueuePluginSystemEvent(...(args as Parameters<typeof enqueuePluginSystemEvent>)),
+        (...args) => enqueueSystemEvent(...(args as Parameters<typeof enqueueSystemEvent>)),
         async () => {
           await control.run(first.interaction, { componentId: "hello" } as ComponentData);
-          enqueuePluginSystemEvent("An unrelated event occurred", {
+          enqueueSystemEvent("An unrelated event occurred", {
             sessionKey: defaultDmSessionKey,
             contextKey: "discord:test:intervening",
           });

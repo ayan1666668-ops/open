@@ -7,7 +7,6 @@ export {
   assertNoSymlinkParentsSync,
   readFileHandleBounded,
   type FileIdentityStat,
-  isUnsafeDeviceReadPath,
   sameFileIdentity,
   sanitizeUntrustedFileName,
   tempFile,

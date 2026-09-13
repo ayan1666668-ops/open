@@ -26,8 +26,8 @@ import {
 import { HEARTBEAT_SKIP_CRON_IN_PROGRESS } from "./heartbeat-wake.js";
 import {
   consumeSelectedSystemEventEntries,
-  enqueueSystemEventRaw as enqueueSystemEvent,
-  enqueueSystemEventEntryRaw as enqueueSystemEventEntry,
+  enqueueSystemEvent,
+  enqueueSystemEventEntry,
   peekSystemEvents,
   resetSystemEventsForTest,
 } from "./system-events.js";

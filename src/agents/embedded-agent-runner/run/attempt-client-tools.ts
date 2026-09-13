@@ -112,26 +112,26 @@ export function prepareEmbeddedAttemptClientTools(params: {
     : [];
   const buildSurface = () => {
     // Raw names gate trusted local media passthrough; normalized aliases are insufficient.
-    const builtinToolNames = new Set(
-      params.uncompactedEffectiveTools.flatMap((tool) => {
-        const name = (tool.name ?? "").trim();
-        return name ? [name] : [];
-      }),
-    );
+    const builtinToolNames = new Set<string>();
+    const trustedLocalMediaToolNames = new Set<string>();
+    for (const tool of params.uncompactedEffectiveTools) {
+      const name = (tool.name ?? "").trim();
+      if (!name) {
+        continue;
+      }
+      builtinToolNames.add(name);
+      const pluginMeta = getPluginToolMeta(tool);
+      if (
+        pluginMeta?.trustedLocalMedia === true ||
+        (!pluginMeta && isCoreToolResultMediaTrustedName(name))
+      ) {
+        trustedLocalMediaToolNames.add(name);
+      }
+    }
     const coreBuiltinToolNames = collectCoreBuiltinToolNames(params.uncompactedEffectiveTools, {
-      isPluginTool: (tool) => Boolean(getPluginToolMeta(tool)),
+      isPluginTool: (tool) =>
+        Boolean(getPluginToolMeta(tool as Parameters<typeof getPluginToolMeta>[0])),
     });
-    const trustedPluginLocalMediaToolNames = new Set(
-      params.uncompactedEffectiveTools.flatMap((tool) => {
-        const name = tool.name?.trim();
-        const meta = getPluginToolMeta(tool);
-        return name && meta?.trustedLocalMedia === true ? [name] : [];
-      }),
-    );
-    const trustedLocalMediaToolNames = new Set([
-      ...[...coreBuiltinToolNames].filter(isCoreToolResultMediaTrustedName),
-      ...trustedPluginLocalMediaToolNames,
-    ]);
     const isReplaySafeTool = (tool: { name?: string }) =>
       isAgentToolReplaySafe(tool, params.replaySafetyOptions);
     const replaySafeTools = new Set(params.uncompactedEffectiveTools.filter(isReplaySafeTool));
@@ -166,7 +166,10 @@ export function prepareEmbeddedAttemptClientTools(params: {
     const sideEffectToolOwners = collectSideEffectToolOwners(
       [...params.uncompactedEffectiveTools, ...clientToolDefs],
       {
-        declaredOwner: (tool) => getPluginToolSideEffectOwnerKey(tool),
+        declaredOwner: (tool) =>
+          getPluginToolSideEffectOwnerKey(
+            tool as Parameters<typeof getPluginToolSideEffectOwnerKey>[0],
+          ),
       },
     );
     const addClientToolsToCatalog = params.codeModeControlsEnabledForRun
@@ -210,21 +213,15 @@ export function prepareEmbeddedAttemptClientTools(params: {
       clientToolDefs,
       replaySafeToolNames,
       replaySafeTools,
-      trustedLocalMediaToolNames,
       codeModeExecToolNames,
       sideEffectToolOwners,
       sessionToolAllowlist,
+      trustedLocalMediaToolNames,
     };
   };
   const current = buildSurface();
   return {
     ...current,
-    subscriptionToolTrust: {
-      builtinToolNames: current.builtinToolNames,
-      coreBuiltinToolNames: current.coreBuiltinToolNames,
-      replaySafeToolNames: current.replaySafeToolNames,
-      trustedLocalMediaToolNames: current.trustedLocalMediaToolNames,
-    },
     refreshTools: () => {
       const next = buildSurface();
       current.allCustomTools.splice(0, current.allCustomTools.length, ...next.allCustomTools);
@@ -238,8 +235,8 @@ export function prepareEmbeddedAttemptClientTools(params: {
         "builtinToolNames",
         "coreBuiltinToolNames",
         "replaySafeToolNames",
-        "trustedLocalMediaToolNames",
         "codeModeExecToolNames",
+        "trustedLocalMediaToolNames",
       ] as const) {
         current[key].clear();
         for (const name of next[key]) {

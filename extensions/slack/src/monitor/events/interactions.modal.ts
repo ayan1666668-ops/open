@@ -1,6 +1,6 @@
 // Slack plugin module implements interactions.modal behavior.
 import type { AllMiddlewareArgs } from "@slack/bolt";
-import { requestPluginHeartbeat } from "openclaw/plugin-sdk/heartbeat-runtime";
+import { requestHeartbeat } from "openclaw/plugin-sdk/heartbeat-runtime";
 import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/routing";
 import { enqueueRoutedSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { dispatchSlackPluginInteractiveHandler } from "../../interactive-dispatch.js";
@@ -465,7 +465,7 @@ async function emitSlackModalLifecycleEvent(params: {
     },
   );
   if (queued) {
-    requestPluginHeartbeat({
+    requestHeartbeat({
       source: "hook",
       intent: "immediate",
       reason: "hook:slack-interaction",
@@ -513,7 +513,7 @@ export function registerModalLifecycleHandler(params: {
     params.trackEvent?.();
     const typedBody = body as SlackModalBody;
     await emitSlackModalLifecycleEvent({
-      ctx: params.ctx,
+      ctx: await params.ctx.readRuntimeContext(),
       body: typedBody,
       eventScope,
       teamId: args.context.teamId,

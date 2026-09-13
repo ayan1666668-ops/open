@@ -6,16 +6,11 @@ import {
   firstMockArg,
   updateMessage,
 } from "./embedded-agent-subscribe.handlers.messages.test-helpers.js";
-import { handleMessageUpdate as handleMessageUpdateImpl } from "./embedded-agent-subscribe.handlers.messages.update.js";
 import {
   createOpenAiResponsesPartial,
   createOpenAiResponsesTextEvent as createTextUpdateEvent,
 } from "./embedded-agent-subscribe.openai-responses.test-helpers.js";
 import { createReplyDelivery } from "./embedded-agent-subscribe.reply-delivery.js";
-
-function handleMessageUpdate(...args: Parameters<typeof handleMessageUpdateImpl>): void {
-  void handleMessageUpdateImpl(...args);
-}
 
 describe("handleMessageUpdate text signatures", () => {
   it("emits the full incrementally extracted reasoning value on every delta", async () => {
@@ -280,8 +275,8 @@ describe("handleMessageUpdate text signatures", () => {
         stream: "assistant",
         data: {
           text: "Hello",
-          delta: "Hello",
-          replace: undefined,
+          delta: "",
+          replace: true,
           phase: "commentary",
           itemId: "item-commentary",
         },
@@ -366,42 +361,6 @@ describe("handleMessageUpdate text signatures", () => {
     ]);
     expect(context.state.deltaBuffer).toBe("Working...");
     expect(context.blockChunker.bufferedText).toBe("");
-  });
-
-  it("streams Anthropic text bytes once when text_start is replayed by the first delta", () => {
-    const onAgentEvent = vi.fn();
-    const context = createMessageUpdateContext({ onAgentEvent });
-    const partial = {
-      role: "assistant",
-      api: "anthropic-messages",
-      content: [{ type: "text", text: "Work" }],
-    };
-
-    handleMessageUpdate(context, {
-      type: "message_update",
-      message: partial,
-      assistantMessageEvent: {
-        type: "text_start",
-        contentIndex: 0,
-        partial,
-      },
-    } as never);
-    handleMessageUpdate(context, {
-      type: "message_update",
-      message: partial,
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "Work",
-        partial,
-      },
-    } as never);
-
-    const deltas = onAgentEvent.mock.calls
-      .map(([event]) => (event as { data?: { delta?: string } }).data?.delta ?? "")
-      .join("");
-    expect(deltas).toBe("Work");
-    expect(context.state.deltaBuffer).toBe("Work");
   });
 
   it("keeps same-index commentary snapshot extensions on the original live item key", async () => {

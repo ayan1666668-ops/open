@@ -460,55 +460,6 @@ export type DiagnosticHeartbeatEvent = DiagnosticBaseEvent & {
   queued: number;
 };
 
-export type DiagnosticContinuationQueueOwnerSample = {
-  sessionKey: string;
-  pendingQueued: number;
-  pendingRunnable: number;
-  pendingScheduled: number;
-  stagedPostCompaction: number;
-  invalidQueued: number;
-  totalQueued: number;
-  oldestQueuedAgeMs?: number;
-  newestQueuedAgeMs?: number;
-};
-
-export type DiagnosticContinuationQueueHistoryPoint = {
-  sampledAt: number;
-  intervalMs?: number;
-  totalQueued: number;
-  pendingRunnable: number;
-  pendingScheduled: number;
-  stagedPostCompaction: number;
-  invalidQueued: number;
-  enqueued: number;
-  drained: number;
-  failed: number;
-};
-
-export type DiagnosticContinuationQueueMetrics = {
-  sampledAt: number;
-  intervalMs?: number;
-  totalQueued: number;
-  pendingQueued: number;
-  pendingRunnable: number;
-  pendingScheduled: number;
-  stagedPostCompaction: number;
-  invalidQueued: number;
-  enqueuedSinceLastSample: number;
-  drainedSinceLastSample: number;
-  failedSinceLastSample: number;
-  enqueueRatePerMinute?: number;
-  drainRatePerMinute?: number;
-  failedRatePerMinute?: number;
-  topQueues: DiagnosticContinuationQueueOwnerSample[];
-  queueDepthHistory: DiagnosticContinuationQueueHistoryPoint[];
-};
-
-export type DiagnosticContinuationQueueSampleEvent = DiagnosticBaseEvent & {
-  type: "diagnostic.continuation_queue.sample";
-  continuationQueue: DiagnosticContinuationQueueMetrics;
-};
-
 export type DiagnosticLivenessWarningReason = "event_loop_delay" | "event_loop_utilization" | "cpu";
 
 export type DiagnosticPhaseDetails = Record<string, string | number | boolean>;
@@ -545,7 +496,6 @@ export type DiagnosticLivenessWarningEvent = DiagnosticBaseEvent & {
   activeWorkLabels?: string[];
   waitingWorkLabels?: string[];
   queuedWorkLabels?: string[];
-  continuationQueue?: DiagnosticContinuationQueueMetrics;
 };
 
 export type DiagnosticPhaseCompletedEvent = DiagnosticBaseEvent &
@@ -657,8 +607,6 @@ export type DiagnosticExecProcessCompletedEvent = DiagnosticBaseEvent & {
     | "runtime-error";
 };
 
-export type DiagnosticRunFireReason = "timer" | "external-trigger" | "continuation-chain";
-
 export type DiagnosticExecApprovalFollowupSuppressedEvent = DiagnosticBaseEvent & {
   type: "exec.approval.followup_suppressed";
   approvalId: string;
@@ -674,8 +622,6 @@ type DiagnosticRunBaseEvent = DiagnosticBaseEvent & {
   model?: string;
   trigger?: string;
   channel?: string;
-  fireReason?: DiagnosticRunFireReason;
-  parentRunId?: string;
 };
 
 export type DiagnosticRunStartedEvent = DiagnosticRunBaseEvent & {
@@ -920,7 +866,6 @@ export type DiagnosticEventPayload =
   | DiagnosticGatewayEventLoopSampleEvent
   | DiagnosticGcEvent
   | DiagnosticHeartbeatEvent
-  | DiagnosticContinuationQueueSampleEvent
   | DiagnosticLivenessWarningEvent
   | DiagnosticPhaseCompletedEvent
   | DiagnosticToolLoopEvent
@@ -1014,6 +959,14 @@ type TrustedDiagnosticEventListener = (
   privateData: DiagnosticEventPrivateData,
 ) => void;
 
+type TrustedDiagnosticEventListenerOptions = Readonly<{ includePrivateData?: boolean }>;
+type TrustedDiagnosticEventInterest = InternalDiagnosticEventInterest<
+  DiagnosticEventPayload["type"]
+> &
+  TrustedDiagnosticEventListenerOptions;
+
+const EMPTY_DIAGNOSTIC_PRIVATE_DATA: DiagnosticEventPrivateData = Object.freeze({});
+
 type TrustedOtelDiagnosticEventPrivateData = DiagnosticEventPrivateData &
   Readonly<{
     hostPluginId?: string;
@@ -1048,10 +1001,7 @@ type DiagnosticEventsGlobalState = {
     DiagnosticEventListener,
     InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]> | undefined
   >;
-  trustedListeners: Map<
-    TrustedDiagnosticEventListener,
-    InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]> | undefined
-  >;
+  trustedListeners: Map<TrustedDiagnosticEventListener, TrustedDiagnosticEventInterest | undefined>;
   toolExecutionListeners: Set<TrustedToolExecutionEventListener>;
   toolExecutionSeq: number;
   dispatchDepth: number;
@@ -1234,7 +1184,9 @@ function dispatchDiagnosticEvent(
       try {
         const eventForListener = cloneDiagnosticEventForListener(enriched);
         const metadataForListener = createDiagnosticMetadataForListener(metadata);
-        if (isTrustedOtelDiagnosticListener(listener)) {
+        if (interest?.includePrivateData === false) {
+          listener(eventForListener, metadataForListener, EMPTY_DIAGNOSTIC_PRIVATE_DATA);
+        } else if (isTrustedOtelDiagnosticListener(listener)) {
           listener(
             eventForListener,
             metadataForListener,
@@ -1640,46 +1592,50 @@ export function emitFailoverEvent(event: Omit<DiagnosticFailoverEvent, "seq" | "
   });
 }
 
-/** Subscribes to diagnostic events with dispatcher metadata. */
-export function onInternalDiagnosticEvent(
-  listener: DiagnosticEventListener,
-  filter?: InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]>,
+function registerDiagnosticEventListener<
+  T,
+  Interest extends InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]>,
+>(
+  state: DiagnosticEventsGlobalState,
+  listeners: Map<T, Interest | undefined>,
+  listener: T,
+  filter?: Interest,
 ): () => void {
-  const state = getDiagnosticEventsState();
-  if (state.listeners.has(listener)) {
-    updateInternalDiagnosticEventInterest(state.listeners.get(listener), -1);
+  if (listeners.has(listener)) {
+    updateInternalDiagnosticEventInterest(listeners.get(listener), -1);
   }
-  state.listeners.set(listener, filter);
+  listeners.set(listener, filter);
   updateInternalDiagnosticEventInterest(filter, 1);
   setInternalDiagnosticEventListenerCounts(state.listeners.size, state.trustedListeners.size);
   return () => {
-    const interest = state.listeners.get(listener);
-    if (state.listeners.delete(listener)) {
+    const interest = listeners.get(listener);
+    if (listeners.delete(listener)) {
       updateInternalDiagnosticEventInterest(interest, -1);
     }
     setInternalDiagnosticEventListenerCounts(state.listeners.size, state.trustedListeners.size);
   };
 }
 
+/** Subscribes to diagnostic events with dispatcher metadata. */
+export function onInternalDiagnosticEvent(
+  listener: DiagnosticEventListener,
+  filter?: InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]>,
+): () => void {
+  const state = getDiagnosticEventsState();
+  return registerDiagnosticEventListener(state, state.listeners, listener, filter);
+}
+
 /** Subscribes to diagnostic events plus trusted private payload data. */
 export function onTrustedInternalDiagnosticEvent(
   listener: TrustedDiagnosticEventListener,
   filter?: InternalDiagnosticEventInterest<DiagnosticEventPayload["type"]>,
+  options?: TrustedDiagnosticEventListenerOptions,
 ): () => void {
   const state = getDiagnosticEventsState();
-  if (state.trustedListeners.has(listener)) {
-    updateInternalDiagnosticEventInterest(state.trustedListeners.get(listener), -1);
-  }
-  state.trustedListeners.set(listener, filter);
-  updateInternalDiagnosticEventInterest(filter, 1);
-  setInternalDiagnosticEventListenerCounts(state.listeners.size, state.trustedListeners.size);
-  return () => {
-    const interest = state.trustedListeners.get(listener);
-    if (state.trustedListeners.delete(listener)) {
-      updateInternalDiagnosticEventInterest(interest, -1);
-    }
-    setInternalDiagnosticEventListenerCounts(state.listeners.size, state.trustedListeners.size);
-  };
+  return registerDiagnosticEventListener(state, state.trustedListeners, listener, {
+    ...filter,
+    includePrivateData: options?.includePrivateData,
+  });
 }
 
 /** Subscribes to trusted metadata-only tool execution events, even when diagnostics are disabled. */

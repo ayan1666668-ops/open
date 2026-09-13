@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createChannelParticipantAdmissionEvidence } from "../../../test/helpers/channel-admission-evidence.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import type { CompactionAccountingFact } from "../../agents/embedded-agent-runner/run/internal-params.js";
+import type {
+  CompactionAccountingFact,
+  RunEmbeddedAgentInternalParams,
+} from "../../agents/embedded-agent-runner/run/internal-params.js";
 import {
   clearActiveEmbeddedRun,
   isEmbeddedAgentRunActive,
@@ -57,6 +60,20 @@ const compactionTarget = {
 };
 
 describe("executeAgentTurn: run lifecycle and ownership", () => {
+  it("classifies cancellation raised by the real deferred lifecycle owner", async () => {
+    state.runEmbeddedAgentMock.mockImplementationOnce(
+      async (params: RunEmbeddedAgentInternalParams) => {
+        params.onDeferredLifecycleAbort?.();
+        params.abortSignal?.throwIfAborted();
+        throw new Error("The deferred abort must stop the current attempt");
+      },
+    );
+
+    const result = await execution.executeAgentTurn(createMinimalRunAgentTurnParams());
+
+    expect(result.outcome).toMatchObject({ kind: "aborted", reason: "user" });
+  });
+
   it.each([
     {
       kind: "restart",
@@ -94,6 +111,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       setActiveEmbeddedRun(sessionId, handle, sessionKey);
       state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
         params.onDeferredLifecycleOwner?.({
+          beginRetryWait: () => undefined,
           complete: async () => clearActiveEmbeddedRun(sessionId, handle, sessionKey),
           discard: () => clearActiveEmbeddedRun(sessionId, handle, sessionKey),
         });
@@ -508,7 +526,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       state.runEmbeddedAgentMock.mockResolvedValueOnce({
         payloads: [{ text: "late reply" }],
         meta: {
-          contextManagement: { lastTurnCompactions: compactions },
           agentMeta: {
             sessionId: "session",
             provider: "anthropic",
@@ -624,7 +641,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
           return {
             payloads: [{ text: "done" }],
             meta: {
-              contextManagement: { lastTurnCompactions: fact ? 99 : index === 1 ? 2 : 0 },
               agentMeta: {
                 compactionCount: fact ? 99 : index === 1 ? 2 : 0,
                 lastCallUsage: { input: 777 },

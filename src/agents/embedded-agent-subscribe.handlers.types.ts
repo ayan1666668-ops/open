@@ -163,9 +163,6 @@ export type EmbeddedAgentSubscribeState = {
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
   lastDeliveredBlockReplyText?: string;
-  deliveredBlockReplyTexts: string[];
-  attemptedBlockReplyTexts?: string[];
-  deferredBlockReplyTexts: string[];
   deferBlockReplyDelivery: boolean;
   deferredBlockReplies: BlockReplyPayload[];
   toolExecutionSinceLastBlockReply: boolean;
@@ -211,10 +208,7 @@ export type EmbeddedAgentSubscribeState = {
   messagingToolSourceReplyPayloads: MessagingToolSourceReplyPayload[];
   messageToolOnlySourceReplyDelivered: boolean;
   sourceReplyDelivered?: true;
-  pendingMessagingTexts: Map<string, string>;
-  pendingMessagingTargets: Map<string, MessagingToolSend>;
   successfulCronAdds: number;
-  pendingMessagingMediaUrls: Map<string, string[]>;
   pendingToolMediaUrls: string[];
   pendingToolMediaAttachments?: ReplyMediaAttachment[];
   /** Per-URL local-media trust; keys are normalized pending media URLs. */
@@ -229,14 +223,6 @@ export type EmbeddedAgentSubscribeState = {
   pendingAssistantReplyDirectives?: Pick<
     BlockReplyPayload,
     "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
-  >;
-  deferredAssistantReplyDirectives?: Pick<
-    BlockReplyPayload,
-    "mediaUrls" | "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
-  >;
-  lastDeliveredAssistantReplyDirectives?: Pick<
-    BlockReplyPayload,
-    "mediaUrls" | "audioAsVoice" | "replyToId" | "replyToTag" | "replyToCurrent"
   >;
   deterministicApprovalPromptPending: boolean;
   deterministicApprovalPromptSent: boolean;
@@ -267,50 +253,36 @@ export type EmbeddedAgentSubscribeContext = {
   emitBlockChunk: (
     text: string,
     options?: {
+      sourceText?: string;
       assistantMessageIndex?: number;
-      deferPendingToolMedia?: boolean;
       final?: boolean;
       finalReply?: ReplyDirectiveParseResult;
     },
   ) => void;
   flushBlockReplyBuffer: (options?: {
     assistantMessageIndex?: number;
-    deferPendingToolMedia?: boolean;
     final?: boolean;
-    retryFailures?: boolean;
     finalReply?: ReplyDirectiveParseResult;
   }) => void | Promise<void>;
-  settleBlockReplyDeliveries?: (options?: { retryFailures?: boolean }) => void | Promise<void>;
   emitReasoningStream: (text: string | ThinkingContent, fallback?: string) => void;
   consumePartialReplyDirectives: (
     text: string,
     options?: { final?: boolean },
   ) => ReplyDirectiveParseResult | null;
-  consumeReplyDirectives: (
-    text: string,
-    options?: { final?: boolean },
-  ) => ReplyDirectiveParseResult | null;
   resetBlockReplyDirectives: () => void;
   resetPartialReplyDirectives: () => void;
-  resetAssistantMessageState: (
-    nextAssistantTextBaseline: number,
-    options?: { preserveReplyDirectiveState?: boolean },
-  ) => void;
-  getBlockReplyDeliveryGeneration: () => number;
-  invalidateBlockReplyDeliveriesForCompactionRetry: () => number;
-  resetForCompactionRetry: (invalidatedDeliveryGeneration?: number) => void;
+  resetAssistantMessageState: (nextAssistantTextBaseline: number) => void;
+  resetForCompactionRetry: () => void;
   finalizeAssistantTexts: (args: {
     text: string;
     addedDuringMessage: boolean;
     chunkerHasBuffered: boolean;
-    reconcileCurrentMessage?: boolean;
   }) => void;
   trimMessagingToolSent: () => void;
   consumeToolSendReceipt: (toolCallId: string) => unknown;
   ensureCompactionPromise: () => void;
-  noteCompactionRetry: (deliveryGeneration?: number) => void;
-  noteCompactionReplacementActivity: (deliveryGeneration: number) => void;
-  resolveCompactionRetry: (deliveryGeneration?: number) => void;
+  noteCompactionRetry: () => void;
+  resolveCompactionRetry: () => void;
   maybeResolveCompactionWait: () => void;
   captureModelEvent: (evt: AgentSessionEvent) => void;
   incrementCompactionCount: () => void;
@@ -328,11 +300,11 @@ export type EmbeddedAgentSubscribeContext = {
     options?: {
       assistantMessageIndex?: number;
       consumePendingToolMedia?: boolean;
-      onDelivered?: () => void;
+      blockSourceText?: string;
     },
   ) => void;
   flushAssistantStream: () => void;
-  releaseDeferredReplies: () => void | Promise<void>;
+  releaseDeferredReplies: () => void;
   clearAssistantStream: () => void;
   clearDeferredBlockReplies: () => void;
 };
@@ -389,9 +361,6 @@ type ToolHandlerState = Pick<
   | "lastToolError"
   | "latestMcpAppChannelView"
   | "latestMcpConnectAction"
-  | "pendingMessagingTargets"
-  | "pendingMessagingTexts"
-  | "pendingMessagingMediaUrls"
   | "pendingToolMediaUrls"
   | "pendingToolMediaAttachments"
   | "pendingToolMediaTrustByUrl"
@@ -433,5 +402,4 @@ export type ToolHandlerContext = {
   emitToolOutput: (toolName?: string, meta?: string, output?: string, result?: unknown) => void;
   trimMessagingToolSent: () => void;
   consumeToolSendReceipt?: (toolCallId: string) => unknown;
-  getBlockReplyDeliveryGeneration: () => number;
 };

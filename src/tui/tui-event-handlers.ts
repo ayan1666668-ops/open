@@ -1,8 +1,10 @@
-// Handles TUI keyboard, paste, backend, and command events.
 import {
   hasSessionProjectionAcceptedFinal,
   reduceSessionProjectionRunEvent,
+  type SessionProjectionRunStatus,
 } from "../../packages/gateway-client/src/session-projection.js";
+// Handles TUI keyboard, paste, backend, and command events.
+import type { ChatLogOperations } from "./components/chat-log.js";
 import {
   formatPrimitiveString,
   extractTextFromMessage,
@@ -10,6 +12,7 @@ import {
   formatTuiAbortDiagnostic,
   isCommandMarkedMessage,
 } from "./tui-formatters.js";
+import { extractTuiImageSources } from "./tui-images.js";
 import { createTuiRunLifecycle } from "./tui-run-lifecycle.js";
 import { matchesSelectedTuiSession, readTuiSessionUserMessage } from "./tui-session-events.js";
 import {
@@ -37,41 +40,22 @@ import type {
   TuiStateAccess,
 } from "./tui-types.js";
 
-type EventHandlerChatLog = {
-  addLiveUser: (
-    text: string,
-    options: { messageId: string; runId?: string; sendId?: string },
-  ) => void;
-  startTool: (toolCallId: string, toolName: string, args: unknown, runId?: string) => void;
-  updateToolResult: (
-    toolCallId: string,
-    result: unknown,
-    options?: { partial?: boolean; isError?: boolean },
-  ) => void;
-  addSystem: (text: string) => void;
-  addPendingSystem: (runId: string, text: string) => void;
-  dismissPendingSystem: (runId: string) => void;
-  updateAssistant: (text: string, runId: string) => void;
-  finalizeAssistant: (text: string, runId: string) => void;
-  dropAssistant: (runId: string) => void;
-};
+type EventHandlerTui = { requestRender: (force?: boolean) => void };
 
-type RecoverEsc = (runId: string, validationAbort: boolean) => void;
-type EventHandlerTui = { requestRender(force?: boolean): void; recoverEsc?: RecoverEsc };
-
-type EventHandlerBtwPresenter = {
-  showResult: (params: { question: string; text: string; isError?: boolean }) => void;
-  clear: () => void;
-};
-
-const FAILED_RUN_STATES = new Set(["aborted", "error", "timeout"]);
+function isFailedTuiRunStatus(status: SessionProjectionRunStatus | undefined): boolean {
+  return status === "aborted" || status === "error" || status === "timeout";
+}
 
 type EventHandlerContext = {
-  chatLog: EventHandlerChatLog;
-  btw: EventHandlerBtwPresenter;
+  chatLog: ChatLogOperations;
+  btw: {
+    showResult: (params: { question: string; text: string; isError?: boolean }) => void;
+    clear: () => void;
+  };
   tui: EventHandlerTui;
   state: TuiStateAccess;
   setActivityStatus: (text: string) => void;
+  updateFooter: () => void;
   refreshSessionInfo?: () => Promise<void>;
   loadHistory: () => Promise<TuiHistoryLoadResult>;
   noteLocalRunId?: (runId: string) => void;
@@ -203,9 +187,8 @@ export function createEventHandlers(context: EventHandlerContext) {
       return;
     }
     const previousProjectedRun = reducedRun.previousRun;
-    const previousStatus = previousProjectedRun?.status;
     state.sessionProjection = reducedRun.projection;
-    if (evt.state === "final" && previousStatus && FAILED_RUN_STATES.has(previousStatus)) {
+    if (evt.state === "final" && isFailedTuiRunStatus(previousProjectedRun?.status)) {
       const hasRecoverableFinalText =
         Boolean(extractTuiAbortedText(evt.message, state.showThinking).trim()) ||
         streamAssembler.hasDisplayText(evt.runId);
@@ -216,7 +199,7 @@ export function createEventHandlers(context: EventHandlerContext) {
         return;
       }
     }
-    if (evt.state === "aborted" && previousStatus === "aborted") {
+    if (evt.state === "aborted" && previousProjectedRun?.status === "aborted") {
       clearStaleStreamingIfNoTrackedRunRemains();
       return;
     }
@@ -340,7 +323,12 @@ export function createEventHandlers(context: EventHandlerContext) {
       if (suppressEmptyExternalPlaceholder) {
         chatLog.dropAssistant(evt.runId);
       } else {
-        chatLog.finalizeAssistant(finalText, evt.runId);
+        const images = extractTuiImageSources(evt.message);
+        if (images.length > 0) {
+          chatLog.finalizeAssistant(finalText, evt.runId, images);
+        } else {
+          chatLog.finalizeAssistant(finalText, evt.runId);
+        }
       }
       finalizeRun({
         runId: evt.runId,
@@ -352,8 +340,6 @@ export function createEventHandlers(context: EventHandlerContext) {
     if (evt.state === "aborted") {
       forgetLocalBtwRunId?.(evt.runId);
       const wasActiveRun = state.activeChatRunId === evt.runId;
-      const localAbort = localMode === true && wasActiveRun;
-      tui.recoverEsc?.(evt.runId, localAbort && evt.abortOrigin === "tool-validation");
       // Determine content from the message and stream, not the user-visible
       // fallbacks: attachment-only aborts remain cancellation diagnostics.
       const hasDisplayableAbortedText =
@@ -369,7 +355,7 @@ export function createEventHandlers(context: EventHandlerContext) {
       chatLog.addSystem(diagnostic ? `run aborted: ${diagnostic}` : "run aborted");
       terminateRun({ runId: evt.runId, wasActiveRun, status: "aborted" });
       maybeRefreshHistoryForRun(evt.runId, {
-        hasDisplayableFinal: hasDisplayableAbortedText || Boolean(diagnostic),
+        hasDisplayableFinal: hasDisplayableAbortedText,
       });
     }
     if (evt.state === "error") {
@@ -594,6 +580,7 @@ export function createEventHandlers(context: EventHandlerContext) {
       if (isActiveRun) {
         armStreamingWatchdog(evt.runId);
       }
+      context.updateFooter();
       tui.requestRender();
       return;
     }

@@ -3,7 +3,7 @@ import { loadProviderScopedThinkingCatalog } from "../../agents/model-catalog.ru
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
-import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { MODEL_SELECTION_LOCKED_MESSAGE } from "../../sessions/model-overrides.js";
 import {
   onSessionLifecycleEvent,
@@ -52,7 +52,7 @@ vi.mock("../../gateway/session-patch-hooks.js", () => ({
 }));
 
 vi.mock("../../infra/system-events.js", () => ({
-  enqueueSystemEventRaw: vi.fn(),
+  enqueueSystemEvent: vi.fn(),
 }));
 
 vi.mock("./queue.js", () => ({

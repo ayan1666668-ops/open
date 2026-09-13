@@ -56,9 +56,6 @@
       "openclaw/plugin-sdk/concurrency-runtime": [
         "../packages/plugin-sdk/dist/src/plugin-sdk/concurrency-runtime.d.ts"
       ],
-      "openclaw/plugin-sdk/continuation-test-runtime": [
-        "../packages/plugin-sdk/dist/src/plugin-sdk/continuation-test-runtime.d.ts"
-      ],
       "openclaw/plugin-sdk/delivery-queue-runtime": [
         "../packages/plugin-sdk/dist/src/plugin-sdk/delivery-queue-runtime.d.ts"
       ],
@@ -232,9 +229,6 @@
       ],
       "openclaw/plugin-sdk/test-state": [
         "../packages/plugin-sdk/dist/src/plugin-sdk/test-state.d.ts"
-      ],
-      "openclaw/plugin-sdk/task-flow-test-runtime": [
-        "../packages/plugin-sdk/dist/src/plugin-sdk/task-flow-test-runtime.d.ts"
       ],
       "openclaw/plugin-sdk/time-runtime": [
         "../packages/plugin-sdk/dist/src/plugin-sdk/time-runtime.d.ts"
@@ -939,6 +933,9 @@
       ],
       "openclaw/plugin-sdk/memory-core-host-engine-knn": [
         "../packages/plugin-sdk/dist/src/plugin-sdk/memory-core-host-engine-knn.d.ts"
+      ],
+      "openclaw/plugin-sdk/memory-core-host-engine-indexing": [
+        "../packages/plugin-sdk/dist/src/plugin-sdk/memory-core-host-engine-indexing.d.ts"
       ]
     }
   }

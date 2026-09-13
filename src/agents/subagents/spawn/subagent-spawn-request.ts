@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveSpawnRecipientAuthorityBinding } from "../../../auto-reply/continuation/recipient-authority-binding.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { SubagentLifecycleHookRunner } from "../../../plugins/hooks.js";
 import { isValidAgentId, normalizeAgentId } from "../../../routing/session-key.js";
@@ -8,8 +7,6 @@ import { listAgentIds } from "../../agent-scope-config.js";
 import { resolveSessionAgentId } from "../../agent-scope.js";
 import { reserveChildAdmissionSlot } from "../../child-admission.js";
 import { resolveSpawnAdmission, resolveSpawnMode } from "../../spawn-plan.js";
-import type { ContinuationSpawnParams } from "../announce/subagent-announce.runtime.js";
-import { listAncestorSessionKeys } from "../registry/subagent-registry-read.js";
 import { listSwarmRunsForGroup } from "../registry/subagent-registry.js";
 import { resolveSwarmConfig } from "../swarm/swarm-config.js";
 import { validateStructuredOutputSchema } from "../swarm/swarm-output-schema.js";
@@ -58,8 +55,6 @@ type ResolvedSubagentSpawnRequest = {
     reservation?: { release: () => void };
     childDepth: number;
     maxSpawnDepth: number;
-    continuationTargetSessionKeys?: string[];
-    continuationRecipientAuthorityBinding?: ContinuationSpawnParams["continuationRecipientAuthorityBinding"];
   };
   childIdem: string;
 };
@@ -76,7 +71,7 @@ function rejectSubagentSpawnRequest(
 }
 
 export function resolveSubagentSpawnRequest(
-  params: SpawnSubagentParams & ContinuationSpawnParams,
+  params: SpawnSubagentParams,
   ctx: SpawnSubagentContext,
 ): ResolveSubagentSpawnRequestResult {
   const requestedAgentId = params.agentId?.trim();
@@ -156,6 +151,7 @@ export function resolveSubagentSpawnRequest(
     agentSessionKey: ctx.agentSessionKey,
     completionOwnerKey: ctx.completionOwnerKey,
   });
+
   const requesterAgentId = resolveSessionAgentId({
     config: cfg,
     sessionKey: requesterInternalKey,
@@ -263,20 +259,6 @@ export function resolveSubagentSpawnRequest(
       "sessions_spawn collect=true requires a requesting run id when groupId is omitted.",
     );
   }
-  // Tree membership is an admission fact. Freeze it before async spawn work can
-  // retire registry ancestry and strand a completed grandchild.
-  const continuationTargetSessionKeys =
-    params.continuationFanoutMode === "tree"
-      ? listAncestorSessionKeys(ownership.completionRequesterSessionKey)
-      : params.continuationTargetSessionKeys;
-  const continuationRecipientAuthorityBinding = resolveSpawnRecipientAuthorityBinding({
-    binding: params.continuationRecipientAuthorityBinding,
-    requesterSessionKey: ownership.completionRequesterSessionKey,
-    targetSessionKey: params.continuationTargetSessionKey,
-    targetSessionKeys: params.continuationTargetSessionKeys,
-    fanoutMode: params.continuationFanoutMode,
-    treeSessionKeys: continuationTargetSessionKeys,
-  });
   const childDepth = admission.childSessionPatch?.spawnDepth ?? 1;
   const maxSpawnDepth = admission.maxSpawnDepth ?? childDepth;
   const swarmLaunchReplayKey = normalizeOptionalString(params.swarmLaunchReplayKey);
@@ -348,8 +330,6 @@ export function resolveSubagentSpawnRequest(
         reservation: admissionReservation?.ok ? admissionReservation : undefined,
         childDepth,
         maxSpawnDepth,
-        continuationTargetSessionKeys,
-        continuationRecipientAuthorityBinding,
       },
       childIdem,
     },

@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { finalizeInboundContext } from "openclaw/plugin-sdk/reply-dispatch-runtime";
 import { expect, it, vi } from "vitest";
 import {
@@ -21,6 +23,7 @@ import {
   resolveMarkdownTableMode,
 } from "./bot-message-dispatch.test-harness.js";
 import type { TelegramMessageContext } from "./bot-message-dispatch.test-harness.js";
+import { cacheSticker } from "./sticker-cache.js";
 
 describeTelegramDispatch("dispatchTelegramMessage context-recovery", () => {
   it("keeps a new sticker description through canonical reply-context finalization", async () => {
@@ -42,7 +45,21 @@ describeTelegramDispatch("dispatchTelegramMessage context-recovery", () => {
       StickerMediaIncluded: true,
     });
 
-    await dispatchWithContext({ context: createContext({ ctxPayload }) });
+    const writeStarted = createDeferred<void>();
+    const finishWrite = createDeferred<void>();
+    vi.mocked(cacheSticker).mockImplementationOnce(() => {
+      writeStarted.resolve();
+      return finishWrite.promise;
+    });
+    const pending = dispatchWithContext({ context: createContext({ ctxPayload }) });
+    try {
+      await writeStarted.promise;
+      await setImmediate();
+      expect(dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    } finally {
+      finishWrite.resolve();
+      await pending;
+    }
     const replyContext = finalizeInboundContext(ctxPayload);
 
     expect(replyContext.agentText).toBe(
@@ -292,12 +309,10 @@ describeTelegramDispatch("dispatchTelegramMessage context-recovery", () => {
         ctxPayload: {
           Body: currentBody,
           BodyForAgent: currentBody,
-          CommandBody: "current topic question",
           ChatType: "group",
           From: "telegram:group:-1003774691294:topic:1",
           MessageThreadId: 1,
           OriginatingTo: "telegram:-1003774691294",
-          RawBody: "current topic question",
           SessionKey: "agent:main:telegram:group:-1003774691294:topic:3731",
           To: "telegram:-1003774691294",
           TransportThreadId: 1,

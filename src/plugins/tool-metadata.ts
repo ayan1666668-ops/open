@@ -13,6 +13,8 @@ export type PluginToolMcpMeta = {
   operation: "tool" | "resources_list" | "resources_read" | "prompts_list" | "prompts_get";
   excludedFromOpenClawCatalog?: true;
   deniedBySession?: true;
+  /** Trusted requester OAuth sign-in bootstrap; exempt from per-call MCP approval. */
+  oauthConnectBootstrap?: true;
   codexApproval?: {
     mode?: McpCodexToolApprovalMode;
     annotations?: McpCodexToolAnnotations;
@@ -34,7 +36,7 @@ type PluginToolMeta = {
   mcp?: PluginToolMcpMeta;
 };
 
-const pluginToolMeta = new WeakMap<object, PluginToolMeta>();
+const pluginToolMeta = new WeakMap<AnyAgentTool, PluginToolMeta>();
 
 /** Attaches plugin ownership metadata to a concrete agent tool instance. */
 export function setPluginToolMeta(tool: AnyAgentTool, meta: PluginToolMeta): void {
@@ -42,12 +44,12 @@ export function setPluginToolMeta(tool: AnyAgentTool, meta: PluginToolMeta): voi
 }
 
 /** Reads plugin ownership metadata for a concrete agent tool instance. */
-export function getPluginToolMeta(tool: object): PluginToolMeta | undefined {
+export function getPluginToolMeta(tool: AnyAgentTool): PluginToolMeta | undefined {
   return pluginToolMeta.get(tool);
 }
 
 /** Copies plugin ownership metadata when wrappers replace a tool object. */
-export function copyPluginToolMeta(source: object, target: AnyAgentTool): void {
+export function copyPluginToolMeta(source: AnyAgentTool, target: AnyAgentTool): void {
   const meta = pluginToolMeta.get(source);
   if (meta) {
     pluginToolMeta.set(target, meta);
@@ -60,9 +62,9 @@ export function buildPluginToolMetadataKey(pluginId: string, toolName: string): 
 }
 
 /** Binds a side-effect declaration to the concrete plugin tool that owns it. */
-export function getPluginToolSideEffectOwnerKey(tool: { name?: string }): string | undefined {
+export function getPluginToolSideEffectOwnerKey(tool: AnyAgentTool): string | undefined {
   const meta = getPluginToolMeta(tool);
-  const toolName = normalizeToolPolicyName(tool.name ?? "");
+  const toolName = normalizeToolPolicyName(tool.name);
   return meta?.sideEffecting && toolName
     ? buildPluginToolMetadataKey(meta.pluginId, toolName)
     : undefined;

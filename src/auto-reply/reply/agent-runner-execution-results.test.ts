@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
+import {
+  GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
+  HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT,
+} from "../../agents/failover/user-copy.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
+  createAgentTurnExecutionDefaults,
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
@@ -13,6 +19,7 @@ import {
   requireMockCall,
   expectMockCallArgFields,
   createMinimalRunAgentTurnParams,
+  createRunAgentTurnParams,
   NON_DIRECT_FAILURE_SURFACE_CASES,
   createNonDirectFailureSessionCtx,
 } from "./agent-runner-execution.test-support.js";
@@ -24,6 +31,42 @@ import type {
 const state = await setupAgentRunnerExecutionTestState();
 
 describe("executeAgentTurn: result and tool delivery", () => {
+  it.each([
+    { stopReason: "error", isHeartbeat: false, failureText: GENERIC_EXTERNAL_RUN_FAILURE_TEXT },
+    { stopReason: "error", isHeartbeat: true, failureText: HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT },
+    { stopReason: "aborted", isHeartbeat: false, failureText: undefined },
+    { stopReason: "superseded", isHeartbeat: false, failureText: undefined },
+  ])(
+    "preserves canonical $stopReason after private partial output (heartbeat=$isHeartbeat)",
+    async (testCase) => {
+      const followupRun = createFollowupRun();
+      followupRun.run.sourceReplyDeliveryMode = "message_tool_only";
+      state.runEmbeddedAgentMock.mockResolvedValueOnce({
+        payloads: [{ text: "Private partial output before the run ended." }],
+        meta: { stopReason: testCase.stopReason },
+      });
+
+      const executeAgentTurn = await getExecuteAgentTurnForTest();
+      const result = await executeAgentTurn({
+        ...createMinimalRunAgentTurnParams({ followupRun }),
+        isHeartbeat: testCase.isHeartbeat,
+      });
+
+      expect(result.kind).toBe("success");
+      if (result.kind === "success") {
+        expect(result.terminalFailurePayload?.text).toBe(testCase.failureText);
+        if (testCase.failureText !== undefined) {
+          assert(result.terminalFailurePayload);
+          expect(result.terminalFailurePayload.isError).toBe(true);
+          expect(
+            getReplyPayloadMetadata(result.terminalFailurePayload)
+              ?.deliverDespiteSourceReplySuppression,
+          ).toBe(true);
+        }
+      }
+    },
+  );
+
   it("forwards media-only tool results without typing text", async () => {
     const onToolResult = vi.fn();
     state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
@@ -45,18 +88,8 @@ describe("executeAgentTurn: result and tool delivery", () => {
         onToolResult,
       } satisfies GetReplyOptions,
       typingSignals,
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
+      ...createAgentTurnExecutionDefaults(),
       pendingToolTasks,
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
     });
 
     await Promise.all(pendingToolTasks);
@@ -120,28 +153,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
     followupRun.run.provider = "openai";
     followupRun.run.model = "gpt-5.5";
 
-    const result = await executeAgentTurn({
-      commandBody: "hello",
-      followupRun,
-      sessionCtx: {
-        Provider: "whatsapp",
-        MessageSid: "msg",
-      } as unknown as TemplateContext,
-      opts: {},
-      typingSignals: createMockTypingSignaler(),
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
-      pendingToolTasks: new Set(),
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
-    });
+    const result = await executeAgentTurn(createRunAgentTurnParams(followupRun));
 
     expect(state.runWithModelFallbackMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
@@ -270,7 +282,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
           attempt: 1,
           total: 2,
         }),
-      ).toBeNull();
+      ).toBeUndefined();
       return {
         result,
         provider: "openai",
@@ -302,6 +314,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
       didStream: vi.fn(() => false),
       isAborted: vi.fn(() => false),
       hasSentPayload: vi.fn(() => false),
+      hasRetryBlockedDelivery: () => false,
       getSentMediaUrls: vi.fn(() => []),
     };
     state.runEmbeddedAgentMock.mockResolvedValueOnce({ payloads: [], meta: {} });
@@ -318,7 +331,7 @@ describe("executeAgentTurn: result and tool delivery", () => {
           attempt: 1,
           total: 2,
         }),
-      ).toBeNull();
+      ).toBeUndefined();
       return {
         result,
         provider: "openai",
@@ -441,18 +454,8 @@ describe("executeAgentTurn: result and tool delivery", () => {
         onToolResult,
       } satisfies GetReplyOptions,
       typingSignals,
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
+      ...createAgentTurnExecutionDefaults(),
       pendingToolTasks,
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
     });
 
     await Promise.all(pendingToolTasks);
@@ -460,52 +463,6 @@ describe("executeAgentTurn: result and tool delivery", () => {
     expect(result.kind).toBe("success");
     expect(typingSignals.signalTextDelta).toHaveBeenCalledWith("The user is saying hello");
     expect(onToolResult).toHaveBeenCalledWith({ text: "The user is saying hello" });
-  });
-
-  it("preserves continuation-shaped trailing text in streamed tool results", async () => {
-    const onToolResult = vi.fn();
-    state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
-      await params.onToolResult?.({ text: "Literal tool output CONTINUE_WORK" });
-      return { payloads: [{ text: "final" }], meta: {} };
-    });
-
-    const runAgentTurnWithFallback = await getExecuteAgentTurnForTest();
-    const pendingToolTasks = new Set<Promise<void>>();
-    const typingSignals = createMockTypingSignaler();
-    const followupRun = createFollowupRun();
-    followupRun.run.config = {
-      agents: { defaults: { continuation: { enabled: true } } },
-    };
-    const result = await runAgentTurnWithFallback({
-      commandBody: "hello",
-      followupRun,
-      sessionCtx: {
-        Provider: "whatsapp",
-        MessageSid: "msg",
-      } as unknown as TemplateContext,
-      opts: {
-        onToolResult,
-      } satisfies GetReplyOptions,
-      typingSignals,
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
-      pendingToolTasks,
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
-    });
-
-    await Promise.all(pendingToolTasks);
-
-    expect(result.kind).toBe("success");
-    expect(typingSignals.signalTextDelta).toHaveBeenCalledWith("Literal tool output CONTINUE_WORK");
-    expect(onToolResult).toHaveBeenCalledWith({ text: "Literal tool output CONTINUE_WORK" });
   });
 
   it("continues delivering later streamed tool results after an earlier delivery failure", async () => {
@@ -533,18 +490,8 @@ describe("executeAgentTurn: result and tool delivery", () => {
       } as unknown as TemplateContext,
       opts: { onToolResult } satisfies GetReplyOptions,
       typingSignals: createMockTypingSignaler(),
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
+      ...createAgentTurnExecutionDefaults(),
       pendingToolTasks,
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
     });
 
     await Promise.all(pendingToolTasks);
@@ -625,18 +572,8 @@ describe("executeAgentTurn: result and tool delivery", () => {
       } as unknown as TemplateContext,
       opts: { onToolResult } satisfies GetReplyOptions,
       typingSignals: createMockTypingSignaler(),
-      blockReplyPipeline: null,
-      blockStreamingEnabled: false,
-      resolvedBlockStreamingBreak: "message_end",
-      applyReplyToMode: (payload) => payload,
-      shouldEmitToolResult: () => true,
-      shouldEmitToolOutput: () => false,
+      ...createAgentTurnExecutionDefaults(),
       pendingToolTasks,
-      resetSessionAfterRoleOrderingConflict: async () => false,
-      isHeartbeat: false,
-      sessionKey: "main",
-      getActiveSessionEntry: () => undefined,
-      resolvedVerboseLevel: "off",
     });
 
     await Promise.all(pendingToolTasks);

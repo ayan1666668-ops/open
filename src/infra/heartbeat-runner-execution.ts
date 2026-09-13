@@ -118,9 +118,6 @@ export type HeartbeatRunOptions = {
   /** Persisted monitor cadence carried by a coalesced scheduled wake. */
   scheduledEveryMs?: number;
   tasks?: readonly HeartbeatScheduledTask[];
-  continuationTrigger?: "delegate-return" | "subagent-return" | "work-wake";
-  parentRunId?: string;
-  trustedTargetSessionKey?: string;
   deps?: HeartbeatDeps;
 };
 

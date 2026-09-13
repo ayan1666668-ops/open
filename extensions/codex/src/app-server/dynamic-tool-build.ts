@@ -29,6 +29,7 @@ import {
   formatStageTimings,
   type StageTimingSummary,
 } from "openclaw/plugin-sdk/time-runtime";
+import { CODEX_NATIVE_TOOL_REQUIREMENTS } from "../../native-tool-policy.js";
 import {
   isCodexRemoteExecPlacementSandbox,
   readCodexPluginConfig,
@@ -76,14 +77,6 @@ type OpenClawSandboxContext = Awaited<ReturnType<typeof resolveSandboxContext>>;
 type CodexDynamicToolBuildEvent = Parameters<
   NonNullable<EmbeddedRunAttemptParams["onAgentEvent"]>
 >[0];
-const CODEX_NATIVE_SANDBOX_TOOL_REQUIREMENTS = [
-  "exec",
-  "process",
-  "read",
-  "write",
-  "edit",
-  "apply_patch",
-] as const;
 const CODEX_MEMORY_FLUSH_DYNAMIC_TOOL_ALLOW = new Set(["read", "write"]);
 const CODEX_DISABLED_NATIVE_SHELL_DYNAMIC_TOOLS = new Set([
   "exec",
@@ -161,7 +154,6 @@ type DynamicToolBuildParams = {
   forceHeartbeatTool?: boolean;
   ignoreDisableMessageTool?: boolean;
   ignoreRuntimePlan?: boolean;
-  allowProviderRuntimePluginLoad?: boolean;
   /** Host fact resolver; injectable only for focused plugin contract tests. */
   isHostScopedToolActive?: (toolName: string) => boolean;
   onYieldDetected: (message: string, acknowledgment?: string) => void;
@@ -250,7 +242,6 @@ export async function buildDynamicTools(
   const modelHasVision = params.model.input?.includes("image") ?? false;
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, input.sessionAgentId);
   const injectedOpenClawCodingToolsFactory = dynamicToolBuildState.openClawCodingToolsFactory;
-  const extraOpenClawCodingTools = dynamicToolBuildState.extraOpenClawCodingTools;
   const nativeExecutionPolicy = resolveCodexNativeExecutionPolicyForRun(params, {
     agentId: input.policyAgentId,
     runtimeSessionKey: input.sandboxSessionKey,
@@ -373,34 +364,22 @@ export async function buildDynamicTools(
     cronCreatorToolAllowlistRef: input.cronCreatorToolAllowlistRef,
     cronCreatorToolAllowlistCaptureRef: input.cronCreatorToolAllowlistCaptureRef,
     cronCreatorAuthorityUnavailableReason: input.cronCreatorAuthorityUnavailableReason,
-    drainsContinuationDelegateQueue: params.drainsContinuationDelegateQueue,
-    continueWorkOpts: params.continueWorkOpts,
-    requestCompactionOpts: params.requestCompactionOpts,
   };
 
   input.onMessageToolTargetResolved?.(options.requireExplicitMessageTarget === true);
   const buildOpenClawCodingTools = () => {
     const bindingOptions = { cwd: input.effectiveCwd ?? input.effectiveWorkspace };
-    let tools: OpenClawDynamicTool[];
     if (injectedOpenClawCodingToolsFactory) {
-      tools = params.hostCapabilities.bindToolSurface(
+      return params.hostCapabilities.bindToolSurface(
         injectedOpenClawCodingToolsFactory(options),
         bindingOptions,
       );
-    } else {
-      const createToolSurface = params.hostCapabilities.createToolSurface;
-      if (!createToolSurface) {
-        throw new Error("Codex tool construction requires a current host capability");
-      }
-      tools = createToolSurface(options, bindingOptions);
     }
-    if (!extraOpenClawCodingTools?.length) {
-      return tools;
+    const createToolSurface = params.hostCapabilities.createToolSurface;
+    if (!createToolSurface) {
+      throw new Error("Codex tool construction requires a current host capability");
     }
-    return [
-      ...tools,
-      ...params.hostCapabilities.bindToolSurface(extraOpenClawCodingTools, bindingOptions),
-    ];
+    return createToolSurface(options, bindingOptions);
   };
   const allTools = input.resolveCronCreatorToolAuthority
     ? runWithCronCreatorAuthorityCapabilityResolver({
@@ -510,9 +489,7 @@ export async function buildDynamicTools(
     model: params.model,
     // Durable registration projects the prepared catalog; it must not activate
     // a different provider runtime while building the thread-stable schema.
-    allowProviderRuntimePluginLoad: input.ignoreRuntimePlan
-      ? false
-      : input.allowProviderRuntimePluginLoad,
+    allowProviderRuntimePluginLoad: input.ignoreRuntimePlan ? false : undefined,
     onPreNormalizationSchemaDiagnostics: (diagnostics) =>
       preNormalizationDiagnostics.push(...diagnostics),
   });
@@ -717,9 +694,7 @@ function canCodexAppServerNativeToolSurfaceHonorSandbox(
 function canSandboxToolPolicyExposeCodexNativeToolSurface(sandbox: {
   tools: Parameters<typeof isToolAllowed>[0];
 }): boolean {
-  return CODEX_NATIVE_SANDBOX_TOOL_REQUIREMENTS.every((toolName) =>
-    isToolAllowed(sandbox.tools, toolName),
-  );
+  return CODEX_NATIVE_TOOL_REQUIREMENTS.every((toolName) => isToolAllowed(sandbox.tools, toolName));
 }
 function isCodexMemoryFlushRun(
   params?: Pick<EmbeddedRunAttemptParams, "trigger" | "memoryFlushWritePath">,

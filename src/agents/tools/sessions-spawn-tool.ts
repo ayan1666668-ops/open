@@ -5,18 +5,12 @@
  */
 import { Type } from "typebox";
 import { isAcpRuntimeSpawnAvailable } from "../../acp/runtime/availability.js";
-import {
-  resolveThreadBindingSpawnPolicy,
-  supportsAutomaticThreadBindingSpawn,
-} from "../../channels/thread-bindings-policy.js";
+import { supportsThreadBindingSpawn } from "../../channels/conversation-resolution.js";
+import { resolveThreadBindingSpawnPolicy } from "../../channels/thread-bindings-policy.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSnakeCaseParamKey } from "../../param-key.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
-import {
-  MAX_INLINE_ATTACHMENT_MIME_TYPE_BYTES,
-  MAX_INLINE_ATTACHMENT_MOUNT_PATH_BYTES,
-} from "../../shared/inline-attachments.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { captureAgentToolSourceExecutionGuard } from "../agent-tool-source-execution-guard.js";
 import {
@@ -143,7 +137,7 @@ function resolveSessionsSpawnThreadAvailability(opts?: {
 }): SessionsSpawnThreadAvailability {
   const channel = opts?.agentChannel;
   const cfg = opts?.config;
-  if (!channel || !cfg || !supportsAutomaticThreadBindingSpawn(channel)) {
+  if (!channel || !cfg || !supportsThreadBindingSpawn(channel)) {
     return { subagent: false, acp: false };
   }
   const resolve = (kind: "subagent" | "acp") => {
@@ -208,7 +202,7 @@ function createSessionsSpawnToolSchema(params: {
           thread: Type.Optional(
             Type.Boolean({
               description:
-                'Bind new chat thread when supported; true defaults mode="session"; unavailable with visible=true.',
+                'Bind to the current conversation or a new thread, as supported by the channel; true defaults mode="session"; unavailable with visible=true.',
             }),
           ),
         }
@@ -268,9 +262,7 @@ function createSessionsSpawnToolSchema(params: {
           name: Type.String(),
           content: Type.String(),
           encoding: Type.Optional(optionalStringEnum(["utf8", "base64"] as const)),
-          mimeType: Type.Optional(
-            Type.String({ maxLength: MAX_INLINE_ATTACHMENT_MIME_TYPE_BYTES }),
-          ),
+          mimeType: Type.Optional(Type.String()),
         }),
         {
           maxItems: 50,
@@ -283,9 +275,7 @@ function createSessionsSpawnToolSchema(params: {
         {
           // Where the spawned agent should look for attachments.
           // Kept as a hint; implementation materializes into the child workspace.
-          mountPath: Type.Optional(
-            Type.String({ maxLength: MAX_INLINE_ATTACHMENT_MOUNT_PATH_BYTES }),
-          ),
+          mountPath: Type.Optional(Type.String()),
         },
         {
           description:

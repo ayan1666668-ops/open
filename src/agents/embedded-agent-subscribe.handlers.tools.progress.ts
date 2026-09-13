@@ -15,9 +15,11 @@ import {
   buildCommandItemTitle,
   buildToolItemId,
   buildToolItemTitle,
+  buildToolStartKey,
   emitAgentEventCallbackBestEffort,
   emitTrackedItemEvent,
   isExecToolName,
+  toolStartData,
 } from "./embedded-agent-subscribe.handlers.tools.start.js";
 import type { ToolHandlerContext } from "./embedded-agent-subscribe.handlers.types.js";
 import {
@@ -75,16 +77,12 @@ export function handleToolExecutionUpdate(
     partialResult?: unknown;
     hideFromChannelProgress?: boolean;
   },
-  options?: { deliveryGeneration?: number },
 ) {
-  if (
-    options?.deliveryGeneration !== undefined &&
-    options.deliveryGeneration !== ctx.getBlockReplyDeliveryGeneration()
-  ) {
-    return;
-  }
   const toolName = normalizeToolPolicyName(evt.toolName);
   const toolCallId = evt.toolCallId;
+  const parentToolCallId = toolStartData.get(
+    buildToolStartKey(ctx.params.runId, toolCallId),
+  )?.parentToolCallId;
   const hideFromChannelProgress = evt.hideFromChannelProgress === true;
   const partial = evt.partialResult;
   const isExecTool = isExecToolName(toolName);
@@ -101,6 +99,7 @@ export function handleToolExecutionUpdate(
         phase: "update",
         name: toolName,
         toolCallId,
+        ...(parentToolCallId ? { parentToolCallId } : {}),
         partialResult: liveResult,
         ...(hideFromChannelProgress ? { hideFromChannelProgress: true } : {}),
       },
@@ -131,6 +130,7 @@ export function handleToolExecutionUpdate(
         phase: "update",
         name: toolName,
         toolCallId,
+        ...(parentToolCallId ? { parentToolCallId } : {}),
         ...(hideFromChannelProgress ? { hideFromChannelProgress: true } : {}),
       },
     });

@@ -1,4 +1,3 @@
-import { resetCommandQueueWaiters } from "./command-queue-waiters.js";
 import { resetGatewayWorkAdmission } from "./gateway-work-admission.js";
 
 type CommandQueueStateShape = {
@@ -21,7 +20,6 @@ export function resetCommandQueueStateForTest(): void {
   }
 
   state.lanes.clear();
-  resetCommandQueueWaiters();
   state.laneGroups?.clear();
   state.laneGroupByLane?.clear();
   state.nextTaskId = 1;

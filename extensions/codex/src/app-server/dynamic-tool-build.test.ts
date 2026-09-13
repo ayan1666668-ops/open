@@ -107,7 +107,6 @@ function setOpenClawCodingToolsFactoryForTests(
 
 function resetOpenClawCodingToolsFactoryForTests(): void {
   dynamicToolBuildState.openClawCodingToolsFactory = undefined;
-  dynamicToolBuildState.extraOpenClawCodingTools = undefined;
 }
 
 async function bindProductionCodexHostCapabilities(

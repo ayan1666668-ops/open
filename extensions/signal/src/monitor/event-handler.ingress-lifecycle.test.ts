@@ -53,46 +53,18 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/channel-inbound")>(
     "openclaw/plugin-sdk/channel-inbound",
   );
-  type RunParams = Parameters<typeof actual.runChannelInboundEvent>[0];
+  const { createSignalPreparedDispatchRunner } = await import("./event-handler.test-harness.js");
   return {
     ...actual,
-    runChannelInboundEvent: (params: RunParams) => {
-      const resolveTurn = params.adapter.resolveTurn;
-      return actual.runChannelInboundEvent({
-        ...params,
-        adapter: {
-          ...params.adapter,
-          resolveTurn: async (input, eventClass, preflight) => {
-            const resolved = await resolveTurn(input, eventClass, preflight);
-            if (!("route" in resolved) || !("delivery" in resolved)) {
-              return resolved;
-            }
-            const {
-              cfg: _cfg,
-              delivery: _delivery,
-              dispatcherOptions: _dispatcherOptions,
-              route,
-              ...turn
-            } = resolved;
-            return {
-              ...turn,
-              routeSessionKey: route.sessionKey,
-              storePath: "/tmp/openclaw/signal-sessions.json",
-              recordInboundSession: recordInboundSessionMock,
-              runDispatchLifecycle: {
-                turnAdoptionLifecycle: params.turnAdoptionLifecycle,
-                onDispatchSkipped: () => {},
-              },
-              runDispatch: async () =>
-                await dispatchInboundMessageMock({
-                  ctx: resolved.ctxPayload,
-                  replyOptions: resolved.replyOptions,
-                }),
-            };
-          },
-        },
-      });
-    },
+    runChannelInboundEvent: createSignalPreparedDispatchRunner(
+      actual.runChannelInboundEvent,
+      recordInboundSessionMock,
+      async (resolved) =>
+        await dispatchInboundMessageMock({
+          ctx: resolved.ctxPayload,
+          replyOptions: resolved.replyOptions,
+        }),
+    ),
   };
 });
 

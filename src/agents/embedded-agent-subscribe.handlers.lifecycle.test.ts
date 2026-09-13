@@ -4,11 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createInlineCodeState } from "../../packages/markdown-core/src/code-spans.js";
 import { createHookRunner } from "../plugins/hooks.js";
 import { createMockPluginRegistry, TEST_PLUGIN_AGENT_CTX } from "../plugins/hooks.test-fixtures.js";
-import {
-  __testing,
-  handleAgentEnd,
-  handleAgentStart,
-} from "./embedded-agent-subscribe.handlers.lifecycle.js";
+import { handleAgentEnd, handleAgentStart } from "./embedded-agent-subscribe.handlers.lifecycle.js";
 import type { EmbeddedAgentSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import { createReplyDelivery } from "./embedded-agent-subscribe.reply-delivery.js";
 
@@ -28,7 +24,6 @@ const BEFORE_AGENT_FINALIZE_EVENT = {
   stopHookActive: false,
   lastAssistantMessage: "done",
 };
-const { resolveTerminalToolMediaTrust } = __testing;
 
 vi.mock("../infra/agent-events.js", () => ({
   emitAgentEvent: emitAgentEventMock,
@@ -127,53 +122,6 @@ function firstMockCall(mock: { mock: { calls: ReadonlyArray<ReadonlyArray<unknow
 function firstWarnMeta(ctx: EmbeddedAgentSubscribeContext): Record<string, unknown> {
   return readRecord(firstMockCall(vi.mocked(ctx.log.warn))[1]);
 }
-
-describe("resolveTerminalToolMediaTrust", () => {
-  it.each([
-    {
-      name: "mixed pending batch",
-      pendingMediaUrls: ["/tmp/trusted.mp3", "/tmp/untrusted.mp3"],
-      pendingTrustByUrl: new Map([
-        ["/tmp/trusted.mp3", true],
-        ["/tmp/untrusted.mp3", false],
-      ]),
-      deferredReplies: [],
-      expected: false,
-    },
-    {
-      name: "all-trusted pending batch",
-      pendingMediaUrls: ["/tmp/first.mp3", "/tmp/second.mp3"],
-      pendingTrustByUrl: new Map([
-        ["/tmp/first.mp3", true],
-        ["/tmp/second.mp3", true],
-      ]),
-      deferredReplies: [],
-      expected: true,
-    },
-    {
-      name: "mixed deferred batch",
-      pendingMediaUrls: [],
-      pendingTrustByUrl: new Map<string, boolean>(),
-      deferredReplies: [
-        { mediaUrls: ["/tmp/trusted.mp3"], trustedLocalMedia: true },
-        { mediaUrls: ["/tmp/untrusted.mp3"] },
-      ],
-      expected: false,
-    },
-    {
-      name: "all-trusted deferred batch",
-      pendingMediaUrls: [],
-      pendingTrustByUrl: new Map<string, boolean>(),
-      deferredReplies: [
-        { mediaUrls: ["/tmp/first.mp3"], trustedLocalMedia: true },
-        { mediaUrls: ["/tmp/second.mp3"], trustedLocalMedia: true },
-      ],
-      expected: true,
-    },
-  ])("returns $expected for $name", ({ expected, ...params }) => {
-    expect(resolveTerminalToolMediaTrust(params)).toBe(expected);
-  });
-});
 
 describe("handleAgentEnd", () => {
   it("contains rejected lifecycle start event callbacks", async () => {
@@ -981,13 +929,10 @@ describe("handleAgentEnd", () => {
 
     await handleAgentEnd(ctx);
 
-    expect(ctx.emitBlockReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mediaUrls: ["/tmp/reply.opus"],
-        audioAsVoice: true,
-      }),
-      expect.objectContaining({ onDelivered: expect.any(Function) }),
-    );
+    expect(ctx.emitBlockReply).toHaveBeenCalledWith({
+      mediaUrls: ["/tmp/reply.opus"],
+      audioAsVoice: true,
+    });
     expect(ctx.state.pendingToolMediaUrls).toStrictEqual([]);
     expect(ctx.state.pendingToolAudioAsVoice).toBe(false);
   });
@@ -1018,13 +963,10 @@ describe("handleAgentEnd", () => {
     const lifecycleOrder = onAgentEvent.mock.invocationCallOrder[0] as number | undefined;
 
     expect(ctx.emitBlockReply).toHaveBeenCalledTimes(1);
-    expect(ctx.emitBlockReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mediaUrls: ["/tmp/reply.opus"],
-        audioAsVoice: true,
-      }),
-      expect.objectContaining({ onDelivered: expect.any(Function) }),
-    );
+    expect(ctx.emitBlockReply).toHaveBeenCalledWith({
+      mediaUrls: ["/tmp/reply.opus"],
+      audioAsVoice: true,
+    });
     expect(blockReplyOrder).toBeTypeOf("number");
     if (typeof blockReplyOrder !== "number") {
       throw new Error("Expected orphaned media block reply call order.");
@@ -1121,10 +1063,7 @@ describe("handleAgentEnd", () => {
       expect(ctx.clearAssistantStream).not.toHaveBeenCalled();
       expect(ctx.clearDeferredBlockReplies).not.toHaveBeenCalled();
       expect(ctx.releaseDeferredReplies).toHaveBeenCalledTimes(1);
-      expect(ctx.flushBlockReplyBuffer).toHaveBeenCalledWith({
-        final: true,
-        retryFailures: true,
-      });
+      expect(ctx.flushBlockReplyBuffer).toHaveBeenCalledWith({ final: true });
       expect(ctx.resolveCompactionRetry).toHaveBeenCalledTimes(1);
       expect(ctx.maybeResolveCompactionWait).not.toHaveBeenCalled();
     } finally {
@@ -1307,17 +1246,14 @@ describe("handleAgentEnd", () => {
     ctx.state.blockState.pendingFenceFragment = "```";
     ctx.flushBlockReplyBuffer = vi.fn((options?: { final?: boolean }) => {
       if (vi.mocked(ctx.flushBlockReplyBuffer).mock.calls.length === 1) {
-        expect(options).toEqual({ final: true, retryFailures: true });
+        expect(options).toEqual({ final: true });
         expect(ctx.state.blockState.pendingFenceFragment).toBe("```");
       }
     });
 
     await handleAgentEnd(ctx);
 
-    expect(ctx.flushBlockReplyBuffer).toHaveBeenNthCalledWith(1, {
-      final: true,
-      retryFailures: true,
-    });
+    expect(ctx.flushBlockReplyBuffer).toHaveBeenNthCalledWith(1, { final: true });
     expect(ctx.state.blockState.pendingFenceFragment).toBeUndefined();
   });
 

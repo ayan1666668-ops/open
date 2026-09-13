@@ -63,7 +63,7 @@ export type ResolveQueueSettingsParams = {
   pluginDebounceMs?: number;
 };
 
-export type QueueDedupeMode = "message-id" | "prompt" | "none";
+export type QueueDedupeMode = "message-id" | "none";
 
 type QueueInsertPosition = "tail" | "front";
 
@@ -79,10 +79,22 @@ export type QueuedFollowupReplyBatch = {
   runId: string;
   originatingChannel: string | undefined;
   payloads: ReplyPayload[];
+  completion:
+    | { kind: "progress" }
+    | { kind: "completed"; stopReason?: string; allowCanvasOnly?: true }
+    | { kind: "failed"; error: string; stopReason?: string; errorKind?: "timeout" }
+    | { kind: "aborted"; stopReason?: string };
+};
+
+export type QueuedFollowupReplyDelivery = ((
+  batch: QueuedFollowupReplyBatch,
+) => Promise<void> | void) & {
+  ownsCompletion?: (originatingChannel: string | undefined) => boolean;
+  createSourceRetry?: () => QueuedFollowupReplyDelivery;
 };
 
 type QueuedFollowupReplyDisposition =
-  | { kind: "deliver"; deliver: (batch: QueuedFollowupReplyBatch) => Promise<void> | void }
+  | { kind: "deliver"; deliver: QueuedFollowupReplyDelivery }
   | { kind: "drop"; reason: "source-unavailable" };
 
 export class FollowupRunDeferredError extends Error {
@@ -105,8 +117,6 @@ export type FollowupRun = {
   /** Shared lifecycle owner for the current user-turn transcript append. */
   userTurnTranscriptRecorder?: UserTurnTranscriptRecorder;
   currentInboundEventKind?: InboundEventKind;
-  /** Native inbound event timestamp in epoch milliseconds, when the transport provides one. */
-  currentInboundEventTimestampMs?: number;
   /** Whether the current inbound message contained audio for inbound-only TTS policy. */
   currentInboundAudio?: boolean;
   /** Host-minted participant evidence; raw channel identities never live on this object. */
@@ -268,8 +278,6 @@ export type FollowupRun = {
     terminalReplyExpectation?: RunEmbeddedAgentParams["terminalReplyExpectation"];
     suppressNextUserMessagePersistence?: boolean;
     suppressTranscriptOnlyAssistantPersistence?: boolean;
-    drainsContinuationDelegateQueue?: boolean;
-    traceparent?: string;
     /** Gateway-private optimistic-concurrency constraint for an operator-requested proposal revision. */
     skillWorkshopProposalRevision?: SkillWorkshopProposalRevisionConstraint;
     skillLibraryAuthoring?: import("../../../skills/library/authoring.js").SkillLibraryAuthoringCapability;

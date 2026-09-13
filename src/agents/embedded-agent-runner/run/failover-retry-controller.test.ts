@@ -1,9 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { projectProviderError } from "../../../../packages/ai/src/utils/provider-error.js";
-import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../../agent-run-terminal-outcome.js";
+import {
+  createReplyOperation,
+  isReplyRunEvidenceStale,
+} from "../../../auto-reply/reply/reply-run-registry.js";
+import {
+  closeDiagnosticEmbeddedRunOwner,
+  createDiagnosticEmbeddedRunOwner,
+  getDiagnosticSessionActivitySnapshot,
+  markDiagnosticEmbeddedRunStarted,
+  resolveRunStaleThresholdMs,
+} from "../../../logging/diagnostic-run-activity.js";
 import { FailoverError } from "../../failover-error.js";
 import { resolveRetryAfterMs } from "../../failover/retry-evidence.js";
-import { resolveAgentRunErrorLifecycleFields } from "../../run-termination.js";
+import {
+  createDeferredEmbeddedRunLifecycleManager,
+  createEmbeddedAttemptDeferredLifecycleOwner,
+} from "./deferred-lifecycle-owner.js";
 
 const mocks = vi.hoisted(() => ({
   sleepWithAbort: vi.fn(async (_ms: number, _abortSignal?: AbortSignal): Promise<void> => {}),
@@ -30,11 +43,13 @@ function createController(
   advanceAuthProfile: ControllerInput["advanceAuthProfile"],
   fallbackConfigured = false,
   abortSignal?: AbortSignal,
+  onRetryWait?: ControllerInput["runParams"]["onRetryWait"],
 ) {
   return createEmbeddedRunFailoverRetryController({
     runParams: {
       runId: "run:failover-retry-controller-test",
       abortSignal,
+      onRetryWait,
     } as ControllerInput["runParams"],
     provider: "openai",
     modelId: "gpt-5.6-luna",
@@ -192,11 +207,36 @@ describe("createEmbeddedRunFailoverRetryController", () => {
       const cancellation = new AbortController();
       const dayMs = 24 * 60 * 60 * 1000;
       const retryAfterMs = 30 * dayMs;
+      const ref = {
+        sessionId: "retry-wait-session",
+        runId: "retry-wait-run",
+        sessionKey: "agent:main:retry-wait",
+      };
+      const operation = createReplyOperation({
+        ...ref,
+        turnKind: "visible",
+        resetTriggered: false,
+      });
+      const diagnosticOwner = createDiagnosticEmbeddedRunOwner(ref);
+      markDiagnosticEmbeddedRunStarted({ ...ref, owner: diagnosticOwner });
+      const lifecycle = createDeferredEmbeddedRunLifecycleManager(ref);
+      lifecycle.adopt(
+        createEmbeddedAttemptDeferredLifecycleOwner({
+          ...ref,
+          diagnosticOwner,
+          isCurrent: () => true,
+          onRetryWaitCompleted: () => operation.recordActivity(),
+          trajectoryRecorder: null,
+          clearActiveRun: () => closeDiagnosticEmbeddedRunOwner(diagnosticOwner),
+        }),
+      );
+      const deadlineAtMs = Date.now() + retryAfterMs;
       try {
         const controller = createController(
           vi.fn(async () => false),
           false,
           cancellation.signal,
+          lifecycle.beginRetryWait,
         );
         let retried = false;
         const retry = controller
@@ -205,21 +245,40 @@ describe("createEmbeddedRunFailoverRetryController", () => {
             retried = result;
             return result;
           });
+        await vi.advanceTimersByTimeAsync(dayMs + 1);
+        const activity = getDiagnosticSessionActivitySnapshot(ref);
+        expect(activity.activeWorkKind).toBe("embedded_run");
+        expect(activity.activeRetryWaitDeadlineAtMs).toBe(deadlineAtMs);
+        expect(activity.lastProgressAgeMs).toBe(dayMs + 1);
+        expect(resolveRunStaleThresholdMs(activity)).toBe(retryAfterMs);
+        expect(isReplyRunEvidenceStale(operation)).toBe(false);
         if (abort) {
           const rejected = expect(retry).rejects.toMatchObject({ name: "AbortError" });
-          await vi.advanceTimersByTimeAsync(dayMs + 1);
           cancellation.abort();
+          expect(
+            getDiagnosticSessionActivitySnapshot(ref).activeRetryWaitDeadlineAtMs,
+          ).toBeUndefined();
           await rejected;
           expect(controller.transientRetryCount).toBe(0);
           expect(vi.getTimerCount()).toBe(0);
         } else {
-          await vi.advanceTimersByTimeAsync(retryAfterMs - 1);
+          await vi.advanceTimersByTimeAsync(retryAfterMs - dayMs - 2);
           expect(retried).toBe(false);
           await vi.advanceTimersByTimeAsync(1);
           await expect(retry).resolves.toBe(true);
           expect(controller.transientRetryCount).toBe(1);
+          expect(
+            getDiagnosticSessionActivitySnapshot(ref).activeRetryWaitDeadlineAtMs,
+          ).toBeUndefined();
+          expect(getDiagnosticSessionActivitySnapshot(ref).lastProgressAgeMs).toBe(0);
+          expect(getDiagnosticSessionActivitySnapshot(ref).lastProgressReason).toBe(
+            "retry_wait:ended",
+          );
+          expect(isReplyRunEvidenceStale(operation)).toBe(false);
         }
       } finally {
+        await lifecycle.complete();
+        operation.complete();
         vi.useRealTimers();
         mocks.sleepWithAbort.mockImplementation(async () => {});
       }
@@ -392,35 +451,5 @@ describe("createEmbeddedRunFailoverRetryController", () => {
     expect(rateLimitContext.logFallbackDecision).toHaveBeenNthCalledWith(1, "fallback_model", {
       status: 429,
     });
-  });
-
-  it("keeps owner timeout facts on the rate-limit rotation-cap FailoverError", async () => {
-    const advanceAuthProfile = vi.fn(async () => true);
-    const controller = createController(advanceAuthProfile, true);
-    const timeout = { timeoutPhase: "provider" as const, providerStarted: false };
-    const context = { ...rateLimitContext, timeout };
-
-    await expect(controller.advanceRateLimitAuthProfile(context)).resolves.toBe(true);
-    const error = await controller.advanceRateLimitAuthProfile(context).then(
-      () => {
-        throw new Error("expected rate-limit rotation cap FailoverError");
-      },
-      (caught: unknown) => caught,
-    );
-
-    expect(error).toBeInstanceOf(FailoverError);
-    expect(error).toMatchObject({
-      reason: "rate_limit",
-      timeout,
-    } satisfies Partial<FailoverError>);
-    const fields = resolveAgentRunErrorLifecycleFields(error, undefined);
-    expect(fields).toEqual({
-      stopReason: "timeout",
-      timeoutPhase: "provider",
-      providerStarted: false,
-    });
-    expect(
-      buildAgentRunTerminalOutcomeFromLifecycleEvent({ phase: "error", data: fields }).reason,
-    ).toBe("hard_timeout");
   });
 });

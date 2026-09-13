@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 /**
  * Shared detached-task lifecycle for media generation tools.
  *
@@ -7,8 +8,8 @@ import crypto from "node:crypto";
 import { getCliSessionBinding } from "../../config/sessions/cli-session-binding.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { runWithoutOwnedSessionTranscriptWrites } from "../../config/sessions/transcript-write-context.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../../infra/agent-run-registry.js";
-import { formatActiveContinuationTraceparent } from "../../infra/continuation-tracer.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { parseCronRunScopeSuffix } from "../../sessions/session-key-utils.js";
@@ -45,6 +46,9 @@ const log = createSubsystemLogger("agents/tools/media-generate-background-shared
 const MEDIA_GENERATION_TASK_KEEPALIVE_INTERVAL_MS = 60_000;
 const MEDIA_GENERATION_COMPLETION_HANDOFF_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
 const MEDIA_GENERATION_COMPLETION_HANDOFF_TIMEOUT_MS = 120_000;
+const detachedMediaGenerationAsyncRoot = new AsyncResource(
+  "openclaw.media-generation.detached-root",
+);
 
 /** Schedules detached media generation work. */
 export type MediaGenerateBackgroundScheduler = (work: () => Promise<void>) => void;
@@ -125,6 +129,7 @@ type FailMediaGenerationTaskRunParams = {
 };
 
 type WakeMediaGenerationTaskCompletionParams = {
+  config?: OpenClawConfig;
   handle: MediaGenerationTaskHandle | null;
   status: "ok" | "error";
   statusLabel: string;
@@ -238,7 +243,6 @@ function createMediaGenerationTaskRun(params: {
       requesterAgentId: params.requesterAgentId,
       requesterOrigin,
       taskLabel: params.prompt,
-      traceparent: formatActiveContinuationTraceparent(),
     };
     touchMediaGenerationTaskRunContext(handle);
     return handle;
@@ -375,9 +379,11 @@ export function createDefaultMediaGenerateBackgroundScheduler(params: {
   onCrash: (message: string, meta?: Record<string, unknown>) => void;
 }): MediaGenerateBackgroundScheduler {
   return (work) => {
-    queueMicrotask(() => {
-      void work().catch((error: unknown) => {
-        params.onCrash(`Detached ${params.toolName} job crashed`, { error });
+    detachedMediaGenerationAsyncRoot.runInAsyncScope(() => {
+      queueMicrotask(() => {
+        void work().catch((error: unknown) => {
+          params.onCrash(`Detached ${params.toolName} job crashed`, { error });
+        });
       });
     });
   };
@@ -453,6 +459,7 @@ export function scheduleMediaGenerationTaskCompletion<
   handle: MediaGenerationTaskHandle | null;
   scheduleBackgroundWork: MediaGenerateBackgroundScheduler;
   progressSummary: string;
+  config?: OpenClawConfig;
   toolName: string;
   run: () => Promise<T>;
   onWakeFailure: (message: string, meta?: Record<string, unknown>) => void;
@@ -470,6 +477,7 @@ export function scheduleMediaGenerationTaskCompletion<
         const wakeOutcome = await wakeMediaGenerationTaskCompletionWithRetry({
           wake: async () =>
             await params.lifecycle.wakeTaskCompletion({
+              config: params.config,
               handle: params.handle,
               status: "error",
               statusLabel: "failed",
@@ -513,6 +521,7 @@ export function scheduleMediaGenerationTaskCompletion<
       const wakeOutcome = await wakeMediaGenerationTaskCompletionWithRetry({
         wake: async () =>
           await params.lifecycle.wakeTaskCompletion({
+            config: params.config,
             handle: params.handle,
             status: "ok",
             statusLabel: "completed successfully",

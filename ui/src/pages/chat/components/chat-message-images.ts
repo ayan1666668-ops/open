@@ -1,5 +1,5 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { html, noChange, nothing } from "lit";
+import { html, noChange, nothing, type TemplateResult } from "lit";
 import { AsyncDirective, directive } from "lit/async-directive.js";
 import { Directive } from "lit/directive.js";
 import { keyed } from "lit/directives/keyed.js";
@@ -27,11 +27,12 @@ import {
   isLocalAssistantAttachmentSource,
 } from "./chat-message-local-media.ts";
 import {
-  cacheManagedImageBlobUrl,
+  cacheManagedImageBlob,
   isChatMediaResourceCurrent,
   notifyChatMediaResourceSubscribers,
   observeChatMediaResource,
   observeChatMediaResourceSubscriber,
+  readManagedImageBlob,
   readManagedImageBlobUrl,
   releaseChatMediaResourceSubscriber,
   retainManagedImageBlobUrl,
@@ -355,7 +356,11 @@ class MessageImagesDirective extends Directive {
   private canonicalMessageKey: string | undefined;
   private localSubmission = false;
 
-  override render(images: ImageBlock[], opts?: ImageRenderOptions) {
+  override render(
+    images: ImageBlock[],
+    opts?: ImageRenderOptions,
+    previews: TemplateResult[] = [],
+  ) {
     const scope = JSON.stringify([
       opts?.connectionEpoch,
       opts?.authToken?.trim(),
@@ -410,14 +415,15 @@ class MessageImagesDirective extends Directive {
     this.localSubmission =
       localSubmission &&
       !(opts?.canonicalMessageKey && images.every((image) => image.factIndex !== undefined));
-    if (!images.length) {
+    const mediaCount = images.length + previews.length;
+    if (!mediaCount) {
       return nothing;
     }
     const layoutClasses = [
       "chat-message-images",
-      images.length === 1 ? "chat-message-images--single" : "chat-message-images--gallery",
-      images.length === 2 || images.length === 4 ? "chat-message-images--two-column" : "",
-      images.length === 5 ? "chat-message-images--five" : "",
+      mediaCount === 1 ? "chat-message-images--single" : "chat-message-images--gallery",
+      mediaCount === 2 || mediaCount === 4 ? "chat-message-images--two-column" : "",
+      mediaCount === 5 ? "chat-message-images--five" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -427,6 +433,7 @@ class MessageImagesDirective extends Directive {
         ({ key }) => key,
         ({ image }) => html`${renderMessageImageResource(image, opts)}`,
       )}
+      ${previews}
     </div>`;
   }
 }
@@ -438,6 +445,7 @@ function resolveManagedOutgoingImageResource(
   opts?: ImageRenderOptions,
   artifactId?: string,
   variant: ManagedImageVariant = "thumbnail",
+  retryFailed = false,
 ): ChatMediaResource<string | null> {
   const variantUrl = buildManagedOutgoingImageVariantUrl(source, variant, opts?.resourceBasePath);
   const authToken = opts?.authToken?.trim() ?? "";
@@ -458,9 +466,10 @@ function resolveManagedOutgoingImageResource(
   }
   if (resource.value === null) {
     if (
-      resource.retryAttempted ||
-      resource.unavailableAt === undefined ||
-      Date.now() - resource.unavailableAt < MANAGED_OUTGOING_IMAGE_RETRY_MS
+      !retryFailed &&
+      (resource.retryAttempted ||
+        resource.unavailableAt === undefined ||
+        Date.now() - resource.unavailableAt < MANAGED_OUTGOING_IMAGE_RETRY_MS)
     ) {
       return resource;
     }
@@ -484,8 +493,7 @@ function resolveManagedOutgoingImageResource(
       if (!isChatMediaResourceCurrent(resource)) {
         return null;
       }
-      const blobUrl = URL.createObjectURL(blob);
-      cacheManagedImageBlobUrl(cacheKey, blobUrl);
+      const blobUrl = cacheManagedImageBlob(cacheKey, blob);
       resource.value = blobUrl;
       resource.retryAttempted = false;
       resource.unavailableAt = undefined;
@@ -587,15 +595,13 @@ async function readManagedOutgoingImageBlob(
   opts?: ImageRenderOptions,
   artifactId?: string,
 ): Promise<Blob> {
-  const resource = resolveManagedOutgoingImageResource(source, opts, artifactId, "full");
-  const blobUrl = resource.value ?? (await resource.pending);
-  if (!blobUrl) {
-    throw new Error("managed image is unavailable");
+  const resource = resolveManagedOutgoingImageResource(source, opts, artifactId, "full", true);
+  if (resource.pending) {
+    await resource.pending;
   }
-  const response = await fetch(blobUrl);
-  const blob = await response.blob();
-  if (!blob.type.startsWith("image/")) {
-    throw new Error("managed image response is invalid");
+  const blob = readManagedImageBlob(resource.cacheKey);
+  if (!blob || !isChatMediaResourceCurrent(resource)) {
+    throw new Error("managed image is unavailable");
   }
   return blob;
 }

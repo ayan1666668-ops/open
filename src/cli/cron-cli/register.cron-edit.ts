@@ -1,8 +1,8 @@
-import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-coercion";
 // Cron edit command registration and patch construction for existing jobs.
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
+  readNonBlankString,
 } from "@openclaw/normalization-core/string-coerce";
 import type { Command } from "commander";
 import type { CronJob } from "../../cron/types.js";
@@ -26,7 +26,9 @@ import {
 import {
   getCronChannelOptions,
   handleCronCliError,
+  parseCronIntegerOption,
   warnIfCronSchedulerDisabled,
+  requireCronJobId,
 } from "./shared.js";
 import { normalizeCronSessionTargetOption, parseCronThreadIdOption } from "./thread-id-shared.js";
 import { readCronTriggerScript } from "./trigger-options.js";
@@ -104,8 +106,9 @@ export function registerCronEditCommand(cron: Command) {
         "--failure-alert-account-id <id>",
         "Account ID for failure alert channel (multi-account setups)",
       )
-      .action(async (id, opts) => {
+      .action(async (idArg, opts) => {
         try {
+          const id = requireCronJobId(idArg);
           if (opts.clearTools && opts.tools !== undefined) {
             throw new CronCliError("Use --tools or --clear-tools, not both");
           }
@@ -116,7 +119,7 @@ export function registerCronEditCommand(cron: Command) {
           let existingJobPromise: Promise<CronJobForEdit> | undefined;
           let expectedConfigRevision: string | undefined;
           const readExistingCronJob = async (): Promise<CronJobForEdit> => {
-            const existing = await (existingJobPromise ??= readCronJobForEdit(opts, String(id)));
+            const existing = await (existingJobPromise ??= readCronJobForEdit(opts, id));
             if (typeof existing.configRevision === "string") {
               expectedConfigRevision = existing.configRevision;
             }
@@ -180,7 +183,7 @@ export function registerCronEditCommand(cron: Command) {
           if (deliveryModeFlagCount > 1) {
             throw new CronCliError("Choose at most one of --announce, --no-deliver, or --webhook.");
           }
-          const triggerScriptPath = normalizeOptionalString(opts.triggerScript);
+          const triggerScriptPath = readNonBlankString(opts.triggerScript);
           if (typeof opts.triggerScript === "string" && !triggerScriptPath) {
             throw new CronCliError("--trigger-script must not be blank");
           }
@@ -396,13 +399,10 @@ export function registerCronEditCommand(cron: Command) {
           } else if (failureAlertFlag === true || hasFailureAlertFields) {
             const failureAlert: Record<string, unknown> = {};
             if (hasFailureAlertAfter) {
-              const after = parseStrictPositiveInteger(opts.failureAlertAfter);
-              if (after === undefined) {
-                throw new CronCliError(
-                  "Invalid --failure-alert-after (must be a positive integer).",
-                );
-              }
-              failureAlert.after = after;
+              failureAlert.after = parseCronIntegerOption(
+                opts.failureAlertAfter,
+                "--failure-alert-after",
+              );
             }
             if (hasFailureAlertChannel) {
               failureAlert.channel = normalizeOptionalLowercaseString(opts.failureAlertChannel);

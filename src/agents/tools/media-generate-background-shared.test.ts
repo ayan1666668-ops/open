@@ -1,15 +1,12 @@
 // Background media generation tests cover detached task completion, requester
 // wake delivery, and direct media fallback behavior.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   runWithOwnedSessionTranscriptWrite,
   withOwnedSessionTranscriptWrites,
 } from "../../config/sessions/transcript-write-context.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
-import {
-  runWithDiagnosticTraceContext,
-  type DiagnosticTraceContext,
-} from "../../infra/diagnostic-trace-context.js";
 import { resetGeneratedMediaTaskActivityForTests } from "../../tasks/task-runtime.test-helpers.js";
 import { hasPendingGeneratedMediaTaskForSessionKey } from "../../tasks/task-status-access.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
@@ -40,12 +37,6 @@ const cronContinuationCleanupMocks = vi.hoisted(() => ({
 const sessionMocks = vi.hoisted(() => ({
   loadSessionEntry: vi.fn<() => SessionEntry | undefined>(() => undefined),
 }));
-const ACTIVE_TRACE_CONTEXT: DiagnosticTraceContext = {
-  traceId: "0af7651916cd43dd8448eb211c80319c",
-  spanId: "b7ad6b7169203331",
-  traceFlags: "01",
-};
-const ACTIVE_TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
 vi.mock("../subagents/announce/subagent-announce-delivery.js", () => subagentAnnounceDeliveryMocks);
 vi.mock("../../config/sessions/session-accessor.js", async () => ({
@@ -60,10 +51,36 @@ vi.mock("../../tasks/task-registry-delivery-runtime.js", () => taskRegistryDeliv
 vi.mock("../../tasks/cron-run-continuation-cleanup.js", () => cronContinuationCleanupMocks);
 
 import {
+  createDefaultMediaGenerateBackgroundScheduler,
   createMediaGenerationTaskLifecycle,
   scheduleMediaGenerationTaskCompletion,
   shouldDetachMediaGenerationTask,
 } from "./media-generate-background-shared.js";
+
+describe("createDefaultMediaGenerateBackgroundScheduler", () => {
+  it("runs genuinely detached work outside request-scoped async context", async () => {
+    const requestContext = new AsyncLocalStorage<string>();
+    let resolveWork!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      resolveWork = resolve;
+    });
+    const observedContexts: Array<string | undefined> = [];
+    const scheduler = createDefaultMediaGenerateBackgroundScheduler({
+      toolName: "image_generate",
+      onCrash: vi.fn(),
+    });
+
+    requestContext.run("matrix-monitor-task", () => {
+      scheduler(async () => {
+        observedContexts.push(requestContext.getStore());
+        resolveWork();
+      });
+    });
+
+    await completed;
+    expect(observedContexts).toEqual([undefined]);
+  });
+});
 
 beforeEach(() => {
   resetGeneratedMediaTaskActivityForTests();
@@ -1002,7 +1019,6 @@ describe("createMediaGenerationTaskLifecycle", () => {
     subagentAnnounceDeliveryMocks.deliverSubagentAnnouncement.mockResolvedValueOnce({
       delivered: true,
     });
-
     const lifecycle = createImageMediaLifecycle();
 
     await expect(
@@ -1022,52 +1038,6 @@ describe("createMediaGenerationTaskLifecycle", () => {
         result: "generated",
       }),
     ).resolves.toEqual({ status: "delivered" });
-  });
-
-  it("carries trusted continuation context from task admission into completion delivery", async () => {
-    subagentAnnounceDeliveryMocks.deliverSubagentAnnouncement.mockResolvedValueOnce({
-      delivered: true,
-    });
-    const lifecycle = createImageMediaLifecycle();
-    const handle = runWithDiagnosticTraceContext(ACTIVE_TRACE_CONTEXT, () =>
-      lifecycle.createTaskRun({
-        sessionKey: "agent:main:discord:channel:123",
-        prompt: "traced proof image",
-      }),
-    );
-
-    await lifecycle.wakeTaskCompletion({
-      handle,
-      status: "ok",
-      statusLabel: "completed successfully",
-      result: "generated",
-    });
-
-    expect(subagentAnnounceDeliveryMocks.deliverSubagentAnnouncement).toHaveBeenCalledWith(
-      expect.objectContaining({
-        continuationTriggerOverride: "work-wake",
-        traceparent: ACTIVE_TRACEPARENT,
-      }),
-    );
-  });
-
-  it("keeps the stable ancestor traceparent when the active scope has a parent span", () => {
-    const lifecycle = createImageMediaLifecycle();
-
-    const handle = runWithDiagnosticTraceContext(
-      {
-        ...ACTIVE_TRACE_CONTEXT,
-        spanId: "2222222222222222",
-        parentSpanId: ACTIVE_TRACE_CONTEXT.spanId,
-      },
-      () =>
-        lifecycle.createTaskRun({
-          sessionKey: "agent:main:discord:channel:123",
-          prompt: "ancestor-anchored proof image",
-        }),
-    );
-
-    expect(handle?.traceparent).toBe(ACTIVE_TRACEPARENT);
   });
 
   it("treats an ambiguous generated-media acknowledgement as handled", async () => {

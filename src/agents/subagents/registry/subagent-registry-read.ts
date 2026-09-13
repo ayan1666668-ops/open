@@ -9,7 +9,6 @@ import {
 } from "../../../infra/agent-run-registry.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../../../utils/delivery-context.types.js";
-import { deriveContinuationDelegateChildRunId } from "../../subagent-continuation-ids.js";
 import { ownsSwarmRunReservation } from "../swarm/swarm-scheduler.js";
 import { getSubagentRunsForChildSession, subagentRuns } from "./subagent-registry-memory.js";
 import {
@@ -21,7 +20,6 @@ import {
   getSubagentRunByChildSessionKeyFromRuns,
   hasDescendantRunAwaitingSettleFromRuns,
   isSubagentSessionRunActiveFromRuns,
-  listAncestorSessionKeysFromRuns,
   listDescendantRunsForRequesterFromRuns,
   listRunsForControllerFromRuns,
   listRunsForRequesterFromRuns,
@@ -36,6 +34,7 @@ import {
   getSubagentRunsSnapshotForController,
   getSubagentRunsSnapshotForRead,
 } from "./subagent-registry-state.js";
+import { loadSubagentRunsForChildSessionFromSqlite } from "./subagent-registry.store.sqlite.js";
 import type { SubagentRunReadRecord, SubagentRunRecord } from "./subagent-registry.types.js";
 
 export type { SubagentRunReadIndex } from "./subagent-registry-queries.js";
@@ -132,7 +131,7 @@ export function resolveRequesterForChildSession(childSessionKey: string): {
   requesterOrigin?: DeliveryContext;
 } | null {
   const resolved = resolveRequesterForChildSessionFromRuns(
-    getSubagentRunsSnapshotForRead(subagentRuns),
+    getSubagentRunsSnapshotForChildSession(subagentRuns, childSessionKey),
     childSessionKey,
   );
   if (!resolved) {
@@ -148,7 +147,7 @@ export function resolveRequesterForChildSession(childSessionKey: string): {
 /** True when post-completion announce should be skipped for a child session. */
 export function shouldIgnorePostCompletionAnnounceForSession(childSessionKey: string): boolean {
   return shouldIgnorePostCompletionAnnounceForSessionFromRuns(
-    getSubagentRunsSnapshotForRead(subagentRuns),
+    getSubagentRunsSnapshotForChildSession(subagentRuns, childSessionKey),
     childSessionKey,
   );
 }
@@ -168,18 +167,24 @@ export function listSubagentRunsForRequester(
   return listRunsForRequesterFromRuns(subagentRuns, requesterSessionKey, options);
 }
 
-/** Returns whether a continuation child was accepted before its registry row was written. */
-export function hasLiveContinuationDelegateChildRun(params: {
+/** Whether any current or durable generation still owns this logical task, including waits/recovery. */
+export function hasSubagentTaskOwner(params: {
+  taskRunId: string;
   childSessionKey: string;
-  flowId: string;
+  requesterSessionKey: string;
 }): boolean {
-  const runContext = getAgentRunContext(deriveContinuationDelegateChildRunId(params.flowId));
-  return runContext?.sessionKey === params.childSessionKey;
-}
-
-/** Lists ancestor session keys for a session, walking the requester chain. */
-export function listAncestorSessionKeys(sessionKey: string): string[] {
-  return listAncestorSessionKeysFromRuns(getSubagentRunsSnapshotForRead(subagentRuns), sessionKey);
+  const ownsTask = (entry: SubagentRunRecord) =>
+    (entry.taskRunId ?? entry.runId) === params.taskRunId &&
+    entry.childSessionKey === params.childSessionKey &&
+    entry.requesterSessionKey === params.requesterSessionKey;
+  for (const entry of getSubagentRunsForChildSession(params.childSessionKey)) {
+    if (ownsTask(entry)) {
+      return true;
+    }
+  }
+  // Absence permits maintenance to settle stranded tasks. Unlike presentation
+  // snapshots, this read must propagate failures rather than treating them as absence.
+  return loadSubagentRunsForChildSessionFromSqlite(params.childSessionKey).some(ownsTask);
 }
 
 /** Returns whether a registry entry still has a live agent run context. */

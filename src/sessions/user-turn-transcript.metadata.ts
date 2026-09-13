@@ -237,10 +237,6 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
     : undefined;
   const originalTransport = originalMeta?.transport;
   const steerTargetRunId = normalizePersistedSteerTargetRunId(originalMeta?.steerTargetRunId);
-  const originalSessionDeliveryAckIds = originalMeta?.sessionDeliveryAckIds;
-  const sessionDeliveryAckIds = Array.isArray(originalSessionDeliveryAckIds)
-    ? [...originalSessionDeliveryAckIds]
-    : undefined;
   const lateMedia = originalMeta?.lateMedia === true;
   const originalMedia = originalMeta?.media;
   const media = Array.isArray(originalMedia) ? structuredClone(originalMedia) : undefined;
@@ -271,7 +267,6 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
     ...(replyToId ? { replyToId } : {}),
     ...(replyToPreview ? { replyToPreview } : {}),
     ...(transport ? { transport } : {}),
-    ...(Array.isArray(sessionDeliveryAckIds) ? { sessionDeliveryAckIds } : {}),
     ...(lateMedia ? { lateMedia: true } : {}),
     ...(media === undefined ? {} : { media }),
     ...(mediaImageLayout === undefined ? {} : { mediaImageLayout }),

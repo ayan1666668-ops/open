@@ -17,6 +17,7 @@ import {
 import { formatPluginCompatibilityNotice } from "../plugins/status-compatibility.js";
 import type { PluginCompatibilityNotice } from "../plugins/status.js";
 import type { SecurityAuditReport } from "../security/audit.js";
+import { readBackupRunFreshness } from "../state/backup-run-records.js";
 import type { StatusSummary } from "../status/types.js";
 import { formatHealthChannelLines } from "./health-format.js";
 import type { HealthSummary } from "./health.js";
@@ -48,38 +49,6 @@ import {
 import type { MemoryPluginStatus, MemoryStatusSnapshot } from "./status.scan.shared.js";
 import { formatUpdateAvailableHint } from "./status.update.js";
 
-/**
- * Format the /status continuation overview row per
- * docs/design/continue-work-signal-v2.md §6.3. Pure function over
- * already-resolved config + recent-session runtime counts; the live queries
- * (TaskFlow lookups per session key) live at the caller.
- *
- * @returns the formatted banner value, or `undefined` when continuation is
- *   disabled (so the caller can skip rendering the row).
- */
-export function formatContinuationBannerValue(params: {
-  enabled: boolean;
-  maxChainLength: number;
-  maxDelegatesPerTurn: number;
-  pendingDelegatesRecent: number;
-  postCompactionStagedRecent: number;
-}): string | undefined {
-  if (!params.enabled) {
-    return undefined;
-  }
-  const parts: string[] = ["enabled", `chain max ${params.maxChainLength}`];
-  if (params.pendingDelegatesRecent > 0) {
-    parts.push(
-      `${params.pendingDelegatesRecent} delegate${params.pendingDelegatesRecent === 1 ? "" : "s"} pending (recent sessions)`,
-    );
-  }
-  if (params.postCompactionStagedRecent > 0) {
-    parts.push(`${params.postCompactionStagedRecent} post-compaction (recent sessions)`);
-  }
-  parts.push(`fan-out max ${params.maxDelegatesPerTurn}`);
-  return parts.join(" · ");
-}
-
 /** Builds all table rows, section lines, and footer data needed by the status report renderer. */
 export async function buildStatusCommandReportData(params: {
   env: NodeJS.ProcessEnv;
@@ -101,18 +70,9 @@ export async function buildStatusCommandReportData(params: {
     agents: AgentLocalStatus[];
   };
   channels: {
-    rows: Array<{
-      id: string;
-      label: string;
-      enabled: boolean;
-      state: "ok" | "warn" | "off" | "setup";
-      detail: string;
-    }>;
+    rows: Array<Parameters<typeof buildStatusChannelsTableRows>[0]["rows"][number]>;
   };
-  channelIssues: Array<{
-    channel: string;
-    message: string;
-  }>;
+  channelIssues: Array<Parameters<typeof buildStatusChannelsTableRows>[0]["channelIssues"][number]>;
   memory: MemoryStatusSnapshot | null;
   memoryPlugin: MemoryPluginStatus;
   pluginCompatibility: PluginCompatibilityNotice[];
@@ -130,6 +90,7 @@ export async function buildStatusCommandReportData(params: {
   const muted = (value: string) => theme.muted(value);
   const overviewRows = buildStatusCommandOverviewRows({
     env: params.env,
+    backupFreshness: await readBackupRunFreshness(params.env),
     opts: params.opts,
     surface: params.surface,
     osLabel: params.osSummary.label,
@@ -150,44 +111,6 @@ export async function buildStatusCommandReportData(params: {
     resolveMemoryCacheSummary,
     updateValue: params.updateValue,
     updateRows: params.updateRows,
-    continuationValue: await (async () => {
-      try {
-        // Route through the lazy-runtime boundary so continuation singletons
-        // dedupe with the static graph and don't split across chunks.
-        const lazy = await import("../auto-reply/continuation/lazy.runtime.js");
-        const cfg = lazy.resolveContinuationRuntimeConfig();
-
-        // docs/design/continue-work-signal-v2.md §6.3 — surface runtime continuation state.
-        // TaskFlow-backed counters are queryable cold-path from the CLI (SQLite
-        // persistent); in-memory counters live only in the gateway process.
-        let pendingRecent = 0;
-        let stagedRecent = 0;
-        if (cfg.enabled) {
-          try {
-            const seen = new Set<string>();
-            for (const session of params.summary.sessions.recent) {
-              if (!session.key || seen.has(session.key)) {
-                continue;
-              }
-              seen.add(session.key);
-              pendingRecent += lazy.pendingDelegateCount(session.key);
-              stagedRecent += lazy.stagedPostCompactionDelegateCount(session.key);
-            }
-          } catch {
-            // TaskFlow may be unavailable to this cold CLI path; retain config-only status.
-          }
-        }
-        return formatContinuationBannerValue({
-          enabled: cfg.enabled,
-          maxChainLength: cfg.maxChainLength,
-          maxDelegatesPerTurn: cfg.maxDelegatesPerTurn,
-          pendingDelegatesRecent: pendingRecent,
-          postCompactionStagedRecent: stagedRecent,
-        });
-      } catch {
-        return undefined;
-      }
-    })(),
   });
 
   const sessionsColumns = [
@@ -284,6 +207,7 @@ export async function buildStatusCommandReportData(params: {
     healthRows: params.health
       ? buildStatusHealthRows({
           health: params.health,
+          sqliteWal: params.summary.sqliteWal,
           formatHealthChannelLines,
           ok,
           warn,

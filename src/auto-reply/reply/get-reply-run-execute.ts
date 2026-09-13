@@ -28,6 +28,8 @@ import {
 } from "../../sessions/user-turn-transcript.js";
 import { buildChannelUserTurnSender } from "../../sessions/user-turn-transcript.metadata.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
+import { getGroupThreadTurn } from "../group-thread-context.js";
+import { resolveInternalTurnTranscript } from "../internal-turn-source.js";
 import type { OriginatingChannelType } from "../templating.js";
 import { resolveCurrentTurnImages } from "./current-turn-images.js";
 import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
@@ -42,7 +44,6 @@ import { hasInboundAudio } from "./inbound-media.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveReplyToMode } from "./reply-threading.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
-import { settleManagedSystemEventsAfterTurnAdoption } from "./session-system-event-adoption.js";
 import {
   bindSourceReplyDeliveryRuntime,
   createSourceReplyDeliveryRuntime,
@@ -62,9 +63,13 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     thinkLevelOverride,
     thinkingCatalog,
     skillsSnapshot,
+    prefixedCommandBody,
+    queuedBody,
+    transcriptBody,
+    transcriptCommandBody,
     promptMedia,
     inboundMediaIndexes,
-    adoptPreparedSystemEvents,
+    currentInboundContext,
     isRoomEvent,
     providedReplyOperation,
     preparedSessionState,
@@ -85,7 +90,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     params,
     runtimePolicySessionKey,
     isHeartbeat,
-    isContinuationWake,
     traceRunPhase,
     promptSessionCtx,
     inboundEventKind,
@@ -139,8 +143,9 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   } = params;
 
   const runHasStoredSessionModelOverride = Boolean(
-    normalizeOptionalString(preparedSessionState.sessionEntry?.modelOverride) ||
-    normalizeOptionalString(preparedSessionState.sessionEntry?.providerOverride),
+    preparedSessionState.sessionEntry?.modelOverrideSource !== "default" &&
+    (normalizeOptionalString(preparedSessionState.sessionEntry?.modelOverride) ||
+      normalizeOptionalString(preparedSessionState.sessionEntry?.providerOverride)),
   );
   const runHasLegacyAutoFallbackWithoutOrigin =
     runHasStoredSessionModelOverride &&
@@ -148,7 +153,9 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   const runHasSessionModelOverride =
     runHasStoredSessionModelOverride && !runHasLegacyAutoFallbackWithoutOrigin;
   const runModelOverrideSource = runHasSessionModelOverride
-    ? preparedSessionState.sessionEntry?.modelOverrideSource
+    ? preparedSessionState.sessionEntry?.modelOverrideSource === "default"
+      ? undefined
+      : preparedSessionState.sessionEntry?.modelOverrideSource
     : undefined;
   const runHasAutoFallbackProvenance =
     runHasSessionModelOverride &&
@@ -252,28 +259,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   });
   const inputProvenance = ctx.InputProvenance ?? sessionCtx.InputProvenance;
   const userTurnTimestamp = normalizeMessageTimestampMs(ctx.Timestamp);
-  let adoptedSystemEvents: Extract<
-    ReturnType<typeof adoptPreparedSystemEvents>,
-    { kind: "adopted" }
-  >;
-  for (;;) {
-    const adoption = adoptPreparedSystemEvents();
-    if (adoption.kind === "adopted") {
-      adoptedSystemEvents = adoption;
-      break;
-    }
-    await traceRunPhase("reply.settle_stale_system_event_authority", adoption.settle);
-  }
-  // Keep prompt bytes and adoption receipts inside this synchronous section:
-  // any future awaited preparation belongs before the authority recheck above.
-  const {
-    prefixedCommandBody,
-    queuedBody,
-    transcriptBody,
-    transcriptCommandBody,
-    currentInboundContext,
-    managedSystemEventDeliveries,
-  } = adoptedSystemEvents;
   // prompt-prelude substitutes MEDIA_ONLY_USER_TEXT as transcriptBody for
   // bodyless turns; storage stays bare (the LLM boundary re-injects it), while
   // room-event lines that merely contain the marker keep their real text.
@@ -317,12 +302,14 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
           text: userTurnTranscriptText,
           senderIsOwner: command.senderIsOwner,
           ...(sourceTurnId ? { idempotencyKey: sourceTurnId } : {}),
-          ...(managedSystemEventDeliveries.size > 0
-            ? { sessionDeliveryAckIds: [...managedSystemEventDeliveries.keys()] }
-            : {}),
           ...(inputProvenance && !isHeartbeat ? { provenance: inputProvenance } : {}),
           ...(isHeartbeat
-            ? { provenance: { kind: "internal_system" as const, sourceTool: "heartbeat" } }
+            ? {
+                provenance: resolveInternalTurnTranscript({
+                  InputProvenance: inputProvenance,
+                  InternalTurnSource: ctx.InternalTurnSource ?? sessionCtx.InternalTurnSource,
+                }).provenance,
+              }
             : {}),
           ...(transport ? { transport } : {}),
           ...(userTurnMediaForPersistence.length > 0 ? { media: userTurnMediaForPersistence } : {}),
@@ -367,24 +354,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   const replyPolicyChannel =
     (replyRoute.channel as OriginatingChannelType | undefined) ??
     (messageProvider as OriginatingChannelType | undefined);
-  const originalTurnAdoptionLifecycle = opts?.turnAdoptionLifecycle;
-  const effectiveTurnAdoptionLifecycle =
-    managedSystemEventDeliveries.size > 0
-      ? {
-          ...originalTurnAdoptionLifecycle,
-          onAdopted: async () => {
-            await settleManagedSystemEventsAfterTurnAdoption({
-              deliveries: managedSystemEventDeliveries.values(),
-              persistedMessage: userTurnTranscriptRecorder?.getPersistedMessage?.(),
-              onTurnAdopted: originalTurnAdoptionLifecycle?.onAdopted,
-            });
-          },
-        }
-      : originalTurnAdoptionLifecycle;
-  const effectiveOpts =
-    effectiveTurnAdoptionLifecycle === opts?.turnAdoptionLifecycle
-      ? opts
-      : { ...opts, turnAdoptionLifecycle: effectiveTurnAdoptionLifecycle };
   const queuedToolsAllow = opts?.toolsAllow ? [...opts.toolsAllow] : opts?.toolsAllow;
   const queuedToolIntersections = opts?.toolsAllow
     ? readToolAllowlistIntersection(opts.toolsAllow)
@@ -393,12 +362,12 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     attachToolAllowlistIntersection(queuedToolsAllow, queuedToolIntersections);
   }
   const admittedSessionSettings = opts?.admittedSessionSettings;
+  const groupTurn = getGroupThreadTurn();
   const followupRun = {
     prompt: queuedBody,
     transcriptPrompt: transcriptCommandBody,
     ...(userTurnTranscriptRecorder ? { userTurnTranscriptRecorder } : {}),
     currentInboundEventKind: inboundEventKind,
-    ...(userTurnTimestamp ? { currentInboundEventTimestampMs: userTurnTimestamp } : {}),
     currentInboundAudio: hasInboundAudio(sessionCtx),
     channelAdmissionEvidence:
       readChannelContextAdmissionEvidence(ctx) ?? readChannelContextAdmissionEvidence(sessionCtx),
@@ -406,7 +375,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     explicitSkillSelections: params.explicitSkillSelections,
     ...(queuedFollowupAbortSignal ? { abortSignal: queuedFollowupAbortSignal } : {}),
     deliveryCorrelations: opts?.queuedDeliveryCorrelations,
-    turnAdoptionLifecycle: effectiveTurnAdoptionLifecycle,
+    turnAdoptionLifecycle: opts?.turnAdoptionLifecycle,
     ...(opts?.onFollowupQueueDisposition
       ? { onQueueDisposition: opts.onFollowupQueueDisposition }
       : {}),
@@ -417,7 +386,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
             : { kind: "drop" as const, reason: "source-unavailable" as const },
         }
       : {}),
-    messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
+    messageId:
+      groupTurn && groupTurn.round > 1
+        ? groupTurn.messageId
+        : (sessionCtx.MessageSidFull ?? sessionCtx.MessageSid),
     summaryLine: baseBodyTrimmedRaw,
     ...(queuedToolsAllow !== undefined ? { toolsAllow: queuedToolsAllow } : {}),
     ...(opts?.disableTools !== undefined ? { disableTools: opts.disableTools } : {}),
@@ -539,7 +511,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
           : {}),
       },
       timeoutMs,
-      runTimeoutOverrideMs: opts?.timeoutOverrideSeconds !== undefined ? timeoutMs : undefined,
+      runTimeoutOverrideMs:
+        opts?.timeoutOverrideMs !== undefined || opts?.timeoutOverrideSeconds !== undefined
+          ? timeoutMs
+          : undefined,
       blockReplyBreak: resolvedBlockStreamingBreak,
       ownerNumbers: resolveOwnerPromptNumbers({
         ownerNumbers: command.ownerList,
@@ -633,11 +608,11 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       opts:
         authorityRunId || cronCreatorAuthorityCapability
           ? {
-              ...effectiveOpts,
+              ...opts,
               ...(authorityRunId ? { runId: authorityRunId } : {}),
               ...(cronCreatorAuthorityCapability ? { cronCreatorAuthorityCapability } : {}),
             }
-          : effectiveOpts,
+          : opts,
       typing,
       sessionEntry: preparedSessionState.sessionEntry,
       sessionStore,
@@ -656,7 +631,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       typingMode,
       resetTriggered: effectiveResetTriggered,
       replyThreadingOverride,
-      isContinuationWake,
       replyOperation: providedReplyOperation,
     });
   // The scope surrounds the whole immediate turn, including provider fallbacks.

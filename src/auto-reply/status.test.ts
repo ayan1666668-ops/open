@@ -1,4 +1,3 @@
-// "RFC §" references herein cite docs/design/continue-work-signal-v2.md (Agent Self-Elected Turn Continuation / CONTINUE_WORK).
 /** Tests auto-reply status message formatting. */
 import { withTempHome } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +14,8 @@ import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js
 import {
   buildStatusMessage as buildStatusMessageRaw,
   type buildStatusMessage as BuildStatusMessage,
-} from "../status/status-message.js";
+  statusModelRefs,
+} from "../status/status-message.test-support.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { createSuccessfulImageMediaDecision } from "./media-understanding.test-fixtures.js";
 import { buildCommandsMessage, buildCommandsMessagePaginated, buildHelpMessage } from "./status.js";
@@ -36,48 +36,6 @@ const { listPluginCommands } = vi.hoisted(() => ({
 vi.mock("../plugins/commands.js", () => ({
   listPluginCommands,
 }));
-
-// Continuation counters — mocked so the /status renderer sees session-keyed
-// non-zero values in the "full row" regression test below. Defaults to 0
-// for every session so every other test's behavior is unchanged.
-const continuationMocks = vi.hoisted(() => ({
-  pending: new Map<string, number>(),
-  staged: new Map<string, number>(),
-  volitional: new Map<string, number>(),
-}));
-
-vi.mock("./continuation/delegate-store.js", async () => {
-  const actual = await vi.importActual<typeof import("./continuation/delegate-store.js")>(
-    "./continuation/delegate-store.js",
-  );
-  return {
-    ...actual,
-    pendingDelegateCount: (sessionKey: string): number =>
-      continuationMocks.pending.get(sessionKey) ?? 0,
-  };
-});
-
-vi.mock("./continuation/delegate-store-post-compaction.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("./continuation/delegate-store-post-compaction.js")
-  >("./continuation/delegate-store-post-compaction.js");
-  return {
-    ...actual,
-    stagedPostCompactionDelegateCount: (sessionKey: string): number =>
-      continuationMocks.staged.get(sessionKey) ?? 0,
-  };
-});
-
-vi.mock("../agents/tools/request-compaction-tool.js", async () => {
-  const actual = await vi.importActual<typeof import("../agents/tools/request-compaction-tool.js")>(
-    "../agents/tools/request-compaction-tool.js",
-  );
-  return {
-    ...actual,
-    getVolitionalCompactionCount: (sessionKey: string): number =>
-      continuationMocks.volitional.get(sessionKey) ?? 0,
-  };
-});
 
 beforeEach(() => {
   cliBackendsTesting.setDepsForTest({
@@ -181,6 +139,10 @@ function makeFallbackContextStatusArgs({
   }
 
   return {
+    modelRefs: statusModelRefs(
+      { provider: "xiaomi", model: "mimo-v2-flash" },
+      { provider: activeProvider, model: activeModel },
+    ),
     config: { models: { providers } } as unknown as OpenClawConfig,
     agent: { model: "xiaomi/mimo-v2-flash" },
     ...(runtimeContextTokens === undefined ? {} : { runtimeContextTokens }),
@@ -220,6 +182,7 @@ function makeFallbackContextStatusArgs({
 describe("buildStatusMessage", () => {
   it("summarizes agent readiness and context usage", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
       config: {
         models: {
           providers: {
@@ -289,185 +252,15 @@ describe("buildStatusMessage", () => {
     expect(normalized).not.toContain("verbose");
     expect(normalized).toContain("elevated");
     expect(normalized).toContain("Queue: collect");
-    // RFC §6.3 — with continuation disabled (default), the row is absent.
-    expect(normalized).not.toContain("Continuation:");
     expect(normalized).toContain("- active run");
-  });
-
-  it("renders the RFC §6.3 continuation row when enabled and chain depth > 0", () => {
-    const text = buildStatusMessage({
-      config: {
-        agents: {
-          defaults: {
-            continuation: {
-              enabled: true,
-              maxChainLength: 10,
-            },
-          },
-        },
-      } as unknown as OpenClawConfig,
-      agent: { model: "anthropic/pi:opus" },
-      sessionEntry: {
-        sessionId: "abc",
-        updatedAt: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        contextTokens: 32_000,
-        continuationChainCount: 3,
-      },
-      sessionKey: "agent:main:test-187",
-      sessionScope: "per-sender",
-      queue: { mode: "collect", depth: 0 },
-    });
-    const normalized = normalizeTestText(text);
-    // Shape comes from docs/design/continue-work-signal-v2.md §6.3.
-    expect(normalized).toMatch(/Continuation: chain 3\/10/);
-  });
-
-  it("renders the full RFC §6.3 continuation row with all four fields", () => {
-    const key = "agent:main:test-187-full-row";
-    continuationMocks.pending.set(key, 2);
-    continuationMocks.staged.set(key, 1);
-    continuationMocks.volitional.set(key, 3);
-    try {
-      const text = buildStatusMessage({
-        config: {
-          agents: {
-            defaults: {
-              continuation: { enabled: true, maxChainLength: 10 },
-            },
-          },
-        } as unknown as OpenClawConfig,
-        agent: { model: "anthropic/pi:opus" },
-        sessionEntry: {
-          sessionId: "abc",
-          updatedAt: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          contextTokens: 32_000,
-          continuationChainCount: 4,
-        },
-        sessionKey: key,
-        sessionScope: "per-sender",
-        queue: { mode: "collect", depth: 0 },
-      });
-      const normalized = normalizeTestText(text);
-      // All four RFC §6.3 fields must render, pipe-joined, in order.
-      expect(normalized).toMatch(
-        /Continuation: chain 4\/10 \| 2 delegates pending \| 1 post-compaction staged \| volitional: 3/,
-      );
-    } finally {
-      continuationMocks.pending.delete(key);
-      continuationMocks.staged.delete(key);
-      continuationMocks.volitional.delete(key);
-    }
-  });
-
-  it("renders a partial continuation row showing only the non-zero fields", () => {
-    const key = "agent:main:test-187-partial";
-    // chain + staged only; pending=0 and volitional=0 must be omitted from the line.
-    continuationMocks.staged.set(key, 1);
-    try {
-      const text = buildStatusMessage({
-        config: {
-          agents: {
-            defaults: {
-              continuation: { enabled: true, maxChainLength: 10 },
-            },
-          },
-        } as unknown as OpenClawConfig,
-        agent: { model: "anthropic/pi:opus" },
-        sessionEntry: {
-          sessionId: "abc",
-          updatedAt: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          contextTokens: 32_000,
-          continuationChainCount: 2,
-        },
-        sessionKey: key,
-        sessionScope: "per-sender",
-        queue: { mode: "collect", depth: 0 },
-      });
-      const normalized = normalizeTestText(text);
-      // Chain + staged visible; pending / volitional fields omitted entirely.
-      expect(normalized).toMatch(/Continuation: chain 2\/10 \| 1 post-compaction staged$/m);
-      expect(normalized).not.toContain("delegate");
-      expect(normalized).not.toContain("volitional");
-    } finally {
-      continuationMocks.staged.delete(key);
-    }
-  });
-
-  it("renders singular 'delegate' when pending count is 1 (plural boundary)", () => {
-    const key = "agent:main:test-187-singular";
-    continuationMocks.pending.set(key, 1);
-    try {
-      const text = buildStatusMessage({
-        config: {
-          agents: {
-            defaults: {
-              continuation: { enabled: true, maxChainLength: 10 },
-            },
-          },
-        } as unknown as OpenClawConfig,
-        agent: { model: "anthropic/pi:opus" },
-        sessionEntry: {
-          sessionId: "abc",
-          updatedAt: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          contextTokens: 32_000,
-          continuationChainCount: 1,
-        },
-        sessionKey: key,
-        sessionScope: "per-sender",
-        queue: { mode: "collect", depth: 0 },
-      });
-      const normalized = normalizeTestText(text);
-      expect(normalized).toMatch(/Continuation: chain 1\/10 \| 1 delegate pending$/m);
-      expect(normalized).not.toMatch(/1 delegates pending/);
-    } finally {
-      continuationMocks.pending.delete(key);
-    }
-  });
-
-  it("omits the continuation row when enabled but every field is zero", () => {
-    const text = buildStatusMessage({
-      config: {
-        agents: {
-          defaults: {
-            continuation: {
-              enabled: true,
-              maxChainLength: 10,
-            },
-          },
-        },
-      } as unknown as OpenClawConfig,
-      agent: { model: "anthropic/pi:opus" },
-      sessionEntry: {
-        sessionId: "abc",
-        updatedAt: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        contextTokens: 32_000,
-        continuationChainCount: 0,
-      },
-      sessionKey: "agent:main:test-187-empty",
-      sessionScope: "per-sender",
-      queue: { mode: "collect", depth: 0 },
-    });
-    const normalized = normalizeTestText(text);
-    expect(normalized).not.toContain("Continuation:");
   });
 
   it("shows configured model costs for aws-sdk providers", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({
+        provider: "amazon-bedrock",
+        model: "us.anthropic.claude-sonnet-4-6",
+      }),
       config: {
         models: {
           providers: {
@@ -544,6 +337,7 @@ describe("buildStatusMessage", () => {
     },
   ])("$name", ({ sessionEntry, expectedContext, unexpectedContext }) => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
       agent: {
         model: "anthropic/test:opus",
       },
@@ -563,6 +357,7 @@ describe("buildStatusMessage", () => {
 
   it("uses estimated context budget status when fresh totalTokens are unavailable", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-sonnet-4.6" }),
       agent: {
         model: "anthropic/claude-sonnet-4.6",
       },
@@ -620,6 +415,7 @@ describe("buildStatusMessage", () => {
     },
   ])("$name", ({ sessionEntry, expectedContext, unexpectedContext }) => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-sonnet-4.6" }),
       agent: {
         model: "anthropic/claude-sonnet-4.6",
       },
@@ -639,6 +435,7 @@ describe("buildStatusMessage", () => {
   it("shows sanitized TTS provider details in the voice status line", async () => {
     await withTempHome(async () => {
       const text = buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
         config: {
           tts: {
             auto: "always",
@@ -669,6 +466,7 @@ describe("buildStatusMessage", () => {
 
   it("shows the model runtime for CLI-backed providers", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "claude-cli", model: "opus" }),
       config: {
         agents: {
           defaults: {},
@@ -692,6 +490,7 @@ describe("buildStatusMessage", () => {
 
   it("falls back to the configured CLI provider when session provider fields are empty", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "claude-cli", model: "opus" }),
       config: {
         agents: {
           defaults: {},
@@ -713,6 +512,7 @@ describe("buildStatusMessage", () => {
 
   it("shows the ACP runtime agent and backend when ACP owns the session", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: "anthropic/claude-opus-4-6",
       },
@@ -737,6 +537,7 @@ describe("buildStatusMessage", () => {
 
   it("sanitizes runtime labels sourced from session metadata", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: "anthropic/claude-opus-4-6",
       },
@@ -763,6 +564,7 @@ describe("buildStatusMessage", () => {
 
   it("falls back to sessionEntry levels when resolved levels are not passed", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
       agent: {
         model: "anthropic/test:opus",
       },
@@ -786,6 +588,7 @@ describe("buildStatusMessage", () => {
   it("shows plugin status lines only when verbose is enabled", () => {
     const visible = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -806,6 +609,7 @@ describe("buildStatusMessage", () => {
     );
     const hidden = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -832,6 +636,7 @@ describe("buildStatusMessage", () => {
   it("shows structured plugin debug lines in verbose status", () => {
     const visible = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -859,6 +664,7 @@ describe("buildStatusMessage", () => {
   it("shows trace lines only when trace is enabled", () => {
     const hidden = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -876,6 +682,7 @@ describe("buildStatusMessage", () => {
     );
     const visible = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -901,6 +708,7 @@ describe("buildStatusMessage", () => {
   it("shows raw trace mode and plugin trace lines in status", () => {
     const visible = normalizeTestText(
       buildStatusMessage({
+        modelRefs: statusModelRefs({ provider: "anthropic", model: "test:opus" }),
         agent: {
           model: "anthropic/test:opus",
         },
@@ -926,6 +734,7 @@ describe("buildStatusMessage", () => {
     {
       name: "shows fast mode when enabled",
       model: "openai/gpt-5.4",
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.4" }),
       sessionId: "fast",
       fastMode: true,
       expected: "fast",
@@ -933,12 +742,14 @@ describe("buildStatusMessage", () => {
     {
       name: "shows fast mode when disabled",
       model: "anthropic/claude-opus-4-6",
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       sessionId: "fast-off",
       fastMode: false,
       expected: "fast off",
     },
-  ])("$name", ({ model, sessionId, fastMode, expected }) => {
+  ])("$name", ({ model, modelRefs, sessionId, fastMode, expected }) => {
     const text = buildStatusMessage({
+      modelRefs,
       agent: { model },
       sessionEntry: { sessionId, updatedAt: 0, fastMode },
       sessionKey: "agent:main:main",
@@ -965,6 +776,7 @@ describe("buildStatusMessage", () => {
     },
   ])("$name", ({ sessionId, resolvedHarness, expectedRuntime, unexpectedSuffix }) => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.4" }),
       agent: { model: "openai/gpt-5.4" },
       sessionEntry: { sessionId, updatedAt: 0, fastMode: true },
       sessionKey: "agent:main:main",
@@ -980,6 +792,7 @@ describe("buildStatusMessage", () => {
 
   it("shows configured text verbosity for the active model", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.4" }),
       config: {
         agents: {
           defaults: {
@@ -1010,6 +823,7 @@ describe("buildStatusMessage", () => {
 
   it("shows per-agent text verbosity overrides for the active model", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.4" }),
       config: {
         agents: {
           defaults: {
@@ -1049,6 +863,7 @@ describe("buildStatusMessage", () => {
 
   it("notes channel model overrides in status output", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-4.1" }),
       config: {
         channels: {
           modelByChannel: {
@@ -1079,6 +894,7 @@ describe("buildStatusMessage", () => {
 
   it("uses the channel override model context window instead of stale persisted context", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "minimax-portal", model: "MiniMax-M2.7" }),
       config: {
         channels: {
           modelByChannel: {
@@ -1125,6 +941,7 @@ describe("buildStatusMessage", () => {
 
   it("shows 1M context window when anthropic context1m is enabled", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       config: {
         agents: {
           defaults: {
@@ -1157,6 +974,7 @@ describe("buildStatusMessage", () => {
 
   it("keeps bare Claude CLI opus 4.7 variants at the plan-safe context window", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "claude-cli", model: "claude-opus-4.7-20260219" }),
       agent: {
         model: "claude-cli/claude-opus-4.7-20260219",
       },
@@ -1199,6 +1017,7 @@ describe("buildStatusMessage", () => {
     });
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "local", model: "large-model" }),
       config: {
         models: {
           providers: {
@@ -1222,6 +1041,10 @@ describe("buildStatusMessage", () => {
 
   it("ignores stale session contextTokens after the default model changes", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "ollama-cloud", model: "kimi-k2.7-code" },
+        { provider: "ollama-cloud", model: "deepseek-v4-pro" },
+      ),
       config: {
         models: {
           providers: {
@@ -1258,6 +1081,10 @@ describe("buildStatusMessage", () => {
 
   it("uses the selected model window when a stale runtime snapshot is smaller", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "ollama-cloud", model: "deepseek-v4-pro" },
+        { provider: "ollama-cloud", model: "kimi-k2.7-code" },
+      ),
       config: {
         models: {
           providers: {
@@ -1347,6 +1174,10 @@ describe("buildStatusMessage", () => {
     registerAnthropicCliBackendForTest();
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "anthropic", model: "claude-opus-4-7" },
+        { provider: "claude-cli", model: "claude-opus-4-7" },
+      ),
       agent: {
         model: "anthropic/claude-opus-4-7",
       },
@@ -1390,6 +1221,10 @@ describe("buildStatusMessage", () => {
     registerAnthropicCliBackendForTest();
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "anthropic", model: "claude-opus-4-7" },
+        { provider: "claude-cli", model: "claude-opus-4-7" },
+      ),
       config: {
         models: {
           providers: {
@@ -1473,6 +1308,7 @@ describe("buildStatusMessage", () => {
 
   it("uses per-agent sandbox config when config and session key are provided", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       config: {
         agents: {
           list: [
@@ -1492,6 +1328,7 @@ describe("buildStatusMessage", () => {
 
   it("shows verbose/elevated labels only when enabled", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       sessionEntry: { sessionId: "v1", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1508,6 +1345,7 @@ describe("buildStatusMessage", () => {
 
   it("includes media understanding decisions when present", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       sessionEntry: { sessionId: "media", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1542,6 +1380,7 @@ describe("buildStatusMessage", () => {
 
   it("distinguishes observed local STT backends from requested backends", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       sessionEntry: { sessionId: "media-local-stt", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1574,6 +1413,7 @@ describe("buildStatusMessage", () => {
 
   it("includes failed media understanding decisions with the surfaced reason", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       sessionEntry: { sessionId: "media-failed", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1612,6 +1452,7 @@ describe("buildStatusMessage", () => {
 
   it("omits media line when all decisions are none", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       sessionEntry: { sessionId: "media-none", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1644,6 +1485,7 @@ describe("buildStatusMessage", () => {
 
   it("does not show elevated label when session explicitly disables it", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6", elevatedDefault: "on" },
       sessionEntry: { sessionId: "v1", updatedAt: 0, elevatedLevel: "off" },
       sessionKey: "agent:main:main",
@@ -1660,44 +1502,85 @@ describe("buildStatusMessage", () => {
     expect(optionsLine).not.toContain("elevated");
   });
 
-  it("shows selected model and active runtime model when they differ", () => {
-    const text = buildStatusMessage({
-      agent: {
-        model: "anthropic/claude-opus-4-6",
-      },
-      sessionEntry: {
-        sessionId: "override-1",
-        updatedAt: 0,
-        providerOverride: "openai",
-        modelOverride: "gpt-4.1-mini",
-        modelProvider: "anthropic",
-        model: "claude-haiku-4-5",
-        fallbackNotice: {
-          kind: "active",
-          selectedModel: "openai/gpt-4.1-mini",
-          activeModel: "anthropic/claude-haiku-4-5",
-          reason: "rate limit",
+  it.each([
+    [
+      "openai",
+      "gpt-4.1-mini",
+      "anthropic",
+      "claude-haiku-4-5",
+      statusModelRefs(
+        { provider: "openai", model: "gpt-4.1-mini" },
+        { provider: "anthropic", model: "claude-haiku-4-5" },
+      ),
+    ],
+    [
+      "custom",
+      "model",
+      "custom",
+      "custom/model",
+      statusModelRefs(
+        { provider: "custom", model: "model" },
+        { provider: "custom", model: "custom/model" },
+      ),
+    ],
+    [
+      undefined,
+      "custom/model",
+      "custom",
+      "custom/model",
+      statusModelRefs(
+        { provider: "custom", model: "model" },
+        { provider: "custom", model: "custom/model" },
+      ),
+    ],
+  ] as const)(
+    "shows selected %s/%s and active %s/%s when they differ",
+    (selectedProvider, selectedModel, activeProvider, activeModel, modelRefs) => {
+      const selectedRef = selectedProvider ? `${selectedProvider}/${selectedModel}` : selectedModel;
+      const activeRef = `${activeProvider}/${activeModel}`;
+      const text = buildStatusMessage({
+        modelRefs,
+        agent: {
+          model: "anthropic/claude-opus-4-6",
         },
-        contextTokens: 32_000,
-      },
-      sessionKey: "agent:main:main",
-      sessionScope: "per-sender",
-      queue: { mode: "collect", depth: 0 },
-      modelAuth: "api-key",
-      activeModelAuth: "api-key di_123…abc (deepinfra:default)",
-    });
+        sessionEntry: {
+          sessionId: "override-1",
+          updatedAt: 0,
+          providerOverride: selectedProvider,
+          modelOverride: selectedModel,
+          modelProvider: activeProvider,
+          model: activeModel,
+          fallbackNotice: {
+            kind: "active",
+            selectedModel: selectedRef,
+            activeModel: activeRef,
+            reason: "rate limit",
+          },
+          contextTokens: 32_000,
+        },
+        sessionKey: "agent:main:main",
+        sessionScope: "per-sender",
+        queue: { mode: "collect", depth: 0 },
+        modelAuth: "api-key",
+        activeModelAuth: "api-key di_123…abc (deepinfra:default)",
+      });
 
-    const normalized = normalizeTestText(text);
-    expect(normalized).toContain("Model: openai/gpt-4.1-mini");
-    expect(normalized).toContain("Fallback: anthropic/claude-haiku-4-5");
-    expect(normalized).toContain("(rate limit)");
-    expect(normalized).not.toContain(" - Reason:");
-    expect(normalized).not.toContain("Active:");
-    expect(normalized).toContain("di_123...abc");
-  });
+      const normalized = normalizeTestText(text);
+      expect(normalized).toContain(`Model: ${selectedRef}`);
+      expect(normalized).toContain(`Fallback: ${activeRef}`);
+      expect(normalized).toContain("(rate limit)");
+      expect(normalized).not.toContain(" - Reason:");
+      expect(normalized).not.toContain("Active:");
+      expect(normalized).toContain("di_123...abc");
+    },
+  );
 
   it("omits active fallback details when runtime drift does not match fallback state", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "openai", model: "gpt-4.1-mini" },
+        { provider: "anthropic", model: "claude-haiku-4-5" },
+      ),
       agent: {
         model: "openai/gpt-4.1-mini",
       },
@@ -1728,6 +1611,7 @@ describe("buildStatusMessage", () => {
 
   it("omits active lines when runtime matches selected model", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-4.1-mini" }),
       agent: {
         model: "openai/gpt-4.1-mini",
       },
@@ -1749,6 +1633,7 @@ describe("buildStatusMessage", () => {
 
   it("shows configured fallback models when provided", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: {
           primary: "anthropic/claude-opus-4-6",
@@ -1768,6 +1653,7 @@ describe("buildStatusMessage", () => {
 
   it("omits configured fallbacks for a session-selected model", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "google", model: "gemini-3.1-flash-lite" }),
       configuredDefaultModelLabel: "google/gemini-3-flash-preview",
       agent: {
         model: {
@@ -1800,6 +1686,7 @@ describe("buildStatusMessage", () => {
 
   it("omits configured fallbacks line when no fallbacks provided", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: "anthropic/claude-opus-4-6",
       },
@@ -1816,6 +1703,7 @@ describe("buildStatusMessage", () => {
 
   it("keeps provider prefix from configured model", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "google-antigravity", model: "claude-sonnet-4-6" }),
       agent: {
         model: "google-antigravity/claude-sonnet-4-6",
       },
@@ -1829,6 +1717,7 @@ describe("buildStatusMessage", () => {
 
   it("renders session-selected model overrides compactly", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "deepseek", model: "deepseek-v4-flash" }),
       agent: {
         model: "zhipu/glm-4.5-air",
       },
@@ -1855,12 +1744,16 @@ describe("buildStatusMessage", () => {
     expect(normalized).not.toContain("Reason: session override");
     expect(normalized).not.toContain("This session is pinned");
     expect(normalized).not.toContain(
-      "Docs: https://docs.openclaw.ai/concepts/models#selection-source-and-fallback-behavior",
+      "Docs: https://docs.openclaw.ai/concepts/models#selection-source-and-fallback-strictness",
     );
   });
 
   it("does not warn when only the last runtime model differs from the configured default", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "zhipu", model: "glm-4.5-air" },
+        { provider: "deepseek", model: "deepseek-v4-flash" },
+      ),
       agent: {
         model: "zhipu/glm-4.5-air",
       },
@@ -1885,6 +1778,7 @@ describe("buildStatusMessage", () => {
 
   it("does not label auto fallback model overrides as pinned selections", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "deepseek", model: "deepseek-v4-flash" }),
       agent: {
         model: "zhipu/glm-4.5-air",
       },
@@ -1912,6 +1806,7 @@ describe("buildStatusMessage", () => {
 
   it("handles missing agent config gracefully", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {},
       sessionScope: "per-sender",
       queue: { mode: "collect", depth: 0 },
@@ -1926,6 +1821,7 @@ describe("buildStatusMessage", () => {
 
   it("includes group activation for group sessions", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {},
       sessionEntry: {
         sessionId: "g1",
@@ -1944,6 +1840,7 @@ describe("buildStatusMessage", () => {
 
   it("shows queue details when overridden", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {},
       sessionEntry: { sessionId: "q1", updatedAt: 0 },
       sessionKey: "agent:main:main",
@@ -1964,6 +1861,7 @@ describe("buildStatusMessage", () => {
 
   it("inserts usage summary beneath context line", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: { model: "anthropic/claude-opus-4-6" },
       runtimeContextTokens: 32_000,
       sessionEntry: { sessionId: "u1", updatedAt: 0, totalTokens: 1000 },
@@ -1982,6 +1880,7 @@ describe("buildStatusMessage", () => {
 
   it("shows configured model costs when not using an API key", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       config: {
         models: {
           providers: {
@@ -2063,6 +1962,7 @@ describe("buildStatusMessage", () => {
 
   function buildTranscriptStatusText(params: { sessionId: string; sessionKey: string }) {
     return buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: "anthropic/claude-opus-4-6",
       },
@@ -2138,6 +2038,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
           agent: {
             model: "anthropic/claude-opus-4-6",
           },
@@ -2184,6 +2085,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
           agent: {
             model: "anthropic/claude-opus-4-6",
           },
@@ -2231,6 +2133,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
           agent: {
             model: "anthropic/claude-opus-4-6",
           },
@@ -2310,6 +2213,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
           agent: {
             model: "anthropic/claude-opus-4-6",
           },
@@ -2355,6 +2259,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "openrouter", model: "google/gemini-2.5-pro" }),
           config: {
             models: {
               providers: {
@@ -2391,6 +2296,7 @@ describe("buildStatusMessage", () => {
     getContextWindowCaches().discoveredTokenCache.set("google/gemini-2.5-pro", 999_000);
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openrouter", model: "google/gemini-2.5-pro" }),
       config: {
         models: {
           providers: {
@@ -2426,6 +2332,10 @@ describe("buildStatusMessage", () => {
     getContextWindowCaches().discoveredTokenCache.clear();
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs(
+        { provider: "xiaomi", model: "mimo-v2-flash" },
+        { provider: "fake-minimax", model: "FakeMiniMax-M2.5" },
+      ),
       config: {
         models: {
           providers: {
@@ -2474,6 +2384,7 @@ describe("buildStatusMessage", () => {
     getContextWindowCaches().discoveredTokenCache.clear();
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-4o" }),
       config: {
         models: {
           providers: {
@@ -2531,6 +2442,7 @@ describe("buildStatusMessage", () => {
         });
 
         const text = buildStatusMessage({
+          modelRefs: statusModelRefs({ provider: "google-gemini-cli", model: "gemini-2.5-pro" }),
           agent: {
             model: "google-gemini-cli/gemini-2.5-pro",
           },
@@ -2562,6 +2474,7 @@ describe("buildStatusMessage", () => {
     );
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "anthropic", model: "claude-opus-4-6" }),
       agent: {
         model: "anthropic/claude-opus-4-6",
       },
@@ -2590,6 +2503,7 @@ describe("buildStatusMessage", () => {
     );
 
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.5" }),
       agent: {
         model: "openai/gpt-5.5",
       },
@@ -2613,6 +2527,7 @@ describe("buildStatusMessage", () => {
 
   it("uses runtime context tokens to cap status when the sync cache is cold", () => {
     const text = buildStatusMessage({
+      modelRefs: statusModelRefs({ provider: "openai", model: "gpt-5.5" }),
       agent: {
         model: "openai/gpt-5.5",
       },

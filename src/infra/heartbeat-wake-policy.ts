@@ -1,37 +1,14 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { listAgentIds } from "../agents/agent-scope.js";
-import type { ContinuationTrigger } from "../auto-reply/get-reply-options.types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
-import type { HeartbeatWakeIntent, HeartbeatWakeSource } from "./heartbeat-wake-contracts.js";
+import type { HeartbeatWakeIntent, HeartbeatWakeSource } from "./heartbeat-wake.js";
 
 export type HeartbeatWakePayloadFlags = {
   isExecEventWake: boolean;
   isCronWake: boolean;
   isWakePayload: boolean;
 };
-
-function isContinuationHeartbeatWakeReason(reason?: string): boolean {
-  const normalized = (reason ?? "").trim();
-  return (
-    normalized === "continuation" ||
-    normalized === "silent-wake-enrichment" ||
-    normalized === "delegate-return"
-  );
-}
-
-export function resolveHeartbeatContinuationTrigger(
-  reason?: string,
-): ContinuationTrigger | undefined {
-  const normalized = (reason ?? "").trim();
-  if (normalized === "continuation") {
-    return "work-wake";
-  }
-  if (normalized === "silent-wake-enrichment" || normalized === "delegate-return") {
-    return "delegate-return";
-  }
-  return undefined;
-}
 
 export function inferHeartbeatWakeSourceFromReason(
   reason?: string,
@@ -44,9 +21,6 @@ export function inferHeartbeatWakeSourceFromReason(
     return "cron";
   }
   if (trimmed === "wake" || trimmed.startsWith("hook:")) {
-    return "hook";
-  }
-  if (isContinuationHeartbeatWakeReason(trimmed)) {
     return "hook";
   }
   if (trimmed.startsWith("acp:spawn:")) {
@@ -73,8 +47,7 @@ export function resolveHeartbeatWakePayloadFlags(params: {
       source === "session-state" ||
       source === "background-task" ||
       source === "background-task-blocked" ||
-      reason === "wake" ||
-      isContinuationHeartbeatWakeReason(reason),
+      reason === "wake",
   };
 }
 

@@ -28,7 +28,6 @@ import { renderRateLimitOrOverloadedCopy } from "../../agents/failover/user-copy
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { leaseMcpAppModelContextForTurn } from "../../agents/mcp-app-model-context.js";
 import { createAgentPatchedSessionModelRunGuard } from "../../agents/session-model-auto-revert.js";
-import type { ContinueWorkRequest } from "../../agents/tools/continue-work-tool.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
@@ -38,6 +37,7 @@ import {
 } from "../../infra/agent-events.js";
 import { clearAgentRunContext, registerAgentRunContext } from "../../infra/agent-run-registry.js";
 import { emitAgentRunStatusEvent } from "../../infra/agent-run-status-events.js";
+import { drainAgentRunTerminalWrites } from "../../infra/agent-run-terminal-writes.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
@@ -46,7 +46,6 @@ import {
   getPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
-import type { ReplyPayload } from "../types.js";
 import {
   clearRecoveredAutoFallbackPrimaryProbeSelection,
   resolveRunAfterAutoFallbackPrimaryProbeRecheck,
@@ -76,6 +75,7 @@ import { prepareChannelRunAdmission } from "./channel-run-admission.js";
 import { shouldNotifyUserAboutCompaction } from "./compaction-notice.js";
 import { type CurrentTurnImages, resolveCurrentTurnImages } from "./current-turn-images.js";
 import type { FollowupRun } from "./queue.js";
+import type { DirectBlockDelivery } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
 import { resolveReplyOperationAbortReason } from "./reply-operation-abort.js";
@@ -110,10 +110,11 @@ function resolveRunStartupPhase(
     case "process_spawned":
     case "model_call_started":
       return "starting_model";
-    default:
-      // Tool execution and assistant output occur after startup has completed.
+    case "tool_execution_started":
+    case "assistant_output_started":
       return undefined;
   }
+  return undefined;
 }
 
 async function executeAgentTurnInternalLoop(
@@ -128,7 +129,7 @@ async function executeAgentTurnInternalLoop(
   const heartbeatState = { didLogStrip: false };
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
-  const directlySentBlockPayloads: Array<ReplyPayload | undefined> = [];
+  const directBlockDeliveries: DirectBlockDelivery[] = [];
   const runnableRun = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
     run: params.followupRun.run,
     entry: params.activeSessionStore?.[params.sessionKey ?? ""] ?? params.getActiveSessionEntry(),
@@ -184,6 +185,7 @@ async function executeAgentTurnInternalLoop(
       verboseLevel: params.resolvedVerboseLevel,
       isHeartbeat: params.isHeartbeat,
       isControlUiVisible: shouldSurfaceToControlUi,
+      completionSource: params.completionSource,
     });
   }
   if (isDiagnosticsEnabled(runtimeConfig)) {
@@ -196,7 +198,7 @@ async function executeAgentTurnInternalLoop(
         params.followupRun.run.messageProvider ??
         params.sessionCtx.Surface ??
         params.sessionCtx.Provider,
-      trigger: params.hookTrigger ?? (params.isHeartbeat ? "heartbeat" : "user"),
+      trigger: params.isHeartbeat ? "heartbeat" : "user",
     });
   }
   let replyMediaContext: ReplyMediaContext;
@@ -299,9 +301,6 @@ async function executeAgentTurnInternalLoop(
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
   let fallbackExhausted = false;
   let terminalRunFailed = false;
-  let continueWorkRequests: ContinueWorkRequest[] = [];
-  let compactionTraceparent: string | undefined;
-  let rawContinuationText: string | undefined;
   const modelPatch = createAgentPatchedSessionModelRunGuard({
     cfg: runtimeConfig,
     agentId: params.followupRun.run.agentId,
@@ -342,7 +341,7 @@ async function executeAgentTurnInternalLoop(
         turn: params,
         replyMediaContext,
         directlySentBlockKeys,
-        directlySentBlockPayloads,
+        directBlockDeliveries,
         heartbeatState,
       });
       const cycle = await executeAgentFallbackCycle({
@@ -357,6 +356,7 @@ async function executeAgentTurnInternalLoop(
         state: fallbackCycleState,
         presentation,
         directlySentBlockKeys,
+        directBlockDeliveries,
         notifyAgentRunStart,
         signalExecutionPhaseForTyping,
         notifyUserAboutCompaction,
@@ -385,9 +385,6 @@ async function executeAgentTurnInternalLoop(
       fallbackExhausted = cycle.fallbackExhausted;
       fallbackAttempts = cycle.fallbackAttempts;
       terminalRunFailed = cycle.terminalRunFailed;
-      continueWorkRequests = cycle.continueWorkRequests;
-      compactionTraceparent = cycle.compactionTraceparent;
-      rawContinuationText = cycle.rawContinuationText;
       break;
     } catch (err) {
       if (err instanceof LiveSessionModelSwitchError) {
@@ -521,13 +518,8 @@ async function executeAgentTurnInternalLoop(
     fallbackAttempts,
     didLogHeartbeatStrip: heartbeatState.didLogStrip,
     autoCompactionCount: compaction.count,
-    compactionTraceparent,
-    continueWorkRequests,
-    rawContinuationText,
     directlySentBlockKeys: directlySentBlockKeys.size > 0 ? directlySentBlockKeys : undefined,
-    directlySentBlockPayloads: directlySentBlockPayloads.filter(
-      (payload): payload is ReplyPayload => payload !== undefined,
-    ),
+    directBlockDeliveries,
     ...(terminalFailurePayload ? { terminalFailurePayload } : {}),
     ...(terminalRunFailed && fallbackCycleState.postCompactionModelAttempted
       ? { postCompactionModelFailure: true as const }
@@ -578,8 +570,13 @@ async function executeAgentTurnInternal(
       compaction,
     );
   } finally {
-    await deferredLifecycle.complete();
-    preparedRunAdmission.close();
+    try {
+      await deferredLifecycle.complete();
+    } finally {
+      await drainAgentRunTerminalWrites(preparedRunAdmission.operationalRunInstance).finally(
+        preparedRunAdmission.close,
+      );
+    }
   }
 }
 
@@ -690,9 +687,6 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
         compactionRequestBudget: internal.compactionRequestBudget,
         ...terminalStatus,
         result: internal.result,
-        continueWorkRequests: internal.continueWorkRequests,
-        compactionTraceparent: internal.compactionTraceparent,
-        rawContinuationText: internal.rawContinuationText,
         resolved: { provider, model },
         fallback: {
           exhausted: internal.fallbackExhausted === true,
@@ -702,7 +696,7 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
         ...completedCompaction(),
         didLogHeartbeatStrip: internal.didLogHeartbeatStrip,
         directlySentBlockKeys: internal.directlySentBlockKeys,
-        directlySentBlockPayloads: internal.directlySentBlockPayloads,
+        directBlockDeliveries: internal.directBlockDeliveries,
       },
     };
   } catch (error) {
@@ -725,7 +719,8 @@ export async function executeAgentTurn(params: AgentTurnParams): Promise<AgentTu
     retainReplyOperationUntilComplete(params.replyOperation);
   }
   const runId = params.opts?.runId ?? crypto.randomUUID();
-  const executionParams = { ...params, opts: { ...params.opts, runId } };
+  const executionParams =
+    params.opts?.runId === runId ? params : { ...params, opts: { ...params.opts, runId } };
   try {
     const result = await executeAgentTurnOutcome(executionParams);
     recordAgentTurnExecutionOutcome(executionParams, result);

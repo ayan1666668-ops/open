@@ -191,18 +191,18 @@ export function createAgentTurnService(
         to,
       } = content;
       let resolvedSessionId = requestedSessionId;
-      let sessionEntry: SessionEntry | undefined, sessionTraceparent: string | undefined;
+      let sessionEntry: SessionEntry | undefined;
       let effectiveBootstrapContextRunKind = request.bootstrapContextRunKind;
       let restoredCronContinuation: RestoredCronContinuation | undefined;
       let restoredCronContinuationIdentity:
         | Pick<RestoredCronContinuation, "lifecycleRevision" | "sessionId">
         | undefined;
       let sessionPersistedBeforeGatewayAdmission = false;
-      let bestEffortDeliver = requestedBestEffortDeliver ?? false,
-        isNewSession = false;
+      let bestEffortDeliver = requestedBestEffortDeliver ?? false;
       let cfgForAgent: OpenClawConfig | undefined;
       let resolvedSessionKey = requestedSessionKey;
       let resolvedSessionAgentId: string | undefined;
+      let isNewSession = false;
       let supersededSessionId: string | undefined;
       let skipAgentInitialSessionTouch = false;
       let pendingChatRun: { sessionKey: string; agentId?: string } | undefined;
@@ -330,7 +330,8 @@ export function createAgentTurnService(
           channel: recipientChannel?.trim(),
           to,
           accountId: recipientAccountId?.trim(),
-          // normalizeDeliveryContext accepts string and numeric thread IDs.
+          // Pass threadId directly — normalizeDeliveryContext handles both
+          // string and numeric threadIds (e.g., Matrix uses integers).
           threadId: recipientThreadId,
         });
         const explicitSessionKey = normalizeOptionalString(request.sessionKey);
@@ -439,7 +440,6 @@ export function createAgentTurnService(
           return;
         }
         sessionEntry = persistedSession.sessionEntry;
-        sessionTraceparent = persistedSession.consumedContinuationTraceparent;
         resolvedSessionId = persistedSession.resolvedSessionId;
         sessionPersistedBeforeGatewayAdmission =
           persistedSession.sessionPersistedBeforeGatewayAdmission;
@@ -554,7 +554,6 @@ export function createAgentTurnService(
             cfg,
             cfgForAgent,
             sessionEntry,
-            sessionContinuationTraceparent: sessionTraceparent,
             resolvedSessionKey,
             requestedSessionKey,
             resolvedSessionId,

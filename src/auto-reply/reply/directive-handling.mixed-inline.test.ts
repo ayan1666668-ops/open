@@ -9,7 +9,7 @@ import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
-import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
+import { enqueueSystemEvent } from "../../infra/system-events.js";
 import {
   onSessionLifecycleEvent,
   type SessionLifecycleEvent,
@@ -27,6 +27,14 @@ type PersistenceResult =
   | { status: "current"; entry: SessionEntry }
   | { status: "model-selection-locked"; entry: SessionEntry }
   | { status: "lifecycle-invalidated"; error: string; entry?: SessionEntry };
+
+// Runtime eligibility belongs to the published-owner tests; these cases exercise its consumers.
+vi.mock("../../agents/model-runtime-choice.js", () => ({
+  preparePublishedModelRuntimeChoice: vi.fn(async () => ({
+    kind: "ready",
+    validate: () => undefined,
+  })),
+}));
 
 vi.mock("../../agents/model-catalog.runtime.js", () => ({
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
@@ -60,7 +68,7 @@ vi.mock("../../gateway/session-patch-hooks.js", () => ({
 }));
 
 vi.mock("../../infra/system-events.js", () => ({
-  enqueueSystemEventRaw: vi.fn(),
+  enqueueSystemEvent: vi.fn(),
 }));
 
 vi.mock("./queue.js", () => ({
@@ -656,7 +664,7 @@ describe("mixed inline directives", () => {
     });
     expect(sessionEntry.providerOverride).toBeUndefined();
     expect(sessionEntry.modelOverride).toBeUndefined();
-    expect(sessionEntry.modelOverrideSource).toBeUndefined();
+    expect(sessionEntry.modelOverrideSource).toBe("default");
     expect(sessionEntry.authProfileOverride).toBeUndefined();
     expect(sessionEntry.authProfileOverrideSource).toBeUndefined();
     expect(sessionEntry.authProfileOverrideCompactionCount).toBeUndefined();
@@ -694,7 +702,7 @@ describe("mixed inline directives", () => {
     });
     expect(sessionEntry.providerOverride).toBeUndefined();
     expect(sessionEntry.modelOverride).toBeUndefined();
-    expect(sessionEntry.modelOverrideSource).toBeUndefined();
+    expect(sessionEntry.modelOverrideSource).toBe("default");
     expect(sessionEntry).toMatchObject({
       authProfileOverride: "openai:work",
       authProfileOverrideSource: "user",

@@ -26,7 +26,7 @@ function getSessionEntry(params: {
   return loadSessionEntry(params);
 }
 
-async function upsertSessionEntryCore(params: {
+async function upsertSessionEntry(params: {
   storePath: string;
   sessionKey: string;
   entry: SessionEntry;
@@ -42,7 +42,7 @@ describe("session goals", () => {
   const sessionKey = "agent:main:telegram:direct:123";
 
   async function writeSession(totalTokens = 0) {
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -56,7 +56,7 @@ describe("session goals", () => {
   }
 
   it("creates core-owned goal state on the session entry", async () => {
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -113,7 +113,7 @@ describe("session goals", () => {
       tokenBudget: 20,
       now: 10,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -137,7 +137,7 @@ describe("session goals", () => {
       tokenBudget: 20,
       now: 10,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -163,7 +163,7 @@ describe("session goals", () => {
   });
 
   it("ignores stale token snapshots for budget accounting", async () => {
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -180,7 +180,7 @@ describe("session goals", () => {
       tokenBudget: 20,
       now: 10,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -199,7 +199,7 @@ describe("session goals", () => {
   });
 
   it("adopts the first fresh token snapshot as the baseline after stale goal creation", async () => {
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -216,7 +216,7 @@ describe("session goals", () => {
       tokenBudget: 20,
       now: 10,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -236,7 +236,7 @@ describe("session goals", () => {
   });
 
   it("accounts token snapshots with current context provenance", async () => {
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -253,7 +253,7 @@ describe("session goals", () => {
       objective: "finish task",
       now: 10,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {
@@ -289,6 +289,18 @@ describe("session goals", () => {
 
     expect(completed.status).toBe("complete");
     expect(completed.lastStatusNote).toBe("done");
+    const repeated = await updateSessionGoalStatus({
+      storePath: fixture.storePath(),
+      sessionKey,
+      status: "complete",
+      note: "verified",
+      now: 30,
+    });
+    expect(repeated.completedAt).toBe(completed.completedAt);
+    expect(repeated.lastStatusNote).toBe("verified");
+    expect(getSessionEntry({ storePath: fixture.storePath(), sessionKey })?.goal?.completedAt).toBe(
+      completed.completedAt,
+    );
     await expect(
       updateSessionGoalStatus({
         storePath: fixture.storePath(),
@@ -341,7 +353,7 @@ describe("session goals", () => {
       status: "paused",
       now: 20,
     });
-    await upsertSessionEntryCore({
+    await upsertSessionEntry({
       storePath: fixture.storePath(),
       sessionKey,
       entry: {

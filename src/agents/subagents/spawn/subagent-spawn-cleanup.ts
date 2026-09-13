@@ -20,17 +20,6 @@ function isMatchingAbortResponse(response: unknown, gatewayRunId: string): boole
   );
 }
 
-function isSettledAbortResponse(response: unknown, gatewayRunId: string): boolean {
-  if (isMatchingAbortResponse(response, gatewayRunId)) {
-    return true;
-  }
-  const result = asNullableRecord(response);
-  if (!result) {
-    return false;
-  }
-  return result.aborted === false && Array.isArray(result.runIds) && result.runIds.length === 0;
-}
-
 function isDefinitiveAbortMiss(response: unknown, gatewayRunId: string): boolean {
   const result = asNullableRecord(response);
   if (!result) {
@@ -42,10 +31,6 @@ function isDefinitiveAbortMiss(response: unknown, gatewayRunId: string): boolean
     result.runIds.every((runId) => typeof runId === "string") &&
     !result.runIds.includes(gatewayRunId)
   );
-}
-
-function hasFrozenSessionIdentity(options?: SessionCleanupOptions): boolean {
-  return Boolean(options?.expectedSessionId && options.expectedLifecycleRevision);
 }
 
 export async function retrySubagentCleanup(
@@ -103,9 +88,6 @@ async function waitForProvisionalSessionDeletion(
   childSessionKey: string,
   options?: SessionCleanupOptions,
 ): Promise<boolean> {
-  if (!hasFrozenSessionIdentity(options)) {
-    return false;
-  }
   let deleted = false;
   await retrySubagentCleanup(async () => {
     const outcome = await requestProvisionalSessionCleanup(childSessionKey, options);
@@ -149,13 +131,12 @@ export async function terminateAcceptedCollectorRun(params: {
   expectedLifecycleRevision?: string;
   callGateway?: GatewayCall;
   timeoutMs?: number;
-  retry?: boolean;
   sessionCleanup?: "delete-on-abort-miss" | "preserve";
-}): Promise<boolean> {
+}): Promise<void> {
   const call = params.callGateway ?? callSubagentGateway;
   const timeoutMs = params.timeoutMs ?? SUBAGENT_CONTROL_GATEWAY_TIMEOUT_MS;
   const resolveGatewayContext = getPluginRuntimeGatewayRequestScope()?.resolveGatewayContext;
-  return await retrySubagentCleanup(
+  await retrySubagentCleanup(
     async () => {
       try {
         const response = await call({
@@ -163,7 +144,7 @@ export async function terminateAcceptedCollectorRun(params: {
           params: { sessionKey: params.childSessionKey, runId: params.gatewayRunId },
           timeoutMs,
         });
-        if (isSettledAbortResponse(response, params.gatewayRunId)) {
+        if (isMatchingAbortResponse(response, params.gatewayRunId)) {
           return true;
         }
         if (
@@ -178,7 +159,7 @@ export async function terminateAcceptedCollectorRun(params: {
         }
         // Fall through to exact-session deletion for provisional sessions only.
       }
-      if (params.sessionCleanup === "preserve" || !hasFrozenSessionIdentity(params)) {
+      if (params.sessionCleanup === "preserve") {
         return false;
       }
       const cleanup = await requestProvisionalSessionCleanup(params.childSessionKey, {
@@ -192,13 +173,9 @@ export async function terminateAcceptedCollectorRun(params: {
       return cleanup !== "failed";
     },
     {
-      // Retry abort while the request owner can still dispatch. Preserve retries
-      // a durable session without frozen identity; deletion waits require that
-      // identity. A retired scope can never dispatch again.
-      shouldRetry: () =>
-        params.retry !== false &&
-        (!resolveGatewayContext || Boolean(resolveGatewayContext())) &&
-        (params.sessionCleanup === "preserve" || hasFrozenSessionIdentity(params)),
+      // A retired request scope can never dispatch again; retrying would retain
+      // its Gateway forever without terminating the accepted run.
+      shouldRetry: () => !resolveGatewayContext || Boolean(resolveGatewayContext()),
     },
   );
 }

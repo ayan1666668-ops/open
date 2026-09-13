@@ -7,7 +7,6 @@ import {
   type EmbeddedRunCompactionRecoveryInput,
 } from "./compaction-runtime.js";
 import { createRunRecoveryDiagId } from "./helpers.js";
-import { emitRecoveryContextPressure } from "./recovery-context-pressure.js";
 
 const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
 
@@ -67,7 +66,6 @@ export async function recoverEmbeddedRunTimeout(
       `[timeout-compaction] LLM timed out with high prompt token usage (${Math.round(tokenUsedRatio * 100)}%); ` +
         `attempting compaction before retry (attempt ${input.state.timeoutCompactionAttempts}/${MAX_TIMEOUT_COMPACTION_ATTEMPTS}) diagId=${timeoutDiagId}`,
     );
-    await emitRecoveryContextPressure(input, lastTurnPromptTokens ?? 0);
     const { result: timeoutCompactResult, previousSessionId } = await compactEmbeddedRunForRecovery(
       input,
       {
@@ -90,7 +88,7 @@ export async function recoverEmbeddedRunTimeout(
         restoreEmbeddedRunTimeoutAbandonment(recoveryMarker);
       }
       log.warn(
-        `[timeout-compaction] compaction did not reduce context for ${input.provider}/${input.modelId}; falling through to normal handling`,
+        `[timeout-compaction] compaction did not reduce context for ${input.modelSelection.provider}/${input.modelSelection.model}; falling through to normal handling`,
       );
       return false;
     }
@@ -116,7 +114,7 @@ export async function recoverEmbeddedRunTimeout(
       input.assertRecoveryActive();
     }
     log.info(
-      `[timeout-compaction] compaction succeeded for ${input.provider}/${input.modelId}; retrying prompt`,
+      `[timeout-compaction] compaction succeeded for ${input.modelSelection.provider}/${input.modelSelection.model}; retrying prompt`,
     );
     input.armPostCompactionGuard();
     await input.prepareCompactedTranscriptRetry(input.assertRecoveryActive);

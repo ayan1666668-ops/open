@@ -3,10 +3,11 @@ import { Box, Container, Spacer, Text, truncateToWidth } from "@earendil-works/p
 import { asOptionalObjectRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { formatToolDetail, resolveToolDisplay } from "../../agents/tool-display.js";
-import { resolveRedactedToolArgumentSummary } from "../../chat/tool-argument-redaction.js";
 import { markdownTheme, tuiTheme as theme } from "../theme/theme.js";
 import * as tuiFormatters from "../tui-formatters.js";
+import { extractTuiImageSources } from "../tui-images.js";
 import { HyperlinkMarkdown } from "./hyperlink-markdown.js";
+import { MessageImages, type TuiImageRenderer } from "./message-images.js";
 
 // Rendering model for live tool calls in the chat log.
 type ToolResultContent = {
@@ -15,6 +16,10 @@ type ToolResultContent = {
   mimeType?: string;
   bytes?: number;
   omitted?: boolean;
+  data?: string;
+  url?: string;
+  artifactId?: string;
+  source?: unknown;
 };
 
 type ToolResult = {
@@ -23,7 +28,6 @@ type ToolResult = {
 };
 
 const PREVIEW_LINES = 12;
-
 const MAX_PREVIEW_CHARS = PREVIEW_LINES * 256;
 
 // Bound the actual wrapped Markdown, not just source newlines: a single long
@@ -36,9 +40,7 @@ class ToolOutputComponent extends HyperlinkMarkdown {
   private literalOutput = new Text("", 0, 0);
 
   override setText(text: string, literal = false): void {
-    const sourceText = literal
-      ? tuiFormatters.sanitizeTerminalControlsAndBinary(text)
-      : tuiFormatters.sanitizeMarkdownSource(text);
+    const sourceText = tuiFormatters.sanitizeTerminalControlsAndBinary(text);
     if (this.sourceText === sourceText && this.literal === literal) {
       return;
     }
@@ -87,12 +89,7 @@ class ToolOutputComponent extends HyperlinkMarkdown {
 }
 
 // Prefer curated display summaries, then fall back to sanitized JSON args.
-// Redact sensitive tools before consulting shared detail-key fallbacks.
-function formatArgs(toolName: string, detail: string | undefined, args: unknown): string {
-  const redactedFallback = resolveRedactedToolArgumentSummary(toolName);
-  if (redactedFallback) {
-    return redactedFallback;
-  }
+function formatArgs(detail: string | undefined, args: unknown): string {
   if (detail) {
     return tuiFormatters.sanitizeRenderableText(detail);
   }
@@ -147,8 +144,9 @@ export class ToolExecutionComponent extends Container {
   private toolName: string;
   private title = "";
   private isPartial = true;
+  private images: MessageImages;
 
-  constructor(toolName: string, args: unknown) {
+  constructor(toolName: string, args: unknown, imageRenderer?: TuiImageRenderer) {
     super();
     this.toolName = toolName;
     this.box = new Box(1, 1, theme.toolPendingBg);
@@ -162,6 +160,8 @@ export class ToolExecutionComponent extends Container {
     this.box.addChild(this.header);
     this.box.addChild(this.argsLine);
     this.box.addChild(this.output);
+    this.images = new MessageImages(imageRenderer);
+    this.box.addChild(this.images);
     this.setArgs(args);
     this.setPartialResult(undefined);
   }
@@ -171,7 +171,7 @@ export class ToolExecutionComponent extends Container {
     const display = resolveToolDisplay({ name: this.toolName, args });
     this.title = `${display.emoji} ${display.label}`;
     this.refreshTitle();
-    const argLine = formatArgs(this.toolName, formatToolDetail(display), args);
+    const argLine = formatArgs(formatToolDetail(display), args);
     this.argsLine.setText(argLine ? theme.dim(argLine) : theme.dim(" "));
   }
 
@@ -188,6 +188,10 @@ export class ToolExecutionComponent extends Container {
   /** Renders partial output while the tool call is still running. */
   setPartialResult(result: ToolResult | undefined) {
     this.updateResult(result, true);
+  }
+
+  dispose() {
+    this.images.dispose();
   }
 
   private refreshTitle() {
@@ -211,5 +215,6 @@ export class ToolExecutionComponent extends Container {
       raw.trim() ? raw : isPartial ? "…" : "",
       isCodeModeResult(this.toolName, result),
     );
+    this.images.setImages(extractTuiImageSources(result));
   }
 }

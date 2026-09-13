@@ -23,14 +23,13 @@ import {
   readLatestSubagentOutputWithRetryUsing,
 } from "./subagent-announce-capture.js";
 import {
-  callGateway,
+  callSubagentLifecycleGateway,
   getRuntimeConfig,
   readSubagentSessionEntry,
   readSessionMessagesAsync,
   resolveAgentIdFromSessionKey,
   resolveSessionStorePathCore,
 } from "./subagent-announce.runtime.js";
-import type { SubagentRunOutcome } from "./subagent-run-outcome.js";
 import { assistantCallsSessionsYield, isSessionsYieldToolResult } from "./subagent-yield-output.js";
 
 const FAST_TEST_RETRY_INTERVAL_MS = 8;
@@ -46,7 +45,7 @@ const ASSISTANT_TOOL_CALL_BLOCK_TYPES = new Set([
   "function_call",
 ]);
 type SubagentAnnounceOutputDeps = {
-  callGateway: typeof callGateway;
+  callGateway: typeof callSubagentLifecycleGateway;
   getRuntimeConfig: typeof getRuntimeConfig;
   readSubagentSessionEntry: typeof readSubagentSessionEntry;
   readSessionMessagesAsync: typeof readSessionMessagesAsync;
@@ -55,7 +54,7 @@ type SubagentAnnounceOutputDeps = {
 };
 
 const defaultSubagentAnnounceOutputDeps: SubagentAnnounceOutputDeps = {
-  callGateway,
+  callGateway: callSubagentLifecycleGateway,
   getRuntimeConfig,
   readSubagentSessionEntry,
   readSessionMessagesAsync,
@@ -87,6 +86,14 @@ type AgentWaitResult = {
   pendingError?: boolean;
   timeoutPhase?: string;
   providerStarted?: boolean;
+};
+
+export type SubagentRunOutcome = {
+  status: "ok" | "error" | "timeout" | "unknown";
+  error?: string;
+  startedAt?: number;
+  endedAt?: number;
+  elapsedMs?: number;
 };
 
 export function withSubagentOutcomeTiming(

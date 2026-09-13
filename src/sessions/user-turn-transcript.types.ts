@@ -13,7 +13,6 @@ import type {
 import type { TranscriptEntryAnchor } from "../config/sessions/transcript-entry-anchor.js";
 import type { TranscriptTurnAdmission } from "../config/sessions/transcript-turn-admission.js";
 import type { SessionEntry } from "../config/sessions/types.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { MediaFactInput } from "../media/media-facts.js";
 import type { InputProvenance } from "./input-provenance.js";
 
@@ -61,8 +60,6 @@ export type UserTurnInput = Pick<PersistedUserTurnMessage, "display" | "excludeF
   } | null;
   timestamp?: number;
   idempotencyKey?: string;
-  /** Private durable receipts for managed system events adopted by this turn. */
-  sessionDeliveryAckIds?: readonly string[];
   /** Durable transcript message reference used to render and hydrate replies. */
   replyToId?: string;
   /** Bounded display fallback for replies whose target is outside loaded history. */
@@ -95,7 +92,7 @@ export type UserTurnMessagePersistenceParams = {
   agentId?: string;
   sessionKey?: string;
   cwd?: string;
-  config?: OpenClawConfig;
+  config?: unknown;
   updateMode?: UserTurnTranscriptUpdateMode;
   beforeMessageWrite?: UserTurnBeforeMessageWrite;
 };
@@ -117,7 +114,7 @@ type UserTurnTranscriptPersistenceTarget = {
   agentId: string;
   threadId?: string | number;
   cwd?: string;
-  config?: OpenClawConfig;
+  config?: unknown;
   beforeMessageWrite?: UserTurnBeforeMessageWrite;
 };
 
@@ -169,7 +166,7 @@ export type PersistUserTurnTranscriptParams = {
   logicalTurnId?: string;
   threadId?: string | number;
   cwd?: string;
-  config?: OpenClawConfig;
+  config?: unknown;
   updateMode?: UserTurnTranscriptUpdateMode;
   beforeMessageWrite?: UserTurnBeforeMessageWrite;
   expectedSessionState?: SessionTranscriptTurnExpectedState;
@@ -215,7 +212,6 @@ export type UserTurnTranscriptRecorder = {
   confirmSteerTargetRunIdForPersistence?: (targetRunId: string) => Promise<void>;
   getPersistedMessage?: () => PersistedUserTurnMessage | undefined;
   getAdmissionReceipt: () => UserTurnTranscriptAdmissionReceipt | undefined;
-  replaceSessionDeliveryAckIds?: (deliveryIds: readonly string[]) => boolean;
   setAdmissionHandler?: (handler: (admission: UserTurnTranscriptAdmissionReceipt) => void) => void;
   markSentToProvider?: () => void;
   markRuntimePersistencePending: (pending: Promise<void>) => void;

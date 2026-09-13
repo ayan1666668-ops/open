@@ -41,7 +41,7 @@ import {
   resolvePreparedReplyQueueState,
 } from "./get-reply-run-queue.js";
 import { buildReplyPromptEnvelope } from "./prompt-prelude.js";
-import { resolveActiveRunQueueAction } from "./queue-policy.js";
+import { resolveActiveRunQueueAction, resolveReplyQueueAdmissionState } from "./queue-policy.js";
 import { resolveQueueSettings } from "./queue/settings-runtime.js";
 import { getExistingFollowupQueue } from "./queue/state.js";
 import {
@@ -58,11 +58,7 @@ import {
   isSlackDirectRoutedThreadTurn,
   resolveRoutedDeliveryThreadId,
 } from "./routed-delivery-thread.js";
-import {
-  resolveFinalSystemEventAdoption,
-  type PreparedFormattedSystemEvents,
-} from "./session-system-event-adoption.js";
-import { prepareFormattedSystemEvents } from "./session-system-events.js";
+import { drainFormattedSystemEvents } from "./session-system-events.js";
 import { getReplySystemEventContext } from "./system-event-session-key.js";
 
 export async function prepareReplyRunAdmission(context: PreparedReplyRunContext) {
@@ -149,9 +145,6 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
       ? `[Thread starter - for context]\n${threadStarterBody}`
       : undefined;
   const drainedSystemEventBlocks: string[] = [];
-  const preparedSystemEvents: PreparedFormattedSystemEvents[] = [];
-  const suppliedUserTurnTranscriptRecorder = opts?.userTurnTranscriptRecorder;
-  let systemEventsPrepared = false;
   const drainSystemEventBlocks = async () => {
     if (useFastReplyRuntime) {
       return;
@@ -163,29 +156,24 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
       : routeSystemEventSessionKey && routeSystemEventSessionKey !== sessionKey
         ? [routeSystemEventSessionKey, sessionKey]
         : [sessionKey];
-    const preparedBySession: PreparedFormattedSystemEvents[] = [];
     for (const systemEventSessionKey of systemEventSessionKeys) {
       const isCurrentSession = systemEventSessionKey === sessionKey;
-      preparedBySession.push(
-        await prepareFormattedSystemEvents({
-          cfg,
-          agentId,
-          sessionKey: systemEventSessionKey,
-          isMainSession: isCurrentSession && isMainSession,
-          isNewSession: isCurrentSession && isNewSession,
-          // A heartbeat may consume only its prepared generic selection, never
-          // dedicated reminders or arrivals that were not part of this turn.
-          events: context.isHeartbeat ? (eventContext?.events ?? []) : undefined,
-        }),
-      );
+      const eventsBlock = await drainFormattedSystemEvents({
+        cfg,
+        agentId,
+        sessionKey: systemEventSessionKey,
+        isMainSession: isCurrentSession && isMainSession,
+        isNewSession: isCurrentSession && isNewSession,
+        // A heartbeat may consume only its prepared generic selection, never
+        // dedicated reminders or arrivals that were not part of this turn.
+        events: context.isHeartbeat ? (eventContext?.events ?? []) : undefined,
+      });
+      if (eventsBlock) {
+        drainedSystemEventBlocks.push(eventsBlock);
+      }
     }
-    preparedSystemEvents.push(...preparedBySession);
-    systemEventsPrepared = true;
-    drainedSystemEventBlocks.push(
-      ...preparedBySession.flatMap((prepared) => prepared.blocks.map((block) => block.text)),
-    );
   };
-  const rebuildPromptBodies = (systemEventBlocks = drainedSystemEventBlocks) => {
+  const rebuildPromptBodies = () => {
     const { activeGoalContext, inboundUserContext } = context.getInboundContext();
     return buildReplyPromptEnvelope({
       ctx,
@@ -204,40 +192,9 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
       inboundEventKind,
       sourceReplyDeliveryMode,
       threadContextNote,
-      systemEventBlocks,
+      systemEventBlocks: drainedSystemEventBlocks,
       media: opts?.media,
     });
-  };
-  const adoptPreparedSystemEvents = () => {
-    const adoption = resolveFinalSystemEventAdoption({
-      prepared: preparedSystemEvents,
-      replaceDeliveryIds: systemEventsPrepared
-        ? suppliedUserTurnTranscriptRecorder
-          ? (deliveryIds) =>
-              suppliedUserTurnTranscriptRecorder.replaceSessionDeliveryAckIds?.(deliveryIds) ===
-              true
-          : undefined
-        : undefined,
-    });
-    if (adoption.kind === "settle-stale") {
-      return adoption;
-    }
-    const {
-      prefixedCommandBody,
-      queuedBody,
-      transcriptBody,
-      transcriptCommandBody,
-      currentInboundContext,
-    } = rebuildPromptBodies(adoption.blocks.map((block) => block.text));
-    return {
-      kind: "adopted",
-      prefixedCommandBody,
-      queuedBody,
-      transcriptBody,
-      transcriptCommandBody,
-      currentInboundContext,
-      managedSystemEventDeliveries: adoption.managedDeliveries,
-    } as const;
   };
   const skillResult = isFastTestRuntimeEnv()
     ? {
@@ -387,9 +344,13 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     const latestSessionId = latestSessionEntry?.sessionId ?? sessionIdFinal;
     rebindProvidedReplyOperation(latestSessionId);
     opts?.onSessionPrepared?.({ sessionKey, sessionId: latestSessionId, storePath });
-    const sessionFile = storePath
-      ? formatSqliteSessionFileMarker({ agentId, sessionId: latestSessionId, storePath })
-      : resolveSessionFilePathCore(latestSessionId, latestSessionEntry, sessionFilePathOptions);
+    // Queued admission uses the scoped key too. A legacy marker for the same
+    // transcript would make unchanged tool authority fail the steering check.
+    const sessionFile =
+      normalizeOptionalString(sessionKey) ??
+      (storePath
+        ? formatSqliteSessionFileMarker({ agentId, sessionId: latestSessionId, storePath })
+        : resolveSessionFilePathCore(latestSessionId, latestSessionEntry, sessionFilePathOptions));
     return { sessionEntry: latestSessionEntry, sessionId: latestSessionId, sessionFile };
   };
   let preparedSessionState = resolvePreparedSessionState();
@@ -455,7 +416,7 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
         sessionKey: context.runtimePolicySessionKey,
       });
   const resolveRuntimeAuthProfile = async () => {
-    if (useFastReplyRuntime) {
+    if (useFastReplyRuntime && !params.configuredProfileId) {
       return {
         authProfileId: preparedSessionState.sessionEntry?.authProfileOverride,
         authProfileIdSource: resolveCollapsedSessionAuthPinSource(
@@ -463,7 +424,8 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
         ),
       };
     }
-    const shouldUseEphemeralSession = params.autoFallbackPrimaryProbe !== undefined;
+    const shouldUseEphemeralSession =
+      params.autoFallbackPrimaryProbe !== undefined || params.configuredProfileId !== undefined;
     const authSessionKey = shouldUseEphemeralSession ? (sessionKey ?? sessionIdFinal) : sessionKey;
     const authSessionEntry =
       shouldUseEphemeralSession && preparedSessionState.sessionEntry
@@ -480,6 +442,8 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
       cfg,
       provider,
       modelId: model,
+      agentId,
+      configuredProfileId: params.configuredProfileId,
       ...(agentHarnessPolicy ? { harnessRuntime: agentHarnessPolicy.runtime } : {}),
       agentDir,
       sessionEntry: authSessionEntry,
@@ -590,13 +554,10 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
       ? replyRunRegistry.resolveCurrentInterruptTarget(sessionKey)
       : undefined;
   const pendingQueue = getExistingFollowupQueue(queueKey);
-  const queueAdmissionState = !pendingQueue
-    ? "empty"
-    : pendingQueue.items.some((item) => !item.steerPending) ||
-        pendingQueue.inFlight.size > 0 ||
-        pendingQueue.droppedCount > 0
-      ? "ready"
-      : "steering";
+  const queueAdmissionState = resolveReplyQueueAdmissionState(
+    pendingQueue,
+    replyRunRegistry.get(queueKey),
+  );
   const activeRunAcceptsCurrentThread = resolveActiveRunAcceptsCurrentThread({ isActive });
   const shouldSteer =
     !isRoomEvent &&
@@ -675,7 +636,15 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     promptBodies = await traceRunPhase("reply.build_prompt_bodies", () => rebuildPromptBodies());
   }
 
-  const { media: promptMedia, inboundMediaIndexes, currentInboundContext } = promptBodies;
+  const {
+    prefixedCommandBody,
+    queuedBody,
+    transcriptBody,
+    transcriptCommandBody,
+    media: promptMedia,
+    inboundMediaIndexes,
+    currentInboundContext,
+  } = promptBodies;
   return {
     kind: "ready",
     context,
@@ -684,10 +653,13 @@ export async function prepareReplyRunAdmission(context: PreparedReplyRunContext)
     thinkingCatalog,
     sessionEntry,
     skillsSnapshot,
+    prefixedCommandBody,
+    queuedBody,
+    transcriptBody,
+    transcriptCommandBody,
     promptMedia,
     inboundMediaIndexes,
     currentInboundContext,
-    adoptPreparedSystemEvents,
     isRoomEvent,
     providedReplyOperation,
     sessionIdFinal,

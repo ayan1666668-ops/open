@@ -1,8 +1,8 @@
 /** Test doubles and setup for CLI execution supervisor and event seams. */
 import type { Mock } from "vitest";
 import { vi } from "vitest";
-import type { requestHeartbeatRaw as requestHeartbeat } from "../../infra/heartbeat-wake.js";
-import type { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
+import type { requestHeartbeat } from "../../infra/heartbeat-wake.js";
+import type { enqueueSystemEvent } from "../../infra/system-events.js";
 import type { getProcessSupervisor } from "../../process/supervisor/index.js";
 import { withTestRunAdmission } from "../admitted-run-context.test-support.js";
 import { executeDeps } from "./execute-deps.js";
@@ -54,6 +54,9 @@ setCliRunnerExecuteTestDeps({
         // was requested; replay it through callbacks once to match production.
         const wrappedParams = {
           ...params,
+          ...(params.mode === "child" && params.resolveArgs
+            ? { argv: [...params.argv, ...params.resolveArgs()] }
+            : {}),
           onStdout: params.onStdout
             ? (chunk: string) => {
                 stdoutDelivered = true;

@@ -1,5 +1,4 @@
 export * from "./subagent-spawn.js";
-import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
 
 type SpawnRuntime = typeof import("./subagent-spawn.runtime.js");
 type SpawnDeps = Omit<
@@ -12,7 +11,7 @@ type SpawnDeps = Omit<
     | "getGlobalHookRunner"
     | "getRuntimeConfig"
     | "hasInProcessGatewayContext"
-    | "loadPreparedModelCatalog"
+    | "readPreparedModelCatalog"
     | "resolveContextEngine"
   >,
   "getGlobalHookRunner"
@@ -20,13 +19,16 @@ type SpawnDeps = Omit<
   getGlobalHookRunner: () => import("../../../plugins/hooks.js").SubagentLifecycleHookRunner | null;
 };
 
-export const testing: {
+type Testing = {
   setDepsForTest(overrides?: Partial<SpawnDeps>): void;
-} = {
-  setDepsForTest(overrides) {
-    Object.assign(spawnDeps, defaultSpawnDeps, overrides);
-  },
 };
 
-const spawnDeps = getSubagentSpawnDeps();
-const defaultSpawnDeps = { ...spawnDeps };
+function getTesting(): Testing {
+  return (globalThis as Record<PropertyKey, unknown>)[
+    Symbol.for("openclaw.subagentSpawnTestApi")
+  ] as Testing;
+}
+
+export const testing: Testing = {
+  setDepsForTest: (overrides) => getTesting().setDepsForTest(overrides),
+};

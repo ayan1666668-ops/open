@@ -6,7 +6,10 @@ import { replaceCompactionReplayOwnerContent } from "@openclaw/ai/transports";
  * Normalizes raw tool-call blocks and synthesizes missing tool results without rewriting trusted local payloads.
  */
 import { safeParseJsonRecord } from "@openclaw/normalization-core";
-import { hasNonEmptyString as hasNonEmptyStringField } from "@openclaw/normalization-core/string-coerce";
+import {
+  hasNonEmptyString as hasNonEmptyStringField,
+  readStringValue,
+} from "@openclaw/normalization-core/string-coerce";
 import {
   classifyToolUseResultPairing,
   makeMissingToolResult as makePairingMissingToolResult,
@@ -19,9 +22,9 @@ import {
   hasToolCallInput,
 } from "./tool-call-id.js";
 import {
+  createCompletedToolCallPredicate,
   isAllowedToolCallName,
   normalizeAllowedToolNames,
-  sanitizeTranscriptToolCallBlock,
 } from "./tool-call-shared.js";
 
 type RawToolCallBlock = {
@@ -100,6 +103,26 @@ function isFinalizedOpenAIResponsesToolCall(
   return separator > 0 && separator < block.id.length - 1;
 }
 
+function sanitizeToolCallBlock(block: RawToolCallBlock): RawToolCallBlock {
+  // This repair path normalizes replay shape only. Tool payloads are local
+  // trusted-operator transcript state per SECURITY.md, so do not redact or
+  // rewrite sessions_spawn arguments here.
+  const rawName = readStringValue(block.name);
+  const trimmedName = rawName?.trim();
+  const hasTrimmedName = typeof trimmedName === "string" && trimmedName.length > 0;
+  const normalizedName = hasTrimmedName ? trimmedName : undefined;
+  const nameChanged = hasTrimmedName && rawName !== trimmedName;
+
+  if (!nameChanged) {
+    return block;
+  }
+  const next = { ...(block as Record<string, unknown>) };
+  if (nameChanged && normalizedName) {
+    next.name = normalizedName;
+  }
+  return next as RawToolCallBlock;
+}
+
 function countRawToolCallBlocks(content: unknown[]): number {
   let count = 0;
   for (const block of content) {
@@ -113,6 +136,7 @@ function countRawToolCallBlocks(content: unknown[]): number {
 function isReplaySafeThinkingAssistantTurn(
   content: unknown[],
   allowedToolNames: Set<string> | null,
+  isCompleted: ReturnType<typeof createCompletedToolCallPredicate>,
 ): boolean {
   let sawToolCall = false;
   const seenToolCallIds = new Set<string>();
@@ -123,20 +147,16 @@ function isReplaySafeThinkingAssistantTurn(
     sawToolCall = true;
     const toolCallId = typeof block.id === "string" ? block.id.trim() : "";
     if (
-      !hasToolCallInput(block as RawToolCallBlock) ||
+      !hasToolCallInput(block) ||
       hasPartialJson(block) ||
       !toolCallId ||
       seenToolCallIds.has(toolCallId) ||
-      !isAllowedToolCallName(block.name, allowedToolNames)
+      !isAllowedToolCallName(block.name, isCompleted(block) ? null : allowedToolNames)
     ) {
       return false;
     }
     seenToolCallIds.add(toolCallId);
-    if (
-      sanitizeTranscriptToolCallBlock(block, {
-        preserveLegacyContinueDelegateAttachmentName: true,
-      }) !== block
-    ) {
+    if (sanitizeToolCallBlock(block) !== block) {
       return false;
     }
   }
@@ -237,6 +257,7 @@ function repairToolCallInputs(
   let changed = false;
   const out: AgentMessage[] = [];
   const allowedToolNames = normalizeAllowedToolNames(options?.allowedToolNames);
+  const isCompleted = createCompletedToolCallPredicate(messages);
   const allowProviderOwnedThinkingReplay = options?.allowProviderOwnedThinkingReplay === true;
   const preservedThinkingToolCallIds = new Set<string>();
   const priorToolCallIds = new Set<string>();
@@ -264,7 +285,7 @@ function repairToolCallInputs(
       const replaySafeToolCalls = extractToolCallsFromAssistant(msg);
       const followingToolResults = collectFollowingToolResults(messages, index);
       if (
-        isReplaySafeThinkingAssistantTurn(msg.content, allowedToolNames) &&
+        isReplaySafeThinkingAssistantTurn(msg.content, allowedToolNames, isCompleted) &&
         replaySafeToolCalls.every(
           (toolCall) =>
             !preservedThinkingToolCallIds.has(toolCall.id) &&
@@ -292,11 +313,12 @@ function repairToolCallInputs(
 
     for (const block of msg.content) {
       if (isRawToolCallBlock(block)) {
+        const rawBlock = block as RawToolCallBlock;
         // Drop genuinely incomplete streaming artifacts (missing required fields).
         if (
           !hasToolCallInput(block) ||
           !hasToolCallId(block) ||
-          !isAllowedToolCallName((block as RawToolCallBlock).name, allowedToolNames)
+          !isAllowedToolCallName(rawBlock.name, isCompleted(rawBlock) ? null : allowedToolNames)
         ) {
           droppedToolCalls += 1;
           changed = true;
@@ -323,9 +345,7 @@ function repairToolCallInputs(
         messageChanged = true;
       }
       if (isRawToolCallBlock(workBlock)) {
-        const sanitized = sanitizeTranscriptToolCallBlock(
-          workBlock as RawToolCallBlock, // SAFETY: the guard establishes this shape.
-        );
+        const sanitized = sanitizeToolCallBlock(workBlock);
         if (sanitized !== workBlock) {
           changed = true;
           messageChanged = true;

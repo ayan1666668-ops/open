@@ -7,6 +7,7 @@ import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { prepareGitHubPublicationAvailability } from "../../gateway/github-publication-availability.js";
+import { clearAgentRunTerminalWriteContext } from "../../infra/agent-run-terminal-writes.js";
 import { RUN_STALE_TAKEOVER_MS } from "../../logging/diagnostic-run-activity.js";
 import { CommandLane } from "../../process/lanes.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -19,10 +20,7 @@ import {
 } from "./agent-runner-compaction-accounting.js";
 import { runEmbeddedFallbackCandidate } from "./agent-runner-embedded-candidate.js";
 import type { MessageToolDeliveryState } from "./agent-runner-event-handler.js";
-import type {
-  ContinuationWrappedRunResult,
-  EmbeddedAgentRunResult,
-} from "./agent-runner-execution.types.js";
+import type { EmbeddedAgentRunResult } from "./agent-runner-execution.types.js";
 import type {
   AgentFallbackCandidateCommonParams,
   AgentFallbackCycleParams,
@@ -33,6 +31,7 @@ import {
   resolveRunFastModeForFallbackCandidate,
   resolveRunThinkingLevelForFallbackCandidate,
 } from "./agent-runner-utils.js";
+import { hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
 import { beginReplyOperationFinalizationWork } from "./reply-run-finalization-lease.js";
 import {
   bindSourceReplyDeliveryRuntime,
@@ -40,31 +39,6 @@ import {
   readSourceReplyDeliveryRuntime,
   type SourceReplyDeliveryRuntimeOptions,
 } from "./source-reply-delivery-runtime.js";
-
-type FallbackContinuationMetadata = Omit<ContinuationWrappedRunResult, "result">;
-
-type FallbackContinuationRecord = FallbackContinuationMetadata & {
-  result: EmbeddedAgentRunResult;
-};
-
-export function selectFallbackContinuationMetadata(
-  selectedResult: EmbeddedAgentRunResult,
-  records: readonly FallbackContinuationRecord[],
-): FallbackContinuationMetadata {
-  const selectedRecord =
-    records.findLast((record) => record.result === selectedResult) ??
-    (selectedResult.payloads
-      ? records.findLast((record) => record.result.payloads === selectedResult.payloads)
-      : undefined) ??
-    (selectedResult.meta.error
-      ? records.findLast((record) => record.result.meta.error === selectedResult.meta.error)
-      : undefined);
-  return {
-    continueWorkRequests: selectedRecord?.continueWorkRequests,
-    compactionTraceparent: selectedRecord?.compactionTraceparent,
-    rawContinuationText: selectedRecord?.rawContinuationText,
-  };
-}
 
 /** Runs the provider/model fallback candidates while preserving cross-candidate delivery state. */
 export async function runAgentFallbackCandidates(params: AgentFallbackCycleParams) {
@@ -91,7 +65,6 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
   const preserveProgressCallbackStartOrder = turn.opts?.preserveProgressCallbackStartOrder === true;
   const runLane = turn.isHeartbeat ? CommandLane.CronNested : CommandLane.Main;
   let queuedUserMessagePersistedAcrossFallback = false;
-  const continuationRecords: FallbackContinuationRecord[] = [];
   const messageToolDeliveryState: MessageToolDeliveryState = {
     toolCallIds: new Set(),
     completed: false,
@@ -156,7 +129,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       useCliExecution,
     };
   };
-  const entryResult = await params.timing.measure("model_fallback", () =>
+  return params.timing.measure("model_fallback", () =>
     runEmbeddedAgentEntry<EmbeddedAgentRunResult>({
       selection: {
         cfg: selection.cfg,
@@ -211,6 +184,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       behavior: {
         kind: "channel-delivery",
         readDeliveryEvidence: () => ({
+          hasRetryBlockedDelivery:
+            turn.blockReplyPipeline?.hasRetryBlockedDelivery() === true ||
+            params.directBlockDeliveries.some(hasBlockReplyDeliveryCustody),
           hasDirectlySentBlockReply: params.directlySentBlockKeys.size > 0,
           hasBlockReplyPipelineOutput: Boolean(
             turn.blockReplyPipeline?.hasBuffered() || turn.blockReplyPipeline?.didStream(),
@@ -232,6 +208,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         emitModelFallbackStepLifecycle({ runId: params.runId, sessionKey: turn.sessionKey, step });
       },
       runCandidate: async (provider, model, runOptions) => {
+        clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
         params.state.maintenanceAuthProfile = undefined;
         params.state.compactionRequestBudget = undefined;
         invalidateTurnCompactionContext(params.state.compaction);
@@ -306,6 +283,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           contextEngineLogicalTurnLease: runOptions.contextEngineLogicalTurnLease,
           onContextEngineTurnCandidate: runOptions.onContextEngineTurnCandidate,
           assistantErrorTranscript: runOptions.assistantErrorTranscript,
+          authProfileFailurePolicy: runOptions.authProfileFailurePolicy,
           notifyUserMessagePersisted: () => {
             queuedUserMessagePersistedAcrossFallback = true;
           },
@@ -365,26 +343,10 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           candidate.bootstrapPromptWarningSignaturesSeen;
         params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
         params.state.compactionRequestBudget = candidate.compactionRequestBudget;
-        continuationRecords.push({
-          result: candidate.result,
-          continueWorkRequests: candidate.continueWorkRequests,
-          compactionTraceparent: candidate.compactionTraceparent,
-          rawContinuationText: candidate.rawContinuationText,
-        });
         return candidate.result;
       },
     }),
   );
-  const continuation = selectFallbackContinuationMetadata(entryResult.result, continuationRecords);
-  return {
-    ...entryResult,
-    result: {
-      result: entryResult.result,
-      continueWorkRequests: continuation.continueWorkRequests,
-      compactionTraceparent: continuation.compactionTraceparent,
-      rawContinuationText: continuation.rawContinuationText,
-    } satisfies ContinuationWrappedRunResult,
-  };
 }
 
 export type AgentFallbackCandidatesResult = Awaited<ReturnType<typeof runAgentFallbackCandidates>>;

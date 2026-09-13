@@ -21,10 +21,7 @@ export {
   resolveLeastPrivilegeOperatorScopesForMethod,
 } from "../../../gateway/method-scopes.js";
 export { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
-// Leaf import: do not route through gateway/session-utils barrel — that pulls
-// list/core modules which import the subagent registry and close a madge cycle
-// back into spawn/announce runtime.
-export { resolveGatewaySessionStoreTarget } from "../../../gateway/session-utils-store-lookup.js";
+export { resolveGatewaySessionStoreTarget } from "../../../gateway/session-utils.js";
 export { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 export { resolveProviderRefOwnership } from "../../../plugins/providers.js";
 export { emitSessionLifecycleEvent } from "../../../sessions/session-lifecycle-events.js";
@@ -34,7 +31,7 @@ export {
 } from "../../../utils/delivery-context.shared.js";
 export { resolveAgentConfig } from "../../agent-scope.js";
 export { AGENT_LANE_SUBAGENT } from "../../lanes.js";
-export { loadPreparedModelCatalog } from "../../prepared-model-catalog.js";
+export { readPreparedModelCatalog } from "../../prepared-model-catalog.js";
 export { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 export {
   resolveInternalSessionKey,

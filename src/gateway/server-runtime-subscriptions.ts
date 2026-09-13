@@ -1,6 +1,5 @@
-import { isDefinitiveRunLifecycle } from "../agents/agent-run-terminal-outcome.js";
 // Gateway event subscription wiring for agent, heartbeat, transcript, and lifecycle broadcasts.
-import { readToolValidationErrorSummary } from "../agents/tool-error-summary.js";
+import { isDefinitiveRunLifecycle } from "../agents/agent-run-terminal-outcome.js";
 import {
   isAuditLedgerEnabled,
   isExecutionIdentityCollectionEnabled,
@@ -23,6 +22,7 @@ import {
   onAgentRuntimeEvent,
 } from "../infra/agent-events.js";
 import { clearAgentRunContext, getAgentRunContext } from "../infra/agent-run-registry.js";
+import { captureAgentRunTerminalWriteContext } from "../infra/agent-run-terminal-writes.js";
 import { onTrustedToolExecutionEvent } from "../infra/diagnostic-events.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import type { SubsystemLogger } from "../logging/subsystem.js";
@@ -31,8 +31,6 @@ import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js
 import { onInternalSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { createLazyPromise, createLazyPromiseLoader } from "../shared/lazy-runtime.js";
 import { onUserProfilesChanged } from "../state/user-profile-events.js";
-import { isTerminalTaskStatus } from "../tasks/task-executor-policy.js";
-import type { TaskRegistryObserverEvent } from "../tasks/task-registry.store.js";
 import { markChatAbortTerminalPersistenceError } from "./chat-abort-lifecycle-internal.js";
 import {
   type ChatAbortControllerEntry,
@@ -47,14 +45,13 @@ import type {
   ToolEventRecipientRegistry,
 } from "./server-chat-state.js";
 import { resolveVisibleActiveSessionRunState } from "./server-methods/session-active-runs.js";
-import { mapTaskSummary, type TaskEventPayload } from "./server-methods/task-summary.js";
+import { startGatewayTaskSubscriptions } from "./server-task-subscriptions.js";
 import { defaultSessionCompanionContextReader } from "./session-companion-context.js";
 import { createSessionCompanion } from "./session-companion.js";
 import { createSessionLifecyclePersistenceOwner } from "./session-lifecycle-persistence-owner.js";
 import { sessionObserverScopeKey } from "./session-observer-model.js";
 import { createSessionObserver } from "./session-observer.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "./session-request-agent.js";
-import { resolveTaskRequesterSessionTarget } from "./task-session-access.js";
 import type { TerminalSessionManager } from "./terminal/session-manager.js";
 
 function dispatchEventHandler<TEvent>(params: {
@@ -73,16 +70,6 @@ function dispatchEventHandler<TEvent>(params: {
       params.log.warn(params.failureMessage, { ...params.context, error });
       params.onFailure?.();
     });
-}
-
-function terminalTaskId(event: TaskRegistryObserverEvent): string | undefined {
-  if (event.kind !== "upserted" || !isTerminalTaskStatus(event.task.status)) {
-    return undefined;
-  }
-  if (event.previous && isTerminalTaskStatus(event.previous.status)) {
-    return undefined;
-  }
-  return event.task.taskId;
 }
 
 /** Register gateway runtime event subscriptions and return unsubscribe handles. */
@@ -164,7 +151,6 @@ export function startGatewayEventSubscriptions(params: {
       }
       entry.projectSessionActive = false;
       entry.projectSessionTerminalPersisted = false;
-      entry.chatSendActiveAtTerminalObservation = false;
       markChatAbortTerminalPersistenceError(entry, undefined);
       queueMicrotask(() => {
         const current = params.chatAbortControllers.get(candidateRunId);
@@ -257,33 +243,20 @@ export function startGatewayEventSubscriptions(params: {
             sessionEventSubscribers: params.sessionEventSubscribers,
             sessionMessageSubscribers: params.sessionMessageSubscribers,
             persistGatewaySessionLifecycleEventForEvent: sessionLifecyclePersistence.persist,
+            updateRunToolErrorSummary: ({ runId, clientRunId, summary }) => {
+              for (const candidateRunId of new Set([runId, clientRunId])) {
+                const entry = params.chatAbortControllers.get(candidateRunId);
+                if (entry) {
+                  entry.toolErrorSummary = summary;
+                }
+              }
+            },
             clearTrackedActiveRun,
             settleTrackedTerminal,
             trackTrackedRunTerminalPersistence,
             isChatSendRunActive: (runId) => {
               const entry = params.chatAbortControllers.get(runId);
-              return (
-                entry !== undefined &&
-                entry.kind !== "agent" &&
-                entry.registrationCleanupRequested !== true &&
-                entry.chatTerminalBroadcasted !== true
-              );
-            },
-            wasChatSendActiveAtTerminalObservation: (runId) =>
-              params.chatAbortControllers.get(runId)?.chatSendActiveAtTerminalObservation === true,
-            wasChatSendTerminalBroadcasted: (runId) =>
-              params.chatAbortControllers.get(runId)?.chatTerminalBroadcasted === true,
-            resolveRunToolErrorSummary: ({ runId, clientRunId }) =>
-              params.chatAbortControllers.get(runId)?.toolErrorSummary ??
-              params.chatAbortControllers.get(clientRunId)?.toolErrorSummary,
-            markChatSendTerminalBroadcasted: ({ runId, clientRunId, state }) => {
-              const entry =
-                params.chatAbortControllers.get(runId) ??
-                params.chatAbortControllers.get(clientRunId);
-              if (entry && entry.kind !== "agent") {
-                entry.chatTerminalBroadcasted = true;
-                entry.chatTerminalState = state;
-              }
+              return entry !== undefined && entry.kind !== "agent";
             },
             resolveActiveLifecycleGenerationForRun: (runId) =>
               params.chatAbortControllers.get(runId)?.lifecycleGeneration,
@@ -345,68 +318,48 @@ export function startGatewayEventSubscriptions(params: {
     if (auditEnabled) {
       auditRecorder.record(evt);
     }
-    const chatLink = evt.contextClaimId ? undefined : params.chatRunState.registry.peek(evt.runId);
-    const clientRunId = chatLink?.clientRunId ?? evt.runId;
-    const candidateRunIds = evt.runId === clientRunId ? [evt.runId] : [evt.runId, clientRunId];
-    const eventLifecycleGeneration = evt.lifecycleGeneration?.trim();
-    const forEachMatchingTrackedEntry = (
-      visit: (entry: ChatAbortControllerEntry) => void,
-    ): void => {
+    const lifecyclePhase =
+      evt.stream === "lifecycle" && typeof evt.data?.phase === "string"
+        ? evt.data.phase
+        : undefined;
+    if (lifecyclePhase === "end" || lifecyclePhase === "error") {
+      const chatLink = evt.contextClaimId
+        ? undefined
+        : params.chatRunState.registry.peek(evt.runId);
+      const clientRunId = chatLink?.clientRunId ?? evt.runId;
+      const candidateRunIds = evt.runId === clientRunId ? [evt.runId] : [evt.runId, clientRunId];
+      const observedAt =
+        typeof evt.data.endedAt === "number" && Number.isFinite(evt.data.endedAt)
+          ? evt.data.endedAt
+          : evt.ts;
       for (const candidateRunId of candidateRunIds) {
         const entry = params.chatAbortControllers.get(candidateRunId);
+        const eventLifecycleGeneration = evt.lifecycleGeneration?.trim();
         if (
           entry &&
           (!eventLifecycleGeneration ||
             !entry.lifecycleGeneration ||
             entry.lifecycleGeneration === eventLifecycleGeneration)
         ) {
-          visit(entry);
+          entry.projectSessionTerminalPending = true;
+          entry.projectSessionTerminalObservedAt = observedAt;
         }
       }
-    };
-    const toolPhase =
-      evt.stream === "tool" && typeof evt.data?.phase === "string" ? evt.data.phase : undefined;
-    if (evt.stream === "assistant" || toolPhase === "start") {
-      forEachMatchingTrackedEntry((entry) => {
-        entry.toolErrorSummary = undefined;
-      });
-    } else if (toolPhase === "result") {
-      const summary = readToolValidationErrorSummary(evt.data?.toolErrorSummary);
-      forEachMatchingTrackedEntry((entry) => {
-        entry.toolErrorSummary = summary;
-      });
-    }
-    const lifecyclePhase =
-      evt.stream === "lifecycle" && typeof evt.data?.phase === "string"
-        ? evt.data.phase
-        : undefined;
-    if (lifecyclePhase === "end" || lifecyclePhase === "error") {
-      const hasToolErrorSummary = Object.hasOwn(evt.data ?? {}, "toolErrorSummary");
-      const terminalSummary = readToolValidationErrorSummary(evt.data?.toolErrorSummary);
-      const observedAt =
-        typeof evt.data.endedAt === "number" && Number.isFinite(evt.data.endedAt)
-          ? evt.data.endedAt
-          : evt.ts;
-      forEachMatchingTrackedEntry((entry) => {
-        if (hasToolErrorSummary) {
-          entry.toolErrorSummary = terminalSummary;
-        }
-        if (entry.kind !== "agent" && entry.registrationCleanupRequested !== true) {
-          entry.chatSendActiveAtTerminalObservation = true;
-        }
-        entry.projectSessionTerminalPending = true;
-        entry.projectSessionTerminalObservedAt = observedAt;
-      });
       const trackedEntry = candidateRunIds
         .map((candidateRunId) => params.chatAbortControllers.get(candidateRunId))
         .find((entry) => entry !== undefined);
       const runContext = getAgentRunContext(evt.runId);
-      const sessionAgentId = trackedEntry?.agentId ?? evt.agentId ?? runContext?.agentId;
+      // Match the chat projection owner before preparing the shared terminal write.
+      // A bound ACP runtime emits its target key, but the chat link owns the source run.
+      const sessionAgentId =
+        chatLink?.agentId ?? evt.agentId ?? trackedEntry?.agentId ?? runContext?.agentId;
       const knownSessionKey =
+        chatLink?.sessionKey ??
         evt.deliverySessionKey ??
         evt.sessionKey ??
         trackedEntry?.sessionKey ??
         runContext?.sessionKey;
+      const eventLifecycleGeneration = evt.lifecycleGeneration?.trim();
       const terminalAuthority =
         evt.contextClaimId && eventLifecycleGeneration
           ? {
@@ -426,12 +379,14 @@ export function startGatewayEventSubscriptions(params: {
         evt.projectSessionLifecycle !== false &&
         trackedOwnerIsCurrent &&
         claimIsComplete;
+      const writeContext = captureAgentRunTerminalWriteContext(evt.runId);
       const prepareTerminalPersistence = (sessionKey: string) => {
         const persistence = sessionLifecyclePersistence.observe({
           sessionKey,
           ...(sessionAgentId ? { agentId: sessionAgentId } : {}),
           event: evt,
           ...(terminalAuthority ? { authority: terminalAuthority } : {}),
+          ...(writeContext ? { writeContext } : {}),
           ...(clientRunId !== evt.runId ? { clientRunId } : {}),
         });
         if (terminalAuthority) {
@@ -463,31 +418,46 @@ export function startGatewayEventSubscriptions(params: {
           () => settleTrackedTerminal({ runId: evt.runId, clientRunId }),
           () => settleTrackedTerminal({ runId: evt.runId, clientRunId, persisted: false }),
         );
+        return persistence;
       };
       if (canPersistTerminal) {
         if (knownSessionKey) {
-          prepareTerminalPersistence(knownSessionKey);
+          const persistence = prepareTerminalPersistence(knownSessionKey);
+          writeContext?.track(persistence);
         } else {
           // Context cleanup can precede a terminal event. Resolve its persisted
           // run mapping before the lazy chat handler consumes the same event.
-          terminalPreparation = getSessionKeyModule().then(({ resolveSessionKeyForRun }) => {
+          terminalPreparation = getSessionKeyModule().then(async ({ resolveSessionKeyForRun }) => {
             const sessionKey = resolveSessionKeyForRun(
               evt.runId,
               sessionAgentId ? { agentId: sessionAgentId } : undefined,
             );
             if (sessionKey) {
-              prepareTerminalPersistence(sessionKey);
+              await prepareTerminalPersistence(sessionKey);
             }
           });
+          writeContext?.track(terminalPreparation);
         }
       }
     } else if (lifecyclePhase === "start") {
-      forEachMatchingTrackedEntry((entry) => {
-        entry.toolErrorSummary = undefined;
-        entry.chatSendActiveAtTerminalObservation = false;
-        entry.projectSessionTerminalPending = false;
-        entry.projectSessionTerminalObservedAt = undefined;
-      });
+      const chatLink = evt.contextClaimId
+        ? undefined
+        : params.chatRunState.registry.peek(evt.runId);
+      const clientRunId = chatLink?.clientRunId ?? evt.runId;
+      const candidateRunIds = evt.runId === clientRunId ? [evt.runId] : [evt.runId, clientRunId];
+      const eventLifecycleGeneration = evt.lifecycleGeneration?.trim();
+      for (const candidateRunId of candidateRunIds) {
+        const entry = params.chatAbortControllers.get(candidateRunId);
+        if (
+          entry &&
+          (!eventLifecycleGeneration ||
+            !entry.lifecycleGeneration ||
+            entry.lifecycleGeneration === eventLifecycleGeneration)
+        ) {
+          entry.projectSessionTerminalPending = false;
+          entry.projectSessionTerminalObservedAt = undefined;
+        }
+      }
     }
     const dispatchPreparation = terminalPreparation;
     const dispatch = dispatchEventHandler<AgentEventRuntimePayload>({
@@ -576,69 +546,7 @@ export function startGatewayEventSubscriptions(params: {
     unsubscribeLifecycle();
   };
 
-  let taskObserverDisposed = false;
-  const lastTaskSummaryById = new Map<string, string>();
-  const taskObservers = {
-    onEvent: (event: TaskRegistryObserverEvent) => {
-      let payload: TaskEventPayload;
-      let sessionTarget: ReturnType<typeof resolveTaskRequesterSessionTarget>;
-      switch (event.kind) {
-        case "upserted": {
-          const task = mapTaskSummary(event.task);
-          const summary = JSON.stringify(task);
-          if (lastTaskSummaryById.get(task.id) === summary) {
-            return;
-          }
-          lastTaskSummaryById.set(task.id, summary);
-          payload = { action: "upserted", task };
-          sessionTarget = resolveTaskRequesterSessionTarget(event.task);
-          break;
-        }
-        case "deleted":
-          lastTaskSummaryById.delete(event.taskId);
-          payload = { action: "deleted", taskId: event.taskId };
-          sessionTarget = resolveTaskRequesterSessionTarget(event.previous);
-          break;
-        case "restored":
-          lastTaskSummaryById.clear();
-          payload = { action: "restored" };
-          break;
-      }
-      params.broadcast("task", payload, {
-        dropIfSlow: true,
-        ...(sessionTarget
-          ? { sessionKeys: [sessionTarget.sessionKey], agentId: sessionTarget.agentId }
-          : {}),
-      });
-      const taskId = terminalTaskId(event);
-      if (taskId) {
-        params.terminalSessions.closeTaskSessions(taskId);
-      }
-    },
-  };
-  const taskObserverRuntimePromise = import("../tasks/task-registry.store.js").then((module) => {
-    if (!taskObserverDisposed) {
-      module.configureTaskRegistryRuntime({ observers: taskObservers });
-    }
-    return module;
-  });
-  void taskObserverRuntimePromise.catch((error: unknown) => {
-    params.log.warn("Task registry observer registration failed", { error });
-  });
-  // The observer slot is a process-wide singleton. Cleanup returns its promise
-  // so shutdown can await it, and only clears the slot when it still holds
-  // this subscription's observer — a replacement gateway may have registered
-  // its own observer before a stale deferred dispose runs.
-  const taskUnsub = () => {
-    taskObserverDisposed = true;
-    return taskObserverRuntimePromise
-      .then((module) => {
-        if (module.getTaskRegistryObservers() === taskObservers) {
-          module.configureTaskRegistryRuntime({ observers: null });
-        }
-      })
-      .catch(() => undefined);
-  };
+  const taskUnsub = startGatewayTaskSubscriptions(params);
 
   return {
     sessionCompanion,

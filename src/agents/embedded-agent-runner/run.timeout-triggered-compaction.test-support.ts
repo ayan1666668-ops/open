@@ -1,7 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeUserMessage } from "../../../test/helpers/user-message.js";
-import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
-import * as systemEvents from "../../infra/system-events.js";
 import type { OpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import type { AgentHarness } from "../harness/types.js";
 import { makeAttemptResult, makeCompactionSuccess } from "./run.overflow-compaction.fixture.js";
@@ -54,7 +52,6 @@ describe("runEmbeddedAgent timeout recovery composition", () => {
   beforeEach(() => {
     resetSharedRunIntegrationHarnessMocks();
     runsTesting.resetActiveEmbeddedRuns();
-    systemEvents.resetSystemEventsForTest();
   });
 
   afterEach(async () => {
@@ -62,7 +59,6 @@ describe("runEmbeddedAgent timeout recovery composition", () => {
       await fixture?.cleanup();
     } finally {
       fixture = undefined;
-      systemEvents.resetSystemEventsForTest();
     }
   });
 
@@ -227,16 +223,6 @@ describe("runEmbeddedAgent timeout recovery composition", () => {
   it("keeps the timeout compaction cap across auth-profile rotation", async () => {
     const session = await createSharedRunIntegrationSession();
     fixture = session;
-    const config = {
-      agents: {
-        defaults: {
-          continuation: {
-            enabled: true,
-            contextPressureThreshold: 0.8,
-          },
-        },
-      },
-    };
     vi.stubEnv("ANTHROPIC_API_KEY", "");
     mockedResolveAuthProfileOrder.mockReturnValue(["profile-a", "profile-b"]);
     mockedGetApiKeyForModel.mockImplementation(async ({ profileId } = {}) => ({
@@ -252,27 +238,13 @@ describe("runEmbeddedAgent timeout recovery composition", () => {
         lastAssistant: { usage: { input: 150_000 } } as never,
       }),
     );
-    const firstPressureEvents: systemEvents.SystemEvent[] = [];
-    let compactionCalls = 0;
-    mockedCompactDirect.mockImplementation(async () => {
-      compactionCalls += 1;
-      if (compactionCalls === 1) {
-        firstPressureEvents.push(
-          ...systemEvents
-            .drainSystemEventEntries(session.runParams.sessionKey)
-            .filter((event) => event.text.includes("[system:context-pressure]")),
-        );
-      }
-      return {
-        ok: false,
-        compacted: false,
-        reason: "nothing to compact",
-      };
+    mockedCompactDirect.mockResolvedValue({
+      ok: false,
+      compacted: false,
+      reason: "nothing to compact",
     });
-    const result = await runEmbeddedAgent({
-      ...session.runParams,
-      config,
-    });
+
+    const result = await runEmbeddedAgent(session.runParams);
 
     expect(mockedCompactDirect).toHaveBeenCalledTimes(2);
     expect(
@@ -282,21 +254,6 @@ describe("runEmbeddedAgent timeout recovery composition", () => {
     ).toEqual(["profile-a", "profile-b"]);
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
     expect(result.payloads?.[0]?.text).toContain("timed out");
-    expect(firstPressureEvents).toEqual([
-      expect.objectContaining({
-        expectedSessionId: session.runParams.sessionId,
-      }),
-    ]);
-    expect(firstPressureEvents[0]?.text).toMatch(/preserve critical working state/i);
-    expect(firstPressureEvents[0]?.text).not.toContain("continue_delegate");
-    expect(firstPressureEvents[0]?.text).not.toContain("request_compaction");
-    const repeatedPressureEvents = systemEvents
-      .peekSystemEventEntries(session.runParams.sessionKey)
-      .filter((event) => event.text.includes("[system:context-pressure]"));
-    expect(repeatedPressureEvents).toHaveLength(0);
-    expect(loadSessionEntry(session.runParams.sessionTarget!)).toMatchObject({
-      lastContextPressureBand: 25,
-    });
   });
 
   it("lets one silent idle timeout retry before the normal timeout surface", async () => {

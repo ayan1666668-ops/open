@@ -498,12 +498,7 @@ describe("resolveContextTokens", () => {
 
 describe("incrementCompactionCount", () => {
   it("increments compaction count", async () => {
-    const entry = {
-      sessionId: "s1",
-      updatedAt: Date.now(),
-      compactionCount: 2,
-      lastContextPressureBand: 90,
-    } as SessionEntry;
+    const entry = { sessionId: "s1", updatedAt: Date.now(), compactionCount: 2 } as SessionEntry;
     const { storePath, sessionKey, sessionStore } = await createCompactionSessionFixture(entry);
 
     const count = await incrementCompactionCount({
@@ -514,13 +509,10 @@ describe("incrementCompactionCount", () => {
     });
     expect(count).toBe(3);
     expect(sessionStore[sessionKey]).toMatchObject({ sessionId: "s1", compactionCount: 3 });
-    const stored = { [sessionKey]: await loadStoredEntry(storePath, sessionKey) };
-    const storedEntry = requireStoredSession(stored, sessionKey);
-    expect(storedEntry).toMatchObject({
+    expect(await loadStoredEntry(storePath, sessionKey)).toMatchObject({
       sessionId: "s1",
       compactionCount: 3,
     });
-    expect(storedEntry.lastContextPressureBand).toBeUndefined();
   });
 
   it.each([

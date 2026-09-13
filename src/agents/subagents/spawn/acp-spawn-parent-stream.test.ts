@@ -8,7 +8,7 @@ const requestHeartbeatMock = vi.fn();
 const recordAcpParentStreamEventsMock = vi.fn();
 
 vi.mock("../../../infra/system-events.js", () => ({
-  enqueueSystemEventRaw: (...args: unknown[]) => enqueueSystemEventMock(...args),
+  enqueueSystemEvent: (...args: unknown[]) => enqueueSystemEventMock(...args),
 }));
 
 vi.mock("../../../infra/heartbeat-wake.js", async () => {
@@ -17,7 +17,7 @@ vi.mock("../../../infra/heartbeat-wake.js", async () => {
       "../../../infra/heartbeat-wake.js",
     ),
     () => ({
-      requestHeartbeatRaw: (...args: unknown[]) => requestHeartbeatMock(...args),
+      requestHeartbeat: (...args: unknown[]) => requestHeartbeatMock(...args),
     }),
   );
 });

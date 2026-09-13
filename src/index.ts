@@ -75,7 +75,7 @@ export let normalizeE164: LibraryExports["normalizeE164"];
 export let PortInUseError: LibraryExports["PortInUseError"];
 export let promptYesNo: LibraryExports["promptYesNo"];
 export let resolveSessionKey: LibraryExports["resolveSessionKey"];
-export let resolveSessionStorePathCore: LibraryExports["resolveSessionStorePathCore"];
+export let resolveStorePath: LibraryExports["resolveStorePath"];
 export let runCommandWithTimeout: LibraryExports["runCommandWithTimeout"];
 export let runExec: LibraryExports["runExec"];
 /** @deprecated Use SQLite-backed session APIs. Scheduled for removal after 2026-10-12. */
@@ -124,7 +124,7 @@ if (!isMain) {
     PortInUseError,
     promptYesNo,
     resolveSessionKey,
-    resolveSessionStorePathCore,
+    resolveStorePath,
     runCommandWithTimeout,
     runExec,
     saveSessionStore,

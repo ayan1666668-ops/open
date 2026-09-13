@@ -64,16 +64,9 @@ export function handleAgentStart(ctx: EmbeddedAgentSubscribeContext) {
 export function handleAgentEnd(
   ctx: EmbeddedAgentSubscribeContext,
   evt?: Extract<AgentSessionEvent, { type: "agent_end" }>,
-  options?: { deliveryGeneration?: number },
 ): void | Promise<void> {
   ctx.state.liveEditDiffStateById.clear();
   type BeforeTerminalDeliveryDecision = void | { suppressTerminalDelivery?: boolean };
-  const isCurrentDeliveryGeneration = () =>
-    options?.deliveryGeneration === undefined ||
-    options.deliveryGeneration === ctx.getBlockReplyDeliveryGeneration();
-  if (!isCurrentDeliveryGeneration()) {
-    return;
-  }
   const lastAssistant = ctx.state.lastAssistant;
   const isError = isAssistantMessage(lastAssistant) && lastAssistant.stopReason === "error";
   let lifecycleErrorText: string | undefined;
@@ -115,11 +108,6 @@ export function handleAgentEnd(
     toolAudioAsVoice:
       ctx.state.pendingToolAudioAsVoice ||
       ctx.state.deferredBlockReplies.some((payload) => payload.audioAsVoice),
-    toolTrustedLocalMedia: resolveTerminalToolMediaTrust({
-      pendingMediaUrls: ctx.state.pendingToolMediaUrls,
-      pendingTrustByUrl: ctx.state.pendingToolMediaTrustByUrl,
-      deferredReplies: ctx.state.deferredBlockReplies,
-    }),
     hasToolMediaBlockReply: ctx.state.hasToolMediaBlockReply,
     didDeliverSourceReplyViaMessageTool:
       ctx.state.messageToolOnlySourceReplyDelivered ||
@@ -219,11 +207,10 @@ export function handleAgentEnd(
       typeof ctx.state.terminalAborted === "boolean"
         ? ctx.state.terminalAborted
         : ctx.params.isTerminalAborted?.();
-    // Validation loops lose their final safe tool result on abort/error
-    // terminal paths. Preserve only the argument-free validator summary;
-    // arbitrary tool errors can contain secrets.
+    // Aborted validation loops lose their final tool result. Preserve only the
+    // argument-free validator summary; arbitrary tool errors can contain secrets.
     const toolErrorSummary =
-      (terminalAborted === true || isError) && ctx.state.lastToolError
+      terminalAborted === true && ctx.state.lastToolError
         ? summarizeToolValidationError(ctx.state.lastToolError)
         : undefined;
     const data = {
@@ -265,9 +252,6 @@ export function handleAgentEnd(
   };
 
   const finalizeAgentEnd = () => {
-    if (!isCurrentDeliveryGeneration()) {
-      return;
-    }
     ctx.state.blockState.thinking = false;
     ctx.state.blockState.final = false;
     ctx.state.blockState.inlineCode = createInlineCodeState();
@@ -276,33 +260,23 @@ export function handleAgentEnd(
     ctx.state.blockState.pendingFenceFragment = undefined;
 
     if (ctx.state.pendingCompactionRetry > 0) {
-      ctx.resolveCompactionRetry(options?.deliveryGeneration);
+      ctx.resolveCompactionRetry();
     } else {
       ctx.maybeResolveCompactionWait();
     }
   };
 
   const flushPendingMediaAndChannel = () => {
-    if (!isCurrentDeliveryGeneration()) {
-      return undefined;
-    }
     if (ctx.params.onBlockReply && !ctx.state.pendingToolMediaDeliveryFailed) {
       const pendingToolMediaReply = readPendingToolMediaReply(ctx.state);
       if (pendingToolMediaReply && hasAssistantVisibleReply(pendingToolMediaReply)) {
-        ctx.emitBlockReply(pendingToolMediaReply, {
-          onDelivered: () => {
-            ctx.state.hasToolMediaBlockReply = true;
-          },
-        });
+        ctx.emitBlockReply(pendingToolMediaReply);
       }
     }
 
-    const postMediaFlushResult = ctx.flushBlockReplyBuffer({ retryFailures: true });
+    const postMediaFlushResult = ctx.flushBlockReplyBuffer();
     if (isPromiseLike<void>(postMediaFlushResult)) {
       return postMediaFlushResult.then(() => {
-        if (!isCurrentDeliveryGeneration()) {
-          return undefined;
-        }
         const onBlockReplyFlushResult = ctx.params.onBlockReplyFlush?.({ reason: "terminal" });
         if (isPromiseLike<void>(onBlockReplyFlushResult)) {
           return onBlockReplyFlushResult;
@@ -339,47 +313,28 @@ export function handleAgentEnd(
   };
 
   const deliverTerminal = () => {
-    if (!isCurrentDeliveryGeneration()) {
-      return;
+    ctx.releaseDeferredReplies();
+    const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer({ final: true });
+    finalizeAgentEnd();
+    const flushPendingMediaAndChannelResult = isPromiseLike<void>(flushBlockReplyBufferResult)
+      ? Promise.resolve(flushBlockReplyBufferResult).then(() => flushPendingMediaAndChannel())
+      : flushPendingMediaAndChannel();
+
+    if (isPromiseLike<void>(flushPendingMediaAndChannelResult)) {
+      return Promise.resolve(flushPendingMediaAndChannelResult).then(
+        () => emitLifecycleTerminalOnce(),
+        (error: unknown) => {
+          const emitted = emitLifecycleTerminalOnce();
+          if (isPromiseLike<void>(emitted)) {
+            return Promise.resolve(emitted).then(() => {
+              throw error;
+            });
+          }
+          throw error;
+        },
+      );
     }
-    const continueTerminalDelivery = () => {
-      if (!isCurrentDeliveryGeneration()) {
-        return;
-      }
-      const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer({
-        final: true,
-        retryFailures: true,
-      });
-      finalizeAgentEnd();
-      const flushPendingMediaAndChannelResult = isPromiseLike<void>(flushBlockReplyBufferResult)
-        ? Promise.resolve(flushBlockReplyBufferResult).then(() =>
-            isCurrentDeliveryGeneration() ? flushPendingMediaAndChannel() : undefined,
-          )
-        : flushPendingMediaAndChannel();
-      if (isPromiseLike<void>(flushPendingMediaAndChannelResult)) {
-        return Promise.resolve(flushPendingMediaAndChannelResult).then(
-          () => (isCurrentDeliveryGeneration() ? emitLifecycleTerminalOnce() : undefined),
-          (error: unknown) => {
-            if (!isCurrentDeliveryGeneration()) {
-              return undefined;
-            }
-            const emitted = emitLifecycleTerminalOnce();
-            if (isPromiseLike<void>(emitted)) {
-              return Promise.resolve(emitted).then(() => {
-                throw error;
-              });
-            }
-            throw error;
-          },
-        );
-      }
-      return emitLifecycleTerminalOnce();
-    };
-    const released = ctx.releaseDeferredReplies();
-    if (isPromiseLike<void>(released)) {
-      return Promise.resolve(released).then(continueTerminalDelivery);
-    }
-    return continueTerminalDelivery();
+    return emitLifecycleTerminalOnce();
   };
 
   const deliverTerminalWithLifecycleErrorFallback = () => {
@@ -397,9 +352,6 @@ export function handleAgentEnd(
   };
 
   const suppressTerminalDelivery = () => {
-    if (!isCurrentDeliveryGeneration()) {
-      return;
-    }
     ctx.clearAssistantStream();
     ctx.clearDeferredBlockReplies();
     finalizeAgentEnd();
@@ -407,7 +359,7 @@ export function handleAgentEnd(
 
   let lifecycleTerminalEmitted = false;
   const emitLifecycleTerminalOnce = (): void | Promise<void> => {
-    if (lifecycleTerminalEmitted || !isCurrentDeliveryGeneration()) {
+    if (lifecycleTerminalEmitted) {
       return;
     }
     lifecycleTerminalEmitted = true;
@@ -446,9 +398,6 @@ export function handleAgentEnd(
         return undefined;
       })
       .then((decision) => {
-        if (!isCurrentDeliveryGeneration()) {
-          return undefined;
-        }
         if (decision?.suppressTerminalDelivery === true) {
           suppressTerminalDelivery();
           return undefined;
@@ -462,19 +411,3 @@ export function handleAgentEnd(
   }
   return deliverTerminalWithLifecycleErrorFallback();
 }
-function resolveTerminalToolMediaTrust(params: {
-  pendingMediaUrls: readonly string[];
-  pendingTrustByUrl: ReadonlyMap<string, boolean>;
-  deferredReplies: readonly { mediaUrls?: string[]; trustedLocalMedia?: boolean }[];
-}): boolean {
-  const trust = [
-    ...params.pendingMediaUrls.map((url) => params.pendingTrustByUrl.get(url.trim()) === true),
-    ...params.deferredReplies.flatMap((payload) =>
-      (payload.mediaUrls ?? []).map(() => payload.trustedLocalMedia === true),
-    ),
-  ];
-  return trust.length > 0 && trust.every(Boolean);
-}
-
-const testing = { resolveTerminalToolMediaTrust };
-export { testing as __testing };

@@ -202,7 +202,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: restore the shipped read-only conversation-binding inspection facade.
       // +1: canonical node CLI owners for plugin-provided node commands.
       // +3: typed feature contracts, backend registration, and native Control UI hosting.
-      152,
+      // +1: public provider-owned asynchronous embedding batch contract.
+      153,
       env,
     ),
     publicExports: readPluginSdkSurfaceBudgetEnv(
@@ -362,9 +363,15 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // -1: add one tool policy object and retire two unused deprecated mode exports.
       // -1: one exec policy object replaces two deprecated comparator exports.
       // +1: approved bounded TAR inspection through the archive admission owner.
+      // +8: bounded group-thread coordination, mention/route facts, and participant delivery types.
       // +1: canonical runtime-context classifier for native history projection.
-      // +17: continuation runtime, task-flow, trace, and channel-ingress contracts.
-      4464,
+      // +1: prepared model-specific runtime choices for channel consumers.
+      // +3: public provider-owned asynchronous embedding batch contract.
+      // +2: canonical credential-value functions through the narrow secret-input surface.
+      // +1: shared removed-model choice recovery text for channel consumers.
+      // +2: shared stored-account key selection and its plugin-owned policy type.
+      // +1: shared per-connection webhook request ordering for channel listeners.
+      4465,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -495,9 +502,13 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // -2: retire the deprecated mode projection callables.
       // -2: exec comparators are members of the shared policy object.
       // +1: approved bounded TAR inspection through the archive admission owner.
+      // +5: group-thread coordinator, config resolution, mention facts, route exclusion, delivery session.
       // +1: canonical runtime-context classifier for native history projection.
-      // +5: callable continuation and channel-ingress runtime helpers.
-      2634,
+      // +1: prepared model-specific runtime choice reader.
+      // +2: canonical env-value reader and managed SecretRef marker constructor.
+      // +1: shared stored-account key selection for channel readers and writers.
+      // +1: shared per-connection webhook request ordering for channel listeners.
+      2639,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
@@ -517,8 +528,7 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       //     Slack progress-draft render) so installed plugins survive upgrade (#124041 class).
       // -18: retire the expired August compatibility exports and messaging-targets subpath.
       // +4: rendering helpers forwarded by the shipped channel-message wildcard.
-      // +7: continuation compatibility projections retained during migration.
-      1145,
+      1138,
       env,
     ),
     publicWildcardReexports: readPluginSdkSurfaceBudgetEnv(

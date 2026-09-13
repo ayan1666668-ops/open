@@ -11,7 +11,7 @@ import { createStreamRendering } from "./embedded-agent-subscribe.stream-renderi
 export function updateMessage(
   context: EmbeddedAgentSubscribeContext,
   event: { message: unknown; assistantMessageEvent?: unknown },
-): void | Promise<void> {
+) {
   // Stream fixtures intentionally include incomplete and malformed provider payloads.
   return handleMessageUpdate(context, {
     type: "message_update",
@@ -144,8 +144,7 @@ export function createMessageEndContext(
     params.finalizeAssistantTexts ?? vi.fn(delivery.finalizeAssistantTexts);
   const rendering = createStreamRendering({
     ...ctx,
-    settleBlockReplyDeliveries: delivery.settleBlockReplyDeliveries,
-    currentPendingBlockReplyTasks: delivery.currentPendingBlockReplyTasks,
+    pendingBlockReplyTasks: delivery.pendingBlockReplyTasks,
     pushAssistantText: delivery.pushAssistantText,
     shouldSkipAssistantText: delivery.shouldSkipAssistantText,
   });

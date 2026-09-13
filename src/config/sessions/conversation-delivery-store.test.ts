@@ -29,7 +29,7 @@ type LegacyDeliveryFixture = Partial<SessionEntry> & {
   origin?: SessionOrigin;
 };
 
-const upsertSessionEntryCore = (
+const upsertSessionEntry = (
   scope: Parameters<typeof upsertCanonicalSessionEntry>[0],
   entry: LegacyDeliveryFixture,
 ) => upsertCanonicalSessionEntry(scope, normalizeLegacySessionEntryDelivery(entry as SessionEntry));
@@ -44,7 +44,7 @@ async function withConversationStore(
     const storePath = path.join(dir, "sessions.json");
     const scope = { agentId: "main", storePath };
     try {
-      await upsertSessionEntryCore(
+      await upsertSessionEntry(
         { ...scope, sessionKey: "agent:main:reef:direct:peer-agent" },
         {
           sessionId: "reef-session",
@@ -74,6 +74,37 @@ async function withConversationStore(
 }
 
 describe("conversation delivery store", () => {
+  it("validates retry input without recreating a missing operation", async () => {
+    await withConversationStore(({ scope, conversationRef }) => {
+      const input = {
+        operationKind: "send" as const,
+        conversationRef,
+        sourceSessionKey: "agent:main:telegram:direct:operator",
+        message: "hello",
+      };
+      expect(getConversationDeliveryOperation(scope, "missing", input)).toBeUndefined();
+      expect(getConversationDeliveryOperation(scope, "missing")).toBeUndefined();
+      const begun = beginConversationDeliveryOperation(scope, { operationId: "retry", ...input });
+      expect(
+        getConversationDeliveryOperation(scope, " retry ", {
+          ...input,
+          sourceSessionKey: ` ${input.sourceSessionKey} `,
+        }),
+      ).toEqual(begun.record);
+      for (const changed of [
+        { operationKind: "turn" as const },
+        { conversationRef: "conv_ffffffffffffffffffffffffffffffff" },
+        { sourceSessionKey: "agent:main:other" },
+        { message: "changed" },
+      ]) {
+        expect(() =>
+          getConversationDeliveryOperation(scope, "retry", { ...input, ...changed }),
+        ).toThrow("Conversation delivery operation was reused with different input: retry");
+      }
+      expect(getConversationDeliveryOperation(scope, "retry")).toEqual(begun.record);
+    });
+  });
+
   it("creates idempotent operations and rejects operation-id input reuse", async () => {
     await withConversationStore(({ scope, conversationRef }) => {
       const first = beginConversationDeliveryOperation(scope, {

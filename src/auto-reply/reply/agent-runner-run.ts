@@ -1,6 +1,8 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveDefaultAgentId } from "../../agents/agent-scope-config.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
 import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
+import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
 import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
@@ -13,7 +15,6 @@ import {
 import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
-import { createReplyContinuationController } from "./agent-runner-continuation.js";
 import {
   BLOCK_REPLY_SEND_TIMEOUT_MS,
   cleanupReplyAgentRun,
@@ -65,7 +66,6 @@ import {
   retireTerminalRestartRecoverySourceClaim,
 } from "./restart-recovery-claim.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
-import { resolveReplyHookTrigger } from "./run-provenance.js";
 import { readChannelSourceTurnId } from "./source-turn-id.js";
 import { createTypingSignaler } from "./typing-mode.js";
 export async function runReplyAgent(
@@ -101,7 +101,6 @@ export async function runReplyAgent(
     typingMode,
     resetTriggered,
     replyThreadingOverride,
-    isContinuationWake,
     replyOperation: providedReplyOperation,
   } = params;
   const resolveGatewayContext = providedReplyOperation
@@ -193,6 +192,29 @@ export async function runReplyAgent(
           hydrateSkillPromptRefs: false,
         }) ?? activeSessionEntry)
       : activeSessionEntry;
+  // New steering must not reuse a terminal source claim. Compare the active
+  // source identity so unrelated retained tombstones still permit steering.
+  // The parked admission owner rechecks after any predecessor wait.
+  const activeSourceTurnId =
+    replyRunRegistry.getSourceTurnId(sessionKey ?? "") ??
+    normalizeOptionalString(restartRecoveryEntry?.restartRecoveryDeliverySourceRunId) ??
+    "";
+  const terminalDeliveryFailClosed = isRestartRecoveryTerminalDeliveryFailClosed(
+    restartRecoveryEntry,
+    activeReplyOperation?.sessionId ?? followupRun.run.sessionId,
+    activeSourceTurnId,
+  );
+  const shouldQueueTerminalReceiptSteer =
+    effectiveShouldSteer &&
+    isActive &&
+    !shouldQueueAuthorityMismatch &&
+    messageInjectionDisposition === "none" &&
+    terminalDeliveryFailClosed;
+  if (shouldQueueTerminalReceiptSteer) {
+    logVerbose(
+      `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} is fail-closed for terminal source-reply delivery; queuing instead of steering`,
+    );
+  }
   if (
     restartRecoverySourceTurnId &&
     isDuplicateRestartRecoverySource(restartRecoveryEntry, restartRecoverySourceTurnId)
@@ -301,6 +323,7 @@ export async function runReplyAgent(
     effectiveShouldSteer &&
     isActive &&
     !shouldQueueAuthorityMismatch &&
+    !shouldQueueTerminalReceiptSteer &&
     messageInjectionDisposition === "none"
   ) {
     bindQueueDisposition();
@@ -316,6 +339,8 @@ export async function runReplyAgent(
       runFollowup: queuedRunFollowupTurn,
       sessionCtx,
       sessionKey,
+      sessionEntry: activeSessionEntry,
+      storePath,
       touchActiveSessionEntry,
       typing,
       typingSignals,
@@ -574,17 +599,6 @@ export async function runReplyAgent(
     },
     storePath,
   });
-  const continuation = createReplyContinuationController({
-    cfg,
-    sessionKey,
-    storePath,
-    isContinuationWake: isContinuationWake === true,
-    activeSessionStore,
-    getActiveSessionEntry: () => activeSessionEntry,
-    setActiveSessionEntry: (entry) => {
-      activeSessionEntry = entry;
-    },
-  });
   const resetSessionAfterRoleOrderingConflict = async (reason: string): Promise<boolean> =>
     await resetReplyRunSession({
       options: {
@@ -618,14 +632,11 @@ export async function runReplyAgent(
       cfg,
       checkpointBeforeAgentReply,
       commandBody,
-      continuation,
       defaultModel,
       resolveVisibleReplyDelivery,
       followupRun,
       getActiveIsNewSession: () => activeIsNewSession,
       getActiveSessionEntry: () => activeSessionEntry,
-      hookTrigger: resolveReplyHookTrigger(opts),
-      isContinuationWake: isContinuationWake === true,
       isHeartbeat,
       isRestartRecoveryArmed,
       opts: runOpts,
@@ -684,7 +695,6 @@ export async function runReplyAgent(
     await cleanupReplyAgentRun({
       blockReplyPipeline,
       clearRestartRecoveryDeliveryClaim,
-      postCompactionDelegatesToPreserve: continuation.postCompactionDelegatesToPreserve,
       providedReplyOperation,
       queueKey,
       replyOperation,

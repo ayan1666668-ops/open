@@ -9,7 +9,11 @@ import {
   setPluginInstallRecordMapEntry,
 } from "../../config/plugin-install-record-map.js";
 import type { PluginInstallRecord } from "../../config/types.plugins.js";
+import { isPidAlive } from "../../shared/pid-alive.js";
+import { killPidIfAlive, readPidFile, waitForPidToExit } from "../../test-utils/process-tree.js";
+import type { PostCorePluginUpdateResult } from "./update-command-plugins.js";
 import {
+  continuePostCoreUpdateInFreshProcess,
   preparePostCorePluginInstallRecordsForFreshProcess,
   readPostCorePluginInstallRecordsFile,
   shouldResumePostCoreUpdateInFreshProcess,
@@ -26,11 +30,84 @@ afterEach(async () => {
   );
 });
 
-async function withTestDir(): Promise<string> {
+async function withTempDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-post-core-records-"));
   tempDirs.push(dir);
   return dir;
 }
+
+describe("continuePostCoreUpdateInFreshProcess", () => {
+  it.runIf(process.platform !== "win32").each([true, false])(
+    "waits for a committed child's shutdown before returning its result (cooperative=%s)",
+    async (cooperative) => {
+      const root = await withTempDir();
+      const settledPath = path.join(root, "settled");
+      const pidPath = path.join(root, "writer.pid");
+      const pluginUpdate: PostCorePluginUpdateResult = {
+        status: "ok",
+        changed: true,
+        sync: {
+          changed: false,
+          switchedToBundled: [],
+          switchedToNpm: [],
+          warnings: [],
+          errors: [],
+        },
+        npm: { changed: false, outcomes: [] },
+        integrityDrifts: [],
+      };
+      await fs.mkdir(path.join(root, "dist"));
+      await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ version: "9999.0.0" }));
+      await fs.writeFile(
+        path.join(root, "dist", "entry.mjs"),
+        `import fs from "node:fs/promises";
+const hold = setInterval(() => {}, 1000);
+setTimeout(() => process.exit(2), 10000).unref();
+process.once("SIGTERM", () => {
+  if (!${JSON.stringify(cooperative)}) return;
+  setTimeout(async () => {
+    await fs.writeFile(${JSON.stringify(settledPath)}, "settled");
+    clearInterval(hold);
+  }, 150);
+});
+await fs.writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+await fs.writeFile(process.env.OPENCLAW_UPDATE_POST_CORE_RESULT_PATH, ${JSON.stringify(JSON.stringify(pluginUpdate))});
+`,
+      );
+
+      let settledAtReturn: string | undefined;
+      let aliveAtReturn: boolean | undefined;
+      let result: Awaited<ReturnType<typeof continuePostCoreUpdateInFreshProcess>>;
+      try {
+        result = await continuePostCoreUpdateInFreshProcess({
+          root,
+          channel: "stable",
+          requestedChannel: null,
+          opts: { json: true, yes: true },
+          pluginInstallRecords: {},
+          updateStartedAtMs: Date.now(),
+          timeoutMs: 5000,
+          nodeRunner: process.execPath,
+        });
+        settledAtReturn = await fs.readFile(settledPath, "utf8").catch(() => undefined);
+        aliveAtReturn = isPidAlive(await readPidFile(pidPath));
+      } finally {
+        // Join the real fixture even on the unsafe baseline before temp cleanup.
+        const pid = await readPidFile(pidPath);
+        if (cooperative) {
+          await expect
+            .poll(() => fs.readFile(settledPath, "utf8").catch(() => undefined), { timeout: 5000 })
+            .toBe("settled");
+        }
+        killPidIfAlive(pid);
+        expect(await waitForPidToExit(pid)).toBe(true);
+      }
+      expect(result).toEqual({ resumed: true, pluginUpdate });
+      expect(aliveAtReturn).toBe(false);
+      expect(settledAtReturn).toBe(cooperative ? "settled" : undefined);
+    },
+  );
+});
 
 describe("readPostCorePluginInstallRecordsFile", () => {
   it("returns undefined when the path is omitted", async () => {
@@ -38,13 +115,13 @@ describe("readPostCorePluginInstallRecordsFile", () => {
   });
 
   it("returns undefined when the handoff file is missing", async () => {
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const missing = path.join(dir, "missing-plugin-install-records.json");
     await expect(readPostCorePluginInstallRecordsFile(missing)).resolves.toBeUndefined();
   });
 
   it("loads a prototype-safe install-records handoff with legal special ids", async () => {
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const filePath = path.join(dir, "plugin-install-records.json");
     await fs.writeFile(
       filePath,
@@ -69,7 +146,7 @@ describe("readPostCorePluginInstallRecordsFile", () => {
   });
 
   it("fails closed on structurally invalid handoff records", async () => {
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const filePath = path.join(dir, "plugin-install-records.json");
     await fs.writeFile(filePath, '{"demo":{"source":"bogus"}}\n', "utf-8");
 
@@ -79,7 +156,7 @@ describe("readPostCorePluginInstallRecordsFile", () => {
   });
 
   it("writes UTF-8 byte order and preserves special ids and passthrough fields", async () => {
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const filePath = path.join(dir, "plugin-install-records.json");
     const records = createPluginInstallRecordMap<PluginInstallRecord>();
     setPluginInstallRecordMapEntry(records, "\u{10000}", { source: "git" });
@@ -111,7 +188,7 @@ describe("readPostCorePluginInstallRecordsFile", () => {
   });
 
   it("fails closed on malformed handoff JSON with a path-labelled error", async () => {
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const filePath = path.join(dir, "plugin-install-records.json");
     await fs.writeFile(filePath, "{invalid json", "utf-8");
 
@@ -125,7 +202,7 @@ describe("readPostCorePluginInstallRecordsFile", () => {
 
   it("live FS: corrupt handoff is not silently dropped as empty records", async () => {
     // L3: real temp file + real fs.readFile/JSON.parse (no stubs).
-    const dir = await withTestDir();
+    const dir = await withTempDir();
     const filePath = path.join(dir, "plugin-install-records.json");
     await fs.writeFile(filePath, '[{"not":"a-record-map"', "utf-8");
 

@@ -1,3 +1,4 @@
+import { classifyAgentRunTerminalOutcome } from "../../agents/agent-run-terminal-outcome.js";
 import { isContextOverflowError } from "../../agents/embedded-agent-helpers.js";
 import { hasCompletedSourceReplyDeliveryEvidence } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import {
@@ -10,7 +11,6 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { buildContextOverflowRecoveryText } from "./agent-runner-context-recovery.js";
 import { resolveSourceReplyPolicy } from "./agent-runner-core.js";
-import { isContinuationWrappedRunResult } from "./agent-runner-execution.types.js";
 import { markAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
 import type { AgentFallbackCandidatesResult } from "./agent-runner-fallback-candidate.js";
 import type {
@@ -28,19 +28,7 @@ export async function settleAgentFallbackCycle(params: {
 }): Promise<AgentFallbackCycleResult> {
   const { cycle, fallbackResult } = params;
   const turn = cycle.turn;
-  const wrappedRunResult = fallbackResult.result;
-  const runResult = isContinuationWrappedRunResult(wrappedRunResult)
-    ? wrappedRunResult.result
-    : wrappedRunResult;
-  const continueWorkRequests = isContinuationWrappedRunResult(wrappedRunResult)
-    ? (wrappedRunResult.continueWorkRequests ?? [])
-    : [];
-  const compactionTraceparent = isContinuationWrappedRunResult(wrappedRunResult)
-    ? wrappedRunResult.compactionTraceparent
-    : undefined;
-  const rawContinuationText = isContinuationWrappedRunResult(wrappedRunResult)
-    ? wrappedRunResult.rawContinuationText
-    : undefined;
+  const runResult = fallbackResult.result;
   const fallbackProvider = fallbackResult.provider;
   const fallbackModel = fallbackResult.model;
   const fallbackExhausted = fallbackResult.outcome === "exhausted";
@@ -181,7 +169,12 @@ export async function settleAgentFallbackCycle(params: {
     emitSettledLifecycleError(exhaustionError, terminalMetadata);
     turn.replyOperation?.retainFailureUntilComplete();
     turn.replyOperation?.fail("run_failed", exhaustionError);
-  } else if (deferredLifecycleError || embeddedError || terminalOutcome.status === "timeout") {
+  } else if (
+    deferredLifecycleError ||
+    embeddedError ||
+    terminalOutcome.status === "timeout" ||
+    classifyAgentRunTerminalOutcome(terminalOutcome) === "failure"
+  ) {
     const terminalError = new Error(terminalErrorMessage ?? "Agent run failed");
     terminalRunFailed = true;
     cycle.modelPatch.captureFailure(embeddedError ?? terminalError);
@@ -205,8 +198,5 @@ export async function settleAgentFallbackCycle(params: {
     fallbackExhausted,
     fallbackAttempts,
     terminalRunFailed,
-    continueWorkRequests,
-    compactionTraceparent,
-    rawContinuationText,
   };
 }

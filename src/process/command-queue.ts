@@ -8,11 +8,6 @@ import {
   logLaneEnqueue,
 } from "../logging/diagnostic-runtime.js";
 import {
-  notifyAllCommandLaneIdleWaitersForState,
-  notifyCommandLaneIdleWaitersForState,
-  waitForCommandLaneIdleState,
-} from "./command-queue-waiters.js";
-import {
   applyCommandLaneCapacity,
   canAdmitInGroup,
   type CommandLaneGroupSpec,
@@ -172,19 +167,6 @@ function retireIdleScopedCommandLane(state: LaneState): void {
   if (lanes.get(state.lane) === state) {
     lanes.delete(state.lane);
   }
-}
-
-function isCommandLaneIdle(lane: string): boolean {
-  const state = getQueueState().lanes.get(lane);
-  return !state || getLaneDepth(state) === 0;
-}
-
-function notifyCommandLaneIdleWaiters(lane: string): void {
-  notifyCommandLaneIdleWaitersForState(lane, isCommandLaneIdle);
-}
-
-function notifyAllCommandLaneIdleWaiters(): void {
-  notifyAllCommandLaneIdleWaitersForState(isCommandLaneIdle);
 }
 
 function normalizeTaskTimeoutMs(value: number | undefined): number | undefined {
@@ -421,7 +403,6 @@ function drainLane(
               `lane task done: lane=${lane} durationMs=${Date.now() - startTime} active=${state.activeTaskIds.size} queued=${state.queue.length}`,
             );
             drainReadyCommandLane(lane, state);
-            notifyCommandLaneIdleWaiters(lane);
           }
           entry.resolve(result);
         } catch (err) {
@@ -439,7 +420,6 @@ function drainLane(
           }
           if (completedCurrentGeneration) {
             drainReadyCommandLane(lane, state);
-            notifyCommandLaneIdleWaiters(lane);
           }
           entry.reject(err);
         }
@@ -559,7 +539,6 @@ export function setCommandLaneConcurrency(lane: string, maxConcurrent: number) {
   if (state.maxConcurrent > 0) {
     drainReadyCommandLane(cleaned);
   }
-  notifyCommandLaneIdleWaiters(cleaned);
 }
 
 export function enqueueCommandInLane<T>(
@@ -697,7 +676,6 @@ export function clearCommandLane(lane: string = CommandLane.Main) {
   while ((entry = dequeueLaneQueue(state.queue))) {
     entry.reject(new CommandLaneClearedError(cleaned));
   }
-  notifyCommandLaneIdleWaiters(cleaned);
   return removed;
 }
 
@@ -719,7 +697,6 @@ export function resetCommandLane(lane: string = CommandLane.Main): number {
   // Clearing activeTaskIds may release multiple shared slots. Re-arbitrate the
   // whole group so the reset lane cannot reclaim them ahead of older siblings.
   drainReadyCommandLane(cleaned);
-  notifyCommandLaneIdleWaiters(cleaned);
   return released;
 }
 
@@ -753,23 +730,4 @@ export function resetAllLanes(): void {
   for (const lane of lanesToDrain) {
     drainReadyCommandLane(lane);
   }
-  notifyAllCommandLaneIdleWaiters();
-}
-
-/**
- * Wait for one command lane to become completely idle: no active task and no
- * queued task. Same-session continuation wakes use this event-driven boundary
- * so they cannot cut ahead of already admitted work.
- */
-export function waitForCommandLaneIdle(
-  lane: string = CommandLane.Main,
-  timeoutMs?: number,
-  opts?: { signal?: AbortSignal },
-): Promise<{ idle: boolean }> {
-  return waitForCommandLaneIdleState({
-    lane: normalizeLane(lane),
-    isLaneIdle: isCommandLaneIdle,
-    timeoutMs,
-    signal: opts?.signal,
-  });
 }

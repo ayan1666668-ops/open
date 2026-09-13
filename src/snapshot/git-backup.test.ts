@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSqliteVecExtension } from "../../packages/memory-host-sdk/src/engine-storage.js";
 import { formatCliOperatorError } from "../cli/failure-output.js";
 import { backupGitCreateCommand, backupGitLogCommand } from "../commands/backup-git.js";
-import { readBackupFreshness } from "../commands/backup-health.js";
 import { createTestRuntime } from "../commands/test-runtime-config-helpers.js";
 import { executeGitCommand, requireGitCommand as requireGit } from "../infra/git-exec.js";
+import { readBackupRunFreshness } from "../state/backup-run-records.js";
 import { writeConfigMachineState } from "../state/config-machine-state-write.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "../state/openclaw-agent-db-contract.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
@@ -600,7 +600,7 @@ describe("Git-backed SQLite snapshots", () => {
         `Warning: Git backup committed, but push failed: ${result.pushWarning}`,
       );
 
-      const persisted = readBackupFreshness(process.env).latest?.error;
+      const persisted = (await readBackupRunFreshness(process.env)).latest?.error;
       expect(persisted).toBe(result.pushWarning);
     });
   });
@@ -767,12 +767,12 @@ describe("Git-backed SQLite snapshots", () => {
 
       expect(result).toMatchObject({ noChanges: false, pushed: false, pushWarning: warning });
       expect(result.commit).toMatch(/^[a-f0-9]{40}$/u);
-      expect(readBackupFreshness(process.env)).toMatchObject({
+      expect(await readBackupRunFreshness(process.env)).toMatchObject({
         latest: { status: "ok", kind: "git", pushFailed: true, error: warning },
         latestOk: { status: "ok", kind: "git", pushFailed: true, error: warning },
       });
     });
-    expect((await executeGitCommand(root, ["--git-dir", remotePath, "show-ref"])).code).not.toBe(0);
+    expect((await executeGitCommand(remotePath, ["show-ref"])).code).not.toBe(0);
   });
 
   it("pushes backup-only ancestry to a new remote", async () => {
@@ -795,9 +795,7 @@ describe("Git-backed SQLite snapshots", () => {
     const branch = await requireGit(repositoryPath, ["branch", "--show-current"]);
     expect(result).toMatchObject({ noChanges: false, pushed: true });
     expect(result).not.toHaveProperty("pushWarning");
-    expect(
-      await requireGit(root, ["--git-dir", remotePath, "rev-parse", `refs/heads/${branch}`]),
-    ).toBe(result.commit);
+    expect(await requireGit(remotePath, ["rev-parse", `refs/heads/${branch}`])).toBe(result.commit);
   });
 
   it("redacts credential-bearing origins in conflict errors", async () => {

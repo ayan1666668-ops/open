@@ -11,20 +11,17 @@ import {
   startHeartbeatRunner,
 } from "./heartbeat-runner.js";
 import {
+  heartbeatTestConfig,
   seedMainSessionStore,
   setupTelegramHeartbeatPluginRuntimeForTests,
   withTempHeartbeatSandbox,
 } from "./heartbeat-runner.test-utils.js";
 import {
   HEARTBEAT_SKIP_NO_PENDING_EVENT,
-  requestHeartbeatRaw as requestHeartbeat,
+  requestHeartbeat,
   setHeartbeatWakeHandler as setRuntimeHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
-import {
-  enqueueSystemEventRaw as enqueueSystemEvent,
-  peekSystemEvents,
-  resetSystemEventsForTest,
-} from "./system-events.js";
+import { enqueueSystemEvent, peekSystemEvents, resetSystemEventsForTest } from "./system-events.js";
 
 describe("stale exec heartbeat wakes", () => {
   type WakeRequest = Parameters<typeof requestHeartbeat>[0];
@@ -180,16 +177,7 @@ describe("stale exec heartbeat wakes", () => {
   it("keeps a scheduled turn alive when an acknowledged exec wake coalesces with it", async () => {
     await withTempHeartbeatSandbox(async ({ tmpDir, storePath }) => {
       setTestEnvValue("OPENCLAW_STATE_DIR", tmpDir);
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            workspace: tmpDir,
-            heartbeat: { every: "5m", target: "telegram" },
-          },
-        },
-        channels: { telegram: { allowFrom: ["*"] } },
-        session: { store: storePath },
-      };
+      const cfg: OpenClawConfig = heartbeatTestConfig(tmpDir, "telegram", "telegram", storePath);
       const sessionKey = await seedMainSessionStore(storePath, cfg, {
         lastChannel: "telegram",
         lastProvider: "telegram",
@@ -223,16 +211,7 @@ describe("stale exec heartbeat wakes", () => {
   it("keeps tagged cron work alive when an exec wake is coalesced", async () => {
     await withTempHeartbeatSandbox(async ({ tmpDir, storePath }) => {
       setTestEnvValue("OPENCLAW_STATE_DIR", tmpDir);
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            workspace: tmpDir,
-            heartbeat: { every: "5m", target: "telegram" },
-          },
-        },
-        channels: { telegram: { allowFrom: ["*"] } },
-        session: { store: storePath },
-      };
+      const cfg: OpenClawConfig = heartbeatTestConfig(tmpDir, "telegram", "telegram", storePath);
       const sessionKey = await seedMainSessionStore(storePath, cfg, {
         lastChannel: "telegram",
         lastProvider: "telegram",
@@ -262,16 +241,7 @@ describe("stale exec heartbeat wakes", () => {
   it("retires a stale exec wake before retryable busy gates", async () => {
     await withTempHeartbeatSandbox(async ({ tmpDir, storePath }) => {
       setTestEnvValue("OPENCLAW_STATE_DIR", tmpDir);
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            workspace: tmpDir,
-            heartbeat: { every: "5m", target: "telegram" },
-          },
-        },
-        channels: { telegram: { allowFrom: ["*"] } },
-        session: { store: storePath },
-      };
+      const cfg: OpenClawConfig = heartbeatTestConfig(tmpDir, "telegram", "telegram", storePath);
       await seedMainSessionStore(storePath, cfg, {
         lastChannel: "telegram",
         lastProvider: "telegram",

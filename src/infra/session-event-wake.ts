@@ -2,16 +2,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { runWithoutOwnedSessionTranscriptWrites } from "../config/sessions/transcript-write-context.js";
-import { runWithGatewayIndependentRootWorkAdmission } from "../process/gateway-work-admission.js";
+import { runWithGatewayDetachedWorkAdmission } from "../process/gateway-work-admission.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { normalizeHeartbeatWakeReason } from "./heartbeat-reason.js";
-import {
-  hasTrustedContinuationHeartbeatWake,
-  markTrustedContinuationHeartbeatWake,
-  type HeartbeatRunResult,
-  type HeartbeatWakeRequest,
-} from "./heartbeat-wake-contracts.js";
+import type { HeartbeatRunResult, HeartbeatWakeRequest } from "./heartbeat-wake-contracts.js";
 
 type SessionEventWakeResult = HeartbeatRunResult;
 type SessionEventWakeRequest = HeartbeatWakeRequest;
@@ -33,7 +28,6 @@ type Settlement = {
   stopWaitingOnRetry?: SessionEventWakeWaitOptions["stopWaitingOnRetry"];
 };
 type PendingWake = SessionEventWakeRequest & {
-  trustedContinuationRouting: boolean;
   sequence: number;
   barrierSequence?: number;
   requestedAt: number;
@@ -55,8 +49,7 @@ const COALESCE_MS = 250;
 const RETRY_MS = 1_000;
 export const SESSION_EVENT_IDLE_RETRY_MS = 60_000;
 const MAX_ACTIVE_TARGETS = 4;
-const DEFAULT_TRUST_DOMAIN = "default";
-const TRUSTED_CONTINUATION_DOMAIN = "trusted-continuation";
+const GLOBAL_TARGET = "::";
 const RETRY_REASONS = new Set([
   "active-run",
   "requests-in-flight",
@@ -112,9 +105,7 @@ function merge(previous: PendingWake, next: PendingWake): PendingWake {
     readyAt: Math.min(previous.readyAt, next.readyAt),
     notBefore: bypass ? 0 : Math.max(previous.notBefore, next.notBefore),
     heartbeat: preferred.heartbeat ?? other.heartbeat,
-    parentRunId: preferred.parentRunId,
     scheduledEveryMs: preferred.scheduledEveryMs ?? other.scheduledEveryMs,
-    scheduledAnchorMs: preferred.scheduledAnchorMs ?? other.scheduledAnchorMs,
     tasks: tasks.size
       ? [...tasks.values()].toSorted((left, right) => left.jobId.localeCompare(right.jobId))
       : undefined,
@@ -123,7 +114,7 @@ function merge(previous: PendingWake, next: PendingWake): PendingWake {
   };
 }
 
-function targetBaseKey(request: SessionEventWakeRequest): string {
+function targetKey(request: SessionEventWakeRequest): string {
   if (!request.sessionKey || (request.sessionKey === "global" && !request.agentId)) {
     return `${request.agentId ?? ""}::`;
   }
@@ -131,34 +122,6 @@ function targetBaseKey(request: SessionEventWakeRequest): string {
   return parseAgentSessionKey(request.sessionKey)
     ? `::${request.sessionKey}`
     : `${request.agentId ?? ""}::${request.sessionKey}`;
-}
-
-function trustDomain(request: SessionEventWakeRequest | PendingWake): string {
-  return ("trustedContinuationRouting" in request && request.trustedContinuationRouting) ||
-    hasTrustedContinuationHeartbeatWake(request)
-    ? TRUSTED_CONTINUATION_DOMAIN
-    : DEFAULT_TRUST_DOMAIN;
-}
-
-function targetKey(request: SessionEventWakeRequest | PendingWake): string {
-  return `${targetBaseKey(request)}::${trustDomain(request)}`;
-}
-
-function globalTargetKey(domain: string): string {
-  return `::::${domain}`;
-}
-
-function isGlobalTargetKey(key: string): boolean {
-  return (
-    key === globalTargetKey(DEFAULT_TRUST_DOMAIN) ||
-    key === globalTargetKey(TRUSTED_CONTINUATION_DOMAIN)
-  );
-}
-
-function keyTrustDomain(key: string): string {
-  return key.endsWith(`::${TRUSTED_CONTINUATION_DOMAIN}`)
-    ? TRUSTED_CONTINUATION_DOMAIN
-    : DEFAULT_TRUST_DOMAIN;
 }
 
 function shouldRetain(
@@ -181,15 +144,15 @@ function createSessionEventWakeRuntime() {
   const pending = new Map<string, WakeGroup>();
   const active = new Map<string, ActiveWake>();
   const abortSignals = new AsyncLocalStorage<AbortSignal>();
-  const activeRequests = new AsyncLocalStorage<SessionEventWakeRequest>();
   let handler: WakeHandler | null = null;
   let generation = 0;
   let sequence = 0;
   let timer: NodeJS.Timeout | undefined;
   let timerDueAt = 0;
+  let timerDefersReadyWork = false;
   let enabled = true;
 
-  function enqueue(wake: PendingWake, blockedUntil = 0): void {
+  function enqueue(wake: PendingWake, blockedUntil = 0): string {
     const key = targetKey(wake);
     const group = pending.get(key) ?? { blockedUntil: 0 };
     const slot =
@@ -197,6 +160,7 @@ function createSessionEventWakeRuntime() {
     group[slot] = group[slot] ? merge(group[slot], wake) : wake;
     group.blockedUntil = Math.max(group.blockedUntil, blockedUntil);
     pending.set(key, group);
+    return key;
   }
 
   function isReady(group: WakeGroup | undefined, now: number): boolean {
@@ -213,90 +177,76 @@ function createSessionEventWakeRuntime() {
   function afterBarrier(key: string, wake: PendingWake, global: WakeGroup | undefined): boolean {
     const barrier =
       global?.event?.intent === "immediate" ? global.event.barrierSequence : undefined;
-    return !isGlobalTargetKey(key) && barrier !== undefined && wake.sequence >= barrier;
+    return key !== GLOBAL_TARGET && barrier !== undefined && wake.sequence >= barrier;
   }
 
   function takeReady(): Array<{ key: string; wakes: PendingWake[] }> {
+    if (active.has(GLOBAL_TARGET)) {
+      return [];
+    }
     const now = performance.now();
+    const global = pending.get(GLOBAL_TARGET);
+    const globalReady = isReady(global, now);
+    if (globalReady && active.size) {
+      return [];
+    }
+    const event = global?.event;
+    const flush =
+      globalReady &&
+      event?.intent === "immediate" &&
+      Math.max(event.readyAt, event.notBefore) <= now;
+    const candidates =
+      globalReady && global
+        ? flush
+          ? [...pending].filter(([key]) => key !== GLOBAL_TARGET).concat([[GLOBAL_TARGET, global]])
+          : [[GLOBAL_TARGET, global] as const]
+        : pending;
     const ready: Array<{ key: string; wakes: PendingWake[] }> = [];
-    for (const domain of [DEFAULT_TRUST_DOMAIN, TRUSTED_CONTINUATION_DOMAIN]) {
+    for (const [key, group] of candidates) {
       if (ready.length + active.size >= MAX_ACTIVE_TARGETS) {
         break;
       }
-      const domainGlobalKey = globalTargetKey(domain);
-      if (active.has(domainGlobalKey)) {
+      if (
+        active.has(key) ||
+        group.blockedUntil > now ||
+        (key === GLOBAL_TARGET && (active.size || ready.length))
+      ) {
         continue;
       }
-      const global = pending.get(domainGlobalKey);
-      const globalReady = isReady(global, now);
-      const domainHasActiveTarget = [...active.keys()].some(
-        (key) => keyTrustDomain(key) === domain && !isGlobalTargetKey(key),
-      );
-      if (globalReady && domainHasActiveTarget) {
-        continue;
-      }
-      const event = global?.event;
-      const flush =
-        globalReady &&
-        event?.intent === "immediate" &&
-        Math.max(event.readyAt, event.notBefore) <= now;
-      const domainEntries = [...pending].filter(([key]) => keyTrustDomain(key) === domain);
-      const candidates =
-        globalReady && global
-          ? flush
-            ? domainEntries
-                .filter(([key]) => key !== domainGlobalKey)
-                .concat([[domainGlobalKey, global]])
-            : [[domainGlobalKey, global] as const]
-          : domainEntries;
-      for (const [key, group] of candidates) {
-        if (ready.length + active.size >= MAX_ACTIVE_TARGETS) {
-          break;
-        }
+      const picked: Partial<Record<(typeof SLOTS)[number], PendingWake>> = {};
+      for (const slot of SLOTS) {
+        const wake = group[slot];
         if (
-          active.has(key) ||
-          group.blockedUntil > now ||
-          (key === domainGlobalKey &&
-            ([...active.keys()].some((activeKey) => keyTrustDomain(activeKey) === domain) ||
-              ready.some((entry) => keyTrustDomain(entry.key) === domain)))
+          wake &&
+          !afterBarrier(key, wake, global) &&
+          wake.notBefore <= now &&
+          (flush || wake.readyAt <= now)
         ) {
-          continue;
+          picked[slot] = wake;
+          delete group[slot];
         }
-        const picked: Partial<Record<(typeof SLOTS)[number], PendingWake>> = {};
-        for (const slot of SLOTS) {
-          const wake = group[slot];
-          if (
-            wake &&
-            !afterBarrier(key, wake, global) &&
-            wake.notBefore <= now &&
-            (flush || wake.readyAt <= now)
-          ) {
-            picked[slot] = wake;
-            delete group[slot];
-          }
-        }
-        if (!SLOTS.some((slot) => group[slot])) {
-          pending.delete(key);
-        }
-        let wakes: PendingWake[];
-        if (picked.task) {
-          // A task turn includes monitor scratch, so it consumes a coincident base tick.
-          const task = picked.scheduled ? merge(picked.scheduled, picked.task) : picked.task;
-          wakes = picked.event
-            ? [task, picked.event].toSorted(
-                (left, right) =>
-                  Number(Boolean(right.retainedWork)) - Number(Boolean(left.retainedWork)) ||
-                  left.requestedAt - right.requestedAt,
-              )
-            : [task];
-        } else if (picked.event) {
-          wakes = [picked.scheduled ? merge(picked.scheduled, picked.event) : picked.event];
-        } else {
-          wakes = picked.scheduled ? [picked.scheduled] : [];
-        }
-        if (wakes.length) {
-          ready.push({ key, wakes });
-        }
+      }
+      if (!SLOTS.some((slot) => group[slot])) {
+        pending.delete(key);
+      }
+      let wakes: PendingWake[];
+      if (picked.task) {
+        // A task turn includes monitor scratch, so it consumes a coincident base tick.
+        const task = picked.scheduled ? merge(picked.scheduled, picked.task) : picked.task;
+        wakes = picked.event
+          ? [task, picked.event].toSorted(
+              (left, right) =>
+                Number(Boolean(right.retainedWork)) - Number(Boolean(left.retainedWork)) ||
+                left.requestedAt - right.requestedAt,
+            )
+          : [task];
+      } else if (picked.event) {
+        wakes = [picked.scheduled ? merge(picked.scheduled, picked.event) : picked.event];
+      } else {
+        wakes = picked.scheduled ? [picked.scheduled] : [];
+      }
+      if (wakes.length) {
+        ready.push({ key, wakes });
       }
     }
     return ready;
@@ -369,7 +319,7 @@ function createSessionEventWakeRuntime() {
         let result: SessionEventWakeResult;
         let onAbort: (() => void) | undefined;
         try {
-          result = await runWithGatewayIndependentRootWorkAdmission(() => {
+          result = await runWithGatewayDetachedWorkAdmission(() => {
             signal.throwIfAborted();
             // Subscribe before calling the handler: it can synchronously replace its owner.
             const aborted = new Promise<never>((_resolve, reject) => {
@@ -387,24 +337,15 @@ function createSessionEventWakeRuntime() {
               reason: wake.reason,
               ...(wake.agentId ? { agentId: wake.agentId } : {}),
               ...(wake.sessionKey ? { sessionKey: wake.sessionKey } : {}),
-              ...(wake.parentRunId ? { parentRunId: wake.parentRunId } : {}),
               ...(wake.heartbeat ? { heartbeat: wake.heartbeat } : {}),
               ...(wake.scheduledEveryMs !== undefined
                 ? { scheduledEveryMs: wake.scheduledEveryMs }
                 : {}),
-              ...(wake.scheduledAnchorMs !== undefined
-                ? { scheduledAnchorMs: wake.scheduledAnchorMs }
-                : {}),
               ...(wake.tasks ? { tasks: wake.tasks } : {}),
               ...(wake.retainedWork ? { retainedWork: true } : {}),
             };
-            if (wake.trustedContinuationRouting) {
-              markTrustedContinuationHeartbeatWake(request);
-            }
             // A synchronous handler throw must not leave the abort promise unobserved.
-            const running = abortSignals.run(signal, () =>
-              activeRequests.run(request, async () => run(request, signal)),
-            );
+            const running = abortSignals.run(signal, async () => run(request, signal));
             return Promise.race([running, aborted]);
           }, "heartbeat:wake");
         } catch {
@@ -437,15 +378,17 @@ function createSessionEventWakeRuntime() {
     }
   }
 
-  function scheduleAt(dueAt: number): void {
+  function scheduleAt(dueAt: number, defersReadyWork = false): void {
     if (!handler || (timer && timerDueAt <= dueAt)) {
       return;
     }
     clearTimeout(timer);
     timerDueAt = dueAt;
+    timerDefersReadyWork = defersReadyWork;
     timer = setTimeout(
       () => {
         timer = undefined;
+        timerDefersReadyWork = false;
         const run = handler;
         if (!run) {
           return;
@@ -466,25 +409,25 @@ function createSessionEventWakeRuntime() {
     timer.unref?.();
   }
 
-  function schedulePending(readyDelayMs = 0): void {
-    if (active.size >= MAX_ACTIVE_TARGETS) {
+  function schedulePending(readyDelayMs = 0, changedKey?: string): void {
+    if (active.size >= MAX_ACTIVE_TARGETS || active.has(GLOBAL_TARGET)) {
       return;
     }
     const now = performance.now();
+    const global = pending.get(GLOBAL_TARGET);
+    if (active.size && isReady(global, now)) {
+      return;
+    }
     let earliest = Infinity;
-    for (const [key, group] of pending) {
+    const changedGroup = changedKey ? pending.get(changedKey) : undefined;
+    // Installation can defer already-ready work; the next admission must rescan
+    // it. Otherwise the armed timer already covers unchanged targets.
+    const candidates =
+      timer && !timerDefersReadyWork && changedKey && changedKey !== GLOBAL_TARGET && changedGroup
+        ? [[changedKey, changedGroup] as const]
+        : pending;
+    for (const [key, group] of candidates) {
       if (active.has(key)) {
-        continue;
-      }
-      const domain = keyTrustDomain(key);
-      const domainGlobalKey = globalTargetKey(domain);
-      const global = pending.get(domainGlobalKey);
-      if (
-        (key !== domainGlobalKey && active.has(domainGlobalKey)) ||
-        (key === domainGlobalKey &&
-          [...active.keys()].some((activeKey) => keyTrustDomain(activeKey) === domain)) ||
-        (key !== domainGlobalKey && isReady(global, now))
-      ) {
         continue;
       }
       for (const slot of SLOTS) {
@@ -495,7 +438,8 @@ function createSessionEventWakeRuntime() {
       }
     }
     if (Number.isFinite(earliest)) {
-      scheduleAt(earliest <= now ? now + readyDelayMs : earliest);
+      const ready = earliest <= now;
+      scheduleAt(ready ? now + readyDelayMs : earliest, ready && readyDelayMs > 0);
     }
   }
 
@@ -506,6 +450,7 @@ function createSessionEventWakeRuntime() {
     handler = next;
     clearTimeout(timer);
     timer = undefined;
+    timerDefersReadyWork = false;
     if (next) {
       for (const group of pending.values()) {
         group.blockedUntil = 0;
@@ -534,7 +479,6 @@ function createSessionEventWakeRuntime() {
 
   function enqueueRequest(options: RequestOptions, settlement?: Settlement): void {
     const now = performance.now();
-    const trustedContinuationRouting = hasTrustedContinuationHeartbeatWake(options);
     const { coalesceMs, ...wake } = options;
     const normalized = {
       ...wake,
@@ -546,10 +490,9 @@ function createSessionEventWakeRuntime() {
     runWithoutOwnedSessionTranscriptWrites(() => {
       const pendingWake: PendingWake = {
         ...normalized,
-        trustedContinuationRouting,
         sequence: nextSequence,
         barrierSequence:
-          targetBaseKey(normalized) === "::" && wake.intent === "immediate"
+          targetKey(normalized) === GLOBAL_TARGET && wake.intent === "immediate"
             ? nextSequence
             : undefined,
         requestedAt: now,
@@ -557,8 +500,8 @@ function createSessionEventWakeRuntime() {
         notBefore: 0,
         settlements: settlement ? [settlement] : [],
       };
-      enqueue(pendingWake);
-      schedulePending();
+      const key = enqueue(pendingWake);
+      schedulePending(0, key);
     });
   }
 
@@ -598,23 +541,9 @@ function createSessionEventWakeRuntime() {
     requestSessionEventWake,
     requestSessionEventWakeAndWait,
     getSessionEventWakeAbortSignal: () => abortSignals.getStore(),
-    getActiveSessionEventWakeContext: () => activeRequests.getStore() ?? null,
     areSessionEventWakesEnabled: () => enabled,
     setSessionEventWakesEnabled: (value: boolean) => {
       enabled = value;
-    },
-    resetSessionEventWakeStateForTests: () => {
-      clearTimeout(timer);
-      timer = undefined;
-      timerDueAt = 0;
-      pending.clear();
-      for (const owner of active.values()) {
-        owner.controller.abort();
-      }
-      active.clear();
-      sequence = 0;
-      generation += 1;
-      handler = null;
     },
   };
 }
@@ -625,8 +554,6 @@ export const {
   requestSessionEventWake,
   requestSessionEventWakeAndWait,
   getSessionEventWakeAbortSignal,
-  getActiveSessionEventWakeContext,
   areSessionEventWakesEnabled,
   setSessionEventWakesEnabled,
-  resetSessionEventWakeStateForTests,
 } = resolveGlobalSingleton(Symbol.for("openclaw.sessionEventWake"), createSessionEventWakeRuntime);

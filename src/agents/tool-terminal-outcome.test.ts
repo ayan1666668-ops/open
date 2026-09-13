@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  adjustedParamsByToolCallId,
   buildAdjustedParamsKey,
-  peekAdjustedParamsForToolCall,
   preExecutionBlockedToolCallIds,
-  recordAdjustedParamsForToolCall,
   recordToolExecutionStarted,
   recordToolExecutionTracked,
   resetAdjustedParamsByToolCallIdForTests,
@@ -14,6 +13,36 @@ import { createToolTerminalObserver } from "./tool-terminal-outcome.js";
 
 describe("tool terminal outcome observer", () => {
   afterEach(() => resetAdjustedParamsByToolCallIdForTests());
+
+  it("retains a genuine message failure across suppression until a real send succeeds", () => {
+    const observe = createToolTerminalObserver("run-suppression");
+    const suppression = {
+      toolName: "message",
+      arguments: { action: "send", target: "123", message: "omitted" },
+      outcome: "success" as const,
+      result: { details: { status: "suppressed", reason: "cancelled_by_message_sending_hook" } },
+    };
+    expect(observe(suppression).lastToolError).toBeUndefined();
+    observe({
+      toolName: "message",
+      arguments: { action: "send", target: "123", message: "failed" },
+      outcome: "failure",
+      failure: { error: "Telegram transport failed" },
+    });
+    const afterSuppression = observe(suppression);
+    expect(afterSuppression.lastToolError).toMatchObject({ error: "Telegram transport failed" });
+    expect(buildPayloads({ lastToolError: afterSuppression.lastToolError })).toEqual([
+      expect.objectContaining({ isError: true }),
+    ]);
+    expect(
+      observe({
+        toolName: "message",
+        arguments: { action: "send", target: "123", message: "delivered" },
+        outcome: "success",
+        result: { details: { ok: true, messageId: "sent-1" } },
+      }).lastToolError,
+    ).toBeUndefined();
+  });
 
   it("keeps the latest failure when a different tool succeeds", () => {
     const observe = createToolTerminalObserver("run-1");
@@ -44,14 +73,10 @@ describe("tool terminal outcome observer", () => {
     const runId = "run-2";
     const toolCallId = "call-1";
     recordToolExecutionTracked(toolCallId, runId);
-    recordAdjustedParamsForToolCall(
-      toolCallId,
-      {
-        action: "send",
-        to: "channel:adjusted",
-      },
-      runId,
-    );
+    adjustedParamsByToolCallId.set(buildAdjustedParamsKey({ runId, toolCallId }), {
+      action: "send",
+      to: "channel:adjusted",
+    });
 
     const resolution = createToolTerminalObserver(runId)({
       toolCallId,
@@ -68,7 +93,7 @@ describe("tool terminal outcome observer", () => {
       sideEffectEvidence: false,
       lastToolError: { mutatingAction: false },
     });
-    expect(peekAdjustedParamsForToolCall(toolCallId, runId)).toEqual({
+    expect(adjustedParamsByToolCallId.get(buildAdjustedParamsKey({ runId, toolCallId }))).toEqual({
       action: "send",
       to: "channel:adjusted",
     });
@@ -78,14 +103,10 @@ describe("tool terminal outcome observer", () => {
     const runId = "run-racing-timeout";
     const toolCallId = "call-racing-timeout";
     recordToolExecutionStarted(toolCallId, runId);
-    recordAdjustedParamsForToolCall(
-      toolCallId,
-      {
-        action: "send",
-        to: "channel:adjusted",
-      },
-      runId,
-    );
+    adjustedParamsByToolCallId.set(buildAdjustedParamsKey({ runId, toolCallId }), {
+      action: "send",
+      to: "channel:adjusted",
+    });
 
     const resolution = createToolTerminalObserver(runId)({
       toolCallId,

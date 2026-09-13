@@ -252,9 +252,8 @@ export async function recoverInterruptedSubagentRow(
         : undefined;
     if (blockedReason) {
       if (!alreadyWedged) {
-        let wedged: Awaited<ReturnType<typeof patchSessionEntryCore>>;
         try {
-          wedged = await patchSessionEntryCore(
+          await patchSessionEntryCore(
             { storePath, sessionKey: childSessionKey },
             (current) => {
               current.abortedLastRun = false;
@@ -295,22 +294,6 @@ export async function recoverInterruptedSubagentRow(
             childSessionKey,
             error,
           });
-          return {
-            status: "terminal",
-            error: `failed to persist subagent restart recovery wedge marker: ${formatErrorMessage(error)}`,
-          };
-        }
-        if (!wedged) {
-          const error = new Error("subagent restart recovery wedge marker was not persisted");
-          params.warn("failed to persist wedged subagent recovery marker", {
-            runId: params.runId,
-            childSessionKey,
-            error,
-          });
-          return {
-            status: "terminal",
-            error: error.message,
-          };
         }
       }
       params.warn("subagent restart recovery is blocked", {

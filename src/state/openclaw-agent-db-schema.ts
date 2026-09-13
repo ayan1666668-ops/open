@@ -32,8 +32,6 @@ import { VERSION } from "../version.js";
 import { ensureOpenClawAgentBoardSchemaInTransaction } from "./openclaw-agent-board-schema.js";
 import {
   AGENT_MEDIA_SCHEMA_VERSION,
-  AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION,
-  AGENT_RECIPIENT_AUTHORITY_SCHEMA_VERSION,
   OPENCLAW_AGENT_SCHEMA_VERSION,
   type OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
@@ -54,19 +52,15 @@ import {
   repairAndAssertOpenClawAgentV14SchemaForMigration,
 } from "./openclaw-agent-db-schema-helpers.js";
 import {
-  assertOpenClawAgentMigrationInput,
-  resolveOpenClawAgentTargetSchema,
-} from "./openclaw-agent-db-schema-variants.js";
-import {
   backfillSessionConversations,
   dropLegacySessionTranscriptSearchSchema,
   ensureSessionAdditiveColumns,
   ensureSessionEntryValidityProjection,
   hasPendingSessionConversationRouteContextColumn,
+  hasPendingSessionProjectColumn,
   hasPendingSessionTranscriptContextEligibilityColumn,
   migrateConversationDeliveryTargetColumn,
   migrateSessionCreatorNamespaces,
-  migrateSessionRecipientAuthority,
   migrateSessionEntryStatusProjection,
   readSqliteTableColumns,
 } from "./openclaw-agent-db-session-migrations.js";
@@ -78,7 +72,10 @@ import {
 } from "./openclaw-agent-db-session-provenance.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "./openclaw-agent-db.generated.js";
 import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
-import { migrateSessionParticipantsSchema } from "./openclaw-agent-participants-migration.js";
+import {
+  migrateSessionParticipantsSchema,
+  withLegacySessionParticipantsSchema,
+} from "./openclaw-agent-participants-migration.js";
 import { hasPendingInputConsumptionColumnMigration } from "./openclaw-agent-pending-inputs-schema.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db.js";
@@ -138,11 +135,6 @@ function hasPendingSessionKeyContractSchemaMigration(db: DatabaseSync): boolean 
       .get(),
   );
   return !sessionNodeColumns.has("entry_valid") || !hasContractTable;
-}
-
-function hasPendingSessionProjectColumn(db: DatabaseSync): boolean {
-  const columns = readSqliteTableColumns(db, "session_nodes");
-  return Boolean(columns && !columns.has("project_id"));
 }
 
 function migrateMemoryChunkMetadataSchema(db: DatabaseSync): void {
@@ -328,8 +320,12 @@ function migrateSessionTranscriptActiveProjection(db: DatabaseSync, previousVers
   `);
 }
 
-const parseMigratedSessionEntry = (value: unknown): MigratedSessionEntry | null =>
-  typeof value === "string" ? (safeParseJsonRecord(value) ?? null) : null;
+function parseMigratedSessionEntry(value: unknown): MigratedSessionEntry | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return safeParseJsonRecord(value) ?? null;
+}
 
 function migratedChatType(value: unknown): "direct" | "group" | "channel" | null {
   if (value === "direct" || value === "group" || value === "channel") {
@@ -391,11 +387,14 @@ function migratedEntryAccountId(entry: MigratedSessionEntry): string | null {
   );
 }
 
-const migratedEntryDisplayName = (entry: MigratedSessionEntry): string | null =>
-  migratedText(entry.displayName) ??
-  migratedText(entry.label) ??
-  migratedText(entry.subject) ??
-  migratedText(entry.groupId);
+function migratedEntryDisplayName(entry: MigratedSessionEntry): string | null {
+  return (
+    migratedText(entry.displayName) ??
+    migratedText(entry.label) ??
+    migratedText(entry.subject) ??
+    migratedText(entry.groupId)
+  );
+}
 
 function backfillOpenClawAgentSchema(db: DatabaseSync, previousVersion: number): void {
   if (previousVersion >= 2) {
@@ -482,6 +481,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
   agentId: string,
   pathname: string,
   diagnostics?: SqliteIntegrityDiagnostics,
+  reuseIntegrity = false,
 ): SqliteIntegrityOperation<boolean> {
   database.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
   const userVersion = readSqliteUserVersion(database);
@@ -513,6 +513,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
       validateAfterRepair: () =>
         assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname }),
       diagnostics,
+      reuseIntegrity,
     });
     assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname });
   } else if (
@@ -524,7 +525,7 @@ export function* agentDatabaseIntegrityBeforeMutationSteps(
     // Yielding first leaves an occupied, unowned file that custom selectors must avoid.
     assertSqliteIntegrity(database, pathname);
   } else {
-    // Every physical open proves the full file before schema mutation or exposure.
+    // Pending migrations cannot inherit an earlier runtime verification.
     yield* sqliteIntegrityCheckSteps(database, pathname, diagnostics);
   }
   return hasPendingCurrentVersionMigration;
@@ -572,13 +573,15 @@ function ensureAgentSchema(
   pathname: string,
   targetVersion = OPENCLAW_AGENT_SCHEMA_VERSION,
 ): void {
-  const schemaSql = resolveOpenClawAgentTargetSchema(targetVersion);
-  const openingVersion = readSqliteUserVersion(db);
-  const maintenanceMigration =
-    targetVersion >= AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION &&
-    openingVersion < targetVersion &&
-    (openingVersion > 0 || readExistingAgentSchemaMeta(db) !== null);
-  if (maintenanceMigration) {
+  const schemaSql =
+    targetVersion < 18
+      ? withLegacySessionParticipantsSchema(OPENCLAW_AGENT_SCHEMA_SQL)
+      : OPENCLAW_AGENT_SCHEMA_SQL;
+  const identityMigration =
+    targetVersion >= 18 &&
+    readSqliteUserVersion(db) < targetVersion &&
+    (readSqliteUserVersion(db) > 0 || readExistingAgentSchemaMeta(db) !== null);
+  if (identityMigration) {
     maintenanceAuthority.assertAgentDatabaseMaintenanceAuthority();
   }
   // FK enforcement must be off before BEGIN: PRAGMA foreign_keys is a silent
@@ -594,10 +597,7 @@ function ensureAgentSchema(
       assertExistingAgentSchemaOwner(readExistingAgentSchemaMeta(db), agentId, pathname);
       assertSupportedAgentSchemaVersion(db, pathname);
       const previousVersion = readSqliteUserVersion(db);
-      if (
-        maintenanceMigration &&
-        readExistingAgentSchemaMeta(db)?.schemaVersion !== previousVersion
-      ) {
+      if (identityMigration && readExistingAgentSchemaMeta(db)?.schemaVersion !== previousVersion) {
         throw new Error(
           `Agent schema markers disagree for ${pathname}; repair ownership metadata before migration.`,
         );
@@ -608,7 +608,7 @@ function ensureAgentSchema(
         );
       }
       if (previousVersion === AGENT_MEDIA_SCHEMA_VERSION) {
-        const legacySql = resolveOpenClawAgentTargetSchema(AGENT_MEDIA_SCHEMA_VERSION);
+        const legacySql = withLegacySessionParticipantsSchema(OPENCLAW_AGENT_SCHEMA_SQL);
         ensureSessionAdditiveColumns(db);
         verifyAndRepairCanonicalSqliteIndexes(db, pathname, legacySql, {
           validateAfterRepair: () => {
@@ -659,7 +659,7 @@ function ensureAgentSchema(
       maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
       ensureSessionAdditiveColumns(db);
       ensureSessionEntryValidityProjection(db);
-      if (targetVersion >= AGENT_PARTICIPANT_IDENTITY_SCHEMA_VERSION) {
+      if (targetVersion >= 18 && previousVersion < 18) {
         migrateSessionParticipantsSchema(db, pathname);
       }
       if (targetVersion >= 19) {
@@ -667,12 +667,6 @@ function ensureAgentSchema(
       }
       maintenanceAuthority.renewAgentDatabaseMaintenanceAuthorityIfPresent();
       db.exec(schemaSql);
-      if (targetVersion >= AGENT_RECIPIENT_AUTHORITY_SCHEMA_VERSION) {
-        migrateSessionRecipientAuthority(db);
-        // Removing a legacy field fires the canonical entry-update trigger.
-        // Settle valid rows again while malformed Doctor-owned rows remain rejected.
-        ensureSessionEntryValidityProjection(db);
-      }
       migrateMemoryChunkMetadataSchema(db);
       if (previousVersion < targetVersion) {
         ensureOpenClawAgentBoardSchemaInTransaction(db);
@@ -690,15 +684,19 @@ function ensureAgentSchema(
       db.exec(`PRAGMA user_version = ${targetVersion};`);
       persistAgentSchemaMetadata(db, agentId, targetVersion);
       assertAgentSchemaVersion(db, { agentId, pathname, version: targetVersion }, schemaSql);
-      if (maintenanceMigration) {
+      if (identityMigration) {
         if (db.prepare("PRAGMA foreign_key_check").all().length > 0) {
-          throw new Error(`Agent schema migration failed foreign key validation for ${pathname}.`);
+          throw new Error(
+            `Agent identity migration failed foreign key validation for ${pathname}.`,
+          );
         }
         maintenanceAuthority.assertAgentDatabaseMaintenanceAuthority();
       }
     });
   } finally {
-    db.exec("PRAGMA foreign_keys = ON;");
+    if (db.isOpen) {
+      db.exec("PRAGMA foreign_keys = ON;");
+    }
   }
 }
 
@@ -723,7 +721,6 @@ export function* ensureOpenClawAgentDatabaseSchemaSteps(
   assertSupportedAgentSchemaVersion(db, pathname);
   assertExistingAgentSchemaOwner(readExistingAgentSchemaMeta(db), agentId, pathname);
   if (readSqliteUserVersion(db) !== AGENT_MEDIA_SCHEMA_VERSION) {
-    assertOpenClawAgentMigrationInput(db, { agentId, pathname });
     yield* agentDatabaseIntegrityBeforeMutationSteps(db, agentId, pathname);
   }
   configureSqlitePreSchemaPragmas(db, {
@@ -742,8 +739,7 @@ export function migrateOpenClawAgentDatabaseToMediaPrerequisiteSchema(
   options: OpenClawAgentDatabaseOptions,
 ): void {
   const targetVersion = AGENT_MEDIA_SCHEMA_VERSION - 1;
-  const userVersion = readSqliteUserVersion(db);
-  if (userVersion > targetVersion) {
+  if (readSqliteUserVersion(db) > targetVersion) {
     return;
   }
   const agentId = normalizeAgentId(options.agentId);

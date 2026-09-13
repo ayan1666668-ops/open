@@ -333,14 +333,12 @@ describe("createCodexDynamicToolBridge", () => {
     expect((contentItem.text as string).length).toBeLessThanOrEqual(800);
   });
 
-  it("bounds aggregated unexpected-property details returned to Codex", async () => {
-    const invalidArguments = Object.fromEntries(
-      Array.from({ length: 20 }, (_, index) => [`unexpected_property_${index}`, true]),
-    );
+  it("bounds oversized unexpected-property details returned to Codex", async () => {
+    const propertyName = `unexpected_property_${"x".repeat(240)}`;
     const { execute, response } = await runSchemaToolCall({
-      arguments: invalidArguments,
-      callId: "call-many-unexpected-fields",
-      name: "bounded_additional_properties_tool",
+      arguments: { [propertyName]: true },
+      callId: "call-oversized-validation-detail",
+      name: "bounded_validation_detail_tool",
       parameters: {
         type: "object",
         properties: {},
@@ -932,8 +930,9 @@ describe("createCodexDynamicToolBridge", () => {
     // An accepted sessions_spawn launch carries details.status "accepted" with a
     // runId + childSessionKey. The launch succeeded (the child session was
     // accepted), so Codex must see a successful tool call, not an error.
-    // Regression for #96833: Codex previously classified unfamiliar
-    // successful statuses as errors instead of using the shared failure contract.
+    // Regression for #96833: the former Codex-only success allowlist omitted
+    // "accepted", so the launch was persisted with isError: true and reported
+    // to Codex as success: false.
     const onAgentToolResult = vi.fn();
     const bridge = createBridgeWithToolResult(
       "sessions_spawn",
@@ -1053,7 +1052,8 @@ describe("createCodexDynamicToolBridge", () => {
   });
 
   it("still reports a forbidden sessions_spawn result as a failed dynamic tool call", async () => {
-    // Deny symmetry: a genuinely forbidden spawn must remain an error.
+    // Deny symmetry: a genuinely rejected spawn (status "forbidden") must stay an
+    // error so the accepted-status allowlist entry does not over-correct.
     const bridge = createBridgeWithToolResult(
       "sessions_spawn",
       textToolResult("Forbidden: spawn limit reached.", { status: "forbidden" }),
@@ -1152,82 +1152,6 @@ describe("createCodexDynamicToolBridge", () => {
     );
   });
 
-  it.each([
-    { toolName: "continue_work", status: "scheduled" },
-    { toolName: "continue_delegate", status: "scheduled" },
-    { toolName: "continue_delegate", status: "queued-for-compaction" },
-    { toolName: "request_compaction", status: "compaction_requested" },
-    { toolName: "request_compaction", status: "already_pending" },
-  ])(
-    "treats $toolName status $status as a successful dynamic tool call",
-    async ({ toolName, status }) => {
-      const onAgentToolResult = vi.fn();
-      const bridge = createBridgeWithToolResult(
-        toolName,
-        textToolResult(`${toolName}: ${status}`, { status }),
-      );
-
-      const result = await bridge.handleToolCall(
-        {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          callId: `call-${toolName}-${status}`,
-          namespace: CODEX_OPENCLAW_DYNAMIC_TOOL_NAMESPACE,
-          tool: toolName,
-          arguments: {},
-        },
-        { onAgentToolResult },
-      );
-
-      expect(result.success).toBe(true);
-      expect(onAgentToolResult).toHaveBeenCalledWith(
-        expect.objectContaining({ toolName, isError: false }),
-      );
-    },
-  );
-
-  it("keeps structured continuation guard rejections informational", async () => {
-    const bridge = createBridgeWithToolResult(
-      "continue_delegate",
-      textToolResult("delegate limit reached", {
-        status: "rejected",
-        guard: "maxDelegatesPerTurn",
-      }),
-    );
-
-    const result = await bridge.handleToolCall({
-      threadId: "thread-1",
-      turnId: "turn-1",
-      callId: "call-continue-delegate-rejected",
-      namespace: CODEX_OPENCLAW_DYNAMIC_TOOL_NAMESPACE,
-      tool: "continue_delegate",
-      arguments: {},
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it("keeps explicitly failed continuation rejections classified as failures", async () => {
-    const bridge = createBridgeWithToolResult(
-      "continue_delegate",
-      textToolResult("delegate request failed", {
-        status: "rejected",
-        ok: false,
-      }),
-    );
-
-    const result = await bridge.handleToolCall({
-      threadId: "thread-1",
-      turnId: "turn-1",
-      callId: "call-continue-delegate-rejected-failed",
-      namespace: CODEX_OPENCLAW_DYNAMIC_TOOL_NAMESPACE,
-      tool: "continue_delegate",
-      arguments: {},
-    });
-
-    expect(result.success).toBe(false);
-  });
-
   it.each(["pending", "applied", "rejected", "quarantined", "stale"] as const)(
     "treats Skill Workshop lifecycle status %s as a successful dynamic tool call",
     async (status) => {
@@ -1270,6 +1194,7 @@ describe("createCodexDynamicToolBridge", () => {
       tool: "plugin_tool",
       arguments: {},
     });
+
     expect(result.success).toBe(true);
   });
 
@@ -2306,7 +2231,7 @@ describe("createCodexDynamicToolBridge", () => {
     expect(bridge.telemetry.toolAudioAsVoice).toBe(true);
   });
 
-  it("does not grant auto-delivery to a plugin tool named tts", async () => {
+  it("does not grant local media or auto-delivery to a plugin tool named tts", async () => {
     const tool = createOwnerBackedContractTool({
       pluginId: "tts-collision",
       name: "tts",
@@ -2335,9 +2260,39 @@ describe("createCodexDynamicToolBridge", () => {
       arguments: { text: "hello" },
     });
 
-    expect(bridge.telemetry.toolMediaUrls).toEqual(["/tmp/plugin.opus"]);
+    expect(bridge.telemetry.toolMediaUrls).toEqual([]);
     expect(bridge.telemetry.toolAutoDeliveryMediaUrls).toEqual([]);
   });
+
+  it.each([
+    { name: "dir_fetch", trustedLocalMedia: true, expected: ["/tmp/plugin-file.txt"] },
+    { name: "browser", trustedLocalMedia: false, expected: [] },
+  ])(
+    "applies concrete plugin metadata to local media from $name",
+    async ({ name, trustedLocalMedia, expected }) => {
+      const tool = createOwnerBackedContractTool({
+        pluginId: "file-transfer",
+        name,
+        result: mediaResult("/tmp/plugin-file.txt"),
+        trustedLocalMedia,
+      });
+      const bridge = createCodexDynamicToolBridge({
+        tools: [tool],
+        signal: new AbortController().signal,
+      });
+
+      await bridge.handleToolCall({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-1",
+        namespace: null,
+        tool: name,
+        arguments: {},
+      });
+
+      expect(bridge.telemetry.toolMediaUrls).toEqual(expected);
+    },
+  );
 
   it("records messaging tool side effects while returning concise text to app-server", async () => {
     const toolResult = {

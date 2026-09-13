@@ -1,16 +1,11 @@
 // Matrix tests cover actions plugin behavior.
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { PluginRuntime } from "../runtime-api.js";
 import { matrixMessageActions } from "./actions.js";
 import { setMatrixRuntime } from "./runtime.js";
 import type { CoreConfig } from "./types.js";
 
 const profileAction = "set-profile" as const;
-let stateDir = "";
 
 const runtimeStub = {
   config: {
@@ -26,7 +21,7 @@ const runtimeStub = {
     resizeToJpeg: async () => Buffer.from(""),
   },
   state: {
-    resolveStateDir: () => stateDir,
+    resolveStateDir: () => "/tmp/openclaw-matrix-test",
   },
   channel: {
     text: {
@@ -55,14 +50,7 @@ function createConfiguredMatrixConfig(): CoreConfig {
 
 describe("matrixMessageActions", () => {
   beforeEach(() => {
-    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-matrix-test-"));
-    resetPluginStateStoreForTests();
     setMatrixRuntime(runtimeStub);
-  });
-
-  afterEach(() => {
-    resetPluginStateStoreForTests();
-    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   it("exposes poll create but only handles poll votes inside the plugin", () => {

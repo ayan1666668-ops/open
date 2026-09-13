@@ -400,6 +400,10 @@ export interface CronRunReceipts {
   store_key: string;
 }
 
+export interface CronRunTriggerStateRetirements {
+  receipt_id: string;
+}
+
 export interface CurrentConversationBindings {
   account_id: string;
   binding_id: string;
@@ -416,97 +420,6 @@ export interface CurrentConversationBindings {
   target_kind: string;
   target_session_key: string;
   updated_at: number;
-}
-
-export interface DelegateArtifactAudit {
-  action: string;
-  claim_id: string | null;
-  destination: string | null;
-  flow_id: string | null;
-  occurred_at: number;
-  outcome: string;
-  recipient_session_id: string;
-  recipient_session_key: string;
-  sequence: Generated<number>;
-}
-
-export interface DelegateArtifactBindings {
-  arrived_at: number | null;
-  claim_id: string;
-  delivery_acknowledged_at: number | null;
-  discarded_at: number | null;
-  last_delivery_attempt_at: number | null;
-  materialized_at: number | null;
-  purpose: string | null;
-  recipient_relation: string;
-  recipient_session_id: string;
-  recipient_session_key: string;
-  replayed_at: number | null;
-  status: string;
-  unavailable_reason: string | null;
-}
-
-export interface DelegateArtifactClaims {
-  artifact_type: string;
-  backing: Uint8Array | null;
-  claim_id: string;
-  created_at: number;
-  finalized_at: number | null;
-  flow_id: string;
-  mime_type: string | null;
-  ordinal: number;
-  publication_index: number;
-  publication_key: string;
-  sha256: string;
-  size_bytes: number;
-  status: string;
-  title: string;
-}
-
-export interface DelegateArtifactPolicies {
-  allowed_mimes_json: string;
-  artifact_mode: string;
-  completed_at: number | null;
-  completion_delivery_mode: string | null;
-  completion_disposition: string | null;
-  completion_finalization_key: string | null;
-  completion_id: string | null;
-  completion_status: string | null;
-  dispatch_accepted_at: number;
-  dispatch_revision: number;
-  flow_id: string;
-  max_artifact_bytes: number;
-  max_artifact_count: number;
-  max_total_bytes: number;
-  not_before: number | null;
-  origin_parent_session_id: string;
-  origin_parent_session_key: string;
-  output_root: string;
-  policy_version: number;
-  producer_run_id: string;
-  producer_session_id: string | null;
-  producer_session_key: string;
-  recipient_context: string | null;
-  recipients_json: string;
-  retention_deadline: number;
-  route_json: string;
-  scheduled_at: number | null;
-  status: string;
-}
-
-export interface DelegateArtifactRecipientOutcomes {
-  decided_at: number;
-  delivery_acknowledged_at: number | null;
-  delivery_terminal_reason: string | null;
-  first_delivery_at: number | null;
-  flow_id: string;
-  outcome: string;
-  purpose: string | null;
-  recipient_relation: string;
-  recipient_session_id: string;
-  recipient_session_key: string;
-  replayed_at: number | null;
-  unavailable_reason: string | null;
 }
 
 export interface DeliveryQueueEntries {
@@ -692,7 +605,6 @@ export interface FlowRuns {
   blocked_summary: string | null;
   blocked_task_id: string | null;
   cancel_requested_at: number | null;
-  chain_id: string | null;
   controller_id: string | null;
   created_at: number;
   current_step: string | null;
@@ -1046,6 +958,24 @@ export interface NodeWorkerLaunches {
   updated_at_ms: number;
   worker_pid: number | null;
   worker_start_time: number | null;
+}
+
+export interface NodeWorkerPreparedWorkspaces {
+  bound_at_ms: number | null;
+  cache_key: string;
+  created_at_ms: number;
+  environment_id: string;
+  gateway_namespace: string;
+  home_dir: string;
+  owner_epoch: number | null;
+  preparation_key: string;
+  prepared_manifest_ref: string;
+  retired_at_ms: number | null;
+  session_id: string | null;
+  session_key: string | null;
+  source_manifest_ref: string;
+  state: string;
+  workspace_dir: string;
 }
 
 export interface NodeWorkerTurns {
@@ -1581,11 +1511,17 @@ export interface WorkerEnvironments {
   destroy_requested_at_ms: number | null;
   environment_id: string;
   idle_since_at_ms: number | null;
+  last_activated_at_ms: number | null;
   last_error: string | null;
   lease_id: string | null;
   node_device_id: string | null;
   node_setup_id: string | null;
   owner_epoch: Generated<number>;
+  preparation_consumed_at_ms: number | null;
+  preparation_demand_at_ms: number | null;
+  preparation_expires_at_ms: number | null;
+  preparation_key: string | null;
+  preparation_purpose: string | null;
   profile_id: string;
   profile_snapshot_json: string;
   provider_id: string;
@@ -1762,6 +1698,21 @@ export interface WorktreeProvisionedFileChunks {
   worktree_id: string;
 }
 
+export interface WorktreeTemplates {
+  backend: string;
+  cache_key: string;
+  common_dir: string;
+  content_key: string;
+  created_at: number;
+  id: string;
+  last_used_at: number;
+  path: string;
+  repo_root: string;
+  source_commit: string;
+  status: string;
+  worktree_root: string;
+}
+
 export interface Worktrees {
   base_ref: string;
   branch: string;
@@ -1811,12 +1762,8 @@ export interface DB {
   cron_job_scratch: CronJobScratch;
   cron_jobs: CronJobs;
   cron_run_receipts: CronRunReceipts;
+  cron_run_trigger_state_retirements: CronRunTriggerStateRetirements;
   current_conversation_bindings: CurrentConversationBindings;
-  delegate_artifact_audit: DelegateArtifactAudit;
-  delegate_artifact_bindings: DelegateArtifactBindings;
-  delegate_artifact_claims: DelegateArtifactClaims;
-  delegate_artifact_policies: DelegateArtifactPolicies;
-  delegate_artifact_recipient_outcomes: DelegateArtifactRecipientOutcomes;
   delivery_queue_entries: DeliveryQueueEntries;
   device_auth_tokens: DeviceAuthTokens;
   device_bootstrap_tokens: DeviceBootstrapTokens;
@@ -1853,6 +1800,7 @@ export interface DB {
   native_hook_relay_bridges: NativeHookRelayBridges;
   node_worker_launch_containers: NodeWorkerLaunchContainers;
   node_worker_launches: NodeWorkerLaunches;
+  node_worker_prepared_workspaces: NodeWorkerPreparedWorkspaces;
   node_worker_turns: NodeWorkerTurns;
   official_external_plugin_catalog_snapshots: OfficialExternalPluginCatalogSnapshots;
   operator_approval_execution_identities: OperatorApprovalExecutionIdentities;
@@ -1909,5 +1857,6 @@ export interface DB {
   workspace_path_aliases: WorkspacePathAliases;
   workspace_setup_state: WorkspaceSetupState;
   worktree_provisioned_file_chunks: WorktreeProvisionedFileChunks;
+  worktree_templates: WorktreeTemplates;
   worktrees: Worktrees;
 }

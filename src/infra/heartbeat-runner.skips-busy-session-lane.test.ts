@@ -42,11 +42,7 @@ import {
   HEARTBEAT_SKIP_CRON_IN_PROGRESS,
   HEARTBEAT_SKIP_REQUESTS_IN_FLIGHT,
 } from "./heartbeat-wake.js";
-import {
-  peekSystemEvents,
-  resetSystemEventsForTest,
-  enqueueSystemEventRaw as enqueueSystemEvent,
-} from "./system-events.js";
+import { resetSystemEventsForTest, enqueueSystemEvent, peekSystemEvents } from "./system-events.js";
 
 vi.mock("jiti", () => ({ createJiti: () => () => ({}) }));
 

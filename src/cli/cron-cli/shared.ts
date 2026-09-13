@@ -1,6 +1,8 @@
 // Shared cron CLI formatting, parsing, delivery preview, and warning helpers.
 import {
   MAX_DATE_TIMESTAMP_MS,
+  parseStrictNonNegativeInteger,
+  parseStrictPositiveInteger,
   resolveExpiresAtMsFromDurationMs,
   timestampMsToIsoString,
 } from "@openclaw/normalization-core/number-coercion";
@@ -35,6 +37,31 @@ import { isJsonOutputModeActive } from "../json-output-mode.js";
 import { exitCliAfterOutput } from "../one-shot-exit.js";
 import { parseDurationMs as parseSharedDurationMs } from "../parse-duration.js";
 import { CronCliError } from "./cron-cli-error.js";
+
+export function parseCronIntegerOption(
+  value: unknown,
+  flag: string,
+  kind: "positive" | "non-negative" = "positive",
+): number | undefined {
+  const parsed =
+    kind === "non-negative"
+      ? parseStrictNonNegativeInteger(value)
+      : parseStrictPositiveInteger(value);
+  if (value !== undefined && parsed === undefined) {
+    throw new CronCliError(`Invalid ${flag} (must be a ${kind} integer).`);
+  }
+  return parsed;
+}
+
+export function parseCronNoOutputTimeoutOption(opts: Record<string, unknown>): number | undefined {
+  // Commander strips the leading no- from this option's attribute name.
+  const raw =
+    opts.noOutputTimeoutSeconds ??
+    (typeof opts.outputTimeoutSeconds === "string" || typeof opts.outputTimeoutSeconds === "number"
+      ? opts.outputTimeoutSeconds
+      : undefined);
+  return parseCronIntegerOption(raw, "--no-output-timeout-seconds");
+}
 
 function parseCronArgv(value: unknown, flag: string): string[] | undefined {
   if (typeof value !== "string") {
@@ -221,7 +248,7 @@ function formatCronStatusForDisplay(job: CronJob) {
           ? theme.success
           : theme.muted;
   let label = decorateStatusWithFailures(status, state.consecutiveErrors);
-  if (streamDisabled) {
+  if (streamDisabled && status !== "running") {
     label = "disabled";
   } else if (status === "disabled" && state.autoDisabled) {
     label =
@@ -276,6 +303,16 @@ export const formatCronLookupMiss = (jobId: string) =>
     valueLabel: "automation id",
   });
 
+// A blank id usually comes from an empty shell variable; reject it here instead of
+// letting the Gateway answer with a raw params-schema error.
+export function requireCronJobId(id: unknown, accepted = "Pass it positionally."): string {
+  const jobId = normalizeOptionalString(id);
+  if (!jobId) {
+    throw new CronCliError(`Missing job id. ${accepted}`);
+  }
+  return jobId;
+}
+
 export async function warnIfCronSchedulerDisabled(opts: GatewayRpcOpts) {
   // Old/offline gateways should not make successful cron mutations fail after the fact.
   try {
@@ -297,7 +334,7 @@ export async function warnIfCronSchedulerDisabled(opts: GatewayRpcOpts) {
     defaultRuntime.error(
       [
         "warning: the automations scheduler is disabled in the Gateway; jobs are saved but will not run automatically.",
-        "Re-enable with `cron.enabled: true` (or remove `cron.enabled: false`) and restart the Gateway.",
+        "To enable automatic runs, set `cron.enabled: true` (or remove `cron.enabled: false`), remove `OPENCLAW_SKIP_CRON=1` from the Gateway's launch environment, and restart the Gateway.",
         store ? `store: ${store}` : "",
       ]
         .filter(Boolean)

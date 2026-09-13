@@ -1,5 +1,5 @@
-// "RFC §" references herein cite docs/design/continue-work-signal-v2.md (Agent Self-Elected Turn Continuation / CONTINUE_WORK).
 // Status message helpers read and format stored status messages.
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { asNonNegativeFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import {
   type FastMode,
@@ -10,7 +10,7 @@ import {
 import { resolveAuthoredModelContextTokens } from "../agents/context-resolution.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { resolveCronStyleNow } from "../agents/current-time.js";
-import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
+import { DEFAULT_CONTEXT_TOKENS, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveExtraParams } from "../agents/embedded-agent-runner/extra-params.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import { resolveModelAuthMode } from "../agents/model-auth.js";
@@ -19,21 +19,10 @@ import {
   areRuntimeModelRefsEquivalent,
   shouldPreferActiveRuntimeAliasAuthLabel,
 } from "../agents/model-runtime-aliases.js";
-import {
-  buildModelAliasIndex,
-  resolveConfiguredModelRef,
-  resolveModelRefFromString,
-} from "../agents/model-selection.js";
+import { buildModelAliasIndex, resolveModelRefFromString } from "../agents/model-selection.js";
 import { resolveOpenAITextVerbosity } from "../agents/openai-text-verbosity.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
-import { getVolitionalCompactionCount } from "../agents/tools/request-compaction-tool.js";
-import { resolveContinuationRuntimeConfig } from "../auto-reply/continuation/config.js";
-import { stagedPostCompactionDelegateCount } from "../auto-reply/continuation/delegate-store-post-compaction.js";
-import { pendingDelegateCount } from "../auto-reply/continuation/delegate-store.js";
-import {
-  formatProviderModelRef,
-  resolveSelectedAndActiveModel,
-} from "../auto-reply/model-runtime.js";
+import type { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
 import type {
   ElevatedLevel,
   ReasoningLevel,
@@ -46,6 +35,7 @@ import {
   resolveMainSessionKey,
   resolveFreshSessionTotalTokens,
   resolveProjectedSessionContextTokens,
+  resolveProjectedSessionContextBudgetStatus,
   resolveSessionPluginStatusLines,
   resolveSessionPluginTraceLines,
   type SessionEntry,
@@ -85,55 +75,6 @@ import { resolveRuntimeServiceCommit, VERSION } from "../version.js";
 import { resolveAgentRuntimeLabel } from "./agent-runtime-label.js";
 import { resolveActiveFallbackState } from "./fallback-notice-state.js";
 
-/**
- * RFC §6.3 Continuation row formatter for /status.
- * Renders only when continuation is enabled and a sessionKey is provided.
- * Format:
- *   🔄 Continuation: chain X/Y [| Z delegate(s) pending] [| W post-compaction staged] [| volitional: N]
- * Pending / staged fields are omitted when zero; volitional is omitted when zero.
- * Pluralization: "1 delegate pending" vs "N delegates pending".
- */
-function formatContinuationStatusLine(args: StatusArgs): string | null {
-  const continuation = args.config?.agents?.defaults?.continuation;
-  if (!continuation?.enabled || !args.sessionKey) {
-    return null;
-  }
-  const { maxChainLength } = resolveContinuationRuntimeConfig(args.config);
-  const chainCount = args.sessionEntry?.continuationChainCount ?? 0;
-  let pending = 0;
-  let staged = 0;
-  let volitional = 0;
-  try {
-    pending = pendingDelegateCount(args.sessionKey);
-  } catch {
-    /* delegate-store not initialised */
-  }
-  try {
-    staged = stagedPostCompactionDelegateCount(args.sessionKey);
-  } catch {
-    /* delegate-store not initialised */
-  }
-  try {
-    volitional = getVolitionalCompactionCount(args.sessionKey);
-  } catch {
-    /* request-compaction-tool not initialised */
-  }
-  if (chainCount === 0 && pending === 0 && staged === 0 && volitional === 0) {
-    return null;
-  }
-  const parts = [`chain ${chainCount}/${maxChainLength}`];
-  if (pending > 0) {
-    parts.push(`${pending} ${pending === 1 ? "delegate" : "delegates"} pending`);
-  }
-  if (staged > 0) {
-    parts.push(`${staged} post-compaction staged`);
-  }
-  if (volitional > 0) {
-    parts.push(`volitional: ${volitional}`);
-  }
-  return `🔄 Continuation: ${parts.join(" | ")}`;
-}
-
 type AgentDefaults = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>;
 type AgentConfig = Partial<AgentDefaults> & {
   model?: AgentDefaults["model"] | string;
@@ -149,7 +90,8 @@ type QueueStatus = {
 };
 
 type StatusArgs = {
-  config?: OpenClawConfig;
+  config: OpenClawConfig;
+  modelRefs: ReturnType<typeof resolveSelectedAndActiveModel>;
   agent: AgentConfig;
   agentId?: string;
   configuredDefaultModelLabel?: string;
@@ -172,6 +114,7 @@ type StatusArgs = {
   resolvedElevated?: ElevatedLevel;
   modelAuth?: string;
   activeModelAuth?: string;
+  activeModel?: { modelProvider: string; model: string };
   usageLine?: string;
   timeLine?: string;
   uptimeValue?: string;
@@ -179,7 +122,6 @@ type StatusArgs = {
   mediaDecisions?: ReadonlyArray<MediaUnderstandingDecision>;
   subagentsLine?: string;
   taskLine?: string;
-  continuationLine?: string;
   pluginHealthLine?: string;
   channelFeatureLine?: string;
   includeTranscriptUsage?: boolean;
@@ -622,58 +564,24 @@ export type StatusMessageParts = {
   presentation: MessagePresentation;
 };
 
-export function buildStatusMessage(args: StatusArgs): string {
-  return buildStatusMessageParts(args).text;
-}
-
 export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
   const now = args.now ?? Date.now();
   // Derive the live wall clock here so both /status and session_status expose
   // the same configured timezone without duplicating formatting at each caller.
-  const cronNow = args.config ? resolveCronStyleNow(args.config, now) : undefined;
+  const cronNow = resolveCronStyleNow(args.config, now);
   const timeLine = args.timeLine ?? cronNow?.timeLine;
   const uptimeLine = args.uptimeValue ? `⏱️ Uptime: ${args.uptimeValue}` : undefined;
   const entry = args.sessionEntry;
-  const selectionConfig = {
+  const contextConfig = {
+    ...args.config,
     agents: {
-      defaults: args.agent ?? {},
+      ...args.config.agents,
+      defaults: { ...args.config.agents?.defaults, ...args.agent },
     },
-  } as OpenClawConfig;
-  const contextConfig = args.config
-    ? ({
-        ...args.config,
-        agents: {
-          ...args.config.agents,
-          defaults: {
-            ...args.config.agents?.defaults,
-            ...args.agent,
-          },
-        },
-      } as OpenClawConfig)
-    : ({
-        agents: {
-          defaults: args.agent ?? {},
-        },
-      } as OpenClawConfig);
-  const resolved = resolveConfiguredModelRef({
-    cfg: selectionConfig,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
-    allowPluginNormalization: false,
-  });
-  const selectedProvider = entry?.providerOverride ?? resolved.provider ?? DEFAULT_PROVIDER;
-  const selectedModel = entry?.modelOverride ?? resolved.model ?? DEFAULT_MODEL;
-  const parseSelectedProvider = Boolean(
-    entry?.modelOverride?.trim() && !entry?.providerOverride?.trim(),
-  );
-  const modelRefs = resolveSelectedAndActiveModel({
-    selectedProvider,
-    selectedModel,
-    sessionEntry: entry,
-    parseSelectedProvider,
-  });
-  const selectedLookupProvider = modelRefs.selected.provider || selectedProvider;
-  const selectedLookupModel = modelRefs.selected.model || selectedModel;
+  };
+  const { modelRefs } = args;
+  const selectedLookupProvider = modelRefs.selected.provider;
+  const selectedLookupModel = modelRefs.selected.model;
   const initialFallbackState = resolveActiveFallbackState({
     selectedModelRef: modelRefs.selected.label || "unknown",
     activeModelRef: modelRefs.active.label || "unknown",
@@ -684,8 +592,9 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
   let activeModel = modelRefs.active.model;
   let contextLookupProvider: string | undefined = activeProvider;
   let contextLookupModel = activeModel;
-  const runtimeModelRaw = normalizeOptionalString(entry?.model) ?? "";
-  const runtimeProviderRaw = normalizeOptionalString(entry?.modelProvider) ?? "";
+  const runtimeModelRaw = normalizeOptionalString(args.activeModel?.model ?? entry?.model) ?? "";
+  const runtimeProviderRaw =
+    normalizeOptionalString(args.activeModel?.modelProvider ?? entry?.modelProvider) ?? "";
 
   if (runtimeModelRaw && !runtimeProviderRaw && runtimeModelRaw.includes("/")) {
     const slashIndex = runtimeModelRaw.indexOf("/");
@@ -748,7 +657,7 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
       ) {
         totalTokens = candidate;
       }
-      if (!entry?.model && logUsage.model) {
+      if (!entry?.model && !args.activeModel && logUsage.model) {
         const slashIndex = logUsage.model.indexOf("/");
         if (slashIndex > 0) {
           const provider = logUsage.model.slice(0, slashIndex).trim();
@@ -785,7 +694,7 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
     }
   }
 
-  const activeModelLabel = formatProviderModelRef(activeProvider, activeModel) || "unknown";
+  const activeModelLabel = buildModelCatalogRef(activeProvider, activeModel) || "unknown";
   const runtimeDiffersFromSelected = activeModelLabel !== (modelRefs.selected.label || "unknown");
   const runtimeAliasModelEquivalent = areRuntimeModelRefsEquivalent(
     modelRefs.selected.label || "unknown",
@@ -924,9 +833,17 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
     ? (args.groupActivation ?? entry?.groupActivation ?? "mention")
     : undefined;
 
+  const contextBudgetStatus = args.activeModel
+    ? resolveProjectedSessionContextBudgetStatus({
+        entry,
+        provider: activeProvider,
+        model: activeModel,
+        contextTokens,
+      })
+    : entry?.contextBudgetStatus;
   const contextUsageLabel =
     totalTokens == null || totalTokens === 0
-      ? (formatEstimatedContextBudgetTokens(entry?.contextBudgetStatus, contextTokens) ??
+      ? (formatEstimatedContextBudgetTokens(contextBudgetStatus, contextTokens) ??
         formatTokens(totalTokens, contextTokens ?? null))
       : formatTokens(totalTokens, contextTokens ?? null);
   const queueMode = args.queue?.mode ?? "unknown";
@@ -1095,7 +1012,6 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
       : "";
   const mediaLine = formatMediaUnderstandingLine(args.mediaDecisions);
   const voiceLine = formatVoiceModeLine(args.config, args.sessionEntry, args.agentId);
-  const continuationLine = args.continuationLine ?? formatContinuationStatusLine(args);
 
   // One fact per line: chat clients wrap long lines mid-fact, so joining
   // several facts with separators reads as a wall rather than a summary.
@@ -1118,7 +1034,7 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
       mediaLine,
       args.usageLine,
     ],
-    [`🧵 Session: ${sessionValue}`, args.subagentsLine, args.taskLine, continuationLine],
+    [`🧵 Session: ${sessionValue}`, args.subagentsLine, args.taskLine],
     [
       `⚙️ Execution: ${execution.label}`,
       `🤖 Runtime: ${agentRuntimeLabel}`,
@@ -1154,7 +1070,6 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
   pushStatusRow("📚 Context", `${contextMeter}${contextUsageLabel}`);
   pushStatusRow("🧹 Compactions", compactionCount > 0 ? compactionCount : null);
   pushStatusRow("🧵 Session", sessionValue);
-  pushStatusRow("🔄 Continuation", continuationLine?.replace(/^🔄 Continuation:\s*/, ""));
   pushStatusRow("⚙️ Execution", execution.label);
   pushStatusRow("Runtime", agentRuntimeLabel);
   pushStatusRow("🎛️ Modes", modesValue);

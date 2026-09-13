@@ -19,7 +19,7 @@ import { readFileRangeAsync } from "../config/sessions/file-range.js";
 import { parseSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
 import {
   loadSessionEntry,
-  loadTranscriptEventsSync,
+  loadTranscriptEvents,
   patchSessionEntryCore,
   type SessionCompactionCheckpointMutationResult,
   type SessionTranscriptRuntimeTarget,
@@ -222,10 +222,10 @@ async function statCheckpointSnapshotBytes(
 
 /** Resolve the stored checkpoint reason from compaction trigger state. */
 export function resolveSessionCompactionCheckpointReason(params: {
-  trigger?: "budget" | "overflow" | "manual" | "volitional";
+  trigger?: "budget" | "overflow" | "manual";
   timedOut?: boolean;
 }): SessionCompactionCheckpointReason {
-  if (params.trigger === "manual" || params.trigger === "volitional") {
+  if (params.trigger === "manual") {
     return "manual";
   }
   if (params.timedOut) {
@@ -353,7 +353,7 @@ export async function readSessionLeafStateFromTranscriptAsync(
   maxBytes = MAX_COMPACTION_CHECKPOINT_LEAF_SCAN_BYTES,
 ): Promise<{ entryId: string; leafId: string | null } | null> {
   if (typeof sessionFile !== "string") {
-    const records = loadTranscriptEventsSync(sessionFile).filter(
+    const records = (await loadTranscriptEvents(sessionFile)).filter(
       (event): event is Record<string, unknown> =>
         Boolean(event) && typeof event === "object" && !Array.isArray(event),
     );
@@ -361,7 +361,7 @@ export async function readSessionLeafStateFromTranscriptAsync(
   }
   const sqliteMarker = parseSqliteSessionFileMarker(sessionFile);
   if (sqliteMarker) {
-    const records = loadTranscriptEventsSync(sqliteMarker).filter(
+    const records = (await loadTranscriptEvents(sqliteMarker)).filter(
       (event): event is Record<string, unknown> =>
         Boolean(event) && typeof event === "object" && !Array.isArray(event),
     );
