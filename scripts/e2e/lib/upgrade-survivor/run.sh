@@ -1896,8 +1896,8 @@ if [ "$SCENARIO" = "custom-plugin-siblings" ]; then
   phase seed-sibling-plugin node scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs seed
   phase validate-baseline-config validate_baseline_config
   phase baseline-sibling-runtime node scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs baseline
-  phase resolve-candidate resolve_candidate_version
-  phase update-candidate update_candidate
+  phase resolve-sibling-candidate resolve_candidate_version
+  phase update-sibling-candidate update_candidate
   phase canary-sibling-runtime node scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs assert-canary
   phase candidate-sibling-runtime node scripts/e2e/lib/upgrade-survivor/custom-plugin-siblings.mjs candidate
   run_completed="1"
