@@ -12,8 +12,8 @@ import {
   removeTempDirectory,
   removeTempDirectoryAsync,
   SQLITE_SNAPSHOT_STAGING_PREFIX,
-  type PreparedSqliteReadOnlyLocation,
 } from "./sqlite-readonly-location.js";
+import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import { runSqliteReadOnlyWorker, runSqliteReadOnlyWorkerSync } from "./sqlite-readonly-worker.js";
 import {
   readSqliteSchemaHeaderFromSnapshotAsync,

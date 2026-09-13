@@ -4,7 +4,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { SqliteCoordinatorError } from "../infra/sqlite-coordinator.js";
-import type { PreparedSqliteReadOnlyLocation } from "../infra/sqlite-readonly-location.js";
+import type { PreparedSqliteReadOnlyLocation } from "../infra/sqlite-readonly-location.types.js";
 import {
   prepareSqliteReadOnlyLocation,
   prepareSqliteReadOnlyLocationSync,

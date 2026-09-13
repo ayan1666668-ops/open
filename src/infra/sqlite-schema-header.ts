@@ -13,7 +13,7 @@ import {
   runWithSqliteCoordinator,
   SqliteCoordinatorError,
 } from "./sqlite-coordinator.js";
-import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.js";
+import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import { runSqliteDeferredTransactionSync } from "./sqlite-transaction.js";
 import { readSqliteUserVersion } from "./sqlite-user-version.js";
 import { configureSqliteReadOnlyPragmas } from "./sqlite-wal.js";

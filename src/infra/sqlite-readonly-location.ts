@@ -14,6 +14,7 @@ import {
   createPrivateSqliteTempDirectorySync,
   resolvePrivateSqliteSnapshotStagingRoot,
 } from "./sqlite-private-directory.js";
+import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 import {
   readSqliteSchemaHeader,
   readSqliteSchemaHeaderFromSnapshot,
@@ -54,12 +55,6 @@ type SourceSidecars = {
 };
 
 type SourceJournalMode = "empty" | "rollback" | "unknown" | "wal";
-
-export type PreparedSqliteReadOnlyLocation = {
-  cleanup: () => boolean;
-  cleanupAsync: () => Promise<boolean>;
-  location: string;
-};
 
 class SqliteSourceChangedError extends Error {}
 

@@ -16,7 +16,7 @@ import {
   tryAcquireExclusiveSqliteCoordinator,
   tryAcquireSharedSqliteCoordinator,
 } from "./sqlite-coordinator.js";
-import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.js";
+import type { PreparedSqliteReadOnlyLocation } from "./sqlite-readonly-location.types.js";
 
 const heldCoordinators = new Map<
   string,
