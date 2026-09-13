@@ -1224,6 +1224,7 @@ export async function installPluginFromClawHub(
     env?: RuntimeVersionEnv;
     confirmInstall?: () => boolean | Promise<boolean>;
     onBeforePluginArtifactCommit?: PluginInstallArtifactConsentHandler;
+    onPluginArtifactInspect?: PluginInstallArtifactConsentHandler;
     beforePersistentApply?: () => void;
   },
 ): Promise<
@@ -1461,6 +1462,7 @@ export async function installPluginFromClawHub(
         dryRun: params.dryRun,
         expectedPluginId: runtimeIdResolution.expectedPluginId,
         beforePersistentApply: params.beforePersistentApply,
+        onPluginArtifactInspect: params.onPluginArtifactInspect,
         onBeforePluginArtifactCommit: params.onBeforePluginArtifactCommit
           ? (artifact) =>
               params.onBeforePluginArtifactCommit!({
