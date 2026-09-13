@@ -6,6 +6,7 @@ import {
   createChannelApproverDmTargetResolver,
   createChannelNativeOriginTargetResolver,
   createNativeApprovalChannelRouteGates,
+  createNativeApprovalForwardingFallbackSuppressor,
   createNativeApprovalMessagingTargetResolvers,
   shouldSuppressLocalNativeExecApprovalPrompt,
 } from "openclaw/plugin-sdk/approval-native-runtime";
@@ -170,13 +171,32 @@ const lineNativeApprovalCapability = createApproverRestrictedNativeApprovalCapab
   // told where the approval went.
   resolveNativeDeliveryMode: () => "dm",
   notifyOriginWhenDmOnly: true,
-  requireMatchingTurnSourceChannel: true,
-  resolveSuppressionAccountId: ({ target, request }) =>
-    normalizeOptionalString(target.accountId) ??
-    normalizeOptionalString(request.request.turnSourceAccountId),
   resolveOriginTarget: resolveLineOriginTarget,
   resolveApproverDmTargets: resolveLineApproverDmTargets,
   nativeRuntime: lineLazyApprovalNativeRuntime,
+});
+
+// Forwarding is dropped only for the chats native delivery already covers: the
+// originating chat (its card or routed notice) and the approver DMs. Any other
+// configured target, such as an operations group, still gets the text prompt.
+const shouldSuppressLineForwardingFallback = createNativeApprovalForwardingFallbackSuppressor<
+  NonNullable<ReturnType<typeof resolveLineOriginTarget>>
+>({
+  channel: "line",
+  normalizeForwardTarget: lineApprovalTargetResolvers.normalizeForwardTarget,
+  resolveAccountId: ({ target, request }) =>
+    normalizeOptionalString(target.accountId) ??
+    normalizeOptionalString(request.request.turnSourceAccountId),
+  // Native targets carry the account; a forwarding target without one matches them
+  // under the account the request resolved to.
+  resolveForwardingTargetForMatch: ({ forwardingTarget, accountId }) => ({
+    ...forwardingTarget,
+    accountId,
+  }),
+  isSessionRouteEligible: shouldHandleLineNativeApprovalRequest,
+  isExplicitTargetEligible: shouldHandleLineNativeApprovalRequest,
+  resolveOriginTarget: resolveLineOriginTarget,
+  resolveApproverDmTargets: resolveLineApproverDmTargets,
 });
 
 // Availability follows forwarding, as the forwarding-routes builder defines it, not
@@ -191,6 +211,10 @@ const lineApprovalAvailability: (
 
 export const lineApprovalCapability: ChannelApprovalCapability = {
   ...lineNativeApprovalCapability,
+  delivery: {
+    ...lineNativeApprovalCapability.delivery,
+    shouldSuppressForwardingFallback: shouldSuppressLineForwardingFallback,
+  },
   getActionAvailabilityState: ({ cfg, accountId, approvalKind }) =>
     lineApprovalAvailability(
       approvalKind

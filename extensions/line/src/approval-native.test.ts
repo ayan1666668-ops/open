@@ -104,6 +104,41 @@ describe("line approval capability", () => {
     expect(suppressLocalSessionPrompt(forwardingOnly, "agent:main:main")).toBe(false);
   });
 
+  // Native delivery replaces the forwarded prompt only in the chats it reaches; a
+  // configured operations group is not one of them and keeps its text prompt.
+  it("keeps forwarded prompts for targets native delivery does not reach", () => {
+    const opsGroup = "line:group:C11111111111111111111111111111111";
+    const cfg = buildConfig({
+      channel: { allowFrom: [APPROVER] },
+      approvals: {
+        exec: { enabled: true, mode: "both", targets: [{ channel: "line", to: opsGroup }] },
+      },
+    });
+    const request = buildExecRequest(`line:${APPROVER}`);
+    const suppressed = (to: string, source: "session" | "target") =>
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg,
+        approvalKind: "exec",
+        target: { channel: "line", to, source },
+        request,
+      });
+
+    expect(suppressed(opsGroup, "target")).toBe(false);
+    expect(suppressed(`line:${APPROVER}`, "target")).toBe(true);
+    expect(suppressed(`line:${APPROVER}`, "session")).toBe(true);
+
+    // A group that raised the request gets the routed notice, not a second prompt.
+    const raisingGroup = "line:group:C0123456789abcdef0123456789abcdef";
+    expect(
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg,
+        approvalKind: "exec",
+        target: { channel: "line", to: raisingGroup, source: "session" },
+        request: buildExecRequest(raisingGroup),
+      }),
+    ).toBe(true);
+  });
+
   it("sends the card to every listed approver", async () => {
     const second = "U11111111111111111111111111111111";
     const targets = await lineApprovalCapability.native?.resolveApproverDmTargets?.({

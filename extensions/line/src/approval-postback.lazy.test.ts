@@ -85,6 +85,18 @@ describe("resolveLineApprovalPostbackTap", () => {
     },
   );
 
+  it("refuses a tap from someone who is not a listed approver", async () => {
+    const notice = await resolveLineApprovalPostbackTap({
+      cfg,
+      accountId: "default",
+      data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
+      senderId: "U11111111111111111111111111111111",
+    });
+
+    expect(notice).toContain("not authorized");
+    expect(gateway.resolveApprovalOverGateway).not.toHaveBeenCalled();
+  });
+
   // A resolved approval leaves the pending set within moments, so a tap on an old
   // card usually meets this error. Sending the approver to `/approve` would fail too.
   it("tells a tap on a card nothing waits for any more, instead of offering /approve", async () => {
