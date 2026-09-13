@@ -1,7 +1,11 @@
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { Value } from "typebox/value";
 import ts from "typescript";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { clearCronJobActive, markCronJobActive } from "../../cron/active-jobs.js";
+import { CronService } from "../../cron/service.js";
+import { createCronStoreHarness, createNoopLogger } from "../../cron/service.test-harness.js";
 import type { CronJob } from "../../cron/types.js";
 import { GatewayClientRequestError } from "../../gateway/client.js";
 import { claimAgentRunContext, clearAgentRunContext } from "../../infra/agent-run-registry.js";
@@ -57,6 +61,7 @@ const createJob = {
 };
 
 describe("automations output contract", () => {
+  const { makeStorePath } = createCronStoreHarness({ prefix: "cron-code-mode-output-" });
   it.each([
     {
       name: "scheduler status",
@@ -138,6 +143,57 @@ describe("automations output contract", () => {
     expect(Value.Errors(schema, result.details)).toEqual([]);
   });
 
+  it.each(["isolated", "current"] as const)(
+    "accepts successful removal with pending %s session cleanup without retrying",
+    async (sessionTarget) => {
+      onTestFinished(resetCodeModeTestState);
+      const { storePath } = await makeStorePath();
+      const cron = new CronService({
+        storePath,
+        cronEnabled: true,
+        defaultAgentId: "main",
+        sessionStorePath: path.join(path.dirname(storePath), "sessions.json"),
+        log: createNoopLogger(),
+        enqueueSystemEvent: vi.fn(),
+        requestHeartbeat: vi.fn(),
+        runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
+      });
+      const input = {
+        ...createJob,
+        id: `code-mode-cleanup-${sessionTarget}`,
+        enabled: false,
+        sessionTarget,
+        sessionKey: "agent:main:cleanup-fixture",
+        payload: { kind: "agentTurn" as const, message: "Synthetic pending cleanup" },
+      };
+      const activeJob = await cron.add(input);
+      const marker = markCronJobActive(activeJob.id);
+      const gatewayCall = vi.fn().mockImplementation(async () => await cron.remove(activeJob.id));
+      const tool = createCronTool(undefined, { callGatewayTool: gatewayCall });
+      const h = createCodeModeHarness();
+      applyCodeModeCatalog({ ...h.ctx, tools: [...h.tools, tool] });
+      try {
+        const result = await runUntilCompleted({
+          execTool: expectDefined(h.tools[0], "Code Mode exec"),
+          waitTool: expectDefined(h.tools[1], "Code Mode wait"),
+          code: `return await automations({action:"remove",jobId:${JSON.stringify(activeJob.id)}});`,
+        });
+        expect(gatewayCall).toHaveBeenCalledOnce();
+        expect(gatewayCall.mock.calls[0]?.[0]).toBe("cron.remove");
+        expect(cron.getJob(activeJob.id)).toBeUndefined();
+        expect(result, JSON.stringify(result)).toMatchObject({
+          status: "completed",
+          value: { ok: true, removed: true, sessionCleanup: "pending" },
+        });
+      } finally {
+        clearCronJobActive(activeJob.id, marker);
+        // Reusing the id joins the owner's deferred cleanup before fixture teardown.
+        await cron.add(input);
+        cron.stop();
+      }
+    },
+  );
+
   it("keeps older full inventories valid after compact fallback", async () => {
     const gatewayCall = vi
       .fn()
@@ -213,6 +269,10 @@ async function consume() {
     // @ts-expect-error Invented invoice fields are not part of an automation.
     result.jobs[0].invoiceTotal;
     return { names, next };
+  }
+  if ("removed" in result && result.ok) {
+    const cleanup: "pending" | undefined = result.sessionCleanup;
+    return cleanup;
   }
   if ("entries" in result) {
     const summaries: (string | undefined)[] = result.entries.map(entry => entry.summary);

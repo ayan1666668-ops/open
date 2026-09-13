@@ -137,7 +137,14 @@ export const CronToolOutputSchema = Type.Union([
   // include deliveryPreview or the declarative convergence envelope.
   ...CronAddResultSchema.anyOf,
   ...CronRunOutputSchema.anyOf,
-  Type.Object({ ok: Type.Literal(true), removed: Type.Boolean() }, { additionalProperties: false }),
+  Type.Object(
+    {
+      ok: Type.Literal(true),
+      removed: Type.Boolean(),
+      sessionCleanup: Type.Optional(Type.Literal("pending")),
+    },
+    { additionalProperties: false },
+  ),
   Type.Object(
     { ok: Type.Literal(false), removed: Type.Literal(false) },
     { additionalProperties: false },
