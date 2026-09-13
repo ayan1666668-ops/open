@@ -128,7 +128,7 @@ describe("remote sandbox fs bridge", () => {
         await expect(createFileExclusive({ filePath, data: payload })).resolves.toBe("created");
         await expect(bridge.readFile({ filePath })).resolves.toEqual(payload);
         await expect(bridge.readDirectory({ filePath: "." })).resolves.toEqual([
-          { name: filePath, isDirectory: false },
+          { name: filePath, isDirectory: false, isFile: true },
         ]);
         await expect(
           createFileExclusive({ filePath, data: Buffer.alloc(1_048_576) }),
