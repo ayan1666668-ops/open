@@ -78,6 +78,7 @@ function resolveRouteOwnerAgentId(raw: string | undefined): string | undefined {
   const normalized = normalizeAgentIdStrict(trimmed);
   return normalized.ok ? normalized.value : undefined;
 }
+
 export async function gatherDispatchRequest(
   params: DispatchFromConfigParams,
   messageAuditTerminal: InboundMessageAuditTerminalRecorder | undefined,
