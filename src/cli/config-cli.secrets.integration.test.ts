@@ -298,6 +298,41 @@ describe("config cli secrets integration", () => {
     );
   });
 
+  it("rejects unconfigured provider refs during real config validate", async () => {
+    const refId = "OPENAI_API_KEY";
+    await withConfigFileHarness(
+      "openclaw-config-cli-validate-unconfigured-provider-",
+      `${JSON.stringify(
+        {
+          models: {
+            providers: {
+              openai: {
+                apiKey: { source: "store", provider: "store", id: refId },
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      async () => {
+        const snapshot = await configRuntime.readConfigFileSnapshot({ observe: false });
+        expect(snapshot.valid).toBe(true);
+        expect(snapshot.issues).toStrictEqual([]);
+
+        await expect(runRegisteredConfigCommand(["config", "validate"])).rejects.toMatchObject({
+          name: "ExitError",
+          code: 1,
+        });
+
+        expect(registeredRuntimeErrors.join("\n")).toContain(
+          'Secret provider "store" is not configured.',
+        );
+        expect(registeredRuntimeErrors.join("\n")).not.toContain(refId);
+      },
+    );
+  });
+
   it("allows a config set that repairs an inactive provider/source mismatch", async () => {
     const raw = `${JSON.stringify(
       {

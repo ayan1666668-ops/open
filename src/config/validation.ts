@@ -12,8 +12,6 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
 import type { PluginOrigin } from "../plugins/plugin-origin.types.js";
 import { validatePluginSchemaValue } from "../plugins/schema-validator.js";
 import { resolveWebSearchInstallCatalogEntries } from "../plugins/web-search-install-catalog.js";
-import { resolveSecretRefProviderSourceMismatch } from "../secrets/ref-contract.js";
-import { discoverConfigSecretTargets } from "../secrets/target-registry.js";
 import { isRecord } from "../utils.js";
 import { GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA } from "./bundled-channel-config-metadata.generated.js";
 import {
@@ -32,7 +30,6 @@ import { removeLegacyCopilotDiscovery } from "./legacy.github-copilot.js";
 import { migratePersistedImplicitMainRoster } from "./legacy.roster.js";
 import { materializeRuntimeConfig } from "./materialize.js";
 import type { ConfigValidationIssue, OpenClawConfig } from "./types.js";
-import { resolveSecretInputRef } from "./types.secrets.js";
 import {
   bundledChannelIds,
   collectChannelDmPolicyDependencyWarnings,
@@ -41,7 +38,7 @@ import {
   normalizeBundledChannelId,
 } from "./validation-channel-rules.js";
 import { collectHeartbeatOwnerWarnings, validateConfigObjectRaw } from "./validation-core.js";
-import { withConfigIssuePath } from "./validation-issues.js";
+import { collectSecretRefProviderIssues } from "./validation-issues.js";
 import {
   collectExplicitPluginReferences,
   resolveExplicitPluginReferencePath,
@@ -80,43 +77,6 @@ type RegistryInfo = {
     { schema?: Record<string, unknown>; pluginId?: string; origin: PluginOrigin }
   >;
 };
-
-function collectSecretRefProviderSourceIssues(params: {
-  config: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  manifestRegistry: PluginManifestRegistry;
-}): ConfigValidationIssue[] {
-  const issues: ConfigValidationIssue[] = [];
-  for (const target of discoverConfigSecretTargets(params.config, {
-    env: params.env,
-    manifestRegistry: params.manifestRegistry,
-  })) {
-    const { ref } = resolveSecretInputRef({
-      value: target.value,
-      refValue: target.refValue,
-      defaults: params.config.secrets?.defaults,
-    });
-    if (!ref) {
-      continue;
-    }
-    const configuredSource = resolveSecretRefProviderSourceMismatch(params.config, ref);
-    if (!configuredSource) {
-      continue;
-    }
-    const path = target.refPath ?? target.path;
-    const pathSegments = target.refPathSegments ?? target.pathSegments;
-    issues.push(
-      withConfigIssuePath(
-        {
-          path,
-          message: `Secret provider "${ref.provider}" has source "${configuredSource}" but ref requests "${ref.source}".`,
-        },
-        pathSegments,
-      ),
-    );
-  }
-  return issues;
-}
 
 export function validateConfigObjectWithPlugins(
   raw: unknown,
@@ -735,12 +695,9 @@ function validateConfigObjectWithPluginsBase(
       warnings,
     });
   }
-  if (
-    opts.semanticValidation === "strict" &&
-    Object.keys(mutatedConfig.secrets?.providers ?? {}).length > 0
-  ) {
+  if (opts.semanticValidation === "strict") {
     issues.push(
-      ...collectSecretRefProviderSourceIssues({
+      ...collectSecretRefProviderIssues({
         config: mutatedConfig,
         env: opts.env,
         manifestRegistry: ensureLoadedRegistryInfo().registry,

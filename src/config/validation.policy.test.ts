@@ -145,6 +145,98 @@ describe("config validation SecretRef policy guards", () => {
     }
   });
 
+  it("strictly rejects an unconfigured secret provider when providers are omitted", () => {
+    const refId = "OPENAI_API_KEY";
+    const plugin = createSecretFixturePlugin();
+    const result = validateConfigObjectRawWithPlugins(
+      {
+        plugins: {
+          entries: {
+            "secret-fixture": {
+              enabled: false,
+              config: {
+                credential: { source: "store", provider: "store", id: refId },
+              },
+            },
+          },
+        },
+      },
+      {
+        semanticValidation: "strict",
+        pluginMetadataSnapshot: { manifestRegistry: { diagnostics: [], plugins: [plugin] } },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const issue = requireIssue(result.issues, "plugins.entries.secret-fixture.config.credential");
+      expect(issue.message).toBe('Secret provider "store" is not configured.');
+      expect(JSON.stringify(result.issues)).not.toContain(refId);
+    }
+  });
+
+  it("strictly rejects an unconfigured secret provider when other providers are declared", () => {
+    const refId = "MY_EXEC_SECRET";
+    const plugin = createSecretFixturePlugin();
+    const result = validateConfigObjectRawWithPlugins(
+      {
+        plugins: {
+          entries: {
+            "secret-fixture": {
+              enabled: false,
+              config: {
+                credential: { source: "exec", provider: "missing-runner", id: refId },
+              },
+            },
+          },
+        },
+        secrets: {
+          providers: {
+            configured: { source: "file", path: "/tmp/unused-secrets.json", mode: "json" },
+          },
+        },
+      },
+      {
+        semanticValidation: "strict",
+        pluginMetadataSnapshot: { manifestRegistry: { diagnostics: [], plugins: [plugin] } },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const issue = requireIssue(result.issues, "plugins.entries.secret-fixture.config.credential");
+      expect(issue.message).toBe('Secret provider "missing-runner" is not configured.');
+      expect(JSON.stringify(result.issues)).not.toContain(refId);
+    }
+  });
+
+  it.each(["env", "store"] as const)(
+    "allows built-in default provider refs for %s without explicit provider declarations",
+    (source) => {
+      const plugin = createSecretFixturePlugin();
+      const result = validateConfigObjectRawWithPlugins(
+        {
+          plugins: {
+            entries: {
+              "secret-fixture": {
+                enabled: false,
+                config: {
+                  credential: { source, provider: "default", id: "MY_BUILTIN_SECRET" },
+                },
+              },
+            },
+          },
+        },
+        {
+          semanticValidation: "strict",
+          pluginMetadataSnapshot: { manifestRegistry: { diagnostics: [], plugins: [plugin] } },
+        },
+      );
+
+      expect(result.ok).toBe(true);
+    },
+  );
+
   it.each(["env", "store"] as const)(
     "allows the %s default alias to shadow another-source provider entry",
     (source) => {
