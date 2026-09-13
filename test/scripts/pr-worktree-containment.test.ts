@@ -934,7 +934,7 @@ describePosix("scripts/pr worktree containment", () => {
     git(fixture.root, "checkout", fixture.siblingBranch);
 
     const worktree = join(fixture.root, ".worktrees", "pr-42");
-    const setup = runShell(fixture, ["review_checkout_main 42"]);
+    const setup = runShell(fixture, ["review_init 42"]);
     expect(setup.status, setup.stdout + setup.stderr).toBe(0);
     writeFileSync(git(worktree, "rev-parse", "--git-path", "info/exclude"), "zz-*\n");
     const lookalike = join(worktree, "zz-transition-literal1\n雪\\name.txt");
