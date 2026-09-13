@@ -1,3 +1,4 @@
+import { formatErrorMessage, readErrorName } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
   buildRealtimeVoiceAgentErrorProviderResult,
@@ -18,7 +19,6 @@ import {
   type RealtimeVoiceWakeNamePolicy,
 } from "openclaw/plugin-sdk/realtime-voice";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
 import { controlDiscordVoiceAgentRun, maybeControlDiscordVoiceAgentRun } from "./agent-control.js";
 import type { DiscordVoiceIngressContext } from "./ingress.js";
 import { formatVoiceLogPreview } from "./log-preview.js";
@@ -276,7 +276,7 @@ export class DiscordRealtimeConsults {
       if (this.params.stopped() || providerEpoch !== this.params.providerEpoch()) {
         return;
       }
-      if (error instanceof Error && error.name === "AbortError") {
+      if (readErrorName(error) === "AbortError") {
         if (pendingForcedConsult) {
           this.params.harness.forcedConsults.remove(pendingForcedConsult);
         }
