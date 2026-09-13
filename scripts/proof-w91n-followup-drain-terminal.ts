@@ -160,11 +160,11 @@ async function scenarioBoundedSuspension(): Promise<void> {
   const [suspensionMessage] = suspension;
   assert(suspensionMessage?.includes(key) === true, "suspension error must name the session key");
   assert(
-    suspensionMessage?.includes("messageId=proof-m1") === true,
+    suspensionMessage.includes("messageId=proof-m1"),
     "suspension error must identify the retained item",
   );
   assert(
-    suspensionMessage?.includes(AUTHORITY_ERROR) === true,
+    suspensionMessage.includes(AUTHORITY_ERROR),
     "suspension error must carry the final underlying error",
   );
   console.log(
