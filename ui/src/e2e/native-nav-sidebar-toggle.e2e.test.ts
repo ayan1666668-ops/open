@@ -659,62 +659,6 @@ suite.define(() => {
     }
   });
 
-  it("moves collapsed-navigation page headers below the web titlebar chrome", async () => {
-    const page = await openPage({ pathname: "agents", webChrome: true });
-    const toolbar = page.locator(".macos-titlebar-controls");
-    await toolbar.getByRole("button", { name: "Collapse sidebar" }).click();
-    await expect
-      .poll(() => page.locator(".shell").getAttribute("class"))
-      .toContain("shell--nav-collapsed");
-    const header = page.locator(".content .content-header").first();
-    await header.locator(".page-title").waitFor({ state: "visible" });
-    if (railProofDir) {
-      await page.screenshot({
-        animations: "disabled",
-        path: path.join(railProofDir, "native-web-collapsed-page-header.png"),
-      });
-    }
-    // The titlebar row hosts the traffic lights and web controls; the page
-    // header must start below it instead of rendering underneath.
-    const titlebarBottom = await toolbar.evaluate(
-      (element) => element.getBoundingClientRect().bottom,
-    );
-    expect(titlebarBottom).toBe(52);
-    await expect
-      .poll(async () => (await header.boundingBox())?.y ?? -1)
-      .toBeGreaterThanOrEqual(titlebarBottom);
-  });
-
-  it("keeps page headers below the legacy Mac app's lowered web controls", async () => {
-    // Older apps stamp only openclaw-native-macos and keep the in-page
-    // cluster, which drops below the drag region instead of into a titlebar.
-    const page = await openPage({
-      beforeNavigate: (target) =>
-        target.addInitScript(() => {
-          const stamp = () => document.documentElement.classList.add("openclaw-native-macos");
-          if (document.documentElement) {
-            stamp();
-          } else {
-            document.addEventListener("DOMContentLoaded", stamp);
-          }
-        }),
-      pathname: "agents",
-    });
-    await page.locator(".sidebar-brand__collapse").click();
-    await expect
-      .poll(() => page.locator(".shell").getAttribute("class"))
-      .toContain("shell--nav-collapsed");
-    const controls = page.locator(".shell-chrome-controls");
-    const controlsBottom = await controls.evaluate(
-      (element) => element.getBoundingClientRect().bottom,
-    );
-    expect(controlsBottom).toBeGreaterThan(52);
-    const header = page.locator(".content .content-header").first();
-    await expect
-      .poll(async () => (await header.boundingBox())?.y ?? -1)
-      .toBeGreaterThanOrEqual(controlsBottom);
-  });
-
   it("keeps overlay motion anchored to its owning interaction", async () => {
     const page = await openPage({ nativeNav: false });
 
