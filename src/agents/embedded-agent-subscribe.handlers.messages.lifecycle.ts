@@ -606,6 +606,8 @@ export function handleMessageEnd(
     !ctx.params.silentExpected &&
     !suppressDeterministicApprovalOutput &&
     !suppressMessageToolOnlySourceReplyOutput &&
+    !deliverMessageEndPartsIndividually &&
+    !(hasMultiplePhasedTextItems && hadBlockReplyBeforeMessageEnd) &&
     hasFinalAssistantReply &&
     onBlockReply &&
     (hasBufferedBlockReply ||

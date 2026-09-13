@@ -9,10 +9,12 @@ import { emitAgentEvent } from "../infra/agent-events.js";
 import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import { runBestEffortCallback } from "./embedded-agent-subscribe.callback.js";
 import {
+  blockReplyDeliveryKey,
   consumePendingAssistantReplyDirectivesIntoReply,
   consumePendingToolMediaIntoReply,
   hasAssistantVisibleReply,
   readPendingToolMediaReply,
+  recordAssistantTranscriptMedia,
   recordDeferredAssistantReplyDirectives,
   recordDeliveredAssistantReplyDirectives,
   recordDeliveredAutoMedia,
@@ -315,20 +317,6 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
   let blockReplyDeliveryInvalidation = new Promise<void>((resolve) => {
     resolveBlockReplyDeliveryInvalidation = resolve;
   });
-  const blockReplyDeliveryKey = (
-    payload: BlockReplyPayload,
-    options?: { assistantMessageIndex?: number },
-  ) =>
-    JSON.stringify([
-      options?.assistantMessageIndex,
-      payload.text ?? "",
-      payload.mediaUrls ?? [],
-      payload.audioAsVoice === true,
-      payload.replyToId ?? "",
-      payload.replyToTag === true,
-      payload.replyToCurrent === true,
-      payload.isReasoning === true,
-    ]);
   const emitBlockReplySafely = (
     payload: Parameters<NonNullable<SubscribeEmbeddedAgentSessionParams["onBlockReply"]>>[0],
     options?: {
@@ -340,7 +328,7 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     onDelivered?: () => void,
     retrying = false,
     deliveryGeneration = blockReplyDeliveryGeneration,
-    deliveryKey = blockReplyDeliveryKey(payload, options),
+    deliveryKey = blockReplyDeliveryKey(payload, options?.assistantMessageIndex),
     deliverySequence = blockReplyDeliverySequence++,
   ): boolean => {
     if (!params.onBlockReply) {
@@ -571,8 +559,11 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     }
     const replies = state.deferredBlockReplies.splice(0);
     for (const payload of replies) {
-      const index = getReplyPayloadMetadata(payload)?.assistantMessageIndex;
-      if (!payload.isReasoning && isSuperseded(index)) {
+      if (
+        !payload.isReasoning &&
+        isSuperseded(getReplyPayloadMetadata(payload)?.assistantMessageIndex)
+      ) {
+        recordAssistantTranscriptMedia(payload);
         payload.text = undefined;
       }
     }

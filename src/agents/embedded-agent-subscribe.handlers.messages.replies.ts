@@ -3,6 +3,7 @@
  */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
+import { setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-directives.js";
 import type { BlockReplyPayload } from "./embedded-agent-payloads.js";
 import type { EmbeddedAgentSubscribeState } from "./embedded-agent-subscribe.handlers.types.js";
@@ -53,6 +54,30 @@ function clearPendingToolMedia(
 
 function hasReplyMedia(payload: BlockReplyPayload): boolean {
   return (payload.mediaUrls ?? []).some((url) => url.trim().length > 0);
+}
+
+export function recordAssistantTranscriptMedia(payload: BlockReplyPayload): void {
+  if (payload.mediaUrls?.length) {
+    setReplyPayloadMetadata(payload, {
+      assistantTranscriptMediaUrls: Array.from(new Set(payload.mediaUrls)),
+    });
+  }
+}
+
+export function blockReplyDeliveryKey(
+  payload: BlockReplyPayload,
+  assistantMessageIndex?: number,
+): string {
+  return JSON.stringify([
+    assistantMessageIndex,
+    payload.text ?? "",
+    payload.mediaUrls ?? [],
+    payload.audioAsVoice === true,
+    payload.replyToId ?? "",
+    payload.replyToTag === true,
+    payload.replyToCurrent === true,
+    payload.isReasoning === true,
+  ]);
 }
 
 function readAlignedPendingToolMedia(
