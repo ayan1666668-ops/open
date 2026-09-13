@@ -36,10 +36,15 @@ export function protectPreparedProviderRuntimeAuth(params: {
   if (!preparedAuth) {
     return undefined;
   }
-  const protect = (value: string, label: string): string =>
-    !value || isNonSecretApiKeyMarker(value)
-      ? value
-      : protectRuntimeAuthValue({ value, provider: params.provider, label });
+  // Credential provenance must not depend on the logging registry's length or capacity limits.
+  const credentialValues = new Set<string>();
+  const protect = (value: string, label: string): string => {
+    if (!value || isNonSecretApiKeyMarker(value)) {
+      return value;
+    }
+    credentialValues.add(value);
+    return protectRuntimeAuthValue({ value, provider: params.provider, label });
+  };
   const request = preparedAuth.request;
   // Register explicit credentials first so metadata cannot declassify a duplicate value.
   const apiKey = protect(preparedAuth.apiKey, "runtime-api-key");
@@ -72,7 +77,7 @@ export function protectPreparedProviderRuntimeAuth(params: {
     ? Object.fromEntries(
         protectedHeaders.map(([name, value]) => [
           name,
-          isSecretValueRegisteredForRedaction(value)
+          credentialValues.has(value) || isSecretValueRegisteredForRedaction(value)
             ? protect(value, `runtime-header:${name.toLowerCase()}`)
             : value,
         ]),

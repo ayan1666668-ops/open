@@ -69,8 +69,11 @@ describe("prepared auth header classification", () => {
     expect(redactSensitiveText(secret, { mode: "off" })).not.toContain(secret);
   });
 
-  it.each(["registered", "api-key"])("protects a %s value duplicated in metadata", (source) => {
-    const secret = "synthetic-duplicate-header-secret";
+  it.each([
+    ["registered", "synthetic-duplicate-header-secret"],
+    ["api-key", "synthetic-duplicate-header-secret"],
+    ["api-key", "abcde"],
+  ])("protects a %s value %s duplicated in metadata", (source, secret) => {
     if (source === "registered") {
       mintSecretSentinel(secret, { label: "fixture:registered" });
     }
@@ -103,10 +106,14 @@ describe("prepared auth header classification", () => {
     expect(resolveSecretSentinel(value)).toBe(`Prefix ${secret}`);
   });
 
-  it.each([true, false])(
-    "protects custom-header duplicates with metadata first=%s",
-    (metadataFirst) => {
-      const secret = "synthetic-custom-duplicate-secret";
+  it.each([
+    [true, "synthetic-custom-duplicate-secret"],
+    [false, "synthetic-custom-duplicate-secret"],
+    [true, "abcde"],
+    [false, "abcde"],
+  ] as const)(
+    "protects custom-header duplicates with metadata first=%s and value=%s",
+    (metadataFirst, secret) => {
       const headers = metadataFirst
         ? { Accept: secret, "X-Opaque": secret }
         : { "X-Opaque": secret, Accept: secret };
@@ -122,26 +129,35 @@ describe("prepared auth header classification", () => {
     },
   );
 
-  it.each(["authorization-bearer", "header"] as const)(
-    "protects explicit %s auth independently of metadata classification",
-    (mode) => {
-      const secret = "synthetic-explicit-auth-value";
-      const auth =
-        mode === "header" ? { mode, headerName: "Accept", value: secret } : { mode, token: secret };
-      const result = protectPreparedProviderRuntimeAuth({
-        provider: "fixture-provider",
-        preparedAuth: { apiKey: "synthetic-api-key", request: { auth } },
-      });
-      const protectedAuth = result?.request?.auth;
-      const value =
-        protectedAuth?.mode === "header"
-          ? protectedAuth.value
-          : protectedAuth?.mode === "authorization-bearer"
-            ? protectedAuth.token
-            : "";
-      expect(looksLikeSecretSentinel(value)).toBe(true);
-      expect(resolveSecretSentinel(value)).toBe(secret);
+  it.each([
+    ["authorization-bearer", "synthetic-explicit-auth-value"],
+    ["header", "synthetic-explicit-auth-value"],
+    ["authorization-bearer", "abcde"],
+    ["header", "abcde"],
+  ] as const)("protects explicit %s auth and its metadata alias with value=%s", (mode, secret) => {
+    const auth =
+      mode === "header" ? { mode, headerName: "Accept", value: secret } : { mode, token: secret };
+    const result = protectPreparedProviderRuntimeAuth({
+      provider: "fixture-provider",
+      preparedAuth: {
+        apiKey: "synthetic-api-key",
+        request: { auth, headers: { "Content-Type": secret } },
+      },
+    });
+    const protectedAuth = result?.request?.auth;
+    const value =
+      protectedAuth?.mode === "header"
+        ? protectedAuth.value
+        : protectedAuth?.mode === "authorization-bearer"
+          ? protectedAuth.token
+          : "";
+    expect(looksLikeSecretSentinel(value)).toBe(true);
+    expect(resolveSecretSentinel(value)).toBe(secret);
+    const alias = result?.request?.headers?.["Content-Type"] ?? "";
+    expect(looksLikeSecretSentinel(alias)).toBe(true);
+    expect(resolveSecretSentinel(alias)).toBe(secret);
+    if (secret.length >= 6) {
       expect(redactSensitiveText(secret, { mode: "off" })).not.toContain(secret);
-    },
-  );
+    }
+  });
 });
