@@ -116,10 +116,12 @@ async function withTranscriptFixture(
         },
       },
     ];
-    for (const [index, message] of messages.entries()) {
-      expect(appendTranscriptMessageSync(scope, { ...message, now: 1_000 + index })).toMatchObject({
+    for (const [index, { eventId, message }] of messages.entries()) {
+      expect(
+        appendTranscriptMessageSync(scope, { eventId, message, now: 1_000 + index }),
+      ).toMatchObject({
         ok: true,
-        value: { appended: true, messageId: message.eventId },
+        value: { appended: true, messageId: eventId },
       });
     }
     const snapshot = () => {
