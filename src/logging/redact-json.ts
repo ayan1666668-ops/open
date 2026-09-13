@@ -480,7 +480,12 @@ export function redactJsonRecord(
             if (token.currentStart >= capture.end) {
               break;
             }
-            if (batch && token.isKey) {
+            const unquoted = token.raw || token.deferEncoding;
+            const padding = unquoted ? 0 : 1;
+            const captureInsideToken =
+              capture.start >= token.currentStart + padding &&
+              capture.end <= token.currentEnd - padding;
+            if (batch && token.isKey && !captureInsideToken) {
               continue;
             }
             const value = token.currentValue;
@@ -488,8 +493,6 @@ export function redactJsonRecord(
               add(token, { start: 0, end: value.length, replacement: "***" });
               continue;
             }
-            const unquoted = token.raw || token.deferEncoding;
-            const padding = unquoted ? 0 : 1;
             let startPosition = Math.max(capture.start, token.currentStart + padding);
             let start = unquoted
               ? startPosition - token.currentStart
@@ -533,10 +536,7 @@ export function redactJsonRecord(
               continue;
             }
             let replacement = "***";
-            if (
-              capture.start >= token.currentStart + padding &&
-              capture.end <= token.currentEnd - padding
-            ) {
+            if (captureInsideToken) {
               try {
                 replacement = unquoted ? edit.replacement : JSON.parse(`"${edit.replacement}"`);
               } catch {

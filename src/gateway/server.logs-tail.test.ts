@@ -141,6 +141,42 @@ it("logs.tail applies current ordered patterns and secrets registered after the 
   }
 });
 
+it("logs.tail masks late secrets and confined pattern captures inside JSON property names", async () => {
+  const dir = tempDirs.make("openclaw-gateway-log-keys-");
+  const file = path.join(dir, "stored.log");
+  const secret = "opaque-registered-key-987654321";
+  const stored =
+    [
+      JSON.stringify({ [secret]: "diagnostic" }),
+      JSON.stringify({ ordinary: secret }),
+      JSON.stringify({ 'prefix"MASKME"suffix': "diagnostic" }),
+      JSON.stringify({ message: "VALUE_ONLY", ordinary: "keep" }),
+    ].join("\n") + "\n";
+  await fs.writeFile(file, stored);
+  registerSecretValueForRedaction(secret);
+  applyLoggingConfig({
+    redactPatterns: [String.raw`"prefix\\"(MASKME)\\"suffix":`, "VALUE_ONLY"],
+  });
+  setLoggerOverride({ file, level: "silent", consoleLevel: "silent" });
+  try {
+    const response = await rpcReq<LogTailPayload>(ws, "logs.tail", { limit: 100 });
+    expect(response.ok).toBe(true);
+    assert(response.payload);
+    expect(response.payload.lines.join("\n")).not.toContain(secret);
+    const [keyRecord, valueRecord, patternKey, patternValue] = response.payload.lines.map((line) =>
+      JSON.parse(line),
+    );
+    expect(keyRecord).toEqual({ [valueRecord.ordinary]: "diagnostic" });
+    expect(patternKey).toEqual({ 'prefix"***"suffix': "diagnostic" });
+    expect(patternValue).toEqual({ message: "***", ordinary: "keep" });
+    expect(response.payload.cursor).toBe(Buffer.byteLength(stored));
+    expect(await fs.readFile(file, "utf8")).toBe(stored);
+  } finally {
+    applyLoggingConfig(undefined);
+    setLoggerOverride({ level: "silent", consoleLevel: "silent" });
+  }
+});
+
 it.each(["raw", "JSON"])(
   "logs.tail masks %s PEM bodies across selection windows and separate cursor polls",
   async (format) => {
