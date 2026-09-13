@@ -1315,6 +1315,10 @@ export const en: TranslationMap & {
     customEmojiSet: "Set",
     customEmojiHint: "Any emoji works. Press {shortcut} for the system emoji picker.",
     customEmojiHintNoShortcut: "Any emoji works.",
+    customIconCell: "Custom icon…",
+    customIconTitle: "Custom icon",
+    customIconHint: "Paste an emoji or SVG. Press {shortcut} for the system emoji picker.",
+    customIconHintNoShortcut: "Paste an emoji or SVG.",
     removeIcon: "Remove icon",
     pinSession: "Pin session",
     pinRootSessionsOnly: "Only root sessions can be pinned; pin the parent session instead.",
@@ -4759,6 +4763,9 @@ export const en: TranslationMap & {
       },
       cliHarnessContext: {
         label: "System · injected context",
+      },
+      claudeCliTaskNotification: {
+        label: "System · background task",
       },
       showContent: "Show content",
     },
