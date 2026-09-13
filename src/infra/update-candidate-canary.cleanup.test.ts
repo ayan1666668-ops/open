@@ -23,8 +23,14 @@ vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: mocks.spawn,
 }));
-vi.mock("../process/exec.js", () => ({ runCommandBuffered: mocks.snapshot }));
-vi.mock("../process/kill-tree.js", () => ({ signalProcessTree: mocks.signal }));
+vi.mock("../process/exec.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../process/exec.js")>()),
+  runCommandBuffered: mocks.snapshot,
+}));
+vi.mock("../process/kill-tree.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../process/kill-tree.js")>()),
+  signalProcessTree: mocks.signal,
+}));
 vi.mock("../process/scoped-child-reaper.js", () => ({
   scheduleAdoptedChildZombieReapAfterExit: mocks.reap,
 }));
