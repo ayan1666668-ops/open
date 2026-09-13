@@ -388,6 +388,10 @@ export function loadChatMetadataRefresh(
       peekModelCatalog(client, scope);
       const current = entry.refresh === record;
       const active = current && Array.from(entry.listeners.values()).some((isActive) => isActive());
+      if (active && record.metadataRequired && entry.queuedRequest) {
+        // Refresh the queued publication without admitting another transport.
+        void loadChatMetadata(client, scope);
+      }
       const inheritedCatalog =
         requestedRevision === entry.refreshRevision &&
         requestedCatalogRevision === entry.catalogRevision
