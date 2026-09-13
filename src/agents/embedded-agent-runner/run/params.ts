@@ -495,6 +495,7 @@ export type RunEmbeddedAgentParams = {
     sessionId?: string;
     ownerAgentId?: string;
     getContextUsage: () => number | null;
+    contextUsageOrigin?: "live_runner" | "inventory_stub";
     triggerCompaction: RequestCompactionToolOpts["triggerCompaction"];
   };
   /** Mark explicit one-shot local CLI runs so plugin tools can release resources promptly. */

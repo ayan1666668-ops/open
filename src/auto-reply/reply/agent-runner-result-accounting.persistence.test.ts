@@ -175,6 +175,7 @@ async function createFixture() {
     defaultModel: diagnostic.model,
     followupRun,
     getActiveSessionEntry,
+    setActiveSessionEntry,
     isHeartbeat: false,
     noOpRearmWakeClass: undefined,
     pendingToolTasks: new Set(),

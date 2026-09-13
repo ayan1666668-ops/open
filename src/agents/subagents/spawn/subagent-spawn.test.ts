@@ -14,10 +14,12 @@ import {
   deriveContinuationDelegateChildRunId,
   deriveContinuationDelegateChildSessionKey,
 } from "../../subagent-continuation-ids.js";
+import { consumeSubagentTraceparentHandoff } from "../../subagent-traceparent-handoff.js";
 import { installAcceptedSubagentGatewayMock } from "../../test-helpers/subagent-gateway.js";
 import { testing as swarmSchedulerTesting } from "../swarm/swarm-scheduler.test-support.js";
 import {
   SpawnSubagentAdmissionCancelledError,
+  type SpawnSubagentAdmissionBoundary,
   type SpawnSubagentAdmissionAuthority,
 } from "./subagent-spawn-contract.js";
 import {
@@ -37,6 +39,8 @@ const hoisted = vi.hoisted(() => ({
   resolveProviderRefOwnershipMock: vi.fn(),
   updateSessionStoreMock: vi.fn(),
   registerSubagentRunMock: vi.fn(),
+  recordAcceptedSubagentSpawnRollbackMock: vi.fn(),
+  rollbackSubagentRunRegistrationMock: vi.fn(),
   startQueuedSubagentRunMock: vi.fn(),
   settleFailedQueuedSubagentLaunchMock: vi.fn(),
   completeCollectorLaunchCleanupMock: vi.fn(),
@@ -248,6 +252,8 @@ describe("spawnSubagentDirect seam flow", () => {
       resolveProviderRefOwnershipMock: hoisted.resolveProviderRefOwnershipMock,
       updateSessionStoreMock: hoisted.updateSessionStoreMock,
       registerSubagentRunMock: hoisted.registerSubagentRunMock,
+      recordAcceptedSubagentSpawnRollbackMock: hoisted.recordAcceptedSubagentSpawnRollbackMock,
+      rollbackSubagentRunRegistrationMock: hoisted.rollbackSubagentRunRegistrationMock,
       startQueuedSubagentRunMock: hoisted.startQueuedSubagentRunMock,
       settleFailedQueuedSubagentLaunchMock: hoisted.settleFailedQueuedSubagentLaunchMock,
       completeCollectorLaunchCleanupMock: hoisted.completeCollectorLaunchCleanupMock,
@@ -275,6 +281,10 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.updateSessionStoreMock.mockReset();
     hoisted.registerSubagentRunMock.mockReset();
+    hoisted.recordAcceptedSubagentSpawnRollbackMock
+      .mockReset()
+      .mockReturnValue({ status: "persisted" });
+    hoisted.rollbackSubagentRunRegistrationMock.mockReset().mockReturnValue(true);
     hoisted.startQueuedSubagentRunMock.mockReset().mockReturnValue(true);
     hoisted.settleFailedQueuedSubagentLaunchMock.mockReset().mockReturnValue(true);
     hoisted.completeCollectorLaunchCleanupMock.mockReset();

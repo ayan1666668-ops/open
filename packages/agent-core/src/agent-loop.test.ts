@@ -35,6 +35,7 @@ import type {
   AgentLoopConfig,
   AgentMessage,
   AgentTool,
+  AgentToolCall,
   AgentToolResult,
   StreamFn,
 } from "./types.js";

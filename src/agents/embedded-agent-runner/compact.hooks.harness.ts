@@ -151,6 +151,9 @@ let fixtureWorkspaceDir: string;
 export const resolveDefaultAgentDirMock = vi.fn<() => string>();
 export const estimateTokensMock = vi.fn((_message?: unknown) => 10);
 export const resolveAgentHarnessPolicyMock = vi.fn(() => ({ runtime: "openclaw" }));
+export const resolveSelectedOpenAIRuntimeProviderMock = vi.fn(
+  (params: { provider: string }) => params.provider,
+);
 function createSelectedAgentHarnessMock(params: {
   agentHarnessId?: string;
   agentHarnessRuntimeOverride?: string;
@@ -673,6 +676,10 @@ export function resetCompactHooksHarnessMocks(workspaceDir: string): void {
   );
   resolveAgentHarnessPolicyMock.mockReset();
   resolveAgentHarnessPolicyMock.mockReturnValue({ runtime: "openclaw" });
+  resolveSelectedOpenAIRuntimeProviderMock.mockReset();
+  resolveSelectedOpenAIRuntimeProviderMock.mockImplementation(
+    (params: { provider: string }) => params.provider,
+  );
   resolveContextWindowInfoMock.mockReset();
   resolveContextWindowInfoMock.mockReturnValue({ tokens: 128_000 });
 
@@ -759,6 +766,14 @@ export async function loadCompactHooksHarness(options: { durableSession?: boolea
   vi.doMock("../harness/policy.js", () => ({
     resolveAgentHarnessPolicy: resolveAgentHarnessPolicyMock,
   }));
+  vi.doMock("../openai-routing.js", async () => {
+    const actual =
+      await vi.importActual<typeof import("../openai-routing.js")>("../openai-routing.js");
+    return {
+      ...actual,
+      resolveSelectedOpenAIRuntimeProvider: resolveSelectedOpenAIRuntimeProviderMock,
+    };
+  });
   vi.doMock("../harness/runtime-plugin.js", () => ({
     ensureSelectedAgentHarnessPlugin: vi.fn(async () => undefined),
   }));

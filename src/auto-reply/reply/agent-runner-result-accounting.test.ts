@@ -180,7 +180,6 @@ function createTurn(): AdmittedFollowupTurn {
     },
     sendPolicy: "allow",
     preflightCompactionApplied: false,
-    noOpRearmWakeClass: { kind: "fresh_human_edge", messageId: "message-1" },
   };
 }
 
@@ -262,17 +261,7 @@ describe("accountFollowupTurn", () => {
     });
 
     expect(state.scheduleContinuation).toHaveBeenCalledOnce();
-    expect(state.recordNoOpRearmOutcome).toHaveBeenCalledWith({
-      sessionKey: "main",
-      wakeClass: { kind: "fresh_human_edge", messageId: "message-1" },
-      runId: "run-1",
-      facts: {
-        hasVisibleReply: true,
-        toolNames: [],
-        structuredCompletion: false,
-        errorOnlyNoGain: false,
-      },
-    });
+    expect(state.recordNoOpRearmOutcome).not.toHaveBeenCalled();
     expect(state.scheduleContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg: continuationConfig,
@@ -307,7 +296,7 @@ describe("accountFollowupTurn", () => {
 
     await accountFollowupTurn(params);
 
-    expect(mocks.persistSessionUsageUpdate).toHaveBeenCalledWith(
+    expect(state.persistSessionUsageUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         agentHarnessId: "codex",
         contextTokensUsed: 1_000_000,
@@ -369,7 +358,7 @@ describe("accountFollowupTurn", () => {
 
     await accountFollowupTurn(params);
 
-    expect(mocks.persistSessionUsageUpdate).toHaveBeenCalledWith(
+    expect(state.persistSessionUsageUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         agentHarnessId: "legacy-runtime",
         contextTokensUsed: 512_000,
@@ -383,7 +372,7 @@ describe("accountFollowupTurn", () => {
 
     await accountFollowupTurn(params);
 
-    expect(mocks.persistSessionUsageUpdate).toHaveBeenCalledWith(
+    expect(state.persistSessionUsageUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         contextTokensUsed: 200_000,
         contextTokensSource: "resolved-v1",
@@ -392,7 +381,7 @@ describe("accountFollowupTurn", () => {
   });
 
   it("does not label a prior context fallback as a current resolution after a model switch", async () => {
-    mocks.resolveContextTokensForModel.mockReturnValueOnce(undefined);
+    state.resolveContextTokensForModel.mockReturnValueOnce(undefined);
     const params = createParams();
     const session = params.turn.session as unknown as {
       current: () => SessionEntry;
@@ -419,7 +408,7 @@ describe("accountFollowupTurn", () => {
 
     await accountFollowupTurn(params);
 
-    expect(mocks.persistSessionUsageUpdate).toHaveBeenCalledWith(
+    expect(state.persistSessionUsageUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         providerUsed: "openai",
         modelUsed: "gpt-4o",

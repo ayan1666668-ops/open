@@ -12,7 +12,7 @@ function makeDeps(overrides: { enqueueSystemEvent: () => boolean }) {
   const enqueueSessionDelivery = vi.fn<ReturnDeliveryDeps["enqueueSessionDelivery"]>(
     async () => "delivery-id-1",
   );
-  const ackSessionDelivery = vi.fn<ReturnDeliveryDeps["ackSessionDelivery"]>(async () => undefined);
+  const ackSessionDelivery = vi.fn(async (_id: string, _stateDir?: string): Promise<void> => {});
   const enqueueSystemEvent = vi.fn<ReturnDeliveryDeps["enqueueSystemEvent"]>(() =>
     overrides.enqueueSystemEvent(),
   );
@@ -35,6 +35,7 @@ describe("enqueueContinuationReturnDeliveries :: de-duplicated ack reconciliatio
         text: "identical return text",
         idempotencyKeyBase: "idem-base",
         stateDir: "/tmp/state",
+        ownerAgentId: "main",
       },
       deps,
     );
@@ -57,6 +58,7 @@ describe("enqueueContinuationReturnDeliveries :: de-duplicated ack reconciliatio
         text: "fresh return text",
         idempotencyKeyBase: "idem-base",
         stateDir: "/tmp/state",
+        ownerAgentId: "main",
       },
       deps,
     );
@@ -78,6 +80,7 @@ describe("enqueueContinuationReturnDeliveries :: de-duplicated ack reconciliatio
           ["agent:main:beta", "beta envelope"],
         ]),
         idempotencyKeyBase: "idem-base",
+        ownerAgentId: "main",
       },
       deps,
     );

@@ -142,6 +142,8 @@ export async function loadSubagentSpawnModuleForTest(params: {
   resolveContextEngineMock?: MockFn;
   resolveParentForkDecisionMock?: MockFn;
   registerSubagentRunMock?: MockFn;
+  recordAcceptedSubagentSpawnRollbackMock?: MockFn;
+  rollbackSubagentRunRegistrationMock?: MockFn;
   startQueuedSubagentRunMock?: MockFn;
   settleFailedQueuedSubagentLaunchMock?: MockFn;
   completeCollectorLaunchCleanupMock?: MockFn;
@@ -407,8 +409,10 @@ export async function loadSubagentSpawnModuleForTest(params: {
           createdAt: Date.now(),
         },
       })),
-    recordAcceptedSubagentSpawnRollback: vi.fn(() => ({ status: "persisted" })),
-    rollbackSubagentRunRegistration: vi.fn(() => true),
+    recordAcceptedSubagentSpawnRollback:
+      params.recordAcceptedSubagentSpawnRollbackMock ?? vi.fn(() => ({ status: "persisted" })),
+    rollbackSubagentRunRegistration:
+      params.rollbackSubagentRunRegistrationMock ?? vi.fn(() => true),
     resetSubagentRegistryForTests,
     settleFailedQueuedSubagentLaunch:
       params.settleFailedQueuedSubagentLaunchMock ?? vi.fn(() => true),

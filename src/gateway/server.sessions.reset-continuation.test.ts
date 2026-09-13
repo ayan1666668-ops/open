@@ -97,6 +97,9 @@ test("sessions.reset reports durable continuation cancellation failures", async 
       upsertFlow: () => {
         throw new Error("SQLITE_FULL: database or disk is full");
       },
+      updateFlow: () => {
+        throw new Error("SQLITE_FULL: database or disk is full");
+      },
       deleteFlow: () => {},
     },
   });

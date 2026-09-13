@@ -17,6 +17,7 @@ import {
   withGatewayToolCallerIdentity,
 } from "../../tools/gateway-caller-context.js";
 import type { SubagentRegistryDeps } from "./subagent-registry-deps.js";
+import { expectFixtureAgentDatabaseCount } from "./subagent-registry.persistence.resume.test-support.js";
 import { registerSubagentDismissedRetentionCases } from "./subagent-registry.persistence.retention.test-support.js";
 import {
   createSubagentRegistryTestDeps,
@@ -25,7 +26,9 @@ import {
   withSubagentRegistryPersistenceState,
   createDeliveredWake,
   createOrphanedRequiredDelivery,
+  removeSubagentSessionEntry,
   writeChildSession,
+  writeSubagentSessionEntry,
 } from "./subagent-registry.persistence.test-support.js";
 import {
   loadSubagentRegistryFromSqlite,
@@ -35,9 +38,14 @@ import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
 type WakeRequester = SubagentRegistryDeps["maybeWakeRequesterAfterAllChildrenSettled"];
 type WakeParams = Parameters<WakeRequester>[0];
+type AnnounceParams = Parameters<
+  typeof import("../announce/subagent-announce.js").runSubagentAnnounceFlow
+>[0];
 
 const { announceSpy } = vi.hoisted(() => ({
-  announceSpy: vi.fn(async () => "delivered" as const),
+  announceSpy: vi.fn<(params: AnnounceParams) => Promise<"delivered" | "retryable">>(
+    async () => "delivered",
+  ),
 }));
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 vi.mock("../announce/subagent-announce.js", () => ({
@@ -105,8 +113,18 @@ describe("subagent registry persistence resume", () => {
       .mockReturnValue(() => undefined);
   });
 
-  const withRegistryState = <T>(run: (stateDir: string) => Promise<T>) => {
-    const stateDir = tempDirs.make("openclaw-subagent-");
+  function withRegistryState<T>(run: (stateDir: string) => Promise<T>): Promise<T>;
+  function withRegistryState<T>(stateDir: string, run: () => Promise<T>): Promise<T>;
+  function withRegistryState<T>(
+    stateDirOrRun: string | ((stateDir: string) => Promise<T>),
+    explicitRun?: () => Promise<T>,
+  ): Promise<T> {
+    const stateDir =
+      typeof stateDirOrRun === "string" ? stateDirOrRun : tempDirs.make("openclaw-subagent-");
+    const run = typeof stateDirOrRun === "string" ? explicitRun : () => stateDirOrRun(stateDir);
+    if (!run) {
+      throw new Error("Expected a registry persistence test callback.");
+    }
     return withSubagentRegistryPersistenceState(
       {
         stateDir,
@@ -129,9 +147,9 @@ describe("subagent registry persistence resume", () => {
           registryStateDbModule.closeOpenClawStateDatabaseForTest();
         },
       },
-      () => run(stateDir),
+      run,
     );
-  };
+  }
 
   it.each([
     { name: "announcing", expectsCompletionMessage: true },

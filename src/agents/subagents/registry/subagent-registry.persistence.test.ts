@@ -377,15 +377,16 @@ describe("subagent registry persistence", () => {
       sessionKey: "agent:main:subagent:silent-test",
       sessionId: "sess-silent",
     });
-    const registryPath = path.join(tempStateDir, "state", "openclaw.sqlite");
-    const run = await readPersistedRun<{
-      silentAnnounce?: boolean;
-      wakeOnReturn?: boolean;
-      continuationTargetSessionKeys?: string[];
-      continuationFanoutMode?: "tree" | "all";
-      continuationRecipientAuthorityBinding?: unknown;
-      traceparent?: string;
-    }>(registryPath, "run-silent");
+    const run = loadSubagentRegistryFromSqlite().get("run-silent") as
+      | {
+          silentAnnounce?: boolean;
+          wakeOnReturn?: boolean;
+          continuationTargetSessionKeys?: string[];
+          continuationFanoutMode?: "tree" | "all";
+          continuationRecipientAuthorityBinding?: unknown;
+          traceparent?: string;
+        }
+      | undefined;
     expect(run).toMatchObject({
       silentAnnounce: true,
       wakeOnReturn: true,

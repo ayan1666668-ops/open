@@ -6,7 +6,7 @@ import type {
   SpawnSubagentSandboxMode,
 } from "./subagent-spawn.types.js";
 
-type SpawnSubagentAdmissionBoundary =
+export type SpawnSubagentAdmissionBoundary =
   | "child-session"
   | "gateway-dispatch"
   | "registry-acceptance"

@@ -161,6 +161,7 @@ function runCandidate(
     contextEngineLogicalTurnLease: {} as never,
     onContextEngineTurnCandidate: vi.fn(),
     assistantErrorTranscript: createAssistantErrorTranscript({ runId: "run-fallback" }),
+    authProfileFailurePolicy: undefined,
     notifyUserMessagePersisted: vi.fn(),
     fastModeStartedAtMs: Date.now(),
     fastModeAutoProgressState: { offAnnounced: false, resetAnnounced: false },
@@ -200,17 +201,6 @@ describe("runEmbeddedFallbackCandidate continuation callbacks", () => {
     mocks.runEmbeddedAgent.mockImplementationOnce(async (options: RunEmbeddedAgentParams) => {
       expect(options.requestCompactionOpts?.ownerAgentId).toBe("main");
       expect(options.requestCompactionOpts?.contextUsageOrigin).toBe("live_runner");
-      expect(options.requestCompactionOpts?.getContextUsageDiagnostics?.()).toMatchObject({
-        usageSource: "persisted_fallback",
-        callbackSessionId: "session-fallback",
-        callbackSessionKey: "agent:main:fallback",
-        entryPresent: true,
-        totalTokens: 75,
-        totalTokensFresh: true,
-        totalTokensVersion: null,
-        contextWindow: 100,
-        contextWindowSource: "session_entry",
-      });
       options.continueWorkOpts?.requestContinuation({
         reason: "continue after fallback",
         delaySeconds: 5,

@@ -37,6 +37,7 @@ import { REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS, createReplyOperation } from "./reply-
 import { getActiveReplyRunCount } from "./reply-run-registry.registry.js";
 import { testing as replyRunTesting } from "./reply-run-registry.test-support.js";
 import { routeReply } from "./route-reply.runtime.js";
+import type { PreparedFormattedSystemEvents } from "./session-system-event-adoption.js";
 import {
   drainFormattedSystemEvents,
   prepareFormattedSystemEvents,

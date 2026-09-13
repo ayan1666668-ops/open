@@ -54,7 +54,6 @@ test.each(["new", "reset"] as const)(
       },
       {
         enqueueSessionDelivery,
-        ackSessionDelivery: vi.fn(async () => undefined),
         enqueueSystemEvent,
         requestHeartbeatNow,
         isRecipientAuthorityCurrent: (resolvedKey, authority) =>

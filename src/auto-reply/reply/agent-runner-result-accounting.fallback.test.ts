@@ -79,6 +79,7 @@ async function createFixture(selected = diagnostic) {
     noOpRearmWakeClass: undefined,
     pendingToolTasks: new Set(),
     preflightCompactionApplied: false,
+    replySessionKey: sessionKey,
     resolvedVerboseLevel: "off",
     execution: {
       kind: "settled",

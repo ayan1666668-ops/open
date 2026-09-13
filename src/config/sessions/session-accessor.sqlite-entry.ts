@@ -186,9 +186,9 @@ export function loadSessionEntryReadOnlyInScope(
 }
 
 /** Lists persisted session keys without materializing their entry JSON. */
-export function listSessionEntryKeysReadOnly(
+export async function listSessionEntryKeysReadOnly(
   scope: Partial<Omit<SessionAccessScope, "sessionKey">> = {},
-): string[] {
+): Promise<string[]> {
   const resolved = resolveSqliteScope({ ...scope, sessionKey: "" });
   const result = withOpenClawAgentDatabaseReadOnly((database) => {
     const db = getSessionKysely(database.db);

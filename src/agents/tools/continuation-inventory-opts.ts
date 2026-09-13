@@ -21,6 +21,7 @@ export function buildInventoryContinuationToolOpts(continuationEnabled: boolean)
   continueWorkOpts?: { requestContinuation: () => void };
   requestCompactionOpts?: {
     sessionId: string;
+    ownerAgentId?: string;
     getContextUsage: () => number | null;
     triggerCompaction: () => Promise<{ ok: boolean; compacted: boolean; reason: string }>;
   };

@@ -60,7 +60,7 @@ describe("clearSessionResetRuntimeState", () => {
     const state = getEmbeddedSessionPromptState("old-session");
     state.sentUserTurnIds.add("sent-user-turn");
 
-    clearSessionResetRuntimeState(["old-session"], { agentId: "main" });
+    clearSessionResetRuntimeState(["old-session"], { agentId: "main", reason: "reset" });
 
     expect(getEmbeddedSessionPromptState("old-session")).not.toBe(state);
   });
@@ -72,6 +72,7 @@ describe("clearSessionResetRuntimeState", () => {
 
     const result = clearSessionResetRuntimeState([" alpha ", undefined, " ", "alpha", "beta"], {
       agentId: "main",
+      reason: "reset",
     });
 
     expect(result.keys).toEqual(["alpha", "beta"]);
@@ -86,7 +87,10 @@ describe("clearSessionResetRuntimeState", () => {
     enqueueSystemEvent("alpha", withSystemEventOwner({ sessionKey: "global" }, "alpha"));
     enqueueSystemEvent("beta", withSystemEventOwner({ sessionKey: "global" }, "beta"));
 
-    const result = clearSessionResetRuntimeState(["global"], { agentId: " Alpha " });
+    const result = clearSessionResetRuntimeState(["global"], {
+      agentId: " Alpha ",
+      reason: "reset",
+    });
 
     expect(result.systemEventsCleared).toBe(2);
     expect(peekSystemEvents("global")).toEqual(["beta"]);
@@ -109,6 +113,7 @@ describe("clearSessionResetRuntimeState", () => {
     clearSessionResetRuntimeState(["agent:main:slack:room:1", "old-session"], {
       agentId: "main",
       activeReplySessionId: "old-session",
+      reason: "reset",
     });
 
     expect(cancel).toHaveBeenCalledWith("restart");
@@ -132,6 +137,7 @@ describe("clearSessionResetRuntimeState", () => {
     clearSessionResetRuntimeState(["agent:main:slack:room:1", "old-session"], {
       agentId: "main",
       activeReplySessionId: "old-session",
+      reason: "reset",
     });
 
     expect(replyRunRegistry.get("agent:main:slack:room:1")).toBe(operation);
@@ -162,6 +168,7 @@ describe("clearSessionResetRuntimeState", () => {
     clearSessionResetRuntimeState(["agent:main:slack:room:1", "old-session"], {
       agentId: "main",
       activeReplySessionId: "old-session",
+      reason: "reset",
     });
 
     expect(replacement).toBeDefined();

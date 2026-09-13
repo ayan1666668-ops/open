@@ -71,6 +71,8 @@ export function resolveContinuationReturnTargetSessionKeys(
 
 type ContinuationReturnDeliveryDeps = {
   enqueueSessionDelivery: typeof enqueueSessionDelivery;
+  /** Test seam proving queued durable delivery is not acknowledged before prompt adoption. */
+  ackSessionDelivery?: typeof import("../../infra/session-delivery-queue-storage.js").ackSessionDelivery;
   enqueueSystemEvent: typeof enqueueSystemEvent;
   requestHeartbeatNow: typeof requestHeartbeatNow;
   isRecipientAuthorityCurrent?: (
