@@ -70,9 +70,8 @@ async function indexPath(worktree: string, options: WorktreeFilesystemOptions): 
 
 async function estimateTemplateCloneBytes(
   template: NonNullable<Awaited<ReturnType<typeof prepareTemplate>>>,
-  options: CheckoutOptions,
 ): Promise<number | undefined> {
-  const index = await fs.open(await indexPath(template.record.path, options), "r");
+  const index = await fs.open(template.sourceIndex, "r");
   try {
     const header = Buffer.alloc(12);
     const { bytesRead } = await index.read(header, 0, header.length, 0);
@@ -252,7 +251,7 @@ async function prepareTemplate(options: CheckoutOptions) {
     ) {
       assertOwned(options);
       touchTemplate(options.env, existing.id, options.now(), options.commitGuard);
-      return { record: existing, backend };
+      return { record: existing, backend, sourceIndex: await indexPath(existing.path, options) };
     }
   }
   options.requireSpace();
@@ -292,7 +291,7 @@ async function prepareTemplate(options: CheckoutOptions) {
   });
   assertOwned(options);
   markTemplateReady(options.env, id, options.now(), options.commitGuard);
-  return { record, backend };
+  return { record, backend, sourceIndex: await indexPath(record.path, options) };
 }
 
 /** Git owns registration, branches and indexes; the backend only materializes files. */
@@ -302,7 +301,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
   if (options.enabled) {
     try {
       template = await prepareTemplate(options);
-      cloneBytes = template ? await estimateTemplateCloneBytes(template, options) : undefined;
+      cloneBytes = template ? await estimateTemplateCloneBytes(template) : undefined;
     } catch (error) {
       assertOwned(options);
       template = undefined;
@@ -377,7 +376,7 @@ export async function addManagedWorktree(options: CheckoutOptions): Promise<GitR
     await fs.unlink(markerPath);
     assertOwned(options);
     await fs.writeFile(markerPath, marker);
-    const sourceIndex = await indexPath(template.record.path, options);
+    const sourceIndex = template.sourceIndex;
     assertOwned(options);
     let copied = false;
     if (template.backend.id === "apfs") {

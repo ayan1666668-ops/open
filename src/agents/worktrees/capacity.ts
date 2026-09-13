@@ -56,7 +56,35 @@ export async function estimateWorktreeGitBytes(
   options: Pick<GitWorkerOperationOptions, "signal" | "assertCurrent"> = {},
 ): Promise<number> {
   return await runGitWorkerOperation(
-    { type: "worktree.git-size", input: { repoRoot, ref } },
+    {
+      type: "worktree.git-size",
+      input: {
+        repoRoot,
+        ref,
+        replacementRefBase: process.env.GIT_REPLACE_REF_BASE ?? "refs/replace/",
+      },
+    },
+    options,
+  );
+}
+
+/** Budget a source checkout plus the destination blobs written by its overlay. */
+export async function estimateWorktreeCheckoutTransitionBytes(
+  repoRoot: string,
+  baseRef: string,
+  targetRef: string,
+  options: Pick<GitWorkerOperationOptions, "signal" | "assertCurrent"> = {},
+): Promise<{ baseBytes: number; changedBytes: number; checkoutAttributesChanged: boolean }> {
+  return await runGitWorkerOperation(
+    {
+      type: "worktree.checkout-transition-size",
+      input: {
+        repoRoot,
+        baseRef,
+        targetRef,
+        replacementRefBase: process.env.GIT_REPLACE_REF_BASE ?? "refs/replace/",
+      },
+    },
     options,
   );
 }
