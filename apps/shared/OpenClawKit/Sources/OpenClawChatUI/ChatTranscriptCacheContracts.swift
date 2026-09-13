@@ -489,11 +489,11 @@ public struct OpenClawChatSessionRoutingIdentity: Codable, Equatable, Sendable {
             // `agents.defaults.systemAgent.agentId` makes the gateway's real
             // value end in that agent id instead — a guess permanently
             // disagrees with the gateway and trips its own
-            // session-routing-changed guard on every send. Every consumer of
-            // `contract` already treats an empty string as "no expectation"
-            // and omits it from requests, so leave it empty rather than
-            // assert a value the gateway never confirmed.
-            self.contract = ""
+            // session-routing-changed guard on every send. Use the shared
+            // unconfirmed placeholder instead of asserting a value the
+            // gateway never confirmed; every wire request excludes it the
+            // same way it excludes a nil/empty contract.
+            self.contract = OpenClawChatSessionRoutingContract.unconfirmed
         } else {
             // No ambiguity to guess about: a gateway old enough to omit this
             // field entirely also predates explicit-ownership selection, so

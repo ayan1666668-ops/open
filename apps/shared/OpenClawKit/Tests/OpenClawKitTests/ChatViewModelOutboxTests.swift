@@ -1309,6 +1309,42 @@ struct ChatViewModelOutboxTests {
         #expect(await newTransport.state.sentSessionKeys == ["agent:agent-b:main"])
     }
 
+    /// A gateway that confirms it has no authoritative routing fingerprint
+    /// yet (explicit ownership, selection required, `agents.list` omits
+    /// `sessionRoutingContract`) reports the shared unconfirmed placeholder,
+    /// not nil. Durable capture and connected attachment delivery both route
+    /// through this same outbox path even while online, so this confirmed
+    /// placeholder must neither block enqueueing nor false-positive as a
+    /// "changed target" once the matching live route lease reports the same
+    /// placeholder value.
+    @Test func `durable capture and flush succeed with a confirmed but unconfirmed routing contract`() async throws {
+        let (store, _, databaseDirectory) = try makeOutboxStore()
+        defer { try? FileManager.default.removeItem(at: databaseDirectory) }
+        let transport = OutboxTestTransport(healthy: false)
+        await transport.state.update { $0.sessionRoutingContract = OpenClawChatSessionRoutingContract.unconfirmed }
+        let vm = await makeOutboxViewModel(
+            transport: transport,
+            outbox: store,
+            activeAgentID: "main",
+            sessionRoutingContract: OpenClawChatSessionRoutingContract.unconfirmed)
+        await MainActor.run { vm.load() }
+        try await sendWhileOffline(vm, text: "unconfirmed contract capture")
+
+        // Capture must not refuse with "Reconnect to verify this message's
+        // delivery target before queueing" just because the confirmed value
+        // is the unconfirmed placeholder rather than a real fingerprint.
+        #expect(await store.loadCommands().first?.status == .queued)
+
+        await transport.goOnline()
+        // The flush-time comparison against the live route lease must see
+        // both sides agree (placeholder == placeholder), not park this as a
+        // changed target that can never be retried successfully.
+        try await waitUntil("unconfirmed-contract send drains") {
+            await store.loadCommands().isEmpty
+        }
+        #expect(await transport.state.sentMessages == ["unconfirmed contract capture"])
+    }
+
     @Test func `atomic gateway routing rejection parks without retrying`() async throws {
         let (store, _, databaseDirectory) = try makeOutboxStore()
         defer { try? FileManager.default.removeItem(at: databaseDirectory) }

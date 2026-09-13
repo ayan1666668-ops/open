@@ -55,8 +55,28 @@ public actor OpenClawWatchMessageJournal {
             guard let row = try Row.fetchOne(
                 db,
                 sql: "SELECT * FROM gateway_routing_identity WHERE gateway_id = ?",
-                arguments: [gatewayStableID]),
-                let identity = OpenClawChatSessionRoutingIdentity(
+                arguments: [gatewayStableID])
+            else { return nil }
+            // Read the same selection_required/routing_contract columns the
+            // main-app decode path already persists here (ClientDatabases.
+            // loadSessionRoutingIdentity). The 3-arg initializer hardcodes
+            // selectionRequired: false and always reconstructs a display
+            // contract, so a Watch command captured through it can never
+            // agree with a live route lease built from the authoritative
+            // agents.list response once selection is actually required —
+            // permanently tripping WatchReplyCoordinator's routing-changed
+            // guard. Columns are nullable only for rows written before this
+            // migration; fall back to the legacy reconstruction there.
+            let hasFullIdentityColumns = (row["selection_required"] as Int?) != nil &&
+                (row["routing_contract"] as String?) != nil
+            guard let identity = hasFullIdentityColumns
+                ? OpenClawChatSessionRoutingIdentity(
+                    scope: row["scope"],
+                    mainSessionKey: row["main_session_key"],
+                    defaultAgentID: row["default_agent_id"],
+                    selectionRequired: (row["selection_required"] as Int?) == 1,
+                    sessionRoutingContract: row["routing_contract"])
+                : OpenClawChatSessionRoutingIdentity(
                     scope: row["scope"],
                     mainSessionKey: row["main_session_key"],
                     defaultAgentID: row["default_agent_id"])

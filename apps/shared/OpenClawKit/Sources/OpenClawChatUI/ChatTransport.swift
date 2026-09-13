@@ -1405,6 +1405,20 @@ extension OpenClawChatTransport {
 public enum OpenClawChatSessionRoutingContract {
     public static let changedErrorReason = "session-routing-changed"
 
+    /// Placeholder for "the gateway was asked and confirmed it has no
+    /// authoritative fingerprint yet" (explicit ownership, selection
+    /// required, `agents.list` omits `sessionRoutingContract`). Deliberately
+    /// non-empty and never pipe-delimited so it can never collide with a
+    /// real `scope|mainKey|owner` contract, and so it survives the
+    /// `isEmpty`-collapses-to-nil normalization every layer between the
+    /// gateway response and the outbox applies to optional string fields.
+    /// `OpenClawChatGatewayRequests.sendMessage` excludes this value from
+    /// the wire request the same way it excludes a genuinely nil/empty one;
+    /// the durable outbox's capture-time and flush-time comparisons need no
+    /// special-casing since equal sentinels on both sides already compare
+    /// equal, matching a live send made before an authoritative value exists.
+    public static let unconfirmed = "unconfirmed"
+
     public struct Components: Equatable, Sendable {
         public let scope: String
         public let mainKey: String
