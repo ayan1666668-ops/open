@@ -1,6 +1,5 @@
 // Inworld plugin module implements tts behavior.
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
-import { redactSensitiveText } from "openclaw/plugin-sdk/security-runtime";
 import type { SpeechVoiceOption } from "openclaw/plugin-sdk/speech-core";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/speech-provider";
 import type { SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
@@ -49,7 +48,10 @@ async function readInworldErrorBodySnippet(response: Response): Promise<string> 
   // The diagnostic snippet is echoed into the thrown error, and these requests
   // send `Authorization: Basic <apiKey>`, so a proxy or upstream can reflect the
   // live credential back in its own error text. Match the voice-call provider
-  // snippets, which already redact before returning.
+  // snippets, which already redact before returning. Loaded lazily like the
+  // other runtime entries in this module so cold capability-catalog imports do
+  // not pull the logging-redaction chain into the descriptor import graph.
+  const { redactSensitiveText } = await import("openclaw/plugin-sdk/security-runtime");
   const redacted = redactSensitiveText(collapsed, { mode: "tools" });
   if (redacted.length > INWORLD_ERROR_BODY_MAX_CHARS) {
     return `${truncateUtf16Safe(redacted, INWORLD_ERROR_BODY_MAX_CHARS)}…`;
