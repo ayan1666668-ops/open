@@ -10,11 +10,13 @@ import {
   resolveSessionStorePathCore,
   type InternalSessionEntry as SessionEntry,
 } from "../../../config/sessions.js";
-import { loadSessionEntryReadOnly } from "../../../config/sessions/session-accessor.js";
+import {
+  listSessionEntriesReadOnly,
+  loadSessionEntryReadOnly,
+} from "../../../config/sessions/session-accessor.js";
+import { normalizeStoreSessionKey } from "../../../config/sessions/store-entry.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { getAgentRunContext } from "../../../infra/agent-run-registry.js";
 import type { SubagentRunOutcome } from "../announce/subagent-announce-output.js";
-import { hasRetainedRequiredCompletionDelivery } from "./subagent-delivery-state.js";
 import {
   SUBAGENT_ENDED_REASON_COMPLETE,
   SUBAGENT_ENDED_REASON_ERROR,
@@ -24,6 +26,7 @@ import {
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { isStaleUnendedSubagentRun } from "./subagent-run-liveness.js";
 
+export type SubagentSessionStoreCache = Map<string, Record<string, SessionEntry>>;
 export type SubagentRunOrphanReason =
   | "missing-session-entry"
   | "missing-session-id"
@@ -67,8 +70,33 @@ function freshSessionStartedAt(
   return notBeforeMs === undefined || startedAt >= notBeforeMs ? startedAt : undefined;
 }
 
-/** Read the current child entry; session-key scope also selects incognito storage. */
+/** Load a child session entry using the agent-specific session store path. */
 export function loadSubagentSessionEntry(params: {
+  childSessionKey: string;
+  storeCache?: SubagentSessionStoreCache;
+  cfg?: OpenClawConfig;
+}): SessionEntry | undefined {
+  const key = params.childSessionKey.trim();
+  if (!key) {
+    return undefined;
+  }
+  const agentId = resolveAgentIdFromSessionKey(key);
+  const cfg = params.cfg ?? getRuntimeConfig();
+  const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId });
+  let store = params.storeCache?.get(storePath);
+  if (!store) {
+    store = Object.fromEntries(
+      listSessionEntriesReadOnly({ storePath, clone: false, projection: "list" }).map(
+        ({ sessionKey, entry }) => [sessionKey, entry],
+      ),
+    );
+    params.storeCache?.set(storePath, store);
+  }
+  return store[key] ?? store[normalizeStoreSessionKey(key)];
+}
+
+/** Resolve a child session entry without depending on the file-backed store shape. */
+function loadSubagentSessionEntryForAccessor(params: {
   childSessionKey: string;
   cfg?: OpenClawConfig;
 }): SessionEntry | undefined {
@@ -80,7 +108,6 @@ export function loadSubagentSessionEntry(params: {
   const cfg = params.cfg ?? getRuntimeConfig();
   const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId });
   return loadSessionEntryReadOnly({
-    agentId,
     storePath,
     sessionKey: key,
     clone: false,
@@ -94,31 +121,12 @@ export function resolveSubagentRunOrphanReason(params: {
   now?: number;
   cfg?: OpenClawConfig;
 }): SubagentRunOrphanReason | null {
-  const { entry } = params;
-  // Execution, recovery, and completion obligations outlive individual turns.
-  // Missing session metadata must not steal those owners or manufacture success.
-  if (
-    entry.execution.outcome ||
-    entry.collectorCompletion ||
-    entry.requesterSettleWake ||
-    hasRetainedRequiredCompletionDelivery(entry) ||
-    entry.pauseReason ||
-    entry.killIntent ||
-    entry.killReconciliation ||
-    entry.execution.restartRecovery ||
-    entry.terminalOwner === "interrupted-recovery" ||
-    entry.suppressAnnounceReason === "steer-restart" ||
-    entry.execution.status === "queued" ||
-    getAgentRunContext(entry.runId)
-  ) {
-    return null;
-  }
   const childSessionKey = params.entry.childSessionKey?.trim();
   if (!childSessionKey) {
     return "missing-session-entry";
   }
   try {
-    const sessionEntry = loadSubagentSessionEntry({
+    const sessionEntry = loadSubagentSessionEntryForAccessor({
       childSessionKey,
       cfg: params.cfg,
     });
@@ -138,7 +146,7 @@ export function resolveSubagentRunOrphanReason(params: {
     }
     return null;
   } catch {
-    // A failed read cannot establish orphanhood or authorize terminal settlement.
+    // Best-effort guard: avoid false orphan pruning on transient read/config failures.
     return null;
   }
 }
@@ -219,11 +227,13 @@ export function resolveSubagentSessionCompletion(params: {
   childSessionKey: string;
   fallbackEndedAt: number;
   notBeforeMs?: number;
+  storeCache?: SubagentSessionStoreCache;
   cfg?: OpenClawConfig;
 }): SubagentSessionCompletion | null {
   return resolveCompletionFromSessionEntry(
     loadSubagentSessionEntry({
       childSessionKey: params.childSessionKey,
+      storeCache: params.storeCache,
       cfg: params.cfg,
     }),
     params.fallbackEndedAt,
@@ -235,10 +245,12 @@ export function resolveSubagentSessionCompletion(params: {
 export function resolveSubagentSessionStartedAt(params: {
   childSessionKey: string;
   notBeforeMs?: number;
+  storeCache?: SubagentSessionStoreCache;
   cfg?: OpenClawConfig;
 }): number | undefined {
   const sessionEntry = loadSubagentSessionEntry({
     childSessionKey: params.childSessionKey,
+    storeCache: params.storeCache,
     cfg: params.cfg,
   });
   return isFreshForRun(sessionEntry, params.notBeforeMs)

@@ -107,6 +107,7 @@ beforeEach(() => {
     store: {
       loadSnapshot: () => ({ flows: new Map() }),
       upsertFlow: () => {},
+      updateFlow: () => ({ applied: false, reason: "not_found" }),
       deleteFlow: () => {},
     },
   });

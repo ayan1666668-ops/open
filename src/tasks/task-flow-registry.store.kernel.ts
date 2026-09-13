@@ -141,6 +141,7 @@ const FLOW_RUN_SELECT_COLUMNS = [
   "sync_mode",
   "shape",
   "owner_key",
+  "chain_id",
   "requester_origin_json",
   "controller_id",
   "revision",

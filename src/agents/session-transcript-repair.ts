@@ -22,6 +22,7 @@ import {
   createCompletedToolCallPredicate,
   isAllowedToolCallName,
   normalizeAllowedToolNames,
+  sanitizeTranscriptToolCallBlock,
 } from "./tool-call-shared.js";
 
 type RawToolCallBlock = {

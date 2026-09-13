@@ -1,5 +1,6 @@
 // Block-reply rejection tests ensure async callback failures are contained and
 // do not escape as process-level unhandled rejections.
+import type { AssistantMessage } from "@openclaw/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HEARTBEAT_RESPONSE_TOOL_NAME } from "../auto-reply/heartbeat-tool-response.js";
 import {

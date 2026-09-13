@@ -102,7 +102,7 @@ export function hasUsableSessionEntry(entry: unknown): entry is Record<string, u
   return typeof sessionId !== "string" || sessionId.trim() !== "";
 }
 
-export async function runSubagentAnnounceFlow(params: {
+export type SubagentAnnounceFlowParams = {
   childSessionKey: string;
   childAgentId?: string;
   childRunId: string;

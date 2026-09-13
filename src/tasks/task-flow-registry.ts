@@ -12,6 +12,7 @@ import {
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import {
   assertControllerId,
+  applyFlowPatch,
   areTaskFlowRecordsEqual,
   buildFlowRecord,
   buildManagedTaskFlowPatch,

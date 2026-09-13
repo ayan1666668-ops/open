@@ -11,7 +11,7 @@ import {
 } from "../config/sessions/artifacts.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { hasErrnoCode } from "./errno.js";
-import { discoverAllSessions as discoverAllSessionsFromReporting } from "./session-cost-usage-reporting.js";
+import { discoverAllSessionsFromTranscripts } from "./session-cost-usage-reporting.js";
 import type { DiscoveredSession } from "./session-cost-usage.types.js";
 
 export {
@@ -41,7 +41,7 @@ export async function discoverAllSessions(params?: {
   includeFirstUserMessage?: boolean;
 }): Promise<DiscoveredSession[]> {
   const agentId = params?.agentId ?? resolveDefaultAgentId(getRuntimeConfig());
-  const discovered = await discoverAllSessionsFromReporting({
+  const discovered = await discoverAllSessionsFromTranscripts({
     agentId,
     ...(params?.startMs !== undefined ? { startMs: params.startMs } : {}),
     ...(params?.endMs !== undefined ? { endMs: params.endMs } : {}),

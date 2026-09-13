@@ -15,35 +15,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import tsdownConfig from "../../tsdown.config.ts";
 import * as continuationRuntime from "./subagent-announce.continuation.runtime.js";
 
+const TSDOWN_CONFIG_PATH = "tsdown.config.ts";
 const ANNOUNCE_HOST_PATH = "src/agents/subagents/announce/subagent-announce.ts";
 const ANNOUNCE_LAZY_LOADER_PATH = "src/agents/subagents/announce/subagent-announce-deps.ts";
 const CONTINUATION_RUNTIME_PATH = "src/agents/subagent-announce.continuation.runtime.ts";
 const CONTINUATION_RUNTIME_LAZY_IMPORT =
   'import("../../subagent-announce.continuation.runtime.js")';
 
-type TsdownConfigEntry = {
-  entry?: Record<string, string> | string[];
-};
-
-function entriesOfMainGraph(): Record<string, string> {
-  const configs = Array.isArray(tsdownConfig) ? tsdownConfig : [tsdownConfig];
-  const main = (configs as TsdownConfigEntry[]).find((config) => {
-    const entry = config.entry;
-    return Boolean(entry && !Array.isArray(entry) && "subagent-registry.runtime" in entry);
-  });
-  if (!main?.entry || Array.isArray(main.entry)) {
-    throw new Error("could not locate main dist graph in tsdown config");
-  }
-  return main.entry;
-}
-
 describe("subagent-announce continuation runtime entry", () => {
   it("registers the continuation runtime as a tsdown bundler entry", () => {
-    expect(entriesOfMainGraph()["subagent-announce.continuation.runtime"]).toBe(
-      CONTINUATION_RUNTIME_PATH,
+    const source = readFileSync(resolve(process.cwd(), TSDOWN_CONFIG_PATH), "utf8");
+    expect(source).toContain(
+      `"subagent-announce.continuation.runtime": "${CONTINUATION_RUNTIME_PATH}"`,
     );
   });
 

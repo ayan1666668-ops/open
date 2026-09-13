@@ -5,8 +5,10 @@ import {
   loadTaskFlowRegistryStateFromSqlite,
   updateTaskFlowRegistryRecordInSqlite,
   upsertTaskFlowRegistryRecordToSqlite,
+  upsertTaskFlowRegistryRecordsToSqlite,
 } from "./task-flow-registry.store.sqlite.js";
 import type {
+  TaskFlowRegistryAtomicWrite,
   TaskFlowRegistryObservedUpdate,
   TaskFlowRegistryStoreSnapshot,
   TaskFlowRegistryUpdate,
@@ -24,6 +26,7 @@ type TaskFlowRegistryStore = {
       update: TaskFlowRegistryObservedUpdate,
     ) => TaskFlowRegistryUpdatePublication,
   ) => TaskFlowRegistryUpdateResult;
+  upsertFlowsAtomically?: (write: TaskFlowRegistryAtomicWrite) => boolean;
   deleteFlow: (flowId: string) => void;
   close?: () => void;
 };
@@ -53,6 +56,7 @@ const defaultFlowRegistryStore: TaskFlowRegistryStore = {
   loadSnapshot: loadTaskFlowRegistryStateFromSqlite,
   upsertFlow: upsertTaskFlowRegistryRecordToSqlite,
   updateFlow: updateTaskFlowRegistryRecordInSqlite,
+  upsertFlowsAtomically: upsertTaskFlowRegistryRecordsToSqlite,
   deleteFlow: deleteTaskFlowRegistryRecordFromSqlite,
   close: closeTaskFlowRegistryDatabase,
 };

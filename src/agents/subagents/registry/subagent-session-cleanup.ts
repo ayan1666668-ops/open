@@ -5,8 +5,8 @@ import type { SessionsDeleteParams } from "../../../../packages/gateway-protocol
  */
 import { SESSION_LIFECYCLE_CHANGED_ERROR_REASON } from "../../../config/sessions/lifecycle.js";
 import type { GatewayContextResolver } from "../../../gateway/server-methods/types.js";
-import { withPluginRuntimeGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
+import { withPluginRuntimeGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import type { SpawnSubagentMode } from "../spawn/subagent-spawn.types.js";
 
 type CallGateway = (options: {

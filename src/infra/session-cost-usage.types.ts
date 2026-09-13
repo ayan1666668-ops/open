@@ -158,6 +158,7 @@ export type DiscoveredSession = {
   sessionId: string;
   sessionFile: string;
   mtime: number;
+  firstUserMessage?: string;
 };
 
 export type SessionUsageTimePoint = SharedSessionUsageTimePoint;

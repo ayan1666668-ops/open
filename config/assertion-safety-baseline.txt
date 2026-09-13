@@ -1746,8 +1746,7 @@ src/agents/embedded-agent-runner/run/incomplete-turn-resolution.ts	3
 src/agents/embedded-agent-runner/run/llm-idle-timeout.ts	3
 src/agents/embedded-agent-runner/run/message-tool-terminal.ts	1
 src/agents/embedded-agent-runner/run/message-transform-stream-wrapper.ts	3
-src/agents/embedded-agent-runner/run/payloads.ts	2
-src/agents/embedded-agent-runner/run/pre-persisted-user-turn.ts	5
+src/agents/embedded-agent-runner/run/payloads.ts	1
 src/agents/embedded-agent-runner/run/prompt-image-metadata.ts	4
 src/agents/embedded-agent-runner/run/recovery-message-action-capability.ts	1
 src/agents/embedded-agent-runner/run/run-attempt-result.ts	1
@@ -1914,7 +1913,6 @@ src/agents/subagents/announce/subagent-announce-origin.ts	2
 src/agents/subagents/announce/subagent-announce-output.ts	8
 src/agents/subagents/completion/subagent-completion-admission.store.ts	2
 src/agents/subagents/registry/subagent-recovery-state.ts	1
-src/agents/subagents/registry/subagent-registry-helpers.ts	1
 src/agents/subagents/registry/subagent-registry-lifecycle-delivery.ts	2
 src/agents/subagents/registry/subagent-registry-restore.ts	1
 src/agents/subagents/registry/subagent-registry.store.sqlite.ts	3
@@ -3007,8 +3005,8 @@ src/infra/session-cost-usage-aggregation.ts	5
 src/infra/session-cost-usage-cache.sqlite.ts	1
 src/infra/session-cost-usage-collection.ts	3
 src/infra/session-cost-usage-pricing.ts	6
-src/infra/session-cost-usage-reporting.ts	8
-src/infra/session-delivery-queue-storage.ts	6
+src/infra/session-cost-usage-reporting.ts	5
+src/infra/session-delivery-queue-storage.ts	4
 src/infra/shell-env.ts	1
 src/infra/sqlite-audit-record-store.ts	1
 src/infra/sqlite-coordinator.ts	2
