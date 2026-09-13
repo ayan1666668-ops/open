@@ -105,7 +105,11 @@ describe("LINE native approval runtime", () => {
 
   it("pushes the card and tracks the approver chat for the outcome", async () => {
     const view = execPendingView();
-    const pendingPayload = buildLinePendingApprovalCard({ view, nowMs: NOW_MS });
+    const pendingPayload = buildLinePendingApprovalCard({
+      view,
+      nowMs: NOW_MS,
+      channelSecret: "line-secret",
+    });
     const entry = await lineApprovalNativeRuntime.transport.deliverPending({
       cfg,
       accountId: "default",
@@ -195,7 +199,11 @@ describe("LINE native approval runtime", () => {
       request,
       approvalKind: "exec",
       view,
-      pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+      pendingPayload: buildLinePendingApprovalCard({
+        view,
+        nowMs: NOW_MS,
+        channelSecret: "line-secret",
+      }),
     });
     expect(pushMessageLine).toHaveBeenCalledWith(
       APPROVER,
@@ -219,7 +227,11 @@ describe("LINE native approval runtime", () => {
         request,
         approvalKind: "exec",
         view,
-        pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+        pendingPayload: buildLinePendingApprovalCard({
+          view,
+          nowMs: NOW_MS,
+          channelSecret: "line-secret",
+        }),
       }),
     ).rejects.toThrow("400 Bad Request");
   });
@@ -243,7 +255,11 @@ describe("LINE native approval runtime", () => {
       request,
       approvalKind: "exec",
       view,
-      pendingPayload: buildLinePendingApprovalCard({ view, nowMs: NOW_MS }),
+      pendingPayload: buildLinePendingApprovalCard({
+        view,
+        nowMs: NOW_MS,
+        channelSecret: "line-secret",
+      }),
     });
 
     expect(entry).toEqual({ to: APPROVER, accountId: "default" });

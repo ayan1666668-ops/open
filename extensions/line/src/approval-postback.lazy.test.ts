@@ -2,7 +2,10 @@
 import type { ApprovalResolveResult } from "openclaw/plugin-sdk/approval-gateway-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveLineApprovalPostbackTap } from "./approval-postback.js";
+import {
+  buildLineApprovalPostbackData,
+  resolveLineApprovalPostbackTap,
+} from "./approval-postback.js";
 
 const gateway = vi.hoisted(() => ({
   resolveApprovalOverGateway: vi.fn<(params: unknown) => Promise<ApprovalResolveResult>>(),
@@ -32,11 +35,21 @@ const common = {
   },
 } satisfies Partial<ApprovalResolveResult["approval"]>;
 
+// Data exactly as a card for this account draws it.
+function cardData(decision: "allow-once" | "allow-always" | "deny"): string {
+  return (
+    buildLineApprovalPostbackData(
+      { type: "approval", approvalId: "approval-1", approvalKind: "exec", decision },
+      lineCredentials.channelSecret,
+    ) ?? ""
+  );
+}
+
 function tap(decision: "allow-once" | "allow-always" | "deny") {
   return resolveLineApprovalPostbackTap({
     resolveConfig: () => cfg,
     accountId: "default",
-    data: `line.approval=approval-1&line.approvalKind=exec&line.decision=${decision}`,
+    data: cardData(decision),
     senderId: approver,
   });
 }
@@ -88,7 +101,7 @@ describe("resolveLineApprovalPostbackTap", () => {
         resolveLineApprovalPostbackTap({
           resolveConfig: () => config,
           accountId: "default",
-          data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
+          data: cardData("allow-once"),
           ...(senderId ? { senderId } : {}),
         }),
       ).resolves.toBe("Reply /approve approval-1 allow-once to decide this approval.");
@@ -100,7 +113,7 @@ describe("resolveLineApprovalPostbackTap", () => {
     const notice = await resolveLineApprovalPostbackTap({
       resolveConfig: () => cfg,
       accountId: "default",
-      data: "line.approval=approval-1&line.approvalKind=exec&line.decision=allow-once",
+      data: cardData("allow-once"),
       senderId: "U11111111111111111111111111111111",
     });
 

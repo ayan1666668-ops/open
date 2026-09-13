@@ -7,8 +7,9 @@ import {
 import { buildChannelApprovalNativeTargetKey } from "openclaw/plugin-sdk/approval-native-runtime";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { resolveLineAccount } from "./accounts.js";
 import { buildLinePendingApprovalCard, type LinePendingApprovalCard } from "./approval-card.js";
 import {
   isLineNativeApprovalClientEnabled,
@@ -18,6 +19,8 @@ import { normalizeLineMessagingTarget } from "./messaging-target.js";
 import { pushFlexMessage, pushMessageLine } from "./send.js";
 
 type LinePreparedTarget = { to: string; accountId?: string };
+
+const log = createSubsystemLogger("line/approvals");
 
 // The view already publishes each decision as the command a non-interactive surface
 // would use, so the notice quotes those instead of composing its own syntax.
@@ -45,7 +48,12 @@ async function sendLineApprovalText(params: {
   } catch (error) {
     // Same contract as every other LINE send: a partial-delivery error means LINE
     // already showed this text, so it is not a failure to report.
-    logVerbose(`${params.logLabel}: ${String(error)}`);
+    if (isChannelPartialDeliveryError(error)) {
+      return;
+    }
+    // This text stands in for a prompt native delivery already suppressed, so an operator
+    // needs to see that the approver never received it.
+    log.error(`${params.logLabel}: ${String(error)}`);
   }
 }
 
@@ -63,7 +71,13 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
       shouldHandleLineNativeApprovalRequest({ cfg, accountId, approvalKind, request }),
   },
   presentation: {
-    buildPendingPayload: ({ view, nowMs }) => buildLinePendingApprovalCard({ view, nowMs }),
+    buildPendingPayload: ({ cfg, accountId, view, nowMs }) =>
+      buildLinePendingApprovalCard({
+        view,
+        nowMs,
+        channelSecret: resolveLineAccount({ cfg, ...(accountId ? { accountId } : {}) })
+          .channelSecret,
+      }),
     // LINE cannot edit a delivered message, so the terminal state is a new message
     // the transport sends, the way Signal and iMessage publish theirs.
     buildResolvedResult: ({ request, resolved, view }) => ({
@@ -129,7 +143,7 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
   },
   observe: {
     onDeliveryError: ({ accountId, cfg, error, plannedTarget, request, pendingPayload, view }) => {
-      logVerbose(`line approvals: failed to deliver request ${request.id}: ${String(error)}`);
+      log.error(`line approvals: failed to deliver request ${request.id}: ${String(error)}`);
       const to = normalizeLineMessagingTarget(plannedTarget.target.to);
       if (!to || !pendingPayload) {
         return;

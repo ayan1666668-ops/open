@@ -11,6 +11,8 @@ import {
 
 type ApprovalDecisionControl = Parameters<typeof buildLineApprovalPostbackData>[0];
 
+const CHANNEL_SECRET = "line-channel-secret";
+
 const gateway = vi.hoisted(() => ({
   resolveApprovalOverGateway: vi.fn<(params: object) => Promise<undefined>>(async () => undefined),
 }));
@@ -36,7 +38,7 @@ async function tapped(data: string) {
       channels: {
         line: {
           channelAccessToken: "token",
-          channelSecret: "secret",
+          channelSecret: CHANNEL_SECRET,
           allowFrom: ["U0123456789abcdef0123456789abcdef"],
         },
       },
@@ -60,7 +62,10 @@ describe("LINE approval postback data", () => {
   it("resolves every decision the control can offer", async () => {
     for (const decision of ["allow-once", "allow-always", "deny"] as const) {
       for (const approvalKind of ["exec", "plugin", "system-agent"] as const) {
-        const data = buildLineApprovalPostbackData(approval({ approvalKind, decision }));
+        const data = buildLineApprovalPostbackData(
+          approval({ approvalKind, decision }),
+          CHANNEL_SECRET,
+        );
         expect(data).toBeDefined();
         expect((await tapped(data ?? "")).resolved).toEqual([
           expect.objectContaining({ approvalId: approval().approvalId, approvalKind, decision }),
@@ -70,7 +75,7 @@ describe("LINE approval postback data", () => {
   });
 
   it("keeps the exact approval id when it fits the action data ceiling", async () => {
-    const data = buildLineApprovalPostbackData(approval()) ?? "";
+    const data = buildLineApprovalPostbackData(approval(), CHANNEL_SECRET) ?? "";
     expect(data.length).toBeLessThanOrEqual(LINE_ACTION_DATA_LIMIT);
     expect((await tapped(data)).resolved).toEqual([
       expect.objectContaining({ approvalId: approval().approvalId }),
@@ -79,7 +84,7 @@ describe("LINE approval postback data", () => {
 
   it("falls back to a digest locator instead of dropping an oversized id", async () => {
     const approvalId = "x".repeat(LINE_ACTION_DATA_LIMIT + 1);
-    const data = buildLineApprovalPostbackData(approval({ approvalId }));
+    const data = buildLineApprovalPostbackData(approval({ approvalId }), CHANNEL_SECRET);
     expect(data).toBeDefined();
     expect((data ?? "").length).toBeLessThanOrEqual(LINE_ACTION_DATA_LIMIT);
     expect((await tapped(data ?? "")).resolved).toEqual([
@@ -99,6 +104,23 @@ describe("LINE approval postback data", () => {
 
   it("ignores postback data from another control", () => {
     expect(hasLineApprovalPostbackData("line.question=q-1&line.option=0")).toBe(false);
+  });
+
+  // A reply can carry postback buttons built from agent-authored content, so data that
+  // merely names an approval must not decide it: only a card built for this account can.
+  it("does not decide from approval data no card for this account built", async () => {
+    const signed = buildLineApprovalPostbackData(approval(), CHANNEL_SECRET) ?? "";
+    const fields = signed.replace(/&line\.sig=[^&]*$/, "");
+    for (const data of [
+      fields,
+      `${fields}&line.sig=${"A".repeat(22)}`,
+      buildLineApprovalPostbackData(approval(), "another-channel-secret") ?? "",
+      signed.replace("line.decision=allow-once", "line.decision=allow-always"),
+    ]) {
+      expect(hasLineApprovalPostbackData(data)).toBe(true);
+      expect(await tapped(data)).toEqual({ notice: undefined, resolved: [] });
+    }
+    expect((await tapped(signed)).resolved).toHaveLength(1);
   });
 
   it("rejects an unknown kind or decision", async () => {

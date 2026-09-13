@@ -82,7 +82,11 @@ function cardPostbackData(
 
 describe("LINE pending approval card", () => {
   it("carries one resolvable postback per offered decision", async () => {
-    const card = buildLinePendingApprovalCard({ view: execView(), nowMs: NOW_MS });
+    const card = buildLinePendingApprovalCard({
+      view: execView(),
+      nowMs: NOW_MS,
+      channelSecret: "secret",
+    });
     expect(card).not.toBeNull();
     expect(card?.allowedDecisions).toEqual(["allow-once", "allow-always", "deny"]);
     for (const data of cardPostbackData(card!)) {
@@ -111,7 +115,11 @@ describe("LINE pending approval card", () => {
   });
 
   it("names the command in the card and in the notification text", () => {
-    const card = buildLinePendingApprovalCard({ view: execView(), nowMs: NOW_MS });
+    const card = buildLinePendingApprovalCard({
+      view: execView(),
+      nowMs: NOW_MS,
+      channelSecret: "secret",
+    });
     expect(card?.altText).toBe("Exec Approval Required: rm -rf ./build");
     expect(cardText(card!)).toContain("Command\nrm -rf ./build");
     expect(cardText(card!)).toContain(`Approval ID: ${APPROVAL_ID}`);
@@ -125,6 +133,7 @@ describe("LINE pending approval card", () => {
         commandAnalysis: commandAnalysis(["removes a directory tree", "no confirmation prompt"]),
       }),
       nowMs: NOW_MS,
+      channelSecret: "secret",
     });
     expect(cardText(card!)).toContain("Deletes files outside the workspace.");
     expect(cardText(card!)).toContain("Command analysis\n- removes a directory tree");
@@ -139,6 +148,7 @@ describe("LINE pending approval card", () => {
       buildLinePendingApprovalCard({
         view: { ...view, actions: [withoutTypedAction, ...rest] },
         nowMs: NOW_MS,
+        channelSecret: "secret",
       }),
     ).toBeNull();
   });
@@ -162,6 +172,7 @@ describe("LINE pending approval card", () => {
     const card = buildLinePendingApprovalCard({
       view: build(LINE_FLEX_BUBBLE_MAX_BYTES),
       nowMs: NOW_MS,
+      channelSecret: "secret",
     });
     expect(card?.bodyShortened).toBe(true);
     expect(cardText(card!)).toContain("[shortened to fit LINE's card limit]");
@@ -174,7 +185,11 @@ describe("LINE pending approval card", () => {
   });
 
   it("leaves a body that already fits unmarked", () => {
-    const card = buildLinePendingApprovalCard({ view: execView(), nowMs: NOW_MS });
+    const card = buildLinePendingApprovalCard({
+      view: execView(),
+      nowMs: NOW_MS,
+      channelSecret: "secret",
+    });
     expect(card?.bodyShortened).toBe(false);
     expect(cardText(card!)).not.toContain("[shortened");
   });
@@ -194,7 +209,7 @@ describe("LINE pending approval card", () => {
       ],
       expiresAtMs: NOW_MS + 60_000,
     };
-    const card = buildLinePendingApprovalCard({ view, nowMs: NOW_MS });
+    const card = buildLinePendingApprovalCard({ view, nowMs: NOW_MS, channelSecret: "secret" });
     expect(card?.altText).toBe("OpenClaw Change Approval Required: enable the LINE channel");
     expect(cardText(card!)).toContain("Change\nenable the LINE channel");
   });
@@ -214,7 +229,7 @@ describe("LINE pending approval card", () => {
       ],
       expiresAtMs: NOW_MS + 60_000,
     };
-    const card = buildLinePendingApprovalCard({ view, nowMs: NOW_MS });
+    const card = buildLinePendingApprovalCard({ view, nowMs: NOW_MS, channelSecret: "secret" });
     expect(card?.altText).toBe("Plugin Approval Required: Publish the release note");
     expect(cardText(card!)).toContain(
       "Request\nPublish the release note\nworkboard wants to post to the release channel",

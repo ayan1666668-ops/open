@@ -252,6 +252,37 @@ describe("line approval capability", () => {
 
     restarted.abort();
     expect(suppressed()).toBe(false);
+
+    // A start whose account already stopped must not leave a record behind.
+    const stopped = new AbortController();
+    stopped.abort();
+    trackLineNativeApprovalStart({
+      cfg: configured,
+      accountId: "default",
+      abortSignal: stopped.signal,
+    });
+    expect(suppressed()).toBe(false);
+  });
+
+  // Starts are recorded under the resolved account id, which is lowercase; a forwarding
+  // target can name the same account in another case.
+  it("matches a started account named in another case", () => {
+    const started = new AbortController();
+    onTestFinished(() => started.abort());
+    trackLineNativeApprovalStart({
+      cfg: configured,
+      accountId: "default",
+      abortSignal: started.signal,
+    });
+
+    expect(
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg: configured,
+        approvalKind: "exec",
+        target: { channel: "line", to: `line:${APPROVER}`, accountId: "Default", source: "target" },
+        request: buildExecRequest(`line:${APPROVER}`),
+      }),
+    ).toBe(true);
   });
 
   // The running handler decides with the config its account started with. A setting that

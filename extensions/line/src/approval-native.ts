@@ -24,7 +24,12 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { hasLineCredentials } from "./account-helpers.js";
-import { listLineAccountIds, resolveDefaultLineAccountId, resolveLineAccount } from "./accounts.js";
+import {
+  listLineAccountIds,
+  normalizeAccountId,
+  resolveDefaultLineAccountId,
+  resolveLineAccount,
+} from "./accounts.js";
 import { getLineApprovalApprovers, lineApprovalAuth } from "./approval-auth.js";
 import { normalizeLineMessagingTarget } from "./messaging-target.js";
 
@@ -219,8 +224,11 @@ export function trackLineNativeApprovalStart(params: {
 function isForwardingCoveredByLineCards(
   params: Parameters<typeof shouldHandleLineNativeApprovalRequest>[0],
 ): boolean {
-  const accountId =
-    normalizeOptionalString(params.accountId) ?? resolveDefaultLineAccountId(params.cfg);
+  // Starts are keyed by the resolved account id, so look up with the same normalizer.
+  const requested = normalizeOptionalString(params.accountId);
+  const accountId = requested
+    ? normalizeAccountId(requested)
+    : resolveDefaultLineAccountId(params.cfg);
   const start = lineCardStartConfigs.get(accountId);
   return (
     start !== undefined &&

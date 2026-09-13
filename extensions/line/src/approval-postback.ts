@@ -1,11 +1,14 @@
 // Line plugin module owns the postback encoding for approval decision controls.
+import { createHmac } from "node:crypto";
 import { isImplicitSameChatApprovalAuthorization } from "openclaw/plugin-sdk/approval-auth-runtime";
 import { buildApprovalResolutionRef } from "openclaw/plugin-sdk/approval-reference-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isApprovalNotFoundError } from "openclaw/plugin-sdk/error-runtime";
 import type { MessagePresentationAction } from "openclaw/plugin-sdk/interactive-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { resolveLineAccount } from "./accounts.js";
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
 import { authorizeLineApprovalActor } from "./approval-native.js";
 
@@ -24,12 +27,45 @@ function fitsLinePostbackData(data: string): boolean {
   return data.length <= LINE_ACTION_DATA_LIMIT;
 }
 
-function encodeLineApprovalPostbackData(action: LineApprovalPostback, approvalRef: string): string {
+const SIGNATURE_PARAM = "line.sig";
+// 128 bits of the HMAC, base64url; a forged tap must guess it without the channel secret.
+const SIGNATURE_LENGTH = 22;
+
+// LINE returns postback data unchanged, and replies can carry postback buttons built from
+// agent-authored content (templates, Flex, presentation callbacks). Only a card built
+// here holds the account's channel secret, so a tap decides only when the data carries
+// a tag that secret produced. The key is derived under a fixed label, as Mattermost
+// does for its interaction tokens, so the tag never reuses the webhook signature key.
+function signLineApprovalFields(fields: string, channelSecret: string): string {
+  const key = createHmac("sha256", "openclaw-line-approval-postback")
+    .update(channelSecret)
+    .digest();
+  return createHmac("sha256", key).update(fields).digest("base64url").slice(0, SIGNATURE_LENGTH);
+}
+
+function encodeLineApprovalFields(fields: {
+  approvalRef: string;
+  approvalKind: LineApprovalPostback["approvalKind"];
+  decision: LineApprovalPostback["decision"];
+}): string {
   return new URLSearchParams({
-    [APPROVAL_PARAM]: approvalRef,
-    [APPROVAL_KIND_PARAM]: action.approvalKind,
-    [DECISION_PARAM]: action.decision,
+    [APPROVAL_PARAM]: fields.approvalRef,
+    [APPROVAL_KIND_PARAM]: fields.approvalKind,
+    [DECISION_PARAM]: fields.decision,
   }).toString();
+}
+
+function encodeLineApprovalPostbackData(
+  action: LineApprovalPostback,
+  approvalRef: string,
+  channelSecret: string,
+): string {
+  const fields = encodeLineApprovalFields({
+    approvalRef,
+    approvalKind: action.approvalKind,
+    decision: action.decision,
+  });
+  return `${fields}&${SIGNATURE_PARAM}=${signLineApprovalFields(fields, channelSecret)}`;
 }
 
 /** Reserve the approval namespace even for postback data this module cannot read. */
@@ -37,13 +73,16 @@ export function hasLineApprovalPostbackData(data?: string | null): boolean {
   return data?.includes(APPROVAL_MARKER) === true;
 }
 
-/** Encode one approval decision into LINE postback data. */
-export function buildLineApprovalPostbackData(action: LineApprovalPostback): string | undefined {
+/** Encode one approval decision into LINE postback data, tagged for this account. */
+export function buildLineApprovalPostbackData(
+  action: LineApprovalPostback,
+  channelSecret: string,
+): string | undefined {
   const approvalId = normalizeOptionalString(action.approvalId);
   if (!approvalId) {
     return undefined;
   }
-  const exact = encodeLineApprovalPostbackData(action, approvalId);
+  const exact = encodeLineApprovalPostbackData(action, approvalId, channelSecret);
   if (fitsLinePostbackData(exact)) {
     return exact;
   }
@@ -53,12 +92,16 @@ export function buildLineApprovalPostbackData(action: LineApprovalPostback): str
   const ref = encodeLineApprovalPostbackData(
     action,
     buildApprovalResolutionRef({ approvalId, approvalKind: action.approvalKind }),
+    channelSecret,
   );
   return fitsLinePostbackData(ref) ? ref : undefined;
 }
 
-/** Read an approval decision back out of inbound postback data, if it carries one. */
-function parseLineApprovalPostbackData(data: string): LineApprovalPostback | undefined {
+/** Read an approval decision back out of postback data a card for this account built. */
+function parseLineApprovalPostbackData(
+  data: string,
+  channelSecret: string,
+): LineApprovalPostback | undefined {
   if (!hasLineApprovalPostbackData(data)) {
     return undefined;
   }
@@ -66,11 +109,23 @@ function parseLineApprovalPostbackData(data: string): LineApprovalPostback | und
   const approvalId = normalizeOptionalString(params.get(APPROVAL_PARAM));
   const approvalKind = normalizeOptionalString(params.get(APPROVAL_KIND_PARAM));
   const decision = normalizeOptionalString(params.get(DECISION_PARAM));
+  const signature = params.get(SIGNATURE_PARAM);
   if (
     !approvalId ||
     (approvalKind !== "exec" && approvalKind !== "plugin" && approvalKind !== "system-agent") ||
-    (decision !== "allow-once" && decision !== "allow-always" && decision !== "deny")
+    (decision !== "allow-once" && decision !== "allow-always" && decision !== "deny") ||
+    !signature ||
+    !channelSecret
   ) {
+    return undefined;
+  }
+  // The tag covers the canonical encoding, so a reordered or re-encoded copy of the same
+  // fields does not verify.
+  const expected = signLineApprovalFields(
+    encodeLineApprovalFields({ approvalRef: approvalId, approvalKind, decision }),
+    channelSecret,
+  );
+  if (!safeEqualSecret(signature, expected)) {
     return undefined;
   }
   return { type: "approval", approvalId, approvalKind, decision };
@@ -82,7 +137,8 @@ function parseLineApprovalPostbackData(data: string): LineApprovalPostback | und
  * A recorded decision stays silent: LINE echoes the chosen label through the action's
  * `displayText`, and the approval runtime publishes the outcome as its own message. A tap
  * that changes nothing, because the approval was already decided or is gone, says so.
- * Unreadable data returns nothing so the caller still consumes the reserved namespace.
+ * Unreadable data, including data no card for this account built, returns nothing so the
+ * caller still consumes the reserved namespace.
  */
 export async function resolveLineApprovalPostbackTap(params: {
   /** The config current when called; read after awaited work, just before the decision. */
@@ -91,8 +147,15 @@ export async function resolveLineApprovalPostbackTap(params: {
   data: string;
   senderId?: string;
 }): Promise<string | undefined> {
-  const callback = parseLineApprovalPostbackData(params.data);
+  const { channelSecret } = resolveLineAccount({
+    cfg: params.resolveConfig(),
+    accountId: params.accountId,
+  });
+  const callback = parseLineApprovalPostbackData(params.data, channelSecret);
   if (!callback) {
+    logVerbose(
+      "line: ignored approval postback data that is malformed or was not built by an approval card for this account",
+    );
     return undefined;
   }
   const commandFallback = `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;

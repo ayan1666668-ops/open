@@ -137,11 +137,17 @@ function buildApprovalMetadataText(
  * answer toward the decisions it could draw, so a decision this card cannot carry
  * sends the whole prompt to the text path that still lists all of them.
  */
-function buildApprovalCardActions(view: PendingApprovalView): CardAction[] | null {
+function buildApprovalCardActions(
+  view: PendingApprovalView,
+  channelSecret: string,
+): CardAction[] | null {
   const actions: CardAction[] = [];
   for (const entry of view.actions) {
     const action = entry.action;
-    const data = action?.type === "approval" ? buildLineApprovalPostbackData(action) : undefined;
+    const data =
+      action?.type === "approval"
+        ? buildLineApprovalPostbackData(action, channelSecret)
+        : undefined;
     if (!data) {
       return null;
     }
@@ -159,9 +165,11 @@ function buildApprovalCardActions(view: PendingApprovalView): CardAction[] | nul
 export function buildLinePendingApprovalCard(params: {
   view: PendingApprovalView;
   nowMs: number;
+  /** The sending account's channel secret, which tags each decision button. */
+  channelSecret: string;
 }): LinePendingApprovalCard | null {
   const { view, nowMs } = params;
-  const actions = buildApprovalCardActions(view);
+  const actions = buildApprovalCardActions(view, params.channelSecret);
   if (!actions) {
     return null;
   }
