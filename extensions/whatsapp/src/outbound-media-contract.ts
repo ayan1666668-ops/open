@@ -268,6 +268,13 @@ function getOpusInputRate(buf: Buffer): number | undefined {
   if (buf.subarray(bodyStart, bodyStart + 8).toString("ascii") !== "OpusHead") {
     return undefined;
   }
+  // OpusHead: assinatura (8) + version (1) + channels (1) + pre-skip (2) +
+  // input sample rate (4). Buffer que termina no meio do campo é cabeçalho
+  // desconhecido (undefined), não erro — áudio truncado passa intacto em vez
+  // de lançar exceção no readUInt32LE.
+  if (buf.length < bodyStart + 16) {
+    return undefined;
+  }
   return buf.readUInt32LE(bodyStart + 12);
 }
 
@@ -439,7 +446,10 @@ function fixWhatsAppOpusVendor(buf: Buffer): Buffer {
   }
   out.push({
     htype: 0x00,
-    granule: tagsSource.granule,
+    // Página de cabeçalho concluída: RFC 7845 §4 exige granule position 0.
+    // Página contendo só pacote inacabado carrega all-ones (-1), que não pode
+    // ser copiado para o cabeçalho reescrito (invalidaria a nota de voz).
+    granule: 0n,
     serial: tagsSource.serial,
     seq: -1,
     laces: newLaces,

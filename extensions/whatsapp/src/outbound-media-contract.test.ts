@@ -207,6 +207,7 @@ describe("fixWhatsAppOpusVendor via prepareWhatsAppOutboundMedia", () => {
     expect(pages[0]?.raw.equals(headPage)).toBe(true);
     expect(pages[1]?.body.equals(WHATSAPP_TAGS_BODY)).toBe(true);
     expect(pages[1]?.htype).toBe(0x00);
+    expect(pages[1]?.granule).toBe(0n);
     expect(pages[2]?.raw.equals(audioPage)).toBe(true);
     for (const page of pages) {
       expectValidCrc(page);
@@ -241,7 +242,10 @@ describe("fixWhatsAppOpusVendor via prepareWhatsAppOutboundMedia", () => {
       headPage,
       buildPage({
         htype: 0x00,
-        granule: 0n,
+        // Página com pacote ainda inacabado: RFC 7845 §4 exige granule all-ones
+        // (0xFFFFFFFFFFFFFFFF), não 0 — o fixture antigo com 0n mascarava o bug
+        // de copiar esse valor pro cabeçalho reescrito.
+        granule: 0xffffffffffffffffn,
         serial: 9,
         seq: 1,
         body: tagsChunk1,
@@ -259,6 +263,9 @@ describe("fixWhatsAppOpusVendor via prepareWhatsAppOutboundMedia", () => {
     expect(pages[1]?.body.equals(WHATSAPP_TAGS_BODY)).toBe(true);
     expect(pages[1]?.htype).toBe(0x00);
     expect(pages[1]?.seq).toBe(1);
+    // Cabeçalho concluído: granule deve ser 0n, nunca o all-ones da página
+    // inacabada de origem.
+    expect(pages[1]?.granule).toBe(0n);
     // Old continuation pages are gone; the tail after the terminating lace is
     // promoted to a fresh page that starts the next packet.
     expect(pages[2]?.body.equals(tailAudio)).toBe(true);
@@ -312,5 +319,30 @@ describe("fixWhatsAppOpusVendor via prepareWhatsAppOutboundMedia", () => {
     const input = Buffer.concat([headPage, audioPage]);
 
     expect(await patchTranscodedStream(input)).toEqual(input);
+  });
+
+  it("passes a native stream with a truncated OpusHead rate field through unchanged", async () => {
+    // Segment table + assinatura "OpusHead" presentes, mas o campo input
+    // sample rate (bodyStart + 12) cortado antes dos 4 bytes: antes lançava
+    // exceção no readUInt32LE (envio rejeitado); agora é cabeçalho
+    // desconhecido e o áudio passa intacto.
+    const truncBody = Buffer.concat([Buffer.from("OpusHead"), Buffer.from([1, 2, 0, 0])]);
+    const input = buildPage({
+      htype: 0x02,
+      granule: 0n,
+      serial: 4,
+      seq: 0,
+      body: truncBody,
+    });
+
+    const media = await prepareWhatsAppOutboundMedia({
+      buffer: input,
+      contentType: "audio/ogg",
+      fileName: "voice.ogg",
+    });
+
+    expect(media.buffer.equals(input)).toBe(true);
+    // Constante não exportada (evita knip); literal do MIME de voz do WhatsApp.
+    expect(media.mimetype).toBe("audio/ogg; codecs=opus");
   });
 });
