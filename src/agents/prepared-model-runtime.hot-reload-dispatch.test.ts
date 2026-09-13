@@ -44,12 +44,12 @@ function config(enabled: boolean): OpenClawConfig {
   return { hooks: { internal: { entries: { "session-memory": { enabled } } } } };
 }
 
-function ownerInput(config: OpenClawConfig) {
-  return { config, agentId: "default", agentDir: state.agentDir("default") };
+function ownerInput(cfg: OpenClawConfig) {
+  return { config: cfg, agentId: "default", agentDir: state.agentDir("default") };
 }
 
-async function publish(config: OpenClawConfig) {
-  await refreshPreparedModelRuntimeSnapshots(config, {
+async function publish(cfg: OpenClawConfig) {
+  await refreshPreparedModelRuntimeSnapshots(cfg, {
     gatewayLifecycle: true,
     catalogMode: "static",
   });
