@@ -224,11 +224,11 @@ export function trackLineNativeApprovalStart(params: {
 function isForwardingCoveredByLineCards(
   params: Parameters<typeof shouldHandleLineNativeApprovalRequest>[0],
 ): boolean {
-  // Starts are keyed by the resolved account id, so look up with the same normalizer.
-  const requested = normalizeOptionalString(params.accountId);
-  const accountId = requested
-    ? normalizeAccountId(requested)
-    : resolveDefaultLineAccountId(params.cfg);
+  // Starts are keyed by the resolved, normalized account id; the configured default can
+  // still be a raw key, so both branches go through the same normalizer.
+  const accountId = normalizeAccountId(
+    normalizeOptionalString(params.accountId) ?? resolveDefaultLineAccountId(params.cfg),
+  );
   const start = lineCardStartConfigs.get(accountId);
   return (
     start !== undefined &&

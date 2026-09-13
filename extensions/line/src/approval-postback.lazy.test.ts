@@ -48,7 +48,7 @@ function cardData(decision: "allow-once" | "allow-always" | "deny"): string {
 function tap(decision: "allow-once" | "allow-always" | "deny") {
   return resolveLineApprovalPostbackTap({
     resolveConfig: () => cfg,
-    accountId: "default",
+    account: { accountId: "default", channelSecret: lineCredentials.channelSecret },
     data: cardData(decision),
     senderId: approver,
   });
@@ -100,7 +100,7 @@ describe("resolveLineApprovalPostbackTap", () => {
       await expect(
         resolveLineApprovalPostbackTap({
           resolveConfig: () => config,
-          accountId: "default",
+          account: { accountId: "default", channelSecret: lineCredentials.channelSecret },
           data: cardData("allow-once"),
           ...(senderId ? { senderId } : {}),
         }),
@@ -112,7 +112,7 @@ describe("resolveLineApprovalPostbackTap", () => {
   it("refuses a tap from someone who is not a listed approver", async () => {
     const notice = await resolveLineApprovalPostbackTap({
       resolveConfig: () => cfg,
-      accountId: "default",
+      account: { accountId: "default", channelSecret: lineCredentials.channelSecret },
       data: cardData("allow-once"),
       senderId: "U11111111111111111111111111111111",
     });

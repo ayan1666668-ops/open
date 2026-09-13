@@ -682,7 +682,7 @@ async function handlePostbackEvent(
     // Ordinary postback data becomes the agent's turn text; approval data must not.
     const notice = await resolveLineApprovalPostbackTap({
       resolveConfig: context.resolveConfig ?? (() => context.cfg),
-      accountId: context.account.accountId,
+      account: context.account,
       data: data ?? "",
       ...(userId ? { senderId: userId } : {}),
     });

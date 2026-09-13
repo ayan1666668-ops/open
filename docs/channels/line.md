@@ -570,7 +570,10 @@ Two behaviors follow from the platform rather than from a choice:
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
   stay on screen. The first decision stands; tapping a button on a card that is no longer
-  waiting changes nothing and replies that the approval is no longer waiting.
+  waiting changes nothing and replies that the approval is no longer waiting. Each button is
+  tied to the account's channel secret, so after the secret changes, buttons on earlier
+  cards do nothing; the account restart that picks up the new secret sends pending
+  approvals again as new cards.
 
 For forwarding modes and supported decisions, see
 [Approval forwarding to chat channels](/tools/exec-approvals-advanced#approval-forwarding-to-chat-channels).

@@ -1,5 +1,6 @@
 // Line tests cover the postback encoding for approval decision controls.
 
+import { createHmac } from "node:crypto";
 import { buildApprovalResolutionRef } from "openclaw/plugin-sdk/approval-reference-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
@@ -44,7 +45,7 @@ async function tapped(data: string) {
       },
       approvals: { exec: { enabled: true }, plugin: { enabled: true } },
     }),
-    accountId: "default",
+    account: { accountId: "default", channelSecret: CHANNEL_SECRET },
     data,
     senderId: "U0123456789abcdef0123456789abcdef",
   });
@@ -106,8 +107,8 @@ describe("LINE approval postback data", () => {
     expect(hasLineApprovalPostbackData("line.question=q-1&line.option=0")).toBe(false);
   });
 
-  // A reply can carry postback buttons built from agent-authored content, so data that
-  // merely names an approval must not decide it: only a card built for this account can.
+  // Data that merely names an approval must not decide it: only a card built for this
+  // account can.
   it("does not decide from approval data no card for this account built", async () => {
     const signed = buildLineApprovalPostbackData(approval(), CHANNEL_SECRET) ?? "";
     const fields = signed.replace(/&line\.sig=[^&]*$/, "");
@@ -121,6 +122,41 @@ describe("LINE approval postback data", () => {
       expect(await tapped(data)).toEqual({ notice: undefined, resolved: [] });
     }
     expect((await tapped(signed)).resolved).toHaveLength(1);
+  });
+
+  // An unreadable secret file leaves the account with an empty secret while the webhook
+  // keeps verifying with the one it started with. A tag made with an empty key is one
+  // anyone can compute, so it must never decide, and no card is drawn with it.
+  it("neither draws nor accepts a tag made without a channel secret", async () => {
+    expect(buildLineApprovalPostbackData(approval(), "")).toBeUndefined();
+
+    const fields = new URLSearchParams({
+      "line.approval": approval().approvalId,
+      "line.approvalKind": "exec",
+      "line.decision": "allow-once",
+    }).toString();
+    const emptyKey = createHmac("sha256", "openclaw-line-approval-postback").update("").digest();
+    const tag = createHmac("sha256", emptyKey).update(fields).digest("base64url").slice(0, 22);
+    gateway.resolveApprovalOverGateway.mockClear();
+    // Cards are on and the sender is the listed approver, so only the tag check stands
+    // between this data and a recorded decision.
+    const notice = await resolveLineApprovalPostbackTap({
+      resolveConfig: () => ({
+        channels: {
+          line: {
+            channelAccessToken: "token",
+            channelSecret: CHANNEL_SECRET,
+            allowFrom: ["U0123456789abcdef0123456789abcdef"],
+          },
+        },
+        approvals: { exec: { enabled: true } },
+      }),
+      account: { accountId: "default", channelSecret: "" },
+      data: `${fields}&line.sig=${tag}`,
+      senderId: "U0123456789abcdef0123456789abcdef",
+    });
+    expect(notice).toBeUndefined();
+    expect(gateway.resolveApprovalOverGateway).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown kind or decision", async () => {

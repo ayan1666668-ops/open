@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const pushFlexMessage = vi.hoisted(() => vi.fn());
 const pushMessageLine = vi.hoisted(() => vi.fn());
+const resolveApprovalOverGateway = vi.hoisted(() => vi.fn(async () => undefined));
 
 vi.mock("./send.js", async () => ({
   ...(await vi.importActual<typeof import("./send.js")>("./send.js")),
@@ -16,8 +17,11 @@ vi.mock("./send.js", async () => ({
   pushMessageLine,
 }));
 
+vi.mock("openclaw/plugin-sdk/approval-gateway-runtime", () => ({ resolveApprovalOverGateway }));
+
 const { lineApprovalNativeRuntime } = await import("./approval-handler.runtime.js");
 const { buildLinePendingApprovalCard } = await import("./approval-card.js");
+const { resolveLineApprovalPostbackTap } = await import("./approval-postback.js");
 
 const APPROVAL_ID = "6f4a1b2c-0d3e-4f5a-8b9c-0d1e2f3a4b5c";
 const APPROVER = `U${"a".repeat(32)}`;
@@ -74,6 +78,58 @@ beforeEach(() => {
 });
 
 describe("LINE native approval runtime", () => {
+  // The card is tagged with the sending account's secret and the tap is verified with the
+  // secret of the account whose webhook carried it. If either side picked another
+  // account, every card on that account would be a dead button, with nothing to show it.
+  it("draws cards an approver of the same account can decide, and no other account", async () => {
+    const accounts: OpenClawConfig = {
+      approvals: { exec: { enabled: true } },
+      channels: {
+        line: {
+          channelAccessToken: "line-token",
+          channelSecret: "line-secret",
+          accounts: {
+            work: {
+              channelAccessToken: "work-token",
+              channelSecret: "work-secret",
+              allowFrom: [APPROVER],
+            },
+          },
+        },
+      },
+    };
+    const card = await lineApprovalNativeRuntime.presentation.buildPendingPayload({
+      cfg: accounts,
+      accountId: "work",
+      request,
+      approvalKind: "exec",
+      nowMs: NOW_MS,
+      view: execPendingView(),
+    });
+    const data = (card?.bubble.footer?.contents ?? []).flatMap((content) =>
+      content.type === "button" && content.action.type === "postback" && content.action.data
+        ? [content.action.data]
+        : [],
+    )[0];
+    expect(data).toBeDefined();
+    const tap = (channelSecret: string) =>
+      resolveLineApprovalPostbackTap({
+        resolveConfig: () => accounts,
+        account: { accountId: "work", channelSecret },
+        data: data ?? "",
+        senderId: APPROVER,
+      });
+
+    resolveApprovalOverGateway.mockClear();
+    await tap("line-secret");
+    expect(resolveApprovalOverGateway).not.toHaveBeenCalled();
+
+    await tap("work-secret");
+    expect(resolveApprovalOverGateway).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalId: APPROVAL_ID, accountId: "work", senderId: APPROVER }),
+    );
+  });
+
   it("prepares a LINE address into a bare recipient with its account", async () => {
     const prepared = await lineApprovalNativeRuntime.transport.prepareTarget({
       cfg,

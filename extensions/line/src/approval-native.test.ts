@@ -5,6 +5,7 @@ import {
   createLocalApprovalPromptTestFixture,
   createNativeApprovalTestFixture,
 } from "openclaw/plugin-sdk/channel-test-helpers";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   lineApprovalCapability,
@@ -262,6 +263,38 @@ describe("line approval capability", () => {
       abortSignal: stopped.signal,
     });
     expect(suppressed()).toBe(false);
+  });
+
+  // A target without an account falls back to the configured default, which can be the
+  // raw config key; the start was recorded under the normalized id.
+  it("matches a started default account whose config key is not normalized", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        line: {
+          accounts: {
+            Work: {
+              channelAccessToken: "test-token-placeholder",
+              channelSecret: "secret",
+              allowFrom: [APPROVER],
+            },
+          },
+        },
+      },
+      approvals: { exec: { enabled: true } },
+    };
+    const started = new AbortController();
+    onTestFinished(() => started.abort());
+    trackLineNativeApprovalStart({ cfg, accountId: "work", abortSignal: started.signal });
+
+    expect(
+      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+        cfg,
+        approvalKind: "exec",
+        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
+        // No account on the target or the turn, so the configured default decides.
+        request: buildExecRequest(`line:${APPROVER}`, { turnSourceAccountId: undefined }),
+      }),
+    ).toBe(true);
   });
 
   // Starts are recorded under the resolved account id, which is lowercase; a forwarding

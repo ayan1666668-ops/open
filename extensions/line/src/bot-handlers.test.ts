@@ -1264,7 +1264,11 @@ describe("handleLineWebhookEvents", () => {
     );
 
     expect(resolveLineApprovalPostbackTapMock).toHaveBeenCalledWith(
-      expect.objectContaining({ data, senderId: "user-one" }),
+      expect.objectContaining({
+        data,
+        senderId: "user-one",
+        account: expect.objectContaining({ accountId: "default", channelSecret: "secret" }),
+      }),
     );
     expect(resolveLineApprovalPostbackTapMock.mock.calls[0]?.[0].resolveConfig()).toBe(current);
     // Approval data must never reach the agent as turn text.

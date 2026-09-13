@@ -5,12 +5,12 @@ import { buildApprovalResolutionRef } from "openclaw/plugin-sdk/approval-referen
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isApprovalNotFoundError } from "openclaw/plugin-sdk/error-runtime";
 import type { MessagePresentationAction } from "openclaw/plugin-sdk/interactive-runtime";
-import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { createSubsystemLogger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveLineAccount } from "./accounts.js";
 import { LINE_ACTION_DATA_LIMIT } from "./actions.js";
 import { authorizeLineApprovalActor } from "./approval-native.js";
+import type { ResolvedLineAccount } from "./types.js";
 
 type LineApprovalPostback = Extract<MessagePresentationAction, { type: "approval" }>;
 
@@ -28,14 +28,13 @@ function fitsLinePostbackData(data: string): boolean {
 }
 
 const SIGNATURE_PARAM = "line.sig";
-// 128 bits of the HMAC, base64url; a forged tap must guess it without the channel secret.
+// 22 base64url characters carry 132 bits of the HMAC.
 const SIGNATURE_LENGTH = 22;
 
-// LINE returns postback data unchanged, and replies can carry postback buttons built from
-// agent-authored content (templates, Flex, presentation callbacks). Only a card built
-// here holds the account's channel secret, so a tap decides only when the data carries
-// a tag that secret produced. The key is derived under a fixed label, as Mattermost
-// does for its interaction tokens, so the tag never reuses the webhook signature key.
+// Postback data is not specific to the control that sent it, so a decision counts only
+// when its data carries a tag made with the account's channel secret, which only the card
+// builder holds. The key is derived under a fixed label, as Mattermost does for its
+// interaction tokens, so the tag never reuses the webhook signature key.
 function signLineApprovalFields(fields: string, channelSecret: string): string {
   const key = createHmac("sha256", "openclaw-line-approval-postback")
     .update(channelSecret)
@@ -79,7 +78,9 @@ export function buildLineApprovalPostbackData(
   channelSecret: string,
 ): string | undefined {
   const approvalId = normalizeOptionalString(action.approvalId);
-  if (!approvalId) {
+  // Without a secret the tag is one anyone can compute and the tap refuses it, so the
+  // card is not drawn and the approver gets the command text instead.
+  if (!approvalId || !channelSecret) {
     return undefined;
   }
   const exact = encodeLineApprovalPostbackData(action, approvalId, channelSecret);
@@ -109,23 +110,22 @@ function parseLineApprovalPostbackData(
   const approvalId = normalizeOptionalString(params.get(APPROVAL_PARAM));
   const approvalKind = normalizeOptionalString(params.get(APPROVAL_KIND_PARAM));
   const decision = normalizeOptionalString(params.get(DECISION_PARAM));
-  const signature = params.get(SIGNATURE_PARAM);
   if (
     !approvalId ||
     (approvalKind !== "exec" && approvalKind !== "plugin" && approvalKind !== "system-agent") ||
     (decision !== "allow-once" && decision !== "allow-always" && decision !== "deny") ||
-    !signature ||
+    // An empty secret yields a tag anyone can compute.
     !channelSecret
   ) {
     return undefined;
   }
-  // The tag covers the canonical encoding, so a reordered or re-encoded copy of the same
-  // fields does not verify.
+  // The tag is checked against the fields exactly as decided below, re-encoded, so
+  // accepted data always decides the fields that were signed.
   const expected = signLineApprovalFields(
     encodeLineApprovalFields({ approvalRef: approvalId, approvalKind, decision }),
     channelSecret,
   );
-  if (!safeEqualSecret(signature, expected)) {
+  if (!safeEqualSecret(params.get(SIGNATURE_PARAM), expected)) {
     return undefined;
   }
   return { type: "approval", approvalId, approvalKind, decision };
@@ -143,18 +143,19 @@ function parseLineApprovalPostbackData(
 export async function resolveLineApprovalPostbackTap(params: {
   /** The config current when called; read after awaited work, just before the decision. */
   resolveConfig: () => OpenClawConfig;
-  accountId: string;
+  /** The account whose webhook carried this tap; its secret verified that webhook. */
+  account: Pick<ResolvedLineAccount, "accountId" | "channelSecret">;
   data: string;
   senderId?: string;
 }): Promise<string | undefined> {
-  const { channelSecret } = resolveLineAccount({
-    cfg: params.resolveConfig(),
-    accountId: params.accountId,
-  });
-  const callback = parseLineApprovalPostbackData(params.data, channelSecret);
+  const callback = parseLineApprovalPostbackData(params.data, params.account.channelSecret);
   if (!callback) {
-    logVerbose(
-      "line: ignored approval postback data that is malformed or was not built by an approval card for this account",
+    // A card sent before the channel secret changed lands here too; a restart re-sends
+    // pending approvals as cards tagged with the new secret.
+    // Created at the call, not at module evaluation, so consumers that partially mock the
+    // runtime-env module can still load this one.
+    createSubsystemLogger("line/approvals").warn(
+      `[${params.account.accountId}] ignored approval postback data that no approval card for this account built`,
     );
     return undefined;
   }
@@ -172,7 +173,7 @@ export async function resolveLineApprovalPostbackTap(params: {
     const cfg = params.resolveConfig();
     const authorization = authorizeLineApprovalActor({
       cfg,
-      accountId: params.accountId,
+      accountId: params.account.accountId,
       senderId,
       action: "approve",
       approvalKind: callback.approvalKind,
@@ -195,7 +196,7 @@ export async function resolveLineApprovalPostbackTap(params: {
       approvalKind: callback.approvalKind,
       decision: callback.decision,
       channel: "line",
-      accountId: params.accountId,
+      accountId: params.account.accountId,
       senderId,
     });
     if (!result || result.applied) {

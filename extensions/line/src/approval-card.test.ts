@@ -102,7 +102,7 @@ describe("LINE pending approval card", () => {
           },
           approvals: { exec: { enabled: true } },
         }),
-        accountId: "default",
+        account: { accountId: "default", channelSecret: "secret" },
         data,
         senderId: "U0123456789abcdef0123456789abcdef",
       });
@@ -137,6 +137,14 @@ describe("LINE pending approval card", () => {
     });
     expect(cardText(card!)).toContain("Deletes files outside the workspace.");
     expect(cardText(card!)).toContain("Command analysis\n- removes a directory tree");
+  });
+
+  // Without a secret the tag is one anyone can compute and taps refuse it, so the card
+  // is not drawn and the runtime sends the approval command text instead.
+  it("declines the card when the account has no channel secret", () => {
+    expect(
+      buildLinePendingApprovalCard({ view: execView(), nowMs: NOW_MS, channelSecret: "" }),
+    ).toBeNull();
   });
 
   it("declines the card when one offered decision is not drawable", () => {
