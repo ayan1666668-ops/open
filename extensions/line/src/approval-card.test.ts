@@ -89,7 +89,7 @@ describe("LINE pending approval card", () => {
     expect(card?.altText).toBe("Exec Approval Required: rm -rf ./build");
     expect(cardText(card!)).toContain("Command\nrm -rf ./build");
     expect(cardText(card!)).toContain(`Approval ID: ${APPROVAL_ID}`);
-    expect(cardText(card!)).toContain("Expires in 120s");
+    expect(cardText(card!)).toContain("Expires in: 2m");
   });
 
   it("keeps the reason for the interruption on the card", () => {

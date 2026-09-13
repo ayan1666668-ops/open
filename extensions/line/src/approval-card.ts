@@ -4,6 +4,7 @@ import type {
   ChannelApprovalKind,
   PendingApprovalView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
+import { formatExecApprovalExpiresIn } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type { ExecApprovalDecision } from "openclaw/plugin-sdk/approval-runtime";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { buildLineApprovalPostbackData } from "./approval-postback.js";
@@ -159,8 +160,8 @@ export function buildLinePendingApprovalCard(params: {
     return null;
   }
   const title = `${resolveApprovalKindLabel(view.approvalKind)} Approval Required`;
-  const remainingSeconds = Math.max(0, Math.ceil((view.expiresAtMs - nowMs) / 1000));
-  const leading = [`Expires in ${remainingSeconds}s`, buildApprovalRationaleText(view)].filter(
+  const expiresIn = `Expires in: ${formatExecApprovalExpiresIn(view.expiresAtMs, nowMs)}`;
+  const leading = [expiresIn, buildApprovalRationaleText(view)].filter(
     (section): section is string => Boolean(section),
   );
   const identityLine = `Approval ID: ${view.approvalId}`;
