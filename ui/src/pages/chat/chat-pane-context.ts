@@ -31,6 +31,7 @@ import { ChatPaneLifecycle } from "./chat-pane-lifecycle.ts";
 import { resolvePlacementComposer } from "./chat-pane-placement.ts";
 import {
   applySelectedSessionProjection,
+  dismissChatError,
   resolveAssistantAttachmentAuthToken,
 } from "./chat-pane-state.ts";
 import { markQueuedChatSendsWaitingForReconnect } from "./chat-queue.ts";
@@ -75,6 +76,9 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       restartingKey: this.headerPlacementRestartingKey,
       row,
       startupPending,
+      workspaceResultReconciling:
+        (row?.placement?.state === "active" || row?.placement?.state === "draining") &&
+        row.placement.workspaceResultReconciling === true,
       onRestart: () => row && void this.restartHeaderPlacement(row),
       onReclaim: () => row && void this.reclaimHeaderPlacement(row),
     });
@@ -120,6 +124,10 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       return;
     }
     const onRestartingChange = (restartingKey: string | null) => {
+      if (restartingKey !== null && this.state) {
+        dismissChatError(this.state);
+        this.state.chatRunError = null;
+      }
       if (restartingKey !== null || this.headerPlacementRestartingKey === row.key) {
         this.headerPlacementRestartingKey = restartingKey;
       }
@@ -337,8 +345,6 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       invalidateChatAvatarCache(state);
       state.assistantIdentityRequestVersion += 1;
       retireChatMetadataRequests(state);
-      this.swarmHydrator?.dispose();
-      this.swarmHydrator = null;
       this.taskSuggestionsRequestVersion += 1;
       this.setTaskSuggestions([]);
       this.taskSuggestionBusyIds.clear();
@@ -368,6 +374,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       this.sessionSharingStates = new Map();
       this.sessionSharingHydrationTargets.clear();
       state.guardianNotices = [];
+      state.providerPolicyNotice = null;
       this.resetSessionPullRequests();
       this.resetOlderMessagesViewport();
       state.chatLoading = false;
@@ -378,6 +385,8 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
         isUiSelectedGlobalSessionKey(state, state.sessionKey))
     ) {
       retireChatModelSelectionOwnership(state);
+      this.swarmHydrator?.dispose();
+      this.swarmHydrator = null;
     }
     state.client = snapshot.client;
     state.connected = snapshot.phase === "connected";
