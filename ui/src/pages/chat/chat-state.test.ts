@@ -19,6 +19,7 @@ import {
 import { extractText } from "../../lib/chat/message-extract.ts";
 import {
   beginModelCatalogRead,
+  clearModelCatalogCache,
   invalidateModelCatalogCache,
   publishModelCatalogResult,
 } from "../../lib/model-catalog-cache.ts";
@@ -4416,7 +4417,7 @@ describe("refreshChatMetadata", () => {
           ? refreshChatModelCatalogOnDemand(state)
           : refreshChatMetadata(state, { automatic: true });
       try {
-        expect(catalogReads).toBe(first === "automatic" ? 2 : 1);
+        expect(catalogReads).toBe(1);
         expect(state.chatModelsLoading).toBe(true);
         if (failure) {
           oldCatalog.reject(new Error("Retired catalog failure"));
@@ -4424,6 +4425,7 @@ describe("refreshChatMetadata", () => {
           oldCatalog.resolve({ models: retiredModels });
         }
         await original;
+        expect(catalogReads).toBe(2);
         expect(state.chatModelCatalog).toEqual([]);
         expect(state.chatModelCatalogError).toBeNull();
         expect(state.chatModelsLoading).toBe(true);
@@ -4976,6 +4978,7 @@ describe("refreshChatMetadata", () => {
         kind === "picker" ? refreshChatModelCatalogOnDemand(state) : refreshChatMetadata(state);
       state.connected = false;
       retireChatMetadataRequests(state);
+      clearModelCatalogCache(state.client!);
       invalidateChatMetadataStore(state.client!);
       expect(state.chatModelCatalog).toEqual([]);
       expect(state.chatAccountSelection).toBeNull();
@@ -5104,11 +5107,11 @@ describe("refreshChatMetadata", () => {
     await refreshChatMetadata(state);
     expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(3);
     expect(state.chatModelCatalog[0]?.id).toBe("other-model");
-    expect(request).toHaveBeenLastCalledWith(
-      "models.list",
-      { view: "configured", agentId: "other", sessionKey: "agent:other:main" },
-      { signal: expect.any(AbortSignal) },
-    );
+    expect(request).toHaveBeenLastCalledWith("models.list", {
+      view: "configured",
+      agentId: "other",
+      sessionKey: "agent:other:main",
+    });
   });
 
   it("ignores metadata after switching to a different agent", async () => {

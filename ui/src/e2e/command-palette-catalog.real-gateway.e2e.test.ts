@@ -579,6 +579,7 @@ suite.define(() => {
           await page.keyboard.press("ControlOrMeta+K");
           await input.fill("palette");
           await status.waitFor({ state: "visible" });
+          // The selected Chat can issue its session-scoped read on this connection too.
           expect(catalogParams.slice(requestsBeforeOpen)).toContainEqual({
             view: "configured",
             agentId: "reviewer",
