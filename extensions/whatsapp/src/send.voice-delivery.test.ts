@@ -11,6 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { createWebSendApi } from "./inbound/send-api.js";
 import { createAcceptedWhatsAppSendResult } from "./inbound/send-result.test-helper.js";
 import type { ActiveWebListener } from "./inbound/types.js";
+import { mediaLogForTest } from "./outbound-media-contract.js";
 
 const hoisted = vi.hoisted(() => ({
   loadOutboundMediaFromUrl: vi.fn(),
@@ -463,5 +464,39 @@ describe("WhatsApp gateway voice delivery", () => {
 
     // Buffer nativo é entregue tal qual veio; mime padronizado pra voz.
     expect(sendMessage).toHaveBeenNthCalledWith(1, "+1555", "", buf, "audio/ogg; codecs=opus");
+  });
+
+  it("emits a sanitized warning when native transcoding is skipped", async () => {
+    // runFfmpeg loga com logOutput: false e a resolução de binário ausente
+    // lança sem registrar, então sem o warn sanitizado o usuário não saberia
+    // que a conversão foi pulada. Spy direto no mediaLog.warn via import
+    // estático: o send.ts importa do mesmo module cache do Vitest, então o
+    // spy intercepta antes do sink subsystem ser invocado.
+    const buf = oggOpusHeadBuffer(48000);
+    loadWebMediaMock.mockResolvedValueOnce({
+      buffer: buf,
+      contentType: "audio/ogg",
+      kind: "audio",
+      fileName: "voice.ogg",
+    });
+    hoisted.transcodeAudioBufferToOpus
+      .mockReset()
+      .mockRejectedValueOnce(Object.assign(new Error("ffmpeg missing"), { code: "ENOENT" }));
+
+    const warnSpy = vi.spyOn(mediaLogForTest, "warn");
+    try {
+      await sendMessageWhatsApp("+1555", "voice note", {
+        verbose: false,
+        cfg: WHATSAPP_TEST_CFG,
+        mediaUrl: "/tmp/voice.ogg",
+      });
+      const warned = warnSpy.mock.calls.some(
+        ([first]) =>
+          typeof first === "string" && first.includes("WhatsApp voice transcoding skipped"),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

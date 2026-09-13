@@ -1,6 +1,7 @@
 // Whatsapp plugin module implements outbound media contract behavior.
 import path from "node:path";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/channel-outbound";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/logging-core";
 import {
   mediaKindFromMime,
   mimeTypeFromFilePath,
@@ -55,6 +56,17 @@ type CanonicalWhatsAppLoadedMedia = {
   mimetype: string;
   fileName?: string;
 };
+
+const mediaLog = createSubsystemLogger("gateway/channels/whatsapp").child("outbound-media");
+
+/**
+ * Test-only handle to the outbound-media subsystem logger. The voice-delivery
+ * test suite spies on this to verify the sanitized fallback warning without
+ * pulling in `setLoggerOverride` (which writes to a file sink by default).
+ *
+ * Tracked as a test-only export in `config/knip.all-exports.config.ts`.
+ */
+export const mediaLogForTest = mediaLog;
 
 const WHATSAPP_VOICE_FILE_NAME = "voice.ogg";
 const WHATSAPP_VOICE_SAMPLE_RATE_HZ = 16_000;
@@ -219,11 +231,18 @@ export async function prepareWhatsAppOutboundMedia(
         fileName: media.fileName ?? deriveWhatsAppDocumentFileName(mediaUrl) ?? "audio",
       });
       return { buffer, kind: "audio", mimetype: WHATSAPP_VOICE_MIMETYPE };
-    } catch {
+    } catch (error) {
       // FFmpeg ausente ou falhou: preservar a entrega nativa como antes desta
       // expansão — instalação sem ffmpeg não pode perder notas de voz que
-      // Web/Desktop tocavam sem problema. O erro original continua
-      // registrado em journalctl pelo helper de runFfmpeg.
+      // Web/Desktop tocavam sem problema. Mas o runFfmpeg define logOutput:
+      // false e a resolução de binário ausente lança sem logar, então o
+      // usuário precisa de um sinal visível de que a conversão foi pulada
+      // (WhatsApp mobile pode reter o playback bug sem indicação).
+      mediaLog.warn(
+        "WhatsApp voice transcoding skipped (ffmpeg unavailable or failed); " +
+          "delivering native Ogg/Opus unchanged. WhatsApp mobile may reject the note.",
+        { reason: error instanceof Error ? error.message : String(error) },
+      );
       return normalized;
     }
   }
