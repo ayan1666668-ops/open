@@ -221,7 +221,9 @@ export function handleMessageUpdate(
     if (contentIndexChanged || itemIdChangedWithoutIndexes) {
       streamItemChanged = true;
       void ctx.flushBlockReplyBuffer({ assistantMessageIndex: ctx.state.assistantMessageIndex });
-      ctx.resetAssistantMessageState(ctx.state.assistantTexts.length);
+      ctx.resetAssistantMessageState(ctx.state.assistantTexts.length, {
+        preserveMessageTextBaseline: true,
+      });
       emitAssistantMessageStart(ctx);
     } else if (
       previousStreamContentIndex !== undefined &&

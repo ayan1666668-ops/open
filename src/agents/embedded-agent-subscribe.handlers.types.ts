@@ -181,6 +181,7 @@ export type EmbeddedAgentSubscribeState = {
   lastAssistantTextNormalized?: string;
   lastAssistantTextTrimmed?: string;
   assistantTextBaseline: number;
+  assistantMessageTextBaseline: number;
   suppressBlockChunks: boolean;
   lastReasoningSent?: string;
 
@@ -292,7 +293,10 @@ export type EmbeddedAgentSubscribeContext = {
   resetPartialReplyDirectives: () => void;
   resetAssistantMessageState: (
     nextAssistantTextBaseline: number,
-    options?: { preserveReplyDirectiveState?: boolean },
+    options?: {
+      preserveMessageTextBaseline?: boolean;
+      preserveReplyDirectiveState?: boolean;
+    },
   ) => void;
   getBlockReplyDeliveryGeneration: () => number;
   invalidateBlockReplyDeliveriesForCompactionRetry: () => number;

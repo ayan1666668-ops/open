@@ -675,7 +675,10 @@ export function createStreamRendering({
 
   const resetAssistantMessageState = (
     nextAssistantTextBaseline: number,
-    options?: { preserveReplyDirectiveState?: boolean },
+    options?: {
+      preserveMessageTextBaseline?: boolean;
+      preserveReplyDirectiveState?: boolean;
+    },
   ) => {
     flushAssistantStream();
     state.deltaBuffer = "";
@@ -710,6 +713,9 @@ export function createStreamRendering({
     state.lastAssistantTextTrimmed = undefined;
     if (!options?.preserveReplyDirectiveState) {
       state.assistantTextBaseline = nextAssistantTextBaseline;
+      if (!options?.preserveMessageTextBaseline) {
+        state.assistantMessageTextBaseline = nextAssistantTextBaseline;
+      }
       state.deliveredBlockReplyTexts = [];
       state.attemptedBlockReplyTexts = [];
       state.deferredBlockReplyTexts = [];

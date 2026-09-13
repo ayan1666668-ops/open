@@ -304,6 +304,9 @@ export function handleMessageEnd(
 
   const finalizeMessageEnd = () => {
     const deliveredMessageParts = (ctx.state.attemptedBlockReplyTexts ?? []).filter(Boolean);
+    const canonicalMessageParts = hasMultiplePhasedTextItems
+      ? preparedMessageEndParts.filter(Boolean)
+      : deliveredMessageParts;
     const phasedMessageKeepsDeliveredParts =
       (isResponsesApiAssistantMessage(assistantMessage) || hasMultiplePhasedTextItems) &&
       hadBlockReplyBeforeMessageEnd;
@@ -313,14 +316,14 @@ export function handleMessageEnd(
       sourceSnapshot.parts.length > 1 &&
       deliveredMessageParts.every((part) => !/[<`]/u.test(part));
     if (
-      deliveredMessageParts.length > 1 &&
+      canonicalMessageParts.length > 1 &&
       (phasedMessageKeepsDeliveredParts || unphasedMessageKeepsDeliveredParts)
     ) {
       const currentCount = ctx.state.assistantTexts.length - messageAssistantTextBaseline;
       ctx.state.assistantTexts.splice(
         messageAssistantTextBaseline,
         currentCount,
-        ...deliveredMessageParts,
+        ...canonicalMessageParts,
       );
     } else if (sourceSnapshot.parts.length <= 1) {
       const currentCount = ctx.state.assistantTexts.length - messageAssistantTextBaseline;
@@ -400,10 +403,10 @@ export function handleMessageEnd(
     mediaUrls,
     parsedText,
   });
-  const messageAssistantTextBaseline = ctx.state.assistantTextBaseline;
-  const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
+  const messageAssistantTextBaseline = ctx.state.assistantMessageTextBaseline;
+  const addedDuringMessage = ctx.state.assistantTexts.length > messageAssistantTextBaseline;
   const currentMessageAssistantText = ctx.state.assistantTexts
-    .slice(ctx.state.assistantTextBaseline)
+    .slice(messageAssistantTextBaseline)
     .join("\n");
   const chunkerHasBuffered = Boolean(ctx.params.onBlockReply) && ctx.blockChunker.hasBuffered();
   ctx.finalizeAssistantTexts({
@@ -596,7 +599,11 @@ export function handleMessageEnd(
 
   const hasBufferedBlockReply = textEndDeliveredText == null && ctx.blockChunker.hasBuffered();
   const hasPendingToolMedia = ctx.state.pendingToolMediaUrls.length > 0;
-  if (textEndDeliveredText != null && ctx.blockChunker.hasBuffered()) {
+  if (
+    textEndDeliveredText != null &&
+    ctx.blockChunker.hasBuffered() &&
+    !hasMultiplePhasedTextItems
+  ) {
     // message_end rebuilt the canonical snapshot after text_end already
     // delivered a prefix. Reconcile from the delivery ledger instead of
     // replaying that reconstructed buffer.
@@ -607,7 +614,11 @@ export function handleMessageEnd(
     !suppressDeterministicApprovalOutput &&
     !suppressMessageToolOnlySourceReplyOutput &&
     !deliverMessageEndPartsIndividually &&
-    !(hasMultiplePhasedTextItems && hadBlockReplyBeforeMessageEnd) &&
+    !(
+      hasMultiplePhasedTextItems &&
+      hadBlockReplyBeforeMessageEnd &&
+      !ctx.blockChunker.hasBuffered()
+    ) &&
     hasFinalAssistantReply &&
     onBlockReply &&
     (hasBufferedBlockReply ||
