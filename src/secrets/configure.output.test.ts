@@ -47,6 +47,7 @@ it.each([true, false])(
       }
       const configBefore = await fs.readFile(state.configPath, "utf8");
       const stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      const previousTestRuntimeLog = process.env.OPENCLAW_TEST_RUNTIME_LOG;
       let stdout = "";
       let stderr = "";
       const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
@@ -58,6 +59,8 @@ it.each([true, false])(
         return true;
       });
       try {
+        // This test intentionally captures structured runtime output under Vitest.
+        process.env.OPENCLAW_TEST_RUNTIME_LOG = "1";
         Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
         await expect(
           runSecretsCommand(
@@ -72,6 +75,11 @@ it.each([true, false])(
       } finally {
         stdoutWrite.mockRestore();
         stderrWrite.mockRestore();
+        if (previousTestRuntimeLog === undefined) {
+          delete process.env.OPENCLAW_TEST_RUNTIME_LOG;
+        } else {
+          process.env.OPENCLAW_TEST_RUNTIME_LOG = previousTestRuntimeLog;
+        }
         if (stdinTTY) {
           Object.defineProperty(process.stdin, "isTTY", stdinTTY);
         } else {
