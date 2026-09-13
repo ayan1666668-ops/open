@@ -2225,9 +2225,7 @@ src/cli/cron-cli/register.cron-scratch.ts	2
 src/cli/cron-cli/register.cron-simple.ts	2
 src/cli/cron-cli/shared.ts	8
 src/cli/daemon-cli/launchd-recovery.ts	1
-src/cli/daemon-cli/lifecycle.ts	1
 src/cli/daemon-cli/restart-health-probe.ts	7
-src/cli/daemon-cli/restart-health.ts	1
 src/cli/daemon-cli/start-repair.ts	1
 src/cli/deps.ts	2
 src/cli/devices-cli.runtime.ts	10
@@ -2348,7 +2346,7 @@ src/commands/doctor-post-upgrade.ts	1
 src/commands/doctor-prompter.ts	1
 src/commands/doctor-retired-phone-control.ts	1
 src/commands/doctor-sandbox-legacy-registry.ts	8
-src/commands/doctor-sandbox.ts	5
+src/commands/doctor-sandbox.ts	4
 src/commands/doctor-security.ts	3
 src/commands/doctor-session-canonical-keys.ts	1
 src/commands/doctor-session-incognito-key-repair-state.ts	8
@@ -3530,9 +3528,8 @@ src/trajectory/export.ts	22
 src/trajectory/runtime-store.sqlite.ts	1
 src/trajectory/runtime.ts	4
 src/transcripts/config.ts	2
-src/transcripts/store-export-ownership.ts	5
+src/transcripts/store-export-ownership.ts	2
 src/transcripts/store-sqlite.ts	2
-src/transcripts/store.ts	5
 src/tts/openai-compatible-speech-provider.ts	1
 src/tts/status-config.ts	1
 src/tts/tts-auto-mode.ts	2
