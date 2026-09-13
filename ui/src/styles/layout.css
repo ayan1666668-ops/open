@@ -4577,8 +4577,13 @@ html:is(.openclaw-native-macos, .openclaw-native-nav, .openclaw-native-web-chrom
   .content:not(.content--chat) {
   --content-collapsed-chrome-clearance: var(--openclaw-native-titlebar-height, 50px);
 
-  &:not(:has(> .connection-action-block)):has(.content-header) {
-    padding-top: 0;
+  /* Pages without a header (plugin panels) clear the row with padding. */
+  &:not(:has(> .connection-action-block)) {
+    padding-top: calc(var(--content-collapsed-chrome-clearance) + 16px);
+
+    &:has(.content-header) {
+      padding-top: 0;
+    }
   }
 
   &:not(:has(> .connection-action-block)) .content-header {
@@ -4586,14 +4591,15 @@ html:is(.openclaw-native-macos, .openclaw-native-nav, .openclaw-native-web-chrom
     padding-top: 0;
     max-height: none;
 
-    /* Only the title cell carries the clearance; siblings (hub tabs, counts)
+    /* Only the title cell carries the clearance; middle siblings (hub tabs)
        keep the header's end alignment and follow it down, including at the
-       hub breakpoint that moves the tabs to their own row. */
-    > :first-child:not(.page-header-actions, .hub-page-header__actions) {
+       hub breakpoint that moves the tabs to their own row. The trailing
+       cell (actions, counts) rides in the titlebar row. */
+    > :first-child {
       padding-top: calc(var(--content-collapsed-chrome-clearance) + 12px);
     }
 
-    > :is(.page-header-actions, .hub-page-header__actions) {
+    > :last-child:not(:first-child) {
       display: flex;
       align-items: center;
       align-self: flex-start;
