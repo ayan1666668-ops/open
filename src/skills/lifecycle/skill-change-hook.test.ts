@@ -28,9 +28,11 @@ describe("committed skill artifact snapshots", () => {
     );
     const legacyContent = Buffer.from("---\nname: Other candidate\n---\n");
     const nestedMetadata = Buffer.from([0, 255, 1]);
+    const literalTildeContent = Buffer.from("literal support\n");
     const binary = Buffer.alloc(64 * 1024 + 7, 0xab);
     await fs.mkdir(path.join(skillDir, "assets", ".clawhub"), { recursive: true });
     await fs.mkdir(path.join(skillDir, "empty-directory"));
+    await fs.mkdir(path.join(skillDir, "~"));
     for (const excluded of [".clawhub", ".clawdhub", ".openclaw"]) {
       await fs.mkdir(path.join(skillDir, excluded));
       await fs.writeFile(path.join(skillDir, excluded, "ignored.txt"), "ignored");
@@ -40,6 +42,7 @@ describe("committed skill artifact snapshots", () => {
     await fs.writeFile(path.join(skillDir, "assets", "empty.txt"), "");
     await fs.writeFile(path.join(skillDir, "assets", ".clawhub", "retained.bin"), nestedMetadata);
     await fs.writeFile(path.join(skillDir, "SKILL.md"), content);
+    await fs.writeFile(path.join(skillDir, "~", "support.txt"), literalTildeContent);
 
     const digest = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
     const expectedFiles = [
@@ -48,6 +51,11 @@ describe("committed skill artifact snapshots", () => {
       { path: "assets/empty.txt", sha256: digest(""), sizeBytes: 0 },
       { path: "skills.md", sha256: digest(legacyContent), sizeBytes: legacyContent.byteLength },
       { path: "z.bin", sha256: digest(binary), sizeBytes: binary.byteLength },
+      {
+        path: "~/support.txt",
+        sha256: digest(literalTildeContent),
+        sizeBytes: literalTildeContent.byteLength,
+      },
     ];
 
     await expect(

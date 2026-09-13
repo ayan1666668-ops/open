@@ -62,7 +62,8 @@ async function collectSkillTreeFiles(
     if (stat.nlink > 1) {
       throw new Error(`Skill tree contains hard-linked file ${JSON.stringify(portablePath)}.`);
     }
-    const opened = await skillRoot.open(relativePath);
+    // Listed names are literal; a leading "~" must not expand to the user's home.
+    const opened = await skillRoot.open(path.join(skillRoot.rootReal, relativePath));
     try {
       if (relativePath === selectedSkillPath) {
         const content = await opened.handle.readFile();
