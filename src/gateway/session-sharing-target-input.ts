@@ -68,7 +68,7 @@ function readSessionSharingOpaqueStringParam(params: unknown, key: string): stri
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     return undefined;
   }
-  const value = (params as Record<string, unknown>)[key];
+  const value: unknown = Reflect.get(params, key);
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
