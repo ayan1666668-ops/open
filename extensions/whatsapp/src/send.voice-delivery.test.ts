@@ -440,4 +440,28 @@ describe("WhatsApp gateway voice delivery", () => {
     expect(hoisted.transcodeAudioBufferToOpus).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenNthCalledWith(1, "+1555", "", buf, "audio/ogg; codecs=opus");
   });
+
+  it("preserves native Ogg/Opus delivery when ffmpeg is unavailable", async () => {
+    // Installation without ffmpeg previously reached WhatsApp unchanged with the
+    // native 48 kHz Ogg/Opus header; this expansion must not lose that path.
+    const buf = oggOpusHeadBuffer(48000);
+    loadWebMediaMock.mockResolvedValueOnce({
+      buffer: buf,
+      contentType: "audio/ogg",
+      kind: "audio",
+      fileName: "voice.ogg",
+    });
+    hoisted.transcodeAudioBufferToOpus
+      .mockReset()
+      .mockRejectedValueOnce(Object.assign(new Error("ffmpeg missing"), { code: "ENOENT" }));
+
+    await sendMessageWhatsApp("+1555", "voice note", {
+      verbose: false,
+      cfg: WHATSAPP_TEST_CFG,
+      mediaUrl: "/tmp/voice.ogg",
+    });
+
+    // Buffer nativo é entregue tal qual veio; mime padronizado pra voz.
+    expect(sendMessage).toHaveBeenNthCalledWith(1, "+1555", "", buf, "audio/ogg; codecs=opus");
+  });
 });

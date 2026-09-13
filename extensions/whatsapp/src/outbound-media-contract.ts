@@ -213,11 +213,19 @@ export async function prepareWhatsAppOutboundMedia(
     // Áudio nativo Ogg/Opus com taxa incompatível: NÃO aplica teto de duração.
     // O arquivo já era um voice note válido; cortar a 20 min introduziria perda
     // silenciosa de conteúdo num fluxo que antes passava intacto.
-    const buffer = await transcodeToWhatsAppVoiceOpus({
-      buffer: media.buffer,
-      fileName: media.fileName ?? deriveWhatsAppDocumentFileName(mediaUrl) ?? "audio",
-    });
-    return { buffer, kind: "audio", mimetype: WHATSAPP_VOICE_MIMETYPE };
+    try {
+      const buffer = await transcodeToWhatsAppVoiceOpus({
+        buffer: media.buffer,
+        fileName: media.fileName ?? deriveWhatsAppDocumentFileName(mediaUrl) ?? "audio",
+      });
+      return { buffer, kind: "audio", mimetype: WHATSAPP_VOICE_MIMETYPE };
+    } catch {
+      // FFmpeg ausente ou falhou: preservar a entrega nativa como antes desta
+      // expansão — instalação sem ffmpeg não pode perder notas de voz que
+      // Web/Desktop tocavam sem problema. O erro original continua
+      // registrado em journalctl pelo helper de runFfmpeg.
+      return normalized;
+    }
   }
   // É nativo de verdade (16 kHz): passa como está.
   return normalized;
