@@ -14,6 +14,45 @@ describe("embedded compaction recovery authority", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["compacted", "failed"] as const)(
+    "shrinks current tool output without replaying archived resets after %s compaction",
+    async (outcome) => {
+      await withRecoveryFixture({ historicalTurns: 4 }, async (fixture) => {
+        const before = await fixture.snapshot();
+        if (outcome === "failed") {
+          fixture.compact.mockRejectedValueOnce(new Error("independent engine failure"));
+        }
+
+        await expect(fixture.recover("overflow", outcome === "compacted")).resolves.toEqual({
+          action: "retry",
+        });
+
+        const after = await fixture.snapshot();
+        expect(after.eventDigests.slice(0, before.eventDigests.length)).toEqual(
+          before.eventDigests,
+        );
+        expect(after.resetCount).toBe(before.resetCount);
+        expect(after.eventDigests.length - before.eventDigests.length).toBeLessThanOrEqual(5);
+        expect(after.toolResultChars).toBeLessThan(before.toolResultChars);
+        fixture.assertActive();
+      });
+    },
+  );
+
+  it("leaves archived tool output untouched when the compacted context needs no truncation", async () => {
+    await withRecoveryFixture({ historicalTurns: 4, oversized: false }, async (fixture) => {
+      const before = await fixture.snapshot();
+
+      await expect(fixture.recover("overflow", true)).resolves.toEqual({ action: "retry" });
+
+      const after = await fixture.snapshot();
+      expect(after.eventDigests.slice(0, before.eventDigests.length)).toEqual(before.eventDigests);
+      expect(after.eventDigests).toHaveLength(before.eventDigests.length + 1);
+      expect(after.resetCount).toBe(before.resetCount);
+      expect(after.toolResultChars).toBe(before.toolResultChars);
+    });
+  });
+
   it.each(
     (["overflow", "timeout"] as const).flatMap((kind) => [true, false].map((ok) => ({ kind, ok }))),
   )("settles no-op engine hooks for $kind recovery (ok=$ok)", async ({ kind, ok }) => {

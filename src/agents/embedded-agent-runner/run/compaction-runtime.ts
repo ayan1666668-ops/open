@@ -37,6 +37,7 @@ import type { EmbeddedRunContextRecoveryState } from "./context-recovery-state.j
 import type { PreparedEmbeddedRunInput } from "./execution-context.js";
 import type { RunEmbeddedAgentParams } from "./params.js";
 import { buildContextEngineCompactionSessionTarget } from "./session-bootstrap.js";
+import { resolveEmbeddedSessionContextLimits } from "./session-context-limits.js";
 import type { createEmbeddedRunSessionPromptState } from "./session-prompt-state.js";
 import type { EmbeddedRunAttemptResult } from "./types.js";
 
@@ -426,7 +427,13 @@ export function createEmbeddedRunCompactionRuntime(input: {
     const owner = prepareRecoveryOwner();
     const sessionManager =
       memoryManager ??
-      (detached ? undefined : SessionManager.open(owner.session.target, params.workspaceDir));
+      (detached
+        ? undefined
+        : SessionManager.open(
+            owner.session.target,
+            params.workspaceDir,
+            resolveEmbeddedSessionContextLimits(params.contextTokenBudget),
+          ));
     return {
       sessionManager,
       assertActive: owner.assertActive,
