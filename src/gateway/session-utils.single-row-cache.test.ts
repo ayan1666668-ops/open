@@ -47,9 +47,6 @@ const subagentRegistryReadMock = vi.hoisted(() => {
   return {
     buildSubagentSessionListReadIndex,
     countActiveDescendantRuns: vi.fn(() => 0),
-    getSessionDisplaySubagentRunByChildSessionKey: vi.fn(
-      (childSessionKey: string) => runsByChildSessionKey.get(childSessionKey) ?? null,
-    ),
     getSubagentSessionRuntimeMs: vi.fn(() => undefined),
     getSubagentSessionStartedAt: vi.fn(() => undefined),
     isSubagentRunLive: vi.fn(() => false),
@@ -573,9 +570,6 @@ describe("single gateway session row child projections", () => {
 
         expect(asyncListed.sessions).toHaveLength(1);
         expect(subagentRegistryReadMock.buildSubagentSessionListReadIndex).toHaveBeenCalledTimes(1);
-        expect(
-          subagentRegistryReadMock.getSessionDisplaySubagentRunByChildSessionKey,
-        ).not.toHaveBeenCalled();
       },
     );
   });
