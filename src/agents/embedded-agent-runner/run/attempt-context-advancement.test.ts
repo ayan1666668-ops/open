@@ -4,15 +4,30 @@ import {
   type Model,
   type Message,
 } from "openclaw/plugin-sdk/llm";
+import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import type { ContextEngine } from "../../../context-engine/types.js";
 import { Agent, type AgentMessage } from "../../runtime/index.js";
+import {
+  createAssistant,
+  createAssistantResultStream,
+  createTestSession,
+  registerAgentSessionLoopTestLifecycle,
+} from "../../sessions/agent-session-loop-correctness.test-support.js";
 import { makeAgentAssistantMessage } from "../../test-helpers/agent-message-fixtures.js";
 import { makeProviderModelFixture } from "../../test-helpers/provider-model-fixture.js";
 import { createZeroUsageFixture } from "../../test-helpers/usage-fixtures.js";
-import { createToolResultPromptProjectionState } from "../session-prompt-state.js";
+import {
+  clearEmbeddedSessionPromptStates,
+  createToolResultPromptProjectionState,
+  getEmbeddedSessionPromptState,
+} from "../session-prompt-state.js";
+import { installContextEngineLoopHook } from "../tool-result-context-guard.js";
 import { prepareEmbeddedAttemptPromptContext } from "./attempt-prompt-build.js";
+import { submitEmbeddedAttemptPrompt } from "./attempt-prompt-submit.js";
 import { installEmbeddedAttemptContextGuards } from "./attempt-setup.js";
+
+registerAgentSessionLoopTestLifecycle();
 
 const model: Model = makeProviderModelFixture({
   id: "synthetic-model",
@@ -221,251 +236,145 @@ describe("context advancement through embedded attempt guards", () => {
     },
   );
 
-  it("preserves active turn input and multi-round tool results across deferred context-engine reassembly after replay normalization", async () => {
-    const rawHistory: AgentMessage[] = [
-      { role: "user", content: "Earlier accepted request 0.", timestamp: 0 },
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "Earlier accepted answer 0." }],
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        usage,
-        timestamp: 1,
-        stopReason: "stop",
-      },
-      {
-        role: "assistant",
-        content: "NO_REPLY",
-        timestamp: 2,
-        stopReason: "stop",
-      } as unknown as AgentMessage,
-    ];
-
-    let activeMessages = [...rawHistory];
-    const promptContext = await prepareEmbeddedAttemptPromptContext({
-      attempt: {
-        config: {},
-        prompt: "Perform task with tools.",
-        contextTokenBudget: 8192,
-        model,
-        modelId: model.id,
-        provider: model.provider,
-        sessionId: "synthetic-session",
-        sessionKey: "agent:synthetic:main",
-      } as never,
-      capabilityToolNames: new Set(["read_fixture"]),
-      includeBoundaryTimestamp: false,
-      isRawModelRun: false,
-      messages: activeMessages,
-      preparedUserTurnMessage: {
-        role: "user",
-        content: "Perform task with tools.",
-        timestamp: 10,
-      } as AgentMessage,
-      prompt: {
-        effectivePrompt: "Perform task with tools.",
-        effectiveTranscriptPrompt: "Perform task with tools.",
-      },
-      replaceSessionMessages: (messages) => {
-        activeMessages = messages;
-      },
-      sessionAgentId: "synthetic",
-      systemPromptText: "",
-      toolResultPromptProjectionState: createToolResultPromptProjectionState(),
-    });
-
-    expect(rawHistory.length).toBe(3);
-    expect(activeMessages.length).toBe(2);
-    expect(promptContext.prePromptMessageCount).toBe(2);
-
-    const storedPrefix: AgentMessage[] = [
-      { role: "user", content: "Summary of accepted history.", timestamp: 0 },
-    ];
-    const assemble = vi.fn<ContextEngine["assemble"]>(async () => ({
-      messages: storedPrefix,
-      estimatedTokens: 0,
-    }));
-    const commitTurn = vi.fn<NonNullable<ContextEngine["commitTurn"]>>(async () => ({
-      status: "committed",
-    }));
-    const engine: ContextEngine = {
-      info: {
-        id: "synthetic-engine",
-        name: "Synthetic",
-        ownsCompaction: true,
-        transcriptSemantics: {
-          currentTurnFence: "before-current-turn-entry-v1",
-          turnAdvancementIdempotency: "atomic-idempotent-v1",
+  it.each([0, 6])(
+    "preserves active content through prompt preparation and submission with %i silent replay messages",
+    async (silentCount) => {
+      const prompt = "Perform task with tools.";
+      const sessionId = `replay-boundary-${silentCount}`;
+      const storedPrefix: AgentMessage[] = [
+        { role: "user", content: "Summary of accepted history.", timestamp: 0 },
+      ];
+      const engine: ContextEngine = {
+        info: {
+          id: "synthetic-engine",
+          name: "Synthetic",
+          ownsCompaction: true,
+          transcriptSemantics: {
+            currentTurnFence: "before-current-turn-entry-v1",
+            turnAdvancementIdempotency: "atomic-idempotent-v1",
+          },
         },
-      },
-      ingest: async () => ({ ingested: true }),
-      assemble,
-      compact: async () => ({ ok: true, compacted: false, reason: "fits" }),
-      commitTurn,
-    };
-
-    let providerCalls = 0;
-    let secondModelMessages: Message[] | undefined;
-    let thirdModelMessages: Message[] | undefined;
-    const execute = vi.fn(async (_toolCallId: string, params: unknown) => {
-      const args = params as { id?: unknown } | undefined;
-      return {
-        content: [{ type: "text" as const, text: `fixture observation ${String(args?.id)}` }],
-        details: {},
+        ingest: async () => ({ ingested: true }),
+        assemble: async () => ({ messages: storedPrefix, estimatedTokens: 0 }),
+        compact: async () => ({ ok: true, compacted: false, reason: "fits" }),
+        commitTurn: async () => ({ status: "committed" }),
       };
-    });
-    const agent = new Agent({
-      initialState: {
+      let toolCalls = 0;
+      const { session } = await createTestSession({
         model,
-        messages: activeMessages,
-        tools: [
+        customTools: [
           {
             name: "read_fixture",
             label: "Read fixture",
             description: "Read fixture",
-            parameters: { type: "object", properties: { id: { type: "string" } } },
-            execute,
+            parameters: Type.Object({}),
+            execute: async () => ({
+              content: [{ type: "text", text: `fixture observation ${++toolCalls}` }],
+              details: {},
+            }),
           },
         ],
-      },
-      streamFn: (_model, context) => {
-        providerCalls++;
-        if (providerCalls === 2) {
-          secondModelMessages = structuredClone(context.messages);
-        } else if (providerCalls === 3) {
-          thirdModelMessages = structuredClone(context.messages);
-        }
-        const stopReason = providerCalls < 3 ? "toolUse" : "stop";
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
-          usage,
-          timestamp: providerCalls,
-          content:
-            stopReason === "toolUse"
-              ? [
-                  {
-                    type: "toolCall",
-                    id: `call-${providerCalls}`,
-                    name: "read_fixture",
-                    arguments: { id: String(providerCalls) },
-                  },
-                ]
+      });
+      session.agent.state.messages = [
+        { role: "user", content: "Earlier accepted request.", timestamp: 0 },
+        createAssistant(model, [{ type: "text", text: "Earlier accepted answer." }]),
+        ...Array.from({ length: silentCount }, () =>
+          createAssistant(model, [{ type: "text", text: "NO_REPLY" }]),
+        ),
+      ];
+      const modelRequests: Message[][] = [];
+      session.agent.streamFn = (_model, context) => {
+        modelRequests.push(structuredClone(context.messages));
+        const round = modelRequests.length;
+        return createAssistantResultStream(
+          createAssistant(
+            model,
+            round <= 2
+              ? [{ type: "toolCall", id: `call-${round}`, name: "read_fixture", arguments: {} }]
               : [{ type: "text", text: "done" }],
-          stopReason,
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: stopReason, message });
-        stream.end();
-        return stream;
-      },
-    });
-
-    const guards = installEmbeddedAttemptContextGuards({
-      activeContextEngine: engine,
-      activeSession: { agent },
-      agentDir: process.cwd(),
-      attempt: {
-        config: {},
-        prompt: "Perform task with tools.",
-        contextTokenBudget: 8192,
-        model,
-        modelId: model.id,
-        provider: model.provider,
-        sessionId: "synthetic-session",
-        sessionKey: "agent:synthetic:main",
+            round <= 2 ? "toolUse" : "stop",
+          ),
+        );
+      };
+      const sessionPromptState = getEmbeddedSessionPromptState(sessionId);
+      const promptContext = await prepareEmbeddedAttemptPromptContext({
+        attempt: { config: {}, contextTokenBudget: 8192, sessionId },
+        capabilityToolNames: new Set(["read_fixture"]),
+        includeBoundaryTimestamp: false,
+        isRawModelRun: false,
+        messages: session.messages,
+        prompt: { effectivePrompt: prompt, effectiveTranscriptPrompt: prompt },
+        replaceSessionMessages: (messages) => {
+          session.agent.state.messages = messages;
+        },
+        sessionAgentId: "synthetic",
+        systemPromptText: "",
+        toolResultPromptProjectionState: sessionPromptState.toolResults,
+      });
+      const removeLoopHook = installContextEngineLoopHook({
+        agent: session.agent,
+        contextEngine: engine,
+        sessionId,
         sessionFile: "unused",
-        onContextEngineTurnCandidate: vi.fn(),
-      },
-      computerContextEpoch: { value: 0 },
-      dropThinkingBlocksForEstimate: false,
-      effectiveCwd: process.cwd(),
-      effectiveFsWorkspaceOnly: true,
-      effectiveWorkspace: process.cwd(),
-      getPrePromptMessageCount: () => promptContext.prePromptMessageCount,
-      getPromptCache: () => ({ retention: "none" }),
-      getPromptCacheRetention: () => "none",
-      getCompactionReplayEnabled: () => false,
-      getServerToolClearingEnabled: () => false,
-      toolResultPromptProjectionState: createToolResultPromptProjectionState(),
-      getSystemPrompt: () => "",
-      isOpenAIResponsesApi: false,
-      repairToolUseResultPairing: false,
-      sessionAgentId: "synthetic",
-      sessionManager: {},
-      settingsManager: { getBlockImages: () => false, getCompactionReserveTokens: () => 64 },
-    } as never);
-
-    try {
-      await agent.prompt("Perform task with tools.");
-      expect(providerCalls).toBe(3);
-      expect(execute).toHaveBeenCalledTimes(2);
-      expect(assemble).toHaveBeenCalledTimes(3);
-
-      expect(secondModelMessages).toMatchObject([
-        ...storedPrefix,
-        { role: "user", content: [{ type: "text", text: "Perform task with tools." }] },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "call-1",
-              name: "read_fixture",
-              arguments: { id: "1" },
-            },
-          ],
-        },
-        {
-          role: "toolResult",
-          toolCallId: "call-1",
-          content: [{ type: "text", text: "fixture observation 1" }],
-        },
-      ]);
-
-      expect(thirdModelMessages).toMatchObject([
-        ...storedPrefix,
-        { role: "user", content: [{ type: "text", text: "Perform task with tools." }] },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "call-1",
-              name: "read_fixture",
-              arguments: { id: "1" },
-            },
-          ],
-        },
-        {
-          role: "toolResult",
-          toolCallId: "call-1",
-          content: [{ type: "text", text: "fixture observation 1" }],
-        },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              id: "call-2",
-              name: "read_fixture",
-              arguments: { id: "2" },
-            },
-          ],
-        },
-        {
-          role: "toolResult",
-          toolCallId: "call-2",
-          content: [{ type: "text", text: "fixture observation 2" }],
-        },
-      ]);
-    } finally {
-      agent.abort();
-      await agent.waitForIdle();
-      guards.remove();
-    }
-  });
+        tokenBudget: 8192,
+        modelId: model.id,
+        getPrePromptMessageCount: () => promptContext.prePromptMessageCount,
+        deferredTurn: { prompt, availableTools: new Set(["read_fixture"]) },
+      });
+      try {
+        await submitEmbeddedAttemptPrompt({
+          attempt: { sessionId },
+          activeSession: session,
+          contextTokenBudget: promptContext.contextTokenBudget,
+          images: [],
+          modelPrompt: promptContext.promptForModel,
+          onFinalPromptText: () => {},
+          onSteeringAcknowledged: () => {},
+          persistToolResultProjections: async () => {},
+          promptActiveSession: (text, options) => session.prompt(text, options),
+          runtimeOnly: false,
+          sessionPromptState,
+          systemPrompt: "",
+          toolResultAggregateMaxChars: promptContext.promptToolResultAggregateMaxChars,
+          toolResultMaxChars: promptContext.promptToolResultMaxChars,
+          toolResultPromptProjectionState: sessionPromptState.toolResults,
+          trajectoryRecorder: null,
+          transcriptLeafId: null,
+          transcriptPrompt: promptContext.promptForSession,
+        });
+        expect(modelRequests).toHaveLength(3);
+        expect(toolCalls).toBe(2);
+        for (const messages of modelRequests) {
+          expect(messages).toContainEqual(
+            expect.objectContaining({
+              role: "user",
+              content: [{ type: "text", text: prompt }],
+            }),
+          );
+        }
+        for (const [index, messages] of modelRequests.entries()) {
+          for (let round = 1; round <= index; round++) {
+            expect(messages).toContainEqual(
+              expect.objectContaining({
+                role: "assistant",
+                content: [
+                  { type: "toolCall", id: `call-${round}`, name: "read_fixture", arguments: {} },
+                ],
+              }),
+            );
+            expect(messages).toContainEqual(
+              expect.objectContaining({
+                role: "toolResult",
+                toolCallId: `call-${round}`,
+                content: [{ type: "text", text: `fixture observation ${round}` }],
+              }),
+            );
+          }
+        }
+      } finally {
+        removeLoopHook();
+        clearEmbeddedSessionPromptStates([sessionId]);
+      }
+    },
+  );
 });

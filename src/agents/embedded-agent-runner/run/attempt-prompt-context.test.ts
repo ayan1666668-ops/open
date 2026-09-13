@@ -12,6 +12,7 @@ import {
   resetSubagentRegistryForTests,
 } from "../../subagents/registry/subagent-registry.test-helpers.js";
 import type { SubagentRunRecord } from "../../subagents/registry/subagent-registry.types.js";
+import { makeAgentAssistantMessage } from "../../test-helpers/agent-message-fixtures.js";
 import type { ToolResultPromptProjectionState } from "../session-prompt-state.js";
 import type { EmbeddedRunAttemptParams } from "./types.js";
 
@@ -574,12 +575,10 @@ describe("prepareEmbeddedAttemptPromptContext", () => {
   it("rebases prePromptMessageCount and updates session messages when replay normalization shrinks history", async () => {
     const rawHistory: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "Historic question" }], timestamp: 10 },
-      {
-        role: "assistant",
-        content: "NO_REPLY",
-        stopReason: "stop",
+      makeAgentAssistantMessage({
+        content: [{ type: "text", text: "NO_REPLY" }],
         timestamp: 11,
-      } as unknown as AgentMessage,
+      }),
       { role: "user", content: [{ type: "text", text: "Follow-up" }], timestamp: 12 },
     ];
     const fixture = createInput({ messages: rawHistory });
@@ -594,12 +593,10 @@ describe("prepareEmbeddedAttemptPromptContext", () => {
   it("preserves prePromptMessageCount and leaves session messages untouched when replay normalization does not modify history", async () => {
     const cleanHistory: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "Historic question" }], timestamp: 10 },
-      {
-        role: "assistant",
+      makeAgentAssistantMessage({
         content: [{ type: "text", text: "Historic answer" }],
-        stopReason: "stop",
         timestamp: 11,
-      } as AgentMessage,
+      }),
     ];
     const fixture = createInput({ messages: cleanHistory });
 
@@ -612,15 +609,13 @@ describe("prepareEmbeddedAttemptPromptContext", () => {
   it("updates session messages when replay normalization modifies content without changing count", async () => {
     const contentModifiedHistory: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "Historic question" }], timestamp: 10 },
-      {
-        role: "assistant",
+      makeAgentAssistantMessage({
         content: [
           { type: "text", text: "Slides ready" },
-          { type: "attachment", attachment: { label: "slides.pptx" } },
+          { type: "text", text: "NO_REPLY" },
         ],
-        stopReason: "stop",
         timestamp: 11,
-      } as AgentMessage,
+      }),
     ];
     const fixture = createInput({ messages: contentModifiedHistory });
 
