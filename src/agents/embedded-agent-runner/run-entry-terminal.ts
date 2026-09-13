@@ -1,7 +1,7 @@
 import { buildAgentRunTerminalOutcomeFromLifecycleEvent } from "../agent-run-terminal-outcome.js";
 import {
   formatAgentRunRouteChange,
-  normalizeAgentRunTerminalReceipt,
+  normalizeAgentRunTerminalReceiptDraft,
 } from "../agent-run-terminal-receipt.js";
 import {
   buildAgentRunTerminalReplySnapshot,
@@ -162,7 +162,7 @@ export function buildRunEntryTerminal(params: {
     );
   const agentMeta = meta.agentMeta;
   const normalizedTerminalReceipt =
-    normalizeAgentRunTerminalReceipt(agentMeta?.terminalReceipt) ??
+    normalizeAgentRunTerminalReceiptDraft(agentMeta?.terminalReceipt) ??
     // CLI backends report delivery without an embedded model-turn receipt.
     // The entry owner supplies run identity; the tool supplied the send fact.
     (params.result.sourceReplyDelivered && agentMeta?.provider && agentMeta.model
