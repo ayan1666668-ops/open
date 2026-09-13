@@ -2250,7 +2250,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     });
     const resolveGatewayContext: GatewayContextResolver = () => undefined;
     const signal = new AbortController().signal;
-    const replaceSubagentRunAfterSteer = vi.fn(async () => true);
+    const replaceSubagentRunAfterSteer = vi.fn(() => true);
     testing.setDepsForTest({
       getRuntimeConfig: () => cfg,
       loadSessionEntry: () => ({ sessionId: "nested-session", updatedAt: 1 }),
