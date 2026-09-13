@@ -6,6 +6,8 @@ import { Worker } from "node:worker_threads";
 /**
  * Provisional notification delivery proof; run from the checked-out repo:
  * node --import ./scripts/tsx.mjs scripts/proof-126924-provisional-notification-delivery.ts
+ * Append --profile=combined when both wait-expiry and timeout-disposition topics
+ * are present. The default --profile=standalone pins this topic in isolation.
  *
  * Real: announcement coordinator, direct-delivery classifiers, dispatch, registry
  * singleton and wall-clock retry/grace timers, SQLite session/task/run persistence,
@@ -26,6 +28,16 @@ import type { AgentInternalEvent } from "../src/agents/internal-events.js";
 import type { SubagentAnnounceDeliveryResult } from "../src/agents/subagents/announce/subagent-announce-dispatch.js";
 import type { callGateway } from "../src/gateway/call.js";
 import type { sendMessage } from "../src/infra/outbound/message.js";
+
+// Select expectations from the known topic composition, never from observed results.
+const args = process.argv.slice(2);
+assert.ok(
+  args.length <= 1 &&
+    (args.length === 0 || args[0] === "--profile=standalone" || args[0] === "--profile=combined"),
+  "Usage: pass at most one --profile=standalone or --profile=combined",
+);
+const profile = args[0] === "--profile=combined" ? "combined" : "standalone";
+process.stdout.write(`[profile] ${profile}\n`);
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-provisional-delivery-"));
 process.env.OPENCLAW_STATE_DIR = path.join(root, "state");
@@ -190,6 +202,12 @@ try {
         assert.equal(result.requesterVisibleFinalDelivered, undefined);
         if (response === "error") {
           assert.equal(result.disposition, "retryable");
+        } else if (profile === "combined") {
+          // The timeout-disposition topic makes instructed provisional silence terminal.
+          assert.equal(result.reason, "delivery_suppressed");
+          assert.equal(result.path, "direct");
+          assert.equal(result.disposition, "intentional_non_delivery");
+          assert.equal(result.terminal, true);
         } else {
           assert.equal(result.reason, "message_tool_delivery_missing");
         }
