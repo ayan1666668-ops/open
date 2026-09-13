@@ -2148,7 +2148,6 @@ openclaw-chat-video-player {
   width: calc(100% - 36px);
   max-width: var(--chat-thread-max-width, 48rem);
   margin: 0 auto;
-  padding: 0 0 8px;
 }
 
 .chat-pr {
