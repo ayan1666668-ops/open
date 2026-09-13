@@ -20,6 +20,7 @@ describe("telegram actions contract", () => {
         expectedActions: [
           "read",
           "send",
+          "dice",
           "poll",
           "react",
           "emoji-list",
