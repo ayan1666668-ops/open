@@ -75,6 +75,12 @@ export const MemorySearchSchema = z
       .object({
         maxResults: z.number().int().positive().optional(),
         minScore: z.number().min(0).max(1).optional(),
+        /**
+         * Seconds a memory_search or memory_get call may take before it is cut off.
+         * Unset keeps the shipped behavior: 15 s for memory_search and wiki/combined memory_get,
+         * no deadline for a primary-only memory_get.
+         */
+        timeoutSeconds: z.number().positive().optional(),
       })
       .strict()
       .optional(),

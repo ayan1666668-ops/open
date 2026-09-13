@@ -2,6 +2,10 @@
  * Resolves memory-search source, sync, and ranking configuration.
  */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import {
+  clampTimerTimeoutMs,
+  MAX_TIMER_TIMEOUT_SECONDS,
+} from "@openclaw/normalization-core/number-coercion";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   normalizeConfiguredMemoryExtraPaths,
@@ -93,6 +97,19 @@ function getConfiguredMemoryEmbeddingProvider(providerId: string, cfg: OpenClawC
   return getMemoryEmbeddingProvider(providerId, cfg);
 }
 
+/**
+ * Present only when configured. Consumers keep their built-in defaults when it is
+ * absent, so an unset key changes no shipped behaviour.
+ */
+function resolveQueryTimeoutMs(timeoutSeconds: number | undefined): { timeoutMs?: number } {
+  // Bound the seconds first: a schema-valid 1e308 overflows to Infinity in milliseconds.
+  const timeoutMs =
+    timeoutSeconds === undefined
+      ? undefined
+      : clampTimerTimeoutMs(Math.min(timeoutSeconds, MAX_TIMER_TIMEOUT_SECONDS) * 1000);
+  return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
 /** Resolves source and query settings without loading an embedding provider runtime. */
 export function resolveMemorySearchIndexConfig(cfg: OpenClawConfig, agentId: string) {
   const defaults = cfg.memory?.search;
@@ -128,6 +145,7 @@ export function resolveMemorySearchIndexConfig(cfg: OpenClawConfig, agentId: str
         0,
         1,
       ),
+      ...resolveQueryTimeoutMs(overrides?.query?.timeoutSeconds ?? defaults?.query?.timeoutSeconds),
       hybrid: {
         enabled: DEFAULT_HYBRID_ENABLED,
         vectorWeight: DEFAULT_HYBRID_VECTOR_WEIGHT,

@@ -1,6 +1,10 @@
-import type { MemorySearchRuntimeDebug } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
 // Memory Core tests cover tools plugin behavior.
-import { clearMemoryPluginState } from "openclaw/plugin-sdk/memory-host-core";
+import { MEMORY_SEARCH_DEADLINE_CONTROL } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import type { MemorySearchRuntimeDebug } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
+import {
+  clearMemoryPluginState,
+  registerMemoryCorpusSupplement,
+} from "openclaw/plugin-sdk/memory-host-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MEMORY_GET_TOOL_CONTRACT, MEMORY_SEARCH_TOOL_CONTRACT } from "./memory-tool-contract.js";
 import {
@@ -481,6 +485,167 @@ describe("memory_search unavailable payloads", () => {
     setMemoryCloseImpl(async () => {});
     const retry = await tool.execute("cleanup-abort-retry", { query: "hello again" });
     expect((retry.details as { results?: unknown[] }).results).toHaveLength(1);
+  });
+
+  it("spends only the remaining call budget on one-shot cleanup", async () => {
+    vi.useFakeTimers();
+    try {
+      setMemorySearchImpl(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 800);
+        });
+        return [
+          {
+            path: "MEMORY.md",
+            startLine: 1,
+            endLine: 1,
+            score: 0.9,
+            snippet: "result near the deadline",
+            source: "memory",
+          },
+        ];
+      });
+      setMemoryCloseImpl(async () => await new Promise(() => {}));
+      const tool = createMemorySearchToolOrThrow({
+        oneShotCliRun: true,
+        config: asOpenClawConfig({
+          agents: { list: [{ id: "main", default: true }] },
+          memory: { search: { query: { timeoutSeconds: 1 } } },
+        }),
+      });
+
+      const pending = tool.execute("cleanup-budget", { query: "hello" });
+      // The search used 800 ms of a 1 s budget; a hanging close gets the remaining 200 ms, not a fresh second.
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      const result = await pending;
+      expect((result.details as { results?: unknown[] }).results).toHaveLength(1);
+    } finally {
+      setMemoryCloseImpl(async () => {});
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a managed-readiness pause out of the one-shot cleanup budget", async () => {
+    vi.useFakeTimers();
+    try {
+      setMemorySearchImpl(async (opts) => {
+        const control = opts?.[MEMORY_SEARCH_DEADLINE_CONTROL];
+        control?.report("pause");
+        await new Promise((resolve) => {
+          setTimeout(resolve, 1_000);
+        });
+        control?.report("resume");
+        return [
+          {
+            path: "MEMORY.md",
+            startLine: 1,
+            endLine: 1,
+            score: 0.9,
+            snippet: "result after readiness",
+            source: "memory",
+          },
+        ];
+      });
+      setMemoryCloseImpl(async () => await new Promise(() => {}));
+      const tool = createMemorySearchToolOrThrow({
+        oneShotCliRun: true,
+        config: asOpenClawConfig({
+          agents: { list: [{ id: "main", default: true }] },
+          memory: { search: { query: { timeoutSeconds: 1 } } },
+        }),
+      });
+
+      const pending = tool.execute("cleanup-after-readiness", { query: "hello" });
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      // Readiness took the whole second, but it was paused out of the budget:
+      // a hanging close still gets the unspent second rather than nothing.
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const result = await pending;
+      expect((result.details as { results?: unknown[] }).results).toHaveLength(1);
+    } finally {
+      setMemoryCloseImpl(async () => {});
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards the configured deadline to the wiki search", async () => {
+    vi.useFakeTimers();
+    try {
+      registerMemoryCorpusSupplement("slow-wiki", {
+        search: async () => {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 20_000);
+          });
+          return [{ corpus: "wiki", path: "wiki/alpha.md", score: 0.9, snippet: "Alpha wiki" }];
+        },
+        get: async () => null,
+      });
+      const tool = createMemorySearchToolOrThrow({
+        config: asOpenClawConfig({
+          agents: { list: [{ id: "main", default: true }] },
+          memory: { search: { query: { timeoutSeconds: 60 } } },
+        }),
+      });
+
+      const pending = tool.execute("wiki-budget", { query: "alpha", corpus: "wiki" });
+      // A healthy 20 s wiki search fits a 60 s budget; the built-in 15 s default must not cut it.
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      const result = await pending;
+      expect((result.details as { results?: Array<{ path: string }> }).results).toEqual([
+        expect.objectContaining({ path: "wiki/alpha.md" }),
+      ]);
+      expect(result.details).not.toHaveProperty("warning");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a memory_search running past the built-in 15 s when a longer deadline is configured", async () => {
+    vi.useFakeTimers();
+    try {
+      setMemorySearchImpl(async () => await new Promise(() => {}));
+      const tool = createMemorySearchToolOrThrow({
+        config: asOpenClawConfig({
+          agents: { list: [{ id: "main", default: true }] },
+          memory: { search: { query: { timeoutSeconds: 45 } } },
+        }),
+      });
+
+      const pending = tool.execute("configured-search-timeout", { query: "hello" });
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await pending;
+      expect(result.details).toMatchObject({
+        error: "memory_search timed out after 45s",
+        unavailable: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("re-resolves the manager once when a cached sqlite handle was closed", async () => {

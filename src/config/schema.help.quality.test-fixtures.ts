@@ -456,6 +456,7 @@ export const CHANNELS_AGENTS_TARGET_KEYS = [
   "memory.search.model",
   "memory.search.query.maxResults",
   "memory.search.query.minScore",
+  "memory.search.query.timeoutSeconds",
   "agents.defaults.workspace",
   "agents.entries.*.tools.alsoAllow",
   "agents.entries.*.tools.byProvider",

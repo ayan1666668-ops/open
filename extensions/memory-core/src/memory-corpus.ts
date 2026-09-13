@@ -11,6 +11,7 @@ import {
 import {
   createMemorySearchDeadlineError,
   DEFAULT_MEMORY_SEARCH_TIMEOUT_MS,
+  formatMemorySearchDeadline,
   isMemorySearchDeadlineError,
   resolveMemorySearchAbortError,
 } from "./memory/search-deadline.js";
@@ -38,6 +39,12 @@ export type MemoryCorpusAttempt<T> =
   | UnavailableMemoryCorpus<T>
   | (Omit<UnavailableMemoryCorpus<T>, "outcome"> & { outcome: "partial" })
   | { corpus: MemoryCorpus; outcome: "not-registered" };
+
+/** Result of running a corpus that exists; only a registration probe can report "not-registered". */
+export type ExecutedMemoryCorpus<T> = Exclude<
+  MemoryCorpusAttempt<T>,
+  { outcome: "not-registered" }
+>;
 
 /**
  * Flattening the failure to a string is where provenance would be lost: a
@@ -92,7 +99,7 @@ export async function attemptMemoryCorpus<T>(params: {
   unavailableValue: T;
   getPartialValue?: () => T | null;
   run: () => Promise<T>;
-}): Promise<MemoryCorpusAttempt<T>> {
+}): Promise<ExecutedMemoryCorpus<T>> {
   try {
     return {
       corpus: params.corpus,
@@ -110,19 +117,24 @@ export async function attemptMemoryCorpus<T>(params: {
 
 export async function runMemoryCorpusDeadline<T>(params: {
   operation: "memory_search" | "memory_get";
+  /** Deadline for the whole call; defaults to DEFAULT_MEMORY_SEARCH_TIMEOUT_MS. */
+  timeoutMs?: number;
   parentSignal?: AbortSignal;
+  /** Budget left when the call settles, paused readiness excluded; cleanup may spend it. */
+  onSettled?: (remainingMs: number) => void;
   run: (signal: AbortSignal, deadlineControl: MemorySearchDeadlineControl) => Promise<T>;
 }): Promise<T> {
   if (params.parentSignal?.aborted) {
     throw resolveMemorySearchAbortError(params.parentSignal);
   }
+  const timeoutMs = params.timeoutMs ?? DEFAULT_MEMORY_SEARCH_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutError = createMemorySearchDeadlineError(
-    `${params.operation} timed out after ${DEFAULT_MEMORY_SEARCH_TIMEOUT_MS / 1000}s`,
+    `${params.operation} timed out after ${formatMemorySearchDeadline(timeoutMs)}`,
   );
   const expire = () => controller.abort(timeoutError);
   // Managed readiness has its own deadline; preserve the remaining search budget.
-  let remainingMs = DEFAULT_MEMORY_SEARCH_TIMEOUT_MS;
+  let remainingMs = timeoutMs;
   let segmentStartedAt = performance.now();
   let paused = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -183,6 +195,9 @@ export async function runMemoryCorpusDeadline<T>(params: {
     if (timer) {
       clearTimeout(timer);
     }
+    params.onSettled?.(
+      paused ? remainingMs : Math.max(0, remainingMs - (performance.now() - segmentStartedAt)),
+    );
     memoryCorpusDeadlineChecks.delete(controller.signal);
     params.parentSignal?.removeEventListener("abort", onParentAbort);
   }

@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isMemorySearchDeadlineError, runMemorySearchWithDeadline } from "./search-deadline.js";
+import {
+  formatMemorySearchDeadline,
+  isMemorySearchDeadlineError,
+  runMemorySearchWithDeadline,
+} from "./search-deadline.js";
+
+describe("formatMemorySearchDeadline", () => {
+  it("reports whole and fractional deadlines exactly as configured", () => {
+    expect(formatMemorySearchDeadline(15_000)).toBe("15s");
+    expect(formatMemorySearchDeadline(1_501)).toBe("1.501s");
+    expect(formatMemorySearchDeadline(400)).toBe("0.4s");
+  });
+});
 
 describe("runMemorySearchWithDeadline", () => {
   afterEach(() => {
@@ -40,6 +52,18 @@ describe("runMemorySearchWithDeadline", () => {
     expect(taskSignal?.aborted).toBe(true);
     expect(taskSignal?.reason).toEqual(new Error("memory_search timed out after 15s"));
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports a fractional deadline without rounding it to whole seconds", async () => {
+    vi.useFakeTimers();
+    const result = runMemorySearchWithDeadline({
+      timeoutMs: 1_501,
+      run: async () => await new Promise(() => {}),
+    });
+    const resultAssertion = expect(result).rejects.toThrow("memory_search timed out after 1.501s");
+    await vi.advanceTimersByTimeAsync(1_501);
+
+    await resultAssertion;
   });
 
   it("marks its own deadline error and nothing that merely reads like one", async () => {
