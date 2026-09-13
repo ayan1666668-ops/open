@@ -7,7 +7,6 @@ import {
   DEFAULT_SECRET_PROVIDER_ALIAS,
   ENV_SECRET_REF_ID_RE,
   isSecretRef,
-  isValidEnvSecretRefId,
   type SecretRef,
   type SecretRefSource,
 } from "../secrets/ref-contract.js";
@@ -80,28 +79,6 @@ export function parseEnvTemplateSecretRef(
     provider: provider.trim() || DEFAULT_SECRET_PROVIDER_ALIAS,
     id: expectDefined(match[1], "types.secrets regex capture 1"),
   };
-}
-
-/** Collect env ids from supported SecretRef shapes anywhere in a config tree. */
-export function collectEnvSecretRefIds(value: unknown): Set<string> {
-  const ids = new Set<string>();
-  const seen = new WeakSet<object>();
-  const visit = (candidate: unknown): void => {
-    const ref = coerceSecretRef(candidate);
-    if (ref?.source === "env" && isValidEnvSecretRefId(ref.id)) {
-      ids.add(ref.id);
-      return;
-    }
-    if (typeof candidate !== "object" || candidate === null || seen.has(candidate)) {
-      return;
-    }
-    seen.add(candidate);
-    for (const child of Array.isArray(candidate) ? candidate : Object.values(candidate)) {
-      visit(child);
-    }
-  };
-  visit(value);
-  return ids;
 }
 
 /** Detect retired env SecretRef marker strings for migration and explicit rejection. */
