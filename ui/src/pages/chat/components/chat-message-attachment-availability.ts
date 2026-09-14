@@ -1,3 +1,4 @@
+import { fetchControlUiResource, subscribeBrowserAuthRestored } from "../../../app/browser-http.ts";
 import { t } from "../../../i18n/index.ts";
 import { formatUiExternalText } from "../../../lib/format-error.ts";
 import {
@@ -140,12 +141,15 @@ export function resolveAssistantAttachmentAvailability(
       refreshingAvailability?.mediaTicket,
       options,
     );
-    const pending = fetch(`${attachmentUrl}&meta=1${allowImage ? "&allow=1" : ""}`, {
-      method: allowImage ? "POST" : "GET",
-      headers,
-      credentials: "same-origin",
-      signal: controller.signal,
-    })
+    const pending = fetchControlUiResource(
+      `${attachmentUrl}&meta=1${allowImage ? "&allow=1" : ""}`,
+      {
+        method: allowImage ? "POST" : "GET",
+        headers,
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
+    )
       .then(async (res): Promise<AssistantAttachmentAvailability> => {
         if (res.status === 408 || res.status === 429 || res.status >= 500) {
           throw new Error("Attachment metadata temporarily unavailable");
@@ -277,13 +281,21 @@ function observeAssistantAttachment(source: string, options: ImageRenderOptions)
     options.agentId,
     source,
   ]);
-  return observeChatMediaResource<AssistantAttachmentAvailability>(
+  const resource = observeChatMediaResource<AssistantAttachmentAvailability>(
     "assistant-attachment",
     JSON.stringify([cacheScope, options.policyKey]),
     options.onRequestUpdate,
     source,
     cacheScope,
   );
+  if (resource.subscribers.size > 0 && !resource.releaseAuthRecovery) {
+    resource.releaseAuthRecovery = subscribeBrowserAuthRestored(() => {
+      if (isChatMediaResourceCurrent(resource) && resource.value?.status === "unavailable") {
+        retryAssistantAttachmentAvailability(source, options);
+      }
+    });
+  }
+  return resource;
 }
 
 function setAssistantAttachmentAvailability(

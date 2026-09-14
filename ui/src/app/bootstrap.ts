@@ -54,6 +54,7 @@ import {
   subscribeBootRecordPersistence,
   subscribeWarmBootConnection,
 } from "./bootstrap-warm-boot.ts";
+import { startBrowserAuthRecovery } from "./browser-auth-recovery.ts";
 import { createBrowserHistory, resolveControlUiPaths } from "./browser.ts";
 import { createChatAttachmentHandoff } from "./chat-attachment-handoff.ts";
 import { createChatSubmissions } from "./chat-submissions.ts";
@@ -115,6 +116,7 @@ export function bootstrapApplication(): ApplicationRuntime {
     startupLocation.pathname || globalThis.location?.pathname || "/",
   );
   const documentMode = resolveControlUiDocumentMode(startupLocation.pathname, basePath);
+  const stopBrowserAuthRecovery = startBrowserAuthRecovery(resourceBasePath);
   const persistedSettings = loadSettings();
   const initialSettings = documentMode
     ? resolvePageGatewaySettings(persistedSettings)
@@ -661,6 +663,7 @@ export function bootstrapApplication(): ApplicationRuntime {
       return startupLifecycle.run(steps);
     },
     stop: () => {
+      stopBrowserAuthRecovery();
       startupLifecycle.stop();
       stopWarmBootConnection();
       stopBootRecordPersistence();
