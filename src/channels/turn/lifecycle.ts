@@ -696,19 +696,15 @@ async function dispatchChannelTurnWithDeliveryOwner(
         } catch (error: unknown) {
           settlementError = error;
         }
-        if (
-          settlementError !== undefined &&
-          resolvePartialChannelDeliveryResult(settlementError) !== undefined
-        ) {
-          // Preserve deferred provider receipts so callers do not retry an accepted send.
-          throw toErrorObject(settlementError, "channel delivery settlement failed");
-        }
-        if (dispatchError !== undefined) {
-          throw toErrorObject(dispatchError, "channel dispatch failed");
-        }
-        if (settlementError !== undefined) {
-          throw toErrorObject(settlementError, "channel delivery settlement failed");
-        }
+        const settlementWins =
+          resolvePartialChannelDeliveryResult(settlementError) !== undefined ||
+          (settlementError !== undefined && dispatchError === undefined);
+        const error = settlementWins ? settlementError : dispatchError;
+        if (error !== undefined)
+          throw toErrorObject(
+            error,
+            settlementWins ? "channel delivery settlement failed" : "channel dispatch failed",
+          );
         return dispatchResult!;
       },
     },
