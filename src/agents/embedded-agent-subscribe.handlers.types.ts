@@ -247,6 +247,7 @@ export type EmbeddedAgentSubscribeContext = {
     toolName: string | undefined,
     meta: string | undefined,
     commandBearing: boolean,
+    titleOnly?: string,
   ) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string, result?: unknown) => void;
   stripBlockTags: (text: string, state: StreamBlockState, options?: { final?: boolean }) => string;
@@ -398,6 +399,7 @@ export type ToolHandlerContext = {
     toolName: string | undefined,
     meta: string | undefined,
     commandBearing: boolean,
+    titleOnly?: string,
   ) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string, result?: unknown) => void;
   trimMessagingToolSent: () => void;

@@ -730,6 +730,50 @@ describe("subscribeEmbeddedAgentSession", () => {
     expect(payload?.text).toContain("Server.exec");
   });
 
+  it("hides command-derived exec metadata at verbose on when no title is present", async () => {
+    const onToolResult = vi.fn();
+    const toolHarness = createSubscribedSessionHarness({
+      runId: "run-exec-on-no-title",
+      verboseLevel: "on",
+      onToolResult,
+    });
+
+    toolHarness.emit({
+      type: "tool_execution_start",
+      toolName: "exec",
+      toolCallId: "tool-exec-on-no-title",
+      args: { command: "echo private-sentinel && cat secrets.env" },
+    });
+
+    await Promise.resolve();
+
+    const payload = toolResultPayloadAt(onToolResult, 0);
+    expect(payload?.text).toContain("Exec");
+    expect(payload?.text).not.toContain("private-sentinel");
+    expect(payload?.text).not.toContain("secrets.env");
+  });
+
+  it("keeps command-derived exec metadata visible at verbose full", async () => {
+    const onToolResult = vi.fn();
+    const toolHarness = createSubscribedSessionHarness({
+      runId: "run-exec-full-meta",
+      verboseLevel: "full",
+      onToolResult,
+    });
+
+    toolHarness.emit({
+      type: "tool_execution_start",
+      toolName: "exec",
+      toolCallId: "tool-exec-full-meta",
+      args: { command: "echo private-sentinel && cat secrets.env" },
+    });
+
+    await Promise.resolve();
+
+    const payload = toolResultPayloadAt(onToolResult, 0);
+    expect(payload?.text).toContain("private-sentinel");
+  });
+
   it("includes browser action metadata in tool summaries", async () => {
     const onToolResult = vi.fn();
 
