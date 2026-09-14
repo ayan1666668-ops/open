@@ -377,25 +377,34 @@ describe("native Control UI browser assets", () => {
       const response = createResponse();
       const nativePath = `${basePath}/__openclaw__/plugins/control-ui/native-ui/`;
       const framePath = `${basePath}/plugin-frame/`;
-      setControlUiPluginAuthCookie(
-        response.res,
-        [
-          { pluginId: "native-ui", path: nativePath, match: "prefix", scopes: ["operator.read"] },
-          { pluginId: "native-ui", path: framePath, match: "prefix", scopes: ["operator.read"] },
-        ],
-        {
-          generation: resolveSharedGatewaySessionGeneration(AUTH_TOKEN),
-          basePath,
-          allowInsecureNativeAssets: true,
-        },
-      );
-      const cookies = response.setHeader.mock.calls
-        .filter(([name]) => name === "Set-Cookie")
-        .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
-      expect(cookies).toEqual([
-        expect.stringContaining(`Path=${nativePath}; HttpOnly; SameSite=Strict;`),
-        expect.stringContaining(`Path=${framePath}; HttpOnly; Secure; SameSite=None;`),
-      ]);
+      const request = createRequest({
+        path: `${basePath}/control-ui-config.json`,
+        host: "localhost:18789",
+        remoteAddress: "127.0.0.1",
+      });
+      try {
+        setControlUiPluginAuthCookie(
+          response.res,
+          [
+            { pluginId: "native-ui", path: nativePath, match: "prefix", scopes: ["operator.read"] },
+            { pluginId: "native-ui", path: framePath, match: "prefix", scopes: ["operator.read"] },
+          ],
+          {
+            generation: resolveSharedGatewaySessionGeneration(AUTH_TOKEN),
+            basePath,
+            request,
+          },
+        );
+        const cookies = response.setHeader.mock.calls
+          .filter(([name]) => name === "Set-Cookie")
+          .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
+        expect(cookies).toEqual([
+          expect.stringContaining(`Path=${nativePath}; HttpOnly; SameSite=Strict;`),
+          expect.stringContaining(`Path=${framePath}; HttpOnly; Secure; SameSite=None;`),
+        ]);
+      } finally {
+        request.destroy();
+      }
     },
   );
 

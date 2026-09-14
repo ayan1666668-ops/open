@@ -1,6 +1,7 @@
 // Control UI plugin-tab cookie auth lets an authenticated UI open gateway-auth plugin iframes.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { TLSSocket } from "node:tls";
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import {
   CONTROL_UI_PLUGIN_AUTH_GRANT_TTL_MS,
@@ -10,6 +11,7 @@ import {
 } from "./control-ui-contract.js";
 import { controlUiPluginAssetPrefix } from "./control-ui-plugin-assets-contract.js";
 import type { ControlUiPluginTabAuthGrant } from "./control-ui-plugin-tabs.js";
+import { isLocalDirectRequest, isLoopbackHost, resolveHostName } from "./net.js";
 import { isOperatorScope, type OperatorScope } from "./operator-scopes.js";
 import { resolvePluginRoutePathContext } from "./server/plugins-http/path-context.js";
 
@@ -36,7 +38,7 @@ type PluginAuthCookieOptions = {
   profileId?: string;
   nowMs?: number;
   basePath?: string;
-  allowInsecureNativeAssets?: boolean;
+  request?: IncomingMessage;
 };
 
 function signPayload(encodedPayload: string): string {
@@ -131,7 +133,13 @@ function createControlUiPluginAuthCookie(
     path === controlUiPluginAssetPrefix(grant.pluginId, params.basePath);
   // Native assets load in the UI's own origin. Only a verified direct HTTP
   // loopback request may omit Secure so WebKit can retain and send the cookie.
-  const secure = !isNativeAsset || !params.allowInsecureNativeAssets;
+  const req = params.request;
+  const allowInsecureNativeAssets =
+    req &&
+    !(req.socket instanceof TLSSocket) &&
+    isLocalDirectRequest(req) &&
+    isLoopbackHost(resolveHostName(req.headers.host));
+  const secure = !isNativeAsset || !allowInsecureNativeAssets;
   // The sandboxed frame has an opaque origin, so descendant requests are
   // cross-site for cookie purposes even when the panel URL is same-host.
   // CHIPS cannot be used here: its cross-site-ancestor key prevents nested
