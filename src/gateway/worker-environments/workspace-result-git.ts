@@ -1,6 +1,6 @@
 import os from "node:os";
 import { enqueueGitRefMutation } from "../../infra/git-exec.js";
-import { runCommandBuffered, runCommandWithTimeout } from "../../process/exec.js";
+import { runCommandWithTimeout } from "../../process/exec.js";
 
 export const WORKSPACE_RESULT_GIT_TIMEOUT_MS = 10 * 60_000;
 
@@ -72,22 +72,4 @@ export async function updateWorkspaceResultRefs(
       baseEnv,
     });
   });
-}
-
-export async function readWorkspaceResultGitBlob(params: {
-  root: string;
-  objectId: string;
-  maxBytes: number;
-}): Promise<Buffer> {
-  const result = await runCommandBuffered(
-    workspaceResultGitCommand(params.root, ["cat-file", "blob", params.objectId]),
-    { timeoutMs: WORKSPACE_RESULT_GIT_TIMEOUT_MS, maxOutputBytes: params.maxBytes + 1 },
-  );
-  if (result.termination !== "exit" || result.code !== 0) {
-    throw new Error(result.stderr.toString("utf8").trim() || "git cat-file failed");
-  }
-  if (result.stdout.byteLength > params.maxBytes) {
-    throw new Error("Cloud workspace staged result exceeds its byte limit");
-  }
-  return result.stdout;
 }

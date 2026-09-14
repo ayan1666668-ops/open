@@ -265,7 +265,7 @@ export class WorkerProviderError extends Error {
 }
 
 /** Legacy provisioning options retained for existing provider implementations. */
-export type WorkerProvisionOptions = {
+type WorkerProvisionOptions = {
   /** Live invocation guard; required at use by providers declaring version 1. */
   assertCurrent?: () => void;
   /** Configured profile id for display; settings and operation id own allocation identity. */
@@ -323,7 +323,7 @@ export type WorkerProvisionOptions = {
 };
 
 /** Required live invocation contract for version 1 providers. */
-export type WorkerProvisionOptionsV1 = WorkerProvisionOptions & { assertCurrent: () => void };
+type WorkerProvisionOptionsV1 = WorkerProvisionOptions & { assertCurrent: () => void };
 export type WorkerSshIdentityRequestV1 = WorkerSshIdentityRequest & { assertCurrent: () => void };
 
 /** Legacy cloud-worker provider contract; direct lifecycle remains supported. */

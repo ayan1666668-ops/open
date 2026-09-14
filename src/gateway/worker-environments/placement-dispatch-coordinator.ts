@@ -566,7 +566,7 @@ export function coordinateWorkerPlacementDispatch(
       environmentId === undefined
         ? runReconciliation(() => service.reconcileActive())
         : runReconciliation(() => service.reconcileActive(environmentId), false),
-    resumeProvisioning: (placement, reconcileEnvironmentCore, explicitAuthority) => {
+    resumeProvisioning: async (placement, reconcileEnvironmentCore, explicitAuthority) => {
       // A durable placement is not permission to replay provisioning. Capture one
       // explicit waiting caller, and never replace its authority during this pass.
       const requester = explicitAuthority ? undefined : recoveryRequest(placement);
@@ -578,7 +578,7 @@ export function coordinateWorkerPlacementDispatch(
         authorize();
       } catch (error) {
         requester?.fail(error);
-        return Promise.reject(error);
+        throw error;
       }
       const inFlight = pendingOperations(placement.sessionId).find(
         (pending) => pending.kind === "recovery" && isDeepStrictEqual(pending.request, placement),

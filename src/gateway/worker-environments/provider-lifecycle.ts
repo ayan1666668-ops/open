@@ -56,6 +56,7 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
 
   const {
     requireCurrentOwner,
+    requireCurrentProvisioningOwner,
     stopOwner,
     beginDrain,
     finishProvenDestroy,
@@ -159,24 +160,11 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
       cancellation?.assertActive();
       context?.assertCurrent();
       beforeProvision?.();
-      const current = store.get(record.environmentId);
-      // Enrollment may publish its node while this exact provision is still running.
-      // Its operation and epoch own that progress; teardown instead freezes the node binding.
-      if (
-        !attemptOpen ||
-        options.isStopping() ||
-        !current ||
-        current.state !== record.state ||
-        current.provisionOperationId !== initialRecord.provisionOperationId ||
-        current.ownerEpoch !== initialRecord.ownerEpoch
-      ) {
+      const current = expirePrepared(requireCurrentProvisioningOwner(record));
+      if (!attemptOpen || options.isStopping() || current.destroyRequestedAtMs !== null) {
         throw new Error("Worker provisioning operation is closed");
       }
-      const pending = expirePrepared(current);
-      if (pending.destroyRequestedAtMs !== null) {
-        throw new Error("Worker provisioning operation is closed");
-      }
-      return pending;
+      return current;
     };
     let executionMode: WorkerExecutionMode | undefined;
     let enrollmentOperation: ReturnType<typeof nodeProvisioning.createEnrollmentOperation>;

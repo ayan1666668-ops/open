@@ -84,7 +84,7 @@ describe("worker placement shutdown replay", () => {
       remoteWorkspaceDir: "/worker/workspace",
       manifestRef: MANIFEST_REF,
     }));
-    const startTunnel = vi.spyOn(restarted, "startTunnel").mockImplementation(async (owner) => ({
+    vi.spyOn(restarted, "startTunnel").mockImplementation(async (owner) => ({
       ...owner,
       syncWorkspace,
       runWorkspaceCommand: vi.fn(),

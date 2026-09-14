@@ -88,17 +88,6 @@ type TransferAuthorization = {
   route: NodeWorkspaceTransferHttpRoute;
 };
 
-function contextOwnerValid(
-  context: TransferContext,
-  owner: NodeWorkspaceTransferOwner | undefined,
-): boolean {
-  return (
-    !context.abortController.signal.aborted &&
-    context.isAuthorized() &&
-    isNodeWorkspaceTransferOwnerCurrent(context, owner)
-  );
-}
-
 function capabilityMatchesContext(
   capability: DownloadCapability | UploadOperation,
   context: TransferContext,
@@ -134,7 +123,9 @@ export function createNodeWorkspaceTransferService(options: {
 
   const isCurrentContext = (context: TransferContext): boolean =>
     contexts.get(context.environmentId) === context &&
-    contextOwnerValid(context, options.getOwner(context.environmentId));
+    !context.abortController.signal.aborted &&
+    context.isAuthorized() &&
+    isNodeWorkspaceTransferOwnerCurrent(context, options.getOwner(context.environmentId));
 
   const discardUpload = (context: TransferContext, operation: UploadOperation): Promise<void> => {
     if (!operation.disposal) {
