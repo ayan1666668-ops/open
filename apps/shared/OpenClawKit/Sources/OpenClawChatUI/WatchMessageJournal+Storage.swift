@@ -86,6 +86,28 @@ extension OpenClawWatchMessageJournal {
         }
     }
 
+    /// Single decode point for a `gateway_routing_identity` row, shared by
+    /// every reader (route() in WatchMessageJournal.swift, and requireContext
+    /// below) so a captured identity and its later admission/claim checks can
+    /// never independently drift out of agreement. selection_required/
+    /// routing_contract are nullable only for rows written before that
+    /// migration; the legacy 3-arg reconstruction is a display contract with
+    /// no ambient-owner ambiguity to guess about, exactly like
+    /// OpenClawChatSessionRoutingIdentity's own legacy fallback.
+    static func decodeRoutingIdentity(_ row: Row) -> OpenClawChatSessionRoutingIdentity? {
+        let hasFullIdentityColumns = (row["selection_required"] as Int?) != nil &&
+            (row["routing_contract"] as String?) != nil
+        return hasFullIdentityColumns
+            ? OpenClawChatSessionRoutingIdentity(
+                scope: row["scope"],
+                mainSessionKey: row["main_session_key"],
+                defaultAgentID: row["default_agent_id"],
+                selectionRequired: (row["selection_required"] as Int?) == 1,
+                sessionRoutingContract: row["routing_contract"])
+            : OpenClawChatSessionRoutingIdentity(
+                scope: row["scope"], mainSessionKey: row["main_session_key"], defaultAgentID: row["default_agent_id"])
+    }
+
     static func requireContext(
         _ db: Database,
         context: OpenClawWatchChatDeliveryContext,
@@ -94,8 +116,7 @@ extension OpenClawWatchMessageJournal {
         try self.requireGatewayAvailable(db, gatewayID: context.gatewayStableID)
         let row = try self.requirePersistedGeneration(db, context: context)
         if matchRoutingContract {
-            guard let identity = OpenClawChatSessionRoutingIdentity(
-                scope: row["scope"], mainSessionKey: row["main_session_key"], defaultAgentID: row["default_agent_id"]),
+            guard let identity = self.decodeRoutingIdentity(row),
                 identity.contract.utf8.elementsEqual(context.sessionRoutingContract.utf8)
             else {
                 throw OpenClawWatchChatDeliveryError(

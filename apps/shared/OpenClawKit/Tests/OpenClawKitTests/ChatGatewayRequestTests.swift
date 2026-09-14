@@ -305,14 +305,14 @@ struct ChatGatewayRequestTests {
         let request = OpenClawChatGatewayRequests.patchSessionSettings(
             sessionKey: "global",
             agentID: "reviewer",
-            model: .some("openai/gpt-5.6-sol"),
+            model: .some("openai/gpt-5.6-luna"),
             thinkingLevel: .some("ultra"),
             verboseLevel: .some("full"))
 
         #expect(request.method == "sessions.patch")
         #expect(request.params["key"]?.value as? String == "global")
         #expect(request.params["agentId"]?.value as? String == "reviewer")
-        #expect(request.params["model"]?.value as? String == "openai/gpt-5.6-sol")
+        #expect(request.params["model"]?.value as? String == "openai/gpt-5.6-luna")
         #expect(request.params["thinkingLevel"]?.value as? String == "ultra")
         #expect(request.params["verboseLevel"]?.value as? String == "full")
     }
@@ -736,6 +736,21 @@ struct ChatGatewayRequestTests {
         #expect(inherited.params["expectedToolOverrides"] == nil)
     }
 
+    @Test func `send request omits the unconfirmed routing contract placeholder`() {
+        let request = OpenClawChatGatewayRequests.sendMessage(
+            sessionKey: "global",
+            agentID: "reviewer",
+            expectedSessionRoutingContract: OpenClawChatSessionRoutingContract.unconfirmed,
+            message: "unconfirmed",
+            thinking: nil,
+            idempotencyKey: "send-unconfirmed",
+            attachments: [])
+        // The placeholder means the gateway hasn't confirmed a fingerprint
+        // yet; asserting it on the wire would trip the gateway's own
+        // session-routing-changed guard the same way a stale guess would.
+        #expect(request.params["expectedSessionRoutingContract"] == nil)
+    }
+
     @Test func `question resolve request uses the gateway answer envelope`() throws {
         let request = OpenClawChatGatewayRequests.resolveQuestion(
             id: "ask_123",
@@ -892,23 +907,38 @@ struct ChatGatewayPayloadCodecTests {
         #expect(identity.contract == "per-sender|main|unowned")
     }
 
-    @Test func `routing identity reconstructs legacy gateway contract`() throws {
+    @Test func `routing identity uses the shared placeholder for an unconfirmed contract regardless of selection state`() throws {
         let identity = try OpenClawChatGatewayPayloadCodec.decodeSessionRoutingIdentity(
             Data(#"{"defaultId":"Work","mainKey":"Primary","scope":"global","agents":[]}"#.utf8))
 
         #expect(identity.defaultAgentID == "work")
         #expect(!identity.selectionRequired)
-        #expect(identity.contract == "global|primary|work")
+        // Reconstructing scope|mainKey|defaultAgentID assumes agents.list's
+        // served default agrees with what resolveSessionRoutingContract
+        // actually validates. A gateway with agents.defaults.systemAgent.
+        // agentId set can report selectionRequired: false while still
+        // validating against that systemAgent id rather than the served
+        // defaultId (github.com/openclaw/openclaw/issues/126315#issuecomment-5656412601,
+        // chasechou), so a reconstructed guess is unsafe here too — not just
+        // when selection is required.
+        #expect(identity.contract == OpenClawChatSessionRoutingContract.unconfirmed)
     }
 
-    @Test func `routing identity preserves legacy required selection without contract`() throws {
+    @Test func `routing identity uses the shared placeholder for an unconfirmed contract when selection is required`() throws {
         let identity = try OpenClawChatGatewayPayloadCodec.decodeSessionRoutingIdentity(
             Data(#"{"defaultId":"Work","mainKey":"Primary","scope":"per-sender","selectionRequired":true,"agents":[]}"#
                 .utf8))
 
         #expect(identity.defaultAgentID == "work")
         #expect(identity.selectionRequired)
-        #expect(identity.contract == "per-sender|primary|unowned")
+        // The gateway never confirmed a value here; guessing "unowned" would
+        // disagree with a gateway that resolves an ambient owner instead
+        // (e.g. via agents.defaults.systemAgent.agentId) and permanently trip
+        // its session-routing-changed guard. The shared placeholder survives
+        // every isEmpty-collapses-to-nil normalization between here and the
+        // outbox, and every wire request excludes it just like a nil/empty
+        // contract.
+        #expect(identity.contract == OpenClawChatSessionRoutingContract.unconfirmed)
     }
 
     @Test func `model choices preserve metadata and replace blank names`() throws {

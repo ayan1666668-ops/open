@@ -337,7 +337,11 @@ public enum OpenClawWatchChatDeliveryCodec {
         try self.identifier(context.agentId)
         try self.identifier(context.sessionKey, limit: 512)
         try self.identifier(context.deliverySessionKey, limit: 512)
-        try self.identifier(context.sessionRoutingContract, limit: 2048)
+        // Empty means the gateway hasn't confirmed a routing fingerprint yet
+        // (the opaque value is gateway-owned; the client never guesses one).
+        // Capture- and lease-time equality checks (WatchReplyCoordinator,
+        // WatchMessageJournal) still behave correctly when both sides are empty.
+        try self.identifier(context.sessionRoutingContract, limit: 2048, allowEmpty: true)
     }
 
     public static func validateCommand(_ command: OpenClawWatchChatDeliveryCommand, nowMs: Int64) throws {
@@ -469,8 +473,8 @@ public enum OpenClawWatchChatDeliveryCodec {
         guard data.count <= self.maxEnvelopeBytes else { throw self.tooLarge() }
     }
 
-    private static func identifier(_ value: String, limit: Int = 256) throws {
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+    private static func identifier(_ value: String, limit: Int = 256, allowEmpty: Bool = false) throws {
+        guard allowEmpty || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               value.count <= limit,
               value.utf8.count <= limit * 4,
               !value.utf8.contains(0)

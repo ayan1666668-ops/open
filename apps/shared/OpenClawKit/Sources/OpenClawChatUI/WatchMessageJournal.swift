@@ -55,11 +55,13 @@ public actor OpenClawWatchMessageJournal {
             guard let row = try Row.fetchOne(
                 db,
                 sql: "SELECT * FROM gateway_routing_identity WHERE gateway_id = ?",
-                arguments: [gatewayStableID]),
-                let identity = OpenClawChatSessionRoutingIdentity(
-                    scope: row["scope"],
-                    mainSessionKey: row["main_session_key"],
-                    defaultAgentID: row["default_agent_id"])
+                arguments: [gatewayStableID])
+            else { return nil }
+            // Shared with requireContext's admission/claim check
+            // (WatchMessageJournal+Storage.swift) so a captured identity and
+            // its later validation can never independently drift out of
+            // agreement the way they did before this decode was unified.
+            guard let identity = Self.decodeRoutingIdentity(row)
             else { return nil }
             // Forget deletes this row. Never restore a generation captured before
             // the transaction: a newly paired owner must get a fresh identity.

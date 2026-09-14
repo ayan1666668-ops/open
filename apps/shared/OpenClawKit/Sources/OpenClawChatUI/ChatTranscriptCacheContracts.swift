@@ -483,15 +483,27 @@ public struct OpenClawChatSessionRoutingIdentity: Codable, Equatable, Sendable {
         self.selectionRequired = selectionRequired
         if let authoritativeContract, !authoritativeContract.isEmpty {
             self.contract = authoritativeContract
-        } else if selectionRequired,
-                  let unownedContract = OpenClawChatSessionRoutingContract.make(
-                      scope: display.scope,
-                      mainKey: display.mainKey,
-                      defaultAgentID: "unowned")
-        {
-            self.contract = unownedContract
         } else {
-            self.contract = displayContract
+            // The gateway is the sole owner of this opaque fingerprint.
+            // Reconstructing a display contract from scope/mainKey/
+            // defaultAgentID assumes agents.list's served default agrees
+            // with what resolveSessionRoutingContract actually validates —
+            // true only for a gateway old enough to predate explicit-
+            // ownership selection entirely. A modern gateway with
+            // agents.defaults.systemAgent.agentId set can report
+            // selectionRequired: false (an ambient owner *was* resolved)
+            // while still validating against that systemAgent id rather
+            // than agents.list's served defaultId, e.g. when systemAgent.
+            // agentId isn't the first configured agents.entries key —
+            // reported in production against a 2026.9.4 gateway:
+            // https://github.com/openclaw/openclaw/issues/126315#issuecomment-5656412601
+            // (chasechou). A reconstructed guess permanently disagrees with
+            // the gateway there too and trips its own session-routing-
+            // changed guard on every send. Use the shared unconfirmed
+            // placeholder instead of asserting a value the gateway never
+            // confirmed; every wire request excludes it the same way it
+            // excludes a nil/empty contract.
+            self.contract = OpenClawChatSessionRoutingContract.unconfirmed
         }
     }
 }
