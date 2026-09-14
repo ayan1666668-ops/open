@@ -4,7 +4,8 @@ import {
   deleteSessionEntryLifecycle,
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
-import { writeAgentRunTerminalReceipt } from "../state/agent-run-terminal-receipts.js";
+import { emitAgentEvent } from "../infra/agent-events.js";
+import { registerAgentRunContext } from "../infra/agent-run-registry.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { resetAgentJobStateForTest } from "./agent-turn/agent-job.js";
@@ -58,14 +59,26 @@ it(
 
     try {
       await replaceSessionEntry({ agentId, sessionKey, storePath }, { sessionId, updatedAt: 42 });
-      writeAgentRunTerminalReceipt({
+      const producingClient = await restartGateway();
+      registerAgentRunContext(runId, { agentId, sessionKey, sessionId });
+      emitAgentEvent({
         runId,
-        owner: { agentId, sessionKey, sessionId },
-        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+        stream: "lifecycle",
+        data: { phase: "start", startedAt: 10 },
       });
-      closeOpenClawStateDatabaseForTest();
+      emitAgentEvent({
+        runId,
+        stream: "lifecycle",
+        data: { phase: "end", executionSettled: true, startedAt: 10, endedAt: 20 },
+      });
+      await expect(producingClient.request("agent.wait", { runId, timeoutMs: 0 })).resolves.toEqual(
+        { runId, status: "ok", startedAt: 10, endedAt: 20 },
+      );
+      console.log(
+        "TERMINAL_RECEIPT_PRODUCTION_COMPLETION",
+        JSON.stringify({ runId, status: "ok" }),
+      );
 
-      await restartGateway();
       await stopGateway();
       const recoveredClient = await restartGateway();
       await expect(recoveredClient.request("agent.wait", { runId, timeoutMs: 0 })).resolves.toEqual(

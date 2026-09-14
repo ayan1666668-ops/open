@@ -123,5 +123,21 @@ describe("same-version additive terminal receipt schema", () => {
     } finally {
       publishedReader.close();
     }
+
+    const upgradedCandidate = openOpenClawStateDatabase(options);
+    expect(readVersion(upgradedCandidate.db)).toBe(17);
+    expect(
+      readAgentRunTerminalReceipt({
+        runId: `opaque-${"x".repeat(300)}`,
+        owner,
+        now: 11,
+        env: options.env,
+      }),
+    ).toMatchObject({ owner, terminalJson });
+    closeOpenClawStateDatabaseForTest();
+
+    const reopenedCandidate = openOpenClawStateDatabase(options);
+    expect(readVersion(reopenedCandidate.db)).toBe(17);
+    expect(hasReceiptTable(reopenedCandidate.db)).toBe(true);
   });
 });

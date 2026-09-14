@@ -144,6 +144,22 @@ describe("managed handoff native staging", () => {
     },
   );
 
+  it("never resolves a source-runtime helper from the caller working directory", () => {
+    const untrustedCwd = path.join(root, "untrusted-cwd");
+    write(path.join(untrustedCwd, "dist", "managed-handoff-runtime.mjs"), "untrusted helper");
+    resolveRuntimeWorkerUrlMock.mockReturnValue(pathToFileURL(path.join(root, "runtime.ts")));
+    const previousCwd = process.cwd();
+    process.chdir(untrustedCwd);
+    try {
+      expect(() => stageManagedHandoffRuntime(destination)).toThrow(
+        "Managed handoff requires its sealed runtime",
+      );
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   it.each([
     { selected: "prebuilt" as const, both: false },
     { selected: "prebuilt" as const, both: true },

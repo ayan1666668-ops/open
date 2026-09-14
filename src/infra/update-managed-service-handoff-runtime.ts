@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
 import { stageFreeBsdManagedHandoffNativeRuntime } from "./update-managed-service-handoff-native.js";
 import {
@@ -12,7 +12,11 @@ import {
 export function stageManagedHandoffRuntime(directory: string): string[] {
   let source = resolveRuntimeWorkerUrl(managedHandoffRuntimeEntrypoint);
   if (!source.pathname.endsWith(".mjs")) {
-    const builtSource = path.resolve("dist", MANAGED_HANDOFF_RUNTIME_ENTRY);
+    const installationRoot = path.resolve(
+      path.dirname(fileURLToPath(managedHandoffRuntimeEntrypoint.currentModuleUrl)),
+      "../..",
+    );
+    const builtSource = path.join(installationRoot, "dist", MANAGED_HANDOFF_RUNTIME_ENTRY);
     if (!fs.existsSync(builtSource)) {
       throw new Error(
         "Managed handoff requires its sealed runtime; use the repository test runner or the dist-backed pnpm openclaw CLI.",

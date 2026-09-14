@@ -12,7 +12,9 @@ const state = vi.hoisted(() => ({
     entry: { sessionId?: string; createdActor?: Record<string, unknown> };
   } | null,
   visible: true,
-  waitResult: { runId: "run-recovered", status: "ok" as const },
+  waitResult: { runId: "run-recovered", status: "ok" as const } as
+    | { runId: string; status: "ok" }
+    | Promise<{ runId: string; status: "ok" }>,
 }));
 
 vi.mock("../../infra/agent-run-registry.js", () => ({
@@ -73,6 +75,7 @@ describe("agent.wait recovered receipt authorization", () => {
       },
     };
     state.visible = true;
+    state.waitResult = { runId: "run-recovered", status: "ok" };
   });
 
   it("allows a still-authorized caller to wait after process-local run state is lost", async () => {
@@ -102,4 +105,42 @@ describe("agent.wait recovered receipt authorization", () => {
       expect.objectContaining({ code: "INVALID_REQUEST", message: "agent run was not found" }),
     );
   });
+
+  it.each([
+    {
+      label: "visibility is revoked",
+      changeAuthority: () => {
+        state.visible = false;
+      },
+    },
+    {
+      label: "the retained session is reassigned",
+      changeAuthority: () => {
+        state.target = {
+          storeKey: "agent:main:owned",
+          entry: { sessionId: "session-replacement" },
+        };
+      },
+    },
+  ])(
+    "rejects the final response when $label during a pending wait",
+    async ({ changeAuthority }) => {
+      let release!: (value: { runId: string; status: "ok" }) => void;
+      state.waitResult = new Promise((resolve) => {
+        release = resolve;
+      });
+      const pending = wait();
+      await vi.waitFor(() => expect(state.waitResult).toBeInstanceOf(Promise));
+      changeAuthority();
+      release({ runId: "run-recovered", status: "ok" });
+
+      const respond = await pending;
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST", message: "agent run was not found" }),
+      );
+      expect(respond).not.toHaveBeenCalledWith(true, state.waitResult);
+    },
+  );
 });

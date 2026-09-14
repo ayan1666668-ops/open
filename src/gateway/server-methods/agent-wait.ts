@@ -27,9 +27,13 @@ export const agentWaitHandler: GatewayRequestHandlers["agent.wait"] = async ({
     return;
   }
   const gatewayClient = client ?? null;
-  if (gatewayClient?.authenticatedUserProfile && !isGatewayAdmin(gatewayClient)) {
-    const cfg = context.getRuntimeConfig();
-    if (operatorSessionCap(gatewayClient, cfg) === "none") {
+  const cfg = context.getRuntimeConfig();
+  const requiresRunAuthorization =
+    gatewayClient?.authenticatedUserProfile &&
+    !isGatewayAdmin(gatewayClient) &&
+    operatorSessionCap(gatewayClient, cfg) === "none";
+  const canReadRun = (): boolean => {
+    if (requiresRunAuthorization) {
       const run = getAgentRunContext(params.runId);
       let recoveredOwner:
         | NonNullable<ReturnType<typeof readDurableAgentJobTerminalReceipt>>["owner"]
@@ -59,17 +63,25 @@ export const agentWaitHandler: GatewayRequestHandlers["agent.wait"] = async ({
         !retainedSessionMatches ||
         visibilityFilter?.(target.storeKey, target.entry) === false
       ) {
-        respond(
-          false,
-          undefined,
-          errorShape(ErrorCodes.INVALID_REQUEST, "agent run was not found"),
-        );
-        return;
+        return false;
       }
     }
+    return true;
+  };
+  const rejectUnavailableRun = () =>
+    respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "agent run was not found"));
+  if (!canReadRun()) {
+    rejectUnavailableRun();
+    return;
   }
   const result = await createAgentTurnService({ context, isWebchatConnect }).waitForTurn(
     params as AgentWaitParams,
   );
+  // Authority can change while a wait is pending. Never release a terminal result
+  // under the stale authorization snapshot captured before the await.
+  if (!canReadRun()) {
+    rejectUnavailableRun();
+    return;
+  }
   respond(true, result);
 };

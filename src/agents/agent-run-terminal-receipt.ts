@@ -104,9 +104,6 @@ export function normalizeAgentRunApprovalReceipts(
   }
   const byApprovalId = new Map<string, AgentRunApprovalReceipt>();
   for (const entry of value) {
-    if (byApprovalId.size >= AGENT_RUN_TERMINAL_LINK_MAX_ITEMS) {
-      break;
-    }
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       continue;
     }
@@ -119,6 +116,9 @@ export function normalizeAgentRunApprovalReceipts(
       continue;
     }
     const previous = byApprovalId.get(approvalId);
+    if (!previous && byApprovalId.size >= AGENT_RUN_TERMINAL_LINK_MAX_ITEMS) {
+      continue;
+    }
     byApprovalId.set(approvalId, {
       approvalId,
       ...(toolCallId

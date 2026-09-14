@@ -479,9 +479,8 @@ function getCanonicalAgentRunSnapshot(
   snapshotsBySource: Map<AgentJobSource, AgentRunSnapshot>,
   source?: "chat",
 ): AgentRunSnapshot | undefined {
-  const dedupe = source
-    ? snapshotsBySource.get(source)
-    : getFreshestDedupeSnapshot(snapshotsBySource);
+  const chat = snapshotsBySource.get("chat");
+  const dedupe = source ? chat : getFreshestDedupeSnapshot(snapshotsBySource);
   // A chat waiter must observe completed delivery before consuming the same
   // run's lifecycle outcome and reply. An agent dedupe cannot close that barrier.
   if (source && !dedupe) {
@@ -491,8 +490,13 @@ function getCanonicalAgentRunSnapshot(
   if (!dedupe || !lifecycle) {
     return dedupe ?? lifecycle;
   }
-  if (source === "chat") {
-    return mergeChatDedupeWithLifecycle(dedupe, lifecycle);
+  if (
+    source === "chat" ||
+    (chat !== undefined &&
+      chat.status !== "ok" &&
+      terminalOutcomeFromSnapshot(lifecycle)?.reason === "completed")
+  ) {
+    return mergeChatDedupeWithLifecycle(chat ?? dedupe, lifecycle);
   }
   return dedupe.version > lifecycle.version
     ? mergeSnapshot(lifecycle, dedupe)
@@ -659,6 +663,19 @@ export async function waitForAgentJob(params: {
 /** Test-only failure injection for proving persistence gates hot success publication. */
 export function setAgentJobTerminalPersistenceFailureForTest(fail: boolean): void {
   agentJobDurability.setFailureForTest(fail);
+}
+
+/** Test-only visibility into bounded process-local durability bookkeeping. */
+export function readAgentJobDurabilityStateForTest(): {
+  approvalReceiptRuns: number;
+  durabilityFences: number;
+  pendingTerminals: number;
+} {
+  return {
+    approvalReceiptRuns: agentRunApprovalReceipts.size,
+    durabilityFences: agentRunDurabilityFences.size,
+    pendingTerminals: pendingDurableAgentRunTerminals.size,
+  };
 }
 
 /** Clears process-local projections while deliberately retaining durable SQLite receipts. */

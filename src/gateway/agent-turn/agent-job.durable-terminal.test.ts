@@ -16,6 +16,7 @@ import {
   runOpenClawStateWriteTransaction,
 } from "../../state/openclaw-state-db.js";
 import {
+  readAgentJobDurabilityStateForTest,
   resetAgentJobStateForTest,
   setAgentJobTerminalPersistenceFailureForTest,
   setGatewayDedupeEntry,
@@ -402,6 +403,11 @@ describe("durable agent job terminal receipts", () => {
       sessionId: "incognito-session",
     };
     startRun(runId, incognitoOwner);
+    emitAgentEvent({
+      runId,
+      stream: "approval",
+      data: { phase: "requested", approvalId: "incognito-approval" },
+    });
     finishRun(runId);
 
     await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toMatchObject({
@@ -409,6 +415,10 @@ describe("durable agent job terminal receipts", () => {
       endedAt: 20,
     });
     expect(readAgentRunTerminalReceipt({ runId, owner: incognitoOwner })).toBeUndefined();
+    expect(readAgentJobDurabilityStateForTest()).toMatchObject({
+      approvalReceiptRuns: 0,
+      durabilityFences: 0,
+    });
 
     resetAgentJobStateForTest();
     await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toBeNull();
@@ -639,6 +649,24 @@ describe("durable agent job terminal receipts", () => {
     const recovered = waitForAgentJob({ runId, timeoutMs: 1_000 });
     await vi.advanceTimersByTimeAsync(250);
     await expect(recovered).resolves.toMatchObject({ status: "ok", endedAt: 20 });
+  });
+
+  it("keeps one bounded pending terminal through sustained write failure and recovers", async () => {
+    vi.useFakeTimers();
+    const runId = `run-sustained-write-failure-${runSequence++}`;
+    startRun(runId);
+    setAgentJobTerminalPersistenceFailureForTest(true);
+    finishRun(runId);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toBeNull();
+    expect(readAgentJobDurabilityStateForTest()).toMatchObject({ pendingTerminals: 1 });
+
+    setAgentJobTerminalPersistenceFailureForTest(false);
+    const recovered = waitForAgentJob({ runId, timeoutMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(recovered).resolves.toMatchObject({ status: "ok", endedAt: 20 });
+    expect(readAgentJobDurabilityStateForTest()).toMatchObject({ pendingTerminals: 0 });
   });
 
   it("omits terminal reply content while retaining bounded delivery metadata", async () => {

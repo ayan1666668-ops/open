@@ -166,6 +166,31 @@ describe("normalizeAgentRunTerminalReceipt", () => {
     });
   });
 
+  it("merges updates for retained approvals after reaching the cap", () => {
+    const waiting = Array.from({ length: 20 }, (_, index) => ({
+      approvalId: `approval-${index}`,
+      state: "waiting" as const,
+    }));
+    const normalized = normalizeAgentRunTerminalReceipt({
+      ...visibleRerouteReceipt,
+      approvalReceipts: [
+        ...waiting,
+        { approvalId: "approval-0", toolCallId: "tool-0", state: "resolved" },
+        { approvalId: "approval-over-cap", state: "resolved" },
+      ],
+    });
+
+    expect(normalized?.approvalReceipts).toHaveLength(20);
+    expect(normalized?.approvalReceipts?.[0]).toEqual({
+      approvalId: "approval-0",
+      toolCallId: "tool-0",
+      state: "resolved",
+    });
+    expect(normalized?.approvalReceipts).not.toContainEqual(
+      expect.objectContaining({ approvalId: "approval-over-cap" }),
+    );
+  });
+
   it("omits absent optional linkage", () => {
     const normalized = normalizeAgentRunTerminalReceipt(visibleRerouteReceipt);
     expect(normalized).not.toHaveProperty("acceptedDelegations");

@@ -347,10 +347,26 @@ export function createAgentJobDurability(params: AgentJobDurabilityParams) {
     const observation = { ...snapshot, version };
     const owner = params.runOwners.get(snapshot.runId);
     if (!owner) {
+      const context = getAgentRunContext(snapshot.runId);
+      const isSettledIncognito =
+        snapshot.executionSettled === true && isIncognitoSessionKey(context?.sessionKey);
       const durable =
         params.durabilityFences.has(snapshot.runId) || snapshot.source === "chat"
           ? undefined
           : readSnapshot(snapshot.runId);
+      if (isSettledIncognito) {
+        params.approvalReceipts.delete(snapshot.runId);
+        try {
+          deleteAgentRunTerminalReceipt({ runId: snapshot.runId });
+          params.durabilityFences.delete(snapshot.runId);
+        } catch (error) {
+          // Preserve the fence until a future run can invalidate the stale receipt.
+          params.durabilityFences.add(snapshot.runId);
+          log.warn(
+            `terminal receipt incognito cleanup pending for run ${snapshot.runId}: ${String(error)}`,
+          );
+        }
+      }
       params.publishSnapshot(
         durable ? projectSnapshot(observation, durable) : observation,
         version,

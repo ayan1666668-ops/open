@@ -125,6 +125,30 @@ describe("waitForAgentJob settled execution", () => {
     });
   });
 
+  it("preserves a chat delivery failure for public waits after controller cleanup", async () => {
+    const runId = `chat-post-cleanup-delivery-failure-${runSequence++}`;
+    emitAgentEvent({
+      runId,
+      stream: "lifecycle",
+      data: { phase: "end", executionSettled: true, endedAt: 100 },
+    });
+    setGatewayDedupeEntry({
+      dedupe: new Map<string, DedupeEntry>(),
+      key: `chat:${runId}`,
+      entry: {
+        ts: 200,
+        ok: false,
+        payload: { runId, status: "error", error: "delivery failed", endedAt: 200 },
+      },
+    });
+
+    await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toMatchObject({
+      status: "error",
+      error: "delivery failed",
+      endedAt: 200,
+    });
+  });
+
   it.each([
     { status: "timeout", stopReason: "timeout", timeoutPhase: "provider", providerStarted: true },
     { status: "error", stopReason: "rpc" },

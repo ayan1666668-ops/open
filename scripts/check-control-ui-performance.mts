@@ -21,7 +21,7 @@ const DEFAULT_STARTUP_BUDGET_BASELINE_PATH = path.resolve(
 // Each landed change can consume this much ratchet tolerance, so small increases
 // may accumulate. The fixed startup JS ceiling bounds that cumulative creep.
 const CONTROL_UI_STARTUP_JS_GZIP_TOLERANCE_BYTES = 512;
-const CONTROL_UI_STARTUP_JS_GZIP_BUILD_VARIANCE_BYTES = 96;
+const CONTROL_UI_STARTUP_JS_GZIP_BUILD_VARIANCE_BYTES = 64;
 const CONTROL_UI_STARTUP_CSS_GZIP_TARGET_BYTES = 45 * KIB;
 // Immediate Home and diagnostic frames approved in #147574, including shared header styles.
 const CONTROL_UI_CSS_GZIP_GROWTH_BYTES = 1.5 * KIB;
