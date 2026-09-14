@@ -698,11 +698,11 @@ export async function waitForAgentJob(params: {
         const pending = pendingAgentRunErrors.get(params.runId);
         const pendingError = pending?.snapshot;
         if (pendingError && pendingError.version > afterVersion) {
-          finish(
+          const sticky =
             !pending.timer ||
-              isStickyAgentRunTerminalOutcome(terminalOutcomeFromSnapshot(pendingError))
-              ? publicSnapshot(pendingError)
-              : createPendingErrorTimeoutSnapshot(pendingError),
+            isStickyAgentRunTerminalOutcome(terminalOutcomeFromSnapshot(pendingError));
+          finish(
+            sticky ? publicSnapshot(pendingError) : createPendingErrorTimeoutSnapshot(pendingError),
           );
           return;
         }
