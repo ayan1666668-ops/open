@@ -10,7 +10,6 @@ import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { AgentsListResult, GatewaySessionRow, SessionsListResult } from "../api/types.ts";
 import type { NavigationRouteId } from "../app-navigation.ts";
 import type { RouteId } from "../app-route-paths.ts";
-import { createAgentSelectionCapability } from "../app/agent-selection.ts";
 import { createApplicationConfigCapability } from "../app/config.ts";
 import type {
   ApplicationContext,
@@ -29,6 +28,10 @@ import {
   type SessionListOptions,
 } from "../lib/sessions/index.ts";
 import { reconcileSessionHistory } from "../lib/sessions/reconcile.ts";
+import {
+  createSidebarContextLifecycle,
+  disposeSidebarContextLifecycles,
+} from "./app-sidebar-context-lifecycle.ts";
 import {
   createApplicationContextProvider,
   hiddenScopeUpgradeCapability,
@@ -66,10 +69,13 @@ export type SidebarLifecycleState = HTMLElement & {
   catalogOpenTarget: "viewer" | "terminal";
   canPairDevice: boolean;
   sidebarEntries: readonly string[];
+  sidebarAgentsMode: "chip" | "roster";
+  navigationVisible: boolean;
   sidebarLiveActivity: boolean;
   onUpdateSidebarEntries?: (entries: string[]) => void;
   pinnedAgentIds: readonly string[];
   readonly sessionOwnerFilterId: string | null;
+  setSessionOwnerFilter: AppSidebarSessionNavigationElement["setSessionOwnerFilter"];
   sessionKey: string;
   onNavigate: (
     routeId: string,
@@ -99,10 +105,6 @@ export type SidebarLifecycleState = HTMLElement & {
   onToggleSidebar?: () => void;
   onOpenNewSession?: (agentId: string, target?: { catalogId: string }) => void;
   variant: "panel" | "drawer";
-};
-
-export type LobsterPetElement = HTMLElement & {
-  runOutcome: "ok" | "error" | "aborted";
 };
 
 export type TestSessionMenu = HTMLElement & {
@@ -236,16 +238,6 @@ export function successfulSessionPatch(key: string) {
     key,
     entry: { sessionId: key },
   };
-}
-
-export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
 }
 
 export function createSessionsHarness(agentId: string, keys: string[]) {
@@ -386,6 +378,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     listSnapshot(scope: Parameters<SessionCapability["listSnapshot"]>[0]) {
       if (
         (!scope.archivedFilter || scope.archivedFilter === "active") &&
+        !scope.spawnedBy &&
         !scope.ownerId &&
         !scope.involvingMe
       ) {
@@ -404,9 +397,12 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     ) {
       return scopedSessions!.subscribeList(scope, listener);
     },
+    observeList: (...args: Parameters<SessionCapability["observeList"]>) =>
+      scopedSessions!.observeList(...args),
     refreshList(options: Parameters<SessionCapability["refreshList"]>[0]) {
       if (
         (!options?.archivedFilter || options.archivedFilter === "active") &&
+        !options?.spawnedBy &&
         !options?.ownerId &&
         !options?.involvingMe
       ) {
@@ -459,7 +455,7 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
           const { archived, ...options } = (params ?? {}) as SessionListOptions & {
             archived?: true | "all";
           };
-          if (!archived && !options.ownerId && !options.involvingMe) {
+          if (!archived && !options.spawnedBy && !options.ownerId && !options.involvingMe) {
             return state.result as T;
           }
           return (await list({
@@ -551,16 +547,15 @@ export function createContext(
       agentsError: null,
       agentsList,
     },
+    ensureList: async (): Promise<AgentsListResult | null> => agents.state.agentsList,
     subscribe: () => () => undefined,
   };
-  const agentSelection = createAgentSelectionCapability(gateway, agents, {
-    load: () => selectedAgentId,
-    save: () => undefined,
-  });
-  sidebarSessionGatewayBindings.get(sessions)?.(gateway, agentSelection);
+  const lifecycle = createSidebarContextLifecycle(gateway, agents, selectedAgentId);
+  sidebarSessionGatewayBindings.get(sessions)?.(gateway, lifecycle.agentSelection);
   return {
     config: createApplicationConfigCapability({ resourceBasePath: "" }),
     gateway,
+    ...lifecycle,
     sessions,
     plugins: {
       registrations: () => [],
@@ -571,7 +566,6 @@ export function createContext(
     placementStartup: { pause: vi.fn<ApplicationContext["placementStartup"]["pause"]>() },
     agents,
     agentIdentity,
-    agentSelection,
     scopeUpgrade: hiddenScopeUpgradeCapability,
     overlays: {
       snapshot: { approvalQueue },
@@ -712,6 +706,7 @@ export function setupSidebarTest() {
     }
     await vi.dynamicImportSettled();
     document.body.replaceChildren();
+    disposeSidebarContextLifecycles();
     if (originalLocalStorage) {
       Object.defineProperty(globalThis, "localStorage", originalLocalStorage);
     } else {

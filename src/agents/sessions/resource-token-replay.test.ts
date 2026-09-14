@@ -112,7 +112,7 @@ it.each([false, true])(
       const manager = SessionManager.open(target, dir);
       installSessionToolResultGuard(manager, {
         transformMessageForPersistence: (message) => redactTranscriptMessage(message, { logging }),
-        redactLoggingConfig: logging,
+        config: { logging },
       });
       // An explicit fresh lookup supplies the reference; no historical mask is decoded.
       const visible = appendLookup(manager, "fresh", {
@@ -130,7 +130,7 @@ it.each([false, true])(
       expect(readResource(replayed)).toBe("RESOURCE_READ_OK");
       installSessionToolResultGuard(reopened, {
         transformMessageForPersistence: (message) => redactTranscriptMessage(message, { logging }),
-        redactLoggingConfig: logging,
+        config: { logging },
       });
       reopened.appendMessage(
         makeAgentAssistantMessage({

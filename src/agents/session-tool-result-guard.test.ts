@@ -683,7 +683,7 @@ describe("installSessionToolResultGuard", () => {
     const sm = SessionManager.inMemory();
     installSessionToolResultGuard(sm, {
       transformMessageForPersistence: (message) => redactTranscriptMessage(message, { logging }),
-      redactLoggingConfig: logging,
+      config: { logging },
     });
     registerSecretValueForRedaction(registeredSecret);
     try {

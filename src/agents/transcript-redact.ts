@@ -7,6 +7,10 @@ import { OPENAI_RESPONSES_APIS } from "@openclaw/ai/internal/openai-responses-pa
 import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  copyPreparedModelVisibleToolText,
+  isPreparedModelVisibleToolText,
+} from "../logging/redact-internal.js";
 import { redactSourceInputTextWithConfig } from "../logging/redact-source.js";
 import { isSensitiveFieldKey, redactSensitiveText } from "../logging/redact.js";
 import { readNestedToolActivity } from "../sessions/nested-tool-activity.js";
@@ -19,17 +23,17 @@ import {
   type CodeModeSourceAppend,
 } from "./transcript-code-mode-source.js";
 import {
-  redactTranscriptStructuredFieldValue,
-  redactTranscriptText,
-  resolveTranscriptLoggingConfig,
-} from "./transcript-redact-fields.js";
-import {
   sanitizeTranscriptImageDataUrlField,
   sanitizeTranscriptImageRecord,
   shouldPreserveNestedTranscriptImageDataUrlFields,
   shouldPreserveTranscriptImagePayload,
 } from "./transcript-redact-images.js";
 import { sanitizeCompactionReplayState } from "./transcript-redact-replay.js";
+import {
+  redactTranscriptStructuredFieldValue,
+  redactTranscriptText,
+  resolveTranscriptLoggingConfig,
+} from "./transcript-redact-text.js";
 
 function isPlainTranscriptObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
@@ -527,6 +531,15 @@ function redactTranscriptStructuredValue(
     next = { ...source };
   }
   for (const [key, item] of Object.entries(source)) {
+    // Reuse admitted live text; custom patterns need not be idempotent.
+    if (
+      modelVisibleToolResult &&
+      key === "text" &&
+      typeof item === "string" &&
+      isPreparedModelVisibleToolText(source, item, resolveTranscriptLoggingConfig(cfg))
+    ) {
+      continue;
+    }
     // The append transaction owns this control-plane identity. Redacting it would
     // make stored dedupe disagree with the admitted message identity.
     if (location === "root" && key === "idempotencyKey") {
@@ -707,6 +720,9 @@ function redactTranscriptStructuredValue(
     }
   }
   seen.delete(value);
+  if (next && modelVisibleToolResult) {
+    copyPreparedModelVisibleToolText(source, next);
+  }
   return next ?? value;
 }
 
