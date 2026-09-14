@@ -137,8 +137,10 @@ private func printOutboxSQLitePlans(_ db: Database) throws {
         WHERE tbl_name IN ('outbox_commands', 'outbox_attachments', 'outbox_branch_scopes')
         ORDER BY name
         """).map { String(describing: $0) }
-    let version = try #require(String.fetchOne(db, sql: "SELECT sqlite_version()"))
-    let sourceID = try #require(String.fetchOne(db, sql: "SELECT sqlite_source_id()"))
+    let fetchedVersion = try String.fetchOne(db, sql: "SELECT sqlite_version()")
+    let version = try #require(fetchedVersion)
+    let fetchedSourceID = try String.fetchOne(db, sql: "SELECT sqlite_source_id()")
+    let sourceID = try #require(fetchedSourceID)
     for (name, sql, arguments) in queries {
         let plan = try Row.fetchAll(
             db, sql: "EXPLAIN QUERY PLAN " + sql, arguments: arguments).map { String(describing: $0) }
@@ -1643,13 +1645,15 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         #expect(result == nil)
         #expect(await store.branchState(for: scope) == before)
         try await databases.stateQueue.read { db in
-            #expect(try String.fetchAll(
+            let statuses = try String.fetchAll(
                 db,
                 sql: "SELECT status || ':' || last_error FROM outbox_commands ORDER BY enqueue_sequence")
-                == ["queued:", "queued:"])
-            #expect(try String.fetchOne(
-                db, sql: "SELECT expected_settings_json FROM outbox_commands WHERE client_uuid = 'first'") == "{")
-            #expect(try Int.fetchOne(db, sql: "SELECT payload FROM outbox_attachments WHERE command_id = 'later'") == 7)
+            #expect(statuses == ["queued:", "queued:"])
+            let settingsJSON = try String.fetchOne(
+                db, sql: "SELECT expected_settings_json FROM outbox_commands WHERE client_uuid = 'first'")
+            #expect(settingsJSON == "{")
+            let payload = try Int.fetchOne(db, sql: "SELECT payload FROM outbox_attachments WHERE command_id = 'later'")
+            #expect(payload == 7)
         }
     }
 
