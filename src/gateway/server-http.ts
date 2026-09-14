@@ -109,40 +109,31 @@ type PluginHttpRequestHandler = (
 type WatchNodeHttpRequestHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 type McpOAuthCallbackHandler = (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 
-const getControlUiModule = createLazyRuntimeModule(() => import("./control-ui.js"));
-const getControlUiPluginAssetsModule = createLazyRuntimeModule(
-  () => import("./control-ui-plugin-assets.js"),
-);
-const getCanvasServeModule = createLazyRuntimeModule(() => import("../canvas/serve.runtime.js"));
-const getBoardHttpModule = createLazyRuntimeModule(() => import("./board-http.js"));
-const getEmbeddingsHttpModule = createLazyRuntimeModule(() => import("./embeddings-http.js"));
-const getManagedMediaAttachmentsModule = createLazyRuntimeModule(
+const lazyRuntime = createLazyRuntimeModule;
+const getControlUiModule = lazyRuntime(() => import("./control-ui.js"));
+const getControlUiPluginAssetsModule = lazyRuntime(() => import("./control-ui-plugin-assets.js"));
+const getCanvasServeModule = lazyRuntime(() => import("../canvas/serve.runtime.js"));
+const getBoardHttpModule = lazyRuntime(() => import("./board-http.js"));
+const getEmbeddingsHttpModule = lazyRuntime(() => import("./embeddings-http.js"));
+const getManagedMediaAttachmentsModule = lazyRuntime(
   () => import("./managed-image-attachments.js"),
 );
-const getMcpAppStandaloneModule = createLazyRuntimeModule(() => import("./mcp-app-standalone.js"));
-const getPluginIconHttpModule = createLazyRuntimeModule(() => import("./plugin-icon-http.js"));
-const getWorkspaceIconHttpModule = createLazyRuntimeModule(
-  () => import("./workspace-icon-http.js"),
-);
-const getChannelAvatarHttpModule = createLazyRuntimeModule(
-  () => import("./channel-avatar-http.js"),
-);
-const getModelsHttpModule = createLazyRuntimeModule(() => import("./models-http.js"));
-const getOpenAiHttpModule = createLazyRuntimeModule(() => import("./openai-http.js"));
-const getOpenResponsesHttpModule = createLazyRuntimeModule(() => import("./openresponses-http.js"));
-const getSessionHistoryHttpModule = createLazyRuntimeModule(
-  () => import("./sessions-history-http.js"),
-);
-const getSessionKillHttpModule = createLazyRuntimeModule(() => import("./session-kill-http.js"));
-const getToolsInvokeHttpModule = createLazyRuntimeModule(() => import("./tools-invoke-http.js"));
-const getUserProfilesHttpModule = createLazyRuntimeModule(() => import("./user-profiles-http.js"));
-const getDevicePairingJoinHttpModule = createLazyRuntimeModule(
-  () => import("./device-pairing-join-http.js"),
-);
-const getPluginNodeCapabilityAuthModule = createLazyRuntimeModule(
+const getMcpAppStandaloneModule = lazyRuntime(() => import("./mcp-app-standalone.js"));
+const getPluginIconHttpModule = lazyRuntime(() => import("./plugin-icon-http.js"));
+const getWorkspaceIconHttpModule = lazyRuntime(() => import("./workspace-icon-http.js"));
+const getChannelAvatarHttpModule = lazyRuntime(() => import("./channel-avatar-http.js"));
+const getModelsHttpModule = lazyRuntime(() => import("./models-http.js"));
+const getOpenAiHttpModule = lazyRuntime(() => import("./openai-http.js"));
+const getOpenResponsesHttpModule = lazyRuntime(() => import("./openresponses-http.js"));
+const getSessionHistoryHttpModule = lazyRuntime(() => import("./sessions-history-http.js"));
+const getSessionKillHttpModule = lazyRuntime(() => import("./session-kill-http.js"));
+const getToolsInvokeHttpModule = lazyRuntime(() => import("./tools-invoke-http.js"));
+const getUserProfilesHttpModule = lazyRuntime(() => import("./user-profiles-http.js"));
+const getDevicePairingJoinHttpModule = lazyRuntime(() => import("./device-pairing-join-http.js"));
+const getPluginNodeCapabilityAuthModule = lazyRuntime(
   () => import("./server/plugin-node-capability-auth.js"),
 );
-const getPluginRouteRuntimeScopesModule = createLazyRuntimeModule(
+const getPluginRouteRuntimeScopesModule = lazyRuntime(
   () => import("./server/plugin-route-runtime-scopes.js"),
 );
 

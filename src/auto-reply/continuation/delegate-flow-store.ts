@@ -49,6 +49,8 @@ import type { ChainState, PendingContinuationDelegate } from "./types.js";
 
 const log = createSubsystemLogger("continuation/delegate-store");
 
+type DecodedDelegateFlow = PendingContinuationDelegate | undefined;
+
 export { CONTINUATION_DELEGATE_CONTROLLER_ID, CONTINUATION_POST_COMPACTION_CONTROLLER_ID };
 
 const TraceparentStateSchema = z
@@ -393,7 +395,7 @@ function decodeDelegateState(flow: TaskFlowRecord): PendingDelegateState | undef
 function decodeDelegateFlowWithOptions(
   flow: TaskFlowRecord,
   options: { requireAttachmentPayload: boolean },
-): PendingContinuationDelegate | undefined {
+): DecodedDelegateFlow {
   const state = decodeDelegateState(flow);
   if (!state) {
     return undefined;
@@ -401,13 +403,11 @@ function decodeDelegateFlowWithOptions(
   return projectDelegateFlow(flow, state, options);
 }
 
-export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
+export function decodeDelegateFlow(flow: TaskFlowRecord): DecodedDelegateFlow {
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: true });
 }
 
-export function decodeDelegateFlowMetadata(
-  flow: TaskFlowRecord,
-): PendingContinuationDelegate | undefined {
+export function decodeDelegateFlowMetadata(flow: TaskFlowRecord): DecodedDelegateFlow {
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: false });
 }
 
