@@ -3889,6 +3889,17 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
   });
 
+  it("off posts the raw table even when renderMode is card", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: { feishu: { renderMode: "card", markdown: { tables: "off" } } },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: tableMarkdown, accountId: "main" });
+
+    expect(sendMessageCall()?.text).toBe(tableMarkdown);
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
   describe.each(["channel", "account"] as const)("configured at %s scope", (scope) => {
     const accountId = scope === "account" ? "work" : undefined;
 

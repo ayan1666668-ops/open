@@ -130,9 +130,16 @@ function normalizePossibleLocalImagePath(text: string | undefined): string | nul
   return raw;
 }
 
+const MARKDOWN_TABLE_PATTERN = /\|.+\|[\r\n]+\|[-:| ]+\|/;
+
+/** A table a markdown card renderer would parse natively. */
+function hasMarkdownTable(text: string): boolean {
+  return MARKDOWN_TABLE_PATTERN.test(text);
+}
+
 /** Fenced code promotes a message to a card; a table does so only when it renders natively. */
 function shouldUseCard(text: string, nativeTables: boolean): boolean {
-  return /```[\s\S]*?```/.test(text) || (nativeTables && /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text));
+  return /```[\s\S]*?```/.test(text) || (nativeTables && hasMarkdownTable(text));
 }
 
 type FeishuOutboundPayload = Parameters<
@@ -314,8 +321,11 @@ async function sendOutboundText(params: {
   });
   const nativeTables = tableMode === "block";
   const tableText = nativeTables ? text : convertMarkdownTables(text, tableMode);
+  // off has no card representation, since a card renderer parses the pipes, so a
+  // table that stays raw takes the post path even when cards were requested.
   const useCard =
     (renderMode === "card" || (renderMode === "auto" && shouldUseCard(tableText, nativeTables))) &&
+    !(tableMode === "off" && hasMarkdownTable(tableText)) &&
     withinCardTableLimit(tableText);
 
   // Post rendering has no native tables, so block falls back to code there.

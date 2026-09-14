@@ -61,9 +61,16 @@ import {
 import { resolveReceiveIdType } from "./targets.js";
 import { addTypingIndicator, removeTypingIndicator, type TypingIndicatorState } from "./typing.js";
 
+const MARKDOWN_TABLE_PATTERN = /\|.+\|[\r\n]+\|[-:| ]+\|/;
+
+/** A table a markdown card renderer would parse natively. */
+function hasMarkdownTable(text: string): boolean {
+  return MARKDOWN_TABLE_PATTERN.test(text);
+}
+
 /** Fenced code promotes a message to a card; a table does so only when it renders natively. */
 function shouldUseCard(text: string, nativeTables: boolean): boolean {
-  return /```[\s\S]*?```/.test(text) || (nativeTables && /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text));
+  return /```[\s\S]*?```/.test(text) || (nativeTables && hasMarkdownTable(text));
 }
 
 function mergeStreamingFinalText(
@@ -1413,17 +1420,23 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         );
       const finalTextExceedsStreamingLimit =
         info?.kind === "final" && hasText && text.length > textChunkLimit;
+      // off has no card representation, since a card renderer parses the pipes, so a
+      // final that still carries a table takes the post path like an oversized final.
+      const finalTableNeedsPost =
+        info?.kind === "final" && hasText && tableMode === "off" && hasMarkdownTable(text);
       // Feishu's table ceiling applies to static card elements, not CardKit's streamed markdown.
       // Keep the intents separate so an active preview cannot fork into an independent post.
       const cardRenderingRequested =
         renderMode === "card" ||
         (info?.kind === "block" && coreBlockStreamingEnabled && renderMode !== "raw") ||
         (renderMode === "auto" && shouldUseCard(text, nativeTables));
-      const useStaticCard = hasText && cardRenderingRequested && withinCardTableLimit(text);
+      const useStaticCard =
+        hasText && cardRenderingRequested && !finalTableNeedsPost && withinCardTableLimit(text);
       const useStreamingCard =
         hasText &&
         streamingEnabled &&
         !finalTextExceedsStreamingLimit &&
+        !finalTableNeedsPost &&
         (info?.kind === "final" || cardRenderingRequested);
       const skipTextForDuplicateFinal =
         !hasIndependentPresentation &&
@@ -1439,6 +1452,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         !(hasIndependentPresentation && payload.isError === true && hasStreamingFinalText) &&
         (hasIndependentPresentation ||
           finalTextExceedsStreamingLimit ||
+          finalTableNeedsPost ||
           (hasMedia &&
             ((hasVoiceMedia && !shouldDeliverText && !ttsTextAlreadyVisible) ||
               skipTextForDuplicateFinal)));

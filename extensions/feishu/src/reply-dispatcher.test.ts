@@ -4620,16 +4620,43 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     });
 
-    it.each(["block", "off"] as const)(
-      "commits the raw table through the streaming card in %s mode",
-      async (tables) => {
-        // A streaming card is markdown, so off cannot stop the card renderer from
-        // parsing the pipes; off takes effect on post delivery.
-        await deliverFinal(tables, "partial");
+    it("commits the raw table through the streaming card in block mode", async () => {
+      await deliverFinal("block", "partial");
 
-        expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(tableMarkdown);
-      },
-    );
+      expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(tableMarkdown);
+    });
+
+    it("routes an off final with a table to the post path instead of a streaming card", async () => {
+      await deliverFinal("off", "partial");
+
+      expect(streamingInstances).toHaveLength(0);
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: tableMarkdown }),
+      );
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("discards an open preview when an off final carries a table", async () => {
+      resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+      const { result, options } = createDispatcherHarness({
+        accountId: "main",
+        cfg: tableCfg("off"),
+      });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const delivery = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      await options.onIdle?.();
+      await delivery?.finalization;
+
+      const instance = requireStreamingInstance(0);
+      expect(instance.discard).toHaveBeenCalledTimes(1);
+      expect(instance.closeWithResult).not.toHaveBeenCalled();
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: tableMarkdown }),
+      );
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
 
     it.each(["bullets", "code"] as const)(
       "assigns an idle-closed table preview to its matching final in %s mode",
