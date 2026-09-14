@@ -1,7 +1,12 @@
 import { expect, test, vi } from "vitest";
 import type { EnvironmentSummary } from "../../packages/gateway-protocol/src/index.js";
+import { i18n } from "../../ui/src/i18n/index.ts";
+import { projectDevicePlacements } from "../../ui/src/pages/new-session/device-placement.ts";
+import { readDraftEnvironments } from "../../ui/src/pages/new-session/discovery.ts";
 import { listRegisteredAgentHarnesses, registerAgentHarness } from "../agents/harness/registry.js";
 import { restoreRegisteredAgentHarnesses } from "../agents/harness/registry.test-support.js";
+import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../infra/node-runner-inventory.js";
+import { updateNodeRunnerInventory } from "./node-registry-private.js";
 import { NodeRegistry, type NodeSessionConnectParams } from "./node-registry.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
@@ -16,9 +21,26 @@ import type { WorkerSessionPlacementRecord } from "./worker-environments/placeme
 
 const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
 
-test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as const)(
-  "sessions.list carries automatic runtime requirements into environments.list: %s",
-  async (state) => {
+test.each([
+  { state: "invocable", disabledReason: undefined },
+  {
+    state: "pending-approval",
+    disabledReason:
+      "Ask an administrator to approve the pending runtime.repository.v1 request, or pick another device.",
+  },
+  {
+    state: "unauthorized",
+    disabledReason:
+      "Authorize runtime.repository.v1 in the Gateway node command policy, or pick another device.",
+  },
+  {
+    state: "undeclared",
+    disabledReason:
+      "Make runtime.repository.v1 available on this device, then reconnect, or pick another device.",
+  },
+] as const)(
+  "sessions.list carries automatic runtime requirements through the recovery picker: $state",
+  async ({ state, disabledReason }) => {
     const registered = listRegisteredAgentHarnesses();
     const command = "runtime.repository.v1";
     const config = {
@@ -42,7 +64,10 @@ test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as con
       commands: state === "invocable" || state === "unauthorized" ? [command] : [],
       declaredCommands: state === "undeclared" ? [] : [command],
     };
-    const node = registry.register({ ...client, connect }, { pairingIdentity: "node-host" });
+    const node = registry.register(
+      { ...client, connect },
+      { pairingIdentity: "node-host", pairingGeneration: "node-host-generation" },
+    );
     const connected = vi.spyOn(registry, "listConnectedForPairingStates").mockReturnValue([node]);
     registerAgentHarness({
       id: "repository-device",
@@ -61,6 +86,16 @@ test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as con
       },
     });
     try {
+      await i18n.setLocale("en");
+      updateNodeRunnerInventory({
+        registry,
+        nodeId: node.nodeId,
+        connId: node.connId,
+        declaration: {
+          protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+          workerHost: { enabled: true, capacity: { total: 1, available: 1 } },
+        },
+      });
       await createSessionStoreDir();
       await writeSessionStore({
         entries: {
@@ -99,6 +134,14 @@ test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as con
         catalog.payload?.environments.find((environment) => environment.id === "node:node-host")
           ?.requiredNodeCommand,
       ).toEqual({ command, state });
+      const devices = projectDevicePlacements(
+        readDraftEnvironments(catalog.payload?.environments),
+        runtime?.devicePlacement,
+      );
+      const device = devices.find((option) => option.deviceId === "node-host");
+      expect(device).toBeDefined();
+      expect(device?.selectable).toBe(state === "invocable");
+      expect(device?.disabledReason).toBe(disabledReason);
     } finally {
       connected.mockRestore();
       registry.unregister(node.connId);

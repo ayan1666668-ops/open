@@ -64,21 +64,18 @@ import {
   projectGatewaySessionRunState,
   resolveGatewaySessionGoal,
 } from "./session-utils-display.js";
+import { resolveSessionSelectedModelRef } from "./session-utils-model-selection.js";
 import {
   resolveGatewaySessionThinkingProjectionInternal,
   resolveSessionDisplayModelIdentityRefCached,
 } from "./session-utils-model.js";
 import {
   buildSessionListRowMetadataContext,
-  resolveSessionSelectedModelRef,
   resolveTranscriptUsageFallback,
 } from "./session-utils-projection.js";
 import { parseGroupKey } from "./session-utils-store.js";
 import type { GatewaySessionRow, SessionListModelCatalog } from "./session-utils.types.js";
-import {
-  projectWorkerPlacementAgentRuntime,
-  resolveWorkerPlacementSessionRuntime,
-} from "./worker-environments/placement-session-runtime.js";
+import { projectWorkerPlacementAgentRuntime } from "./worker-environments/placement-session-runtime.js";
 
 /** Opaque cache-busting revision for the channel-avatar route; never leaks the reference. */
 function channelAvatarRevision(reference: string): string {
@@ -493,19 +490,7 @@ export function buildGatewaySessionRow(params: {
         : resolveSessionModelOverrideSource(entry),
     modelSelectionLocked: entry?.modelSelectionLocked,
     runtimeSelectionLocked: thinkingProjection.runtimeSelectionLocked,
-    agentRuntime: projectWorkerPlacementAgentRuntime({
-      ...thinkingProjection.agentRuntime,
-      id:
-        thinkingProjection.agentRuntime.id === "auto" && entry
-          ? resolveWorkerPlacementSessionRuntime({
-              cfg,
-              entry,
-              agentId: sessionAgentId,
-              sessionKey: key,
-              model: selectedModel,
-            })
-          : thinkingProjection.agentRuntime.id,
-    }),
+    agentRuntime: projectWorkerPlacementAgentRuntime(thinkingProjection.agentRuntime),
     contextTokens,
     contextBudgetStatus: resolveProjectedSessionContextBudgetStatus({
       entry,

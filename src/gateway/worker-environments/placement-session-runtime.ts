@@ -1,12 +1,16 @@
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection-cli.js";
-import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import type { GatewayAgentRuntime } from "../../shared/session-types.js";
+import { resolveSessionSelectedModelRef } from "../session-utils-model-selection.js";
+import {
+  createGatewaySessionEntryReader,
+  resolveGatewaySessionStoreTargetWithStore,
+} from "../session-utils-store-lookup.js";
 import { resolveWorkerPlacementCapabilities } from "./placement-capabilities.js";
 import type { WorkerPlacementExecutionMode } from "./placement-record.js";
 
@@ -18,12 +22,42 @@ export function resolveWorkerPlacementSessionRuntime(params: {
   entry: SessionEntry;
   agentId: string;
   sessionKey: string;
-  model?: ReturnType<typeof resolveSessionModelRef>;
 }): string {
-  const selectedModel =
-    params.model ?? resolveSessionModelRef(params.cfg, params.entry, params.agentId);
-  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
+  const selectedModel = resolveSessionSelectedModelRef({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    source: {
+      entry: params.entry,
+      loadSessionEntry: (key) => {
+        const target = resolveGatewaySessionStoreTargetWithStore({
+          cfg: params.cfg,
+          agentId: params.agentId,
+          key: params.sessionKey,
+          clone: false,
+          readOnly: true,
+          exactRead: true,
+        });
+        return createGatewaySessionEntryReader({ ...target, cfg: params.cfg })(key);
+      },
+    },
+  });
+  return resolveWorkerPlacementModelRuntime({
+    ...params,
     provider: selectedModel.provider,
+    model: selectedModel.model,
+  });
+}
+
+/** Resolve the placement runtime from the selected facts shared by reads and admission. */
+export function resolveWorkerPlacementModelRuntime(
+  params: Parameters<typeof resolveWorkerPlacementSessionRuntime>[0] & {
+    provider: string;
+    model: string;
+  },
+): string {
+  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
+    provider: params.provider,
     entry: params.entry,
     cfg: params.cfg,
   });
@@ -43,23 +77,22 @@ export function resolveWorkerPlacementSessionRuntime(params: {
     (sessionRuntimeOverride
       ? undefined
       : resolveCliRuntimeExecutionProvider({
-          provider: selectedModel.provider,
+          provider: params.provider,
           cfg: params.cfg,
           agentId: params.agentId,
-          modelId: selectedModel.model,
+          modelId: params.model,
           authProfileId: params.entry.authProfileOverride,
         }));
   const useCliExecution =
     pinnedCliRuntime !== undefined ||
-    (!sessionRuntimeOverride &&
-      isCliProvider(cliExecutionProvider ?? selectedModel.provider, params.cfg));
+    (!sessionRuntimeOverride && isCliProvider(cliExecutionProvider ?? params.provider, params.cfg));
   if (useCliExecution) {
-    return cliExecutionProvider ?? selectedModel.provider;
+    return cliExecutionProvider ?? params.provider;
   }
   return resolveEffectiveAgentRuntime({
     cfg: params.cfg,
-    provider: selectedModel.provider,
-    modelId: selectedModel.model,
+    provider: params.provider,
+    modelId: params.model,
     agentScope: { kind: "prepared", agentId: params.agentId },
     sessionKey: params.sessionKey,
     sessionEntry: params.entry,
