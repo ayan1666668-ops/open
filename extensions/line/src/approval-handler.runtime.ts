@@ -3,6 +3,7 @@ import {
   buildChannelApprovalExpiredText,
   buildChannelApprovalResolvedText,
   createChannelApprovalNativeRuntimeAdapter,
+  type PendingApprovalView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
 import { buildChannelApprovalNativeTargetKey } from "openclaw/plugin-sdk/approval-native-runtime";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
@@ -23,15 +24,15 @@ type LinePreparedTarget = { to: string; accountId?: string };
 const log = createSubsystemLogger("line/approvals");
 
 // The view already publishes each decision as the command a non-interactive surface
-// would use, so the notice quotes those instead of composing its own syntax.
-function buildApprovalCommandFallbackText(params: {
-  approvalId: string;
-  commands: readonly string[];
-}): string {
-  return [
-    `⚠️ Could not deliver the approval card for ${params.approvalId}. Reply with one of:`,
-    ...params.commands,
-  ].join("\n");
+// would use, so the notice quotes those instead of composing its own syntax. Typed
+// `/approve` decides only exec and plugin approvals, so an OpenClaw-change approval is
+// sent to the Control UI instead of to commands that would fail.
+function buildApprovalCommandFallbackText(view: PendingApprovalView): string {
+  const notice = `⚠️ Could not deliver the approval card for ${view.approvalId}.`;
+  if (view.approvalKind === "system-agent") {
+    return `${notice} Decide it from the Control UI.`;
+  }
+  return [`${notice} Reply with one of:`, ...view.actions.map(({ command }) => command)].join("\n");
 }
 
 async function sendLineApprovalText(params: {
@@ -102,17 +103,14 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
       };
       return { dedupeKey: buildChannelApprovalNativeTargetKey({ to }), target };
     },
-    deliverPending: async ({ cfg, preparedTarget, pendingPayload, view, request }) => {
+    deliverPending: async ({ cfg, preparedTarget, pendingPayload, view }) => {
       if (!pendingPayload) {
         // Native delivery already suppressed the local prompt, so an undrawable card
         // still owes the approver a way to decide.
         await sendLineApprovalText({
           target: preparedTarget,
           cfg,
-          text: buildApprovalCommandFallbackText({
-            approvalId: request.id,
-            commands: view.actions.map(({ command }) => command),
-          }),
+          text: buildApprovalCommandFallbackText(view),
           logLabel: "line approvals: command fallback failed",
         });
         return null;
@@ -152,10 +150,7 @@ export const lineApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdapt
       void sendLineApprovalText({
         target: { to, ...(preparedAccountId ? { accountId: preparedAccountId } : {}) },
         cfg,
-        text: buildApprovalCommandFallbackText({
-          approvalId: request.id,
-          commands: view.actions.map(({ command }) => command),
-        }),
+        text: buildApprovalCommandFallbackText(view),
         logLabel: "line approvals: delivery fallback failed",
       });
     },

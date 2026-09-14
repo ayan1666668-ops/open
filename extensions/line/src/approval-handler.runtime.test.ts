@@ -1,6 +1,7 @@
 // Line tests cover the native approval runtime transport and terminal notices.
 import type {
   ExecApprovalPendingView,
+  PendingApprovalView,
   ResolvedApprovalView,
 } from "openclaw/plugin-sdk/approval-handler-runtime";
 import type { ExecApprovalRequest } from "openclaw/plugin-sdk/approval-runtime";
@@ -266,6 +267,48 @@ describe("LINE native approval runtime", () => {
       expect.stringContaining(`/approve ${APPROVAL_ID}`),
       expect.objectContaining({ accountId: "default" }),
     );
+  });
+
+  // Typed `/approve` decides only exec and plugin approvals, so the fallbacks for an
+  // OpenClaw-change card must not hand the approver commands that would fail.
+  it("sends an OpenClaw-change approval that has no card to the Control UI", async () => {
+    const view: PendingApprovalView = {
+      approvalId: APPROVAL_ID,
+      approvalKind: "system-agent",
+      phase: "pending",
+      title: "OpenClaw Change Approval Required",
+      metadata: [],
+      commandText: "openclaw config set tools.exec.ask off",
+      operationSummary: "Turn off exec approvals",
+      actions: execPendingView().actions,
+      expiresAtMs: NOW_MS + 120_000,
+    };
+    const fallback = `⚠️ Could not deliver the approval card for ${APPROVAL_ID}. Decide it from the Control UI.`;
+    const delivery = {
+      cfg,
+      accountId: "default",
+      plannedTarget,
+      request,
+      approvalKind: "system-agent" as const,
+      view,
+    };
+
+    await lineApprovalNativeRuntime.transport.deliverPending({
+      ...delivery,
+      preparedTarget: { to: APPROVER, accountId: "default" },
+      pendingPayload: null,
+    });
+    lineApprovalNativeRuntime.observe?.onDeliveryError?.({
+      ...delivery,
+      error: new Error("connection reset"),
+      pendingPayload: buildLinePendingApprovalCard({
+        view,
+        nowMs: NOW_MS,
+        channelSecret: "line-secret",
+      }),
+    });
+
+    expect(pushMessageLine.mock.calls.map(([, text]) => text)).toEqual([fallback, fallback]);
   });
 
   // A rejected card must fail the delivery, or core would count it delivered and the

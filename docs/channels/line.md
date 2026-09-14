@@ -552,15 +552,30 @@ list the approvers as LINE user IDs:
   authorization decides who can use it. Listing users in `allowFrom` for DM access does not
   limit `/approve` until cards are on for that approval type.
 
+Approvers are the `U` user IDs written in `channels.line.allowFrom`, with or without a
+`line:` or `line:user:` prefix. Users admitted through pairing and `accessGroup:` entries can
+message the bot but are not approvers, so a setup that lists only those gets no cards. Every
+listed approver receives every card and every outcome notice. Each one is a push message
+that counts against the channel's monthly message quota; once the quota is used up, cards
+and their fallback text are not delivered and only the Gateway log records it.
+
+Upgrade check: a setup that already forwards `approvals.exec` or `approvals.plugin` in
+`session` or `both` mode and lists LINE user IDs in `allowFrom` turns cards on when it
+upgrades. Group members who are not listed then can no longer decide that approval type with
+`/approve`. Before upgrading, list the members who should keep deciding (which also admits
+their DMs), or plan to decide those approvals from the Control UI.
+
 Typed `/approve` in LINE decides only exec and plugin requests that belong to that LINE
 account: requests raised from it, or forwarded to it. Approve a request raised on another
 channel or another LINE account where it was raised. Decide an OpenClaw-change approval with
 its card or from the Control UI.
 
 Restart the Gateway after changing forwarding so the LINE account picks it up. Until then,
-cards follow the forwarding settings the account started with. A request raised from a LINE
-chat that only the new settings would send as a card gets a notice in that chat naming the
-`/approve` command to use instead. A change
+cards follow the forwarding settings the account started with. If no approval type had cards
+on when the account started, forwarded text prompts are delivered as before. Otherwise, a
+request raised from a LINE chat that only the new settings would send as a card gets a notice
+in that chat naming the `/approve` command to use instead; decide an OpenClaw-change approval
+from the Control UI. A change
 to `channels.line`, such as removing an approver, waits for active runs and replies to finish
 before it takes effect; until then the previous configuration still decides.
 
