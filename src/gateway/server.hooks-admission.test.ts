@@ -7,9 +7,13 @@ import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { DEFAULT_WEBHOOK_MAX_BODY_BYTES } from "../infra/http-body.js";
 import { drainSystemEvents, peekSystemEventEntries } from "../infra/system-events.js";
+import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
+import { withEnvAsync } from "../test-utils/env.js";
 import {
+  connectWebchatClient,
   cronIsolatedRun,
   installGatewayTestHooks,
+  rpcReq,
   testState,
   withGatewayServer,
 } from "./test-helpers.js";
@@ -19,6 +23,7 @@ installGatewayTestHooks({ scope: "suite" });
 await import("./server.js");
 
 const HOOK_TOKEN = "hook-secret";
+const ROTATED_HOOK_TOKEN = "hook-secret-rotated";
 
 afterEach(() => {
   drainSystemEvents(resolveMainSessionKeyFromConfig());
@@ -30,11 +35,12 @@ async function postHook(
   hookPath: string,
   body: Record<string, unknown>,
   idempotencyKey: string,
+  token = HOOK_TOKEN,
 ): Promise<Response> {
   return await fetch(`http://127.0.0.1:${port}${hookPath}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${HOOK_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
     },
@@ -52,6 +58,110 @@ async function waitForDuplicateRequest(): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, 25);
   });
+}
+
+type PausedHookRequest = {
+  complete: () => Promise<{ status: number; body: string }>;
+};
+
+function startPausedHookRequest(params: {
+  port: number;
+  path: string;
+  token: string;
+  body: string;
+}): PausedHookRequest {
+  const split = Math.max(1, Math.floor(params.body.length / 2));
+  let complete!: () => void;
+  const releaseBody = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  const response = new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: params.port,
+        path: params.path,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${params.token}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(params.body),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("error", reject);
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(15_000, () => req.destroy(new Error("paused hook request timed out")));
+    req.write(params.body.slice(0, split));
+    void releaseBody.then(() => req.end(params.body.slice(split)));
+  });
+  return {
+    complete: async () => {
+      complete();
+      return await response;
+    },
+  };
+}
+
+async function writeReloadableHooksConfig(hooks: Record<string, unknown>): Promise<void> {
+  const configPath = process.env.OPENCLAW_CONFIG_PATH;
+  if (!configPath) {
+    throw new Error("expected OPENCLAW_CONFIG_PATH");
+  }
+  await fs.writeFile(
+    configPath,
+    `${JSON.stringify({ gateway: { reload: { mode: "hybrid" } }, hooks }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function patchHooksConfig(
+  socket: Parameters<typeof rpcReq>[0],
+  hooks: Record<string, unknown>,
+): Promise<void> {
+  const current = await rpcReq<{ hash: string }>(socket, "config.get", {});
+  expect(current.ok, current.error?.message).toBe(true);
+  const changed = await rpcReq(socket, "config.patch", {
+    raw: JSON.stringify({ hooks }),
+    baseHash: current.payload?.hash,
+  });
+  expect(changed.ok, changed.error?.message).toBe(true);
+}
+
+async function waitForHookStatus(params: {
+  port: number;
+  path: string;
+  token: string;
+  body: string;
+  status: number;
+}): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`http://127.0.0.1:${params.port}${params.path}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${params.token}`,
+            "Content-Type": "application/json",
+          },
+          body: params.body,
+        });
+        await response.arrayBuffer();
+        return response.status;
+      },
+      { timeout: 5_000, interval: 50 },
+    )
+    .toBe(params.status);
 }
 
 async function postOversizedChunkedHook(port: number): Promise<{
@@ -139,6 +249,205 @@ describe("gateway hook admission", () => {
         events: ["response-end", "socket-close"],
       });
     });
+  });
+
+  test("revokes in-flight hook authority when startup-enabled hooks are disabled", async () => {
+    await writeReloadableHooksConfig({ enabled: true, token: HOOK_TOKEN });
+    await withEnvAsync({ OPENCLAW_TEST_MINIMAL_GATEWAY: "0" }, () =>
+      withGatewayServer(async ({ port, server }) => {
+        await server.startupSettled;
+        const socket = await connectWebchatClient({ port, scopes: ["operator.admin"] });
+        try {
+          const mainSessionKey = resolveMainSessionKeyFromConfig();
+          const current = await postHook(
+            port,
+            "/hooks/wake",
+            { text: "current-before-disable" },
+            "current-before-disable",
+          );
+          expect(current.status).toBe(200);
+          await expect
+            .poll(
+              () =>
+                peekSystemEventEntries(mainSessionKey).some((event) =>
+                  event.text.includes("current-before-disable"),
+                ),
+              { timeout: 2_000, interval: 10 },
+            )
+            .toBe(true);
+          drainSystemEvents(mainSessionKey);
+
+          const workBaseline = getActiveGatewayRootWorkCount();
+          const revoked = startPausedHookRequest({
+            port,
+            path: "/hooks/wake",
+            token: HOOK_TOKEN,
+            body: JSON.stringify({ text: "revoked-after-disable" }),
+          });
+          await expect
+            .poll(() => getActiveGatewayRootWorkCount(), { timeout: 2_000, interval: 10 })
+            .toBeGreaterThan(workBaseline);
+
+          let disabled: Awaited<ReturnType<PausedHookRequest["complete"]>> | undefined;
+          try {
+            await patchHooksConfig(socket, { enabled: false });
+            await waitForHookStatus({
+              port,
+              path: "/hooks/wake",
+              token: HOOK_TOKEN,
+              body: "{}",
+              status: 404,
+            });
+          } finally {
+            disabled = await revoked.complete();
+          }
+          expect(disabled).toEqual({
+            status: 409,
+            body: JSON.stringify({ ok: false, error: "hook configuration changed; retry request" }),
+          });
+          expect(
+            peekSystemEventEntries(mainSessionKey).some((event) =>
+              event.text.includes("revoked-after-disable"),
+            ),
+          ).toBe(false);
+        } finally {
+          socket.close();
+        }
+      }),
+    );
+  });
+
+  test("rotates hook credentials and preserves replay across production hot reloads", async () => {
+    await writeReloadableHooksConfig({ enabled: true, token: HOOK_TOKEN });
+    await withEnvAsync({ OPENCLAW_TEST_MINIMAL_GATEWAY: "0" }, () =>
+      withGatewayServer(async ({ port, server }) => {
+        await server.startupSettled;
+        const socket = await connectWebchatClient({ port, scopes: ["operator.admin"] });
+        try {
+          const mainSessionKey = resolveMainSessionKeyFromConfig();
+          const current = await postHook(
+            port,
+            "/hooks/wake",
+            { text: "current-before-rotation" },
+            "current-before-rotation",
+          );
+          expect(current.status).toBe(200);
+          await expect
+            .poll(
+              () =>
+                peekSystemEventEntries(mainSessionKey).some((event) =>
+                  event.text.includes("current-before-rotation"),
+                ),
+              { timeout: 2_000, interval: 10 },
+            )
+            .toBe(true);
+          drainSystemEvents(mainSessionKey);
+
+          const rotationWorkBaseline = getActiveGatewayRootWorkCount();
+          const revokedByRotation = startPausedHookRequest({
+            port,
+            path: "/hooks/wake",
+            token: HOOK_TOKEN,
+            body: JSON.stringify({ text: "revoked-after-rotation" }),
+          });
+          await expect
+            .poll(() => getActiveGatewayRootWorkCount(), { timeout: 2_000, interval: 10 })
+            .toBeGreaterThan(rotationWorkBaseline);
+
+          let rotated: Awaited<ReturnType<PausedHookRequest["complete"]>> | undefined;
+          try {
+            await patchHooksConfig(socket, { enabled: true, token: ROTATED_HOOK_TOKEN });
+            await waitForHookStatus({
+              port,
+              path: "/hooks/wake",
+              token: ROTATED_HOOK_TOKEN,
+              body: "{}",
+              status: 400,
+            });
+            const staleToken = await postHook(
+              port,
+              "/hooks/wake",
+              { text: "stale-token" },
+              "stale-token",
+            );
+            expect(staleToken.status).toBe(401);
+          } finally {
+            rotated = await revokedByRotation.complete();
+          }
+          expect(rotated).toEqual({
+            status: 409,
+            body: JSON.stringify({ ok: false, error: "hook configuration changed; retry request" }),
+          });
+          expect(
+            peekSystemEventEntries(mainSessionKey).some((event) =>
+              event.text.includes("revoked-after-rotation"),
+            ),
+          ).toBe(false);
+
+          const authorized = await postHook(
+            port,
+            "/hooks/wake",
+            { text: "current-after-rotation" },
+            "current-after-rotation",
+            ROTATED_HOOK_TOKEN,
+          );
+          expect(authorized.status).toBe(200);
+          await expect
+            .poll(
+              () =>
+                peekSystemEventEntries(mainSessionKey).some((event) =>
+                  event.text.includes("current-after-rotation"),
+                ),
+              { timeout: 2_000, interval: 10 },
+            )
+            .toBe(true);
+          drainSystemEvents(mainSessionKey);
+
+          cronIsolatedRun.mockClear();
+          cronIsolatedRun.mockImplementation(async (params: unknown) => {
+            (params as { onExecutionStarted?: () => void }).onExecutionStarted?.();
+            return { status: "ok", summary: "done" };
+          });
+          const replayKey = "production-reload-replay";
+          const firstAgent = await postHook(
+            port,
+            "/hooks/agent",
+            { message: "replay across reload" },
+            replayKey,
+            ROTATED_HOOK_TOKEN,
+          );
+          expect(firstAgent.status).toBe(200);
+          const firstAgentBody = (await firstAgent.json()) as { runId?: string };
+          await waitForCronIsolatedRuns(1);
+
+          await patchHooksConfig(socket, {
+            enabled: true,
+            token: ROTATED_HOOK_TOKEN,
+            path: "/incoming",
+          });
+          await waitForHookStatus({
+            port,
+            path: "/incoming/wake",
+            token: ROTATED_HOOK_TOKEN,
+            body: "{}",
+            status: 400,
+          });
+          const replayedAgent = await postHook(
+            port,
+            "/incoming/agent",
+            { message: "replay across reload" },
+            replayKey,
+            ROTATED_HOOK_TOKEN,
+          );
+          expect(replayedAgent.status).toBe(200);
+          const replayedAgentBody = (await replayedAgent.json()) as { runId?: string };
+          expect(replayedAgentBody.runId).toBe(firstAgentBody.runId);
+          expect(cronIsolatedRun).toHaveBeenCalledTimes(1);
+        } finally {
+          socket.close();
+        }
+      }),
+    );
   });
 
   test("rejects deferred wake delivery to an explicit session", async () => {
