@@ -85,7 +85,7 @@ describe("node gateway options", () => {
   it("falls back to the baseline host only when --host is omitted", () => {
     expect(resolveNodeGatewayOptions({}, null).host).toBe("127.0.0.1");
     expect(
-      resolveNodeGatewayOptions({}, { gateway: { host: "config.example", port: 18789 } }).host,
+      resolveNodeGatewayOptions({}, { version: 1, nodeId: "node-config", gateway: { host: "config.example", port: 18789 } }).host,
     ).toBe("config.example");
     expect(resolveNodeGatewayOptions({ host: "explicit.example" }, null).host).toBe(
       "explicit.example",
