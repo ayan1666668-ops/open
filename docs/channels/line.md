@@ -556,8 +556,10 @@ Typed `/approve` in LINE decides only requests that belong to that LINE account:
 raised from it, or forwarded to it. Approve a request raised on another channel or another
 LINE account where it was raised.
 
-Restart the Gateway after changing forwarding so the LINE account picks it up. A change to
-`channels.line`, such as removing an approver, waits for active runs and replies to finish
+Restart the Gateway after changing forwarding so the LINE account picks it up. Until then,
+cards follow the forwarding settings the account started with while forwarded text prompts
+follow the new ones, so a request can reach a chat as neither a card nor a prompt. A change
+to `channels.line`, such as removing an approver, waits for active runs and replies to finish
 before it takes effect; until then the previous configuration still decides.
 
 Two behaviors follow from the platform rather than from a choice:
@@ -574,8 +576,9 @@ Two behaviors follow from the platform rather than from a choice:
   stay on screen. The first decision stands; tapping a button on a card that is no longer
   waiting changes nothing and replies that the approval is no longer waiting. Each button is
   tied to the account's channel secret, so after the secret changes, buttons on earlier
-  cards do nothing; the account restart that picks up the new secret sends pending
-  approvals again as new cards.
+  cards do nothing, and approvals still waiting are not sent again as new cards. Decide
+  those with `/approve <id> <decision>`, using the approval ID shown on the card, or from
+  the Control UI.
 
 For forwarding modes and supported decisions, see
 [Approval forwarding to chat channels](/tools/exec-approvals-advanced#approval-forwarding-to-chat-channels).
