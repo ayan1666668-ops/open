@@ -99,10 +99,25 @@ describe.each(["root", "account"] as const)("Feishu markdown tables at %s scope"
     ).toBe(false);
   });
 
-  it("rejects the retired local markdown fields", () => {
-    const entry = { markdown: { mode: "escape", tableMode: "ascii" } };
+  it.each([
+    { markdown: { mode: "escape" } },
+    { markdown: { tableMode: "ascii" } },
+    { markdown: { mode: "escape", tableMode: "ascii", tables: "off" } },
+  ])("keeps accepting the deprecated local markdown keys %j", (entry) => {
     const value = scope === "root" ? entry : { accounts: { work: entry } };
-    expect(FeishuConfigSchema.safeParse(value).success).toBe(false);
+    const parsed = FeishuConfigSchema.safeParse(value);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject(value);
+    }
+    expect(
+      validateJsonSchemaValue({
+        schema: FeishuChannelConfigSchema.schema,
+        cacheKey: "feishu-markdown-tables-test",
+        value,
+        applyDefaults: true,
+      }).ok,
+    ).toBe(true);
   });
 });
 
