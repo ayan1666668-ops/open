@@ -443,6 +443,9 @@ its own session:
 - A new thread session starts empty. It does not copy the room transcript, and
   [passive room context](#passive-room-context) is already scoped to the same
   room and thread. Use the session tools to read other sessions when needed.
+- A thread session does not inherit a `/model` override set on the room session.
+  Set the model on the thread session, or in the agent defaults, when a room
+  uses a non-default model.
 - Automatic replies and typing keep the same placement as before; only the
   session changes.
 - Each thread keeps its own session record. Turning the setting off routes new
