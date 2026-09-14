@@ -229,7 +229,7 @@ export class BrowserPanelInputController {
       ) {
         return;
       }
-      void this.host.runAction((client) => action(client, targetId));
+      void this.host.runAction((actionClient) => action(actionClient, targetId));
     };
     if (this.pendingClick) {
       void this.pendingClick.then((succeeded) => {

@@ -127,10 +127,17 @@ describe("Browser panel paste", () => {
       input.dispatchEvent(paste("for the clicked field"));
       expect(request).toHaveBeenCalledTimes(1);
       expect(request.mock.calls[0]?.[1]).toMatchObject({ body: { kind: "clickCoords" } });
-      if (outcome === "route change") controller.operations.resetRoute();
-      if (outcome === "new click") input.click();
-      if (outcome === "failure") click.reject(new Error("Click failed"));
-      else click.resolve({ ok: true });
+      if (outcome === "route change") {
+        controller.operations.resetRoute();
+      }
+      if (outcome === "new click") {
+        input.click();
+      }
+      if (outcome === "failure") {
+        click.reject(new Error("Click failed"));
+      } else {
+        click.resolve({ ok: true });
+      }
       await vi.advanceTimersByTimeAsync(0);
       const insertions = request.mock.calls.filter(
         ([, params]) => (params as { body?: { kind?: string } }).body?.kind === "insertText",
@@ -201,8 +208,12 @@ describe("Browser panel paste", () => {
     "does not send %s clipboard input",
     async (reason) => {
       const { panel, controller, request } = await mount();
-      if (reason === "disconnected") panel.remove();
-      if (reason === "stale view") controller.view = createView("previous-tab");
+      if (reason === "disconnected") {
+        panel.remove();
+      }
+      if (reason === "stale view") {
+        controller.view = createView("previous-tab");
+      }
       panel.renderRoot
         .querySelector(".bp-viewport")!
         .dispatchEvent(

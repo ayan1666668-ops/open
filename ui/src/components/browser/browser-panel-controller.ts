@@ -748,10 +748,6 @@ export class BrowserPanelController implements ReactiveController {
     this.input.handleOverlayPointerUp(event);
   }
 
-  cancelOverlayPointerGesture(): void {
-    this.input.cancelOverlayPointerGesture();
-  }
-
   undoStroke(): void {
     this.input.undoStroke();
   }
