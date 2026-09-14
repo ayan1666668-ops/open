@@ -115,12 +115,22 @@ describe("managed mount plan", () => {
       agentWorkspaceDir: path.join(root, "empty"),
       binds: ["/daemon/A:/data:ro", "/daemon/B :/data :rw"],
     });
-    expect(plan.binds).toContain("/daemon/A:/data:ro");
-    expect(plan.binds).toContain("/daemon/B :/data :rw");
+    expect(plan.binds).toEqual([
+      "/host/state/empty:/workspace:z",
+      "/host/materialized skills/skills:/workspace/.openclaw/sandbox-skills/skills:ro,z",
+      "/daemon/A:/data:ro",
+      "/daemon/B :/data :rw",
+    ]);
     vi.mocked(execContainer).mockResolvedValue({
       stdout: JSON.stringify({
         Mounts: [
           { Type: "bind", Source: "/host/state/empty", Destination: "/workspace", RW: true },
+          {
+            Type: "bind",
+            Source: "/host/materialized skills/skills",
+            Destination: "/workspace/.openclaw/sandbox-skills/skills",
+            RW: false,
+          },
           { Type: "bind", Source: "/daemon/A", Destination: "/data", RW: false },
           { Type: "bind", Source: "/daemon/B ", Destination: "/data ", RW: true },
         ],
