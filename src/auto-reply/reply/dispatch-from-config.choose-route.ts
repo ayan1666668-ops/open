@@ -22,7 +22,7 @@ import {
   type ReplyPayload,
 } from "../reply-payload.js";
 import { renderPostCompactionModelFailurePayload } from "./agent-runner-failure-reply.js";
-import { setBlockReplyDelivery } from "./block-reply-delivery.js";
+import { recoverBlockReplySources, setBlockReplyDelivery } from "./block-reply-delivery.js";
 import { createBlockReplyContentKey } from "./block-reply-pipeline.js";
 import {
   DispatchReplyOperationAbortedError,
@@ -379,27 +379,16 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
     throwIfFinalDeliveryAborted();
     const sourceRecovery = getReplyPayloadMetadata(payload)?.blockReplySources;
+    let block: BlockDelivery | undefined;
     if (sourceRecovery) {
-      for (const source of sourceRecovery) {
-        normalizedPayload = await runWithDispatchAbortSignal(abortSignal, () =>
-          source.recover(normalizedPayload),
-        );
-        throwIfFinalDeliveryAborted();
-      }
-      if (sourceRecovery.some((source) => source.pending)) {
-        await suppressPendingFinalDelivery(payload, {
-          preserveActivity: state.replyOperationRunState.heartbeat !== undefined,
-        });
-        setReplyPayloadMetadata(normalizedPayload, { pendingFinalDeliveryCompletion: undefined });
-        sourceReplyTranscriptMirror = sourceReplyTranscriptMirror
-          ? transcriptMirrorForDeliveredPayload(sourceReplyTranscriptMirror, normalizedPayload)
-          : undefined;
-      }
-      if (!hasOutboundReplyContent(normalizedPayload, { trimText: true })) {
-        return { queuedFinal: false, routedFinalCount: 0 };
-      }
+      const recovery = await runWithDispatchAbortSignal(abortSignal, () =>
+        recoverBlockReplySources(normalizedPayload, sourceRecovery),
+      );
+      normalizedPayload = recovery.payload;
+      block = recovery.delivery;
+    } else {
+      block = await getBlockReplyOutcome(payload, abortSignal);
     }
-    const block = sourceRecovery ? undefined : await getBlockReplyOutcome(payload, abortSignal);
     throwIfFinalDeliveryAborted();
     const blockDeliveryOutcome = block?.outcome;
     const pendingBlock = block?.pending && blockDeliveryOutcome !== "delivered";

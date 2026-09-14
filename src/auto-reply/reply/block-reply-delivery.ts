@@ -102,11 +102,8 @@ export function createBlockReplySource(): BlockReplySource {
       }
       return operation;
     },
-    async recover(payload) {
-      await sequence;
-      if (lastDelivery && hasBlockReplyDeliveryCustody(lastDelivery)) {
-        return copyReplyPayloadMetadata(payload, { ...payload, text: undefined });
-      }
+    settle: () => sequence.then(() => lastDelivery ?? { outcome: "delivered" }),
+    recoverPartial(payload) {
       let text = payload.text;
       for (const fragment of fragments) {
         if (!isDelivered(fragment.delivery)) {
@@ -126,6 +123,29 @@ export function createBlockReplySource(): BlockReplySource {
     },
   };
   return source;
+}
+
+export async function recoverBlockReplySources(
+  payload: ReplyPayload,
+  sources: readonly BlockReplySource[],
+): Promise<{ payload: ReplyPayload; delivery?: BlockReplyDelivery }> {
+  const receipts = await Promise.all(sources.map((source) => source.settle()));
+  const complete = sources.every((source) => source.complete);
+  const delivery = complete
+    ? { outcome: "delivered" as const }
+    : (receipts.find(hasBlockReplyDeliveryCustody) ??
+      (sources.some((source) => source.pending)
+        ? { outcome: "delivered-not-visible" as const, pending: true }
+        : undefined));
+  if (delivery) {
+    return {
+      payload: copyReplyPayloadMetadata(payload, { ...payload, text: undefined }),
+      delivery,
+    };
+  }
+  return {
+    payload: sources.reduce((remaining, source) => source.recoverPartial(remaining), payload),
+  };
 }
 
 export async function deliverBlockReply(

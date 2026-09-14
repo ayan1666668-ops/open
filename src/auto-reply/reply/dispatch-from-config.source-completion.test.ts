@@ -1,8 +1,11 @@
+import path from "node:path";
 import { setImmediate as nextEventLoopTurn } from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
+import { settlePendingFinalDelivery } from "../../infra/outbound/delivery-completion.js";
 import * as directives from "../../tts/directives.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
@@ -24,6 +27,11 @@ beforeEach(() => {
   setNoAbort();
 });
 afterEach(() => vi.restoreAllMocks());
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+const fencedFirst = "```ts\nconst x = \n```";
+const fencedSecond = "```ts\n1;\n```";
+const fencedSource = "```ts\nconst x = 1;\n```";
 
 type Failure = "before-send" | "ambiguous" | "pending";
 
@@ -35,13 +43,34 @@ it.each<{
   priorBracket?: boolean;
   paragraph?: boolean;
   finalMedia?: boolean;
+  prepared?: boolean;
+  fenced?: boolean;
   expected: string[];
   suffixCalls: number;
 }>([
   { name: "failed suffix", suffix: "before-send", expected: ["See ", "["], suffixCalls: 1 },
-  { name: "successful suffix", expected: ["See ", "["], suffixCalls: 1 },
+  { name: "successful suffix", prepared: true, expected: ["See ", "["], suffixCalls: 1 },
+  {
+    name: "successful suffix after wrapped code",
+    fenced: true,
+    expected: [fencedFirst, fencedSecond, "See ", "["],
+    suffixCalls: 1,
+  },
+  {
+    name: "failed suffix after wrapped code",
+    fenced: true,
+    suffix: "before-send",
+    expected: [fencedFirst, fencedSecond, "See ", `${fencedSource}\n\nSee [`],
+    suffixCalls: 1,
+  },
   { name: "unsent prefix", prefix: "before-send", expected: ["See ["], suffixCalls: 0 },
-  { name: "ambiguous prefix", prefix: "ambiguous", expected: ["See "], suffixCalls: 0 },
+  {
+    name: "ambiguous prefix",
+    prefix: "ambiguous",
+    prepared: true,
+    expected: ["See "],
+    suffixCalls: 0,
+  },
   { name: "pending prefix", prefix: "pending", expected: [], suffixCalls: 0 },
   { name: "ambiguous suffix", suffix: "ambiguous", expected: ["See ", "["], suffixCalls: 1 },
   { name: "pending suffix", suffix: "pending", expected: ["See "], suffixCalls: 1 },
@@ -74,6 +103,24 @@ it.each<{
     suffixCalls: 1,
   },
 ])("dispatchReplyFromConfig settles $name after producer filtering", async (scenario) => {
+  const actualSessions = scenario.prepared
+    ? await vi.importActual<typeof import("../../config/sessions/session-accessor.js")>(
+        "../../config/sessions/session-accessor.js",
+      )
+    : undefined;
+  const preparedScope = actualSessions
+    ? {
+        storePath: path.join(tempDirs.make("openclaw-source-completion-"), "sessions.json"),
+        sessionKey: "agent:main:discord:direct:source-completion",
+      }
+    : undefined;
+  if (actualSessions) {
+    const sessionAccessors = await import("../../config/sessions/session-accessor.js");
+    const patch = actualSessions.patchSessionEntryCore;
+    vi.spyOn(sessionAccessors, "patchSessionEntryCore").mockImplementation((...args) =>
+      patch(...args),
+    );
+  }
   let buffered = false;
   // Hold the parser's future output fixed so this regression tests source accounting alone.
   vi.spyOn(directives, "createTtsDirectiveTextStreamCleaner").mockReturnValue({
@@ -107,6 +154,9 @@ it.each<{
       }
       delivered.push(payload);
       if (failure === "ambiguous") {
+        if (scenario.prepared) {
+          return { visibleReplySent: true, ambiguous: true };
+        }
         throw new Error("acknowledgement lost after sending");
       }
       return undefined;
@@ -131,6 +181,17 @@ it.each<{
         timeoutMs: 0,
       });
       try {
+        if (scenario.fenced) {
+          pipeline.enqueue(
+            setReplyPayloadMetadata(
+              { text: fencedFirst },
+              { blockSourceText: "```ts\nconst x = " },
+            ),
+          );
+          pipeline.enqueue(
+            setReplyPayloadMetadata({ text: fencedSecond }, { blockSourceText: "1;\n```" }),
+          );
+        }
         if (scenario.paragraph) {
           pipeline.enqueue({ text: "First" });
         }
@@ -144,7 +205,11 @@ it.each<{
         }
         const finalPayload = {
           ...source,
-          text: scenario.paragraph ? "First\n\nSee [" : source.text,
+          text: scenario.fenced
+            ? `${fencedSource}\n\nSee [`
+            : scenario.paragraph
+              ? "First\n\nSee ["
+              : source.text,
           ...(scenario.finalMedia ? { mediaUrl: "https://example.com/final.opus" } : {}),
         };
         if (scenario.finalMedia) {
@@ -166,6 +231,30 @@ it.each<{
           blockReplyPipeline: pipeline,
           replyToMode: "off",
         });
+        if (actualSessions && preparedScope) {
+          setReplyPayloadMetadata(expectDefined(replyPayloads[0], "retained final"), {
+            pendingFinalDeliveryCompletion: {
+              ...preparedScope,
+              sessionId: "source-session",
+              intentId: "source-intent",
+              deliveryId: "source-delivery",
+            },
+          });
+          await actualSessions.replaceSessionEntry(preparedScope, {
+            sessionId: "source-session",
+            updatedAt: Date.now(),
+            pendingFinalDelivery: {
+              kind: "replayable",
+              text: "See [",
+              createdAt: Date.now(),
+              intentId: "source-intent",
+              deliveries: [{ id: "source-delivery", state: "prepared" }],
+            },
+          });
+          expect(
+            actualSessions.loadSessionEntry(preparedScope)?.pendingFinalDelivery?.deliveries,
+          ).toEqual([{ id: "source-delivery", state: "prepared" }]);
+        }
         await options?.onBlockReply?.({ text: "[" });
         return replyPayloads;
       } finally {
@@ -175,6 +264,27 @@ it.each<{
   });
   dispatcher.markComplete();
   await dispatcher.waitForIdle();
+  if (actualSessions && preparedScope) {
+    const pending = actualSessions.loadSessionEntry(preparedScope)?.pendingFinalDelivery;
+    if (scenario.prefix === "ambiguous") {
+      expect(pending?.deliveries).toEqual([{ id: "source-delivery", state: "unknown" }]);
+    } else {
+      expect(pending).toBeUndefined();
+    }
+    const recovery = await settlePendingFinalDelivery(
+      {
+        kind: "pending-final",
+        ...preparedScope,
+        sessionId: "source-session",
+        intentId: "source-intent",
+        deliveryId: "source-delivery",
+      },
+      "queued",
+      ["prepared"],
+    );
+    expect(recovery.state).toBe("stale");
+    expect(actualSessions.loadSessionEntry(preparedScope)?.pendingFinalDelivery).toEqual(pending);
+  }
   expect(delivered.flatMap((payload) => payload.text ?? [])).toEqual(scenario.expected);
   expect(suffixCalls).toBe(scenario.suffixCalls);
   if (scenario.media) {
