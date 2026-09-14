@@ -25,6 +25,7 @@ import ai.openclaw.app.ui.canFinishOnboarding
 import ai.openclaw.app.voice.MicCaptureManager
 import ai.openclaw.app.voice.TalkModeManager
 import android.Manifest
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import kotlinx.coroutines.CompletableDeferred
@@ -2555,6 +2556,159 @@ class GatewayBootstrapAuthTest {
     assertNull(desiredConnection(runtime, "nodeSession"))
   }
 
+  @Test
+  fun failedSelectionCommitRefusesConnectionAndKeepsStoredSelection() = assertSelectionFailure(switch = false)
+
+  @Test
+  fun failedSelectionThrowRefusesConnectionAndRestoresMemory() = assertSelectionFailure(switch = false, throws = true)
+
+  @Test
+  fun failedSelectionCommitRefusesSwitchAndKeepsStoredSelection() = assertSelectionFailure(switch = true)
+
+  @Test
+  fun failedSelectionThrowRefusesSwitchAndRestoresMemory() = assertSelectionFailure(switch = true, throws = true)
+
+  @Test
+  fun failedSelectionBeforeSystemTrustedConnectionAdmitsNeitherRole() = assertSelectionFailure(switch = false, tls = true)
+
+  @Test
+  fun certificateChoiceKeepsPreselectedGatewayAndAttemptWithoutAnotherCommit() = assertTrustContinuesPreselectedGateway(systemTrust = false)
+
+  @Test
+  fun systemTrustChoiceKeepsPreselectedGatewayAndAttemptWithoutAnotherCommit() = assertTrustContinuesPreselectedGateway(systemTrust = true)
+
+  private fun assertSelectionFailure(
+    switch: Boolean,
+    throws: Boolean = false,
+    tls: Boolean = false,
+  ) = runBlocking {
+    val app = RuntimeEnvironment.getApplication()
+    val backing = app.getSharedPreferences("selection-${UUID.randomUUID()}", android.content.Context.MODE_PRIVATE)
+    val controlled = SelectionCommitPreferences(backing, throws)
+    val prefs = SecurePrefs(app, controlled)
+    val runtime =
+      trackRuntime(
+        NodeRuntime(
+          app,
+          prefs,
+          tlsFingerprintProbe = { _, _ -> GatewayTlsProbeResult(fingerprintSha256 = "bb".repeat(32), systemTrusted = true) },
+        ),
+      )
+    neutralizeColdStartAutoConnect(runtime)
+    val nodeTransport = installStalledTransport(readField(runtime, "nodeSession"), completeOnCancel = true)
+    val operatorTransport = installStalledTransport(readField(runtime, "operatorSession"), completeOnCancel = true)
+    val endpoint = if (tls) tlsGatewayEndpoint() else gatewayEndpoint()
+    val previous = GatewayEndpoint.manual("127.0.0.1", gatewayServer.port, contextPath = "/previous")
+    assertTrue(prefs.gatewayRegistry.upsertAndSetActive(gatewayRegistryEntry(previous, null)))
+    if (switch) prefs.gatewayRegistry.upsert(gatewayRegistryEntry(endpoint, null))
+    prefs.saveGatewayCredentials(endpoint.stableId, token = "synthetic-token")
+    val original = backing.getString("gateway.registry", null)
+    val active = prefs.gatewayRegistry.activeStableId.value
+    controlled.failSelection = true
+
+    if (switch) {
+      withTimeout(5000) { runtime.switchToGateway(endpoint.stableId) }
+    } else {
+      runtime.connect(endpoint, auth(token = "synthetic-token"))
+    }
+    withTimeout(5000) {
+      while (desiredConnection(runtime, "nodeSession") == null &&
+        !runtime.gatewayConnectionDisplay.value.statusText
+          .contains("save", ignoreCase = true)
+      ) {
+        delay(10)
+      }
+    }
+    assertNull(desiredConnection(runtime, "nodeSession"))
+    assertNull(desiredConnection(runtime, "operatorSession"))
+    assertFalse(nodeTransport.created.isCompleted)
+    assertFalse(operatorTransport.created.isCompleted)
+    assertEquals(active, prefs.gatewayRegistry.activeStableId.value)
+    assertEquals(original, backing.getString("gateway.registry", null))
+    assertEquals(active, SecurePrefs(app, backing).gatewayRegistry.activeStableId.value)
+    assertTrue(
+      runtime.gatewayConnectionDisplay.value.statusText
+        .contains("save", ignoreCase = true),
+    )
+  }
+
+  private fun assertTrustContinuesPreselectedGateway(
+    systemTrust: Boolean,
+  ) = runBlocking {
+    val app = RuntimeEnvironment.getApplication()
+    val backing = app.getSharedPreferences("selection-${UUID.randomUUID()}", android.content.Context.MODE_PRIVATE)
+    val controlled = SelectionCommitPreferences(backing)
+    val prefs = SecurePrefs(app, controlled)
+    val runtime =
+      trackRuntime(
+        NodeRuntime(
+          app,
+          prefs,
+          tlsFingerprintProbe = { _, _ -> GatewayTlsProbeResult(fingerprintSha256 = "bb".repeat(32), systemTrusted = true) },
+        ),
+      )
+    neutralizeColdStartAutoConnect(runtime)
+    installStalledTransport(readField(runtime, "nodeSession"), completeOnCancel = true)
+    installStalledTransport(readField(runtime, "operatorSession"), completeOnCancel = true)
+    val endpoint = tlsGatewayEndpoint()
+    prefs.saveGatewayTlsFingerprint(endpoint.stableId, "aa".repeat(32))
+    runtime.connect(endpoint, auth(token = "synthetic-token"))
+    val prompt = waitForGatewayTrustPrompt(runtime)
+    assertEquals(endpoint.stableId, prefs.gatewayRegistry.activeStableId.value)
+    assertEquals(endpoint.stableId, SecurePrefs(app, backing).gatewayRegistry.activeStableId.value)
+    assertEquals(1, controlled.selectionCommits.get())
+    val selection = runtime.switchToGateway(endpoint.stableId) as GatewayTargetSelection.Selected
+    assertTrue(selection.isCurrent())
+    assertSame(prompt, runtime.pendingGatewayTrust.value)
+    val committedRegistry = backing.getString("gateway.registry", null)
+    controlled.failSelection = true
+
+    if (systemTrust) runtime.useSystemGatewayTrustPrompt(prompt) else runtime.acceptGatewayTrustPrompt(prompt)
+
+    val desired = waitForDesiredConnection(runtime, "nodeSession")
+    waitForDesiredConnection(runtime, "operatorSession")
+    assertTrue("Trust continues the captured accepted attempt", selection.isCurrent())
+    assertNull(runtime.pendingGatewayTrust.value)
+    assertEquals("synthetic-token", readField<String?>(desired, "token"))
+    assertEquals(endpoint.stableId, readField<GatewayEndpoint>(desired, "endpoint").stableId)
+    val expectedPin = if (systemTrust) null else "bb".repeat(32)
+    assertEquals(expectedPin, prefs.loadGatewayTlsFingerprint(endpoint.stableId))
+    assertEquals(expectedPin, readField<GatewayTlsParams>(desired, "tls").expectedFingerprint)
+    assertEquals("Trust must not recommit the already selected registry", 1, controlled.selectionCommits.get())
+    assertEquals(committedRegistry, backing.getString("gateway.registry", null))
+  }
+
+  private class SelectionCommitPreferences(
+    private val backing: SharedPreferences,
+    private val throws: Boolean = false,
+  ) : SharedPreferences by backing {
+    @Volatile var failSelection = false
+    val selectionCommits = AtomicInteger()
+
+    override fun edit(): SharedPreferences.Editor {
+      val edit = backing.edit()
+      var registryEdit = false
+      return object : SharedPreferences.Editor by edit {
+        override fun putString(
+          key: String?,
+          value: String?,
+        ): SharedPreferences.Editor {
+          registryEdit = registryEdit || key == "gateway.registry"
+          edit.putString(key, value)
+          return this
+        }
+
+        override fun commit(): Boolean {
+          edit.commit()
+          if (!registryEdit) return true
+          selectionCommits.incrementAndGet()
+          if (failSelection && throws) error("Synthetic selection failure after memory update")
+          return !failSelection
+        }
+      }
+    }
+  }
+
   // Arms the registry only after the runtime's startup work is neutralized, so the real
   // discovery collector can never observe an auto-connectable active gateway.
   private fun createNeutralizedRuntime(): Pair<NodeRuntime, SecurePrefs> {
@@ -2640,7 +2794,10 @@ class GatewayBootstrapAuthTest {
     val cancelled: CompletableDeferred<Unit> = CompletableDeferred(),
   )
 
-  private fun installStalledTransport(session: GatewaySession): StalledGatewayTransport {
+  private fun installStalledTransport(
+    session: GatewaySession,
+    completeOnCancel: Boolean = false,
+  ): StalledGatewayTransport {
     val stalled = StalledGatewayTransport()
     val factory: (OkHttpClient, Request, WebSocketListener) -> WebSocket =
       { _, request, listener ->
@@ -2661,6 +2818,7 @@ class GatewayBootstrapAuthTest {
 
             override fun cancel() {
               stalled.cancelled.complete(Unit)
+              if (completeOnCancel) listener.onFailure(this, IOException("Synthetic transport cancelled"), null)
             }
           }
         stalled.created.complete(socket to listener)

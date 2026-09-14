@@ -19,7 +19,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -111,7 +110,6 @@ internal fun shouldRecreateForScreenshotMode(
     (currentScene != null || parseWearScreenshotModeIntent(intent) != null)
 
 class MainActivity : ComponentActivity() {
-  private val viewModel: WearViewModel by viewModels()
   private var screenshotScene: WearScreenshotScene? = null
   private var launchState by mutableStateOf(WearLaunchState())
 
@@ -128,10 +126,8 @@ class MainActivity : ComponentActivity() {
       val scene = screenshotScene
       if (scene == null) {
         WearLaunchContent(launchState) { initialPage, navigationRequest ->
-          OpenClawWearApp(
-            viewModel = viewModel,
-            settingsStore = remember { WearSettingsStore(applicationContext) },
-            speaker = remember { WearReplySpeaker(applicationContext) },
+          WearConnectionHost(
+            app = application as WearApplication,
             initialPage = initialPage,
             navigationRequest = navigationRequest,
             onNavigationRequestHandled = { requestId ->
@@ -178,6 +174,7 @@ internal fun OpenClawWearApp(
   initialPage: WearHomePage = WearHomePage.Chat,
   navigationRequest: WearNavigationRequest? = null,
   onNavigationRequestHandled: (Int) -> Unit = {},
+  onManageConnection: (() -> Unit)? = null,
 ) {
   val state by viewModel.state.collectAsState()
   val snapshot = state.toConversationSnapshot()
@@ -343,7 +340,7 @@ internal fun OpenClawWearApp(
       notificationsGranted = granted
     }
 
-  DisposableEffect(lifecycleOwner, view.context) {
+  DisposableEffect(lifecycleOwner, view.context, viewModel) {
     val observer =
       LifecycleEventObserver { _, event ->
         if (event == Lifecycle.Event.ON_RESUME) {
@@ -370,7 +367,10 @@ internal fun OpenClawWearApp(
         }
       }
     lifecycleOwner.lifecycle.addObserver(observer)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+      viewModel.suspendRealtimeTalk()
+    }
   }
 
   fun toggleRealtimeTalk() {
@@ -592,6 +592,7 @@ internal fun OpenClawWearApp(
           }
         },
         onStopSpeaking = speaker::stop,
+        onManageConnection = onManageConnection,
       )
     }
   }
