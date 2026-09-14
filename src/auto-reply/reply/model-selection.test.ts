@@ -188,10 +188,7 @@ describe("createModelSelectionState catalog loading", () => {
             fixture: {
               api: "openai-completions",
               baseUrl: "https://fixture.invalid/v1",
-              models: [
-                { id: "automatic", name: "Automatic" },
-                { id: "manual", name: "Manual", reasoning: false },
-              ],
+              models: [makeConfiguredModel({ id: "manual", name: "Manual", reasoning: false })],
             },
           },
         },

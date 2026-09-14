@@ -9,6 +9,7 @@ import {
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   onSessionLifecycleEvent,
@@ -174,7 +175,14 @@ describe("applySessionModelSelection", () => {
               fixture: {
                 api: "openai-completions",
                 baseUrl: "https://fixture.invalid/v1",
-                models: modelCatalog.map(({ id, name }) => ({ id, name })),
+                models: modelCatalog.map<ModelDefinitionConfig>(({ id, name }) => ({
+                  id,
+                  name,
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  maxTokens: 4_096,
+                })),
               },
             },
           },
