@@ -22,6 +22,8 @@ import type { OpenClawPluginNodeWorkspace } from "../types.node-host.js";
 import { getPluginRuntimeLoadContextState } from "./load-context-state.js";
 
 type PluginRuntimeGatewayRequestScope = {
+  /** Marks an auth:"plugin" HTTP route redeeming explicit subagent delegation. */
+  pluginSubagentDelegationAllowed?: boolean;
   /** Revalidates the exact plugin's manifest declaration and operator consent. */
   assertSubagentRunAuthorized?: () => void;
   /** Recheck the admitted HTTP device grant before effects; rejection sends HTTP 401 and throws. */

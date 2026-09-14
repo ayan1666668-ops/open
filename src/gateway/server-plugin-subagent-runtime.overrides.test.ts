@@ -5,7 +5,10 @@ import {
 } from "../agents/command/model-ref.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { withPluginRuntimePluginScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  withPluginRuntimeGatewayRequestScope,
+  withPluginRuntimePluginScope,
+} from "../plugins/runtime/gateway-request-scope.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import {
   createGatewaySubagentRuntime,
@@ -96,7 +99,7 @@ function run(override: { provider?: string; model?: string }) {
 }
 
 describe("plugin subagent initial override policy", () => {
-  it("uses a synthetic admin client only for an entitled plugin-owned run", async () => {
+  it("uses a synthetic write client only for an entitled plugin-auth delegated run", async () => {
     const assertAuthorized = vi.fn();
     const context = { getRuntimeConfig: () => config } as GatewayRequestContext;
     const runtime = createGatewaySubagentRuntime(
@@ -105,13 +108,17 @@ describe("plugin subagent initial override policy", () => {
     );
 
     await expect(
-      withPluginRuntimePluginScope(
-        { pluginId: "override-fixture", assertSubagentRunAuthorized: assertAuthorized },
+      withPluginRuntimeGatewayRequestScope(
+        { pluginSubagentDelegationAllowed: true, isWebchatConnect: () => false },
         () =>
-          runtime.run({
-            sessionKey: "agent:worker:subagent:entitled",
-            message: "Use the default model",
-          }),
+          withPluginRuntimePluginScope(
+            { pluginId: "override-fixture", assertSubagentRunAuthorized: assertAuthorized },
+            () =>
+              runtime.run({
+                sessionKey: "agent:worker:subagent:entitled",
+                message: "Use the default model",
+              }),
+          ),
       ),
     ).resolves.toMatchObject({ runId: "override-run" });
 
@@ -119,10 +126,63 @@ describe("plugin subagent initial override policy", () => {
     const options = dispatch.mock.calls[0]?.[2];
     expect(options).toMatchObject({
       forceSyntheticClient: true,
-      syntheticScopes: ["operator.admin"],
+      syntheticScopes: ["operator.write"],
     });
     options?.sessionMutationCommitGuard?.();
     expect(assertAuthorized).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves an existing write-scoped Gateway caller without requiring entitlement", async () => {
+    const assertAuthorized = vi.fn();
+    const context = { getRuntimeConfig: () => config } as GatewayRequestContext;
+    const runtime = createGatewaySubagentRuntime(
+      () => context,
+      resolvePluginSubagentOverridePolicies(config),
+    );
+
+    await expect(
+      withPluginRuntimeGatewayRequestScope(
+        {
+          client: { connect: { scopes: ["operator.write"] } } as never,
+          isWebchatConnect: () => false,
+        },
+        () =>
+          withPluginRuntimePluginScope(
+            { pluginId: "override-fixture", assertSubagentRunAuthorized: assertAuthorized },
+            () =>
+              runtime.run({
+                sessionKey: "agent:worker:subagent:write-caller",
+                message: "Use the default model",
+              }),
+          ),
+      ),
+    ).resolves.toMatchObject({ runId: "override-run" });
+
+    expect(assertAuthorized).not.toHaveBeenCalled();
+    expect(dispatch.mock.calls[0]?.[2]).not.toMatchObject({ forceSyntheticClient: true });
+  });
+
+  it("rejects a delegated plugin-auth run without a current entitlement owner", async () => {
+    const context = { getRuntimeConfig: () => config } as GatewayRequestContext;
+    const runtime = createGatewaySubagentRuntime(
+      () => context,
+      resolvePluginSubagentOverridePolicies(config),
+    );
+
+    await expect(
+      withPluginRuntimeGatewayRequestScope(
+        { pluginSubagentDelegationAllowed: true, isWebchatConnect: () => false },
+        () =>
+          withPluginRuntimePluginScope({ pluginId: "override-fixture" }, () =>
+            runtime.run({
+              sessionKey: "agent:worker:subagent:missing-entitlement-owner",
+              message: "Use the default model",
+            }),
+          ),
+      ),
+    ).rejects.toThrow("Plugin subagent delegation requires a current entitlement owner.");
+
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it.each([{ provider: "fixture", model: "literal" }, { model: "fixture/literal" }])(

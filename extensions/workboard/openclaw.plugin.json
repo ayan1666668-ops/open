@@ -67,9 +67,6 @@
     "order": 10
   },
   "contracts": {
-    "runtimeCapabilities": [
-      "subagent.run"
-    ],
     "tools": [
       "workboard_list",
       "workboard_create",

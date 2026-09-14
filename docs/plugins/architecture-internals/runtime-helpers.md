@@ -172,13 +172,13 @@ const result = await api.runtime.subagent.run({
 
 Notes:
 
-- `run(...)` is default-deny. The plugin manifest must declare `contracts.runtimeCapabilities: ["subagent.run"]`, and the operator must consent with `plugins.entries.<id>.subagent.allowRun: true`. The grant is bound to the declaring plugin id and does not expose general Gateway methods or operator scopes.
+- An `auth: "plugin"` HTTP route has no operator scopes. To delegate `run(...)` from that route, the plugin manifest must declare `contracts.runtimeCapabilities: ["subagent.run"]`, and the operator must consent with `plugins.entries.<id>.subagent.allowRun: true`. The grant is bound to the declaring plugin id and exposes only this host-owned run path. Existing Gateway-authorized and background callers retain their normal authority and compatibility.
 - `provider` and `model` are optional per-run overrides, not persistent session changes.
 - `toolsAlsoAllow` accepts exact, uniquely owned tool names registered by the calling plugin. Core and ambiguous names are rejected. It is additive to the normal profile, but operator allowlists and denies remain authoritative.
 - OpenClaw only honors those override fields for trusted callers.
 - For plugin-owned fallback runs, operators must opt in with `plugins.entries.<id>.subagent.allowModelOverride: true`.
 - Use `plugins.entries.<id>.subagent.allowedModels` to restrict trusted plugins to specific canonical `provider/model` targets, or `"*"` to allow any target explicitly.
-- Plugins without both the manifest declaration and operator consent cannot start subagent runs.
+- An otherwise-unprivileged plugin HTTP route without both the declaration and consent cannot start a subagent run.
 - Plugin-created subagent sessions are tagged with the creating plugin id. Fallback `api.runtime.subagent.deleteSession(...)` may delete those owned sessions only; arbitrary session deletion still requires an admin-scoped Gateway request.
 
 For web search, plugins can consume the shared runtime helper instead of

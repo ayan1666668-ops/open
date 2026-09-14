@@ -13,7 +13,7 @@ import {
   type OpenKeyedStoreOptions,
 } from "../plugin-state/plugin-state-store.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
-import { normalizePluginsConfig } from "./config-state.js";
+import { normalizePluginId } from "./config-state.js";
 import { formatPluginTrustRefusal } from "./plugin-trust.js";
 import {
   capturePluginLifecycleAuthority,
@@ -26,6 +26,7 @@ import type { PluginRegistryState } from "./registry-state.js";
 import type { PluginRecord } from "./registry-types.js";
 import {
   getGatewayContextResolver,
+  getPluginRuntimeGatewayRequestScope,
   withPluginRuntimePluginScope,
   withPluginRuntimeRegistryScope,
 } from "./runtime/gateway-request-scope.js";
@@ -199,10 +200,12 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
         const assertSubagentRunAuthorized = () => {
           assertRuntimeCurrent();
           const declared = record.contracts?.runtimeCapabilities?.includes("subagent.run") === true;
-          const consented =
-            normalizePluginsConfig(registryParams.runtime.config.current().plugins).entries[
-              pluginId
-            ]?.subagent?.allowRun === true;
+          const configuredEntries = registryParams.runtime.config.current().plugins?.entries;
+          const consented = Object.entries(configuredEntries ?? {}).some(
+            ([configuredPluginId, entry]) =>
+              normalizePluginId(configuredPluginId) === pluginId &&
+              entry?.subagent?.allowRun === true,
+          );
           if (!declared || !consented) {
             throw new Error(
               `plugin "${pluginId}" requires manifest runtimeCapabilities ["subagent.run"] and ` +
@@ -611,7 +614,9 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           run: async (params) => {
             const { assertSessionIdentitiesOwned } = await loadSessionOwnership();
             return await runWithPluginScope(async () => {
-              assertSubagentRunAuthorized();
+              if (getPluginRuntimeGatewayRequestScope()?.pluginSubagentDelegationAllowed === true) {
+                assertSubagentRunAuthorized();
+              }
               assertSessionIdentitiesOwned({
                 action: "run",
                 sessionKeys: [params.sessionKey],

@@ -6,6 +6,7 @@ import { withTempHome } from "../plugin-sdk/test-env.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { createPluginRecord } from "./loader-records.js";
 import { createRuntimeTestRegistry } from "./registry-runtime.test-helpers.js";
+import { withPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
 import { createPluginRuntime } from "./runtime/index.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
@@ -49,13 +50,18 @@ describe("plugin registry SQLite session ownership", () => {
         },
       };
       const params = { sessionKey: "agent:main:subagent:entitlement", message: "start" };
-      await expect(manifestOnly.runtime.subagent.run(params)).rejects.toThrow(
+      const delegatedRun = (api: ReturnType<typeof createApi>) =>
+        withPluginRuntimeGatewayRequestScope(
+          { pluginSubagentDelegationAllowed: true, isWebchatConnect: () => false },
+          () => api.runtime.subagent.run(params),
+        );
+      await expect(delegatedRun(manifestOnly)).rejects.toThrow(
         "requires manifest runtimeCapabilities",
       );
-      await expect(consentOnly.runtime.subagent.run(params)).rejects.toThrow(
+      await expect(delegatedRun(consentOnly)).rejects.toThrow(
         "requires manifest runtimeCapabilities",
       );
-      await expect(entitled.runtime.subagent.run(params)).resolves.toEqual({
+      await expect(delegatedRun(entitled)).resolves.toEqual({
         runId: "entitled-run",
       });
       expect(subagent.run).toHaveBeenCalledOnce();
@@ -64,10 +70,13 @@ describe("plugin registry SQLite session ownership", () => {
         ...config,
         plugins: { entries: { entitled: { subagent: { allowRun: false } } } },
       };
-      await expect(entitled.runtime.subagent.run(params)).rejects.toThrow(
-        "requires manifest runtimeCapabilities",
-      );
+      await expect(delegatedRun(entitled)).rejects.toThrow("requires manifest runtimeCapabilities");
       expect(subagent.run).toHaveBeenCalledOnce();
+
+      await expect(manifestOnly.runtime.subagent.run(params)).resolves.toEqual({
+        runId: "entitled-run",
+      });
+      expect(subagent.run).toHaveBeenCalledTimes(2);
     });
   });
 
