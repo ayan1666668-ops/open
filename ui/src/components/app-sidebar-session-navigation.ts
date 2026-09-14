@@ -16,6 +16,7 @@ import {
 } from "../lib/sessions/route-navigation.ts";
 import {
   normalizeAgentId,
+  isSubagentSessionKey,
   resolveUiDefaultAgentId,
   resolveUiSessionRowAgentId,
 } from "../lib/sessions/session-key.ts";
@@ -415,9 +416,7 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
   }
 
   readonly selectSession = (sessionKey: string, mainAgentId?: string) => {
-    const navigationState = this.getSessionNavigationState();
-    const sessionResultsByAgent = this.sessionData.sessionResultsByAgent;
-    const row = findProjectedSidebarSession({ sessionKey, navigationState, sessionResultsByAgent });
+    const row = this.findSidebarSessionByKey(sessionKey);
     const mainChat = mainAgentId !== undefined && this.sidebarAgentsMode === "roster";
     const face = mainChat ? "chat" : resolveSessionPreferredFace(row);
     const agentId = mainAgentId ?? this.sessionNavigationAgentId(row ?? { key: sessionKey });
@@ -522,8 +521,7 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
 
   /** Rows in on-screen order; shift ranges and batch actions share this ordering. */
   protected visibleSessionRowsInOrder(): SidebarRecentSession[] {
-    const navigationState = this.getSessionNavigationState();
-    const rows = this.selectedAgentSessionRows(navigationState);
+    const rows = this.selectedAgentSessionRows(this.getSessionNavigationState());
     const { visibleRows } = this.zonedVisibleSections(rows);
     const { entries, sessionRows } = this.reconciledSidebarZone(rows);
     const pinnedRows = entries.flatMap((entry) => {
@@ -541,13 +539,14 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
   }
 
   handleSessionRowClick(event: MouseEvent, session: SidebarRecentSession) {
-    if (session.isChild && shouldHandleNavigationClick(event)) {
+    const subagent = isSubagentSessionKey(session.key);
+    if (subagent && shouldHandleNavigationClick(event)) {
       event.preventDefault();
       this.clearSessionSelection();
       this.selectSession(session.key);
       return;
     }
-    if (session.isChild || event.defaultPrevented || event.button !== 0) {
+    if (subagent || event.defaultPrevented || event.button !== 0) {
       return;
     }
     if (event.metaKey || event.ctrlKey) {
@@ -697,11 +696,11 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
   }
 
   findSidebarSessionByKey(sessionKey: string): SidebarRecentSession | undefined {
-    const navigationState = this.getSessionNavigationState();
     return findProjectedSidebarSession({
       sessionKey,
-      navigationState,
+      navigationState: this.getSessionNavigationState(),
       sessionResultsByAgent: this.sessionData.sessionResultsByAgent,
+      childSessionRowsByParent: this.sessionData.childSessionRowsByParent,
     });
   }
 
