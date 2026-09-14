@@ -334,7 +334,6 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
   readonly #adapter: StartedOpenClawCrablineCorrelatedAdapter;
   readonly #selection: OpenClawCrablineChannelDriverSelection;
   readonly #transportPolicy?: QaTransportPolicy;
-  readonly #voiceCaPath?: string;
   readonly #state: QaCrablineTransportState;
   readonly sendNativeCommand?: (input: QaTransportNativeCommandInput) => Promise<void>;
   readonly waitForOutboundSequence?: (input: QaTransportOutboundSequenceMatch) => Promise<{
@@ -349,7 +348,6 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     transportPolicy?: QaTransportPolicy;
     selection: OpenClawCrablineChannelDriverSelection;
     state: QaCrablineTransportState;
-    voiceCaPath?: string;
   }) {
     super({
       id: "crabline",
@@ -361,7 +359,6 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     this.#adapter = params.adapter;
     this.#selection = params.selection;
     this.#transportPolicy = params.transportPolicy;
-    this.#voiceCaPath = params.voiceCaPath;
     this.#state = params.state;
     if (params.selection.channel === "discord" && params.adapter.manifest.provider === "discord") {
       const manifest = params.adapter.manifest;
@@ -513,7 +510,6 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     this.#adapter.manifest.provider === "discord"
       ? {
           DISCORD_API_URL: `${this.#adapter.manifest.endpoints.apiRoot}/v10`,
-          ...(this.#voiceCaPath ? { NODE_EXTRA_CA_CERTS: this.#voiceCaPath } : {}),
         }
       : this.#adapter.createProviderReadinessEnv({});
 
@@ -570,15 +566,6 @@ export async function createQaCrablineTransportAdapter(params: {
     recorderPath,
   });
 
-  let voiceCaPath: string | undefined;
-  if (adapter.manifest.provider === "discord") {
-    const certificate = adapter.manifest.endpoints.voiceCaCertificate;
-    if (certificate) {
-      voiceCaPath = path.join(params.outputDir, "artifacts", "crabline", "discord-voice-ca.pem");
-      await fs.writeFile(voiceCaPath, `${certificate.trim()}\n`, { encoding: "utf8", mode: 0o600 });
-    }
-  }
-
   const state = createCrablineState({
     adapter,
     state: params.state ?? createQaBusState(),
@@ -589,6 +576,5 @@ export async function createQaCrablineTransportAdapter(params: {
     transportPolicy: params.transportPolicy,
     selection: params.selection,
     state,
-    ...(voiceCaPath ? { voiceCaPath } : {}),
   });
 }

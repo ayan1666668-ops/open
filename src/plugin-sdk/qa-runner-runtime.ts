@@ -321,6 +321,27 @@ function mapLiveTransportQaCommanderOptions(
   opts: LiveTransportQaCommanderOptions,
   normalizeInactiveSelectionOptions: boolean,
 ): LiveTransportQaCommandOptions {
+  if (!normalizeInactiveSelectionOptions) {
+    return {
+      ...(opts.channelDriver ? { channelDriver: opts.channelDriver } : {}),
+      concurrency: opts.concurrency,
+      repoRoot: opts.repoRoot,
+      outputDir: opts.outputDir,
+      providerMode: opts.providerMode,
+      primaryModel: opts.model,
+      alternateModel: opts.altModel,
+      fastMode: opts.fast,
+      allowFailures: opts.allowFailures,
+      failFast: opts.failFast,
+      profile: opts.profile,
+      scenarioIds: opts.scenario,
+      listScenarios: opts.listScenarios,
+      sutAccountId: opts.sutAccount,
+      credentialFile: opts.credentialFile,
+      credentialSource: opts.credentialSource,
+      credentialRole: opts.credentialRole,
+    };
+  }
   return {
     ...(opts.channelDriver ? { channelDriver: opts.channelDriver } : {}),
     ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
@@ -331,16 +352,10 @@ function mapLiveTransportQaCommanderOptions(
     alternateModel: opts.altModel,
     fastMode: opts.fast,
     allowFailures: opts.allowFailures,
-    ...(normalizeInactiveSelectionOptions || opts.failFast !== undefined
-      ? { failFast: opts.failFast }
-      : {}),
-    ...(normalizeInactiveSelectionOptions || opts.profile !== undefined
-      ? { profile: opts.profile }
-      : {}),
+    failFast: opts.failFast,
+    profile: opts.profile,
     scenarioIds: opts.scenario,
-    listScenarios: normalizeInactiveSelectionOptions
-      ? opts.listScenarios || undefined
-      : opts.listScenarios,
+    listScenarios: opts.listScenarios || undefined,
     sutAccountId: opts.sutAccount,
     ...(opts.credentialFile ? { credentialFile: opts.credentialFile } : {}),
     credentialSource: opts.credentialSource,

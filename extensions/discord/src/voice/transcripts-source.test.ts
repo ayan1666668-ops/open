@@ -1,5 +1,4 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 // Discord tests cover transcripts source plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Guild, RequestClient } from "../internal/discord.js";
@@ -46,83 +45,6 @@ describe("discordVoiceTranscriptsSourceProvider", () => {
 
   it("declares Discord as its account ownership namespace", () => {
     expect(discordVoiceTranscriptsSourceProvider.accessControl?.channelId).toBe("discord");
-  });
-
-  it("shares the active voice manager across plugin module generations", async () => {
-    const first = await importFreshModule<typeof import("./transcripts-source.js")>(
-      import.meta.url,
-      "./transcripts-source.js?generation=transcripts-manager-a",
-    );
-    const second = await importFreshModule<typeof import("./transcripts-source.js")>(
-      import.meta.url,
-      "./transcripts-source.js?generation=transcripts-manager-b",
-    );
-    const guild = new Guild<true>(
-      { rest: new RequestClient("token-reloaded"), fetchUser: vi.fn() },
-      "g-reloaded",
-    );
-    const manager: TranscriptsManager = {
-      resolveAccessTarget: vi.fn(async () => ({
-        guild,
-        channelName: "QA Voice",
-        channelSlug: "qa-voice",
-        scope: "channel" as const,
-      })),
-      startTranscriptsCapture: vi.fn(async () => ({ ok: true, message: "joined" })),
-      stopTranscriptsCapture: vi.fn(async () => {}),
-      hasRealtimeCapture: vi.fn(() => false),
-      watchChannelOccupancy: vi.fn(() => vi.fn()),
-    };
-    first.setDiscordTranscriptsVoiceManager({ accountId: "reloaded", manager });
-    try {
-      const cfg = {
-        channels: {
-          discord: {
-            accounts: {
-              reloaded: {
-                token: "token-reloaded",
-                voice: { enabled: true },
-                groupPolicy: "allowlist",
-                guilds: {
-                  "*": { channels: { "*": { users: ["discord:u-owner"] } } },
-                },
-              },
-            },
-          },
-        },
-      } satisfies OpenClawConfig;
-
-      await expect(
-        second.discordVoiceTranscriptsSourceProvider.accessControl?.authorize({
-          action: "start",
-          cfg,
-          caller: {
-            kind: "channel",
-            channel: "discord",
-            accountId: "reloaded",
-            senderId: "u-owner",
-            groupSpace: "g-reloaded",
-            roleIds: [],
-          },
-          source: {
-            providerId: "discord-voice",
-            accountId: "reloaded",
-            guildId: "g-reloaded",
-            channelId: "c-reloaded",
-          },
-        }),
-      ).resolves.toEqual({ ok: true, value: undefined });
-      expect(manager.resolveAccessTarget).toHaveBeenCalledWith({
-        guildId: "g-reloaded",
-        channelId: "c-reloaded",
-      });
-    } finally {
-      first.setDiscordTranscriptsVoiceManager({
-        accountId: "reloaded",
-        manager: null,
-        expectedManager: manager,
-      });
-    }
   });
 
   it("authorizes the resolved target with the native voice policy", async () => {

@@ -166,7 +166,9 @@ pnpm openclaw qa discord \
 Crabline starts a local Discord-compatible provider server and exercises the
 bundled Discord plugin without contacting Discord or acquiring Discord bot
 credentials. Omitting `--channel-driver` keeps the live-service behavior and
-credential requirements below.
+credential requirements below. Discord voice scenarios remain live-only because
+the endpoint override does not authorize provider-selected voice WebSocket or UDP
+destinations.
 
 Required env when `--credential-source env`:
 

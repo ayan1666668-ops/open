@@ -351,9 +351,24 @@ describe("live transport QA contributions", () => {
 
     await qa.parseAsync(["node", "openclaw", "telegram", "--scenario", "telegram-canary"]);
 
-    expect(runTelegram).toHaveBeenCalledWith(
-      expect.objectContaining({ scenarioIds: ["telegram-canary"] }),
-    );
+    expect(runTelegram).toHaveBeenCalledWith({
+      allowFailures: false,
+      alternateModel: undefined,
+      concurrency: undefined,
+      credentialFile: undefined,
+      credentialRole: undefined,
+      credentialSource: undefined,
+      failFast: undefined,
+      fastMode: undefined,
+      listScenarios: false,
+      outputDir: undefined,
+      primaryModel: undefined,
+      profile: undefined,
+      providerMode: "live-frontier",
+      repoRoot: undefined,
+      scenarioIds: ["telegram-canary"],
+      sutAccountId: "sut",
+    });
   });
 
   it.each(["discord", "slack", "telegram", "whatsapp"])(

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { requestDiscord } from "@openclaw/discord/api.js";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import {
   discordQaScenarioSupport,
@@ -48,8 +49,7 @@ type TranscriptAuthorizationEvidence = {
   };
 };
 
-const VISIBLE_DENIAL_RE =
-  /\b(?:denied|not allowlisted|not authorized|unauthorized|access target is unavailable)\b/iu;
+const VISIBLE_DENIAL_RE = /\b(?:denied|not allowlisted|not authorized|unauthorized)\b/iu;
 
 async function waitForDiscordVoiceDisconnect(params: {
   channelId: string;
@@ -90,10 +90,10 @@ async function deleteChannelMessage(params: {
   messageId: string;
   token: string;
 }) {
-  await discordQaScenarioSupport.testing.deleteChannelMessage(
+  await requestDiscord<void>(
+    `/channels/${params.channelId}/messages/${params.messageId}`,
     params.token,
-    params.channelId,
-    params.messageId,
+    { method: "DELETE", timeoutMs: 15_000 },
   );
 }
 

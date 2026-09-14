@@ -352,6 +352,22 @@ describe("live transport suite runtime", () => {
     }
   });
 
+  it.each([
+    ["discord-voice-autojoin", "mock-openai"],
+    ["discord-transcripts-voice-authorization", "live-frontier"],
+  ] as const)("keeps %s on the live Discord transport", async (scenarioId, providerMode) => {
+    await expect(
+      runStandardLiveTransportQaSuiteCommand({
+        channelId: "discord",
+        options: {
+          channelDriver: "crabline",
+          providerMode,
+          scenarioIds: [scenarioId],
+        },
+      }),
+    ).rejects.toThrow(/channelDriver=live/u);
+  });
+
   it("normalizes the shared credential source environment override", async () => {
     vi.stubEnv("OPENCLAW_QA_CREDENTIAL_SOURCE", " convex ");
 
