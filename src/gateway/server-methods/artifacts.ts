@@ -20,6 +20,7 @@ import {
 import { findMarkdownImageSpans } from "../../../packages/markdown-core/src/image-spans.js";
 import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isImageMediaFact, readPersistedMediaFacts } from "../../media/media-facts.js";
 import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import {
   ASSISTANT_DISPLAY_CONTENT_FIELD,
@@ -277,6 +278,18 @@ function collectArtifactsFromMessage(params: {
     for (const text of texts) {
       for (const span of findMarkdownImageSpans(text)) {
         content.push({ type: "image", url: span.destination, title: "image" });
+      }
+    }
+    for (const fact of readPersistedMediaFacts(msg) ?? []) {
+      const url = fact.path ?? fact.url;
+      if (url && isImageMediaFact(fact)) {
+        content.push({
+          type: "image",
+          url,
+          mimeType: fact.contentType,
+          fileName: fact.fileName,
+          sizeBytes: fact.sizeBytes,
+        });
       }
     }
   }

@@ -6,6 +6,7 @@ import {
   appendTranscriptMessage,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import { buildPersistedUserTurnMessage } from "../../sessions/user-turn-transcript.message.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import { sharingPolicyClient } from "../session-sharing.test-utils.js";
@@ -46,6 +47,57 @@ async function append(content: unknown) {
 }
 
 describe("bounded Activity image discovery", () => {
+  it("pages canonical uploaded images from mixed user media with Chat's path preference", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+      const urls = Array.from({ length: 5 }, (_, index) => `media://inbound/upload-${index}.png`);
+      const localPath = "/synthetic/nonexistent/upload.png";
+      await appendTranscriptMessage(scope, {
+        message: buildPersistedUserTurnMessage({
+          text: "Uploaded screenshots",
+          media: [
+            {
+              url: "media://inbound/document.png",
+              kind: "document",
+              contentType: "application/pdf",
+            },
+            {},
+            { url: "media://inbound/audio.wav", kind: "audio", contentType: "audio/wav" },
+            ...urls.map((url, index) => ({
+              url,
+              contentType: "image/png",
+              fileName: `upload-${index}.png`,
+              sizeBytes: 42,
+              hydrationSuppressed: true,
+            })),
+            { path: localPath, url: "https://images.example.test/alternate.png", kind: "image" },
+          ],
+        }),
+      });
+      const first = page(await list());
+      expect(first.artifacts.map((artifact) => artifact.image?.url)).toEqual([
+        localPath,
+        ...urls.slice(2).toReversed(),
+      ]);
+      const second = page(
+        await list({ cursor: expectDefined(first.nextCursor, "uploaded image cursor") }),
+      );
+      expect(second.artifacts.map((artifact) => artifact.image?.url)).toEqual(
+        urls.slice(0, 2).toReversed(),
+      );
+      expect(second.artifacts[1]).toMatchObject({
+        title: "upload-0.png",
+        mimeType: "image/png",
+        sizeBytes: 42,
+        source: "session-transcript-preview",
+        download: { mode: "unsupported" },
+      });
+      expect(second.nextCursor).toBeUndefined();
+      expect(page(await list({ messageRole: "assistant" })).artifacts).toEqual([]);
+      expect(page(await list({ type: undefined, limit: undefined })).artifacts).toEqual([]);
+    });
+  });
+
   it("honors assistant image filters and binds pagination to the same role", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
