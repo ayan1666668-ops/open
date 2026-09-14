@@ -63,6 +63,8 @@ const { reconcileStaleActiveSubagentRun } =
   await import("../src/agents/subagents/registry/subagent-registry-sweeper-orphan.js");
 const { persistSubagentRunsToDisk, persistSubagentRunsToDiskOrThrow } =
   await import("../src/agents/subagents/registry/subagent-registry-state.js");
+const { getLatestSubagentRunByChildSessionKeyFromRuns } =
+  await import("../src/agents/subagents/registry/subagent-registry-queries.js");
 const { loadSubagentRegistryFromSqlite } =
   await import("../src/agents/subagents/registry/subagent-registry.store.sqlite.js");
 const { loadGatewayBootSegmentsForAttribution } =
@@ -155,6 +157,8 @@ function createController(runs: Map<string, SubagentRunRecord>, edges: EdgeRecor
     persistOrThrow,
     clearPendingLifecycleError: () => {},
     countPendingDescendantRuns: () => 0,
+    getLatestRunForChildSession: (key, matches) =>
+      getLatestSubagentRunByChildSessionKeyFromRuns(runs, key, matches) ?? null,
     suppressAnnounceForSteerRestart: () => false,
     // No detached task backs these runs; the real "unavailable" resolution is
     // what the production lookup returns for an un-tasked run.
