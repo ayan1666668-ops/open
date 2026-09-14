@@ -400,7 +400,12 @@ describe("security audit install metadata findings", () => {
       },
       async () => {
         const findings = await runInstallMetadataAudit({}, stateDir);
-        expect(reads).toEqual([pluginPath, hookPath]);
+        // Persistence drops blank resolved versions and sorts plugin IDs before the audit reads them.
+        expect(reads).toEqual([
+          path.join(stateDir, "extensions", "empty-version"),
+          pluginPath,
+          hookPath,
+        ]);
         expect(findings.map(({ checkId, detail }) => [checkId, detail])).toEqual([
           [
             "plugins.installs_unpinned_npm_specs",
