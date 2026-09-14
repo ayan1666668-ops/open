@@ -263,8 +263,9 @@ async function applyPatch(input: string, options: ApplyPatchOptions): Promise<Ap
         if (hunk.movePath && moveTarget) {
           await assertPatchParentPath(hunk.movePath, patchOptions);
           await ensureDir(moveTarget.resolved, fileOps);
-          const moveResolvesToSource =
-            path.resolve(moveTarget.resolved) === path.resolve(target.resolved);
+          // Container aliases can name the same file; reuse the physical identity
+          // already held by the mutation queue instead of comparing spellings.
+          const moveResolvesToSource = moveTarget.queueKey === target.queueKey;
           if (moveResolvesToSource) {
             const existing = await fileOps.readFile(target.resolved);
             if (normalizeUpdateComparison(existing) === normalizeUpdateComparison(applied)) {

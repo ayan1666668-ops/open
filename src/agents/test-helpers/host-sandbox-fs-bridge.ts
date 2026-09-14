@@ -119,8 +119,13 @@ export function createHostSandboxFsBridge(rootDir: string): SandboxFsBridge {
   const root = path.resolve(rootDir);
 
   const resolvePath = (filePath: string, cwd?: string): SandboxResolvedPath => {
+    // Operations may receive the container path returned by an earlier resolution.
+    const input =
+      filePath === "/workspace" || filePath.startsWith("/workspace/")
+        ? path.join(root, filePath.slice("/workspace".length))
+        : filePath;
     const resolved = resolveSandboxPath({
-      filePath,
+      filePath: input,
       cwd: cwd ?? root,
       root,
     });

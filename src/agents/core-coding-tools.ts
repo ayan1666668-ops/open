@@ -13,6 +13,7 @@ import {
   type SkillInstructionDeliveryCache,
   wrapReadToolWithSkillContent,
   wrapToolWorkspaceRootGuardWithOptions,
+  wrapSandboxFileToolPath,
 } from "./agent-tools.read.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
 import { createApplyPatchTool } from "./apply-patch.js";
@@ -146,20 +147,29 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
         modelBudget: resolveToolResultBudget(options.modelContextWindowTokens),
       });
       // Skill-content read exceptions do not grant directory enumeration outside the workspace.
+      const guardedLs = options.workspaceOnly
+        ? wrapToolWorkspaceRootGuardWithOptions(
+            ls,
+            sandboxRoot ?? options.containmentRoot,
+            sandboxRoot
+              ? {
+                  additionalContainerMounts: sandboxWorkspaceMounts,
+                  containerWorkdir: sandbox.containerWorkdir,
+                  bridge: sandboxFsBridge,
+                  normalizeGuardedPathParams: true,
+                }
+              : { resolutionCwd: options.codingRoot, normalizeGuardedPathParams: true },
+          )
+        : ls;
+      // Resolve the default directory before the guard as well as execution.
       base.push(
-        options.workspaceOnly
-          ? wrapToolWorkspaceRootGuardWithOptions(
-              ls,
-              sandboxRoot ?? options.containmentRoot,
-              sandboxRoot
-                ? {
-                    additionalContainerMounts: sandboxWorkspaceMounts,
-                    containerWorkdir: sandbox.containerWorkdir,
-                    bridge: sandboxFsBridge,
-                  }
-                : { resolutionCwd: options.codingRoot, normalizeGuardedPathParams: true },
-            )
-          : ls,
+        sandboxRoot
+          ? wrapSandboxFileToolPath(guardedLs, {
+              root: sandboxRoot,
+              bridge: sandboxFsBridge!,
+              defaultPath: ".",
+            })
+          : guardedLs,
       );
     }
     const read = sandboxRoot
@@ -244,6 +254,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
             additionalContainerMounts: sandboxWorkspaceMounts,
             containerWorkdir: sandbox.containerWorkdir,
             bridge: sandboxFsBridge,
+            normalizeGuardedPathParams: true,
           })
         : edit,
       options.workspaceOnly
@@ -251,6 +262,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
             additionalContainerMounts: sandboxWorkspaceMounts,
             containerWorkdir: sandbox.containerWorkdir,
             bridge: sandboxFsBridge,
+            normalizeGuardedPathParams: true,
           })
         : write,
     );

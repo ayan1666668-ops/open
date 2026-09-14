@@ -11,139 +11,188 @@ import {
   withTempDir,
 } from "./sandbox/fs-bridge.test-helpers.js";
 import { getTextContent } from "./test-helpers/agent-tools-fs-helpers.js";
+import { createSandboxFsBridgeFromResolver } from "./test-helpers/host-sandbox-fs-bridge.js";
+
+function installLocalTransport(bridge: ReturnType<typeof createSandboxFsBridge>) {
+  const local = createSandboxFsBridgeFromResolver((filePath, cwd) =>
+    bridge.resolvePath({ filePath, cwd }),
+  );
+  // Keep real path guards and pinned reads; injected transport persists bytes
+  // so the session tools still enforce their ordinary readback verification.
+  const write = vi.spyOn(bridge, "writeFile").mockImplementation(local.writeFile);
+  const create = vi
+    .spyOn(bridge, "createFileExclusive")
+    .mockImplementation(local.createFileExclusive!);
+  const remove = vi.spyOn(bridge, "remove").mockImplementation(local.remove);
+  vi.spyOn(bridge, "mkdirp").mockImplementation(local.mkdirp);
+  vi.spyOn(bridge, "stat").mockImplementation(local.stat);
+  const list = vi.spyOn(bridge, "readDirectory").mockImplementation(async (params) =>
+    (await fs.readdir(bridge.resolvePath(params).hostPath!, { withFileTypes: true })).map(
+      (entry) => ({
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+      }),
+    ),
+  );
+  return { write, create, remove, list };
+}
 
 describe("workspace-only coding tools with effective sandbox mounts", () => {
   installFsBridgeTestHarness();
 
-  it("guards the visible workspace while preserving read-only exceptions for additional mounts", async () => {
-    await withTempDir("openclaw-coding-mounts-", async (root) => {
-      const workspaceDir = path.join(root, "workspace");
-      const replacement = path.join(root, "replacement");
-      const outside = path.join(root, "outside");
-      const data = path.join(root, "data");
-      for (const dir of [workspaceDir, replacement, outside, data]) {
-        await fs.mkdir(dir);
-      }
-      await fs.mkdir(path.join(replacement, "sub"));
-      await fs.mkdir(path.join(replacement, "cache"));
-      await fs.writeFile(path.join(replacement, "sub/marker"), "VISIBLE");
-      await fs.writeFile(path.join(outside, "marker"), "HIDDEN");
-      await fs.writeFile(path.join(data, "marker"), "EXTRA");
-      await fs.symlink(
-        outside,
-        path.join(workspaceDir, "sub"),
-        process.platform === "win32" ? "junction" : "dir",
-      );
-      await fs.symlink(
-        outside,
-        path.join(replacement, "escape"),
-        process.platform === "win32" ? "junction" : "dir",
-      );
-      const sandbox = createSandbox({
-        workspaceDir,
-        agentWorkspaceDir: workspaceDir,
-        workspaceAccess: "rw",
-        docker: {
-          ...createSandbox().docker,
-          binds: [
-            `${replacement}:/workspace:rw`,
-            `${data}:/data:rw`,
-            ...(process.platform === "win32" ? [] : [`${data}:${workspaceDir}:rw`]),
-          ],
-          tmpfs: ["/workspace/cache"],
-        },
-      });
-      const bridge = createSandboxFsBridge({ sandbox });
-      sandbox.fsBridge = bridge;
-      // Exercise factory admission with the real resolver, host guard and reader.
-      // Transport mutations/listing are observed here; the Docker suite executes them.
-      const write = vi.spyOn(bridge, "writeFile").mockResolvedValue();
-      vi.spyOn(bridge, "mkdirp").mockResolvedValue();
-      const list = vi
-        .spyOn(bridge, "readDirectory")
-        .mockResolvedValue([{ name: "marker", isDirectory: false }]);
-      const tools = createCoreCodingTools({
-        codingRoot: workspaceDir,
-        containmentRoot: workspaceDir,
-        includeBaseCodingTools: true,
-        includeShellTools: false,
-        workspaceOnly: true,
-        readOnly: false,
-        sandbox,
-        applyPatchEnabled: false,
-        applyPatchWorkspaceOnly: true,
-        execDefaults: {},
-        processDefaults: {},
-      });
-      const tool = (name: string) => {
-        const found = tools.find((entry) => entry.name === name);
-        if (!found) {
-          throw new Error(`Missing ${name} tool`);
+  it.each([true, false])(
+    "preserves container execution paths with workspaceOnly=%s",
+    async (workspaceOnly) => {
+      await withTempDir("openclaw-coding-mounts-", async (root) => {
+        const workspaceDir = path.join(root, "workspace");
+        const replacement = path.join(root, "replacement");
+        const outside = path.join(root, "outside");
+        const data = path.join(root, "data");
+        for (const dir of [workspaceDir, replacement, outside, data]) {
+          await fs.mkdir(dir);
         }
-        return found;
-      };
-      for (const filePath of [
-        "sub/marker",
-        "/workspace/sub/marker",
-        "file:///workspace/sub/marker",
-      ]) {
-        expect(
-          getTextContent(await tool("read").execute("read-visible", { path: filePath })),
-        ).toContain("VISIBLE");
-      }
-      for (const filePath of ["sub/marker", "/workspace/sub/marker"]) {
-        await tool("write").execute("write-visible", { path: filePath, content: "changed" });
-        await tool("edit").execute("edit-visible", {
-          path: filePath,
-          edits: [{ oldText: "VISIBLE", newText: "edited" }],
+        await fs.mkdir(path.join(replacement, "sub"));
+        await fs.mkdir(path.join(replacement, "cache"));
+        await fs.writeFile(path.join(replacement, "sub/marker"), "VISIBLE");
+        await fs.writeFile(path.join(replacement, "@literal"), "AT");
+        await fs.writeFile(path.join(outside, "marker"), "HIDDEN");
+        await fs.writeFile(path.join(data, "marker"), "EXTRA");
+        await fs.symlink(
+          outside,
+          path.join(workspaceDir, "sub"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
+        await fs.symlink(
+          outside,
+          path.join(replacement, "escape"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
+        const sandbox = createSandbox({
+          workspaceDir,
+          agentWorkspaceDir: workspaceDir,
+          workspaceAccess: "rw",
+          docker: {
+            ...createSandbox().docker,
+            binds: [
+              `${replacement}:/workspace:rw`,
+              `${data}:/data:rw`,
+              ...(process.platform === "win32" ? [] : [`${data}:${workspaceDir}:rw`]),
+            ],
+            tmpfs: ["/workspace/cache"],
+          },
         });
-      }
-      expect(write).toHaveBeenCalledTimes(4);
-      for (const [request] of write.mock.calls) {
-        expect(bridge.resolvePath(request).hostPath).toBe(path.join(replacement, "sub/marker"));
-      }
-      for (const filePath of ["sub", "/workspace/sub"]) {
-        expect(
-          getTextContent(await tool("ls").execute("list-visible", { path: filePath })),
-        ).toContain("marker");
-      }
-      expect(list).toHaveBeenCalledTimes(2);
-      for (const containerRoot of [
-        "/data",
-        ...(process.platform === "win32" ? [] : [workspaceDir]),
-      ]) {
-        expect(
-          getTextContent(
-            await tool("read").execute("read-extra", { path: `${containerRoot}/marker` }),
-          ),
-        ).toContain("EXTRA");
-        for (const [name, args] of [
-          ["write", { path: `${containerRoot}/marker`, content: "denied" }],
-          [
-            "edit",
-            { path: `${containerRoot}/marker`, edits: [{ oldText: "EXTRA", newText: "denied" }] },
-          ],
-          ["ls", { path: containerRoot }],
-        ] as const) {
-          await expect(tool(name).execute("outside-workspace", args)).rejects.toThrow(
-            "Path escapes sandbox root",
+        const bridge = createSandboxFsBridge({ sandbox });
+        sandbox.fsBridge = bridge;
+        const { write, list } = installLocalTransport(bridge);
+        const tools = createCoreCodingTools({
+          codingRoot: workspaceDir,
+          containmentRoot: workspaceDir,
+          includeBaseCodingTools: true,
+          includeShellTools: false,
+          workspaceOnly,
+          readOnly: false,
+          sandbox,
+          applyPatchEnabled: false,
+          applyPatchWorkspaceOnly: true,
+          execDefaults: {},
+          processDefaults: {},
+        });
+        const tool = (name: string) => {
+          const found = tools.find((entry) => entry.name === name);
+          if (!found) {
+            throw new Error(`Missing ${name} tool`);
+          }
+          return found;
+        };
+        for (const filePath of [
+          "sub/marker",
+          "/workspace/sub/marker",
+          "file:///workspace/sub/marker",
+        ]) {
+          expect(
+            getTextContent(await tool("read").execute("read-visible", { path: filePath })),
+          ).toContain("VISIBLE");
+        }
+        for (const filePath of ["sub/marker", "/workspace/sub/marker"]) {
+          await tool("write").execute("write-visible", { path: filePath, content: "changed" });
+          await tool("edit").execute("edit-visible", {
+            path: filePath,
+            edits: [{ oldText: "changed", newText: "edited" }],
+          });
+          expect(await fs.readFile(path.join(replacement, "sub/marker"), "utf8")).toBe("edited");
+        }
+        expect(write).toHaveBeenCalledTimes(4);
+        for (const [request] of write.mock.calls) {
+          expect(request.filePath).toBe("/workspace/sub/marker");
+          expect(bridge.resolvePath(request).hostPath).toBe(path.join(replacement, "sub/marker"));
+        }
+        await tool("write").execute("write-at", { path: "@literal", content: "new-at" });
+        await tool("edit").execute("edit-at", {
+          path: "@literal",
+          edits: [{ oldText: "new-at", newText: "edited-at" }],
+        });
+        expect(await fs.readFile(path.join(replacement, "@literal"), "utf8")).toBe("edited-at");
+        expect(write).toHaveBeenLastCalledWith(
+          expect.objectContaining({ filePath: "/workspace/@literal" }),
+        );
+        for (const filePath of ["sub", "/workspace/sub"]) {
+          expect(
+            getTextContent(await tool("ls").execute("list-visible", { path: filePath })),
+          ).toContain("marker");
+        }
+        for (const args of [{}, { path: "" }, { path: "." }]) {
+          expect(getTextContent(await tool("ls").execute("list-default", args))).toContain("sub/");
+          expect(list).toHaveBeenLastCalledWith(
+            expect.objectContaining({ filePath: "/workspace" }),
           );
         }
-      }
-      for (const name of ["read", "write", "ls"]) {
+        expect(list).toHaveBeenCalledTimes(5);
         await expect(
-          tool(name).execute("masked", { path: "/workspace/cache/marker", content: "denied" }),
-        ).rejects.toThrow("container-only");
-      }
-      await expect(
-        tool("read").execute("visible-escape", { path: "escape/marker" }),
-      ).rejects.toThrow();
-      expect(write).toHaveBeenCalledTimes(4);
-      expect(list).toHaveBeenCalledTimes(2);
-      expect(await fs.readFile(path.join(outside, "marker"), "utf8")).toBe("HIDDEN");
-      expect(await fs.readFile(path.join(data, "marker"), "utf8")).toBe("EXTRA");
-    });
-  });
+          tool("ls").execute("list-malformed", { path: "</arg_value>>" }),
+        ).rejects.toThrow("Malformed path parameter: path");
+        expect(list).toHaveBeenCalledTimes(5);
+        for (const containerRoot of [
+          "/data",
+          ...(process.platform === "win32" ? [] : [workspaceDir]),
+        ]) {
+          expect(
+            getTextContent(
+              await tool("read").execute("read-extra", { path: `${containerRoot}/marker` }),
+            ),
+          ).toContain("EXTRA");
+          if (workspaceOnly) {
+            for (const [name, args] of [
+              ["write", { path: `${containerRoot}/marker`, content: "denied" }],
+              [
+                "edit",
+                {
+                  path: `${containerRoot}/marker`,
+                  edits: [{ oldText: "EXTRA", newText: "denied" }],
+                },
+              ],
+              ["ls", { path: containerRoot }],
+            ] as const) {
+              await expect(tool(name).execute("outside-workspace", args)).rejects.toThrow(
+                "Path escapes sandbox root",
+              );
+            }
+          }
+        }
+        for (const name of ["read", "write", "ls"]) {
+          await expect(
+            tool(name).execute("masked", { path: "/workspace/cache/marker", content: "denied" }),
+          ).rejects.toThrow("container-only");
+        }
+        await expect(
+          tool("read").execute("visible-escape", { path: "escape/marker" }),
+        ).rejects.toThrow();
+        expect(write).toHaveBeenCalledTimes(6);
+        expect(list).toHaveBeenCalledTimes(5);
+        expect(await fs.readFile(path.join(outside, "marker"), "utf8")).toBe("HIDDEN");
+        expect(await fs.readFile(path.join(data, "marker"), "utf8")).toBe("EXTRA");
+      });
+    },
+  );
 
   it("prepares patch-only workspace admission and preserves the admitted container alias", async () => {
     await withTempDir("openclaw-patch-mounts-", async (root) => {
@@ -173,16 +222,14 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
             `${replacement}:/workspace:rw`,
             `${nested}:/data:ro`,
             `${nested}:/workspace/nested:rw`,
+            `${nested}:/workspace/alias:rw`,
             `${outside}:/extra:rw`,
           ],
         },
       });
       const bridge = createSandboxFsBridge({ sandbox });
       sandbox.fsBridge = bridge;
-      const write = vi.spyOn(bridge, "writeFile").mockResolvedValue();
-      const create = vi.spyOn(bridge, "createFileExclusive").mockResolvedValue("created");
-      const remove = vi.spyOn(bridge, "remove").mockResolvedValue();
-      vi.spyOn(bridge, "mkdirp").mockResolvedValue();
+      const { write, create, remove } = installLocalTransport(bridge);
       const patchTool = (workspaceOnly: boolean) => {
         const tool = createCoreCodingTools({
           codingRoot: workspaceDir,
@@ -203,23 +250,57 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
         return tool;
       };
       const patch = patchTool(true);
-      for (const filePath of ["sub/marker", "/workspace/sub/marker", "nested/marker"]) {
+      for (const [filePath, before, after] of [
+        ["sub/marker", "VISIBLE", "changed"],
+        ["/workspace/sub/marker", "changed", "changed-again"],
+        ["nested/marker", "NESTED", "changed"],
+      ] as const) {
         await patch.execute("patch-visible", {
           input: [
             "*** Begin Patch",
             `*** Update File: ${filePath}`,
             "@@",
-            filePath.startsWith("nested") ? "-NESTED" : "-VISIBLE",
-            "+changed",
+            `-${before}`,
+            `+${after}`,
             "*** End Patch",
           ].join("\n"),
         });
+        expect(await bridge.readFile({ filePath })).toEqual(Buffer.from(`${after}\n`));
       }
       expect(write.mock.calls.map(([request]) => request.filePath)).toEqual([
         "/workspace/sub/marker",
         "/workspace/sub/marker",
         "/workspace/nested/marker",
       ]);
+      const move = (to: string, before: string, after: string) =>
+        [
+          "*** Begin Patch",
+          "*** Update File: nested/marker",
+          `*** Move to: ${to}`,
+          "@@",
+          `-${before}`,
+          `+${after}`,
+          "*** End Patch",
+        ].join("\n");
+      await patch.execute("patch-same-file-move", {
+        input: move("alias/marker", "changed", "moved"),
+      });
+      expect(await fs.readFile(path.join(nested, "marker"), "utf8")).toBe("moved\n");
+      expect(
+        getTextContent(
+          await patch.execute("patch-same-file-noop", {
+            input: move("alias/marker", "moved", "moved"),
+          }),
+        ),
+      ).toContain("No changes made");
+      await fs.writeFile(path.join(nested, "occupied"), "KEEP\n");
+      await expect(
+        patch.execute("patch-occupied-move", {
+          input: move("alias/occupied", "moved", "lost"),
+        }),
+      ).rejects.toThrow("already exists");
+      expect(await fs.readFile(path.join(nested, "marker"), "utf8")).toBe("moved\n");
+      expect(await fs.readFile(path.join(nested, "occupied"), "utf8")).toBe("KEEP\n");
       const add = (filePath: string) =>
         ["*** Begin Patch", `*** Add File: ${filePath}`, "+new", "*** End Patch"].join("\n");
       await patch.execute("patch-add", { input: add("sub/new") });

@@ -1016,7 +1016,7 @@ export function wrapToolWorkspaceRootGuardWithOptions(
         }
         if (options?.normalizeGuardedPathParams && record) {
           normalizedRecord ??= { ...record };
-          normalizedRecord[key] = sandboxResult.resolved;
+          normalizedRecord[key] = options.bridge ? guardPath : sandboxResult.resolved;
         }
       }
       return tool.execute(toolCallId, normalizedRecord ?? args, signal, onUpdate);
@@ -1033,6 +1033,40 @@ type SandboxToolParams = {
   imageSanitization?: ImageSanitizationLimits;
   modelHasVision?: boolean;
 };
+
+/** Preserve the sandbox namespace before session tools use host path resolution. */
+export function wrapSandboxFileToolPath(
+  tool: AnyAgentTool,
+  params: Pick<SandboxToolParams, "root" | "bridge"> & { defaultPath?: string },
+): AnyAgentTool {
+  return {
+    ...tool,
+    execute: async (toolCallId, args, signal, onUpdate) => {
+      const record = getToolParamsRecord(args);
+      const rawPath = record?.path;
+      const filePath = rawPath === undefined || rawPath === "" ? params.defaultPath : rawPath;
+      if (!record || typeof filePath !== "string") {
+        return tool.execute(toolCallId, args, signal, onUpdate);
+      }
+      const normalized = await normalizeFileToolPathParam(filePath, params.root, params.bridge);
+      if (normalized === "") {
+        throw malformedXmlArgValuePathError("path");
+      }
+      const resolved = params.bridge.resolvePath({
+        filePath: resolveContainerPathCandidate(normalized) ?? normalized,
+        cwd: params.root,
+      });
+      // Session write/edit/list resolve relative inputs with host path APIs.
+      // Preserve container intent so a second lookup cannot choose another bind.
+      return tool.execute(
+        toolCallId,
+        { ...record, path: resolved.containerPath },
+        signal,
+        onUpdate,
+      );
+    },
+  };
+}
 
 /** Create a sandbox-backed read tool with OpenClaw result normalization. */
 export function createSandboxedReadTool(params: SandboxToolParams) {
@@ -1059,7 +1093,10 @@ export function createSandboxedWriteTool(params: SandboxToolParams) {
       operations: createSandboxWriteOperations(params),
     }),
   );
-  return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.write, params.root, params.bridge);
+  return wrapToolParamValidation(
+    wrapSandboxFileToolPath(base, params),
+    REQUIRED_PARAM_GROUPS.write,
+  );
 }
 
 /** Create a sandbox-backed edit tool with required-parameter validation. */
@@ -1069,7 +1106,7 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
       operations: createSandboxEditOperations(params),
     }),
   );
-  return wrapToolParamValidation(base, REQUIRED_PARAM_GROUPS.edit, params.root, params.bridge);
+  return wrapToolParamValidation(wrapSandboxFileToolPath(base, params), REQUIRED_PARAM_GROUPS.edit);
 }
 
 /** Create a host workspace write tool using guarded filesystem operations. */
