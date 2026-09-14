@@ -200,7 +200,12 @@ export function registerBrowserInspectCommands(
         // output. Empty means the capture did not happen - the page has not painted yet,
         // or the connection to the browser is wedged. Printing that as success is
         // indistinguishable from "this page has no content", so fail loudly instead.
-        if (result.format === "ai" && !result.snapshot.trim()) {
+        //
+        // One empty response is deliberate: a pending dialog blocks the capture, and the
+        // route answers with blockedByDialog and the dialog details in browserState so
+        // the caller can dismiss it. That is a recovery contract, not a failed capture -
+        // let it through untouched.
+        if (result.format === "ai" && !result.snapshot.trim() && !result.blockedByDialog) {
           defaultRuntime.error(
             danger(
               "Browser snapshot came back empty. The page may not have finished loading, or the browser connection is wedged. Retry, or restart the browser with `openclaw browser start`.",

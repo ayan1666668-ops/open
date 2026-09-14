@@ -379,6 +379,11 @@ describe("browser cli snapshot defaults", () => {
     }
   });
 
+  // runtime.error also receives the exit exception, so the guard message is not
+  // necessarily the last call. Search everything it was handed.
+  const allErrorText = () => runtime.error.mock.calls.map((call) => String(call[0])).join("
+");
+
   const emptyAiSnapshot = (snapshot: string): SnapshotResult => ({
     ok: true,
     format: "ai",
@@ -395,7 +400,7 @@ describe("browser cli snapshot defaults", () => {
 
     await expect(runSnapshot([])).rejects.toThrow("__exit__:1");
 
-    expect(runtime.error.mock.calls.at(-1)?.[0]).toContain("came back empty");
+    expect(allErrorText()).toContain("came back empty");
     expect(runtime.log).not.toHaveBeenCalled();
   });
 
@@ -404,7 +409,7 @@ describe("browser cli snapshot defaults", () => {
 
     await expect(runBrowserInspect(["snapshot"], true)).rejects.toThrow("__exit__:1");
 
-    expect(runtime.error.mock.calls.at(-1)?.[0]).toContain("came back empty");
+    expect(allErrorText()).toContain("came back empty");
     expect(runtime.writeJson).not.toHaveBeenCalled();
   });
 
@@ -431,6 +436,22 @@ describe("browser cli snapshot defaults", () => {
 
     expect(runtime.log).toHaveBeenCalledWith("- generic [ref=e1]");
     expect(runtime.error).not.toHaveBeenCalled();
+  });
+
+  it("still reports a dialog-blocked empty snapshot instead of failing", async () => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ...emptyAiSnapshot(""),
+      blockedByDialog: true,
+      browserState: { dialogs: { pending: { id: "d1", message: "Leave site?" } } },
+    });
+
+    await runBrowserInspect(["snapshot"], true);
+
+    expect(runtime.error).not.toHaveBeenCalled();
+    expect(runtime.writeJson.mock.calls.at(-1)?.[0]).toMatchObject({
+      blockedByDialog: true,
+      browserState: { dialogs: { pending: { id: "d1" } } },
+    });
   });
 
   it("leaves an ARIA snapshot with no nodes alone", async () => {
