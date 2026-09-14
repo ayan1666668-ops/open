@@ -288,11 +288,11 @@ describe("custodian page session lifecycle", () => {
     const { context } = createContext(request);
     const { page } = await mountPage(context);
     const twitch = await waitForFast(() => {
-      const choice = [
+      const button = [
         ...page.querySelectorAll<HTMLButtonElement>(".custodian__wizard-step button"),
-      ].find((button) => button.textContent?.trim() === "Twitch");
-      expect(choice).toBeDefined();
-      return choice!;
+      ].find((option) => option.textContent?.trim() === "Twitch");
+      expect(button).toBeDefined();
+      return button!;
     });
 
     twitch.click();
