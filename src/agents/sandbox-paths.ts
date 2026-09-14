@@ -24,12 +24,16 @@ const DATA_URL_RE = /^data:/i;
 const SANDBOX_CONTAINER_WORKDIR = "/workspace";
 const MANAGED_MEDIA_SUBDIRS = new Set(["outbound"]);
 
-function normalizeAtPrefix(filePath: string): string {
-  return filePath.startsWith("@") ? filePath.slice(1) : filePath;
+/** Consume one file-reference prefix while preserving remaining literal @ bytes. */
+export function normalizeFileReferencePrefix(filePath: string): string {
+  const referenced = filePath.startsWith("@") ? filePath.slice(1) : filePath;
+  // Paths cross multiple tool/guard/bridge resolvers. Escape the remaining
+  // prefix so later resolution cannot reinterpret the selected filename.
+  return referenced.startsWith("@") ? `./${referenced}` : referenced;
 }
 
 export function normalizeSandboxInputPath(filePath: string): string {
-  const normalized = normalizeAtPrefix(filePath);
+  const normalized = normalizeFileReferencePrefix(filePath);
   if (normalized === "~") {
     return os.homedir();
   }

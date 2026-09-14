@@ -45,7 +45,7 @@ import {
 } from "./memory-write-provenance.js";
 import { toRelativeWorkspacePath } from "./path-policy.js";
 import type { AgentTool, AgentToolResult } from "./runtime/index.js";
-import { assertSandboxPath } from "./sandbox-paths.js";
+import { assertSandboxPath, normalizeFileReferencePrefix } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { resolveSandboxFsMount } from "./sandbox/fs-paths.js";
@@ -602,7 +602,7 @@ function mapContainerPathToWorkspaceRoot(params: {
 }
 
 function resolveContainerPathCandidate(filePath: string): string | null {
-  let candidate = filePath.startsWith("@") ? filePath.slice(1) : filePath;
+  let candidate = normalizeFileReferencePrefix(filePath);
   if (/^file:\/\//i.test(candidate)) {
     const localFilePath = trySafeFileURLToPath(candidate);
     if (localFilePath) {
@@ -682,7 +682,7 @@ function resolveToolPathAgainstWorkspaceRoot(params: {
   containerWorkdir?: string;
 }): string {
   const mapped = mapContainerPathToWorkspaceRoot(params);
-  const candidate = mapped.startsWith("@") ? mapped.slice(1) : mapped;
+  const candidate = normalizeFileReferencePrefix(mapped);
   if (isWindowsDrivePath(candidate)) {
     return path.win32.normalize(candidate);
   }

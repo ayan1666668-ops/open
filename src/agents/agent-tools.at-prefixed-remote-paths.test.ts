@@ -13,6 +13,7 @@ import {
   wrapToolMemoryFlushAppendOnlyWrite,
   wrapToolWorkspaceRootGuardWithOptions,
 } from "./agent-tools.read.js";
+import { extractResolvedApplyPatchTargetPaths } from "./apply-patch-paths.js";
 import { createApplyPatchTool } from "./apply-patch.js";
 import { createMemoryWriteProvenanceObserver } from "./memory-write-provenance.js";
 import { resolveSandboxFileIdentity } from "./sandbox/file-mutation-identity.js";
@@ -137,6 +138,44 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
       });
       await expect(fs.readFile(path.join(remoteRoot, "@notes.md"), "utf8")).resolves.toBe(
         "literal edited",
+      );
+      await expect(fs.readFile(path.join(remoteRoot, "notes.md"), "utf8")).resolves.toBe(
+        "sibling original",
+      );
+      await expect(
+        readTool.execute("remote-reference-literal-read", { path: "@@notes.md" }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "text", text: "literal edited" }),
+          ]),
+        }),
+      );
+      await writeTool.execute("remote-reference-literal-write", {
+        path: "@@notes.md",
+        content: "referenced original",
+      });
+      await editTool.execute("remote-reference-literal-edit", {
+        path: "@@notes.md",
+        edits: [{ oldText: "original", newText: "edited" }],
+      });
+      const referencedPatch = [
+        "*** Begin Patch",
+        "*** Update File: @@notes.md",
+        "@@",
+        "-referenced edited",
+        "+referenced patched",
+        "*** End Patch",
+      ].join("\n");
+      const patchOptions = { cwd: hostRoot, sandbox: { root: hostRoot, bridge } };
+      await expect(
+        extractResolvedApplyPatchTargetPaths(referencedPatch, patchOptions),
+      ).resolves.toEqual([path.posix.join(containerWorkdir, "@notes.md")]);
+      await createApplyPatchTool(patchOptions).execute("remote-reference-literal-patch", {
+        input: referencedPatch,
+      });
+      await expect(fs.readFile(path.join(remoteRoot, "@notes.md"), "utf8")).resolves.toBe(
+        "referenced patched",
       );
       await expect(fs.readFile(path.join(remoteRoot, "notes.md"), "utf8")).resolves.toBe(
         "sibling original",

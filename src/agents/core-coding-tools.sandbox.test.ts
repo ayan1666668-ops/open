@@ -55,6 +55,11 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
         await fs.mkdir(path.join(replacement, "cache"));
         await fs.writeFile(path.join(replacement, "sub/marker"), "VISIBLE");
         await fs.writeFile(path.join(replacement, "@literal"), "AT");
+        await fs.writeFile(path.join(replacement, "literal"), "DECOY");
+        await fs.mkdir(path.join(replacement, "@directory"));
+        await fs.mkdir(path.join(replacement, "directory"));
+        await fs.writeFile(path.join(replacement, "@directory/literal-marker"), "AT");
+        await fs.writeFile(path.join(replacement, "directory/decoy-marker"), "DECOY");
         await fs.writeFile(path.join(outside, "marker"), "HIDDEN");
         await fs.writeFile(path.join(data, "marker"), "EXTRA");
         await fs.symlink(
@@ -135,6 +140,28 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
         expect(write).toHaveBeenLastCalledWith(
           expect.objectContaining({ filePath: "/workspace/@literal" }),
         );
+        expect(
+          getTextContent(
+            await tool("read").execute("read-reference-literal", { path: "@@literal" }),
+          ),
+        ).toContain("edited-at");
+        await tool("write").execute("write-reference-literal", {
+          path: "@@literal",
+          content: "reference original",
+        });
+        await tool("edit").execute("edit-reference-literal", {
+          path: "@@literal",
+          edits: [{ oldText: "original", newText: "edited" }],
+        });
+        expect(await fs.readFile(path.join(replacement, "@literal"), "utf8")).toBe(
+          "reference edited",
+        );
+        expect(await fs.readFile(path.join(replacement, "literal"), "utf8")).toBe("DECOY");
+        const mentionedDirectory = getTextContent(
+          await tool("ls").execute("list-reference-literal", { path: "@@directory" }),
+        );
+        expect(mentionedDirectory).toContain("literal-marker");
+        expect(mentionedDirectory).not.toContain("decoy-marker");
         for (const filePath of ["sub", "/workspace/sub"]) {
           expect(
             getTextContent(await tool("ls").execute("list-visible", { path: filePath })),
@@ -146,11 +173,11 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
             expect.objectContaining({ filePath: "/workspace" }),
           );
         }
-        expect(list).toHaveBeenCalledTimes(5);
+        expect(list).toHaveBeenCalledTimes(6);
         await expect(
           tool("ls").execute("list-malformed", { path: "</arg_value>>" }),
         ).rejects.toThrow("Malformed path parameter: path");
-        expect(list).toHaveBeenCalledTimes(5);
+        expect(list).toHaveBeenCalledTimes(6);
         for (const containerRoot of [
           "/data",
           ...(process.platform === "win32" ? [] : [workspaceDir]),
@@ -186,8 +213,8 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
         await expect(
           tool("read").execute("visible-escape", { path: "escape/marker" }),
         ).rejects.toThrow();
-        expect(write).toHaveBeenCalledTimes(6);
-        expect(list).toHaveBeenCalledTimes(5);
+        expect(write).toHaveBeenCalledTimes(8);
+        expect(list).toHaveBeenCalledTimes(6);
         expect(await fs.readFile(path.join(outside, "marker"), "utf8")).toBe("HIDDEN");
         expect(await fs.readFile(path.join(data, "marker"), "utf8")).toBe("EXTRA");
       });
@@ -205,6 +232,8 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
       }
       await fs.mkdir(path.join(replacement, "sub"));
       await fs.writeFile(path.join(replacement, "sub/marker"), "VISIBLE\n");
+      await fs.writeFile(path.join(replacement, "@patch"), "LITERAL\n");
+      await fs.writeFile(path.join(replacement, "patch"), "DECOY\n");
       await fs.writeFile(path.join(nested, "marker"), "NESTED\n");
       await fs.writeFile(path.join(outside, "marker"), "HIDDEN\n");
       await fs.symlink(
@@ -272,6 +301,18 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
         "/workspace/sub/marker",
         "/workspace/nested/marker",
       ]);
+      await patch.execute("patch-reference-literal", {
+        input: [
+          "*** Begin Patch",
+          "*** Update File: @@patch",
+          "@@",
+          "-LITERAL",
+          "+referenced",
+          "*** End Patch",
+        ].join("\n"),
+      });
+      expect(await fs.readFile(path.join(replacement, "@patch"), "utf8")).toBe("referenced\n");
+      expect(await fs.readFile(path.join(replacement, "patch"), "utf8")).toBe("DECOY\n");
       const move = (to: string, before: string, after: string) =>
         [
           "*** Begin Patch",

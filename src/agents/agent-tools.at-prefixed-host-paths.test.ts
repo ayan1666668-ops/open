@@ -64,6 +64,21 @@ describe("leading-@ host and mounted sandbox paths", () => {
         await expect(fs.readFile(path.join(siblingParent, "new.md"), "utf8")).resolves.toBe(
           "sibling child",
         );
+        expect(
+          getTextContent(
+            await readTool.execute("at-reference-literal-read", { path: "@@existing.md" }),
+          ),
+        ).toContain("literal edited");
+        await writeTool.execute("at-reference-literal-write", {
+          path: "@@existing.md",
+          content: "referenced original",
+        });
+        await editTool.execute("at-reference-literal-edit", {
+          path: "@@existing.md",
+          edits: [{ oldText: "original", newText: "edited" }],
+        });
+        await expect(fs.readFile(literalPath, "utf8")).resolves.toBe("referenced edited");
+        await expect(fs.readFile(siblingPath, "utf8")).resolves.toBe("sibling original");
       });
     },
   );
