@@ -3204,6 +3204,9 @@ docker_e2e_docker_run_cmd run demo
       '-v "$ONBOARD_ASSERTIONS:/app/scripts/e2e/lib/release-scenarios/assertions.mjs:ro"',
     );
     expect(runner).toContain(
+      '-v "$ONBOARD_ASSERTION_FILES:/app/scripts/e2e/lib/release-assertion-files.mjs:ro"',
+    );
+    expect(runner).toContain(
       '-v "$ONBOARD_MOCK_OPENAI_CONFIG:/app/scripts/e2e/lib/fixtures/mock-openai-config.mjs:ro"',
     );
   });
@@ -5480,7 +5483,9 @@ exit 0
 set -euo pipefail
 if [ "$1" = run ]; then
   printf "%s\\n" "$@" >"$TMPDIR/docker-args"
-  test ! -e "$TMPDIR/public"
+  if [ ! -e "$TMPDIR/skip-optional-logs" ]; then
+    test ! -e "$TMPDIR/public"
+  fi
   test ! -e "$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/diagnostics/raw.json"
   test ! -e "$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/diagnostics/post-core.json"
   test ! -e "$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/summary.json"
@@ -5490,34 +5495,40 @@ if [ "$1" = run ]; then
   fi
   if [ "${publishedBaseline}" = true ] && [ "${exitCode}" = 0 ]; then
     cp "$TMPDIR/completed-summary.json" "$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/summary.json"
-    printf 'historical preamble\\n{"status":"ok","marker":"FIRST_HOP"}\\n{"status":"warning","token":"HOST_PUBLICATION_SECRET"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/update.json"
-    printf '{"status":"ok","marker":"REPAIR"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/repair.json"
-    printf '{"status":"ok","marker":"RECOVERY"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/recovery-update.json"
+    if [ -e "$TMPDIR/skip-optional-logs" ]; then
+      printf '{"status":"ok","marker":"CURRENT_HOP","token":"HOST_PUBLICATION_SECRET"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/update.json"
+    else
+      printf 'historical preamble\\n{"status":"ok","marker":"FIRST_HOP"}\\n{"status":"warning","token":"HOST_PUBLICATION_SECRET"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/update.json"
+      printf '{"status":"ok","marker":"REPAIR"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/repair.json"
+      printf '{"status":"ok","marker":"RECOVERY"}\\n' >"$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR/recovery-update.json"
+    fi
   fi
   exit ${exitCode}
 fi
 exit 0
 `,
         });
-        const result = spawnSync("bash", [join(process.cwd(), UPGRADE_SURVIVOR_DOCKER_E2E_PATH)], {
-          encoding: "utf8",
-          cwd: workDir,
-          env: {
-            ...process.env,
-            HOME: workDir,
-            TMPDIR: workDir,
-            PATH: `${binDir}:${process.env.PATH ?? ""}`,
-            OPENCLAW_CONFIG_PATH: join(workDir, "absent"),
-            OPENCLAW_STATE_DIR: workDir,
-            OPENCLAW_SKIP_DOCKER_BUILD: "1",
-            OPENCLAW_CURRENT_PACKAGE_TGZ: join(workDir, "candidate.tgz"),
-            OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: registry,
-            OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR: artifacts,
-            OPENCLAW_UPGRADE_SURVIVOR_PUBLISHED_BASELINE: publishedBaseline ? "1" : "0",
-            OPENCLAW_UPGRADE_SURVIVOR_BASELINE_SPEC: "openclaw@2026.7.1-2",
-            OPENCLAW_DOCKER_ALL_LOG_DIR: "public",
-          },
-        });
+        const runWrapper = () =>
+          spawnSync("bash", [join(process.cwd(), UPGRADE_SURVIVOR_DOCKER_E2E_PATH)], {
+            encoding: "utf8",
+            cwd: workDir,
+            env: {
+              ...process.env,
+              HOME: workDir,
+              TMPDIR: workDir,
+              PATH: `${binDir}:${process.env.PATH ?? ""}`,
+              OPENCLAW_CONFIG_PATH: join(workDir, "absent"),
+              OPENCLAW_STATE_DIR: workDir,
+              OPENCLAW_SKIP_DOCKER_BUILD: "1",
+              OPENCLAW_CURRENT_PACKAGE_TGZ: join(workDir, "candidate.tgz"),
+              OPENCLAW_PREPUBLISH_PLUGIN_REGISTRY_DIR: registry,
+              OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_DIR: artifacts,
+              OPENCLAW_UPGRADE_SURVIVOR_PUBLISHED_BASELINE: publishedBaseline ? "1" : "0",
+              OPENCLAW_UPGRADE_SURVIVOR_BASELINE_SPEC: "openclaw@2026.7.1-2",
+              OPENCLAW_DOCKER_ALL_LOG_DIR: "public",
+            },
+          });
+        const result = runWrapper();
         expect(result.status, result.stdout + result.stderr).toBe(exitCode);
         const dockerArgs = readFileSync(join(workDir, "docker-args"), "utf8");
         expect(dockerArgs).toContain(`${artifacts}:/tmp/openclaw-upgrade-survivor-artifacts`);
@@ -5573,6 +5584,40 @@ exit 0
           expect(receipt.logs["repair.json"]).toContain("REPAIR");
           expect(receipt.logs["recovery-update.json"]).toContain("RECOVERY");
           expect(result.stderr).not.toContain("diagnostics missing");
+
+          writeFileSync(join(workDir, "skip-optional-logs"), "1");
+          writeFileSync(
+            join(workDir, "completed-summary.json"),
+            JSON.stringify({
+              ...completedSummary,
+              updateOutcome: "success",
+              updateRecovery: null,
+              firstHopPostCore: { availability: "unavailable" },
+            }),
+          );
+          const reusedResult = runWrapper();
+          expect(reusedResult.status, reusedResult.stdout + reusedResult.stderr).toBe(0);
+          expect(reusedResult.stderr).not.toContain("diagnostics missing");
+          const reusedDirectories = readdirSync(publicRoot).filter((dir) => dir !== directories[0]);
+          expect(reusedDirectories).toHaveLength(1);
+          const reusedText = readFileSync(
+            join(publicRoot, reusedDirectories[0]!, "summary.json"),
+            "utf8",
+          );
+          expect(reusedText).not.toMatch(/PRIVATE_|HOST_PUBLICATION_SECRET/);
+          const reusedReceipt = JSON.parse(reusedText);
+          expect(reusedReceipt).toMatchObject({
+            status: "passed",
+            updateOutcome: "success",
+            updateRecovery: null,
+          });
+          expect(reusedReceipt.logs["update.json"]).toContain("CURRENT_HOP");
+          expect(reusedReceipt.logs["update.json"]).not.toMatch(/FIRST_HOP|REPAIR|RECOVERY/);
+          expect(
+            reusedReceipt.logs,
+            "reused directory must not publish previous-run repair or recovery",
+          ).toMatchObject({ "repair.json": null, "recovery-update.json": null });
+          expect(readFileSync(join(uploaded, "summary.json"), "utf8")).toBe(text);
         } else if (publishedBaseline) {
           expect(result.stderr).toContain("diagnostics missing");
           expect(
@@ -9335,7 +9380,7 @@ bash "$ROOT_DIR/scripts/e2e/doctor-install-switch-docker.sh"
       'plugins install "$CLAWHUB_PLUGIN_SPEC"',
       'plugins update "$CLAWHUB_PLUGIN_ID"',
       'openclaw_e2e_maybe_timeout "$OPENCLAW_PLUGINS_CLI_TIMEOUT"',
-      "clawhub:@openclaw/kitchen-sink",
+      'CLAWHUB_PLUGIN_SPEC="${OPENCLAW_PLUGINS_E2E_CLAWHUB_SPEC:-',
     ]);
   });
 });
