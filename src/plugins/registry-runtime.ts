@@ -13,7 +13,7 @@ import {
   type OpenKeyedStoreOptions,
 } from "../plugin-state/plugin-state-store.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
-import { normalizePluginId } from "./config-state.js";
+import { normalizePluginsConfig } from "./config-state.js";
 import { formatPluginTrustRefusal } from "./plugin-trust.js";
 import {
   capturePluginLifecycleAuthority,
@@ -201,11 +201,26 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           assertRuntimeCurrent();
           const declared = record.contracts?.runtimeCapabilities?.includes("subagent.run") === true;
           const configuredEntries = registryParams.runtime.config.current().plugins?.entries;
-          const consented = Object.entries(configuredEntries ?? {}).some(
-            ([configuredPluginId, entry]) =>
-              normalizePluginId(configuredPluginId) === pluginId &&
-              entry?.subagent?.allowRun === true,
-          );
+          const configuredPlugins = normalizePluginsConfig({
+            entries: configuredEntries
+              ? Object.fromEntries(
+                  Object.entries(configuredEntries).map(([configuredPluginId, entry]) => [
+                    configuredPluginId,
+                    {
+                      subagent: entry?.subagent
+                        ? {
+                            ...entry.subagent,
+                            allowedModels: entry.subagent.allowedModels
+                              ? [...entry.subagent.allowedModels]
+                              : undefined,
+                          }
+                        : undefined,
+                    },
+                  ]),
+                )
+              : undefined,
+          });
+          const consented = configuredPlugins.entries[pluginId]?.subagent?.allowRun === true;
           if (!declared || !consented) {
             throw new Error(
               `plugin "${pluginId}" requires manifest runtimeCapabilities ["subagent.run"] and ` +

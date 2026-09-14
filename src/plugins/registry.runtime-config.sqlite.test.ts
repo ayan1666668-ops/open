@@ -73,10 +73,36 @@ describe("plugin registry SQLite session ownership", () => {
       await expect(delegatedRun(entitled)).rejects.toThrow("requires manifest runtimeCapabilities");
       expect(subagent.run).toHaveBeenCalledOnce();
 
-      await expect(manifestOnly.runtime.subagent.run(params)).resolves.toEqual({
+      config = {
+        ...config,
+        plugins: {
+          entries: {
+            ENTITLED: { subagent: { allowRun: true } },
+            entitled: { subagent: { allowRun: false } },
+          },
+        },
+      };
+      await expect(delegatedRun(entitled)).rejects.toThrow("requires manifest runtimeCapabilities");
+      expect(subagent.run).toHaveBeenCalledOnce();
+
+      config = {
+        ...config,
+        plugins: {
+          entries: {
+            ENTITLED: { subagent: { allowRun: false } },
+            entitled: { subagent: { allowRun: true } },
+          },
+        },
+      };
+      await expect(delegatedRun(entitled)).resolves.toEqual({
         runId: "entitled-run",
       });
       expect(subagent.run).toHaveBeenCalledTimes(2);
+
+      await expect(manifestOnly.runtime.subagent.run(params)).resolves.toEqual({
+        runId: "entitled-run",
+      });
+      expect(subagent.run).toHaveBeenCalledTimes(3);
     });
   });
 
