@@ -5,6 +5,7 @@ import {
   buildChannelAccountSchemaParts,
   buildGroupEntrySchema,
   ChannelDeliveryStreamingConfigSchema,
+  ChannelPreviewStreamingConfigSchema,
   ChannelSendReadReceiptsSchema,
   ExecutableTokenSchema,
   isSafeScpRemoteHost,
@@ -34,7 +35,7 @@ const IMessageActionSchema = z
 
 const { accountShape, rootPolicyShape } = buildChannelAccountSchemaParts({
   omit: ["mentionPatterns", "replyToMode"],
-  streaming: ChannelDeliveryStreamingConfigSchema.optional(),
+  streaming: ChannelPreviewStreamingConfigSchema.optional(),
   mediaMaxMb: z.number().int().positive().optional(),
 });
 

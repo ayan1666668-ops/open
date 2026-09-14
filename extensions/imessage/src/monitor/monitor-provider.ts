@@ -18,6 +18,7 @@ import {
   bindIngressLifecycleToReplyOptions,
   createChannelMessageReplyPipeline,
   resolveChannelStreamingBlockEnabled,
+  resolveChannelStreamingProgressNarration,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createChannelPairingChallengeIssuer } from "openclaw/plugin-sdk/channel-pairing";
 import {
@@ -89,6 +90,7 @@ import { advanceIMessageCatchupCursor, resolveCatchupConfig } from "./catchup.js
 import { combineIMessagePayloads } from "./coalesce.js";
 import { repairIMessageConversationAnchor } from "./conversation-repair.js";
 import { createIMessageEchoCachingSend, deliverIMessageReply } from "./deliver.js";
+import { createIMessageProgressBubble, type IMessageProgressBubble } from "./progress-bubble.js";
 import { resolveIMessageDmHistoryContext, resolveIMessageDmHistoryLimit } from "./dm-history.js";
 import { createIMessageThrottledDropDiagnosticCache } from "./drop-diagnostic-cache.js";
 import { createSentMessageCache } from "./echo-cache.js";
@@ -1260,6 +1262,42 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         } as const)
       : {};
     const configuredBlockStreaming = resolveChannelStreamingBlockEnabled(accountInfo.config);
+    // Narrated progress bubble: utility-model narration edited into a single
+    // persistent bubble per turn. Opt-in via streaming.progress.narration
+    // (same knob Discord uses); requires a delivery target and a utility
+    // model (resolved by core before the first narration fires).
+    const narrationEnabled =
+      resolveChannelStreamingProgressNarration(accountInfo.config) &&
+      sendPolicy !== "deny" &&
+      Boolean(ctxPayload.To);
+    let progressBubble: IMessageProgressBubble | undefined;
+    const progressBubbleOptions = narrationEnabled
+      ? {
+          // The narration bubble replaces per-tool status bubbles entirely.
+          suppressDefaultToolProgressMessages: true,
+          suppressToolProgressMessages: true,
+          // Feeder callbacks: the narrator wraps whatever callbacks exist on
+          // the options it attaches to, so narration needs these present even
+          // though the bubble renders nothing per tool call. They must claim
+          // visibility (true): a false return tells dispatch the channel did
+          // not accept progress, making it emit the default per-tool status
+          // bubble the narration bubble exists to replace.
+          onToolStart: async () => {
+            return true;
+          },
+          onCommandOutput: async () => true,
+          onItemEvent: async () => true,
+          onNarrationUpdate: async (payload: { text: string }) => {
+            progressBubble ??= createIMessageProgressBubble({
+              cfg,
+              accountId: accountInfo.accountId,
+              target: ctxPayload.To as string,
+              runtime,
+            });
+            await progressBubble.update(payload.text);
+          },
+        }
+      : {};
     const inboundLastRouteSessionKey = resolveInboundLastRouteSessionKey({
       route: decision.route,
       sessionKey: decision.route.sessionKey,
@@ -1334,9 +1372,18 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
               typeof configuredBlockStreaming === "boolean" ? !configuredBlockStreaming : undefined,
             onModelSelected,
             ...directToolTypingOptions,
+            ...progressBubbleOptions,
           },
         }),
-        onFinalize: () => stopEarlyDirectTyping?.(),
+        onFinalize: () => {
+          stopEarlyDirectTyping?.();
+          // Retract the progress bubble once the turn fully settles; the
+          // final reply has already superseded it. Fire-and-forget: a slow
+          // unsend must not delay turn finalization.
+          void progressBubble?.dispose().finally(() => {
+            progressBubble = undefined;
+          });
+        },
       },
     });
   }
