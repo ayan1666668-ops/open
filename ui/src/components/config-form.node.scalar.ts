@@ -2,6 +2,7 @@
 import { formatInternationalPhoneNumberForDisplay } from "@openclaw/normalization-core/phone-presentation";
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
+import { isSensitiveConfigPath } from "../../../src/config/sensitive-paths.js";
 import { i18n, t } from "../i18n/index.ts";
 import {
   configValuesEqual,
@@ -39,6 +40,7 @@ import { resolveConfigFieldMeta as resolveFieldMeta } from "./config-form.search
 import {
   configFieldId,
   hintForPath,
+  pathKey,
   redactedPlaceholder,
   schemaType,
 } from "./config-form.shared.ts";
@@ -275,7 +277,16 @@ export function renderTextInput(
     value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value);
   const isStructuredSecretRef = isSecretRefObject(value);
   const rawAvailable = params.rawAvailable ?? true;
-  const effectiveRedacted = sensitiveState.isRedacted || isStructuredSecretRef;
+  const masked =
+    params.maskSensitive === true &&
+    !params.revealSensitive &&
+    !sensitiveState.isRevealed &&
+    (value === undefined || typeof value === "string") &&
+    (hint?.sensitive || isSensitiveConfigPath(pathKey(path)) || sensitiveState.isSensitive);
+  const effectiveRedacted =
+    (sensitiveState.isRedacted && !masked) ||
+    sensitiveState.sentinelRedacted ||
+    isStructuredSecretRef;
   const placeholder = effectiveRedacted
     ? isStructuredSecretRef
       ? rawAvailable
@@ -283,7 +294,7 @@ export function renderTextInput(
         : t("configForm.structuredSecretFile")
       : redactedPlaceholder()
     : (hint?.placeholder ??
-      (schema.default !== undefined
+      (!masked && schema.default !== undefined
         ? t("configForm.defaultValue", { value: formatConfigValueText(schema.default) })
         : ""));
   const displayValue = effectiveRedacted
@@ -293,10 +304,14 @@ export function renderTextInput(
       : (value ?? "");
   const effectiveValue = value !== undefined ? value : schema.default;
   const initialBranch = scalarValueBranch(effectiveValue);
-  const effectiveInputType = sensitiveState.isSensitive && !effectiveRedacted ? "text" : inputType;
+  const effectiveInputType = masked
+    ? "password"
+    : sensitiveState.isSensitive && !effectiveRedacted
+      ? "text"
+      : inputType;
   const isPhonePresentation = hint?.presentation === "phone-number";
   const phonePresentation =
-    isPhonePresentation && !effectiveRedacted && typeof value === "string"
+    isPhonePresentation && !effectiveRedacted && !masked && typeof value === "string"
       ? formatInternationalPhoneNumberForDisplay(value, i18n.getLocale())
       : undefined;
   const controlIdentity = params.controlIdentity ?? params.sourceIdentity ?? value;
@@ -485,7 +500,8 @@ export function renderTextInput(
     label,
     help,
     helpId,
-    defaultDescription: effectiveRedacted ? nothing : renderSchemaDefaultDescription(schema, value),
+    defaultDescription:
+      effectiveRedacted || masked ? nothing : renderSchemaDefaultDescription(schema, value),
     tags,
     showLabel,
     control: presentedInput,

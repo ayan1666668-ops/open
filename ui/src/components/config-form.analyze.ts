@@ -251,7 +251,7 @@ function normalizeSchemaNode(
   inheritedCompositionType?: string,
   inheritedCompositionAllowsNull?: boolean,
 ): ConfigSchemaAnalysis {
-  // Zod emits primitive unions as type arrays; keep their branch editor and
+  // Plugins and Zod emit unions as type arrays; keep their branch editor and
   // sibling constraints on the same normalization path as anyOf schemas.
   const schema =
     !compositionBranch &&
@@ -260,7 +260,8 @@ function normalizeSchemaNode(
     !input.allOf &&
     Array.isArray(input.type) &&
     new Set(input.type.filter((type) => type !== "null")).size > 1 &&
-    input.type.every((type) => type === "null" || SCALAR_UNION_TYPES.has(type))
+    (input.type.every((type) => type === "null" || SCALAR_UNION_TYPES.has(type)) ||
+      input.type.every((type) => ["string", "object", "null"].includes(type)))
       ? { ...input, type: undefined, anyOf: input.type.map((type) => ({ type })) }
       : input;
   const unsupported = new Set<string>();

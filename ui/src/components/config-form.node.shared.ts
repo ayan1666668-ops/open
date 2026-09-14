@@ -50,6 +50,7 @@ export type ConfigNodeRenderParams = {
   showHeaderMeta?: boolean;
   searchCriteria?: ConfigSearchCriteria;
   revealSensitive?: boolean;
+  maskSensitive?: boolean;
   isSensitivePathRevealed?: (path: Array<string | number>) => boolean;
   onToggleSensitivePath?: (path: Array<string | number>) => void;
   onPatch: (path: Array<string | number>, value: unknown) => boolean | void;

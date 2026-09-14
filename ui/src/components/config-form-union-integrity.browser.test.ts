@@ -1,9 +1,10 @@
+import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import {
   renderAnalyzedFormFixture,
   renderTextInputFixture,
 } from "../test-helpers/config-form-fixtures.ts";
-import { analyzeConfigSchema } from "./config-form.ts";
+import { analyzeConfigSchema, renderNode } from "./config-form.ts";
 
 function expectElement<T extends Element>(element: T | null | undefined, label: string): T {
   expect(element instanceof Element, label).toBe(true);
@@ -14,6 +15,70 @@ function expectElement<T extends Element>(element: T | null | undefined, label: 
 }
 
 describe("config form primitive union integrity", () => {
+  it.each(["anyOf", "type-array"])(
+    "edits string/object credentials without converting reference or object values (%s)",
+    (syntax) => {
+      const container = document.createElement("div");
+      const onPatch = vi.fn();
+      const credential =
+        syntax === "anyOf"
+          ? { anyOf: [{ type: "string" }, { type: "object" }] }
+          : { type: ["string", "object"] };
+      const analysis = analyzeConfigSchema({
+        type: "object",
+        properties: { credentials: { type: "object", properties: { token: credential } } },
+      });
+      const renderValue = (token: unknown) =>
+        render(
+          renderNode({
+            schema: analysis.schema!,
+            value: { credentials: { token } },
+            path: [],
+            hints: { "credentials.token": { sensitive: true } },
+            unsupported: new Set(analysis.unsupportedPaths),
+            disabled: false,
+            rawAvailable: false,
+            maskSensitive: true,
+            onPatch,
+          }),
+          container,
+        );
+
+      renderValue(undefined);
+      const input = expectElement(
+        container.querySelector<HTMLInputElement>("input"),
+        "credential input",
+      );
+      expect(input.type).toBe("password");
+      input.value = "synthetic-key";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(onPatch).toHaveBeenLastCalledWith(["credentials", "token"], "synthetic-key");
+      renderValue("synthetic-key");
+      expect(input.readOnly).toBe(false);
+      expect(input.type).toBe("password");
+
+      for (const source of ["env", "file", "exec"]) {
+        onPatch.mockClear();
+        renderValue({ source, provider: "default", id: "synthetic-reference" });
+        const reference = expectElement(
+          container.querySelector<HTMLInputElement>("input"),
+          "reference input",
+        );
+        expect(reference.value).toBe("");
+        expect(reference.readOnly).toBe(true);
+        expect(reference.placeholder).toContain("edit the config file directly");
+        reference.value = "replacement";
+        reference.dispatchEvent(new Event("input", { bubbles: true }));
+        reference.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(onPatch).not.toHaveBeenCalled();
+      }
+
+      renderValue({ nested: "structured" });
+      expect(container.querySelector("textarea")).not.toBeNull();
+      expect(container.querySelector("input")).toBeNull();
+    },
+  );
+
   it.each(["anyOf", "type-array"])(
     "preserves the current branch type in %s primitive unions",
     (syntax) => {
