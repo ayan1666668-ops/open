@@ -48,6 +48,7 @@ import {
 - `dispatchChannelInboundReply(...)`: records and dispatches an already
   assembled inbound reply with a delivery adapter.
 
+<<<<<<< HEAD
 Native command adapters must authorize the sender before preparing a configured
 binding. `resolveCommandAuthorization(...)` from
 `openclaw/plugin-sdk/command-auth-native` returns an optional `assertOwnerCurrent`
@@ -60,6 +61,13 @@ backend effects, including queued controls, handle reopening, and session
 replacement. Accepted control and close results still settle after revocation;
 revocation blocks the next effect. The optional callback preserves existing
 callers that do not carry channel-request authority.
+=======
+The shared reply delivery pipeline binds delivery, dispatcher, and reply-option
+callbacks to the managed channel instance that admits the turn. Provider or
+harness execution can invoke them without changing which channel runtime they
+use. Callback arguments and results keep their original identities, and plugin
+retirement still stops new callback calls.
+>>>>>>> 9dbf00c3a46 (fix(channels): restore progress callbacks during provider execution)
 
 For intentional skips, `logInboundDrop({ log, channel, reason, target?, onceKey?, hint? })`
 formats a diagnostic through the supplied logger. Use a default-level logger and
