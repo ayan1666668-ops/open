@@ -1,5 +1,7 @@
 // Decides whether raw config is sufficient for static root help without loading config runtime.
+
 import fs from "node:fs";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveConfigReadDotEnvPaths } from "../infra/dotenv-paths.js";
 import { resolveConfigPathCandidate } from "./paths.js";
 
@@ -9,10 +11,6 @@ const HELP_AFFECTING_ENV_KEYS = [
 ] as const;
 const KNOWN_PLUGIN_LOAD_KEYS = new Set(["paths"]);
 const KNOWN_PLUGIN_KEYS = new Set(["enabled", "allow", "deny", "load", "slots", "entries"]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function hasDynamicConfigValue(value: unknown): boolean {
   if (typeof value === "string") {
