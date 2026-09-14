@@ -1,3 +1,4 @@
+import type { ClawInstallSchemaVersionRow } from "../claws/provenance-runtime-read.kernel.js";
 import type { ConfigHealthPatch } from "../config/io.health-state.kernel.js";
 import type {
   ConfigHealthSnapshot,
@@ -45,9 +46,14 @@ type TaskFlowReadQuery = {
 export type OpenClawStateWorkerOperations = UserPreferenceWorkerOperations &
   CronStoreWorkerOperations &
   SessionDeliveryWorkerOperations & {
+    "projects.findRoot": { input: { repoRoot: string }; output: string | undefined };
     "plugins.metadata.read": {
       input: { selector: PluginMetadataStateSelector; artifactPreservingReadOnly?: boolean };
       output: { value_json: string } | undefined;
+    };
+    "claws.install-schema-versions": {
+      input: undefined;
+      output: ClawInstallSchemaVersionRow[] | undefined;
     };
     "tasks.statusSummary": {
       input: { now: number; preserveSourceArtifacts: boolean };
