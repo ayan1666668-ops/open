@@ -172,7 +172,7 @@ const result = await api.runtime.subagent.run({
 
 Notes:
 
-- An `auth: "plugin"` HTTP route has no operator scopes. To delegate `run(...)` from that route, the plugin manifest must declare `contracts.runtimeCapabilities: ["subagent.run"]`, and the operator must consent with `plugins.entries.<id>.subagent.allowRun: true`. The grant is bound to the declaring plugin id and exposes only this host-owned run path. Existing Gateway-authorized and background callers retain their normal authority and compatibility.
+- An `auth: "plugin"` HTTP route has no operator scopes. To delegate `run(...)` from that route, the plugin manifest must declare `contracts.runtimeCapabilities: ["subagent.run"]`, and the operator must consent with `plugins.entries.<id>.subagent.allowRun: true`. The grant is bound to the declaring plugin id and exposes only this host-owned run path. Existing Gateway-authorized and background callers retain their normal authority and compatibility. The delegated turn is a host-owned system action, including on Gateways with operator roles enabled; it does not impersonate a human profile or inherit a route caller's role. Normal agent-access, session-ownership, model, tool, and commit-time revocation checks still apply.
 - `provider` and `model` are optional per-run overrides, not persistent session changes.
 - `toolsAlsoAllow` accepts exact, uniquely owned tool names registered by the calling plugin. Core and ambiguous names are rejected. It is additive to the normal profile, but operator allowlists and denies remain authoritative.
 - OpenClaw only honors those override fields for trusted callers.

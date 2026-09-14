@@ -126,7 +126,10 @@ Start agent work in the background: hook-dispatched turns for external content, 
     declaration of `contracts.runtimeCapabilities: ["subagent.run"]` and operator
     consent via `plugins.entries.<id>.subagent.allowRun: true`. Existing
     Gateway-authorized and background callers retain their normal authority. This
-    narrow entitlement does not grant generic Gateway or operator access.
+    narrow entitlement does not grant generic Gateway or operator access. The
+    delegated turn is attributed to the host system rather than a human operator,
+    including when Gateway roles are enabled; agent access, session ownership,
+    model/tool policy, and commit-time entitlement revocation remain authoritative.
 
     Outside an authorized Gateway request, model overrides require operator opt-in via `plugins.entries.<id>.subagent.allowModelOverride: true` in config. Plugins without that opt-in can use the configured model, but override requests are rejected.
     </Warning>
