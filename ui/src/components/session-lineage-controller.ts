@@ -424,9 +424,12 @@ export class SessionLineageController {
       return Promise.resolve();
     }
     const globalBinding = identity.sessionKey === "global" ? binding : null;
-    // A list refresh keeps this observation even when the displayed roster omits the selection.
+    // Reuse a held descriptor; an empty retained observation still needs the initial lookup.
     const descriptorBinding =
-      globalBinding ?? (binding === retainedBinding || binding?.refreshRequested ? binding : null);
+      globalBinding ??
+      ((binding === retainedBinding && binding?.observation?.row) || binding?.refreshRequested
+        ? binding
+        : null);
     const childScope = this.childScope();
     const request: LineageRequest = {
       identity,
