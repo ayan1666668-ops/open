@@ -6,13 +6,13 @@ import type { RealtimeVoiceBridge } from "../talk/provider-types.js";
 import {
   closeTalkClientGatewayControlSession,
   createTalkClientGatewayControlOwner,
-  createTalkRealtimeRunControlOwner,
 } from "./talk-client-gateway-control.js";
 import {
   sessionTarget,
   controlContext,
   controlBridge,
 } from "./talk-client-gateway-control.test-support.js";
+import { createTalkRealtimeRunControlOwner } from "./talk-realtime-run-control.js";
 import { cleanupTalkConnection } from "./talk-session-registry.js";
 
 describe("Talk client Gateway control owner", () => {
@@ -221,6 +221,7 @@ describe("Talk client Gateway control owner", () => {
         entryId: expect.stringMatching(/^gateway-[0-9a-f-]+-1$/),
         role: "user",
         text: "check the repository",
+        confirmation: expect.any(Object),
       });
       if (outcome === "cancelled") {
         await nextEventLoopTurn();
@@ -565,6 +566,72 @@ describe("Talk client Gateway control owner", () => {
       }
     },
   );
+
+  it("revokes a replaced owner's retained final before deferred teardown", async () => {
+    const claimAppend = vi.fn(() => true);
+    const revokeRequesterFinal = vi.fn();
+    const append = vi.fn(() => true);
+    const requesterFinal: { append: (text: string) => boolean } = { append };
+    let acceptedSignal: AbortSignal | undefined;
+    let retainedRequesterFinal: typeof requesterFinal | undefined;
+    const runAgentConsult = Object.assign(
+      vi.fn(
+        async (
+          _args: unknown,
+          signal: AbortSignal,
+          ready?: () => Promise<void>,
+          _assertCurrent?: () => void,
+          receivedRequesterFinal?: typeof requesterFinal,
+        ) => {
+          await ready?.();
+          acceptedSignal = signal;
+          retainedRequesterFinal = receivedRequesterFinal;
+          return { text: "delegated", yielded: true as const };
+        },
+      ),
+      {
+        claimAppend,
+        claimFailureAppend: vi.fn(() => true),
+        revokeRequesterFinal,
+      },
+    );
+    const common = {
+      voiceSessionId: "voice-replaced-final",
+      sessionTarget,
+      connId: "conn-replaced-final",
+      context: controlContext(),
+      runToolAgentConsult: vi.fn(async () => ({ text: "done" })),
+      runAgentConsult,
+      appendTranscript: vi.fn(async () => undefined),
+      flushTranscript: vi.fn(async () => undefined),
+      closeLogicalSession: vi.fn(async () => undefined),
+    };
+    const owner = createTalkClientGatewayControlOwner(common);
+    const replacement = createTalkClientGatewayControlOwner(common);
+    await owner.adoptProvider(vi.fn(async () => undefined));
+    owner.activate();
+    owner.runAgentConsult.adoptCompletionClaims?.();
+    await expect(owner.runAgentConsult({ prompt: "work", requesterFinal })).resolves.toEqual({
+      text: "delegated",
+      yielded: true,
+    });
+    await replacement.adoptProvider(vi.fn(async () => undefined));
+    replacement.activate();
+
+    try {
+      expect(revokeRequesterFinal).toHaveBeenCalledOnce();
+      expect(acceptedSignal?.aborted).toBe(false);
+      expect(retainedRequesterFinal?.append("late final")).toBe(false);
+      expect(append).not.toHaveBeenCalled();
+      expect(owner.runAgentConsult.claimAppend?.()).toBe(false);
+      expect(claimAppend).toHaveBeenCalledOnce();
+    } finally {
+      await owner.close();
+      expect(revokeRequesterFinal).toHaveBeenCalledOnce();
+      await replacement.close();
+    }
+    expect(acceptedSignal?.aborted).toBe(false);
+  });
 
   it("keeps delegation steering pending until transcript admission publishes the backend", async () => {
     const flush = createDeferred();

@@ -15,9 +15,11 @@ import {
   authorizeClientVoiceConfirmation,
   checkClientVoiceToolConfirmationPolicy,
   deactivateClientVoiceConfirmationSession,
-  noteClientVoiceConfirmationUtterance,
 } from "../talk/client-voice-confirmation.js";
-import { resetClientVoiceConfirmationStateForTest } from "../talk/client-voice-confirmation.test-support.js";
+import {
+  noteClientVoiceConfirmationUtteranceForTest as noteClientVoiceConfirmationUtterance,
+  resetClientVoiceConfirmationStateForTest,
+} from "../talk/client-voice-confirmation.test-support.js";
 
 type ConsultParams = Parameters<
   typeof import("../talk/agent-consult-runtime.js").consultRealtimeVoiceAgent
@@ -134,7 +136,7 @@ describe("Talk client agent consult admission", () => {
       suppress: false,
     });
     mocks.consultRealtimeVoiceAgent.mockImplementation(async (params: ConsultParams) => {
-      params.onRunStarted?.({ runId: "run-talk", sessionId: "session-talk", timeoutMs: 1 });
+      params.onRunStarted?.({ runId: "run-talk", sessionId: "session-talk", timeoutMs: 60_000 });
       await params.agentRuntime.runEmbeddedAgent({
         ...coreParams,
         ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),

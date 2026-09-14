@@ -1,6 +1,11 @@
 // CLI process tests launch real Node+tsx children and must not contend with the
 // shared CLI module graph. Keep the owned list explicit so full and focused runs agree.
 export const cliProcessTestFiles = [
+  "src/cli/directory-cli.test.ts",
+  "src/cli/update-cli/update-command-candidate-exit.test.ts",
+  "src/cli/update-cli/update-command-fresh-preview.test.ts",
+  "src/cli/update-cli/update-command-plugins.persistence.test.ts",
+  "src/cli/plugins-cli.install.test.ts",
   "src/cli/acp-cli-exit.process.test.ts",
   "src/cli/cli-process-child.test-helpers.test.ts",
   "src/cli/completion-cli.runner.process.test.ts",
@@ -17,6 +22,8 @@ export const cliProcessTestFiles = [
   "src/cli/gateway-cli/run-loop.restart-liveness.process.test.ts",
   "src/cli/update-dry-run-state.process.test.ts",
   "src/cli/doctor-output.process.test.ts",
+  "src/cli/skills-cli.sag.process.test.ts",
+  "src/cli/update-cli/update-command-executor-native.test.ts",
   "src/cli/update-cli/update-command-handoff.test.ts",
   "src/cli/update-cli/update-command-lease.test.ts",
   "src/cli/update-cli/update-command-migrated.test.ts",
@@ -24,6 +31,7 @@ export const cliProcessTestFiles = [
   "src/cli/update-cli/update-command-post-update-recovery.test.ts",
   "src/cli/update-cli/update-command-post-update-repair.test.ts",
   "src/cli/update-cli/update-command-service.integration.test.ts",
+  "src/cli/update-cli/update-command-service-custody.test.ts",
   "src/cli/one-shot-exit.test.ts",
   "src/cli/runtime-cleanup-scope.windows.process.test.ts",
   "src/cli/update-finalization-output.process.test.ts",
