@@ -109,48 +109,6 @@ export function resolveReadOnlyWorkspaceSkillMounts(params: {
     .map(({ hostPath, containerPath }) => ({ hostPath, containerPath }));
 }
 
-/**
- * Returns the set of container paths that are protected by read-only skill mounts.
- *
- * User-defined binds that target any path in this set must be skipped so the
- * container engine sees one authoritative read-only mount for each destination.
- */
-export function resolveProtectedSkillMountContainerPaths(
-  mounts: readonly ReadOnlyWorkspaceSkillMount[],
-): Set<string> {
-  return new Set(mounts.map((mount) => normalizeMountContainerPath(mount.containerPath)));
-}
-
-/**
- * Returns a filtered copy of `binds` with entries whose container path conflicts with a
- * protected skill mount removed. Protected skill mounts always take precedence so checked-in
- * skills cannot be made writable by a user bind.
- */
-export function filterBindsConflictingWithProtectedMounts(
-  binds: readonly string[] | undefined,
-  protectedContainerPaths: ReadonlySet<string>,
-): string[] {
-  if (!binds?.length) {
-    return [];
-  }
-  if (protectedContainerPaths.size === 0) {
-    return [...binds];
-  }
-  const filtered: string[] = [];
-  for (const bind of binds) {
-    const spec = splitSandboxBindSpec(bind);
-    if (!spec) {
-      filtered.push(bind);
-      continue;
-    }
-    const containerPath = normalizeMountContainerPath(spec.container);
-    if (!protectedContainerPaths.has(containerPath)) {
-      filtered.push(bind);
-    }
-  }
-  return filtered;
-}
-
 export type ManagedWorkspaceMount = ReadOnlyWorkspaceSkillMount & { readOnly: boolean };
 export type SandboxSelectedMount = ManagedWorkspaceMount & {
   source: "workspace" | "agent" | "bind" | "protectedSkill";
@@ -192,7 +150,7 @@ export function resolveWorkspaceMounts(params: {
 }
 
 /** Select exact-target winners without rewriting the operator's daemon-host bind strings. */
-export function selectSandboxBindMounts(binds: readonly string[] | undefined): string[] {
+function selectSandboxBindMounts(binds: readonly string[] | undefined): string[] {
   const selected = new Map<string, string>();
   for (const bind of binds ?? []) {
     const parsed = splitSandboxBindSpec(bind);
@@ -235,11 +193,17 @@ export function resolveSandboxMountSelection(
   const readOnlyWorkspaceSkillMounts = resolveReadOnlyWorkspaceSkillMounts(params);
   const managed = resolveWorkspaceMounts({ ...params, readOnlyWorkspaceSkillMounts });
   const resources = params.readOnlyResourceMounts ?? [];
-  const protectedTargets = resolveProtectedSkillMountContainerPaths([
-    ...readOnlyWorkspaceSkillMounts,
-    ...resources,
-  ]);
-  const allowed = filterBindsConflictingWithProtectedMounts(params.binds, protectedTargets);
+  const protectedTargets = new Set(
+    [...readOnlyWorkspaceSkillMounts, ...resources].map((mount) =>
+      normalizeMountContainerPath(mount.containerPath),
+    ),
+  );
+  // Keep one authoritative read-only instruction mount at each protected target.
+  // Unparsed binds still reach validation/the engine instead of silently disappearing.
+  const allowed = (params.binds ?? []).filter((bind) => {
+    const spec = splitSandboxBindSpec(bind);
+    return !spec || !protectedTargets.has(normalizeMountContainerPath(spec.container));
+  });
   const custom = selectSandboxBindMounts(allowed);
   const mounts = new Map<string, SandboxSelectedMount>();
   for (const mount of managed) {

@@ -84,7 +84,7 @@ export async function prepareSandboxMountPlan(params: {
   };
 }
 
-export async function inspectSandboxMounts(params: {
+async function inspectSandboxMounts(params: {
   engine: SandboxContainerEngine;
   containerName: string;
 }) {
