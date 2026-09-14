@@ -218,6 +218,7 @@ type NormalizeReplyPayloadInternalOptions = Pick<
   | "transformReplyPayload"
 > & {
   conversationContext?: string;
+  preserveLeadingStreamedSourceBoundary?: boolean;
   onSkip?: (reason: NormalizeReplySkipReason) => void;
 };
 
@@ -234,6 +235,7 @@ function normalizeReplyPayloadInternal(
     onHeartbeatStrip: opts.onHeartbeatStrip,
     transformReplyPayload: opts.transformReplyPayload,
     conversationContext: opts.conversationContext,
+    preserveLeadingStreamedSourceBoundary: opts.preserveLeadingStreamedSourceBoundary,
     onSkip: opts.onSkip,
   });
 }
@@ -338,6 +340,8 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
       responsePrefixContextProvider: options.responsePrefixContextProvider,
       transformReplyPayload: options.transformReplyPayload,
       conversationContext: conversationContextsByDispatcher.get(dispatcher),
+      preserveLeadingStreamedSourceBoundary:
+        kind === "block" && getReplyPayloadMetadata(payload)?.streamedSourceBoundary === true,
       onHeartbeatStrip: options.onHeartbeatStrip,
       onSkip: notifySkip
         ? (reason) =>
@@ -518,8 +522,10 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
     const fallback = undeliveredFallbacks.get(payload);
     undeliveredFallbacks.delete(payload);
     const originalWasExactSilent = isSilentReplyText(payload.text, SILENT_REPLY_TOKEN);
+    const metadata = getReplyPayloadMetadata(payload);
     const normalizedPrimary =
-      getReplyPayloadMetadata(payload)?.replyDispatcherNormalizationOwner === dispatcher
+      metadata?.replyDispatcherNormalizationOwner === dispatcher &&
+      metadata.replyDispatcherNormalizationKind === kind
         ? ({ kind: "deliver", payload } as const)
         : normalizeForDispatch(kind, payload, true);
     const normalizedFallback =
@@ -635,6 +641,7 @@ export function createReplyDispatcher(options: ReplyDispatcherOptions): ReplyDis
             kind: "deliver",
             payload: setReplyPayloadMetadata(outcome.payload, {
               replyDispatcherNormalizationOwner: dispatcher,
+              replyDispatcherNormalizationKind: kind,
             }),
           }
         : outcome;

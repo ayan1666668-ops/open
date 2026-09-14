@@ -230,6 +230,27 @@ describe("EmbeddedBlockChunker", () => {
     expect(drainChunks(chunker, true)).toEqual(["Fixed"]);
   });
 
+  it.each(["\n\n", "\n "])(
+    "reconciles a checkpoint after retaining %j without replaying source",
+    (separator) => {
+      const chunker = new EmbeddedBlockChunker({
+        minChars: 1,
+        maxChars: 20,
+        flushOnParagraph: true,
+      });
+      chunker.append(`Header${separator}`);
+      const chunks = drainChunks(chunker, true);
+      expect(chunks).toEqual(["Header"]);
+      expect(chunker.consumedLength).toBe("Header".length);
+      const corrected = "Header\n \nFixed";
+      expect(chunker.replace(corrected)).toBe(true);
+      chunks.push(...drainChunks(chunker, true));
+      expect(chunks.join("")).toBe(corrected);
+      expect(chunker.consumedLength).toBe(corrected.length);
+      expect(chunker.hasBuffered()).toBe(false);
+    },
+  );
+
   it("breaks at paragraph boundary right after fence close", () => {
     // A closed fence is a safe boundary; splitting before it would corrupt
     // markdown rendered by downstream clients.
@@ -262,13 +283,15 @@ describe("EmbeddedBlockChunker", () => {
 
   it("waits until minChars before flushing paragraph boundaries when flushOnParagraph is set", () => {
     const chunker = createFlushOnParagraphChunker({ minChars: 30, maxChars: 200 });
+    const input = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
 
-    chunker.append("First paragraph.\n\nSecond paragraph.\n\nThird paragraph.");
+    chunker.append(input);
 
     const chunks = drainChunks(chunker);
 
     expect(chunks).toEqual(["First paragraph.\n\nSecond paragraph."]);
-    expect(chunker.bufferedText).toBe("Third paragraph.");
+    expect(chunker.bufferedText).toBe("\n\nThird paragraph.");
+    expect([...chunks, ...drainChunks(chunker, true)].join("")).toBe(input);
   });
 
   it("still force flushes buffered paragraphs below minChars at the end", () => {
@@ -295,6 +318,146 @@ describe("EmbeddedBlockChunker", () => {
 
     expect(chunks).toEqual(["abcdefghij"]);
     expect(chunker.bufferedText).toBe("KLMNOP");
+  });
+
+  it.each([
+    {
+      name: "paragraph boundary",
+      deltas: ["# Title\n\n", "First paragraph."],
+      maxChars: 20,
+    },
+    {
+      name: "paragraph boundary split across deltas at maxChars",
+      deltas: ["abcdefghij", "\n", "\nRest"],
+      maxChars: 10,
+    },
+  ])("preserves a $name across independent drains", ({ deltas, maxChars }) => {
+    const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars });
+    const chunks: string[] = [];
+
+    for (const delta of deltas) {
+      chunker.append(delta);
+      chunks.push(...drainChunks(chunker));
+    }
+    chunks.push(...drainChunks(chunker, true));
+
+    expect(chunks.join("")).toBe(deltas.join(""));
+    expectChunksWithinLength(chunks, maxChars);
+    expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
+  });
+
+  it("preserves a paragraph boundary when a forced chunk ends exactly at maxChars", () => {
+    const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars: 10 });
+    const input = "abcdefghij\n\nRest";
+
+    chunker.append(input);
+    const chunks = drainChunks(chunker, true);
+
+    expect(chunks).toEqual(["abcdefghij", "\n\nRest"]);
+    expect(chunks.join("")).toBe(input);
+    expectChunksWithinLength(chunks, 10);
+    expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
+  });
+
+  it.each([1, 2])(
+    "keeps legacy separator trimming when maxChars=%i cannot carry a visible boundary",
+    (maxChars) => {
+      const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars });
+
+      chunker.append("A\n\nB");
+      const chunks = [...drainChunks(chunker), ...drainChunks(chunker, true)];
+
+      expect(chunks.join("")).toBe("AB");
+      expectChunksWithinLength(chunks, maxChars);
+      expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
+    },
+  );
+
+  it.each([
+    { prefix: "A", tail: "\n", maxChars: 10 },
+    { prefix: "A", tail: "\n ", maxChars: 10 },
+    { prefix: "A", tail: "\n\t", maxChars: 10 },
+    { prefix: "AA", tail: "\n ", maxChars: 3 },
+  ])(
+    "preserves retained source $tail when the next delta completes a single line break",
+    ({ maxChars, prefix, tail }) => {
+      const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars });
+
+      chunker.append(`${prefix}${tail}`);
+      const chunks = drainChunks(chunker, true);
+      expect(chunks).toEqual([prefix]);
+      expect(chunker.bufferedText).toBe(tail);
+
+      chunker.append("B");
+      chunks.push(...drainChunks(chunker, true));
+
+      expect(chunks).toEqual([prefix, `${tail}B`]);
+      expect(chunks.join("")).toBe(`${prefix}${tail}B`);
+      expectChunksWithinLength(chunks, maxChars);
+      expect(chunker.consumedLength).toBe(`${prefix}${tail}B`.length);
+      expect(chunker.bufferedText).toBe("");
+    },
+  );
+
+  it.each(["Second.", "\nSecond."])(
+    "preserves forced ACP punctuation boundaries before %j",
+    (nextDelta) => {
+      const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars: 20 });
+      chunker.append("First.\n");
+      const chunks = drainChunks(chunker, true);
+      chunker.append(nextDelta);
+      chunks.push(...drainChunks(chunker, true));
+
+      expect(chunks.join("")).toBe(`First.\n${nextDelta}`);
+      expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
+      expectChunksWithinLength(chunks, 20);
+      expect(chunker.consumedLength).toBe(`First.\n${nextDelta}`.length);
+      expect(chunker.hasBuffered()).toBe(false);
+    },
+  );
+
+  it.each([
+    { maxChars: 3, separator: "\n \n", expected: "AB" },
+    { maxChars: 4, separator: "\n \n", expected: "A\n \nB" },
+    { maxChars: 3, separator: "\n\n\n", expected: "AB" },
+    { maxChars: 4, separator: "\n\n\n", expected: "A\n\n\nB" },
+  ])(
+    "preserves a $separator boundary only when it fits maxChars=$maxChars with visible text",
+    ({ expected, maxChars, separator }) => {
+      const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars });
+      const chunks: string[] = [];
+
+      chunker.append(`A${separator}`);
+      chunks.push(...drainChunks(chunker));
+      chunker.append("B");
+      chunks.push(...drainChunks(chunker, true));
+
+      expect(chunks.join("")).toBe(expected);
+      expectChunksWithinLength(chunks, maxChars);
+      expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
+    },
+  );
+
+  it.each([
+    { name: "complete separator", tail: "\n\n", completion: "Rest" },
+    { name: "partial separator", tail: "\n ", completion: "\nRest" },
+  ])("holds a forced $name tail for the next visible block", ({ tail, completion }) => {
+    const chunker = createFlushOnParagraphChunker({ minChars: 1, maxChars: 10 });
+    const input = `abcdefgh${tail}${completion}`;
+
+    chunker.append(`abcdefgh${tail}`);
+    const firstChunks = drainChunks(chunker, true);
+
+    expect(firstChunks).toEqual(["abcdefgh"]);
+    expect(chunker.bufferedText).toBe(tail);
+
+    chunker.append(completion);
+    const remainingChunks = drainChunks(chunker, true);
+    const chunks = [...firstChunks, ...remainingChunks];
+
+    expect(chunks.join("")).toBe(input);
+    expectChunksWithinLength(chunks, 10);
+    expect(chunks.every((chunk) => chunk.trim().length > 0)).toBe(true);
   });
 
   it("keeps forced maxChars chunks valid at UTF-16 boundaries", () => {
@@ -337,13 +500,15 @@ describe("EmbeddedBlockChunker", () => {
       flushOnParagraph: true,
     });
 
-    chunker.append("abcdefghijk\n\nRest");
+    const input = "abcdefghijk\n\nRest";
+    chunker.append(input);
 
     const chunks = drainChunks(chunker);
 
     expectChunksWithinLength(chunks, 10);
     expect(chunks).toEqual(["abcdefghij", "k"]);
-    expect(chunker.bufferedText).toBe("Rest");
+    expect(chunker.bufferedText).toBe("\n\nRest");
+    expect([...chunks, ...drainChunks(chunker, true)].join("")).toBe(input);
   });
 
   it("ignores paragraph breaks inside fences when flushOnParagraph is set", () => {
@@ -371,7 +536,8 @@ describe("EmbeddedBlockChunker", () => {
     const chunks = drainChunks(chunker);
 
     expect(chunks).toEqual(["Intro\n```js\nconst a = 1;\n\nconst b = 2;\n```"]);
-    expect(chunker.bufferedText).toBe("After fence");
+    expect(chunker.bufferedText).toBe("\n\nAfter fence");
+    expect([...chunks, ...drainChunks(chunker, true)].join("")).toBe(text);
   });
 
   it("scans fence spans once per drain call for long fenced buffers", () => {

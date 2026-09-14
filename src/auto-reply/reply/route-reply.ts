@@ -228,6 +228,9 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
   }).responsePrefix;
   const transformReplyPayload = createChannelReplyTransform({ messaging, cfg, accountId });
   const normalization = normalizeReplyPayloadOutcome(payload, {
+    preserveLeadingStreamedSourceBoundary:
+      params.replyKind === "block" &&
+      getReplyPayloadMetadata(payload)?.streamedSourceBoundary === true,
     responsePrefix,
     responsePrefixContext: params.responsePrefixContext,
     transformReplyPayload,

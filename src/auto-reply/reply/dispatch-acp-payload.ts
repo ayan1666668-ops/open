@@ -6,7 +6,11 @@ import type { TtsAutoMode } from "../../config/types.tts.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveStatusTtsSnapshot } from "../../tts/status-config.js";
 import { resolveConfiguredTtsMode } from "../../tts/tts-config.js";
-import { copyReplyPayloadMetadata, isReplyPayloadStatusNotice } from "../reply-payload.js";
+import {
+  copyReplyPayloadMetadata,
+  getReplyPayloadMetadata,
+  isReplyPayloadStatusNotice,
+} from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import { normalizeReplyPayloadOutcome } from "./normalize-reply.js";
 import { prepareReplyPayloadForDispatcher } from "./reply-dispatcher.js";
@@ -29,6 +33,9 @@ export function prepareAcpDeliveryPayload(params: {
     return prepareReplyPayloadForDispatcher(params.dispatcher, params.kind, params.payload);
   }
   return normalizeReplyPayloadOutcome(params.payload, {
+    preserveLeadingStreamedSourceBoundary:
+      params.kind === "block" &&
+      getReplyPayloadMetadata(params.payload)?.streamedSourceBoundary === true,
     transformReplyPayload: createChannelReplyTransform({
       messaging: params.messaging,
       cfg: params.cfg,

@@ -1,5 +1,5 @@
 // Shared reply dispatcher type contracts for visible and message-tool delivery.
-import type { ReplyPayload } from "../types.js";
+import type { ReplyPayload } from "../../shared/reply-payload.types.js";
 import type { NormalizeReplyOutcome } from "./normalize-reply-skip-reason.js";
 
 export type ReplyDispatchKind = "tool" | "block" | "final";

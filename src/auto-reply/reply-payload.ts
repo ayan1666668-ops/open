@@ -7,6 +7,7 @@ import {
 import type { ReplyToMode } from "../config/types.base.js";
 import type { AssistantDeliveryTtsFacts } from "../llm/types.js";
 import type { ReplyPayload, ReplyPayloadTtsSupplement } from "../shared/reply-payload.types.js";
+import type { ReplyDispatchKind } from "./reply/reply-dispatcher.types.js";
 
 export type {
   ReplyMediaAttachment,
@@ -198,6 +199,8 @@ export type ReplyPayloadMetadata = {
   assistantMessageIndex?: number;
   /** Visible source represented by this block, excluding synthetic chunk wrappers. */
   blockSourceText?: string;
+  /** A source text block continues an already accepted block with an original line break. */
+  streamedSourceBoundary?: true;
   /** Persisted assistant speech facts; never serialized into channel payloads. */
   tts?: AssistantDeliveryTtsFacts;
   /** Structured message-tool speech is an explicit request, independent of auto-TTS mode. */
@@ -212,6 +215,8 @@ export type ReplyPayloadMetadata = {
   channelReplyTransformOwner?: object;
   /** Exact dispatcher that already ran its full normalization before side effects. */
   replyDispatcherNormalizationOwner?: object;
+  /** Dispatch kind whose formatting policy the normalization owner applied. */
+  replyDispatcherNormalizationKind?: ReplyDispatchKind;
   /** The command owner produced this terminal reply without starting an agent run. */
   commandReply?: true;
   /** Host-owned acknowledgement after this final payload is confirmed delivered. */

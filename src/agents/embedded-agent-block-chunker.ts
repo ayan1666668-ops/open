@@ -203,6 +203,26 @@ export class EmbeddedBlockChunker {
     }
     const minChars = Math.max(1, Math.floor(chunking?.minChars ?? 1));
     const maxChars = Math.max(minChars, Math.floor(chunking?.maxChars ?? Infinity));
+    const sourceBoundaryLength = (value: string, start = 0) => {
+      if (!chunking?.flushOnParagraph) {
+        return 0;
+      }
+      const match = value.slice(start).match(/^(?:\n[\t ]*)+/)?.[0];
+      return match?.length ?? 0;
+    };
+    const nextTextStart = (value: string, start: number) => {
+      const length = sourceBoundaryLength(value, start);
+      return length && (start + length === value.length || length < maxChars)
+        ? start
+        : skipLeadingNewlines(value, start + length);
+    };
+    // Retained line breaks remain source bytes even if the next delta does not
+    // extend them into a paragraph. Only skip boundaries that cannot fit a block.
+    if (chunking?.flushOnParagraph && this.#consumedLength > 0 && !this.#reopenPrefix) {
+      const skipped = nextTextStart(this.#buffer, 0);
+      this.#buffer = this.#buffer.slice(skipped);
+      this.#consumedLength += skipped;
+    }
     let source = this.bufferedText;
 
     if (source.length < minChars && !force) {
@@ -210,11 +230,16 @@ export class EmbeddedBlockChunker {
     }
 
     if (!chunking || (force && source.length <= maxChars && !this.#reopenPrefix)) {
-      if (!chunking || source.trim().length > 0) {
-        emit(source, { sourceText: this.#buffer });
+      const tail = chunking?.flushOnParagraph
+        ? source.match(/\n[\t ]*(?:\n+[\t ]*)?$/)?.[0]
+        : undefined;
+      const consumed = tail ? source.length - tail.length : source.length;
+      const chunk = source.slice(0, consumed);
+      if (!chunking || chunk.trim().length > 0) {
+        emit(chunk, { sourceText: this.#buffer.slice(0, consumed) });
       }
-      this.#consumedLength += this.#buffer.length;
-      this.#buffer = "";
+      this.#consumedLength += consumed;
+      this.#buffer = this.#buffer.slice(consumed);
       this.#reopenPrefix = "";
       return;
     }
@@ -286,10 +311,7 @@ export class EmbeddedBlockChunker {
         const paragraphLimit = Math.max(1, maxChars - reopenPrefix.length);
         if (paragraphBreak && paragraphBreak.index - start <= paragraphLimit) {
           const chunk = `${reopenPrefix}${source.slice(start, paragraphBreak.index)}`;
-          const nextStart = skipLeadingNewlines(
-            source,
-            paragraphBreak.index + paragraphBreak.length,
-          );
+          const nextStart = nextTextStart(source, paragraphBreak.index);
           if (chunk.trim().length > 0) {
             emitSourceChunk(chunk, start, nextStart);
           }
@@ -303,14 +325,27 @@ export class EmbeddedBlockChunker {
       }
 
       const view = source.slice(start);
+      const prefixLength = sourceBoundaryLength(source, start);
+      if (prefixLength === view.length) {
+        break;
+      }
+      if (prefixLength >= maxChars) {
+        start += prefixLength;
+        continue;
+      }
+      const minBreak = prefixLength
+        ? Math.max(force ? 1 : minChars, prefixLength + 1)
+        : force
+          ? 1
+          : undefined;
       const breakResult =
         force && remainingLength <= maxChars
-          ? this.#pickSoftBreakIndex(view, fenceSpans, chunking, 1, start, openFence)
+          ? this.#pickSoftBreakIndex(view, fenceSpans, chunking, minBreak ?? 1, start, openFence)
           : this.#pickBreakIndex(
               view,
               fenceSpans,
               chunking,
-              force ? 1 : undefined,
+              minBreak,
               start,
               maxChars - reopenPrefix.length,
               openFence,
@@ -329,6 +364,7 @@ export class EmbeddedBlockChunker {
         reopenPrefix,
         source,
         start,
+        nextTextStart,
       });
       if (consumed === null) {
         continue;
@@ -349,7 +385,7 @@ export class EmbeddedBlockChunker {
       }
     }
     if (!reopenFence) {
-      start = skipLeadingNewlines(source, start);
+      start = nextTextStart(source, start);
     }
     if (start === 0) {
       return;
@@ -365,6 +401,7 @@ export class EmbeddedBlockChunker {
     reopenPrefix: string;
     source: string;
     start: number;
+    nextTextStart: (value: string, start: number) => number;
   }): { chunk?: string; start: number; reopenFence?: FenceSplit } | null {
     const { breakResult, reopenPrefix, source, start } = params;
     const breakIdx = breakResult.index;
@@ -397,12 +434,12 @@ export class EmbeddedBlockChunker {
     }
 
     const nextStart =
-      absoluteBreakIdx < source.length && /\s/.test(source.charAt(absoluteBreakIdx))
+      absoluteBreakIdx < source.length && /[^\S\n]/.test(source.charAt(absoluteBreakIdx))
         ? absoluteBreakIdx + 1
         : absoluteBreakIdx;
     return {
       chunk: rawChunk,
-      start: skipLeadingNewlines(source, nextStart),
+      start: params.nextTextStart(source, nextStart),
       reopenFence: undefined,
     };
   }

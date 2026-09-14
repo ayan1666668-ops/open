@@ -28,6 +28,8 @@ export function createBlockReplyCoalescer(params: {
   const maxChars = Math.max(minChars, Math.floor(config.maxChars));
   const idleMs = Math.max(0, Math.floor(config.idleMs));
   const joiner = config.joiner ?? "";
+  const joinText = (left: string, right: string) =>
+    `${left}${right.startsWith("\n") ? "" : joiner}${right}`;
   const flushOnEnqueue = config.flushOnEnqueue === true;
 
   let bufferText = "";
@@ -99,7 +101,7 @@ export function createBlockReplyCoalescer(params: {
 
   /** Merges buffered text into a media payload without changing media metadata. */
   const mergeBufferedTextWithMedia = (payload: ReplyPayload, text: string): ReplyPayload => {
-    const mergedText = text ? `${bufferText}${joiner}${text}` : bufferText;
+    const mergedText = text ? joinText(bufferText, text) : bufferText;
     const sourceText = text ? getReplyPayloadMetadata(payload)?.blockSourceText : undefined;
     const mergedSourceText =
       bufferSourceText !== undefined || sourceText !== undefined
@@ -117,9 +119,12 @@ export function createBlockReplyCoalescer(params: {
       bufferedPayload ?? mergedPayload,
       mergedPayload,
     );
+    const streamedSourceBoundary =
+      getReplyPayloadMetadata(metadataMergedPayload)?.streamedSourceBoundary;
     resetBuffer();
     return setReplyPayloadMetadata(copyReplyPayloadMetadata(payload, metadataMergedPayload), {
       blockSourceText: mergedSourceText,
+      streamedSourceBoundary,
     });
   };
 
@@ -185,7 +190,7 @@ export function createBlockReplyCoalescer(params: {
       bufferedPayload = payload;
     }
 
-    const nextText = bufferText ? `${bufferText}${joiner}${text}` : text;
+    const nextText = bufferText ? joinText(bufferText, text) : text;
     if (nextText.length > maxChars) {
       if (bufferText) {
         void flush({ force: true });

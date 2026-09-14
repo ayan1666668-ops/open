@@ -12,6 +12,7 @@ import { formatToolSummary, resolveToolDisplay } from "../../agents/tool-display
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { prefixSystemMessage } from "../../infra/system-message.js";
 import { truncateUtf16WithEllipsis as truncateText } from "../../shared/text-truncate.js";
+import { setReplyPayloadMetadata } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import {
   type AcpHiddenBoundarySeparator,
@@ -187,9 +188,17 @@ export function createAcpReplyProjector(params: {
     accountId: params.accountId,
     deliveryMode: settings.deliveryMode,
   });
+  let hasAcceptedSourceBlock = false;
   const blockReplyPipeline = createBlockReplyPipeline({
     onBlockReply: async (payload) => {
-      await params.deliver("block", payload);
+      setReplyPayloadMetadata(payload, {
+        streamedSourceBoundary:
+          hasAcceptedSourceBlock && (payload.text ?? "").startsWith("\n") ? true : undefined,
+      });
+      const accepted = await params.deliver("block", payload);
+      if (accepted && payload.text?.trim()) {
+        hasAcceptedSourceBlock = true;
+      }
     },
     timeoutMs: ACP_BLOCK_REPLY_TIMEOUT_MS,
     coalescing: settings.deliveryMode === "live" ? undefined : streaming.coalescing,

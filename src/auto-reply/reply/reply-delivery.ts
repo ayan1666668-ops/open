@@ -28,6 +28,7 @@ export function normalizeReplyPayloadDirectives(params: {
   currentMessageId?: string;
   silentToken?: string;
   trimLeadingWhitespace?: boolean;
+  preserveLeadingStreamedSourceBoundary?: boolean;
   parseMode?: ReplyDirectiveParseMode;
   extractMarkdownImages?: boolean;
   extractMediaDirectives?: boolean;
@@ -54,7 +55,11 @@ export function normalizeReplyPayloadDirectives(params: {
     : undefined;
 
   let text = parsed ? parsed.text || undefined : params.payload.text || undefined;
-  if (params.trimLeadingWhitespace && text) {
+  if (
+    params.trimLeadingWhitespace &&
+    text &&
+    !(params.preserveLeadingStreamedSourceBoundary && text.startsWith("\n"))
+  ) {
     text = text.trimStart() || undefined;
   }
 
@@ -110,7 +115,10 @@ export function createBlockReplyDeliveryHandler(params: {
   onBlockReply: (payload: ReplyPayload, context?: BlockReplyContext) => Promise<void> | void;
   currentMessageId?: string;
   replyThreading?: ReplyThreadingPolicy;
-  normalizeStreamingText: (payload: ReplyPayload) => { text?: string; skip: boolean };
+  normalizeStreamingText: (
+    payload: ReplyPayload,
+    options?: { preserveLeadingStreamedSourceBoundary?: boolean },
+  ) => { text?: string; skip: boolean };
   applyReplyToMode: (payload: ReplyPayload) => ReplyPayload;
   normalizeMediaPaths?: (payload: ReplyPayload) => Promise<ReplyPayload>;
   typingSignals: TypingSignaler;
@@ -121,7 +129,10 @@ export function createBlockReplyDeliveryHandler(params: {
   directlySentBlockKeys: Set<string>;
   directBlockDeliveries: DirectBlockDelivery[];
 }): (payload: ReplyPayload) => Promise<void> {
-  return async (payload) => {
+  let hasAcceptedTextBlock = false;
+  let admissionTail: Promise<void> = Promise.resolve();
+
+  const deliver = async (payload: ReplyPayload) => {
     // Suppressed display lanes must not enter delivery bookkeeping: callers use
     // that evidence to decide whether an otherwise empty turn needs a fallback.
     if (
@@ -130,7 +141,12 @@ export function createBlockReplyDeliveryHandler(params: {
     ) {
       return;
     }
-    const { text, skip } = params.normalizeStreamingText(payload);
+    const isSourceTextBlock =
+      params.blockStreamingEnabled && isReplyPayloadTerminalContent(payload) && !payload.isError;
+    const preserveLeadingStreamedSourceBoundary = isSourceTextBlock && hasAcceptedTextBlock;
+    const { text, skip } = params.normalizeStreamingText(payload, {
+      preserveLeadingStreamedSourceBoundary,
+    });
     if (skip && !hasOutboundReplyContent({ ...payload, text: undefined })) {
       return;
     }
@@ -165,6 +181,7 @@ export function createBlockReplyDeliveryHandler(params: {
       currentMessageId: params.currentMessageId,
       silentToken: SILENT_REPLY_TOKEN,
       trimLeadingWhitespace: true,
+      preserveLeadingStreamedSourceBoundary,
       parseMode: "auto",
       extractMediaDirectives: false,
     });
@@ -191,8 +208,15 @@ export function createBlockReplyDeliveryHandler(params: {
     if (normalized.isSilent && !blockHasNonTextContent) {
       return;
     }
+    setReplyPayloadMetadata(blockPayload, {
+      streamedSourceBoundary:
+        preserveLeadingStreamedSourceBoundary && (blockPayload.text ?? "").startsWith("\n")
+          ? true
+          : undefined,
+    });
 
     if (blockPayload.text) {
+      hasAcceptedTextBlock ||= isSourceTextBlock;
       void params.typingSignals.signalTextDelta(blockPayload.text).catch((err: unknown) => {
         logVerbose(`block reply typing signal failed: ${String(err)}`);
       });
@@ -217,5 +241,13 @@ export function createBlockReplyDeliveryHandler(params: {
       });
     }
     // When streaming is disabled entirely, text-only blocks are accumulated in final text.
+  };
+
+  return (payload) => {
+    // Subscriber callbacks can overlap. Queue the full normalization-to-admission
+    // boundary per handler; recover the tail so one rejection cannot poison later blocks.
+    const admission = admissionTail.then(() => deliver(payload));
+    admissionTail = admission.catch(() => undefined);
+    return admission;
   };
 }
