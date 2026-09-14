@@ -77,6 +77,7 @@ describe("Claw plugin capability evidence", () => {
         stagedArtifactDir: "/tmp/staged-audit",
         mode: "install",
       });
+
       return successfulProbe();
     });
 
@@ -100,6 +101,46 @@ describe("Claw plugin capability evidence", () => {
       undefined,
       undefined,
       undefined,
+    );
+  });
+
+  it("maps configured entries from the installed package during an isolated reuse probe", async () => {
+    const inspect = vi.fn(() => ({
+      declared: declaredCapabilities,
+      grants: capabilityGrants,
+    }));
+    const probe = vi.fn(async (request: Parameters<typeof installPluginFromClawHub>[0]) => {
+      await request.onPluginArtifactInspect?.({
+        pluginId: "audit",
+        stagedArtifactDir: "/tmp/staged-audit",
+        mode: "install",
+      });
+      return successfulProbe();
+    });
+
+    await expect(
+      preflightClawPackage(pluginPackage, "/tmp/workspace", {
+        deps: {
+          preflightPlugin: vi.fn(async () => ({
+            ok: true as const,
+            action: "reuse" as const,
+            request: {} as never,
+            installedId: "audit",
+            installedVersion: "2.0.1",
+            installedPath: "/srv/openclaw/extensions/audit",
+            installedIntegrity: integrity,
+          })),
+          probePlugin: probe,
+          inspectPluginCapabilities: inspect,
+        },
+      }),
+    ).resolves.toMatchObject({ ok: true, declaredCapabilities, capabilityGrants });
+    expect(inspect).toHaveBeenCalledWith(
+      "/tmp/staged-audit",
+      "audit",
+      undefined,
+      undefined,
+      "/srv/openclaw/extensions/audit",
     );
   });
 

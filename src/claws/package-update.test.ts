@@ -494,6 +494,10 @@ describe("applyClawPackageUpdate", () => {
       };
       const currentRecords = { audit: { ...priorRecords.audit, version: "1.0.0" } };
       const uninstallPlugin = vi.fn(async () => {});
+      const inspectPluginCapabilities = vi.fn(() => ({
+        declared: declaredCapabilities,
+        grants: capabilityGrants,
+      }));
       const reloadPlugins = vi.fn(async () => {
         expect(hasPluginLifecycleLease()).toBe(false);
         return { operationId: "upgrade", generation: 4, pluginIds: ["audit"] };
@@ -575,7 +579,12 @@ describe("applyClawPackageUpdate", () => {
                 preflightPluginInstall({
                   ...params,
                   loadInstallRecords: async () => ({
-                    audit: { source: "clawhub", clawhubPackage: "audit", version: "0.9.0" },
+                    audit: {
+                      source: "clawhub",
+                      clawhubPackage: "audit",
+                      installPath: targetDir,
+                      version: "0.9.0",
+                    },
                   }),
                 }),
               probePlugin: async (params) => {
@@ -606,10 +615,7 @@ describe("applyClawPackageUpdate", () => {
                   },
                 };
               },
-              inspectPluginCapabilities: () => ({
-                declared: declaredCapabilities,
-                grants: capabilityGrants,
-              }),
+              inspectPluginCapabilities,
             },
           },
         );
@@ -621,6 +627,13 @@ describe("applyClawPackageUpdate", () => {
           await expect(pending).resolves.toMatchObject({ appliedIds: ["plugin:audit"] });
         }
         expect(installPlugin).toHaveBeenCalledOnce();
+        expect(inspectPluginCapabilities).toHaveBeenCalledWith(
+          expect.any(String),
+          "audit",
+          env,
+          undefined,
+          targetDir,
+        );
         expect(uninstallPlugin).not.toHaveBeenCalled();
         expect(reloadPlugins).toHaveBeenCalledOnce();
       });

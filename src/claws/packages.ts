@@ -348,6 +348,7 @@ async function installClawPackagesUnlocked(
         inspectPluginCapabilities: deps.inspectPluginCapabilities ?? inspectClawPluginCapabilities,
         env: options.env,
         config: options.config,
+        currentArtifactDir: preflight.installedPath,
       });
       packageLease.assertCurrent();
       if (!probe.ok) {

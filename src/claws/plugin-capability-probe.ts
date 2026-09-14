@@ -39,6 +39,7 @@ export type ClawPluginProbeDeps = {
   inspectPluginCapabilities?: typeof inspectClawPluginCapabilities;
   env?: NodeJS.ProcessEnv;
   config?: OpenClawConfig;
+  currentArtifactDir?: string;
   createProbeExtensionsDir?: () => Promise<string>;
   removeProbeExtensionsDir?: (path: string) => Promise<void>;
 };
@@ -77,7 +78,7 @@ export async function probeClawPluginArtifact(
           pluginId,
           deps.env,
           deps.config,
-          currentArtifactDir,
+          deps.currentArtifactDir ?? currentArtifactDir,
         );
         stagedDeclaredCapabilities = inspected.declared;
         stagedCapabilityGrants = inspected.grants;
@@ -108,7 +109,13 @@ export async function probeClawPluginArtifact(
       const inspected =
         stagedDeclaredCapabilities && stagedCapabilityGrants
           ? { declared: stagedDeclaredCapabilities, grants: stagedCapabilityGrants }
-          : inspectPluginCapabilities(result.targetDir, result.pluginId, deps.env, deps.config);
+          : inspectPluginCapabilities(
+              result.targetDir,
+              result.pluginId,
+              deps.env,
+              deps.config,
+              deps.currentArtifactDir,
+            );
       return {
         ...result,
         declaredCapabilities: inspected.declared,
@@ -166,6 +173,7 @@ export async function preflightClawPluginPackage(
     ...options.deps,
     env: options.env,
     config: options.config,
+    ...(result.installedPath ? { currentArtifactDir: result.installedPath } : {}),
   });
   if (!probe.ok) {
     return { ok: false, code: probe.code ?? "plugin_preflight_failed", message: probe.error };
