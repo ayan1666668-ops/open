@@ -669,7 +669,11 @@ describe("chat transcript controller", () => {
           requestUpdate: vi.fn(),
           updateComplete: Promise.resolve(true),
         },
-        { onViewportResize, onReaderScroll: () => handleChatScrollTakeover(policy) },
+        {
+          onViewportResize,
+          canFollowEnd: () => !policy.chatFollowLocked,
+          onReaderScroll: (towardEnd) => handleChatScrollTakeover(policy, towardEnd),
+        },
       );
       const rows: TestContentRow[] = Array.from({ length: 12 }, (_, index) => ({
         kind: "content",
@@ -852,9 +856,15 @@ describe("chat transcript controller", () => {
     }
   });
 
-  it.each([0, 8, 50])(
-    "follows appended typing only within 8px of the real end (distance=%s)",
-    async (distance) => {
+  it.each([
+    { distance: 0, followEnabled: true },
+    { distance: 8, followEnabled: true },
+    { distance: 50, followEnabled: true },
+    { distance: 0, followEnabled: false },
+    { distance: 8, followEnabled: false },
+  ])(
+    "follows appended typing only when permitted near the real end ($distance, $followEnabled)",
+    async ({ distance, followEnabled }) => {
       const rows: TestContentRow[] = Array.from({ length: 12 }, (_, index) => ({
         kind: "content",
         key: `row:${index}`,
@@ -863,6 +873,15 @@ describe("chat transcript controller", () => {
       const { container, renderRows, transcript } = await mountTestTranscript(
         `typing-distance-${distance}`,
         rows,
+        new ChatTranscriptController(
+          {
+            addController: () => undefined,
+            removeController: () => undefined,
+            requestUpdate: () => undefined,
+            updateComplete: Promise.resolve(true),
+          },
+          { canFollowEnd: () => followEnabled },
+        ),
       );
       try {
         const total = transcriptSize(container);
@@ -882,7 +901,7 @@ describe("chat transcript controller", () => {
           ...rows,
           { kind: "content", key: "presence:typing", content: html`<div>Typing</div>` },
         ]);
-        if (distance <= 8) {
+        if (followEnabled && distance <= 8) {
           expect(scrollTo).toHaveBeenCalledWith({ top: total + 84 - 600, behavior: "auto" });
         } else {
           expect(scrollTo).not.toHaveBeenCalled();
@@ -971,7 +990,6 @@ describe("chat transcript controller", () => {
         const scrollTo = vi.fn();
         container.scrollTo = scrollTo;
         const bubbles = [...container.querySelectorAll<HTMLElement>(".chat-bubble")];
-        const reveals = bubbles.map((bubble) => (bubble.scrollIntoView = vi.fn()));
         session.syncMessageRows(
           new Map([
             ["first", "first"],
@@ -1002,10 +1020,12 @@ describe("chat transcript controller", () => {
         }
         update.resolve(true);
         await update.promise;
-        expect(reveals[0]).toHaveBeenCalledTimes(
-          ["none", "idle at end"].includes(interruption) ? 1 : 0,
+        expect(bubbles[0]?.classList.contains("chat-bubble--reply-target")).toBe(
+          ["none", "idle at end"].includes(interruption),
         );
-        expect(reveals[1]).toHaveBeenCalledTimes(interruption === "new reveal" ? 1 : 0);
+        expect(bubbles[1]?.classList.contains("chat-bubble--reply-target")).toBe(
+          interruption === "new reveal",
+        );
       } finally {
         transcript.hostDisconnected();
         vi.useRealTimers();

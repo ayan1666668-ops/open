@@ -159,7 +159,9 @@ function renderPreparedGroupMessage(
       expansion?.status === "error" && expansion.revision >= FULL_MESSAGE_RETRY_REVISION_LIMIT;
     assistantMessageDisclosure = {
       expanded: expansion?.status === "loaded",
-      ...(expansion?.status === "loaded" ? { markdown: actionDetails?.markdown } : {}),
+      ...(expansion?.status === "loaded"
+        ? { markdown: actionDetails?.markdown, message: expansion.message }
+        : {}),
       // Manual re-entry once the bounded automatic retries gave up.
       ...(retriesExhausted
         ? { onRetryFullMessage: () => opts.onToggleAssistantMessageExpanded?.(messageId) }
@@ -365,7 +367,9 @@ export function renderActivityGroup(
 }
 
 export function resolveMessageGroupSenderLabel(
-  group: Pick<MessageGroup, "role" | "sender" | "senderLabel" | "messages">,
+  group: Pick<MessageGroup, "role" | "sender" | "senderLabel"> & {
+    messages: ReadonlyArray<{ message: unknown }>;
+  },
   opts: Pick<RenderMessageGroupOptions, "assistantName" | "userId" | "userName" | "userAvatar">,
 ): string {
   const normalizedRole = normalizeRoleForGrouping(group.role);

@@ -6,6 +6,7 @@ import {
   sidebarMainPanel,
   sidebarSidePanels,
   sidebarActivePanel,
+  isSidebarSlotVisible,
 } from "./sidebar-layout-geometry.ts";
 import type {
   SidebarColumn,
@@ -49,6 +50,33 @@ function createSidebarColumn(): SidebarColumn {
     height: SIDEBAR_DEFAULT_HEIGHT_PX,
     width: SIDEBAR_DEFAULT_WIDTH_PX,
   };
+}
+
+/** Logical presentation, independent of responsive/narrow viewport projection. */
+export function sidebarDashboardPresentation(
+  layout: SidebarLayout,
+): "split" | "expanded" | undefined {
+  if (!isSidebarSlotVisible(layout, "dashboard")) {
+    return undefined;
+  }
+  return layout.expanded || layout.open !== true ? "expanded" : "split";
+}
+
+/** Open without changing panel identities, docking, dimensions, or other panel state. */
+export function openDashboardPresentation(
+  layout: SidebarLayout,
+  presentation: "split" | "expanded",
+): SidebarLayout {
+  let next = openSlot(layout, "dashboard");
+  if (presentation === "expanded") {
+    const dashboard = next.columns[0]?.panels.find((panel) => panel.slot === "dashboard");
+    if (dashboard) {
+      next = promoteSidebarPanel(next, dashboard.id);
+    }
+  } else if (sidebarMainPanel(next)?.slot === "dashboard") {
+    next = openSlot(next, "conversation");
+  }
+  return setSidebarExpanded(next, presentation === "expanded");
 }
 
 function nextPanelId(layout: SidebarLayout, slot: SidebarSlotId): string {

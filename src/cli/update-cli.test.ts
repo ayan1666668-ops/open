@@ -136,7 +136,6 @@ const readPersistedInstalledPluginIndex = vi.fn(async () => null);
 const restorePersistedInstalledPluginIndexIfCurrent = vi.fn<
   typeof import("../plugins/installed-plugin-index-store-write.js").restorePersistedInstalledPluginIndexIfCurrent
 >(async () => true);
-const writePersistedInstalledPluginIndexInstallRecords = vi.fn(async () => undefined);
 const writePersistedInstalledPluginIndexInstallRecordsWithLease = vi.fn(async () => ({
   previous: null,
   revision: 1,
@@ -538,7 +537,6 @@ vi.mock("../plugins/installed-plugin-index-records.js", async (importOriginal) =
   return {
     ...actual,
     loadInstalledPluginIndexInstallRecords,
-    writePersistedInstalledPluginIndexInstallRecords,
     writePersistedInstalledPluginIndexInstallRecordsWithLease,
   };
 });
@@ -2193,7 +2191,6 @@ describe("update-cli", () => {
     updateFailureActionMocks.runInteractiveUpdateFailureAction.mockResolvedValue("triage");
     readPersistedInstalledPluginIndex.mockResolvedValue(null);
     restorePersistedInstalledPluginIndexIfCurrent.mockResolvedValue(true);
-    writePersistedInstalledPluginIndexInstallRecords.mockResolvedValue(undefined);
     writePersistedInstalledPluginIndexInstallRecordsWithLease.mockResolvedValue({
       previous: null,
       revision: 1,
@@ -7775,7 +7772,7 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
   });
 
-  it("warns but still runs package updates when disk space looks low", async () => {
+  it("records low disk space before target lookup and still runs package updates", async () => {
     await mockPackageInstallAtCaseDir();
     mockCurrentProcessFreshDoctor();
     vi.spyOn(fsSync, "statfsSync").mockReturnValue(
@@ -7784,9 +7781,28 @@ describe("update-cli", () => {
         bsize: 1024 * 1024,
       }),
     );
+    const targetLookups: Array<{ output: string; steps: UpdateRunRecord["steps"] }> = [];
+    const resolveTag = vi.mocked(resolveNpmChannelTag).getMockImplementation()!;
+    vi.mocked(resolveNpmChannelTag).mockImplementation(async (...args) => {
+      targetLookups.push({
+        output: getLogOutput(),
+        steps: listUpdateRuns({ limit: 1 })[0]?.steps ?? [],
+      });
+      return await resolveTag(...args);
+    });
 
     await updateCommand({ yes: true });
 
+    expect(targetLookups).toContainEqual({
+      output: expect.stringContaining("Low disk space near"),
+      steps: expect.arrayContaining([
+        expect.objectContaining({
+          step: "warning:disk-space-preflight",
+          status: "completed",
+          detail: expect.stringContaining("256 MiB available"),
+        }),
+      ]),
+    });
     expectPackageInstallSpec("openclaw@9999.0.0");
     const preflightParams = vi
       .mocked(fetchNpmPackageTargetStatus)
@@ -8624,7 +8640,6 @@ describe("update-cli", () => {
         timeoutMs: 30_000,
         startedAt: Date.now(),
         progress: {},
-        jsonMode: true,
         managedServiceEnv: { OPENCLAW_CONFIG_PATH: managedConfig },
         validateCandidate: async () => [],
         beforeActivate: async () => {},
