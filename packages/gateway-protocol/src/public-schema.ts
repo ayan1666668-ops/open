@@ -484,6 +484,8 @@ export {
   ModelsAuthOrderSetParamsSchema,
   ModelsAuthRefreshParamsSchema,
   ModelsAuthStatusParamsSchema,
+  ModelsAuthSetApiKeyParamsSchema,
+  ModelsAuthSetApiKeyResultSchema,
   ModelsListParamsSchema,
   AuthProbeStatusSchema,
   ModelsProbeParamsSchema,

@@ -956,7 +956,7 @@ const config = {
     },
     [`${BUNDLED_PLUGIN_ROOT_DIR}/workboard`]: bundledPluginWorkspace([
       // Dashboard runtime loads the hashed control-UI artifact from the plugin manifest.
-      "dist/control-ui/13f509cebae6b5e2b626528311ee500f4d43c393c7a8398950436c5abb86ce01/index.js!",
+      "dist/control-ui/0071f3e81e714748509086f28d4695a5aecd560b340e28cfbf6e07d7dc5b0157/index.js!",
     ]),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/xiaomi`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/xai`]: bundledPluginWorkspace(),
