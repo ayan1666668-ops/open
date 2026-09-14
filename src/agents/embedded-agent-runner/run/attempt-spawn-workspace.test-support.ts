@@ -860,7 +860,10 @@ vi.mock("../cache-ttl.js", () => ({
 }));
 
 vi.mock("../compaction-runtime-context.js", () => ({
-  buildEmbeddedCompactionRuntimeContext: () => ({}),
+  // Pass the inputs through: runtime-identity fields (senderId, workspaceDir,
+  // sessionKey) stay observable to context-engine assertions without resolving
+  // the real model target against the registry.
+  buildEmbeddedCompactionRuntimeContext: (params: Record<string, unknown>) => ({ ...params }),
 }));
 
 vi.mock("./preemptive-compaction.js", async (importOriginal) => {
