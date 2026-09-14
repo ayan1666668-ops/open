@@ -112,7 +112,7 @@ function readChatSubmissionBatch(owner: ChatSessionProjectionOwner, scope: Sessi
         !receipt &&
         !identity.isImported &&
         delivered?.kind === "delivered" &&
-        delivered.pending === false &&
+        !delivered.pending &&
         (!delivered.sessionId || !scope.sessionId || delivered.sessionId === scope.sessionId)
       ) {
         return undefined;

@@ -241,7 +241,7 @@ describe("pane-owned canonical session projection", () => {
     delivered.pending = false;
     const imported = {
       ...initial.message,
-      __openclaw: { ...initial.message.__openclaw, importedFrom: "cli", externalId: "peer" },
+      __openclaw: { ...initial.message["__openclaw"], importedFrom: "cli", externalId: "peer" },
     };
     reduceChatSessionProjection(owner, {
       type: "snapshotLoaded",
