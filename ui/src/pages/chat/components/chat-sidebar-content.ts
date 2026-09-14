@@ -30,7 +30,6 @@ import {
 import { isSvgImageMediaPath } from "../../../lib/media-file-extension.ts";
 import { shouldHandleNavigationClick } from "../../../lib/navigation-click.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
-import { classifyArtifact } from "./chat-artifact.ts";
 import {
   renderAttachmentCardHeader,
   renderAttachmentPreviewSkeleton,
@@ -41,11 +40,11 @@ import {
   safeAttachmentHref,
   safeMediaAttachmentHref,
 } from "./chat-attachment-href.ts";
-import "./chat-audio-player.ts";
-import "./chat-artifact-viewer.ts";
-import "./chat-video-player.ts";
 import { openInlineChatImage } from "./chat-image-lightbox.ts";
+import "./chat-audio-player.ts";
+import "./chat-video-player.ts";
 import { openResolvedImage } from "./chat-message-image-open.ts";
+import { isPdfAttachment } from "./chat-pdf-preview.ts";
 import type { AttachmentSidebarRuntime, SidebarContent } from "./chat-sidebar-content-types.ts";
 import { renderSidebarFile, type FileViewControls } from "./chat-sidebar-file-view.ts";
 import { isTextAttachment } from "./chat-text-attachment.ts";
@@ -84,29 +83,25 @@ function renderSidebarAttachment(
           isSvgImageMediaPath(content.title, undefined)))) &&
     isCrossOriginHttpSource(src ?? "");
   const imagePreview = (src || pending) && !blockedExternalSvg && kind === "image";
-  const artifactKind = classifyArtifact(content.title, content.mimeType);
-  const artifactPreview =
+  if (
+    (src || pending) &&
     kind === "document" &&
-    [
-      "code",
-      "text",
-      "markdown",
-      "html",
-      "pdf",
-      "docx",
-      "spreadsheet",
-      "presentation",
-      "unsupported",
-    ].includes(artifactKind);
-  if ((src || pending) && artifactPreview) {
-    return html`<openclaw-chat-artifact-viewer
+    isPdfAttachment(mimeType, content.title) &&
+    !isCrossOriginHttpSource(src ?? "")
+  ) {
+    return html`<openclaw-chat-pdf-preview
       .src=${src ?? ""}
-      .sourceIdentity=${[runtime.connectionEpoch ?? "", runtime.agentId ?? "", runtime.sessionKey ?? "", content.sourceIdentity ?? src ?? ""].join("\u0000")}
+      .sourceIdentity=${[
+        runtime.connectionEpoch ?? "",
+        runtime.agentId ?? "",
+        runtime.sessionKey ?? "",
+        content.sourceIdentity ?? src ?? "",
+      ].join("\u0000")}
       .label=${content.title}
       .mimeType=${content.mimeType ?? ""}
       .sizeBytes=${source?.sizeBytes ?? content.sizeBytes}
       .downloadHref=${src ?? ""}
-    ></openclaw-chat-artifact-viewer>`;
+    ></openclaw-chat-pdf-preview>`;
   }
   if (
     (src || pending) &&
