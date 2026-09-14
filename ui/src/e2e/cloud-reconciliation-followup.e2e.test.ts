@@ -167,6 +167,11 @@ suite.define(() => {
         }
 
         const active = session("active");
+        const followUpReply = {
+          role: "assistant",
+          content: "The queued follow-up started automatically.",
+          __openclaw: { id: "automatic-follow-up-result", seq: 3, runId },
+        };
         const activeHistory = {
           inFlightRun: null,
           messages: [
@@ -175,6 +180,7 @@ suite.define(() => {
               ...pendingInput.message,
               __openclaw: { id: "persisted-follow-up", idempotencyKey: `${runId}:user` },
             },
+            followUpReply,
           ],
           pendingInputs: { items: [], total: 0 },
           sessionId: active.sessionId,
@@ -191,9 +197,10 @@ suite.define(() => {
         await gateway.emitGatewayEvent("session.message", {
           activeRunIds: [],
           hasActiveRun: false,
-          message: { role: "assistant", content: "The queued follow-up started automatically." },
-          messageId: "automatic-follow-up-result",
-          messageSeq: 3,
+          message: followUpReply,
+          messageId: followUpReply["__openclaw"].id,
+          messageSeq: followUpReply["__openclaw"].seq,
+          runId,
           session: active,
           sessionKey,
         });
