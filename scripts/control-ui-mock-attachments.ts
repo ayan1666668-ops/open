@@ -163,6 +163,17 @@ const buildChatAttachmentAssets = (): Record<string, FixtureAsset> => ({
     },
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ),
+  "launch.pptx": zipAsset(
+    {
+      "[Content_Types].xml":
+        '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>',
+      "ppt/slides/slide1.xml":
+        '<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Launch plan</a:t></a:r></a:p><a:p><a:r><a:t>Ship the artifact viewer</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+      "ppt/slides/slide2.xml":
+        '<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Proof plan</a:t></a:r></a:p><a:p><a:r><a:t>Capture every classified type</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>',
+    },
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ),
   "config.xml": textAsset(
     '<?xml version="1.0"?><attachment><name>fixture</name><ready>true</ready></attachment>\n',
     "application/xml",
@@ -264,6 +275,10 @@ export function buildChatAttachmentHistory(baseTime: number): unknown[] {
         documentAttachment(
           "brief.docx",
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        documentAttachment(
+          "launch.pptx",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ),
       ],
       timestamp: baseTime + 2,

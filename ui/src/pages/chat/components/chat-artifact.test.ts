@@ -10,6 +10,7 @@ describe("artifact classification", () => {
     ["brief.docx", undefined, "docx"],
     ["main.ts", undefined, "code"],
     ["readme.txt", "text/plain; charset=utf-8", "text"],
+    ["mystery.blob", "application/octet-stream", "unsupported"],
   ])("classifies %s", (filename, mime, expected) => {
     expect(classifyArtifact(filename, mime)).toBe(expected);
   });

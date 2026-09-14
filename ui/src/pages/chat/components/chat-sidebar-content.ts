@@ -30,6 +30,7 @@ import {
 import { isSvgImageMediaPath } from "../../../lib/media-file-extension.ts";
 import { shouldHandleNavigationClick } from "../../../lib/navigation-click.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
+import { classifyArtifact } from "./chat-artifact.ts";
 import {
   renderAttachmentCardHeader,
   renderAttachmentPreviewSkeleton,
@@ -40,15 +41,14 @@ import {
   safeAttachmentHref,
   safeMediaAttachmentHref,
 } from "./chat-attachment-href.ts";
-import { openInlineChatImage } from "./chat-image-lightbox.ts";
 import "./chat-audio-player.ts";
 import "./chat-artifact-viewer.ts";
 import "./chat-video-player.ts";
+import { openInlineChatImage } from "./chat-image-lightbox.ts";
 import { openResolvedImage } from "./chat-message-image-open.ts";
 import type { AttachmentSidebarRuntime, SidebarContent } from "./chat-sidebar-content-types.ts";
 import { renderSidebarFile, type FileViewControls } from "./chat-sidebar-file-view.ts";
 import { isTextAttachment } from "./chat-text-attachment.ts";
-import { classifyArtifact } from "./chat-artifact.ts";
 import "./session-diff-panel.ts";
 
 type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" }>;
@@ -87,9 +87,17 @@ function renderSidebarAttachment(
   const artifactKind = classifyArtifact(content.title, content.mimeType);
   const artifactPreview =
     kind === "document" &&
-    ["code", "text", "markdown", "html", "pdf", "docx", "spreadsheet", "presentation"].includes(
-      artifactKind,
-    );
+    [
+      "code",
+      "text",
+      "markdown",
+      "html",
+      "pdf",
+      "docx",
+      "spreadsheet",
+      "presentation",
+      "unsupported",
+    ].includes(artifactKind);
   if ((src || pending) && artifactPreview) {
     return html`<openclaw-chat-artifact-viewer
       .src=${src ?? ""}
