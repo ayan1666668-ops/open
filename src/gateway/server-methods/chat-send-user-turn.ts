@@ -15,6 +15,7 @@ import {
 import { resolveCreatorSandbox } from "../operator-role-policy.js";
 import { resolveGatewayInputParticipant } from "../session-input-participant.js";
 import { prepareSkillLibrarySessionCreation } from "../skill-library-session.js";
+import { captureGatewayUiCommandTarget } from "../ui-command-target.js";
 import { isAcpBridgeClient } from "./chat-origin-routing.js";
 import type { AdmittedChatSend } from "./chat-send-admission.js";
 import type { prepareChatSendAttachments } from "./chat-send-attachments.js";
@@ -59,16 +60,40 @@ async function persistChatSendImages(params: {
   });
 }
 
-function resolveChatSendManagedMedia(entries: PersistedChatSendMedia): MediaFact[] {
+function resolveChatSendManagedMedia(
+  entries: PersistedChatSendMedia,
+  suppressInlineHydration = false,
+): MediaFact[] {
   return entries.map((entry) => ({
     path: entry.path,
     contentType: entry.fact.contentType ?? "application/octet-stream",
+    ...(suppressInlineHydration && entry.imageKind === "inline"
+      ? { hydrationSuppressed: true }
+      : {}),
   }));
 }
 
-export function applyChatSendManagedMedia(ctx: MsgContext, media: MediaFact[]): void {
-  if ((!ctx.media || ctx.media.length === 0) && media.length > 0) {
-    ctx.media = media;
+type ChatSendManagedMediaApplyMode = "replace-empty" | "append-missing";
+
+export function applyChatSendManagedMedia(
+  ctx: MsgContext,
+  media: MediaFact[],
+  mode: ChatSendManagedMediaApplyMode = "replace-empty",
+): void {
+  if (media.length === 0) {
+    return;
+  }
+  if (mode === "replace-empty") {
+    if (!ctx.media || ctx.media.length === 0) {
+      ctx.media = media;
+    }
+    return;
+  }
+  const existing = ctx.media ?? [];
+  const existingPaths = new Set(existing.flatMap((fact) => (fact.path ? [fact.path] : [])));
+  const missing = media.filter((fact) => !fact.path || !existingPaths.has(fact.path));
+  if (missing.length > 0) {
+    ctx.media = [...existing, ...missing];
   }
 }
 
@@ -132,10 +157,13 @@ export function prepareChatSendUserTurn(params: {
     }),
   );
   const pluginBoundMediaPromise =
-    attachments.explicitOriginTargetsPlugin && attachments.parsedImages.length > 0
-      ? persistedMediaForTranscriptPromise.then((result) =>
-          resolveChatSendManagedMedia(result.entries),
-        )
+    attachments.parsedImages.length > 0
+      ? persistedMediaForTranscriptPromise.then((result) => {
+          const entries = attachments.explicitOriginTargetsPlugin
+            ? result.entries
+            : result.entries.filter((entry) => entry.imageKind === "inline");
+          return resolveChatSendManagedMedia(entries, !attachments.explicitOriginTargetsPlugin);
+        })
       : Promise.resolve([]);
   void pluginBoundMediaPromise.catch(() => undefined);
   // Generated media hints belong to the prompt and reset payload, not command arguments.
@@ -149,6 +177,7 @@ export function prepareChatSendUserTurn(params: {
     : attachments.parsedMessage;
   const queuedFollowupOwnerDeviceId = normalizeOptionalChatText(client?.connect?.device?.id);
   const queuedFollowupOwnerConnId = normalizeOptionalChatText(client?.connId);
+  const gatewayUiCommandTarget = captureGatewayUiCommandTarget(client);
   const queuedFollowupOwnerKey = queuedFollowupOwnerDeviceId
     ? `device:${queuedFollowupOwnerDeviceId}`
     : queuedFollowupOwnerConnId
@@ -199,6 +228,7 @@ export function prepareChatSendUserTurn(params: {
     SessionCreation: { ...creation, ...(sandbox ? { sandbox } : {}) },
     ...resolveChatSendCallerContext(client, request.clientInfo, originatingChannel),
     GatewayRunToolBindings: request.toolBindings,
+    GatewayUiCommandTarget: gatewayUiCommandTarget,
   };
   if (attachments.mediaPathOffloadPaths.length > 0) {
     // Pre-staged offloads must use structured facts and marker text so the
@@ -239,6 +269,9 @@ export function prepareChatSendUserTurn(params: {
     isInternalTextSlashCommandTurn: commandSource === "text",
     queuedFollowupOwnerKey,
     pluginBoundMediaPromise,
+    managedMediaApplyMode: attachments.explicitOriginTargetsPlugin
+      ? ("replace-empty" as const)
+      : ("append-missing" as const),
     replyOptionImages: mediaPathOffloadsIncludeImages
       ? undefined
       : attachments.parsedImages.length > 0

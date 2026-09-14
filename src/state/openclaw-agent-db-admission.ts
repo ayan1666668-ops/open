@@ -1,6 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { assertSqliteIntegrityInWorker } from "../infra/sqlite-integrity-worker.js";
-import { assertSqliteIntegrity, type SqliteIntegrityOperation } from "../infra/sqlite-integrity.js";
+import {
+  runSqliteIntegrityCheckSync,
+  type SqliteIntegrityCheck,
+  type SqliteIntegrityOperation,
+} from "../infra/sqlite-integrity.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import {
@@ -11,6 +15,7 @@ import type {
   OpenClawAgentDatabase,
   OpenClawAgentDatabaseOptions,
 } from "./openclaw-agent-db-contract.js";
+import { assertAgentDatabaseMaintenanceAccess } from "./openclaw-agent-db-lease.js";
 import {
   agentDatabaseLifecycle as cache,
   retainAgentDatabase,
@@ -21,12 +26,13 @@ import {
   assertSupportedAgentSchemaVersion,
   readExistingAgentSchemaMeta,
 } from "./openclaw-agent-db-schema-helpers.js";
+import type { OpenClawAgentDatabaseValidation } from "./openclaw-agent-db-validation-cache.js";
 import { resolveOpenClawAgentSqlitePath } from "./openclaw-agent-db.paths.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "./openclaw-state-db-contract.js";
 
 /** Denial still invokes run under admission, with a throwing authority check, to permit cleanup. */
 export type OpenClawAgentDatabaseWriteAdmission = <T>(
-  run: (assertCurrent: () => void) => T | Promise<T>,
+  run: (assertCurrent: () => void, validation?: OpenClawAgentDatabaseValidation) => T | Promise<T>,
 ) => Promise<T>;
 
 /** Refusal must unwind ownership without entering corruption repair or changing its caller error. */
@@ -103,6 +109,7 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
         // Coalesced callers keep their own scope; admission cannot lend its cleanup authority.
         assertAgentDeletionDatabaseCleanupAccess(database, options);
         assertCurrent?.();
+        assertAgentDatabaseMaintenanceAccess(database.db);
         return operation(database);
       })
       .finally(() => {
@@ -144,12 +151,12 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
     void pending.promise.catch(() => {});
     pending.operations += 1;
     const steps = openSteps(options, pending);
-    let check: { database: DatabaseSync; databaseLabel: string } | undefined;
+    let check: SqliteIntegrityCheck | undefined;
     let failure: { error: unknown } | undefined;
     let suspended = false;
     try {
       while (true) {
-        const outcome = await withAdmission(async (assertCurrent) => {
+        const outcome = await withAdmission(async (assertCurrent, validation) => {
           try {
             assertCurrent();
             assertOpenClawAgentDatabaseAdmissionCurrent(options, pending, check?.database);
@@ -161,6 +168,7 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
               }),
             };
           }
+          pending.validation = validation;
           suspended = false;
           const step = failure ? steps.throw(failure.error) : steps.next();
           if (!step.done) {
@@ -170,6 +178,7 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
           pending.releaseBorrow = retainAgentDatabase(step.value.db);
           admission.complete(step.value);
           assertAgentDeletionDatabaseCleanupAccess(step.value, options);
+          assertAgentDatabaseMaintenanceAccess(step.value.db);
           return { done: true as const, result: await operation(step.value) };
         });
         if (outcome.done) {
@@ -179,7 +188,7 @@ export function createOpenClawAgentDatabaseAdmissionOwner(
         failure = undefined;
         try {
           pending.controller.signal.throwIfAborted();
-          assertSqliteIntegrity(check.database, check.databaseLabel);
+          runSqliteIntegrityCheckSync(check);
         } catch (error) {
           failure = { error };
         }

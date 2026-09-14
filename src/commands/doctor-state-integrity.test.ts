@@ -39,7 +39,7 @@ import {
 } from "./doctor-state-integrity.test-support.js";
 
 const WORKSPACE_BACKUP_TIP =
-  "- Tip: back up the agent workspace in a private git repo; keep ~/.openclaw out of git (credentials, sessions). Details: /concepts/agent-workspace#git-backup-recommended";
+  "- Tip: back up the agent workspace in a private git repo; keep ~/.openclaw out of git (credentials, sessions). Details: /concepts/agent-workspace#git-backup-recommended-private";
 
 describe("workspace backup tip", () => {
   it("recognizes direct, deeply nested, and symlinked Git workspaces without duplicate tips", async () => {
@@ -452,6 +452,20 @@ describe("doctor state integrity oauth dir checks", () => {
     const text = await runStateIntegrityText({
       agents: {
         list: [{ id: "main", default: true }, { id: "ops" }],
+      },
+    });
+
+    expect(text).not.toContain("without a matching agents.list entry");
+    expect(text).not.toContain("Examples:");
+  });
+
+  it("ignores reserved system agent dirs that can never appear in agents.list", async () => {
+    createAgentDir("openclaw");
+    createAgentDir("crestodian");
+
+    const text = await runStateIntegrityText({
+      agents: {
+        list: [{ id: "main", default: true }],
       },
     });
 

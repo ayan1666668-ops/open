@@ -31,6 +31,11 @@ do not start a second CLI node for the same Mac. Its native camera, screen, and
 desktop capabilities remain on that identity. If the shared runtime cannot
 start, native capabilities remain available, but session hosting is unavailable.
 
+Approving an updated capability surface on a connected host automatically
+refreshes its session-hosting declaration and current worker slots. The Gateway
+waits for that fresh declaration before making the host available again; the
+app or node-host process does not need to restart.
+
 When a session first needs the current worker build, the Gateway sends its sealed
 worker artifact to the paired host. The node verifies the exact content hash,
 publishes the artifact atomically, and prewarms it when supported by the execution mode.
@@ -48,9 +53,11 @@ installation and retention lifecycle.
 
 You can also enroll and enable a service host in one step with
 `openclaw connect --service --session-host`. In Control UI New Session, a
-write-scoped operator selects a Gateway project or folder and then either a
-specific paired device or **Auto**. OpenClaw creates a
-session-owned managed worktree on the Gateway, dispatches it with the exact
+write-scoped operator chooses either a specific paired device or **Auto**.
+Without an explicit project or folder selection, **New workspace** starts an
+empty isolated workspace without requiring a user Git repository. A selected
+GitHub repository or Gateway Git checkout remains an optional source. OpenClaw creates a
+session-owned managed workspace, dispatches it with the exact
 `deviceId` or `autoDevice: true`, and sends the first turn only after the chosen
 device placement becomes active. New Session does not bind `execNode` or browse
 the device filesystem.

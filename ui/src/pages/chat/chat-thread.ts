@@ -17,7 +17,7 @@ import { getOrCreateSessionCacheValue, setSessionCacheValue } from "./session-ca
 export {
   isPendingSendMessage,
   persistedMessageEntryId,
-  readPendingSendFailure,
+  readPendingSendStatus,
 } from "./chat-thread-items.ts";
 export {
   assistantGroupCanOwnActiveRunStatus,
@@ -87,7 +87,8 @@ function sameMessageGroup(previous: MessageGroup, next: MessageGroup): boolean {
         candidate !== undefined &&
         entry.key === candidate.key &&
         entry.message === candidate.message &&
-        entry.duplicateCount === candidate.duplicateCount
+        entry.duplicateCount === candidate.duplicateCount &&
+        entry.hasVisibleContent === candidate.hasVisibleContent
       );
     })
   );
@@ -263,9 +264,10 @@ function sameChatItemsStructuralInput(
     previous.streamSegments === next.streamSegments &&
     previous.streamStartedAt === next.streamStartedAt &&
     previous.queue === next.queue &&
+    previous.initialTurnId === next.initialTurnId &&
     previous.pendingInputs === next.pendingInputs &&
     previous.workspaceSyncPendingRunIds === next.workspaceSyncPendingRunIds &&
-    previous.workerSetupPendingRunIds === next.workerSetupPendingRunIds &&
+    previous.workerSetupPending === next.workerSetupPending &&
     previous.showToolCalls === next.showToolCalls &&
     previous.persistCommentary === next.persistCommentary &&
     previous.runWorking === next.runWorking &&
@@ -386,7 +388,7 @@ export function getExpandedUserMessages(sessionKey: string): Map<string, boolean
 export type AssistantMessageExpansionState =
   | { status: "loading"; revision: number }
   | { status: "error"; revision: number }
-  | { status: "loaded"; markdown: string; revision: number };
+  | { status: "loaded"; markdown: string; message?: unknown; revision: number };
 
 export function syncToolCardExpansionState(
   sessionKey: string,

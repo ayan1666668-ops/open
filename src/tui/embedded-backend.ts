@@ -127,6 +127,8 @@ import type {
   TuiModelChoice,
   TuiSessionList,
   TuiSessionCreateOptions,
+  TuiImageRequest,
+  TuiImageData,
 } from "./tui-backend.js";
 import { formatTuiErrorMessage } from "./tui-formatters.js";
 
@@ -626,6 +628,11 @@ export class EmbeddedTuiBackend implements TuiBackend {
     return { ok: true, aborted: true, runIds: [opts.runId] };
   }
 
+  async loadImage(opts: TuiImageRequest): Promise<TuiImageData> {
+    const { loadEmbeddedImage } = await import("./embedded-image-loader.js");
+    return await loadEmbeddedImage(opts);
+  }
+
   async loadHistory(opts: { sessionKey: string; agentId?: string; limit?: number }) {
     await this.ready;
     await this.preparedModelRuntime.waitUntilReady();
@@ -653,7 +660,7 @@ export class EmbeddedTuiBackend implements TuiBackend {
       typeof opts.limit === "number" ? opts.limit : 200,
     );
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
-    const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg);
+    const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars();
     const historyPage = await readChatHistoryPage({
       entry,
       provider: resolvedSessionModel.provider,

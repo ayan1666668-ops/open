@@ -1,6 +1,7 @@
 /**
  * Tests for task gateway methods and persisted task lifecycle responses.
  */
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +17,12 @@ import { addSessionMember } from "../../config/sessions/session-sharing-store.js
 import type { GatewayOperatorRoleDefinition } from "../../config/types.gateway.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
+import {
+  type HeartbeatWakeRequest,
+  requestHeartbeat,
+  setHeartbeatWakeHandler,
+} from "../../infra/heartbeat-wake.js";
+import { resetSystemEventsForTest } from "../../infra/system-events.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
@@ -25,6 +32,7 @@ import {
   markTaskTerminalById,
   recordTaskProgressByRunId,
 } from "../../tasks/runtime-internal.js";
+import { updateTaskStateByRunId } from "../../tasks/task-registry-record-api.js";
 import { reloadTaskRegistryFromStore } from "../../tasks/task-registry.js";
 import type { TaskRecord } from "../../tasks/task-registry.types.js";
 import {
@@ -50,6 +58,8 @@ const mainSessionTaskScope = {
 } as const;
 
 let stateDir: string;
+let heartbeatWakeRequests: HeartbeatWakeRequest[] = [];
+let disposeHeartbeatWakeHandler: (() => void) | undefined;
 
 function createTaskRecord(params: Parameters<typeof createTaskRecordOrNull>[0]): TaskRecord {
   const task = createTaskRecordOrNull(params);
@@ -63,6 +73,11 @@ beforeEach(async () => {
   stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gateway-tasks-"));
   setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
   resetTaskRegistryForTests();
+  heartbeatWakeRequests = [];
+  disposeHeartbeatWakeHandler = setHeartbeatWakeHandler(async (request) => {
+    heartbeatWakeRequests.push(request);
+    return { status: "ran", durationMs: 0 };
+  });
   cancelSessionMock.mockReset();
   setTaskRegistryControlRuntimeForTests({
     cancelActiveCronTaskRun: () => false,
@@ -76,12 +91,24 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  resetTaskRegistryControlRuntimeForTests();
-  resetTaskRegistryForTests();
-  stateDirEnvSnapshot.restore();
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
-  await fs.rm(stateDir, { recursive: true, force: true });
+  try {
+    // Drain older targeted wakes through a global barrier before their fixture state retires.
+    const reason = `gateway-tasks-test-flush-${randomUUID()}`;
+    requestHeartbeat({ source: "other", intent: "immediate", reason, coalesceMs: 0 });
+    await vi.waitFor(() => {
+      expect(heartbeatWakeRequests.some((request) => request.reason === reason)).toBe(true);
+    });
+  } finally {
+    disposeHeartbeatWakeHandler?.();
+    disposeHeartbeatWakeHandler = undefined;
+    resetSystemEventsForTest();
+    resetTaskRegistryControlRuntimeForTests();
+    resetTaskRegistryForTests();
+    stateDirEnvSnapshot.restore();
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    await fs.rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 async function getTaskPayload(taskId: string) {
@@ -906,10 +933,57 @@ describe("tasks gateway handlers", () => {
     expect(payload?.task?.error).toBeUndefined();
   });
 
+  it.each([
+    ["succeeded", "completed"],
+    ["failed", "failed"],
+    ["timed_out", "timed_out"],
+    ["lost", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const)(
+    "tasks.cancel preserves ACP %s and explains refused cancellation",
+    async (status, wireStatus) => {
+      const runId = "run-acp-cancel-race";
+      const task = createSnapshotTask({
+        runtime: "acp",
+        runId,
+        notifyPolicy: "silent",
+        childSessionKey: "agent:main:acp:cancel-race",
+        agentId: "main",
+      });
+      seedTaskRegistryRowsForTests([task]);
+      reloadTaskRegistryFromStore();
+      cancelSessionMock.mockImplementationOnce(async () => {
+        updateTaskStateByRunId({
+          runId,
+          runtime: "acp",
+          sessionKey: task.childSessionKey,
+          status,
+          endedAt: 2_000,
+        });
+      });
+
+      const { calls, payload } = await runTaskHandler("tasks.cancel", { taskId: task.taskId });
+
+      expect(calls[0]?.[0]).toBe(true);
+      expect(payload).toMatchObject({ found: true, cancelled: status === "cancelled" });
+      if (status === "cancelled") {
+        expect(payload).not.toHaveProperty("reason");
+      } else {
+        expect(payload).toHaveProperty(
+          "reason",
+          `Task became ${status} while cancellation was in progress.`,
+        );
+      }
+      expect(payload?.task).toMatchObject({ id: task.taskId, status: wireStatus, endedAt: 2_000 });
+      expect(getTaskById(task.taskId)).toMatchObject({ status, endedAt: 2_000 });
+    },
+  );
+
   it("cancels ACP tasks through the live Gateway handler and control runtime", async () => {
     const task = createSnapshotTask({
       taskId: "task-acp-primary",
       runtime: "acp",
+      notifyPolicy: "silent",
       childSessionKey: "agent:codex:acp:child",
       agentId: "codex",
       runId: "run-cancel-acp-gateway",
@@ -918,6 +992,7 @@ describe("tasks gateway handlers", () => {
     const siblingTask = createSnapshotTask({
       taskId: "task-acp-sibling",
       runtime: "acp",
+      notifyPolicy: "silent",
       childSessionKey: "agent:codex:acp:child",
       agentId: "codex",
       runId: "run-cancel-acp-gateway",

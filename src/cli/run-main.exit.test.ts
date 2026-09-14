@@ -319,7 +319,8 @@ vi.mock("../infra/path-env.js", () => ({
   ensureOpenClawCliOnPath: ensurePathMock,
 }));
 
-vi.mock("../infra/runtime-guard.js", () => ({
+vi.mock("../infra/runtime-guard.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/runtime-guard.js")>()),
   assertSupportedRuntime: assertRuntimeMock,
 }));
 
@@ -2582,7 +2583,7 @@ describe("runCli exit behavior", () => {
       "full Commander path with root options",
       ["node", "openclaw", "--log-level", "debug", "gateway", "run"],
     ],
-  ])("loads trusted dotenv and isolates %s gateway proxy config reads", async (_name, argv) => {
+  ])("isolates %s gateway proxy config reads core-only", async (_name, argv) => {
     existsSyncOverride.value = (target) => target === path.join(process.cwd(), ".env");
     if (_name === "full Commander path with root options") {
       tryRouteCliMock.mockResolvedValueOnce(false);
@@ -2601,7 +2602,7 @@ describe("runCli exit behavior", () => {
     expect(loadConfigMock).toHaveBeenCalledWith({
       isolateEnv: true,
       observe: false,
-      skipPluginValidation: true,
+      pluginValidation: "core-only",
     });
     expect(startProxyMock).toHaveBeenCalledWith(undefined);
   });

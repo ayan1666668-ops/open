@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 351659,
-  "reason": "PR #141121 (Control UI warm reload) measures 351659 B startup gzip in Linux CI at 491b8bf880a (+1282 B, 0.37% over the 350377 B baseline; current main measures about 350640 B in the same CI). The boot record, roster-cache lifecycle, and transcript prewarm join the boot path after deferring the roster and snapshot readers. Fixed 358400 B cap and existing growth allowance retained.",
-  "updatedAt": "2026-09-08"
+  "startupJsGzipBytes": 361362,
+  "reason": "Maintainer-approved 353 KiB cap for #147574. Exact-head CI job 103826823422 measured 361362 B gzip for the PR merged with current main, including newer main UI changes and the Settings restore repair. This remains below the 361472 B committed-baseline cap; existing 512 B growth and 64 B build variance allowances remain unchanged.",
+  "updatedAt": "2026-09-14"
 }
