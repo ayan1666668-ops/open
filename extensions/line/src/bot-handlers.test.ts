@@ -1276,6 +1276,68 @@ describe("handleLineWebhookEvents", () => {
     expect(processMessage).not.toHaveBeenCalled();
   });
 
+  // The notice is the tapper's only feedback, and the Gateway call before it can outlast
+  // the sender's access, so it goes out only if the sender is still admitted.
+  it.each(
+    [false, true].flatMap((revoked) =>
+      (["reply", "push"] as const).map((transport) => ({ revoked, transport })),
+    ),
+  )(
+    "sends the approval tap notice only while still admitted, revoked=$revoked over $transport",
+    async ({ revoked, transport }) => {
+      const userId = "U0123456789abcdef0123456789abcdef";
+      const processMessage = vi.fn();
+      const notice = "That approval is no longer waiting for a decision.";
+      readAllowFromStoreMock.mockResolvedValue([userId]);
+      resolveLineApprovalPostbackTapMock.mockImplementationOnce(async () => {
+        if (revoked) {
+          readAllowFromStoreMock.mockResolvedValue([]);
+        }
+        return notice;
+      });
+      pairingDeliveryMocks.replyMessageLine.mockResolvedValueOnce(undefined);
+      pairingDeliveryMocks.pushMessageLine.mockResolvedValueOnce(undefined);
+      await handleLineWebhookEvents(
+        [
+          {
+            type: "postback",
+            replyToken: transport === "reply" ? "reply-token" : "",
+            timestamp: Date.now(),
+            source: { type: "user", userId },
+            mode: "active",
+            webhookEventId: `approval-notice-${revoked}-${transport}`,
+            deliveryContext: { isRedelivery: false },
+            postback: {
+              data: "line.approval=approval-1&line.approvalKind=exec&line.decision=deny",
+            },
+          },
+        ],
+        createLineWebhookTestContext({ processMessage, dmPolicy: "pairing" }),
+      );
+
+      if (!revoked && transport === "reply") {
+        expect(pairingDeliveryMocks.replyMessageLine).toHaveBeenCalledWith(
+          "reply-token",
+          [{ type: "text", text: notice }],
+          expect.anything(),
+        );
+      } else {
+        expect(pairingDeliveryMocks.replyMessageLine).not.toHaveBeenCalled();
+      }
+      if (!revoked && transport === "push") {
+        expect(pairingDeliveryMocks.pushMessageLine).toHaveBeenCalledWith(
+          `line:${userId}`,
+          notice,
+          expect.anything(),
+        );
+      } else {
+        expect(pairingDeliveryMocks.pushMessageLine).not.toHaveBeenCalled();
+      }
+      expect(upsertPairingRequestMock).not.toHaveBeenCalled();
+      expect(processMessage).not.toHaveBeenCalled();
+    },
+  );
+
   it("still routes an ordinary postback to the agent", async () => {
     resolveLineQuestionPostbackMock.mockClear();
     const processMessage = vi.fn();
