@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 361472,
-  "reason": "Upstream merge bundle refresh measured up to 362049 B startup JS gzip on 2026-09-14. This ratchets the committed baseline to the existing 361472 B cap; the 512 B growth allowance remains unchanged and build-variance allowance covers byte-level native gzip drift.",
+  "startupJsGzipBytes": 362012,
+  "reason": "Maintainer-approved 354 KiB cap after integrated scoped catalog invalidation (#147845), remote workspaces (#147773), and update-status feedback (#147883). Controlled build measured 362012 B; deferring the new workspace labels saved only 64 B and still failed the previous limit. Existing 512 B growth and 64 B build variance allowances remain unchanged.",
   "updatedAt": "2026-09-14"
 }
