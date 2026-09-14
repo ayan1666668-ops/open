@@ -2,8 +2,8 @@
 import path from "node:path";
 import { asRecord } from "@openclaw/normalization-core/record-coerce";
 import { beforeEach, expect, it } from "vitest";
-import braveManifest from "../../../extensions/brave/openclaw.plugin.json" with { type: "json" };
-import firecrawlManifest from "../../../extensions/firecrawl/openclaw.plugin.json" with { type: "json" };
+import { loadPluginManifest, PLUGIN_MANIFEST_FILENAME } from "../../../src/plugins/manifest.ts";
+import { resolveBundledPluginPublicModulePath } from "../../../src/test-utils/bundled-plugin-public-surface.ts";
 import type {
   PluginCatalogItem,
   PluginListResult,
@@ -370,7 +370,7 @@ async function openWorkboard(page: Parameters<typeof waitForControlUiRoute>[0], 
 
 suite.define(() => {
   it.each<{
-    manifest: typeof braveManifest | typeof firecrawlManifest;
+    pluginId: string;
     name: string;
     section: string;
     sectionLabel: string;
@@ -380,7 +380,7 @@ suite.define(() => {
     pluginConfig: Record<string, Record<string, unknown>>;
   }>([
     {
-      manifest: braveManifest,
+      pluginId: "brave",
       name: "Brave",
       section: "webSearch",
       sectionLabel: "Web Search",
@@ -395,7 +395,7 @@ suite.define(() => {
       },
     },
     {
-      manifest: braveManifest,
+      pluginId: "brave",
       name: "Brave",
       section: "webSearch",
       sectionLabel: "Web Search",
@@ -410,7 +410,7 @@ suite.define(() => {
       },
     },
     {
-      manifest: firecrawlManifest,
+      pluginId: "firecrawl",
       name: "Firecrawl",
       section: "webFetch",
       sectionLabel: "Web Fetch",
@@ -425,7 +425,7 @@ suite.define(() => {
   ])(
     "edits $name string/object credentials and preserves settings (readOnly=$readOnly)",
     async ({
-      manifest,
+      pluginId,
       name,
       section,
       sectionLabel,
@@ -434,6 +434,22 @@ suite.define(() => {
       readOnly,
       pluginConfig,
     }) => {
+      const manifestResult = loadPluginManifest(
+        path.dirname(
+          resolveBundledPluginPublicModulePath({
+            pluginId,
+            artifactBasename: PLUGIN_MANIFEST_FILENAME,
+          }),
+        ),
+      );
+      if (!manifestResult.ok) {
+        throw new Error(manifestResult.error);
+      }
+      const { manifest } = manifestResult;
+      const uiHints = manifest.uiHints;
+      if (!uiHints) {
+        throw new Error(`Expected credential UI hints for ${pluginId}`);
+      }
       await suite.withPage(
         {
           colorScheme: "dark",
@@ -504,7 +520,7 @@ suite.define(() => {
                   },
                 },
                 uiHints: Object.fromEntries(
-                  Object.entries(manifest.uiHints).map(([key, hint]) => [
+                  Object.entries(uiHints).map(([key, hint]) => [
                     `plugins.entries.${manifest.id}.config.${key}`,
                     hint,
                   ]),
