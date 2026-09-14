@@ -18,6 +18,7 @@ vi.mock("../../tasks/task-flow-registry.js", async () => {
 
 import {
   claimStagedPostCompactionTaskFlowDelegates,
+  finalizeStagedPostCompactionDelegates,
   stagePostCompactionTaskFlowDelegate,
 } from "./delegate-store-post-compaction.js";
 import { markPendingDelegateSpawnAccepted } from "./delegate-store.js";
@@ -91,6 +92,34 @@ describe("reserveAcceptedPostCompactionChainHop", () => {
     expect(replay.chainState).toEqual(first.chainState);
     expect(replay.chainState.currentChainCount).toBe(3);
     expect(replay.expectedRevision).toBe(first.expectedRevision);
+  });
+
+  it("retains metadata decoding after an attachment-bearing durable handoff", () => {
+    stagePostCompactionTaskFlowDelegate(SESSION_KEY, {
+      task: "carry private working state",
+      stagedAt: Date.now(),
+      firstArmedAt: Date.now(),
+      attachments: [{ name: "state.md", content: "private compacted state" }],
+      attachAs: { mountPath: "handoff" },
+    });
+    const delegate = claimStagedPostCompactionTaskFlowDelegates(SESSION_KEY)[0];
+    if (!delegate?.flowId || delegate.expectedRevision === undefined) {
+      throw new Error("expected an attachment-bearing post-compaction delegate");
+    }
+    expect(finalizeStagedPostCompactionDelegates([delegate.flowId])).toBe(1);
+
+    const reserved = reserveAcceptedPostCompactionChainHop(delegate, plannedHop(3));
+
+    expect(reserved.expectedRevision).toBe(delegate.expectedRevision + 2);
+    expect(
+      markPendingDelegateSpawnAccepted(
+        { ...delegate, expectedRevision: reserved.expectedRevision },
+        "agent:main:subagent:attachment-child",
+      ),
+    ).toBe(true);
+    expect(reserveAcceptedPostCompactionChainHop(delegate, plannedHop(4)).chainState).toEqual(
+      plannedHop(3),
+    );
   });
 
   it("passes the planned hop straight through when the entry has no source row", () => {

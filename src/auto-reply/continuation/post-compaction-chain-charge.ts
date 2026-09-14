@@ -10,7 +10,7 @@
  */
 
 import {
-  decodeDelegateFlow,
+  decodeDelegateFlowMetadata,
   delegateFlowRecords,
   isPostCompactionDelegateFlow,
 } from "./delegate-flow-store.js";
@@ -36,7 +36,8 @@ export function reserveAcceptedPostCompactionChainHop(
     return { chainState: plannedChainState, expectedRevision: delegate.expectedRevision };
   }
   const flow = delegateFlowRecords.get(delegate.flowId);
-  const decoded = flow && isPostCompactionDelegateFlow(flow) ? decodeDelegateFlow(flow) : undefined;
+  const decoded =
+    flow && isPostCompactionDelegateFlow(flow) ? decodeDelegateFlowMetadata(flow) : undefined;
   if (decoded?.persistedChainState && decoded.persistedChainStateKind !== "terminal") {
     return { chainState: decoded.persistedChainState, expectedRevision: flow?.revision };
   }

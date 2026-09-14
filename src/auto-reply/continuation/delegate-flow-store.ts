@@ -389,7 +389,10 @@ function decodeDelegateState(flow: TaskFlowRecord): PendingDelegateState | undef
   return attachmentError ? undefined : parsed.data;
 }
 
-export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
+function decodeDelegateFlowWithOptions(
+  flow: TaskFlowRecord,
+  options: { requireAttachmentPayload: boolean },
+): PendingContinuationDelegate | undefined {
   const state = decodeDelegateState(flow);
   if (!state) {
     return undefined;
@@ -398,6 +401,7 @@ export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDel
   const attachments = state.attachments ?? attachmentPayload?.attachments;
   const attachAs = state.attachAs ?? attachmentPayload?.attachAs;
   if (
+    options.requireAttachmentPayload &&
     state.attachmentCount !== undefined &&
     (!attachments || attachments.length !== state.attachmentCount)
   ) {
@@ -444,6 +448,16 @@ export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDel
     flowId: flow.flowId,
     expectedRevision: flow.revision,
   };
+}
+
+export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
+  return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: true });
+}
+
+export function decodeDelegateFlowMetadata(
+  flow: TaskFlowRecord,
+): PendingContinuationDelegate | undefined {
+  return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: false });
 }
 
 export function readAcceptedDelegateChildSessionKey(flow: TaskFlowRecord): string | undefined {

@@ -4,6 +4,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   decodeDelegateFlow,
+  decodeDelegateFlowMetadata,
   delegateDueAt,
   delegateFlowRecords,
   isDurablyHandedOffPostCompactionFlow,
@@ -285,7 +286,7 @@ function recordAcceptedSucceededDelegate(
   childSessionKey: string,
   now: number,
 ): boolean {
-  const accepted = decodeDelegateFlow(flow);
+  const accepted = decodeDelegateFlowMetadata(flow);
   const acceptedChildSessionKey = readAcceptedDelegateChildSessionKey(flow);
   if (acceptedChildSessionKey === childSessionKey) {
     return true;
@@ -410,7 +411,7 @@ export function markPendingDelegateChainStatePersistPlanned(
       `planned delegate chain-state marker was not committed for flow ${delegate.flowId}`,
     );
   }
-  const plannedDelegate = decodeDelegateFlow(planned.flow);
+  const plannedDelegate = decodeDelegateFlowMetadata(planned.flow);
   if (!plannedDelegate) {
     throw new Error(`planned delegate chain-state marker was corrupt for flow ${delegate.flowId}`);
   }
