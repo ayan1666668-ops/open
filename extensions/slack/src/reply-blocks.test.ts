@@ -5,7 +5,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
 import {
-  applySlackLongMessageGuard,
+  normalizeSlackReplyPayload,
   resolveSlackReplyBlockResolution,
   resolveSlackReplyDeliveryMessages,
   resolveSlackReplyRenderPlan,
@@ -13,7 +13,7 @@ import {
 
 describe("applySlackLongMessageGuard", () => {
   it("converts five-line plain text into a four-line summary plus detail presentation", () => {
-    expect(applySlackLongMessageGuard({ text: "one\ntwo\nthree\nfour\nfive\nsix" })).toEqual({
+    expect(normalizeSlackReplyPayload({ text: "one\ntwo\nthree\nfour\nfive\nsix" })).toEqual({
       text: "one\ntwo\nthree\nfour",
       presentation: { blocks: [{ type: "context", text: "five\nsix" }] },
     });
@@ -21,12 +21,12 @@ describe("applySlackLongMessageGuard", () => {
 
   it("keeps short and explicitly structured payloads unchanged", () => {
     const short = { text: "one\ntwo\nthree\nfour" };
-    expect(applySlackLongMessageGuard(short)).toBe(short);
+    expect(normalizeSlackReplyPayload(short)).toBe(short);
     const structured = {
       text: "one\ntwo\nthree\nfour\nfive",
       presentation: { blocks: [{ type: "divider" as const }] },
     };
-    expect(applySlackLongMessageGuard(structured)).toBe(structured);
+    expect(normalizeSlackReplyPayload(structured)).toBe(structured);
   });
 });
 

@@ -73,7 +73,7 @@ function splitSlackLongMessage(text: string): { summary: string; details: string
 }
 
 /** Applies the Slack-only long-message policy once at the adapter normalization boundary. */
-export function applySlackLongMessageGuard(payload: ReplyPayload): ReplyPayload {
+function applySlackLongMessageGuard(payload: ReplyPayload): ReplyPayload {
   if (hasSlackReplyStructuredContent(payload)) {
     return payload;
   }
