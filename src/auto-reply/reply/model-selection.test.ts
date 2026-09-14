@@ -516,13 +516,17 @@ describe("createModelSelectionState catalog loading", () => {
     { hasModelDirective: true, capturedPolicy: true, expected: "ultra" },
     { hasModelDirective: false, capturedPolicy: false, expected: "medium" },
     { hasModelDirective: true, capturedPolicy: false, expected: "medium" },
+    { hasModelDirective: false, capturedPolicy: true, expected: "ultra", unrestricted: true },
+    { hasModelDirective: false, capturedPolicy: false, expected: "medium", unrestricted: true },
   ])(
-    "keeps prepared thinking ownership through reply selection (directive=$hasModelDirective policy=$capturedPolicy)",
-    async ({ hasModelDirective, capturedPolicy, expected }) => {
+    "keeps prepared thinking ownership through reply selection (directive=$hasModelDirective policy=$capturedPolicy unrestricted=$unrestricted)",
+    async ({ hasModelDirective, capturedPolicy, expected, unrestricted }) => {
       const provider = "fixture-provider";
       const model = "fixture-model";
       const cfg: OpenClawConfig = {
-        agents: { defaults: { models: { [`${provider}/${model}`]: { alias: "Fixture" } } } },
+        agents: unrestricted
+          ? undefined
+          : { defaults: { models: { [`${provider}/${model}`]: { alias: "Fixture" } } } },
         models: {
           providers: {
             [provider]: {
