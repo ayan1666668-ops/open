@@ -3012,6 +3012,21 @@ pub(crate) fn startup(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let reserved = on_main(&app, |app| {
             let owner = app.state::<GatewayWindows>();
+            {
+                let mut state = owner.routing.lock().map_err(|_| STALE)?;
+                if state.closing || !matches!(state.initial_selection, InitialSelection::Waiting) {
+                    return Ok(None);
+                }
+                if state
+                    .windows
+                    .get("main")
+                    .is_some_and(|route| route.document.is_some())
+                {
+                    // WKWebView has no URL before its first navigation commits.
+                    // Registered documents already own readiness and source identity.
+                    return Ok(state.reserve_initial_selection(None));
+                }
+            }
             let local = app
                 .get_webview("main")
                 .and_then(|view| view.url().ok())
@@ -3105,23 +3120,28 @@ pub(crate) fn startup(app: &AppHandle) {
     });
 }
 
-pub(crate) fn local_page_load(view: Webview, started: bool) {
+pub(crate) fn local_page_load(view: Webview, url: &Url, started: bool) {
     let app = view.app_handle();
-    let Ok(url) = view.url() else {
+    let owner = app.state::<GatewayWindows>();
+    if owner.routing.lock().is_ok_and(|state| {
+        state
+            .windows
+            .get(view.label())
+            .is_some_and(|route| route.document.is_some())
+    }) {
         return;
-    };
+    }
     if view.label() != "main"
         || !{
             app.state::<crate::DesktopState>()
-                .main_window_has_local_url(&url)
+                .main_window_has_local_url(url)
         }
     {
         return;
     }
-    let owner = app.state::<GatewayWindows>();
     if app
         .state::<crate::DesktopState>()
-        .main_window_has_connection_settings_url(&url)
+        .main_window_has_connection_settings_url(url)
     {
         if let Ok(mut state) = owner.routing.lock() {
             state.settings_page_load(started);
