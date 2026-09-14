@@ -33,6 +33,12 @@ import {
   updateFlowRecordByIdExpectedRevision,
 } from "../../tasks/task-flow-runtime-internal.js";
 import * as delegateFlowDiagnostics from "./delegate-flow-diagnostics.js";
+import {
+  projectDelegateFlow,
+  releaseDelegateAttachmentPayload,
+  resetDelegateAttachmentPayloadsForTests,
+  storeDelegateAttachmentPayload,
+} from "./delegate-attachment-payload-store.js";
 import { createContinuationRecipientAuthorityBinding } from "./recipient-authority-binding.js";
 import {
   CONTINUATION_DELEGATE_FANOUT_MODES,
@@ -42,10 +48,6 @@ import {
 import type { ChainState, PendingContinuationDelegate } from "./types.js";
 
 const log = createSubsystemLogger("continuation/delegate-store");
-const delegateAttachmentPayloads = new Map<
-  string,
-  { attachments: InlineAttachment[]; attachAs?: { mountPath: string } }
->();
 
 export { CONTINUATION_DELEGATE_CONTROLLER_ID, CONTINUATION_POST_COMPACTION_CONTROLLER_ID };
 
@@ -378,8 +380,7 @@ function decodeDelegateState(flow: TaskFlowRecord): PendingDelegateState | undef
   if (!parsed.success) {
     return undefined;
   }
-  // Legacy rows predate the persistence boundary above. They must satisfy the
-  // same live policy before recovery may return their raw bytes to a spawn;
+  // Legacy rows must satisfy the live policy before recovery returns raw bytes to a spawn;
   // callers terminalize an undefined decode through the scrubbed fail path.
   const attachmentError = validateSubagentAttachments({
     config: getRuntimeConfig(),
@@ -397,66 +398,14 @@ function decodeDelegateFlowWithOptions(
   if (!state) {
     return undefined;
   }
-  const attachmentPayload = delegateAttachmentPayloads.get(flow.flowId);
-  const attachments = state.attachments ?? attachmentPayload?.attachments;
-  const attachAs = state.attachAs ?? attachmentPayload?.attachAs;
-  if (
-    options.requireAttachmentPayload &&
-    state.attachmentCount !== undefined &&
-    (!attachments || attachments.length !== state.attachmentCount)
-  ) {
-    return undefined;
-  }
-
-  let mode: PendingContinuationDelegate["mode"];
-  if (state.postCompaction === true) {
-    mode = "post-compaction";
-  } else if (state.silentWake === true) {
-    mode = "silent-wake";
-  } else if (state.silent === true) {
-    mode = "silent";
-  }
-  return {
-    task: state.task,
-    ...(state.delayMs !== undefined ? { delayMs: state.delayMs } : {}),
-    ...(mode !== undefined ? { mode } : {}),
-    ...(state.firstArmedAt !== undefined ? { firstArmedAt: state.firstArmedAt } : {}),
-    ...(attachments ? { attachments: structuredClone(attachments) } : {}),
-    ...(attachAs ? { attachAs: { ...attachAs } } : {}),
-    ...(state.targetSessionKey ? { targetSessionKey: state.targetSessionKey } : {}),
-    ...(state.targetSessionKeys && state.targetSessionKeys.length > 0
-      ? { targetSessionKeys: state.targetSessionKeys }
-      : {}),
-    ...(state.fanoutMode ? { fanoutMode: state.fanoutMode } : {}),
-    ...(state.recipientAuthorityBinding
-      ? { recipientAuthorityBinding: state.recipientAuthorityBinding }
-      : {}),
-    ...(state.returnOptions ? { returnOptions: state.returnOptions } : {}),
-    ...(state.recipientContext ? { recipientContext: state.recipientContext } : {}),
-    ...(state.traceparent && state.traceparentProvenance === "internal"
-      ? { traceparent: state.traceparent }
-      : {}),
-    ...(state.model ? { model: state.model } : {}),
-    ...(state.chainTokensFold !== undefined ? { chainTokensFold: state.chainTokensFold } : {}),
-    ...(state.persistedChainState ? { persistedChainState: state.persistedChainState } : {}),
-    ...(state.persistedChainStateKind
-      ? { persistedChainStateKind: state.persistedChainStateKind }
-      : {}),
-    ...(state.inheritedSilent ? { inheritedSilent: true } : {}),
-    ...(state.inheritedWake ? { inheritedWake: true } : {}),
-    ...(state.originRunId ? { originRunId: state.originRunId } : {}),
-    flowId: flow.flowId,
-    expectedRevision: flow.revision,
-  };
+  return projectDelegateFlow(flow, state, options);
 }
 
 export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: true });
 }
 
-export function decodeDelegateFlowMetadata(
-  flow: TaskFlowRecord,
-): PendingContinuationDelegate | undefined {
+export function decodeDelegateFlowMetadata(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: false });
 }
 
@@ -587,7 +536,7 @@ export function listQueuedPostCompactionFlows(sessionKey: string): TaskFlowRecor
 }
 
 export function scrubCancellationRequestedDelegateFlowState(flow: TaskFlowRecord): void {
-  delegateAttachmentPayloads.delete(flow.flowId);
+  releaseDelegateAttachmentPayload(flow.flowId);
   let current = flow;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (
@@ -662,10 +611,7 @@ export const delegateFlowRecords = {
       stateJson: scrubStoredDelegateAttachmentState(state),
     });
     if (flow && state.attachments) {
-      delegateAttachmentPayloads.set(flow.flowId, {
-        attachments: state.attachments,
-        ...(state.attachAs ? { attachAs: state.attachAs } : {}),
-      });
+      storeDelegateAttachmentPayload(flow.flowId, state);
     }
     return flow;
   },
@@ -719,7 +665,7 @@ export const delegateFlowRecords = {
       endedAt: params.endedAt,
     });
     if (result.applied || result.reason === "not_found") {
-      delegateAttachmentPayloads.delete(params.flowId);
+      releaseDelegateAttachmentPayload(params.flowId);
     }
     return result;
   },
@@ -733,7 +679,7 @@ export const delegateFlowRecords = {
         : {}),
     });
     if (result.applied || result.reason === "not_found") {
-      delegateAttachmentPayloads.delete(params.flowId);
+      releaseDelegateAttachmentPayload(params.flowId);
     }
     return result;
   },
@@ -743,7 +689,7 @@ export const delegateFlowRecords = {
   delete(flowId: string) {
     const deleted = deleteTaskFlowRecordById(flowId);
     if (deleted) {
-      delegateAttachmentPayloads.delete(flowId);
+      releaseDelegateAttachmentPayload(flowId);
     }
     return deleted;
   },
@@ -806,6 +752,6 @@ export function getContinuationDelegateQueueDepths(
 }
 
 export function resetDelegateFlowDiagnosticsForTests(): void {
-  delegateAttachmentPayloads.clear();
+  resetDelegateAttachmentPayloadsForTests();
   continuationQueueDiagnostics.reset();
 }

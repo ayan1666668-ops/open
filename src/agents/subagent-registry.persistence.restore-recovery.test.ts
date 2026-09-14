@@ -25,7 +25,6 @@ import {
 import {
   testing,
   activateSubagentRegistry,
-  addSubagentRunForTests,
   getLatestSubagentRunByChildSessionKey,
   getSubagentRunByChildSessionKey,
   initSubagentRegistry,
