@@ -668,6 +668,7 @@ export const en: TranslationMap & {
     coalescedRestart:
       "Update installed. A gateway restart is already in progress; status will refresh after it reconnects.",
     error: "Update error: {error}",
+    checkError: "Could not check for updates: {error}",
     status: "Update {status}: {reason}. {guidance}",
     verificationFailedWithIdentity:
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}. Run `openclaw triage` on the Gateway host before retrying.",
@@ -3120,6 +3121,8 @@ export const en: TranslationMap & {
     taskCountOne: "1 task",
     agent: "Agent: {agent}",
     openSession: "Open session",
+    viewTranscript: "View transcript",
+    transcript: "Task transcript",
     cancelTask: "Cancel {title}",
     cancelling: "Cancelling…",
     retryDelivery: "Retry delivery",
@@ -5487,7 +5490,9 @@ export const en: TranslationMap & {
       noSummary: "No summary.",
       deliverySuppression: "Delivery suppression: {reason}",
       runAt: "Run at",
-      openRunChat: "Open run chat",
+      transcriptMissingMetadata: "This run is missing the identity needed to open its transcript.",
+      transcriptUnavailable:
+        "The exact run transcript is unavailable or ambiguous. Refresh run history and try again.",
       next: "Next {rel}",
       due: "Due {rel}",
     },
