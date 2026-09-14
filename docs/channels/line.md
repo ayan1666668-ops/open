@@ -558,8 +558,9 @@ channel or another LINE account where it was raised. Decide an OpenClaw-change a
 its card or from the Control UI.
 
 Restart the Gateway after changing forwarding so the LINE account picks it up. Until then,
-cards follow the forwarding settings the account started with while forwarded text prompts
-follow the new ones, so a request can reach a chat as neither a card nor a prompt. A change
+cards follow the forwarding settings the account started with. A request raised from a LINE
+chat that only the new settings would send as a card gets a notice in that chat naming the
+`/approve` command to use instead. A change
 to `channels.line`, such as removing an approver, waits for active runs and replies to finish
 before it takes effect; until then the previous configuration still decides.
 
