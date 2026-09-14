@@ -277,6 +277,7 @@ export function renderApplicationShell(host: ShellViewHost) {
       catalogOpenTarget: normalizeCatalogOpenTarget(uiSettings.catalogOpenTarget),
       canPairDevice: gatewayConnected && (operatorAccess.canAdmin || operatorAccess.canPair),
       preferencesBrowserOnly: gatewayConnected && context.runtimeConfig.canPatch === false,
+      sidebarHomePinned: navigationSnapshot.sidebarHomePinned !== false,
       sidebarEntries: navigationSnapshot.sidebarEntries,
       navigationVisible: !navigationSurfaceHidden,
       sidebarAgentsMode: uiSettings.sidebarAgentsMode ?? "chip",
@@ -291,6 +292,8 @@ export function renderApplicationShell(host: ShellViewHost) {
       onRetryConnect: () => context.gateway.connect(),
       onToggleSidebar: () => host.toggleNavigationSurface(),
       onOpenNewSession: openNewSession,
+      onUpdateSidebarHomePinned: (pinned: boolean) =>
+        context.navigation.update({ sidebarHomePinned: pinned }),
       onUpdateSidebarEntries: (entries: string[]) =>
         context.navigation.update({ sidebarEntries: entries }),
       onPairMobile: () => void context.overlays.openDevicePairSetup(),
