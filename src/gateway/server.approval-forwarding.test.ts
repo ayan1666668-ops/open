@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
@@ -5,6 +6,7 @@ import { createDeferred, withTestTimeout } from "../../test/helpers/promise.js";
 import type { ChannelOutboundContext } from "../channels/plugins/outbound.types.js";
 import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import { writeConfigFile } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getGatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime-context.js";
 import type { GatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime.types.js";
@@ -14,11 +16,13 @@ import { withEnvAsync } from "../test-utils/env.js";
 import { createGatewayMethodRegistry } from "./methods/registry.js";
 import { createGatewayInstanceRuntime } from "./server-instance-runtime.js";
 import { resetTestPluginRegistry, setTestPluginRegistry } from "./test-helpers.plugin-registry.js";
+import { testState } from "./test-helpers.runtime-state.js";
 import {
   connectOk,
   createGatewaySuiteHarness,
   installGatewayTestHooks,
   rpcReq,
+  writeSessionStore,
 } from "./test-helpers.server.js";
 
 installGatewayTestHooks({ scope: "suite" });
@@ -75,18 +79,39 @@ async function startForwardingGateway() {
     approvals: { plugin: { enabled: true, mode: "session" } },
   };
   await writeConfigFile(cfg);
+  const sessionKey = "agent:main:telegram:direct:123";
+  testState.sessionStorePath = path.join(resolveStateDir(), "approval-forwarding", "sessions.json");
+  await writeSessionStore({
+    entries: {
+      [sessionKey]: {
+        sessionId: "approval-forwarding-session",
+        updatedAt: Date.now(),
+        lastChannel: "telegram",
+        lastTo: "123",
+        lastAccountId: "default",
+      },
+    },
+  });
   const gateway = await createGatewaySuiteHarness({ serverOptions: { bind: "loopback" } });
   let ws: WebSocket | undefined;
   try {
     await gateway.server.startupSettled;
+    ws = await gateway.openWs();
+    await connectOk(ws, { scopes: ["operator.admin"] });
+    // Minimal Gateways skip account autostart; use the registered lifecycle owner.
+    for (const accountId of ["default", "ops"]) {
+      const started = await rpcReq(ws, "channels.start", { channel: "telegram", accountId });
+      expect(started).toMatchObject({
+        ok: true,
+        payload: { accountId, started: true, outcome: { status: "handed-off" } },
+      });
+    }
     const nativeRuntime = await withTestTimeout(
       capturedRuntime.promise,
       5_000,
       "channel account did not receive its Gateway approval runtime",
     );
-    ws = await gateway.openWs();
-    await connectOk(ws, { scopes: ["operator.admin"] });
-    return { gateway, ws, nativeRuntime, deliveries, cfg };
+    return { gateway, ws, nativeRuntime, deliveries, cfg, sessionKey };
   } catch (error) {
     ws?.terminate();
     await gateway.server.close({ drainTimeoutMs: 0 });
@@ -115,11 +140,12 @@ async function expectApprovalDelivery(
   forwarded: boolean,
   turnSourceChannel = "telegram",
 ) {
-  const response = await rpcReq<{ id: string; status: string }>(
+  const response = await rpcReq<{ id: string; status: string; deliveryRoute: string }>(
     started.ws,
     "plugin.approval.request",
     {
       pluginId: "approval-test",
+      sessionKey: started.sessionKey,
       title,
       description: "Confirm the requested operation.",
       turnSourceChannel,
@@ -136,7 +162,7 @@ async function expectApprovalDelivery(
     if (forwarded) {
       await vi.waitFor(
         () => {
-          expect(started.deliveries).toContainEqual(
+          expect(started.deliveries, JSON.stringify(response.payload)).toContainEqual(
             expect.objectContaining({ to: "123", text: expect.stringContaining(title) }),
           );
         },
