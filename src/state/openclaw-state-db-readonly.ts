@@ -240,6 +240,8 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
   openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
   // Even read-only SQLite opens can create a missing WAL. The existing worker
   // snapshots committed WAL pages without touching source sidecars or caller-held locks.
+  // One consistent snapshot per synchronous scope avoids mixed reads and duplicate copies.
+  // Concurrent commits become visible in the next scope; this reader closes at scope end.
   const readers = synchronousReadSnapshots.current;
   if (readers && requiresArtifactPreservingSnapshot(pathname)) {
     let opened = readers.get(pathname);
