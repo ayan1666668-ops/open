@@ -1745,7 +1745,7 @@ describe("config plugin validation", () => {
     expect(res.warnings).toContainEqual({
       path: "channels.missing-chat",
       message:
-        "unknown channel id: missing-chat (stale channel plugin config ignored; run openclaw doctor --fix to remove stale config, or install the plugin)",
+        "unknown channel id: missing-chat (disabled or stale channel plugin config ignored; install the plugin to validate it, or run openclaw doctor --fix to remove repairable stale config)",
     });
     expect(res.warnings).toContainEqual({
       path: "plugins.allow",
@@ -1757,6 +1757,46 @@ describe("config plugin validation", () => {
       message:
         "plugin not found: missing-chat (stale config entry ignored; remove it from plugins config)",
     });
+  });
+
+  it("warns instead of failing for an exact disabled unknown channel config", () => {
+    const res = validateInSuite({
+      agents: { list: [{ id: "openclaw" }] },
+      channels: {
+        "missing-chat": { enabled: false },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) {
+      return;
+    }
+    expect(res.warnings).toContainEqual({
+      path: "channels.missing-chat",
+      message:
+        "unknown channel id: missing-chat (disabled or stale channel plugin config ignored; install the plugin to validate it, or run openclaw doctor --fix to remove repairable stale config)",
+    });
+  });
+
+  it("keeps disabled unknown channel config with authored settings fatal", () => {
+    const res = validateInSuite({
+      agents: { list: [{ id: "openclaw" }] },
+      channels: {
+        "missing-chat": { enabled: false, token: "stale" },
+      },
+    });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) {
+      return;
+    }
+    expect(res.issues.filter((issue) => issue.path === "channels.missing-chat")).toEqual([
+      {
+        path: "channels.missing-chat",
+        message: "unknown channel id: missing-chat",
+      },
+    ]);
+    expectNoPath(res.warnings, "channels.missing-chat");
   });
 
   it("keeps unknown channel typos fatal when there is no stale plugin evidence", () => {
@@ -1854,7 +1894,7 @@ describe("config plugin validation", () => {
       expect(res.warnings).toContainEqual({
         path: "channels.missing-sms",
         message:
-          "unknown channel id: missing-sms (stale channel plugin config ignored; run openclaw doctor --fix to remove stale config, or install the plugin)",
+          "unknown channel id: missing-sms (disabled or stale channel plugin config ignored; install the plugin to validate it, or run openclaw doctor --fix to remove repairable stale config)",
       });
     } finally {
       await writePersistedInstalledPluginIndex(
