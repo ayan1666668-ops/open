@@ -2,44 +2,20 @@ import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-even
 import { loadSessionEntry } from "../session-utils.js";
 import { setGatewayDedupeEntries } from "./agent-dedupe.js";
 import type {
-  prepareAgentRunDispatch,
-  PreparedAgentRunDispatch,
-} from "./agent-run-admission-phase.js";
+  SupervisedRootAdmission,
+  SupervisedRootRunAbort,
+} from "./agent-run-supervised-root.types.js";
 import {
   releasePreparedAgentRunUserTurn,
   type PreparedAgentRunUserTurn,
 } from "./agent-run-user-turn.js";
 
-type RootAdmission = Pick<
-  Parameters<typeof prepareAgentRunDispatch>[0],
-  | "cfg"
-  | "activeSessionAgentId"
-  | "resolvedSessionKey"
-  | "suppressVisibleSessionEffects"
-  | "isOneShotModelRun"
-  | "isRestartRecoveryResumeRun"
-  | "canUseInternalRuntimeHandoff"
-  | "sessionEntry"
-  | "inputProvenance"
-  | "images"
-  | "offloadedRefs"
-  | "assertAdmissionCurrent"
-  | "assertGatewayWorkAdmissionAllowed"
-  | "lifecycleGeneration"
-  | "getAdmittedSessionId"
-  | "runId"
-  | "markAgentRunAccepted"
-  | "context"
-  | "agentDedupeKeys"
-  | "io"
->;
-
 /** Transfer actionable root input to durable task custody before ordinary execution. */
 export function maybeAdmitSupervisedGatewayRoot(input: {
-  admission: RootAdmission;
+  admission: SupervisedRootAdmission;
   userTurn: PreparedAgentRunUserTurn;
   activeModel: { provider: string; model: string };
-  activeRunAbort: PreparedAgentRunDispatch["activeRunAbort"];
+  activeRunAbort: SupervisedRootRunAbort;
   onInputAccepted: () => void;
   onAccepted: () => void | Promise<void>;
   onRejected: (error: unknown) => void | Promise<void>;

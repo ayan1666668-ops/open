@@ -1,8 +1,23 @@
-// Pure projection of one core method policy spec onto its dispatch descriptor; the policy table
-// and its lookups stay owned by core-descriptors.ts.
-import type { CoreGatewayMethodSpec } from "./core-descriptors.js";
+// Leaf contract for one core method policy spec and its pure projection onto a dispatch
+// descriptor; the policy table and its lookups stay owned by core-descriptors.ts.
 import { isCoreGatewayMethodProfileDependent } from "./core-profile-access.js";
-import type { GatewayMethodDescriptorInput, GatewayMethodHandler } from "./descriptor.js";
+import type {
+  GatewayMethodDescriptorInput,
+  GatewayMethodHandler,
+  GatewayMethodScope,
+} from "./descriptor.js";
+
+export type CoreGatewayMethodSpec = {
+  name: string;
+  family?: string;
+  scope: GatewayMethodScope;
+  since?: string;
+  advertise?: false;
+  startup?: true;
+  controlPlaneWrite?: true;
+  compatibilityRestored?: true;
+  description?: string;
+};
 
 export function toCoreGatewayMethodDescriptorInput(
   spec: CoreGatewayMethodSpec,

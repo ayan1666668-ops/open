@@ -1,6 +1,9 @@
 // Core gateway method descriptors keep handler names, auth scopes, startup availability, and write policy in one table.
 import type { OperatorScope } from "../operator-scopes.js";
-import { toCoreGatewayMethodDescriptorInput } from "./core-descriptor-input.js";
+import {
+  toCoreGatewayMethodDescriptorInput,
+  type CoreGatewayMethodSpec,
+} from "./core-descriptor-input.js";
 import {
   DYNAMIC_GATEWAY_METHOD_SCOPE,
   NODE_GATEWAY_METHOD_SCOPE,
@@ -8,18 +11,6 @@ import {
   type GatewayMethodHandler,
   type GatewayMethodScope,
 } from "./descriptor.js";
-
-export type CoreGatewayMethodSpec = {
-  name: string;
-  family?: string;
-  scope: GatewayMethodScope;
-  since?: string;
-  advertise?: false;
-  startup?: true;
-  controlPlaneWrite?: true;
-  compatibilityRestored?: true;
-  description?: string;
-};
 
 type CoreGatewayMethodMetadata = Pick<CoreGatewayMethodSpec, "name" | "scope" | "since">;
 type CoreGatewayMethodPolicy = Pick<
