@@ -15,7 +15,7 @@ import {
 } from "../../auto-reply/reply-payload.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { resolveSendableOutboundReplyParts } from "../../infra/outbound/reply-payload-parts.js";
-import { runWithGatewayDetachedWorkAdmission } from "../../process/gateway-work-admission.js";
+import { runWithGatewayDetachedWorkContinuation } from "../../process/gateway-work-admission.js";
 import { getPluginRuntimeGatewayRequestScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -42,12 +42,14 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   // A deferred caller (e.g. a plugin hook scheduling follow-up work after its
   // triggering command's root already released) must not inherit that released
   // root via AsyncLocalStorage: subordinate admission checks would reject this
-  // run as draining even though the Gateway is healthy. Own a fresh detached
-  // root so the run is judged on current admission state instead.
-  return await runWithGatewayDetachedWorkAdmission(
+  // run as draining even though the Gateway is healthy. A live parent root,
+  // however, keeps its right to finish subordinate work across a reversible
+  // suspension, so reserve a tracked continuation off it instead of forcing
+  // this call through the closed-admission wait every new detached root uses;
+  // only a missing/released parent falls back to that wait.
+  return await runWithGatewayDetachedWorkContinuation(
     () => runAdmittedPluginEmbeddedAgent(pluginId, params),
     `plugin:${pluginId}:run-embedded-agent`,
-    params.abortSignal,
   );
 };
 

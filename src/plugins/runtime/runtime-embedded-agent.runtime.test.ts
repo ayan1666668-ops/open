@@ -12,8 +12,10 @@ import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-d
 import { setReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
+  getActiveGatewayRootWorkCount,
   isGatewaySubordinateWorkAdmissionClosed,
   tryBeginGatewayRootWorkAdmission,
+  tryBeginGatewaySuspendAdmission,
 } from "../../process/gateway-work-admission.js";
 import { withPluginRuntimePluginScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
@@ -426,6 +428,27 @@ describe("plugin embedded-agent runtime admission", () => {
 
     await expect(runResult).resolves.toEqual({ payloads: [] });
     expect(admissionClosedDuringRun).toBe(false);
+  });
+
+  it("keeps a live parent's plugin run admitted across a reversible suspension", async () => {
+    const parentRoot = tryBeginGatewayRootWorkAdmission("command:new");
+    expect(parentRoot).not.toBeNull();
+    let runResult: Promise<unknown> | undefined;
+    await parentRoot?.run(async () => {
+      const suspension = tryBeginGatewaySuspendAdmission(() => {});
+      expect(suspension).not.toBeNull();
+      runResult = withPluginRuntimePluginScope({ pluginId: "memory-plugin" }, () =>
+        runPluginEmbeddedAgent(params),
+      );
+      // A live parent keeps its right to finish subordinate work across a
+      // reversible suspension: admission must be reserved synchronously here,
+      // not parked behind the closed global fence like a fresh root.
+      expect(getActiveGatewayRootWorkCount()).toBe(2);
+      suspension?.rollback();
+    });
+
+    await expect(runResult).resolves.toEqual({ payloads: [] });
+    parentRoot?.release();
   });
 
   it("revokes admission immediately when a pending plugin run aborts", async () => {
