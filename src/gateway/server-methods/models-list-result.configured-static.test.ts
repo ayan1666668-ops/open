@@ -130,7 +130,10 @@ describe("models.list configured static entries", () => {
           await modelsHandlers["models.list"]!({
             req: { type: "req", id: "personal-catalog", method: "models.list", params },
             client: profileId
-              ? ({ authenticatedUserProfile: { profileId } } as GatewayClient)
+              ? ({
+                  connect: { caps: [] },
+                  authenticatedUserProfile: { profileId },
+                } as GatewayClient)
               : null,
             context,
             params,
