@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import radiusPlugin from "../../extensions/radius/index.js";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
 import { createNonExitingRuntime } from "../runtime.js";
+import { loadBundledPluginFacade } from "../test-utils/bundled-plugin-public-surface.js";
 import { registerSingleProviderPlugin } from "../test-utils/plugin-registration.js";
 import { WizardSession } from "../wizard/session.js";
 import { runProviderPluginAuthMethodUnpersisted } from "./provider-auth-method.js";
@@ -98,7 +98,10 @@ describe("runProviderPluginAuthMethodUnpersisted", () => {
         }),
         release: async () => undefined,
       });
-      const provider = await registerSingleProviderPlugin(radiusPlugin);
+      const plugin = await loadBundledPluginFacade<{
+        default: Parameters<typeof registerSingleProviderPlugin>[0];
+      }>({ pluginId: "radius", artifactBasename: "index.js" });
+      const provider = await registerSingleProviderPlugin(plugin.default);
       const method = provider.auth.find((entry) => entry.id === "oauth");
       if (!method) {
         throw new Error("Radius did not register its OAuth method");
