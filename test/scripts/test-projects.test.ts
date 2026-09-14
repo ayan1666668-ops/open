@@ -3073,6 +3073,7 @@ describe("scripts/test-projects changed-target routing", () => {
         config: "test/vitest/vitest.commands.config.ts",
         includePatterns: [
           "src/commands/onboard-non-interactive.gateway-auth-token.test.ts",
+          "src/commands/onboard-non-interactive.gateway-health-auth.test.ts",
           "src/commands/onboard-non-interactive.gateway.test.ts",
         ],
       },
