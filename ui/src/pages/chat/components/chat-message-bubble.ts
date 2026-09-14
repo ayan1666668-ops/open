@@ -219,7 +219,7 @@ function renderPairingQrExpiryNotices(count: number) {
 }
 
 export function renderGroupedMessage(
-  { message, normalizedMessage, displayMarkdown }: ChatMessageRenderPreparation,
+  preparation: ChatMessageRenderPreparation,
   messageKey: string,
   opts: {
     isStreaming: boolean;
@@ -271,11 +271,10 @@ export function renderGroupedMessage(
   onOpenSidebar?: (content: SidebarContent) => void,
 ) {
   const disclosure = opts.assistantMessageDisclosure;
-  if (disclosure?.expanded && disclosure.message) {
-    ({ message, normalizedMessage, displayMarkdown } = prepareChatMessageRender(
-      disclosure.message,
-    ));
-  }
+  const { message, normalizedMessage, displayMarkdown } =
+    disclosure?.expanded && disclosure.message
+      ? prepareChatMessageRender(disclosure.message)
+      : preparation;
   const m = message as Record<string, unknown>;
   const role = typeof m.role === "string" ? m.role : "unknown";
   const sourceRole = normalizeRoleForGrouping(role);
