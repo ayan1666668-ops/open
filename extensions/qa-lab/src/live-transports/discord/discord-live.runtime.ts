@@ -11,6 +11,7 @@ import {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { writeExternalFileWithinRoot } from "openclaw/plugin-sdk/security-runtime";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { escapeHtml } from "openclaw/plugin-sdk/text-utility-runtime";
 import { chromium } from "playwright-core";
@@ -232,7 +233,25 @@ function createDiscordQaEndpointFetcher(apiBaseUrl: string): typeof fetch {
       throw new Error(`Discord QA request escaped the expected API base: ${request.url}`);
     }
     const suffix = request.url.slice(`${DISCORD_PUBLIC_API_BASE}/`.length);
-    return await fetch(new Request(new URL(suffix, base), request));
+    const target = new URL(suffix, base);
+    const guarded = await fetchWithSsrFGuard({
+      url: target.toString(),
+      init: request,
+      signal: request.signal,
+      policy: { allowPrivateNetwork: true, allowedOrigins: [base.origin] },
+      maxRedirects: 0,
+      auditContext: "qa-lab-discord-endpoint",
+    });
+    try {
+      const body = await guarded.response.arrayBuffer();
+      return new Response(body, {
+        status: guarded.response.status,
+        statusText: guarded.response.statusText,
+        headers: guarded.response.headers,
+      });
+    } finally {
+      await guarded.release();
+    }
   };
 }
 

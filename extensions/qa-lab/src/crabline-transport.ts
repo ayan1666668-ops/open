@@ -363,16 +363,8 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     this.#transportPolicy = params.transportPolicy;
     this.#voiceCaPath = params.voiceCaPath;
     this.#state = params.state;
-    if (params.selection.channel === "discord") {
-      // SAFETY: The selected Discord channel uses Crabline's fixture and endpoint manifest contract.
-      const manifest = params.adapter.manifest as unknown as {
-        applicationId: string;
-        botToken: string;
-        driverBotToken: string;
-        driverBotUserId: string;
-        endpoints: { apiRoot: string };
-        fixture: { channelId: string; guildId: string; voiceChannelId: string };
-      };
+    if (params.selection.channel === "discord" && params.adapter.manifest.provider === "discord") {
+      const manifest = params.adapter.manifest;
       let prepared:
         | Promise<
             ReturnType<
@@ -579,12 +571,8 @@ export async function createQaCrablineTransportAdapter(params: {
   });
 
   let voiceCaPath: string | undefined;
-  if (adapter.channel === "discord") {
-    // SAFETY: This branch admits only Crabline's Discord manifest, which may expose the test voice CA.
-    const manifest = adapter.manifest as unknown as {
-      endpoints?: { voiceCaCertificate?: string };
-    };
-    const certificate = manifest.endpoints?.voiceCaCertificate;
+  if (adapter.manifest.provider === "discord") {
+    const certificate = adapter.manifest.endpoints.voiceCaCertificate;
     if (certificate) {
       voiceCaPath = path.join(params.outputDir, "artifacts", "crabline", "discord-voice-ca.pem");
       await fs.writeFile(voiceCaPath, `${certificate.trim()}\n`, { encoding: "utf8", mode: 0o600 });
