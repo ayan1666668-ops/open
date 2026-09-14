@@ -39,7 +39,7 @@ describe("native Bash execution policy", () => {
         nativeTools: ["Bash"],
       });
       let decision: CliBackendToolPermissionResult | undefined;
-      const exit = await runPlugin(context, async function* (execution) {
+      const runExit = await runPlugin(context, async function* (execution) {
         decision = await execution.requestToolPermission({
           toolName: "Bash",
           toolInput: { command: "gog calendar list" },
@@ -47,14 +47,7 @@ describe("native Bash execution policy", () => {
         });
         yield SUCCESS_RESULT;
       });
-      expect(
-        decision?.behavior,
-        JSON.stringify({
-          reason: exit.reason,
-          exitCode: exit.exitCode,
-          message: decision?.behavior === "deny" ? decision.message : undefined,
-        }),
-      ).toBe(behavior);
+      expect(decision?.behavior, JSON.stringify({ decision, runExit })).toBe(behavior);
       expect(mockCallGatewayTool).not.toHaveBeenCalled();
       if (decision?.behavior === "allow") {
         expect(decision.updatedInput?.command).toContain(binary);
