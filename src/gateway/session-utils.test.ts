@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
+import { resolveNonGitTempRoot } from "../../test/helpers/temp-dir.js";
 import { writeAcpSessionMetaForMigration } from "../acp/runtime/session-meta.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { resolveLegacyInheritedAuthAgentId } from "../agents/legacy-inherited-auth-dir.js";
@@ -64,35 +65,6 @@ import {
   resolveDeletedAgentIdFromSessionKey,
 } from "./session-utils-store.js";
 import { applySessionContextWindowPatch } from "./sessions-patch-context-window.js";
-
-function hasGitDirectoryAncestor(start: string): boolean {
-  let current = path.resolve(start);
-  for (;;) {
-    if (fs.existsSync(path.join(current, ".git"))) {
-      return true;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return false;
-    }
-    current = parent;
-  }
-}
-
-function createNonGitTempRoot(prefix: string): string {
-  const candidates = [
-    os.tmpdir(),
-    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
-  ];
-  for (const candidate of candidates) {
-    const root = fs.mkdtempSync(path.join(candidate, prefix));
-    if (!hasGitDirectoryAncestor(root)) {
-      return root;
-    }
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-  throw new Error("Could not create a temp directory outside a git checkout");
-}
 
 const providerArtifactMocks = vi.hoisted(() => ({
   resolveBundledProviderPolicySurface: vi.fn<
@@ -4740,7 +4712,9 @@ describe("gateway session utils", () => {
   });
 
   test("listAgentsForGateway reports whether each workspace is a git checkout", () => {
-    const root = createNonGitTempRoot("openclaw-agent-workspace-git-");
+    const root = fs.mkdtempSync(
+      path.join(resolveNonGitTempRoot(), "openclaw-agent-workspace-git-"),
+    );
     const gitWorkspace = path.join(root, "git");
     const plainWorkspace = path.join(root, "plain");
     fs.mkdirSync(path.join(gitWorkspace, ".git"), { recursive: true });

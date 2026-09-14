@@ -1,9 +1,10 @@
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import {
+  resolveNonGitTempRoot,
+  useAutoCleanupTempDirTracker,
+} from "../../../test/helpers/temp-dir.js";
 import { AcceptedWorkspacePublicationIndeterminateError } from "./workspace-accepted-publication.js";
 import { verifyReconciledWorkspaceFinal } from "./workspace-finalize.js";
 import { serializeWorkerWorkspaceManifest } from "./workspace-manifest.js";
@@ -35,38 +36,6 @@ vi.mock("../../logging/subsystem.js", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-
-function hasGitDirectoryAncestor(start: string): boolean {
-  let current = path.resolve(start);
-  for (;;) {
-    if (fsSync.existsSync(path.join(current, ".git"))) {
-      return true;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return false;
-    }
-    current = parent;
-  }
-}
-
-function resolveNonGitTempRoot(): string {
-  const candidates = [
-    os.tmpdir(),
-    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
-  ];
-  for (const candidate of candidates) {
-    try {
-      const root = fsSync.realpathSync.native(candidate);
-      if (!hasGitDirectoryAncestor(root)) {
-        return root;
-      }
-    } catch {
-      // Try the next platform temp root candidate.
-    }
-  }
-  throw new Error("Could not resolve a temp root outside a git checkout");
-}
 
 afterEach(() => {
   workspaceWarning.mockReset();

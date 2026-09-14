@@ -21,6 +21,38 @@ function resolveCanonicalSystemTempRoot(): string {
   return canonicalRoot;
 }
 
+function hasGitDirectoryAncestor(start: string): boolean {
+  let current = path.resolve(start);
+  for (;;) {
+    if (fs.existsSync(path.join(current, ".git"))) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+}
+
+export function resolveNonGitTempRoot(): string {
+  const candidates = [
+    resolveCanonicalSystemTempRoot(),
+    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const root = fs.realpathSync.native(candidate);
+      if (!hasGitDirectoryAncestor(root)) {
+        return root;
+      }
+    } catch {
+      // Try the next platform temp root candidate.
+    }
+  }
+  throw new Error("Could not resolve a temp root outside a git checkout");
+}
+
 interface TestTempDirTracker {
   readonly dirs: ReadonlySet<string>;
   make(prefix: string, root?: string): string;
