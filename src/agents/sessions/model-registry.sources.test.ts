@@ -114,7 +114,7 @@ describe("ModelRegistry source composition", () => {
       if (baseUrl === catalogUrl) {
         expect(model).toMatchObject({ contextWindows, contextWindowDefault: "200k" });
       } else {
-        expect(model?.contextWindows).toBeUndefined();
+        expect(model).toHaveProperty("contextWindows", undefined);
         expect(model).toHaveProperty("contextWindowDefault", undefined);
       }
     },
