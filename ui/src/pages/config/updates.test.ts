@@ -221,7 +221,7 @@ describe("renderUpdates", () => {
     disabled: boolean;
     title: string;
   }>)("distinguishes $name", ({ props, status, tone, label, disabled, title }) => {
-    const onCheckStatus = vi.fn(async () => undefined);
+    const onCheckStatus = vi.fn(async () => true);
     render(renderUpdates(createProps({ ...props, onCheckStatus })), container);
     const statusRow = row("Status");
     expect(statusRow.querySelector(".settings-status")?.textContent?.trim()).toBe(status);
