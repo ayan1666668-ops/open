@@ -4,6 +4,7 @@ import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-a
 import { isCliProvider } from "../../agents/model-selection-cli.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
+import { STATE_DIR } from "../../config/paths.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -18,21 +19,19 @@ import type { WorkerPlacementExecutionMode } from "./placement-record.js";
 
 export { resolveWorkerPlacementCapabilities } from "./placement-capabilities.js";
 
-/** Dispatch and projection share CLI precedence and automatic harness selection. */
 export function resolveWorkerPlacementSessionRuntime(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry;
   agentId: string;
   sessionKey: string;
 }): string {
-  const selectedModel = resolveSessionSelectedModelRef({
+  const { provider, model } = resolveSessionSelectedModelRef({
     ...params,
     source: {
       entry: params.entry,
       loadSessionEntry: (key) => {
         const target = resolveGatewaySessionStoreTargetWithStore({
-          cfg: params.cfg,
-          agentId: params.agentId,
+          ...params,
           key: params.sessionKey,
           clone: false,
           readOnly: true,
@@ -42,25 +41,16 @@ export function resolveWorkerPlacementSessionRuntime(params: {
       },
     },
   });
-  return resolveWorkerPlacementModelRuntime({
-    ...params,
-    provider: selectedModel.provider,
-    model: selectedModel.model,
-  });
+  return resolveWorkerPlacementModelRuntime({ ...params, provider, model });
 }
 
-/** Resolve the placement runtime from the selected facts shared by reads and admission. */
 export function resolveWorkerPlacementModelRuntime(
   params: Parameters<typeof resolveWorkerPlacementSessionRuntime>[0] & {
     provider: string;
     model: string;
   },
 ): string {
-  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-    provider: params.provider,
-    entry: params.entry,
-    cfg: params.cfg,
-  });
+  const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider(params);
   const pinnedHarnessId = resolveSessionPinnedHarnessId(params.entry);
   const locksPersistedHarness =
     pinnedHarnessId !== undefined && pinnedHarnessId === sessionRuntimeOverride;
@@ -77,33 +67,39 @@ export function resolveWorkerPlacementModelRuntime(
     (sessionRuntimeOverride
       ? undefined
       : resolveCliRuntimeExecutionProvider({
-          provider: params.provider,
-          cfg: params.cfg,
-          agentId: params.agentId,
+          ...params,
           modelId: params.model,
           authProfileId: params.entry.authProfileOverride,
           preparedAuthDirectories: {
-            agentDir: resolveEffectiveAgentDir(params.cfg, params.agentId),
-            inheritedAuthDir: resolveEffectiveAgentDir(
-              params.cfg,
-              resolveLegacyInheritedAuthAgentId(params.cfg),
-            ),
+            env: {
+              ...process.env,
+              OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR?.trim() || STATE_DIR,
+            },
+            get agentDir() {
+              return resolveEffectiveAgentDir(params.cfg, params.agentId, { env: this.env });
+            },
+            get inheritedAuthDir() {
+              return resolveEffectiveAgentDir(
+                params.cfg,
+                resolveLegacyInheritedAuthAgentId(params.cfg),
+                { env: this.env },
+              );
+            },
           },
         }));
   const useCliExecution =
     pinnedCliRuntime !== undefined ||
     (!sessionRuntimeOverride && isCliProvider(cliExecutionProvider ?? params.provider, params.cfg));
-  if (useCliExecution) {
-    return cliExecutionProvider ?? params.provider;
-  }
-  return resolveEffectiveAgentRuntime({
-    cfg: params.cfg,
-    provider: params.provider,
-    modelId: params.model,
-    agentScope: { kind: "prepared", agentId: params.agentId },
-    sessionKey: params.sessionKey,
-    sessionEntry: params.entry,
-  });
+  return useCliExecution
+    ? (cliExecutionProvider ?? params.provider)
+    : resolveEffectiveAgentRuntime({
+        cfg: params.cfg,
+        provider: params.provider,
+        modelId: params.model,
+        agentScope: { kind: "prepared", agentId: params.agentId },
+        sessionKey: params.sessionKey,
+        sessionEntry: params.entry,
+      });
 }
 
 export function resolveWorkerPlacementExecutionMode(
