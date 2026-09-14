@@ -151,6 +151,54 @@ describe("buildDeveloperInstructions credential routing", () => {
   });
 });
 
+describe("buildDeveloperInstructions deferred tool discovery", () => {
+  it("distinguishes logical names from Code Mode callable names", () => {
+    const instructions = buildDeveloperInstructions(createParams(), {
+      dynamicTools: [
+        {
+          type: "function",
+          name: "message",
+          description: "Send a message",
+          inputSchema: { type: "object" },
+        },
+        {
+          type: "namespace",
+          name: "openclaw",
+          description: "OpenClaw tools",
+          tools: [
+            {
+              type: "function",
+              name: "memory_search",
+              description: "Search memory",
+              inputSchema: { type: "object" },
+              deferLoading: true,
+            },
+            {
+              type: "function",
+              name: "agent_knock_knock_list",
+              description: "List notifications",
+              inputSchema: { type: "object" },
+              deferLoading: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(instructions).toContain(
+      "Deferred OpenClaw tools by logical name: agent_knock_knock_list, memory_search.",
+    );
+    expect(instructions).toContain("Use `tool_search` when directly callable");
+    expect(instructions).toContain(
+      "namespaced tools appear in `ALL_TOOLS[].name` and the `tools` object under normalized callable names such as `namespace__tool_name` (punctuation becomes `_`), not bare logical names",
+    );
+    expect(instructions).toContain("Search `ALL_TOOLS` by normalized name suffix and description");
+    expect(instructions).toContain("call the returned `name` through `tools`");
+    expect(instructions).toContain("a missing bare name does not mean the tool is unavailable");
+    expect(instructions).not.toContain("message,");
+  });
+});
+
 describe("buildDeveloperInstructions delegation guidance", () => {
   it("shares the visible-session delegation policy with a canonical main session", () => {
     const instructions = buildInstructions();

@@ -1282,9 +1282,9 @@ describe("Codex app-server native code mode config", () => {
     // always-direct sessions_spawn.
     expect(instructions).toContain("Use `tool_search` when directly callable");
     expect(instructions).toContain(
-      "On code-mode-only models, use `exec` instead: filter `ALL_TOOLS` by name and description",
+      "On code-mode-only models, use `exec` instead: namespaced tools appear in `ALL_TOOLS[].name`",
     );
-    expect(instructions).toContain("call the matching entry through `tools`");
+    expect(instructions).toContain("call the returned `name` through `tools`");
     expect(instructions).toContain(
       "Use OpenClaw `sessions_spawn` only for OpenClaw or ACP delegation, never as a substitute for `spawn_agent` on internal legwork.",
     );
@@ -1410,50 +1410,6 @@ describe("Codex app-server native code mode config", () => {
     },
   );
 
-  it("summarizes deferred dynamic tool names in developer instructions", () => {
-    const instructions = buildDeveloperInstructions(createAttemptParams({ provider: "openai" }), {
-      dynamicTools: [
-        {
-          type: "function",
-          name: "message",
-          description: "Send a message",
-          inputSchema: { type: "object" },
-        },
-        {
-          type: "namespace",
-          name: "openclaw",
-          description: "",
-          tools: [
-            {
-              type: "function",
-              name: "music_generate",
-              description: "Create music",
-              inputSchema: { type: "object" },
-              deferLoading: true,
-            },
-            {
-              type: "function",
-              name: "image_generate",
-              description: "Create images",
-              inputSchema: { type: "object" },
-              deferLoading: true,
-            },
-          ],
-        },
-      ],
-    });
-
-    expect(instructions).toContain(
-      "Deferred searchable OpenClaw dynamic tools available: image_generate, music_generate.",
-    );
-    expect(instructions).toContain("Use `tool_search` when directly callable");
-    expect(instructions).toContain(
-      "On code-mode-only models, use `exec` instead: filter `ALL_TOOLS` by name and description",
-    );
-    expect(instructions).toContain("call the matching entry through `tools`");
-    expect(instructions).not.toContain("message,");
-  });
-
   it("materializes namespaced prompt tools once while preserving all guidance", () => {
     const params = createAttemptParams({ provider: "openai" });
     params.sourceReplyDeliveryMode = "message_tool_only";
@@ -1504,7 +1460,7 @@ describe("Codex app-server native code mode config", () => {
 
     expect(namespaceReads).toBe(1);
     expect(instructions).toContain(
-      "Deferred searchable OpenClaw dynamic tools available: alpha_tool, skill_workshop, zeta_tool.",
+      "Deferred OpenClaw tools by logical name: alpha_tool, skill_workshop, zeta_tool.",
     );
     expect(instructions).toContain("## Skill Workshop");
     expect(instructions).not.toContain("Visible source replies are not automatically delivered");

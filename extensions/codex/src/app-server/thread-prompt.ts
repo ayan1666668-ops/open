@@ -98,12 +98,12 @@ export function buildDeveloperInstructions(
     !shouldDisableCodexToolSearchForModel(params.modelId);
   const deferredToolDiscoveryGuidance =
     deferredToolNames.size > 0 || nativeDelegationAvailable
-      ? "Deferred tools may be absent from the direct tool list. Use `tool_search` when directly callable. On code-mode-only models, use `exec` instead: filter `ALL_TOOLS` by name and description, then call the matching entry through `tools`."
+      ? "Deferred tools may be absent from the direct tool list. Use `tool_search` when directly callable. On code-mode-only models, use `exec` instead: namespaced tools appear in `ALL_TOOLS[].name` and the `tools` object under normalized callable names such as `namespace__tool_name` (punctuation becomes `_`), not bare logical names. Search `ALL_TOOLS` by normalized name suffix and description, then call the returned `name` through `tools`; a missing bare name does not mean the tool is unavailable."
       : undefined;
   const sections = [
     "You are a personal agent running inside OpenClaw. OpenClaw has dynamic tools for OpenClaw-owned messaging, cron, sessions, media, gateway, and nodes.",
     deferredToolNames.size > 0
-      ? `Deferred searchable OpenClaw dynamic tools available: ${[...deferredToolNames]
+      ? `Deferred OpenClaw tools by logical name: ${[...deferredToolNames]
           .toSorted((left, right) => left.localeCompare(right))
           .join(", ")}.`
       : undefined,

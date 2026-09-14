@@ -2427,10 +2427,10 @@ describe("runCodexAppServerAttempt", () => {
     expect(registeredToolNames).toContain("message");
     expect(registeredToolNames).toContain("heartbeat_respond");
     expect(normalInstructions).not.toContain(
-      "Deferred searchable OpenClaw dynamic tools available: heartbeat_respond",
+      "Deferred OpenClaw tools by logical name: heartbeat_respond",
     );
     expect(heartbeatInstructions).toContain(
-      "Deferred searchable OpenClaw dynamic tools available: heartbeat_respond.",
+      "Deferred OpenClaw tools by logical name: heartbeat_respond.",
     );
     for (const bridge of [normalBridge, heartbeatBridge, nextNormalBridge]) {
       const heartbeat = flattenSpecsWithNamespace(bridge.specs).find(
@@ -4476,7 +4476,7 @@ describe("runCodexAppServerAttempt", () => {
       "When the memory guidance above calls for memory recall, use an already-loaded memory tool directly.",
     );
     expect(collaborationInstructions).toContain(
-      "If the needed memory tool is deferred and not currently callable, use `tool_search` to load it, then call that memory tool.",
+      "If the needed memory tool is deferred, use `tool_search` when directly callable; on code-mode-only models, use `exec` with the `ALL_TOOLS` and `tools` guidance in the developer instructions.",
     );
     expect(collaborationInstructions).not.toContain(memorySummary);
     expect(inputText).not.toContain("OpenClaw runtime context for this turn:");

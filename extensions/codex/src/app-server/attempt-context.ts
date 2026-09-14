@@ -964,7 +964,7 @@ function renderCodexMemoryToolSearchBridge(toolNames: readonly string[]): string
   if (memoryToolNames.length === 0) {
     return undefined;
   }
-  return `Codex may expose ${memoryToolNames.join(" and ")} as deferred tools. When the memory guidance above calls for memory recall, use an already-loaded memory tool directly. If the needed memory tool is deferred and not currently callable, use \`tool_search\` to load it, then call that memory tool.`;
+  return `Codex may expose ${memoryToolNames.join(" and ")} as deferred tools. When the memory guidance above calls for memory recall, use an already-loaded memory tool directly. If the needed memory tool is deferred, use \`tool_search\` when directly callable; on code-mode-only models, use \`exec\` with the \`ALL_TOOLS\` and \`tools\` guidance in the developer instructions.`;
 }
 
 /** Lists available memory tool names understood by Codex workspace memory routing. */
