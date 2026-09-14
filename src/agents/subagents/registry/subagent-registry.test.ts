@@ -2869,6 +2869,54 @@ describe("subagent registry seam flow", () => {
     expect(mocks.runSubagentAnnounceFlow).toHaveBeenCalledTimes(2);
   });
 
+  it("routes a private child's provisional wait-expiry wake by its completion target", async () => {
+    const startedAt = Date.now();
+    let waitAttempts = 0;
+    mocks.callGateway.mockImplementation(async (request: { method?: string }) => {
+      if (request.method === "agent.wait") {
+        waitAttempts += 1;
+        return { status: "timeout" };
+      }
+      return {};
+    });
+    mocks.loadSessionStore.mockReturnValue(
+      createSessionStore({
+        updatedAt: startedAt,
+        status: "running",
+      }),
+    );
+
+    mod.registerSubagentRun({
+      runId: "run-unconfirmed-private-child",
+      task: "private child keeps its provisional wake parent-only",
+      expectsCompletionMessage: true,
+      completionTarget: "parent",
+      completionRequesterSessionId: "sess-private-parent",
+      runTimeoutSeconds: 1,
+    });
+
+    await waitForFast(() => {
+      expect(waitAttempts).toBeGreaterThanOrEqual(1);
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await waitForFast(() => {
+      expect(mocks.runSubagentAnnounceFlow).toHaveBeenCalledTimes(1);
+    });
+    // A parent-only child must have completion notifications on, so the
+    // producer's collect/expectsCompletionMessage skip cannot exclude it. The
+    // terminal producers forward the private-completion fields; the provisional
+    // wake has to as well or the still-running notice takes the public route.
+    expect(mocks.runSubagentAnnounceFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryPhase: "wait-expiry",
+        outcome: { status: "timeout", disposition: "still-running" },
+        completionTarget: "parent",
+        completionRequesterSessionId: "sess-private-parent",
+      }),
+    );
+  });
+
   it("runs no terminal cleanup tails for an unconfirmed child until an observed stop promotes it", async () => {
     // Regression (openclaw-odqn round 2, finding 1): round 1 only withheld
     // sessions.delete. Cleanup bookkeeping still tore down internal session

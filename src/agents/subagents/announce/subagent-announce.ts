@@ -128,7 +128,10 @@ function buildAnnounceReplyInstruction(params: {
       ? " Preserve any runtime-authored model-route change notice in your update."
       : " Keep runtime-authored model-route change notices internal on this shared surface.";
   if (params.stillRunning) {
-    return `This ${params.announceType} is NOT known to have finished: the wait for it expired without observing it stop, so it may still be running. Do not treat this as a completed result, and do not start a replacement, duplicate, or successor for it — a second worker on the same files or working directory can corrupt what the first one is mid-edit on. Re-check whether it is still live before acting, and keep waiting or harvest its own output when it lands.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type). Reply ONLY: ${SILENT_REPLY_TOKEN} if there is nothing to say to the user about this yet.`;
+    // A parent-only child's provisional wake is still parent-only: keep the
+    // still-running guidance first, but never promise user delivery for it.
+    const parentOnly = params.completionTarget === "parent";
+    return `This ${params.announceType} is NOT known to have finished: the wait for it expired without observing it stop, so it may still be running. Do not treat this as a completed result, and do not start a replacement, duplicate, or successor for it — a second worker on the same files or working directory can corrupt what the first one is mid-edit on. Re-check whether it is still live before acting, and keep waiting or harvest its own output when it lands.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type).${parentOnly ? " Your final reply stays internal; no external response is required." : ""} Reply ONLY: ${SILENT_REPLY_TOKEN} if there is nothing to ${parentOnly ? "act on" : "say to the user about this"} yet.`;
   }
   if (params.completionTarget === "parent") {
     return `Process this result privately. Your final reply stays internal; no external response is required. Review the result, continue the task, or reply ONLY: ${SILENT_REPLY_TOKEN}.`;

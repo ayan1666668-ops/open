@@ -106,6 +106,7 @@ vi.mock("./subagent-announce-delivery.js", () => ({
     requesterOrigin?: { channel?: string; to?: string; accountId?: string; threadId?: string };
     requesterSessionOrigin?: { provider?: string; channel?: string };
     bestEffortDeliver?: boolean;
+    completionTarget?: "parent";
     directIdempotencyKey?: string;
     internalEvents?: unknown;
   }) => {
@@ -120,6 +121,7 @@ vi.mock("./subagent-announce-delivery.js", () => ({
         message: params.triggerMessage,
         deliver: !params.requesterIsSubagent,
         bestEffortDeliver: params.bestEffortDeliver,
+        completionTarget: params.completionTarget,
         internalEvents: params.internalEvents,
         idempotencyKey: params.directIdempotencyKey,
         ...(params.requesterIsSubagent
@@ -886,6 +888,28 @@ describe("subagent announce still-running disposition", () => {
     const { message } = readAnnouncedEvent();
     expect(message).toContain("is NOT known to have finished");
     expect(message).toContain("do not start a replacement");
+  });
+
+  it("keeps a private child's provisional wake parent-only", async () => {
+    await runAnnounceFlowForTest("run-wait-expiry-private", {
+      outcome: { status: "timeout", disposition: "still-running" },
+      roundOneReply: undefined,
+      expectsCompletionMessage: true,
+      completionTarget: "parent",
+      completionRequesterSessionId: "private-parent",
+      requesterOrigin: { channel: "discord", to: "chan-main", accountId: "acct-main" },
+      suppressChildSessionEffects: true,
+      startedAt: 1_000,
+      endedAt: 5_401_000,
+    });
+
+    // Delivery decides the external target from this field alone; the
+    // provisional wake must hand it over exactly like a terminal announce.
+    expect(findFinalDirectAgentCall()?.params?.completionTarget).toBe("parent");
+    const { message } = readAnnouncedEvent();
+    expect(message).toContain("is NOT known to have finished");
+    expect(message).toContain("Your final reply stays internal; no external response is required.");
+    expect(message).not.toContain("to the user");
   });
 
   it("preserves the last retry-grace error while reporting the child as live", async () => {

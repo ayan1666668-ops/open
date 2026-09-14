@@ -595,6 +595,8 @@ const subagentRunManager = createSubagentRunManager({
       outcome: { status: "timeout", disposition: "still-running" },
       deliveryPhase: "wait-expiry",
       expectsCompletionMessage: entry.expectsCompletionMessage,
+      completionTarget: entry.completionTarget,
+      completionRequesterSessionId: entry.completionRequesterSessionId,
       spawnMode: entry.spawnMode,
       wakeOnDescendantSettle: entry.wakeOnDescendantSettle,
       suppressChildSessionEffects: true,
