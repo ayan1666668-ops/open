@@ -125,7 +125,10 @@ function buildAnnounceReplyInstruction(params: {
   if (params.stillRunning) {
     // The parent's next act decides whether this event is harmless or
     // destructive, so name the forbidden act rather than only the state.
-    return `This ${params.announceType} has NOT finished — the wait above expired, the child did not. It is still running and still owns its session, working directory, and any branch or file it was given. Do not treat this as a result, do not report it as done or failed, and do not start a replacement or duplicate for the same work. Anything above is partial. Continue with other work; a further completion event will arrive when the child actually ends. Keep this internal context private (don't mention system/log/stats/session details or announce type). If there is nothing for the user right now, reply ONLY: ${SILENT_REPLY_TOKEN}.`;
+    // A parent-only child's provisional wake is still parent-only: keep the
+    // still-running guidance first, but never promise user delivery for it.
+    const parentOnly = params.completionTarget === "parent";
+    return `This ${params.announceType} has NOT finished — the wait above expired, the child did not. It is still running and still owns its session, working directory, and any branch or file it was given. Do not treat this as a result, do not report it as done or failed, and do not start a replacement or duplicate for the same work. Anything above is partial. Continue with other work; a further completion event will arrive when the child actually ends. Keep this internal context private (don't mention system/log/stats/session details or announce type).${parentOnly ? " Your final reply stays internal; no external response is required." : ""} If there is nothing ${parentOnly ? "to act on" : "for the user"} right now, reply ONLY: ${SILENT_REPLY_TOKEN}.`;
   }
   const modelRouteInstruction = !params.modelRouteChange
     ? ""
@@ -539,10 +542,7 @@ async function runSubagentAnnounceFlowBound(
     // may travel onward; raw descendant findings remain internal wake context.
     const childResultText = hasPrivateChildCompletion ? reply : childCompletionFindings || reply;
     const findings =
-      childResultText ||
-      (stillRunning
-        ? "(no result yet; child still running)"
-        : "(no output)");
+      childResultText || (stillRunning ? "(no result yet; child still running)" : "(no output)");
 
     let requesterIsSubagent = requesterIsInternalSession();
     if (requesterIsSubagent) {
