@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withMockedPlatform } from "../test-utils/vitest-spies.js";
+import { managedHandoffRuntimeEntrypoint } from "./update-managed-service-handoff-runtime-assets.js";
 import { stageManagedHandoffRuntime } from "./update-managed-service-handoff-runtime.js";
 
 const { createRequireMock, resolveRuntimeWorkerUrlMock } = vi.hoisted(() => ({
@@ -149,6 +150,10 @@ describe("managed handoff native staging", () => {
     write(path.join(untrustedCwd, "dist", "managed-handoff-runtime.mjs"), "untrusted helper");
     resolveRuntimeWorkerUrlMock.mockReturnValue(pathToFileURL(path.join(root, "runtime.ts")));
     const previousCwd = process.cwd();
+    const previousModuleUrl = managedHandoffRuntimeEntrypoint.currentModuleUrl;
+    managedHandoffRuntimeEntrypoint.currentModuleUrl = pathToFileURL(
+      path.join(root, "install", "src", "infra", "runtime.ts"),
+    ).href;
     process.chdir(untrustedCwd);
     try {
       expect(() => stageManagedHandoffRuntime(destination)).toThrow(
@@ -157,6 +162,7 @@ describe("managed handoff native staging", () => {
       expect(fs.existsSync(destination)).toBe(false);
     } finally {
       process.chdir(previousCwd);
+      managedHandoffRuntimeEntrypoint.currentModuleUrl = previousModuleUrl;
     }
   });
 
