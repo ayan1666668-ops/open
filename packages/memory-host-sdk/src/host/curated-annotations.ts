@@ -1,43 +1,6 @@
 // Pure curated-memory annotation parsing shared by runtime and doctor paths.
 export const INVALID_PROJECT_ANNOTATION_KEY = "!invalid-project-annotation";
 
-export type MemoryFrontmatterLineRange = {
-  startLine: 1;
-  endLine: number;
-};
-
-/** Returns the line range of a complete leading YAML frontmatter block. */
-export function resolveMemoryFrontmatterLineRange(text: string): MemoryFrontmatterLineRange | null {
-  const normalized = text
-    .replace(/^\uFEFF/u, "")
-    .replace(/\r\n/gu, "\n")
-    .replace(/\r/gu, "\n");
-  const lines = normalized.split("\n");
-  if (!/^---[^\S\n]*$/u.test(lines[0] ?? "")) {
-    return null;
-  }
-  for (let index = 1; index < lines.length; index += 1) {
-    if (/^---[^\S\n]*$/u.test(lines[index] ?? "")) {
-      return { startLine: 1, endLine: index + 1 };
-    }
-  }
-  return null;
-}
-
-/** Removes a complete leading YAML frontmatter block from memory content. */
-export function stripMemoryFrontmatterCarrier(text: string): string {
-  const normalized = text
-    .replace(/^\uFEFF/u, "")
-    .replace(/\r\n/gu, "\n")
-    .replace(/\r/gu, "\n");
-  const range = resolveMemoryFrontmatterLineRange(normalized);
-  if (!range) {
-    return text;
-  }
-  const lines = normalized.split("\n");
-  return lines.slice(range.endLine).join("\n");
-}
-
 function* scanMemoryAnnotations(text: string, marker: RegExp, lineScoped = false) {
   let closing = -1;
   let newline = -1;

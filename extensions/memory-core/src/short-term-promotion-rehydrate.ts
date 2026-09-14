@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { resolveMemoryFrontmatterLineRange } from "openclaw/plugin-sdk/memory-core-host-engine-indexing";
+import { extractFrontmatterBlock } from "openclaw/plugin-sdk/memory-core-host-engine-indexing";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { resolveShortTermSourcePathCandidates } from "./short-term-promotion-record.js";
 import type { PromotionCandidate } from "./short-term-promotion-types.js";
@@ -334,10 +334,10 @@ export async function rehydratePromotionCandidate(
     if (lineRangeOverlapsDreamingFence(lines, relocated.startLine, relocated.endLine)) {
       continue;
     }
-    const frontmatterRange = isShortTermSessionCorpusPath(candidate.path)
-      ? null
-      : resolveMemoryFrontmatterLineRange(rawSource);
-    if (frontmatterRange && relocated.startLine <= frontmatterRange.endLine) {
+    const frontmatter = isShortTermSessionCorpusPath(candidate.path)
+      ? undefined
+      : extractFrontmatterBlock(rawSource);
+    if (frontmatter && relocated.startLine <= frontmatter.lineRange.endLine) {
       continue;
     }
     return {

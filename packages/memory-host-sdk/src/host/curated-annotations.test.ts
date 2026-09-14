@@ -2,29 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   extractCuratedEntryRecallMetadata,
   extractProjectKeysFromCuratedEntry,
-  resolveMemoryFrontmatterLineRange,
   stripMemoryAnnotationCarriers,
-  stripMemoryFrontmatterCarrier,
 } from "./curated-annotations.js";
 
 describe("curated annotation grammar", () => {
-  it("strips complete frontmatter and reports its source line range", () => {
-    const input = "\uFEFF---\r\ntitle: Daily Note\r\nstatus: active\r\n---\r\n# 2026-09-05\r\nBody";
-
-    expect(resolveMemoryFrontmatterLineRange(input)).toEqual({ startLine: 1, endLine: 4 });
-    expect(stripMemoryFrontmatterCarrier(input)).toBe("# 2026-09-05\nBody");
-  });
-
-  it("leaves ordinary Markdown and unterminated frontmatter unchanged", () => {
-    const markdown = "# Note\nstatus: active";
-    const unterminated = "---\nstatus: active\n# Note";
-
-    expect(resolveMemoryFrontmatterLineRange(markdown)).toBeNull();
-    expect(stripMemoryFrontmatterCarrier(markdown)).toBe(markdown);
-    expect(resolveMemoryFrontmatterLineRange(unterminated)).toBeNull();
-    expect(stripMemoryFrontmatterCarrier(unterminated)).toBe(unterminated);
-  });
-
   it.each([
     ["<!--\n trigger: x -->", ""],
     ["<!--trigger\n: x -->", ""],

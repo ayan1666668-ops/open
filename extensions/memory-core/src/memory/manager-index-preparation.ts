@@ -2,11 +2,10 @@ import {
   chunkMarkdown,
   extractCuratedEntryRecallMetadata,
   enforceEmbeddingMaxInputTokens,
+  extractFrontmatterBlock,
   hashText,
   remapChunkLines,
-  resolveMemoryFrontmatterLineRange,
   stripMemoryAnnotationCarriers,
-  stripMemoryFrontmatterCarrier,
   type MemoryChunk,
   type MemoryEntryProvenance,
   type MemorySource,
@@ -44,11 +43,9 @@ export function prepareMemoryIndexChunks({
   const perEntry =
     source === "memory" &&
     (normalizedEntryPath === "MEMORY.md" || normalizedEntryPath === "USER.md");
-  const frontmatterRange = source === "memory" ? resolveMemoryFrontmatterLineRange(content) : null;
+  const frontmatter = source === "memory" ? extractFrontmatterBlock(content) : undefined;
   const indexingContent =
-    source === "memory"
-      ? stripMemoryAnnotationCarriers(stripMemoryFrontmatterCarrier(content))
-      : content;
+    source === "memory" ? stripMemoryAnnotationCarriers(frontmatter?.body ?? content) : content;
   // All chunks share one source snapshot; splitting per chunk makes indexing quadratic.
   const sourceLines =
     source === "memory" ? content.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n").split("\n") : [];
@@ -63,15 +60,15 @@ export function prepareMemoryIndexChunks({
         })
       : chunkMarkdown(indexingContent, chunkOptions)
   ).filter((chunk) => chunk.text.trim().length > 0);
-  if (frontmatterRange) {
+  if (frontmatter) {
     for (const chunk of baseChunks) {
-      chunk.startLine += frontmatterRange.endLine;
-      chunk.endLine += frontmatterRange.endLine;
+      chunk.startLine += frontmatter.lineRange.endLine;
+      chunk.endLine += frontmatter.lineRange.endLine;
       if (chunk.entryStartLine !== undefined) {
-        chunk.entryStartLine += frontmatterRange.endLine;
+        chunk.entryStartLine += frontmatter.lineRange.endLine;
       }
       if (chunk.entryEndLine !== undefined) {
-        chunk.entryEndLine += frontmatterRange.endLine;
+        chunk.entryEndLine += frontmatter.lineRange.endLine;
       }
     }
   }
