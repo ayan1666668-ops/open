@@ -552,9 +552,10 @@ list the approvers as LINE user IDs:
   authorization decides who can use it. Listing users in `allowFrom` for DM access does not
   limit `/approve` until cards are on for that approval type.
 
-Typed `/approve` in LINE decides only requests that belong to that LINE account: requests
-raised from it, or forwarded to it. Approve a request raised on another channel or another
-LINE account where it was raised.
+Typed `/approve` in LINE decides only exec and plugin requests that belong to that LINE
+account: requests raised from it, or forwarded to it. Approve a request raised on another
+channel or another LINE account where it was raised. Decide an OpenClaw-change approval with
+its card or from the Control UI.
 
 Restart the Gateway after changing forwarding so the LINE account picks it up. Until then,
 cards follow the forwarding settings the account started with while forwarded text prompts
@@ -568,17 +569,17 @@ Two behaviors follow from the platform rather than from a choice:
   postback in a group carries no `userId` (LINE includes it only in message events), so a
   card tapped in a group could not name who decided. A tap from someone who is not a listed
   approver is refused, and a card tapped after cards were turned off or every approver was
-  removed answers with the `/approve` command to use instead, if that chat is still allowed
-  to message the bot. A tap is checked against the configuration in force when the decision
-  is sent, not when the tap arrived.
+  removed answers with the `/approve` command to use instead (for an OpenClaw-change approval,
+  the Control UI), if that chat is still allowed to message the bot. A tap is checked against
+  the configuration in force when the decision is sent, not when the tap arrived.
 - **A decision arrives as a new message, not as an edited card.** LINE cannot edit a
   message it has sent, so the outcome is published below the card, and the card's buttons
   stay on screen. The first decision stands; tapping a button on a card that is no longer
   waiting changes nothing and replies that the approval is no longer waiting. Each button is
-  tied to the account's channel secret, so after the secret changes, buttons on earlier
-  cards do nothing, and approvals still waiting are not sent again as new cards. Decide
-  those with `/approve <id> <decision>`, using the approval ID shown on the card, or from
-  the Control UI.
+  tied to the account's channel secret, so after the secret changes, a tap on an earlier
+  card decides nothing and replies that the button could not be verified, and approvals still
+  waiting are not sent again as new cards. Decide those from the Control UI, or, for exec and
+  plugin approvals, with `/approve <id> <decision>` using the approval ID shown on the card.
 
 For forwarding modes and supported decisions, see
 [Approval forwarding to chat channels](/tools/exec-approvals-advanced#approval-forwarding-to-chat-channels).

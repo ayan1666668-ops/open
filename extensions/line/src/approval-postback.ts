@@ -30,6 +30,9 @@ function fitsLinePostbackData(data: string): boolean {
 const SIGNATURE_PARAM = "line.sig";
 // 22 base64url characters carry 132 bits of the HMAC.
 const SIGNATURE_LENGTH = 22;
+// Typed `/approve` decides only exec and plugin approvals.
+const UNVERIFIED_APPROVAL_TAP_NOTICE =
+  "Nothing was decided: this approval button could not be verified. Use the Control UI, or for an exec or plugin approval reply /approve with the approval ID shown on the card and your decision.";
 
 // Postback data is not specific to the control that sent it, so a decision counts only
 // when its data carries a tag made with the account's channel secret, which only the card
@@ -137,8 +140,8 @@ function parseLineApprovalPostbackData(
  * A recorded decision stays silent: LINE echoes the chosen label through the action's
  * `displayText`, and the approval runtime publishes the outcome as its own message. A tap
  * that changes nothing, because the approval was already decided or is gone, says so.
- * Unreadable data, including data no card for this account built, returns nothing so the
- * caller still consumes the reserved namespace.
+ * Unreadable data, including data no card for this account built, decides nothing and
+ * returns a fixed notice that repeats none of that data.
  */
 export async function resolveLineApprovalPostbackTap(params: {
   /** The config current when called; read after awaited work, just before the decision. */
@@ -150,16 +153,24 @@ export async function resolveLineApprovalPostbackTap(params: {
 }): Promise<string | undefined> {
   const callback = parseLineApprovalPostbackData(params.data, params.account.channelSecret);
   if (!callback) {
-    // A card sent before the channel secret changed lands here too; a restart re-sends
-    // pending approvals as cards tagged with the new secret.
+    // A card sent before the channel secret changed lands here too, and pending approvals
+    // are not sent again as new cards, so the approver needs another way to decide.
     // Created at the call, not at module evaluation, so consumers that partially mock the
     // runtime-env module can still load this one.
     createSubsystemLogger("line/approvals").warn(
       `[${params.account.accountId}] ignored approval postback data that no approval card for this account built`,
     );
-    return undefined;
+    return UNVERIFIED_APPROVAL_TAP_NOTICE;
   }
-  const commandFallback = `Reply /approve ${callback.approvalId} ${callback.decision} to decide this approval.`;
+  // Typed `/approve` decides only exec and plugin approvals, so an OpenClaw-change
+  // approval that a tap cannot decide is sent to the Control UI instead.
+  const typedCommand =
+    callback.approvalKind === "system-agent"
+      ? undefined
+      : `/approve ${callback.approvalId} ${callback.decision}`;
+  const commandFallback = typedCommand
+    ? `Reply ${typedCommand} to decide this approval.`
+    : "Decide this approval from the Control UI.";
   const senderId = params.senderId;
   if (!senderId) {
     // A tap without a sender could not name who decided.
@@ -226,6 +237,8 @@ export async function resolveLineApprovalPostbackTap(params: {
     // failure would leave the decision looking recorded while the run still waits.
     // True whether the request is still pending or was already decided elsewhere: the
     // command answers authoritatively either way, so the notice claims neither.
-    return `Could not record that decision. Reply /approve ${callback.approvalId} ${callback.decision} instead.`;
+    return typedCommand
+      ? `Could not record that decision. Reply ${typedCommand} instead.`
+      : "Could not record that decision. Decide it from the Control UI instead.";
   }
 }

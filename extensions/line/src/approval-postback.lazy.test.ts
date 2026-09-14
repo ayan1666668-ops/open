@@ -134,6 +134,34 @@ describe("resolveLineApprovalPostbackTap", () => {
     await expect(tap("deny")).resolves.toBe("That approval is no longer waiting for a decision.");
   });
 
+  // Typed `/approve` resolves only exec and plugin approvals, so pointing an OpenClaw-change
+  // tap at it would hand the approver a command that fails.
+  it("sends an OpenClaw-change tap to the Control UI instead of /approve", async () => {
+    const data =
+      buildLineApprovalPostbackData(
+        {
+          type: "approval",
+          approvalId: "approval-1",
+          approvalKind: "system-agent",
+          decision: "allow-once",
+        },
+        lineCredentials.channelSecret,
+      ) ?? "";
+    const openClawChangeTap = (senderId?: string) =>
+      resolveLineApprovalPostbackTap({
+        resolveConfig: () => cfg,
+        account: { accountId: "default", channelSecret: lineCredentials.channelSecret },
+        data,
+        ...(senderId ? { senderId } : {}),
+      });
+
+    await expect(openClawChangeTap()).resolves.toBe("Decide this approval from the Control UI.");
+    gateway.resolveApprovalOverGateway.mockRejectedValue(new Error("gateway closed"));
+    await expect(openClawChangeTap(approver)).resolves.toBe(
+      "Could not record that decision. Decide it from the Control UI instead.",
+    );
+  });
+
   it("keeps the /approve fallback when the Gateway could not take the decision", async () => {
     gateway.resolveApprovalOverGateway.mockRejectedValue(new Error("gateway closed"));
 

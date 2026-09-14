@@ -13,6 +13,10 @@ import {
 type ApprovalDecisionControl = Parameters<typeof buildLineApprovalPostbackData>[0];
 
 const CHANNEL_SECRET = "line-channel-secret";
+// Unverifiable data decides nothing, but the tapper is told so and pointed elsewhere:
+// pending approvals are not sent again as new cards after the channel secret changes.
+const UNVERIFIED_NOTICE =
+  "Nothing was decided: this approval button could not be verified. Use the Control UI, or for an exec or plugin approval reply /approve with the approval ID shown on the card and your decision.";
 
 const gateway = vi.hoisted(() => ({
   resolveApprovalOverGateway: vi.fn<(params: object) => Promise<undefined>>(async () => undefined),
@@ -100,7 +104,7 @@ describe("LINE approval postback data", () => {
     // its raw data reach the agent as a turn.
     const malformed = "line.approval=&line.approvalKind=exec&line.decision=allow-once";
     expect(hasLineApprovalPostbackData(malformed)).toBe(true);
-    expect(await tapped(malformed)).toEqual({ notice: undefined, resolved: [] });
+    expect(await tapped(malformed)).toEqual({ notice: UNVERIFIED_NOTICE, resolved: [] });
   });
 
   it("ignores postback data from another control", () => {
@@ -119,7 +123,7 @@ describe("LINE approval postback data", () => {
       signed.replace("line.decision=allow-once", "line.decision=allow-always"),
     ]) {
       expect(hasLineApprovalPostbackData(data)).toBe(true);
-      expect(await tapped(data)).toEqual({ notice: undefined, resolved: [] });
+      expect(await tapped(data)).toEqual({ notice: UNVERIFIED_NOTICE, resolved: [] });
     }
     expect((await tapped(signed)).resolved).toHaveLength(1);
   });
@@ -155,7 +159,7 @@ describe("LINE approval postback data", () => {
       data: `${fields}&line.sig=${tag}`,
       senderId: "U0123456789abcdef0123456789abcdef",
     });
-    expect(notice).toBeUndefined();
+    expect(notice).toBe(UNVERIFIED_NOTICE);
     expect(gateway.resolveApprovalOverGateway).not.toHaveBeenCalled();
   });
 
@@ -166,7 +170,7 @@ describe("LINE approval postback data", () => {
       "line.approval=a1&line.approvalKind=exec",
     ]) {
       expect(hasLineApprovalPostbackData(data)).toBe(true);
-      expect(await tapped(data)).toEqual({ notice: undefined, resolved: [] });
+      expect(await tapped(data)).toEqual({ notice: UNVERIFIED_NOTICE, resolved: [] });
     }
   });
 });
