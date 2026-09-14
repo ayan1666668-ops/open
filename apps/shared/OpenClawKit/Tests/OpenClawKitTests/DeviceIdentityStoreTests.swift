@@ -738,7 +738,7 @@ struct DeviceIdentityStoreTests {
     }
 
     @Test
-    func `canonical SQLite identity preserves a conflicting interrupted native claim`() throws {
+    func `canonical SQLite identity ignores a conflicting interrupted native claim`() throws {
         let fixture = DeviceIdentityMigrationFixture()
         try Self.seedCanonicalSchema(fixture.databaseURL)
         try Self.execute(fixture.databaseURL, """
@@ -756,14 +756,9 @@ struct DeviceIdentityStoreTests {
         try FileManager.default.moveItem(at: source.identityURL, to: claimURL)
 
         for _ in 0..<2 {
-            do {
-                _ = try fixture.load(sources: [source])
-                Issue.record("Expected conflicting interrupted native claim to throw")
-            } catch let error as NSError {
-                #expect(error.localizedDescription ==
-                    "Legacy device identity conflicts with SQLite identity key primary; source preserved")
-            }
+            let identity = try fixture.load(sources: [source])
 
+            #expect(identity.deviceId == Self.fixtureDeviceID)
             #expect(!FileManager.default.fileExists(atPath: source.identityURL.path))
             #expect(FileManager.default.fileExists(atPath: claimURL.path))
         }
@@ -872,6 +867,26 @@ struct DeviceIdentityStoreTests {
         #expect(try Self.scalarText(
             fixture.databaseURL,
             "SELECT device_id FROM device_identities WHERE identity_key = 'primary'") == Self.fixtureDeviceID)
+
+        let replacement = try String(
+            decoding: JSONEncoder().encode(DeviceIdentityStore.generateMaterial().identity),
+            as: UTF8.self)
+        #expect(throws: NSError.self) {
+            try fixture.load(
+                sources: [source],
+                afterLegacyCommit: {
+                    try replacement.write(to: source.identityURL, atomically: true, encoding: .utf8)
+                })
+        }
+        #expect(FileManager.default.fileExists(atPath: source.identityURL.path))
+        #expect(FileManager.default.fileExists(atPath: claimURL.path))
+
+        try legacyData.write(to: source.identityURL, atomically: true, encoding: .utf8)
+        let resumed = try fixture.load(sources: [source])
+
+        #expect(resumed.deviceId == Self.fixtureDeviceID)
+        #expect(FileManager.default.fileExists(atPath: source.identityURL.path))
+        #expect(!FileManager.default.fileExists(atPath: claimURL.path))
     }
 
     @Test

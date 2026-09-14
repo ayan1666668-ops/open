@@ -38,6 +38,7 @@ enum DeviceIdentitySQLiteStore {
         let snapshot: LegacyFileSnapshot
         let material: DeviceIdentityMaterial
         let restoreOnFailure: Bool
+        let matchingRecreatedSource: LegacyFileReceipt?
     }
 
     private struct LegacyFileSnapshot: Equatable {
@@ -45,6 +46,11 @@ enum DeviceIdentitySQLiteStore {
         let inode: UInt64
         let size: UInt64
         let modifiedAt: Date?
+    }
+
+    private struct LegacyFileReceipt {
+        let data: Data
+        let snapshot: LegacyFileSnapshot
     }
 
     private struct LegacyAuthCandidate {
@@ -170,7 +176,10 @@ enum DeviceIdentitySQLiteStore {
                    profile: profile)
             {
                 for source in legacySources {
-                    if let claim = try self.loadInterruptedNativeClaim(source) {
+                    if let claim = try self.loadInterruptedNativeClaim(
+                        source,
+                        matching: existing)
+                    {
                         claims.append(claim)
                     }
                 }
@@ -643,7 +652,8 @@ enum DeviceIdentitySQLiteStore {
             return try self.readLegacyClaim(
                 source: source,
                 identityURL: nativeClaimURL,
-                restoreOnFailure: true)
+                restoreOnFailure: true,
+                matchingRecreatedSource: nil)
         } catch {
             do {
                 try self.restoreClaimedLegacyIdentity(
@@ -659,29 +669,51 @@ enum DeviceIdentitySQLiteStore {
     }
 
     private static func loadInterruptedNativeClaim(
-        _ source: DeviceIdentityPaths.LegacyIdentitySource) throws -> LegacyClaim?
+        _ source: DeviceIdentityPaths.LegacyIdentitySource,
+        matching canonicalIdentity: DeviceIdentity) throws -> LegacyClaim?
     {
         let nativeClaimURL = self.claimURL(source.identityURL, suffix: self.nativeClaimSuffix)
         guard self.pathMayExist(nativeClaimURL) else { return nil }
         let doctorClaimURL = self.claimURL(source.identityURL, suffix: self.doctorClaimSuffix)
-        guard !self.pathMayExist(doctorClaimURL) else {
-            throw DeviceIdentityStore.storageError(
-                "Device identity Doctor import is pending; run openclaw doctor --fix before starting the app")
-        }
-        guard !self.pathMayExist(source.identityURL) else {
-            throw DeviceIdentityStore.storageError(
-                "Legacy device identity source and interrupted native claim both exist")
-        }
-        return try self.readLegacyClaim(
+        guard !self.pathMayExist(doctorClaimURL) else { return nil }
+        guard let claim = try? self.readLegacyClaim(
             source: source,
             identityURL: nativeClaimURL,
-            restoreOnFailure: false)
+            restoreOnFailure: false,
+            matchingRecreatedSource: nil),
+            claim.material.identity.deviceId == canonicalIdentity.deviceId,
+            claim.material.identity.publicKey == canonicalIdentity.publicKey,
+            claim.material.identity.privateKey == canonicalIdentity.privateKey
+        else {
+            // Keep the released canonical-SQLite behavior for unverified or conflicting evidence.
+            // A later preflight/operator-recovery path can surface it without making startup mutate it.
+            return nil
+        }
+        guard self.pathMayExist(source.identityURL) else { return claim }
+        guard let recreatedSource = try? self.readLegacyIdentity(
+            source.identityURL,
+            beneath: source.stateDirURL),
+            self.hasSameKeyMaterial(recreatedSource.material, claim.material)
+        else {
+            return nil
+        }
+        return LegacyClaim(
+            source: claim.source,
+            identityURL: claim.identityURL,
+            data: claim.data,
+            snapshot: claim.snapshot,
+            material: claim.material,
+            restoreOnFailure: claim.restoreOnFailure,
+            matchingRecreatedSource: LegacyFileReceipt(
+                data: recreatedSource.data,
+                snapshot: recreatedSource.snapshot))
     }
 
     private static func readLegacyClaim(
         source: DeviceIdentityPaths.LegacyIdentitySource,
         identityURL: URL,
-        restoreOnFailure: Bool) throws -> LegacyClaim
+        restoreOnFailure: Bool,
+        matchingRecreatedSource: LegacyFileReceipt?) throws -> LegacyClaim
     {
         let claimed = try self.readLegacyIdentity(identityURL, beneath: source.stateDirURL)
         return LegacyClaim(
@@ -690,7 +722,8 @@ enum DeviceIdentitySQLiteStore {
             data: claimed.data,
             snapshot: claimed.snapshot,
             material: claimed.material,
-            restoreOnFailure: restoreOnFailure)
+            restoreOnFailure: restoreOnFailure,
+            matchingRecreatedSource: matchingRecreatedSource)
     }
 
     private static func readLegacyIdentity(
@@ -867,9 +900,21 @@ enum DeviceIdentitySQLiteStore {
     private static func removeClaimedLegacyIdentities(_ claims: [LegacyClaim]) throws {
         let fileManager = FileManager.default
         for claim in claims {
-            guard !self.pathMayExist(claim.source.identityURL) else {
-                throw DeviceIdentityStore.storageError(
-                    "Legacy device identity source reappeared during migration; native claim preserved")
+            if let expectedSource = claim.matchingRecreatedSource {
+                let currentSource = try self.readLegacyIdentity(
+                    claim.source.identityURL,
+                    beneath: claim.source.stateDirURL)
+                guard currentSource.snapshot == expectedSource.snapshot,
+                      currentSource.data == expectedSource.data
+                else {
+                    throw DeviceIdentityStore.storageError(
+                        "Legacy device identity source changed during migration; native claim preserved")
+                }
+            } else {
+                guard !self.pathMayExist(claim.source.identityURL) else {
+                    throw DeviceIdentityStore.storageError(
+                        "Legacy device identity source reappeared during migration; native claim preserved")
+                }
             }
             guard fileManager.fileExists(atPath: claim.identityURL.path) else {
                 if (try? fileManager.destinationOfSymbolicLink(atPath: claim.identityURL.path)) != nil {
