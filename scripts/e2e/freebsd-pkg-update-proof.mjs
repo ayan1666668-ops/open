@@ -10,12 +10,16 @@ import { fileURLToPath } from "node:url";
 
 const BASE = "77fab5c84cf45c6163174d945f6c75c18cadec37";
 const PKG_VERSION = "2.8.4";
+const PUBLISHED_VERSION = "2026.9.4";
+const PUBLISHED_SHA512 =
+  "9534291047b55e6deed8f08768f12bfaf3fca5a1a4d6f2dd1eecdd22db0d4e868b23a840a9156f809620f86c6e9098444c9a78b4fcbf4b519fb65e0ab81f27ec";
 const WORKFLOW = ".github/workflows/freebsd-pkg-update-proof.yml";
 const PRODUCER = "Build FreeBSD update proof package";
 const FILES = [
   "first-hop-fixture.json",
   "openclaw-candidate.tgz",
   "openclaw-first-hop.tgz",
+  "openclaw-published.tgz",
   "pack.json",
   "source.json",
 ];
@@ -71,6 +75,7 @@ async function api(suffix) {
 
 function verifyFiles(directory) {
   assert.deepEqual(fs.readdirSync(directory).toSorted(), FILES);
+  assert.equal(hash(path.join(directory, "openclaw-published.tgz"), "sha512"), PUBLISHED_SHA512);
   const manifest = json(path.join(directory, "source.json"));
   for (const [name, expected] of Object.entries(manifest.files)) {
     assert(FILES.includes(name) && name !== "source.json");
@@ -278,7 +283,7 @@ async function shutdown(directory) {
   emit({ guestCleanup: "stopped", ownedQemuPids: before });
 }
 
-function native(directory, architecture) {
+function native(directory, architecture, publishedOnly = false) {
   assert.equal(process.platform, "freebsd");
   assert(["x86_64", "aarch64"].includes(architecture));
   assert.equal(process.arch, architecture === "x86_64" ? "x64" : "arm64");
@@ -307,9 +312,11 @@ function native(directory, architecture) {
   // The action's workspace parents need not be searchable by the fixture account.
   const candidate = path.join(task, "candidate.tgz");
   const target = path.join(task, "first-hop.tgz");
+  const published = path.join(task, "published.tgz");
   for (const [name, destination] of [
     ["openclaw-candidate.tgz", candidate],
     ["openclaw-first-hop.tgz", target],
+    ["openclaw-published.tgz", published],
   ]) {
     fs.copyFileSync(path.join(directory, name), destination);
     fs.chmodSync(destination, 0o644);
@@ -380,22 +387,15 @@ function native(directory, architecture) {
       inventoryMs: Date.now() - inventoryStart,
       identity,
     });
-    process.stdout.write(
-      success("/usr/local/bin/npm", ["install", "--global", "--prefix", prefix, candidate], {
-        ...asUser,
-        timeout: 300_000,
-      }) + "\n",
-    );
+    const install = (tarball) => {
+      process.stdout.write(
+        success("/usr/local/bin/npm", ["install", "--global", "--prefix", prefix, tarball], {
+          ...asUser,
+          timeout: 300_000,
+        }) + "\n",
+      );
+    };
     const installed = () => json(path.join(root, "package.json")).version;
-    assert.equal(installed(), hop.sourceVersion);
-    const fsSafe = json(path.join(root, "node_modules/@openclaw/fs-safe/package.json"));
-    assert.equal(fsSafe.version, "0.10.0");
-    emit({
-      fsSafe: fsSafe.version,
-      npm: success("/usr/local/bin/npm", ["--version"], asUser),
-      sourceSha: manifest.sourceSha,
-    });
-
     const entry = (file) => {
       const stat = fs.lstatSync(file);
       return {
@@ -411,7 +411,103 @@ function native(directory, architecture) {
         packageRoot,
         path.join(packageRoot, "package.json"),
         path.join(packageRoot, "openclaw.mjs"),
+        path.join(packageRoot, "dist/build-info.json"),
       ].map(entry);
+    if (publishedOnly) {
+      const artifactBuildInfo = (tarball) =>
+        JSON.parse(success("/usr/bin/tar", ["-xOf", tarball, "package/dist/build-info.json"]));
+      install(published);
+      assert.equal(installed(), PUBLISHED_VERSION);
+      assert.deepEqual(json(path.join(root, "dist/build-info.json")), artifactBuildInfo(published));
+      const state = path.join(task, "published-driver-state");
+      ownedDirectory(state);
+      const env = {
+        ...userEnv,
+        OPENCLAW_STATE_DIR: state,
+        OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
+      };
+      const entrypoint = path.join(root, "openclaw.mjs");
+      success(process.execPath, [entrypoint, "config", "set", "gateway.mode", "local"], {
+        ...asUser,
+        env,
+        timeout: 120_000,
+      });
+      const stateDatabase = path.join(state, "state/openclaw.sqlite");
+      const stateIdentity = fs.statSync(stateDatabase);
+      const beforePackage = packageSnapshot();
+      const beforeLauncher = entry(launcher);
+      const beforeSiblings = fs.readdirSync(path.dirname(root)).toSorted();
+      const beforeBuild = hash(path.join(root, "dist/build-info.json"));
+      const runUpdate = () => {
+        const result = command(
+          process.execPath,
+          [entrypoint, "update", "--tag", target, "--yes", "--no-restart", "--json"],
+          { ...asUser, env, timeout: 480_000 },
+        );
+        process.stdout.write(result.stdout);
+        process.stderr.write(result.stderr);
+        return result;
+      };
+      // The released driver has no FreeBSD process identity reader. It cannot
+      // acquire the new candidate's checks before its own admission succeeds.
+      const prior = runUpdate();
+      assert.equal(prior.status, 1, "published updater must refuse before replacement");
+      assert.match(
+        `${prior.stdout}\n${prior.stderr}`,
+        /managed handoff process start identity is unavailable/u,
+      );
+      assert.deepEqual(packageSnapshot(), beforePackage);
+      assert.deepEqual(entry(launcher), beforeLauncher);
+      assert.deepEqual(fs.readdirSync(path.dirname(root)).toSorted(), beforeSiblings);
+      emit({
+        case: "published updater preserves installation on missing FreeBSD identity",
+        publishedVersion: PUBLISHED_VERSION,
+        publishedSha512: PUBLISHED_SHA512,
+        publishedBuildSha256: beforeBuild,
+        packageIdentity: beforePackage,
+      });
+
+      // Bootstrap through the original installation owner, preserving the same
+      // prefix and failed invocation's state; this is not a successful first hop.
+      install(candidate);
+      assert.equal(installed(), hop.sourceVersion);
+      assert.deepEqual(json(path.join(root, "dist/build-info.json")), artifactBuildInfo(candidate));
+      assert.notEqual(hash(path.join(root, "dist/build-info.json")), beforeBuild);
+      assert.equal(
+        json(path.join(root, "node_modules/@openclaw/fs-safe/package.json")).version,
+        "0.10.0",
+      );
+      const result = runUpdate();
+      assert.equal(result.status, 0, "owner-assisted candidate update failed");
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.status, "ok");
+      assert.equal(installed(), hop.targetVersion);
+      assert.equal(report.after?.version, hop.targetVersion);
+      assert.deepEqual(json(path.join(root, "dist/build-info.json")), artifactBuildInfo(target));
+      assert.equal(json(env.OPENCLAW_CONFIG_PATH).gateway.mode, "local");
+      const afterStateIdentity = fs.statSync(stateDatabase);
+      assert.equal(afterStateIdentity.dev, stateIdentity.dev);
+      assert.equal(afterStateIdentity.ino, stateIdentity.ino);
+      emit({
+        passed: true,
+        case: "owner-assisted bootstrap updates with preserved state",
+        sourceSha: manifest.sourceSha,
+        candidateSha256: manifest.files["openclaw-candidate.tgz"].sha256,
+        firstHopSha256: manifest.files["openclaw-first-hop.tgz"].sha256,
+        afterVersion: report.after.version,
+        defaultRcServiceSupport: "not tested",
+      });
+      return;
+    }
+    install(candidate);
+    assert.equal(installed(), hop.sourceVersion);
+    const fsSafe = json(path.join(root, "node_modules/@openclaw/fs-safe/package.json"));
+    assert.equal(fsSafe.version, "0.10.0");
+    emit({
+      fsSafe: fsSafe.version,
+      npm: success("/usr/local/bin/npm", ["--version"], asUser),
+      sourceSha: manifest.sourceSha,
+    });
     const tree = (dir) =>
       fs
         .readdirSync(dir)
@@ -668,6 +764,8 @@ try {
     await verifyArtifact(directory);
   } else if (mode === "native") {
     native(directory, architecture);
+  } else if (mode === "published") {
+    native(directory, architecture, true);
   } else if (mode === "shutdown") {
     await shutdown(directory);
   } else {

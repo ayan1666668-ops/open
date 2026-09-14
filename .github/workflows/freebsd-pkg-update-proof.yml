@@ -40,12 +40,20 @@ jobs:
           install-bun: false
           cache-mode: off
           frozen-lockfile: true
+      - name: Check the temporary native fixture
+        run: |
+          node --check scripts/e2e/freebsd-pkg-update-proof.mjs
+          pnpm exec oxfmt --check scripts/e2e/freebsd-pkg-update-proof.mjs .github/workflows/freebsd-pkg-update-proof.yml
+          node scripts/run-oxlint.mjs --tsconfig tsconfig.scripts.json scripts/e2e/freebsd-pkg-update-proof.mjs
       - name: Build and package once through the canonical producer
         shell: bash
         run: |
           set -euo pipefail
           payload="$RUNNER_TEMP/freebsd-pkg-payload"
           mkdir "$payload"
+          curl --fail --silent --show-error --max-time 180 \
+            https://registry.npmjs.org/openclaw/-/openclaw-2026.9.4.tgz \
+            --output "$payload/openclaw-published.tgz"
           node scripts/package-openclaw-for-docker.mjs \
             --allow-unreleased-changelog --output-dir "$payload" \
             --output-name openclaw-candidate.tgz --pack-json "$payload/pack.json"
@@ -66,6 +74,7 @@ jobs:
           path: |
             ${{ runner.temp }}/freebsd-pkg-payload/openclaw-candidate.tgz
             ${{ runner.temp }}/freebsd-pkg-payload/openclaw-first-hop.tgz
+            ${{ runner.temp }}/freebsd-pkg-payload/openclaw-published.tgz
             ${{ runner.temp }}/freebsd-pkg-payload/pack.json
             ${{ runner.temp }}/freebsd-pkg-payload/first-hop-fixture.json
             ${{ runner.temp }}/freebsd-pkg-payload/source.json
@@ -134,7 +143,7 @@ jobs:
           prepare: |
             timeout -k 15s 300s sh -eu -c 'env ASSUME_ALWAYS_YES=yes pkg bootstrap -f; pkg install -y node24 npm-node24 python3 gmake'
           run: |
-            timeout -k 15s 1200s /usr/local/bin/node scripts/e2e/freebsd-pkg-update-proof.mjs native proof-payload '${{ matrix.arch }}'
+            timeout -k 15s 1200s /usr/local/bin/node scripts/e2e/freebsd-pkg-update-proof.mjs published proof-payload '${{ matrix.arch }}'
       - name: Shut down this disposable guest
         if: ${{ always() && steps.vm.outcome != 'skipped' }}
         run: node scripts/e2e/freebsd-pkg-update-proof.mjs shutdown "$RUNNER_TEMP/freebsd-pkg-vm"
