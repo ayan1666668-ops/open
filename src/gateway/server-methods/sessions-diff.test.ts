@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveNonGitTempRoot } from "../../../test/helpers/temp-dir.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { ensureSessionDiffBaseline } from "../../sessions/session-diff-baseline.js";
 import {
@@ -133,7 +134,9 @@ describe("loadSessionDiff", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    repoRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sessions-diff-")));
+    repoRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(resolveNonGitTempRoot(), "openclaw-sessions-diff-")),
+    );
     hoisted.resolveDefaultAgentId.mockReturnValue("main");
     hoisted.resolveAgentWorkspaceDir.mockReturnValue(repoRoot);
   });

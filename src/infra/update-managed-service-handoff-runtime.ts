@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
 import { stageFreeBsdManagedHandoffNativeRuntime } from "./update-managed-service-handoff-native.js";
 import {
@@ -9,11 +10,15 @@ import {
 
 /** Prepare the complete lease owner before launch; the caller owns partial-stage cleanup. */
 export function stageManagedHandoffRuntime(directory: string): string[] {
-  const source = resolveRuntimeWorkerUrl(managedHandoffRuntimeEntrypoint);
+  let source = resolveRuntimeWorkerUrl(managedHandoffRuntimeEntrypoint);
   if (!source.pathname.endsWith(".mjs")) {
-    throw new Error(
-      "Managed handoff requires its sealed runtime; use the repository test runner or the dist-backed pnpm openclaw CLI.",
-    );
+    const builtSource = path.resolve("dist", MANAGED_HANDOFF_RUNTIME_ENTRY);
+    if (!fs.existsSync(builtSource)) {
+      throw new Error(
+        "Managed handoff requires its sealed runtime; use the repository test runner or the dist-backed pnpm openclaw CLI.",
+      );
+    }
+    source = pathToFileURL(builtSource);
   }
   const destination = path.join(directory, "runtime", MANAGED_HANDOFF_RUNTIME_ENTRY);
   fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
