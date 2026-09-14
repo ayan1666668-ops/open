@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 export const DAY_MS = 86_400_000;

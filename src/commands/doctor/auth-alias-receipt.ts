@@ -1,4 +1,3 @@
-import "zod/compile";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";

@@ -1,4 +1,3 @@
-import "zod/compile";
 import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { z } from "zod";
 import type {

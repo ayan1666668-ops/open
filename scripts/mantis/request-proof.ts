@@ -1,4 +1,3 @@
-import "zod/compile";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { telegramQaScenario, verifyTelegramQaFiles } from "./telegram-qa-proof.ts";

@@ -1,4 +1,3 @@
-import "zod/compile";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { z } from "zod";
 import { resolveNodeStartupTlsEnvironment } from "../../bootstrap/node-startup-env.js";

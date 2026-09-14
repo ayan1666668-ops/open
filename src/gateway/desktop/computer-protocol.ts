@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const command = z.enum(["screen.snapshot", "computer.act"]);

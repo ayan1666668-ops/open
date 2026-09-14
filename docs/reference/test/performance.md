@@ -29,30 +29,32 @@ Native imports also need the plugin's declared dependencies and a resolvable `op
 
 ### Zod schema compilation
 
-Modules that construct runtime Zod schemas import `zod/compile` before schema
-construction. Keep activation with direct consumers so standalone workers,
-plugins, and scripts receive it without depending on Gateway startup:
+Compile individual schemas only after measuring a repeated validation path.
+Use the pinned Zod package's `z.compile(schema)` API and retain the compiled
+schema at its existing owner. The `zod/compile` side-effect import enables a
+process-wide hook and is unsuitable for a selective optimization.
 
-```ts
-import "zod/compile";
-import { z } from "zod";
+Nested tool activity validation compiles its schema on the first matching read
+or creation and reuses it across Gateway turns. Ordinary transcript rows bypass
+that compilation. Config, transcript entry, and browser relay schemas retain
+their existing parsers because their measured caller costs did not justify
+compilation.
 
-const messageSchema = z.object({ text: z.string() });
-```
+Measure compilation and the first operation separately from warmed operations.
+Compare valid, invalid, and mixed inputs through the actual caller, including
+any JSON decoding, copying, or context construction it performs. For predicates
+that discard parsed output, compare ordinary `safeParse(...).success`,
+`z.validate(schema, input)`, and validation with a compiled schema; avoiding
+error allocation can help independently of compilation.
 
-Zod generates a parser lazily on the first synchronous parse and reuses it for
-later calls. Existing `parse` and `safeParse` calls retain their parsed data and
-Zod errors. Async parsing, recursive schemas, and unsupported features use the
-runtime parser. Compilation respects the Control UI's `jitless` setting, which
-keeps its strict Content Security Policy intact.
-
-Reuse stable schemas across calls. Constructing an array, object, or extended
-schema inside a reader pays the compilation cost again on every call.
+Keep schemas shared with the strict-CSP Control UI uncompiled: explicit
+compilation attempts code generation even when `jitless` is set. Reusing a
+stable schema across calls is a separate optimization that needs no compiler.
 
 Keep refinement and transform callbacks pure: an invalid compiled parse can
-fall back to the runtime parser and execute those callbacks twice. Benchmark
-the cold first parse, including compilation, separately from warm repeated
-parses, and include both valid and invalid inputs.
+fall back to the runtime parser and execute those callbacks twice. Default
+compilation preserves runtime fallback for unsupported schemas; async parsing
+and encoding keep their existing runtime behavior.
 
 ## Benchmarks
 

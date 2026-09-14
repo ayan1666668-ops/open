@@ -1,4 +1,3 @@
-import "zod/compile";
 import { containsAsciiControlCharacter } from "@openclaw/normalization-core/string-normalization";
 import { z } from "zod";
 import { BoardValidationError } from "./board-layout.js";

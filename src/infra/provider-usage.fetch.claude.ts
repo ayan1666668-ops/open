@@ -1,5 +1,4 @@
 // Fetches Claude provider usage windows.
-import "zod/compile";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";

@@ -1,5 +1,4 @@
 // Legacy cron delivery hint migration from top-level payload fields to delivery objects.
-import "zod/compile";
 import { z } from "zod";
 import {
   DeliveryThreadIdFieldSchema,

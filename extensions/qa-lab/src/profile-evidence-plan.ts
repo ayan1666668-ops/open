@@ -1,5 +1,4 @@
 // QA Lab plugin module owns canonical profile scheduling evidence.
-import "zod/compile";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { QaSeedScenarioWithSource } from "./scenario-catalog.js";

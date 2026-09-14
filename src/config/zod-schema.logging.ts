@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { LoggingLevelSchema } from "./zod-schema.root-support.js";
 

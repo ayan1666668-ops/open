@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { isManagedGitHubProfileId } from "../config/github-identity-profile-id.js";
 import { normalizeAgentId } from "../routing/session-key.js";

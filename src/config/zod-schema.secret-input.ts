@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import {
   ENV_SECRET_REF_ID_RE,

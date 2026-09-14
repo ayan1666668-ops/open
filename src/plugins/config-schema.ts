@@ -1,5 +1,4 @@
 // Builds plugin config schemas from manifest metadata.
-import "zod/compile";
 import { z, type ZodTypeAny } from "zod";
 import type { JsonSchemaObject } from "../shared/json-schema.types.js";
 import type { PluginConfigUiHint } from "./manifest-types.js";

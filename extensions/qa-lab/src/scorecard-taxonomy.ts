@@ -1,5 +1,4 @@
 // Qa Lab plugin module validates taxonomy-backed QA scorecard evidence.
-import "zod/compile";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

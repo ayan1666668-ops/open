@@ -1,4 +1,3 @@
-import "zod/compile";
 import type { WebClient } from "@slack/web-api";
 import { z } from "zod";
 import { formatSlackTarget } from "./target-parsing.js";

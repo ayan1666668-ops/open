@@ -1,4 +1,3 @@
-import "zod/compile";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";

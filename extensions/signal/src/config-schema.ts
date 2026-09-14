@@ -1,5 +1,4 @@
 // Signal helper module supports config schema behavior.
-import "zod/compile";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-resolution";
 import {
   buildChannelConfigSchema,

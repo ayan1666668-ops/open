@@ -1,5 +1,4 @@
 // Doctor-only import for the retired ACP replay JSON ledger.
-import "zod/compile";
 import { createHash } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";

@@ -1,5 +1,4 @@
 // Googlechat plugin module implements accounts behavior.
-import "zod/compile";
 import { createAccountListHelpers } from "openclaw/plugin-sdk/account-helpers";
 import {
   DEFAULT_ACCOUNT_ID,

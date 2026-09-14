@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import type { CuaComputerActParams } from "./action-targets.js";
 import type { CuaDriverSession, CuaToolResult } from "./driver-client.js";

@@ -1,4 +1,3 @@
-import "zod/compile";
 import { registerComputerUseProvider } from "openclaw/plugin-sdk/computer-use";
 import { normalizePluginsConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import { buildPluginConfigSchema, definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";

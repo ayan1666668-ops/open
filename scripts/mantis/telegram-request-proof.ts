@@ -1,4 +1,3 @@
-import "zod/compile";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { parseTelegramProofPlan, telegramProofPlanSchema } from "./telegram-proof-plan.ts";

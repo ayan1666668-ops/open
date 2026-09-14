@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { telegramProofIdentitySchema } from "./telegram-request-proof.ts";
 

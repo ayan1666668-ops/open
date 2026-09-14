@@ -1,5 +1,4 @@
 // Sms helper module supports config schema behavior.
-import "zod/compile";
 import {
   AllowFromListSchema,
   buildChannelConfigSchema,

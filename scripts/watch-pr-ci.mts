@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import "zod/compile";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { z } from "zod";

@@ -1,5 +1,4 @@
 // Nextcloud Talk plugin module owns durable webhook admission and replay draining.
-import "zod/compile";
 import {
   createChannelIngressMonitor,
   type ChannelIngressQueue,

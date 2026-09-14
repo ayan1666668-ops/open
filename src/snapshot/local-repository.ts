@@ -1,4 +1,3 @@
-import "zod/compile";
 import { randomUUID } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";

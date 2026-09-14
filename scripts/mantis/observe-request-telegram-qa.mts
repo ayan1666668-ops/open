@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Trusted observer only. Candidate shares a network, never this filesystem.
-import "zod/compile";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";

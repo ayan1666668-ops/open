@@ -33,8 +33,8 @@ it("retains original JSON and closes the shared lease after preloaded owner file
   ]);
   for (const [original, destination] of relocated) {
     const code = (await fs.readFile(original, "utf8")).replace(
-      /\b(from|import) "([^"]+)"/g,
-      (_match, keyword: string, specifier: string) => {
+      /from "([^"]+)"/g,
+      (_match, specifier: string) => {
         const resolved =
           specifier === "@openclaw/normalization-core/record-coerce"
             ? path.resolve("packages/normalization-core/src/record-coerce.ts")
@@ -42,9 +42,9 @@ it("retains original JSON and closes the shared lease after preloaded owner file
               ? path.resolve(path.dirname(original), specifier).replace(/\.js$/, ".ts")
               : undefined;
         if (!resolved) {
-          return `${keyword} ${JSON.stringify(import.meta.resolve(specifier))}`;
+          return `from ${JSON.stringify(import.meta.resolve(specifier))}`;
         }
-        return `${keyword} ${JSON.stringify(pathToFileURL(relocated.get(resolved) ?? resolved).href)}`;
+        return `from ${JSON.stringify(pathToFileURL(relocated.get(resolved) ?? resolved).href)}`;
       },
     );
     await fs.writeFile(destination, code);

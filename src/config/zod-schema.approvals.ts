@@ -1,5 +1,4 @@
 // Defines command approval Zod schema fragments.
-import "zod/compile";
 import { z } from "zod";
 
 /** Native exec approval mode accepted by config. */

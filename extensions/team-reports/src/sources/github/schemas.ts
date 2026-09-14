@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const date = z.string().refine((value) => Number.isFinite(Date.parse(value)));

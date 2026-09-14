@@ -1,4 +1,3 @@
-import "zod/compile";
 import { asOptionalObjectRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { z } from "zod";
 import { isOpenAIGptLiveApiModel } from "./realtime-quicksilver.js";

@@ -1,5 +1,4 @@
 // Shared MCP channel helpers normalize channel tool payloads and responses.
-import "zod/compile";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString as toText,

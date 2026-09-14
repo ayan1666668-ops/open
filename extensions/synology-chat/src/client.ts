@@ -3,7 +3,6 @@
  * Sends messages TO Synology Chat via the incoming webhook URL.
  */
 
-import "zod/compile";
 import * as http from "node:http";
 import * as https from "node:https";
 import { collectErrorGraphCandidates, extractErrorCode } from "openclaw/plugin-sdk/error-runtime";

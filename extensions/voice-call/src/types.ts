@@ -1,5 +1,4 @@
 // Voice Call type declarations define plugin contracts.
-import "zod/compile";
 import { z } from "zod";
 import type { CallMode } from "./config.js";
 

@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const A2A_CONTEXT_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;

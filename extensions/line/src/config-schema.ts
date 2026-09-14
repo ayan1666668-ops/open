@@ -1,5 +1,4 @@
 // Line helper module supports config schema behavior.
-import "zod/compile";
 import {
   ChannelDeliveryStreamingConfigSchema,
   DmPolicySchema,

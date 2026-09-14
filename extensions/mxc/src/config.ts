@@ -1,4 +1,3 @@
-import "zod/compile";
 import { posix, win32 } from "node:path";
 import { buildPluginConfigSchema, type OpenClawPluginConfigSchema } from "openclaw/plugin-sdk/core";
 import {

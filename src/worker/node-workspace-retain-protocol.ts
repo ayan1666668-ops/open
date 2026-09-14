@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 export const NODE_WORKER_RETAIN_REQUEST_MAX_BYTES = 1024 * 1024;

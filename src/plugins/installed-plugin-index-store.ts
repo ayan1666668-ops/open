@@ -1,5 +1,4 @@
 /** Reads and parses the installed plugin index in the state database. */
-import "zod/compile";
 import { z } from "zod";
 import {
   parsePluginInstallRecordMap,

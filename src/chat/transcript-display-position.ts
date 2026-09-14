@@ -1,4 +1,3 @@
-import "zod/compile";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { z } from "zod";
 

@@ -1,5 +1,4 @@
 // Purpose-scoped local agent runtime identity token for Gateway clients.
-import "zod/compile";
 import { createHmac } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { z } from "zod";

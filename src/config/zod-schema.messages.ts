@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const VisibleRepliesValueSchema = z.enum(["automatic", "message_tool"]);

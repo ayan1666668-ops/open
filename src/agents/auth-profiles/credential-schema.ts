@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { coerceSecretRef } from "../../config/types.secrets.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";

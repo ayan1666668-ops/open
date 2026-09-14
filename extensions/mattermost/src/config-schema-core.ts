@@ -1,5 +1,4 @@
 // Mattermost helper module supports config schema core behavior.
-import "zod/compile";
 import {
   BlockStreamingCoalesceSchema,
   ChannelImplicitMentionsSchema,

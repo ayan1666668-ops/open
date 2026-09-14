@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 export const RELAY_OWNER_PATH = "/_openclaw/relay/owner";

@@ -1,5 +1,4 @@
 // Parent-operated acceptance client: no config loaders, local servers, or credential files.
-import "zod/compile";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";

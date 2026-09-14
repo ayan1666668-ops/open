@@ -1,5 +1,4 @@
 // Irc helper module supports config schema behavior.
-import "zod/compile";
 import {
   ChannelGroupEntrySchema,
   DmPolicySchema,

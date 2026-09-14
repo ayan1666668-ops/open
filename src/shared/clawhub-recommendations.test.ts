@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   CLAWHUB_RECOMMENDATIONS_CHANNEL_DATA_KEY,
   type ClawHubRecommendation,
@@ -6,7 +6,7 @@ import {
 } from "./clawhub-recommendations.js";
 
 describe("readClawHubRecommendations", () => {
-  it("reuses warmed validation while preserving accepted and rejected cards", () => {
+  it("preserves accepted and rejected cards and their serialized field order", () => {
     const plugin = {
       type: "clawhub",
       id: `ch_${"p".repeat(300)}`,
@@ -43,17 +43,6 @@ describe("readClawHubRecommendations", () => {
       expect(JSON.stringify(cards)).toBe(JSON.stringify(expected));
     }
 
-    const compile = vi.spyOn(globalThis, "Function");
-    try {
-      for (const { value, expected } of cases) {
-        const cards = read(value);
-        expect(cards).toEqual(expected);
-        expect(JSON.stringify(cards)).toBe(JSON.stringify(expected));
-      }
-      expect(readClawHubRecommendations(undefined)).toEqual([]);
-      expect(compile).not.toHaveBeenCalled();
-    } finally {
-      compile.mockRestore();
-    }
+    expect(readClawHubRecommendations(undefined)).toEqual([]);
   });
 });

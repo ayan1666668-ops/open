@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { NODE_WORKER_CAPACITY_MAX } from "../infra/node-runner-inventory.js";
 

@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import {
   UPDATE_RUN_DRIVER_LIMIT,

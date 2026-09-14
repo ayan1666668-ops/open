@@ -1,4 +1,3 @@
-import "zod/compile";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";

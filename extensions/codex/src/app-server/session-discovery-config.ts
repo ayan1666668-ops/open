@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const codexSessionCatalogHomeSchema = z.union([

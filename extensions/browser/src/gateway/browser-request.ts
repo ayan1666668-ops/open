@@ -2,7 +2,6 @@
  * Gateway handler for browser.request, including optional node-host proxy
  * dispatch and local Browser control route dispatch.
  */
-import "zod/compile";
 import crypto from "node:crypto";
 import { clampTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
@@ -62,9 +61,6 @@ const dashboardRequestSchema = z.object({
   agentId: z.string().trim().min(1).optional(),
   name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
   instanceId: z.string().min(1).optional(),
-});
-const dashboardControlRequestSchema = dashboardRequestSchema.extend({
-  resume: z.boolean().optional(),
 });
 
 type BrowserRequestParams = {
@@ -158,7 +154,9 @@ export async function handleBrowserGatewayRequest({
       );
       return;
     }
-    const request = dashboardControlRequestSchema.safeParse(methodRaw === "GET" ? query : body);
+    const request = dashboardRequestSchema
+      .extend({ resume: z.boolean().optional() })
+      .safeParse(methodRaw === "GET" ? query : body);
     if (!request.success) {
       respond(
         false,

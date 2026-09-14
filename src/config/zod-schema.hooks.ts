@@ -1,6 +1,5 @@
 // Defines hook-related Zod schema fragments for config parsing.
 import path from "node:path";
-import "zod/compile";
 import { z } from "zod";
 import { sensitive } from "./zod-schema.sensitive.js";
 

@@ -1,4 +1,3 @@
-import "zod/compile";
 import type { OpenClawPluginNodeHostCommandAvailabilityContext } from "openclaw/plugin-sdk/plugin-entry";
 import { buildPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 import { z } from "zod";

@@ -1,5 +1,4 @@
 // Defines sensitive config schema fragments and redaction metadata.
-import "zod/compile";
 import { z } from "zod";
 import type { ConfigUiHint } from "../shared/config-ui-hints-types.js";
 

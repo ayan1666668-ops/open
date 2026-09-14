@@ -1,5 +1,4 @@
 // Coordinates gateway lock files, ports, and stale owner detection.
-import "zod/compile";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
@@ -152,7 +151,8 @@ type LockOwnerStatus = "alive" | "dead" | "unknown";
 
 function readLinuxCmdline(pid: number): string[] | null {
   try {
-    return parseProcCmdline(fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8"));
+    const raw = fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    return parseProcCmdline(raw);
   } catch {
     return null;
   }

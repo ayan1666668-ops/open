@@ -1,5 +1,4 @@
 /** Native writer facts are evidence, never serialized lifecycle authority. */
-import "zod/compile";
 import { createHash } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";

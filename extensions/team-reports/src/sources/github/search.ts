@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import type { ActivityWindow } from "../../types.js";
 import { GithubClient, GithubSourceError, parse, pathWithQuery } from "./client.js";

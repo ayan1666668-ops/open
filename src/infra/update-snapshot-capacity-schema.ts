@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 
 const locationKind = z.enum(["explicit-tmpdir", "state-volume", "system-tmpdir"]);

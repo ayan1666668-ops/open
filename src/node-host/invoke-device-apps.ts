@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { scanInstalledApps, type InstalledApp } from "../infra/installed-apps.js";
 

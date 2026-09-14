@@ -1,6 +1,4 @@
 // Memory Wiki API module exposes the plugin public contract.
-import "zod/compile";
-
 export {
   buildPluginConfigSchema,
   definePluginEntry,

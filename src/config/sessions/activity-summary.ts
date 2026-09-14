@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import type { SessionEntry } from "./types.js";
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import "zod/compile";
 import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";

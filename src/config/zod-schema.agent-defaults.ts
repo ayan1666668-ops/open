@@ -1,5 +1,4 @@
 // Composes dependency-heavy runtime validators onto the leaf agent-defaults schema.
-import "zod/compile";
 import { z } from "zod";
 import { AgentDefaultsBaseSchema } from "./zod-schema.agent-defaults-base.js";
 import {

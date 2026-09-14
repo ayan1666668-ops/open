@@ -1,5 +1,4 @@
 // Zalo plugin owns raw webhook durable admission and replay draining.
-import "zod/compile";
 import {
   bindIngressLifecycleToReplyOptions,
   createChannelIngressError,

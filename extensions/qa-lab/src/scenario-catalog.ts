@@ -1,4 +1,3 @@
-import "zod/compile";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";

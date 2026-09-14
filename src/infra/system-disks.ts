@@ -1,4 +1,3 @@
-import "zod/compile";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { decodeMountInfoPath } from "@openclaw/normalization-core/mountinfo-path";

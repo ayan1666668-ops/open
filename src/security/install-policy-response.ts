@@ -1,4 +1,3 @@
-import "zod/compile";
 import { createHash } from "node:crypto";
 import { truncateWithMarker } from "@openclaw/normalization-core/utf16-slice";
 import { z } from "zod";

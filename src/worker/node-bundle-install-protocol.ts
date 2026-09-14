@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import {
   WORKER_BUNDLE_PREWARM_VERSION,

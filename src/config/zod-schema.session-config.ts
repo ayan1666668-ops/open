@@ -1,5 +1,4 @@
 import { normalizeStringifiedOptionalString } from "@openclaw/normalization-core/string-coerce";
-import "zod/compile";
 import { z } from "zod";
 import { parseByteSize } from "../cli/parse-bytes.js";
 import { parseDurationMs } from "../cli/parse-duration.js";

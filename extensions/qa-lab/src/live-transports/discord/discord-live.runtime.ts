@@ -1,5 +1,4 @@
 // QA Lab plugin module implements Discord scenario support helpers.
-import "zod/compile";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";

@@ -1,4 +1,3 @@
-import "zod/compile";
 import {
   addGatewayClientOptions,
   callGatewayFromCli,

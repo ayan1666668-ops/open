@@ -1,4 +1,3 @@
-import "zod/compile";
 import { z } from "zod";
 import { BoardValidationError } from "./board-layout.js";
 
