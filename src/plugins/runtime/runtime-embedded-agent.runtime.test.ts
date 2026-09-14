@@ -451,6 +451,22 @@ describe("plugin embedded-agent runtime admission", () => {
     parentRoot?.release();
   });
 
+  it("rejects a deferred plugin run's admission wait on abort instead of waiting for admission to reopen", async () => {
+    const suspension = tryBeginGatewaySuspendAdmission(() => {});
+    expect(suspension).not.toBeNull();
+    const controller = new AbortController();
+    // No live parent root: this run owns the closed-admission wait itself, so
+    // its abort must settle that wait instead of only being checked afterward.
+    const run = withPluginRuntimePluginScope({ pluginId: "memory-plugin" }, () =>
+      runPluginEmbeddedAgent({ ...params, abortSignal: controller.signal }),
+    );
+    controller.abort(new Error("cancelled while waiting for admission"));
+
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
+    suspension?.rollback();
+  });
+
   it("revokes admission immediately when a pending plugin run aborts", async () => {
     const core = createDeferred<{ payloads: never[] }>();
     const admittedRunContext: AdmittedRunContext = {

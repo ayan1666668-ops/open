@@ -50,6 +50,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   return await runWithGatewayDetachedWorkContinuation(
     () => runAdmittedPluginEmbeddedAgent(pluginId, params),
     `plugin:${pluginId}:run-embedded-agent`,
+    params.abortSignal,
   );
 };
 
