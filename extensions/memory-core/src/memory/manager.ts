@@ -128,25 +128,24 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     return await acquireMemoryManagerWithSearchRecovery({
       ...params,
       registry: managerRegistry,
-      ...(source
-        ? {
-            source: {
-              manager: source,
-              cfg: source.cfg,
-              agentId: source.agentId,
-              workspaceDir: source.workspaceDir,
-              settings: source.settings,
-              providerRequirement: source.providerRequirement,
-            },
-          }
-        : {}),
-      create: async (acquisition) => {
-        const { key: cacheKey, ...resolved } = acquisition;
-        const databaseOptions = MemoryIndexDatabase.captureWriteOptions(
+      ...(source && {
+        source: {
+          manager: source,
+          cfg: source.cfg,
+          agentId: source.agentId,
+          workspaceDir: source.workspaceDir,
+          settings: source.settings,
+          providerRequirement: source.providerRequirement,
+        },
+      }),
+      prepareCreate: (acquisition) =>
+        MemoryIndexDatabase.captureWriteOptions(
           acquisition.agentId,
           acquisition.settings.store.databasePath,
           acquisition.maintenanceSource?.publishedDatabase,
-        );
+        ),
+      create: async (acquisition, databaseOptions) => {
+        const { key: cacheKey, ...resolved } = acquisition;
         let manager: MemoryIndexManager | undefined;
         try {
           const create = () => {

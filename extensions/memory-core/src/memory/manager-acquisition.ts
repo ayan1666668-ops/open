@@ -89,11 +89,15 @@ function resolveMemoryManagerAcquisition<T>(params: {
   };
 }
 
-export async function acquireMemoryManagerWithSearchRecovery<T extends AcquirableMemoryManager>(
+export async function acquireMemoryManagerWithSearchRecovery<
+  T extends AcquirableMemoryManager,
+  TPreparedCreate,
+>(
   params: MemoryManagerGetParams<T> & {
     registry: MemoryManagerRegistry<T>;
     source?: MemoryManagerAcquisitionSource<T>;
-    create: (acquisition: MemoryManagerAcquisition<T>) => Promise<T>;
+    prepareCreate: (acquisition: MemoryManagerAcquisition<T>) => TPreparedCreate;
+    create: (acquisition: MemoryManagerAcquisition<T>, prepared: TPreparedCreate) => Promise<T>;
     reuse: (manager: T, purpose: MemoryIndexManagerPurpose) => Promise<boolean> | boolean;
   },
 ): Promise<T | null> {
@@ -111,11 +115,14 @@ export async function acquireMemoryManagerWithSearchRecovery<T extends Acquirabl
     return await params.registry.acquire(
       { agentId: acquisition.agentId, purpose },
       {
-        prepare: () => ({
-          key: acquisition.key,
-          create: async () => await params.create(acquisition),
-          reuse: async (manager) => await params.reuse(manager, purpose),
-        }),
+        prepare: () => {
+          const prepared = params.prepareCreate(acquisition);
+          return {
+            key: acquisition.key,
+            create: async () => await params.create(acquisition, prepared),
+            reuse: async (manager) => await params.reuse(manager, purpose),
+          };
+        },
       },
     );
   };
