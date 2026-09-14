@@ -21,6 +21,7 @@ import type {
   TaskRegistryStoreSnapshot,
 } from "../tasks/task-registry.store.types.js";
 import type { TaskRecord, TaskRegistrySummary } from "../tasks/task-registry.types.js";
+import type { PreparedBackupRunRecord } from "./backup-run-records.kernel.js";
 import type { UserPreferenceWorkerOperations } from "./user-preferences.types.js";
 
 type TaskLookupRecords = {
@@ -43,6 +44,7 @@ type TaskFlowReadQuery = {
 /** Commands share one physical shared-state actor; bindings belong to commands, not open input. */
 export type OpenClawStateWorkerOperations = UserPreferenceWorkerOperations &
   SessionDeliveryWorkerOperations & {
+    "backup.recordOutcome": { input: PreparedBackupRunRecord; output: void };
     "plugins.metadata.read": {
       input: { selector: PluginMetadataStateSelector; artifactPreservingReadOnly?: boolean };
       output: { value_json: string } | undefined;
