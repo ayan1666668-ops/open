@@ -772,7 +772,13 @@ describe("exec approval forwarder", () => {
           forwarder.handlePluginApprovalRequested?.({
             ...telegramRequest,
             id: "plugin:req-1",
-            request: { ...telegramRequest.request, title: "Demo", description: "Demo approval" },
+            request: {
+              title: "Demo",
+              description: "Demo approval",
+              turnSourceChannel: "telegram",
+              turnSourceTo: "-100999",
+              turnSourceAccountId: "default",
+            },
           }),
         ).resolves.toBe(forwarded);
         expect(deliver).toHaveBeenCalledTimes(forwarded ? 1 : 0);
