@@ -55,7 +55,7 @@ describe("chat pane placement restart", () => {
         }
         return { ok: true };
       });
-      const refreshReplacement = vi.fn(async () => undefined);
+      const refreshReplacement = vi.fn(async () => null);
       const { pane, state } = createTestChatPane({
         client: createGatewayBrowserClientFixture({ request }),
         sessions: createSessionCapabilityFixture({ refreshReplacement }),

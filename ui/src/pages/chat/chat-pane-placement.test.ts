@@ -53,7 +53,7 @@ function repositoryRecoveryFixture(placementState: "local" | undefined, fails = 
     }
     return { ok: true };
   });
-  const refreshReplacement = vi.fn(async () => undefined);
+  const refreshReplacement = vi.fn(async () => null);
   const { pane, state } = createTestChatPane({
     client: createGatewayBrowserClientFixture({ request }),
     sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -105,7 +105,7 @@ async function selectRepositoryWorker() {
 
 function answerWorkerPicker(label: "Continue on worker" | "Cancel") {
   const button = [...document.body.querySelectorAll<HTMLButtonElement>("button")].find(
-    (button) => button.textContent?.trim() === label,
+    (item) => item.textContent?.trim() === label,
   );
   expect(button).toBeDefined();
   button?.click();
@@ -209,7 +209,7 @@ describe("chat pane placement", () => {
       }
       return { ok: true };
     });
-    const refreshReplacement = vi.fn(async () => undefined);
+    const refreshReplacement = vi.fn(async () => null);
     const { pane } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -278,7 +278,7 @@ describe("chat pane placement", () => {
       }
       return { ok: true };
     });
-    const refreshReplacement = vi.fn(async () => undefined);
+    const refreshReplacement = vi.fn(async () => null);
     const { pane } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -369,7 +369,7 @@ describe("chat pane placement", () => {
       const { pane } = createTestChatPane({
         client: createGatewayBrowserClientFixture({ request }),
         sessions: createSessionCapabilityFixture({
-          refreshReplacement: vi.fn(async () => undefined),
+          refreshReplacement: vi.fn(async () => null),
         }),
       });
       pane.context.gateway.snapshot.hello = gatewayHelloForMethods(
@@ -451,7 +451,7 @@ describe("chat pane placement", () => {
 
   it("continues an offline device placement on the Gateway with exact abandonment", async () => {
     const request = dialogs.mockRequest(async () => ({ ok: true }));
-    const refreshReplacement = vi.fn(async () => undefined);
+    const refreshReplacement = vi.fn(async () => null);
     const { pane } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -486,7 +486,7 @@ describe("chat pane placement", () => {
     const request = dialogs.mockRequest(async () => {
       throw new Error("device teardown is still pending; retry Continue on Gateway");
     });
-    const refreshReplacement = vi.fn(async () => undefined);
+    const refreshReplacement = vi.fn(async () => null);
     const { pane, state } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -528,7 +528,7 @@ describe("chat pane placement", () => {
     const { pane } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({
-        refreshReplacement: vi.fn(async () => undefined),
+        refreshReplacement: vi.fn(async () => null),
       }),
     });
     pane.context.gateway.snapshot.hello = gatewayHelloForMethods(
@@ -597,7 +597,7 @@ describe("chat pane placement", () => {
         }
         return { ok: true };
       });
-      const refreshReplacement = vi.fn(async () => undefined);
+      const refreshReplacement = vi.fn(async () => null);
       const { pane } = createTestChatPane({
         client: createGatewayBrowserClientFixture({ request }),
         sessions: createSessionCapabilityFixture({ refreshReplacement }),
@@ -721,7 +721,7 @@ describe("chat pane placement", () => {
     const { pane } = createTestChatPane({
       client: createGatewayBrowserClientFixture({ request }),
       sessions: createSessionCapabilityFixture({
-        refreshReplacement: vi.fn(async () => undefined),
+        refreshReplacement: vi.fn(async () => null),
       }),
     });
     pane.context.gateway.snapshot.hello = gatewayHelloForMethods(

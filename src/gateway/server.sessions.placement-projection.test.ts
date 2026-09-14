@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import type { EnvironmentSummary } from "../../packages/gateway-protocol/src/index.js";
 import { listRegisteredAgentHarnesses, registerAgentHarness } from "../agents/harness/registry.js";
 import { restoreRegisteredAgentHarnesses } from "../agents/harness/registry.test-support.js";
-import { NodeRegistry } from "./node-registry.js";
+import { NodeRegistry, type NodeSessionConnectParams } from "./node-registry.js";
 import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
 import { writeSessionStore } from "./test-helpers.js";
@@ -36,18 +36,13 @@ test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as con
       clientInfo: { id: "node-host", mode: "node" },
       socket: { readyState: 1, bufferedAmount: 0, send: vi.fn() },
     });
-    const node = registry.register(
-      {
-        ...client,
-        connect: {
-          ...client.connect,
-          caps: ["session.host"],
-          commands: state === "invocable" || state === "unauthorized" ? [command] : [],
-          declaredCommands: state === "undeclared" ? [] : [command],
-        },
-      },
-      { pairingIdentity: "node-host" },
-    );
+    const connect: NodeSessionConnectParams = {
+      ...client.connect,
+      caps: ["session.host"],
+      commands: state === "invocable" || state === "unauthorized" ? [command] : [],
+      declaredCommands: state === "undeclared" ? [] : [command],
+    };
+    const node = registry.register({ ...client, connect }, { pairingIdentity: "node-host" });
     const connected = vi.spyOn(registry, "listConnectedForPairingStates").mockReturnValue([node]);
     registerAgentHarness({
       id: "repository-device",
