@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
+import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
 import {
   createGateway,
   createGatewayHarness,
@@ -8,7 +9,6 @@ import {
   mountSidebar,
   type SidebarLifecycleState,
 } from "../app-sidebar.ts";
-import { sessionSharingHello } from "../gateway-methods.ts";
 import { waitForFast } from "../wait-for.ts";
 import "../../components/app-sidebar.ts";
 
@@ -43,6 +43,12 @@ export async function selectSessionMenuValue(sidebar: SidebarLifecycleState, val
 async function expectSort(sidebar: SidebarLifecycleState, mode: string, keys: string[]) {
   await selectSessionMenuValue(sidebar, `sort:${mode}`);
   expect(visibleSessionKeys(sidebar)).toEqual(keys);
+}
+
+function sessionSharingHello(hasMultipleIdentities: boolean) {
+  return {
+    policy: { hasMultipleSessionSharingIdentities: hasMultipleIdentities },
+  } as ApplicationGatewaySnapshot["hello"];
 }
 
 function visibleSessionKeys(sidebar: SidebarLifecycleState): string[] {

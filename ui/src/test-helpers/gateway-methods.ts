@@ -1,5 +1,4 @@
 import type { GatewayHelloOk } from "../api/gateway.ts";
-import type { ApplicationGatewaySnapshot } from "../app/context.ts";
 
 export const SESSION_MUTATION_TEST_METHODS = [
   "chat.abort",
@@ -53,10 +52,4 @@ export function sessionMutationGatewayHello(
   scopes: readonly string[] = ["operator.admin"],
 ): GatewayHelloOk {
   return gatewayHelloForMethods(SESSION_MUTATION_TEST_METHODS, scopes);
-}
-
-export function sessionSharingHello(hasMultipleIdentities: boolean) {
-  return {
-    policy: { hasMultipleSessionSharingIdentities: hasMultipleIdentities },
-  } as ApplicationGatewaySnapshot["hello"];
 }
