@@ -5,6 +5,7 @@ import "./fs-safe-defaults.js";
 export {
   assertNoSymlinkParents,
   assertNoSymlinkParentsSync,
+  buildRandomTempFilePath,
   probePathCaseInsensitiveSync,
   readFileHandleBounded,
   type FileIdentityStat,
