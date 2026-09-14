@@ -23,7 +23,11 @@ import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.j
 import {
   resetTaskRegistryForTests,
 } from "../tasks/task-runtime.test-helpers.js";
-import { listTaskRegistryRecordsByRuntimeSourceIdFromSqlite } from "../tasks/task-registry.store.sqlite.js";
+import {
+  listTaskRegistryRecordsByRuntimeSourceIdFromSqlite,
+  closeTaskRegistryDatabase,
+  upsertTaskWithDeliveryStateToSqlite,
+} from "../tasks/task-registry.store.sqlite.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { CronService, type CronEvent } from "./service.js";
 import type { CronServiceDeps } from "./service/state.js";
@@ -236,6 +240,99 @@ describe("real cron scheduler + real heartbeat runner", () => {
             });
             expect(rows[0]?.error).toBe("heartbeat skipped: empty-heartbeat-file");
           });
+        },
+      );
+    },
+  );
+
+  it(
+    "keeps pre-existing failed rows failed across a restart while new no-op rows are cancelled",
+    { timeout: 90_000 },
+    async () => {
+      await withOpenClawTestState(
+        { layout: "state-only", prefix: "openclaw-proof-cron-skip-" },
+        async () => {
+          resetTaskRegistryForTests();
+
+          // A historical row recorded before this fix: a disabled-heartbeat
+          // skip that was already projected to `failed`. It must not be
+          // retroactively reclassified by the new code path (forward-only).
+          const legacyTaskId = "task-cron-legacy-failed";
+          upsertTaskWithDeliveryStateToSqlite({
+            task: {
+              taskId: legacyTaskId,
+              runtime: "cron",
+              sourceId: "heartbeat:main:legacy",
+              requesterSessionKey: "agent:main:main",
+              ownerKey: "agent:main:main",
+              scopeKind: "system",
+              runId: "run-cron-legacy",
+              task: "legacy heartbeat monitor run",
+              status: "failed",
+              deliveryStatus: "pending",
+              notifyPolicy: "done_only",
+              createdAt: 1,
+              endedAt: 2,
+              error: "heartbeat skipped: disabled",
+            },
+          });
+
+          await runHeartbeatMonitorCase(
+            { paused: false },
+            async ({ runJob, cronStorePath, jobId }) => {
+              const terminal = await runJob();
+              expect(terminal).toMatchObject({
+                jobId,
+                status: "skipped",
+                error: "heartbeat skipped: empty-heartbeat-file",
+              });
+
+              // The new no-op row is cancelled; the legacy failed row is untouched.
+              const newRows = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
+                runtime: "cron",
+                sourceId: jobId,
+              });
+              expect(newRows).toHaveLength(1);
+              expect(newRows[0]).toMatchObject({
+                runtime: "cron",
+                sourceId: jobId,
+                status: "cancelled",
+              });
+              const legacyRows = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
+                runtime: "cron",
+                sourceId: "heartbeat:main:legacy",
+              });
+              expect(legacyRows).toHaveLength(1);
+              expect(legacyRows[0]).toMatchObject({
+                taskId: legacyTaskId,
+                status: "failed",
+              });
+              expect(legacyRows[0]?.error).toBe("heartbeat skipped: disabled");
+
+              // Simulate a process restart: drop the cached DB and re-read the
+              // rows straight from SQLite. Both classifications persist.
+              closeTaskRegistryDatabase();
+              const newRowsAfterRestart = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
+                runtime: "cron",
+                sourceId: jobId,
+              });
+              const legacyRowsAfterRestart = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
+                runtime: "cron",
+                sourceId: "heartbeat:main:legacy",
+              });
+              expect(newRowsAfterRestart).toHaveLength(1);
+              expect(newRowsAfterRestart[0]).toMatchObject({
+                runtime: "cron",
+                sourceId: jobId,
+                status: "cancelled",
+              });
+              expect(legacyRowsAfterRestart).toHaveLength(1);
+              expect(legacyRowsAfterRestart[0]).toMatchObject({
+                taskId: legacyTaskId,
+                status: "failed",
+              });
+            },
+          );
         },
       );
     },
