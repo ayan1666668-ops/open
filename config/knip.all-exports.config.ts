@@ -76,6 +76,20 @@ const ROOT_TEST_ENTRY_GLOBS = [
   // Invoked directly by the Docker image-auth scenario.
   "test/e2e/qa-lab/runtime/openai-image-auth-docker-client.ts!",
   "test/e2e/qa-lab/runtime/system-agent-first-run-docker-client.ts!",
+  // QA Lab runtime proofs are launched by scenario manifests and shell harnesses.
+  "test/e2e/qa-lab/runtime/agent-run-decision-receipt.ts!",
+  "test/e2e/qa-lab/runtime/agent-run-identity-inspection.ts!",
+  "test/e2e/qa-lab/runtime/autonomous-task-lifecycle-receipts.ts!",
+  "test/e2e/qa-lab/runtime/cloud-worker-disappearance-proof.ts!",
+  "test/e2e/qa-lab/runtime/cloud-worker-midturn-loss-proof.ts!",
+  "test/e2e/qa-lab/runtime/codex-heartbeat-compaction-app-server.fixture.mjs!",
+  "test/e2e/qa-lab/runtime/gateway-codex-heartbeat-compaction.ts!",
+  "test/e2e/qa-lab/runtime/gateway-stability-runtime.ts!",
+  "test/e2e/qa-lab/runtime/gateway-websocket-protocol-contracts.ts!",
+  "test/e2e/qa-lab/runtime/media-talk-gateway.ts!",
+  "test/e2e/qa-lab/runtime/otel-generation-config-watcher-runtime.ts!",
+  "test/e2e/qa-lab/runtime/subagent-lineage-inspection.ts!",
+  "test/e2e/qa-lab/runtime/voice-call-gateway.ts!",
   // QA scenario YAML dispatches these scripts/tests by path rather than import.
   ...QA_SCENARIO_EXECUTION_ENTRIES,
   // Invoked directly by the sandbox bind-conflict E2E verification script.
@@ -158,6 +172,17 @@ const config = {
   ignoreIssues: {
     // The memory-state compatibility facade must retain its pre-registry-bundle type export.
     "src/plugins/memory-state.ts": ["types"],
+    // Runtime proof drivers expose main/helpers for path-launched harnesses and docs.
+    "test/e2e/qa-lab/runtime/cached-health-snapshot-boundaries.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/channel-health-monitor-lifecycle-runtime.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/cloud-worker-midturn-loss-fixture.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/gateway-compaction-provider.fixture.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/gateway-compaction-state.fixture.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/gateway-rpc-account-health.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/gateway-tls-pinning.ts": ["exports", "types"],
+    "test/e2e/qa-lab/runtime/otel-generation-config-watcher-contract.ts": ["exports"],
+    "test/e2e/qa-lab/runtime/remote-log-tailing-runtime.ts": ["exports"],
+    "test/e2e/qa-lab/tui/tui-pty-evidence-producer.ts": ["exports"],
     "test/fixtures/ts-topology/basic/**": [
       "exports",
       "nsExports",

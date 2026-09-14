@@ -5,7 +5,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { handleSystemAgentCommand } from "../../dist/auto-reply/reply/commands-system-agent.js";
 import { clearConfigCache } from "../../dist/config/config.js";
-import type { OpenClawConfig } from "../../dist/config/types.openclaw.js";
 import { createSqliteAuditRecordStore } from "../../dist/infra/sqlite-audit-record-store.js";
 import {
   SYSTEM_AGENT_AUDIT_MAX_ENTRIES,
@@ -13,6 +12,7 @@ import {
   type SystemAgentAuditEntry,
 } from "../../dist/system-agent/audit.js";
 import { runSystemAgentRescueMessage } from "../../dist/system-agent/rescue-message.js";
+import type { OpenClawConfig } from "../../src/config/types.openclaw.js";
 import { createE2eStateDir } from "./lib/temp-state-dir.ts";
 
 type CommandResult = Awaited<ReturnType<typeof handleSystemAgentCommand>>;

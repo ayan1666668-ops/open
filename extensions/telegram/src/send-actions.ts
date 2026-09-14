@@ -79,7 +79,7 @@ export async function sendTypingTelegram(
       });
       const threadParams = buildTypingThreadParams(target.messageThreadId ?? opts.messageThreadId);
       const signalArgs: [Parameters<TelegramApi["sendChatAction"]>[3]?] = apiAbort
-        ? [apiAbort.signal]
+        ? [apiAbort.signal as Parameters<TelegramApi["sendChatAction"]>[3]]
         : [];
       await requestWithDiag(
         () =>
