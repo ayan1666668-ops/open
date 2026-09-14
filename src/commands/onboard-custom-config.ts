@@ -180,6 +180,7 @@ function hasSameHost(a: string, b: string): boolean {
 export type CustomApiCompatibility = "openai" | "openai-responses" | "anthropic";
 
 /** Config mutation result for a custom API setup pass. */
+/** Result of applying custom provider config via onboarding. */
 export type CustomApiResult = {
   config: OpenClawConfig;
   providerId: string;
