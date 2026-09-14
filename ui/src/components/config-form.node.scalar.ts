@@ -2,7 +2,6 @@
 import { formatInternationalPhoneNumberForDisplay } from "@openclaw/normalization-core/phone-presentation";
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
-import { isSensitiveConfigPath } from "../../../src/config/sensitive-paths.js";
 import { i18n, t } from "../i18n/index.ts";
 import {
   configValuesEqual,
@@ -40,7 +39,6 @@ import { resolveConfigFieldMeta as resolveFieldMeta } from "./config-form.search
 import {
   configFieldId,
   hintForPath,
-  pathKey,
   redactedPlaceholder,
   schemaType,
 } from "./config-form.shared.ts";
@@ -266,23 +264,12 @@ export function renderTextInput(
   const hint = hintForPath(path, hints);
   const { label, help, tags } = resolveFieldMeta(path, schema, hints);
   const helpId = showLabel && help ? configFieldId(path, "description") : undefined;
-  const sensitiveState = getSensitiveRenderState({
-    path,
-    value,
-    hints,
-    revealSensitive: params.revealSensitive ?? false,
-    isSensitivePathRevealed: params.isSensitivePathRevealed,
-  });
+  const sensitiveState = getSensitiveRenderState(params);
   const isStructuredValue =
     value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value);
   const isStructuredSecretRef = isSecretRefObject(value);
   const rawAvailable = params.rawAvailable ?? true;
-  const masked =
-    params.maskSensitive === true &&
-    !params.revealSensitive &&
-    !sensitiveState.isRevealed &&
-    (value === undefined || typeof value === "string") &&
-    (hint?.sensitive || isSensitiveConfigPath(pathKey(path)) || sensitiveState.isSensitive);
+  const masked = sensitiveState.isMasked;
   const effectiveRedacted =
     (sensitiveState.isRedacted && !masked) ||
     sensitiveState.sentinelRedacted ||

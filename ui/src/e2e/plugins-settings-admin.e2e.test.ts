@@ -2,8 +2,8 @@
 import path from "node:path";
 import { asRecord } from "@openclaw/normalization-core/record-coerce";
 import { beforeEach, expect, it } from "vitest";
-import braveManifest from "../../../extensions/brave/openclaw.plugin.json";
-import firecrawlManifest from "../../../extensions/firecrawl/openclaw.plugin.json";
+import braveManifest from "../../../extensions/brave/openclaw.plugin.json" with { type: "json" };
+import firecrawlManifest from "../../../extensions/firecrawl/openclaw.plugin.json" with { type: "json" };
 import type {
   PluginCatalogItem,
   PluginListResult,
