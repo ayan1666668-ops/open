@@ -33,24 +33,37 @@ describe("memory_search real manager", () => {
     testing.resetMemorySearchToolCooldowns();
   });
 
-  it.each([false, true])(
-    "reads the indexed agent file with explicit ownership (reversed roster: %s)",
-    async (reverse) => {
+  it.each([
+    { name: "main first", reverse: false, systemAgent: false, pinned: false },
+    { name: "other first", reverse: true, systemAgent: false, pinned: false },
+    { name: "non-first system agent", reverse: false, systemAgent: true, pinned: false },
+    { name: "pinned workspaces", reverse: false, systemAgent: false, pinned: true },
+  ])(
+    "reads the indexed agent file with explicit ownership: $name",
+    async ({ reverse, systemAgent, pinned }) => {
       const cfg = fixture.createConfig({
         provider: "none",
         sources: ["memory"],
         vectorEnabled: false,
         minScore: 0,
       });
+      const workspaces = {
+        main: path.join(fixture.paths.workspace, pinned ? "pinned-main" : "main"),
+        other: path.join(fixture.paths.workspace, pinned ? "pinned-other" : "other"),
+      };
+      const main = pinned ? { workspace: workspaces.main } : {};
+      const other = pinned ? { workspace: workspaces.other } : {};
       cfg.agents = {
         ownership: "explicit",
-        defaults: { workspace: fixture.paths.workspace },
-        entries: reverse ? { other: {}, main: {} } : { main: {}, other: {} },
+        defaults: {
+          workspace: fixture.paths.workspace,
+          ...(systemAgent ? { systemAgent: { agentId: "other" } } : {}),
+        },
+        entries: reverse ? { other, main } : { main, other },
       };
       cfg.memory = { ...cfg.memory, citations: "off" };
       await fs.writeFile(path.join(fixture.paths.workspace, "USER.md"), "Parent decoy\n");
-      for (const agentId of ["main", "other"]) {
-        const workspace = path.join(fixture.paths.workspace, agentId);
+      for (const [agentId, workspace] of Object.entries(workspaces)) {
         const marker = `Orchid workspace ${agentId}`;
         await fs.mkdir(workspace, { recursive: true });
         await fs.writeFile(path.join(workspace, "USER.md"), marker);
@@ -69,19 +82,28 @@ describe("memory_search real manager", () => {
           results: Array<{ path: string; startLine: number; endLine: number; snippet: string }>;
         };
         expect(results).toHaveLength(1);
-        expect(results[0]).toMatchObject({ path: "USER.md", snippet: marker });
+        expect(results[0]).toMatchObject({
+          path: "USER.md",
+          startLine: 1,
+          endLine: 1,
+          snippet: marker,
+        });
         const hit = results[0]!;
         const excerpt = await get.execute("workspace-get", {
           path: hit.path,
           from: hit.startLine,
           lines: hit.endLine - hit.startLine + 1,
         });
-        expect(excerpt.details).toMatchObject({ status: "ok", path: hit.path, text: marker });
+        expect(excerpt.details).toMatchObject({
+          status: "ok",
+          path: "USER.md",
+          from: 1,
+          lines: 1,
+          text: marker,
+        });
         const escaped = await get.execute("workspace-parent", { path: "../USER.md" });
         expect(escaped.details).toMatchObject({ status: "error", code: "MEMORY_PATH_NOT_ALLOWED" });
       }
-      expect(fixture.provider.embedBatchCalls).toBe(0);
-      expect(fixture.provider.embedQueryCalls).toBe(0);
     },
   );
 

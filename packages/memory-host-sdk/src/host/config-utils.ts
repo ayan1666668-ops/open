@@ -176,12 +176,7 @@ export function resolveMemoryHostAgentWorkspaceDir(
   // the same legacy data owner as search, independently of the runtime default.
   const inheritedWorkspaceAgentId =
     cfg.agents?.ownership === "explicit"
-      ? tryResolveLegacyDataOwner(cfg, {
-          agentIds: listAgentEntries(cfg).map((agent) => normalizeAgentId(agent.id)),
-          hasAgentRoster:
-            (Object.hasOwn(cfg.agents, "entries") && cfg.agents.entries !== undefined) ||
-            (Object.hasOwn(cfg.agents, "list") && cfg.agents.list !== undefined),
-        })
+      ? tryResolveLegacyDataOwner(cfg)
       : resolveDefaultAgentId(cfg);
   if (id === inheritedWorkspaceAgentId) {
     return stripNullBytes(
