@@ -5,28 +5,25 @@ import {
   createLocalApprovalPromptTestFixture,
   createNativeApprovalTestFixture,
 } from "openclaw/plugin-sdk/channel-test-helpers";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   lineApprovalCapability,
   shouldSuppressLocalLineExecApprovalPrompt,
-  trackLineNativeApprovalStart,
 } from "./approval-native.js";
 import { linePlugin } from "./channel.js";
 
 const APPROVER = "U0123456789abcdef0123456789abcdef";
 
-const { buildConfig, buildExecRequest, buildPluginRequest, checks } =
-  createNativeApprovalTestFixture({
-    channel: "line",
-    capability: lineApprovalCapability,
-    buildConfig: ({ channel, approvals } = {}) => ({
-      channels: {
-        line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
-      },
-      approvals,
-    }),
-  });
+const { buildConfig, buildExecRequest, checks } = createNativeApprovalTestFixture({
+  channel: "line",
+  capability: lineApprovalCapability,
+  buildConfig: ({ channel, approvals } = {}) => ({
+    channels: {
+      line: { channelAccessToken: "test-token-placeholder", channelSecret: "secret", ...channel },
+    },
+    approvals,
+  }),
+});
 
 const { suppressLocalSessionPrompt } = createLocalApprovalPromptTestFixture({
   channel: "line",
@@ -178,177 +175,43 @@ describe("line approval capability", () => {
     ).toBe(false);
   });
 
-  // Native delivery replaces the forwarded prompt only in the chats it reaches; a
-  // configured operations group is not one of them and keeps its text prompt.
-  it("keeps forwarded prompts for targets native delivery does not reach", () => {
+  // Forwarding cannot see whether the card handler is running, so it never drops the text
+  // prompt, not even for chats a card is routed to: the origin chat, approver DMs, or an
+  // operations group. The local prompt, which core gates on a running handler, still
+  // yields to the card.
+  it("keeps every forwarded prompt, including chats cards are routed to", () => {
     const opsGroup = "line:group:C11111111111111111111111111111111";
+    const raisingGroup = "line:group:C0123456789abcdef0123456789abcdef";
     const cfg = buildConfig({
       channel: { allowFrom: [APPROVER] },
       approvals: {
         exec: { enabled: true, mode: "both", targets: [{ channel: "line", to: opsGroup }] },
       },
     });
-    const started = new AbortController();
-    onTestFinished(() => started.abort());
-    trackLineNativeApprovalStart({ cfg, accountId: "default", abortSignal: started.signal });
-    const request = buildExecRequest(`line:${APPROVER}`);
-    const suppressed = (to: string, source: "session" | "target") =>
+    const suppressed = (to: string, source: "session" | "target", origin: string) =>
       lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
         cfg,
         approvalKind: "exec",
         target: { channel: "line", to, source },
-        request,
+        request: buildExecRequest(origin),
       });
-
-    expect(suppressed(opsGroup, "target")).toBe(false);
-    expect(suppressed(`line:${APPROVER}`, "target")).toBe(true);
-    expect(suppressed(`line:${APPROVER}`, "session")).toBe(true);
-
-    // A group that raised the request gets the routed notice, not a second prompt, and
-    // the approver's DM, reached here only as an approver and not as the origin, keeps
-    // just the card.
-    const raisingGroup = "line:group:C0123456789abcdef0123456789abcdef";
-    const fromGroup = (to: string, source: "session" | "target") =>
-      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
-        cfg,
-        approvalKind: "exec",
-        target: { channel: "line", to, source },
-        request: buildExecRequest(raisingGroup),
-      });
-    expect(fromGroup(raisingGroup, "session")).toBe(true);
-    expect(fromGroup(`line:${APPROVER}`, "target")).toBe(true);
-  });
-
-  // Cards start with the account, but forwarding hot-reloads. Until the account starts
-  // with cards, and again once it stops, the forwarded prompt is the only thing that
-  // chat receives, so it must not be dropped.
-  it("keeps the forwarded prompt for an account that is not running cards", () => {
-    const suppressed = () =>
-      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
-        cfg: configured,
-        approvalKind: "exec",
-        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
-        request: buildExecRequest(`line:${APPROVER}`),
-      });
-
-    expect(suppressed()).toBe(false);
-
-    const started = new AbortController();
-    trackLineNativeApprovalStart({
-      cfg: configured,
-      accountId: "default",
-      abortSignal: started.signal,
-    });
-    expect(suppressed()).toBe(true);
-
-    // A restart registers again before the previous run's abort arrives.
-    const restarted = new AbortController();
-    trackLineNativeApprovalStart({
-      cfg: configured,
-      accountId: "default",
-      abortSignal: restarted.signal,
-    });
-    started.abort();
-    expect(suppressed()).toBe(true);
-
-    restarted.abort();
-    expect(suppressed()).toBe(false);
-
-    // A start whose account already stopped must not leave a record behind.
-    const stopped = new AbortController();
-    stopped.abort();
-    trackLineNativeApprovalStart({
-      cfg: configured,
-      accountId: "default",
-      abortSignal: stopped.signal,
-    });
-    expect(suppressed()).toBe(false);
-  });
-
-  // A target without an account falls back to the configured default, which can be the
-  // raw config key; the start was recorded under the normalized id.
-  it("matches a started default account whose config key is not normalized", () => {
-    const cfg: OpenClawConfig = {
-      channels: {
-        line: {
-          accounts: {
-            Work: {
-              channelAccessToken: "test-token-placeholder",
-              channelSecret: "secret",
-              allowFrom: [APPROVER],
-            },
-          },
-        },
-      },
-      approvals: { exec: { enabled: true } },
-    };
-    const started = new AbortController();
-    onTestFinished(() => started.abort());
-    trackLineNativeApprovalStart({ cfg, accountId: "work", abortSignal: started.signal });
 
     expect(
-      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
+      lineApprovalCapability.native?.describeDeliveryCapabilities({
         cfg,
+        accountId: "default",
         approvalKind: "exec",
-        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
-        // No account on the target or the turn, so the configured default decides.
-        request: buildExecRequest(`line:${APPROVER}`, { turnSourceAccountId: undefined }),
-      }),
-    ).toBe(true);
-  });
-
-  // Starts are recorded under the resolved account id, which is lowercase; a forwarding
-  // target can name the same account in another case.
-  it("matches a started account named in another case", () => {
-    const started = new AbortController();
-    onTestFinished(() => started.abort());
-    trackLineNativeApprovalStart({
-      cfg: configured,
-      accountId: "default",
-      abortSignal: started.signal,
-    });
-
-    expect(
-      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
-        cfg: configured,
-        approvalKind: "exec",
-        target: { channel: "line", to: `line:${APPROVER}`, accountId: "Default", source: "target" },
         request: buildExecRequest(`line:${APPROVER}`),
-      }),
+      })?.enabled,
     ).toBe(true);
-  });
-
-  // The running handler decides with the config its account started with. A setting that
-  // hot-reloads after that start, such as plugin forwarding or a wider agent filter, draws
-  // no card until a restart, so its forwarded prompt stays.
-  it("keeps the forwarded prompt for requests the started cards would not draw", () => {
-    const started = new AbortController();
-    onTestFinished(() => started.abort());
-    trackLineNativeApprovalStart({
-      cfg: buildConfig({
-        channel: { allowFrom: [APPROVER] },
-        approvals: { exec: { enabled: true, agentFilter: ["ops"] } },
-      }),
-      accountId: "default",
-      abortSignal: started.signal,
-    });
-    const current = buildConfig({
-      channel: { allowFrom: [APPROVER] },
-      approvals: { exec: { enabled: true }, plugin: { enabled: true } },
-    });
-    const suppressed = (
-      approvalKind: "exec" | "plugin",
-      request: ReturnType<typeof buildExecRequest> | ReturnType<typeof buildPluginRequest>,
-    ) =>
-      lineApprovalCapability.delivery?.shouldSuppressForwardingFallback?.({
-        cfg: current,
-        approvalKind,
-        target: { channel: "line", to: `line:${APPROVER}`, source: "session" },
-        request,
-      });
-
-    expect(suppressed("plugin", buildPluginRequest(`line:${APPROVER}`))).toBe(false);
-    expect(suppressed("exec", buildExecRequest(`line:${APPROVER}`))).toBe(false);
+    for (const [to, source, origin] of [
+      [`line:${APPROVER}`, "session", `line:${APPROVER}`],
+      [`line:${APPROVER}`, "target", `line:${APPROVER}`],
+      [raisingGroup, "session", raisingGroup],
+      [opsGroup, "target", `line:${APPROVER}`],
+    ] as const) {
+      expect(suppressed(to, source, origin)).toBe(false);
+    }
   });
 
   it("suppresses the local prompt when approvers receive the card", () => {

@@ -7,7 +7,6 @@ import {
   createChannelApproverDmTargetResolver,
   createChannelNativeOriginTargetResolver,
   createNativeApprovalChannelRouteGates,
-  createNativeApprovalForwardingFallbackSuppressor,
   createNativeApprovalMessagingTargetResolvers,
   shouldSuppressLocalNativeExecApprovalPrompt,
 } from "openclaw/plugin-sdk/approval-native-runtime";
@@ -24,12 +23,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { hasLineCredentials } from "./account-helpers.js";
-import {
-  listLineAccountIds,
-  normalizeAccountId,
-  resolveDefaultLineAccountId,
-  resolveLineAccount,
-} from "./accounts.js";
+import { listLineAccountIds, resolveDefaultLineAccountId, resolveLineAccount } from "./accounts.js";
 import { getLineApprovalApprovers, lineApprovalAuth } from "./approval-auth.js";
 import { normalizeLineMessagingTarget } from "./messaging-target.js";
 
@@ -191,77 +185,15 @@ const {
   nativeRuntime: lineLazyApprovalNativeRuntime,
 });
 
-// The card handler decides with the config its account started with (`gateway.ts` hands
-// core the same config), while forwarding reads the current one after a hot reload. A
-// forwarded prompt is dropped only when both would draw the card; otherwise a chat could
-// lose the prompt for a request no card reaches. Plugin SDK exposes no running-handler
-// state, so the account records its start config itself, scoped to that start.
-const lineCardStartConfigs = new Map<string, { cfg: OpenClawConfig }>();
-
-/** Record the config one LINE account started native approval cards with, until it stops. */
-export function trackLineNativeApprovalStart(params: {
-  cfg: OpenClawConfig;
-  accountId: string;
-  abortSignal: AbortSignal;
-}): void {
-  if (params.abortSignal.aborted) {
-    return;
-  }
-  // Each start owns its entry, so a restart's entry survives the previous run's abort.
-  const start = { cfg: params.cfg };
-  lineCardStartConfigs.set(params.accountId, start);
-  params.abortSignal.addEventListener(
-    "abort",
-    () => {
-      if (lineCardStartConfigs.get(params.accountId) === start) {
-        lineCardStartConfigs.delete(params.accountId);
-      }
-    },
-    { once: true },
-  );
-}
-
-function isForwardingCoveredByLineCards(
-  params: Parameters<typeof shouldHandleLineNativeApprovalRequest>[0],
-): boolean {
-  // Starts are keyed by the resolved, normalized account id; the configured default can
-  // still be a raw key, so both branches go through the same normalizer.
-  const accountId = normalizeAccountId(
-    normalizeOptionalString(params.accountId) ?? resolveDefaultLineAccountId(params.cfg),
-  );
-  const start = lineCardStartConfigs.get(accountId);
-  return (
-    start !== undefined &&
-    shouldHandleLineNativeApprovalRequest({ ...params, cfg: start.cfg }) &&
-    shouldHandleLineNativeApprovalRequest(params)
-  );
-}
-
-// Forwarding is dropped only for the chats native delivery already covers: the
-// originating chat (its card or routed notice) and the approver DMs. Any other
-// configured target, such as an operations group, still gets the text prompt.
-const shouldSuppressLineForwardingFallback = createNativeApprovalForwardingFallbackSuppressor<
-  NonNullable<ReturnType<typeof resolveLineOriginTarget>>
->({
-  channel: "line",
-  normalizeForwardTarget: lineApprovalTargetResolvers.normalizeForwardTarget,
-  // Native targets carry the account; a forwarding target without one matches them
-  // under the account the request resolved to.
-  resolveForwardingTargetForMatch: ({ forwardingTarget, accountId }) => ({
-    ...forwardingTarget,
-    accountId,
-  }),
-  isSessionRouteEligible: isForwardingCoveredByLineCards,
-  isExplicitTargetEligible: isForwardingCoveredByLineCards,
-  resolveOriginTarget: resolveLineOriginTarget,
-  resolveApproverDmTargets: resolveLineApproverDmTargets,
-});
-
 export const lineApprovalCapability: ChannelApprovalCapability = {
   ...lineNativeApprovalCapability,
   delivery: {
     ...lineNativeApprovalCapability.delivery,
-    shouldSuppressForwardingFallback: shouldSuppressLineForwardingFallback,
+    // Forwarding cannot tell whether this account's card handler is actually running: it
+    // starts with the account and can fail or be disabled after that, and the plugin SDK
+    // exposes no readiness. Dropping the forwarded prompt without that fact can leave a
+    // chat with neither a card nor the prompt, so the text prompt always stays (#148031).
+    shouldSuppressForwardingFallback: () => false,
   },
   // Cards are added on top of same-chat `/approve`, never in place of it. A `disabled`
   // state would make the Gateway expire a request no other client holds, taking away
