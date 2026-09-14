@@ -162,7 +162,9 @@ async function captureDesktopSockets(page: Page) {
                         : "unknown";
             // wasClean describes the native WebSocket close handshake, not noVNC's RFB state.
             closes.push({ socketIndex, code: event.code, wasClean: event.wasClean, category });
-            if (closes.length > 8) closes.shift();
+            if (closes.length > 8) {
+              closes.shift();
+            }
           });
           socket.addEventListener("error", () => console.error("Desktop proof socket error"));
         }
