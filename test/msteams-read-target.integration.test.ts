@@ -5,7 +5,7 @@ import { createOperationalRunInstanceRef } from "../src/agents/admitted-run-cont
 import { wrapToolWithGatewayCallerIdentity } from "../src/agents/tools/gateway-caller-context.js";
 import { createMessageTool } from "../src/agents/tools/message-tool-execution.js";
 import { dispatchChannelMessageAction } from "../src/channels/plugins/message-action-dispatch.js";
-import type { ChannelThreadingToolContext } from "../src/channels/plugins/types.js";
+import type { ChannelThreadingToolContext } from "../src/channels/plugins/types.public.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../src/config/config.js";
 import type { OpenClawConfig } from "../src/config/types.js";
 import { createAgentRuntimeApprovalAuthorityValidator } from "../src/gateway/agent-runtime-identity-token.js";
