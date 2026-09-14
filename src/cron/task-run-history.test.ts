@@ -119,8 +119,9 @@ describe("cron task run history", () => {
   );
 
   it("does not classify an intentional heartbeat skip as a failed task", () => {
-    // A heartbeat no-op (empty-heartbeat-file) is an intentional non-execution,
-    // not a failed run; it must not surface under `tasks list --status failed`.
+    // A heartbeat no-op (empty heartbeat file, or a stale wake with no pending
+    // events) is an intentional non-execution, not a failed run; it must not
+    // surface under `tasks list --status failed`.
     expect(
       cronRunStatusToTaskStatus({
         ts: 100,
@@ -130,12 +131,22 @@ describe("cron task run history", () => {
         error: "heartbeat skipped: empty-heartbeat-file",
       }),
     ).toBe("cancelled");
+    expect(
+      cronRunStatusToTaskStatus({
+        ts: 100,
+        jobId: JOB_ID,
+        action: "finished",
+        status: "skipped",
+        error: "heartbeat skipped: no-pending-event",
+      }),
+    ).toBe("cancelled");
   });
 
   it("keeps unsuccessful skipped runs classified as failed tasks", () => {
-    // Failed preflights and unmet trigger conditions also report `skipped`, but
-    // they are real failures: they must stay under `tasks list --status failed`
-    // (reporting contract from openclaw/openclaw#123787).
+    // Failed preflights, unmet trigger conditions, and disabled heartbeats also
+    // report `skipped`, but they are real failures: they must stay under
+    // `tasks list --status failed` (reporting contract from
+    // openclaw/openclaw#123787).
     expect(
       cronRunStatusToTaskStatus({
         ts: 100,
@@ -143,6 +154,15 @@ describe("cron task run history", () => {
         action: "finished",
         status: "skipped",
         error: "local provider preflight failed ... ECONNREFUSED",
+      }),
+    ).toBe("failed");
+    expect(
+      cronRunStatusToTaskStatus({
+        ts: 100,
+        jobId: JOB_ID,
+        action: "finished",
+        status: "skipped",
+        error: "heartbeat skipped: disabled",
       }),
     ).toBe("failed");
     expect(

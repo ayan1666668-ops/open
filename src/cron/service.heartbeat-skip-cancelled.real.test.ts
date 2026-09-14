@@ -166,7 +166,7 @@ async function runHeartbeatMonitorCase(
 
 describe("real cron scheduler + real heartbeat runner", () => {
   it(
-    "records a disabled heartbeat skip as a cancelled task, not a failed one",
+    "keeps a disabled heartbeat skip a failed task, not a cancelled one",
     { timeout: 90_000 },
     async () => {
       await withOpenClawTestState(
@@ -181,6 +181,9 @@ describe("real cron scheduler + real heartbeat runner", () => {
               error: "heartbeat skipped: disabled",
             });
 
+            // A globally disabled heartbeat did not execute; it is an
+            // unsuccessful run, not an intentional no-op, so it stays a failed
+            // task for failure monitors.
             const rows = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
               runtime: "cron",
               sourceId: jobId,
@@ -189,7 +192,7 @@ describe("real cron scheduler + real heartbeat runner", () => {
             expect(rows[0]).toMatchObject({
               runtime: "cron",
               sourceId: jobId,
-              status: "cancelled",
+              status: "failed",
             });
             expect(rows[0]?.error).toBe("heartbeat skipped: disabled");
 
@@ -220,6 +223,7 @@ describe("real cron scheduler + real heartbeat runner", () => {
               error: "heartbeat skipped: empty-heartbeat-file",
             });
 
+            // An intentional no-op (empty heartbeat file) is not a failure.
             const rows = listTaskRegistryRecordsByRuntimeSourceIdFromSqlite({
               runtime: "cron",
               sourceId: jobId,
