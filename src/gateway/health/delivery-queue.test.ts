@@ -42,7 +42,7 @@ const ingressPressure = [
 
 describe("buildDeliveryQueueHealthSummary", () => {
   beforeEach(() => {
-    countOutbound.mockReset().mockReturnValue([]);
+    countOutbound.mockReset().mockResolvedValue([]);
     countIngressFailed.mockReset().mockReturnValue([]);
     countIngressPressure.mockReset().mockReturnValue([]);
   });
@@ -51,7 +51,7 @@ describe("buildDeliveryQueueHealthSummary", () => {
     {
       name: "outbound failures when the ingress dead-letter read fails",
       arrange: () => {
-        countOutbound.mockReturnValue(outboundFailed);
+        countOutbound.mockResolvedValue(outboundFailed);
         countIngressFailed.mockImplementation(() => {
           throw new Error("ingress database unavailable");
         });
@@ -61,9 +61,7 @@ describe("buildDeliveryQueueHealthSummary", () => {
     {
       name: "ingress failures when the outbound read fails",
       arrange: () => {
-        countOutbound.mockImplementation(() => {
-          throw new Error("outbound database unavailable");
-        });
+        countOutbound.mockRejectedValue(new Error("outbound database unavailable"));
         countIngressFailed.mockReturnValue(ingressFailed);
       },
       expected: { failed: [], ingressFailed },
@@ -88,13 +86,13 @@ describe("buildDeliveryQueueHealthSummary", () => {
       },
       expected: { failed: [], ingressPressure },
     },
-  ])("preserves $name", ({ arrange, expected }) => {
+  ])("preserves $name", async ({ arrange, expected }) => {
     arrange();
-    expect(buildDeliveryQueueHealthSummary()).toEqual(expected);
+    expect(await buildDeliveryQueueHealthSummary()).toEqual(expected);
   });
 
-  it("uses cached ingress pressure without rerunning its reader", () => {
-    expect(buildDeliveryQueueHealthSummary(ingressPressure)).toEqual({
+  it("uses cached ingress pressure without rerunning its reader", async () => {
+    expect(await buildDeliveryQueueHealthSummary(ingressPressure)).toEqual({
       failed: [],
       ingressPressure,
     });
