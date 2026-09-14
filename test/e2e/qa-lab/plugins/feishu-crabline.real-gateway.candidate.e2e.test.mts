@@ -10,16 +10,16 @@ import {
 } from "@openclaw/crabline";
 import { expect, it } from "vitest";
 import {
-  PROXY_FIXTURE_CERTIFICATE,
-  PROXY_FIXTURE_KEY,
-} from "../../../src/test-helpers/proxy-tls-fixture.js";
-import {
   createQaGatewayChild,
   startQaMockOpenAiServer,
   type MockOpenAiRequestSnapshot,
-} from "../../qa-lab/api.js";
+} from "../../../../extensions/qa-lab/api.js";
+import {
+  PROXY_FIXTURE_CERTIFICATE,
+  PROXY_FIXTURE_KEY,
+} from "../../../../src/test-helpers/proxy-tls-fixture.js";
 
-const repoRoot = path.resolve(import.meta.dirname, "../../..");
+const repoRoot = path.resolve(import.meta.dirname, "../../../..");
 const accounts = ["alpha", "beta"] as const;
 
 it("joins two native Feishu accounts through the real Gateway with raw rendering, typing off and native DM post responses", async ({

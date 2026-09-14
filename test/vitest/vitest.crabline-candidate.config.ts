@@ -75,7 +75,7 @@ export default defineConfig({
   },
   test: {
     ...e2eConfig.test,
-    include: ["extensions/feishu/test/crabline.real-gateway.candidate.e2e.test.mts"],
+    include: ["test/e2e/qa-lab/plugins/feishu-crabline.real-gateway.candidate.e2e.test.mts"],
     fileParallelism: false,
     maxWorkers: 1,
   },
