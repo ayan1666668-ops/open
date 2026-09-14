@@ -4552,68 +4552,102 @@ wa-dropdown.sidebar-identity-menu::part(menu) {
   max-height: 80px;
 }
 
-/* Clear collapsed-sidebar chrome once, at the reconnect notice or page header.
-   Browsers float the web control cluster in that corner. Settings and mobile
-   drawers own different chrome. */
-.shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
-  .content:not(.content--chat) {
-  --content-collapsed-chrome-clearance: 48px;
+/* Page toolbar row. Outside chat, settings, and mobile drawers every page
+   header is one row: the title (or a hub's tabs) centered like a window title,
+   the trailing cell (actions, counts) at the right edge, intro text below. The
+   row matches the Mac app titlebar (52px injected by DashboardWindowController;
+   50px mirrors .macos-titlebar-controls for older builds) so the traffic lights
+   and hosted buttons share its centerline; the collapsed-sidebar web cluster in
+   browsers (top: 10px, 32px buttons) lands on the same centerline. Older Mac
+   builds drop that cluster below the drag region (top: 52px), so collapsed
+   navigation there keeps an extra band under the row. */
+.shell:not(.shell--mobile-nav):not(.shell--settings) .content:not(.content--chat) {
+  --page-toolbar-height: 52px;
+  --page-toolbar-clearance: 0px;
 
-  > .connection-action-block,
-  &:not(:has(> .connection-action-block)) .content-header {
-    margin-top: var(--content-collapsed-chrome-clearance);
-  }
-}
-
-/* Native macOS hosts put the traffic lights and hosted titlebar buttons in
-   that corner, so the clearance follows the app titlebar (52px injected by
-   DashboardWindowController; 50px mirrors .macos-titlebar-controls for older
-   builds). The page header then works like a native toolbar: its actions
-   ride in the titlebar row on the right, centered with the window controls,
-   while the title (and hub tabs) stay below the row, aligned with the page
-   content instead of stranded beside the controls. */
-html:is(.openclaw-native-macos, .openclaw-native-nav, .openclaw-native-web-chrome)
-  .shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
-  .content:not(.content--chat) {
-  --content-collapsed-chrome-clearance: var(--openclaw-native-titlebar-height, 50px);
-
-  /* Pages without a header (plugin panels) clear the row with padding. */
-  &:not(:has(> .connection-action-block)) {
-    padding-top: calc(var(--content-collapsed-chrome-clearance) + 16px);
-
-    &:has(.content-header) {
-      padding-top: 0;
-    }
-  }
-
-  &:not(:has(> .connection-action-block)) .content-header {
-    margin-top: 0;
+  &:has(.content-header):not(:has(> .connection-action-block)) {
     padding-top: 0;
+  }
+
+  .content-header {
+    position: relative;
+    display: block;
+    margin-top: 0;
+    padding-top: calc(var(--page-toolbar-height) + var(--page-toolbar-clearance));
     max-height: none;
+  }
 
-    /* Only the title cell carries the clearance; middle siblings (hub tabs)
-       keep the header's end alignment and follow it down, including at the
-       hub breakpoint that moves the tabs to their own row. The trailing
-       cell (actions, counts) rides in the titlebar row. */
-    > :first-child {
-      padding-top: calc(var(--content-collapsed-chrome-clearance) + 12px);
-    }
+  .content-header .page-title,
+  .content-header .hub-page-header__tabs {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    height: var(--page-toolbar-height);
+    max-width: 45%;
+  }
 
-    > :last-child:not(:first-child) {
-      display: flex;
-      align-items: center;
-      align-self: flex-start;
-      min-height: var(--openclaw-native-titlebar-height, 50px);
-    }
+  .content-header .page-title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+
+  /* Hub tabs are the page identity in the row; the heading stays for
+     assistive tech (same recipe as .sr-only). */
+  .content-header.hub-page-header .page-title {
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    clip-path: inset(50%);
+  }
+
+  .content-header :is(.page-subtitle, .page-sub) {
+    margin-top: 4px;
+  }
+
+  .content-header > :last-child:not(:first-child) {
+    position: absolute;
+    top: 0;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: var(--page-toolbar-height);
   }
 }
 
-/* Older Mac builds keep the web cluster and drop it below the drag region
-   (top: 52px above), so the browser clearance stacks on that row. */
-html.openclaw-native-macos:not(.openclaw-native-nav):not(.openclaw-native-web-chrome)
-  .shell.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
+html.openclaw-native-macos
+  .shell:not(.shell--mobile-nav):not(.shell--settings)
   .content:not(.content--chat) {
-  --content-collapsed-chrome-clearance: calc(52px + 48px);
+  --page-toolbar-height: var(--openclaw-native-titlebar-height, 50px);
+}
+
+html.openclaw-native-macos:not(.openclaw-native-nav):not(.openclaw-native-web-chrome)
+  .shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings)
+  .content:not(.content--chat) {
+  --page-toolbar-clearance: 48px;
+}
+
+/* Pages without a header (plugin panels) clear the collapsed-sidebar chrome
+   with padding; the reconnect notice keeps its own clearance. */
+.shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings) .content:not(.content--chat) {
+  > .connection-action-block {
+    margin-top: calc(var(--page-toolbar-height) + var(--page-toolbar-clearance));
+  }
+
+  &:not(:has(.content-header, > .connection-action-block)) {
+    padding-top: calc(var(--page-toolbar-height) + var(--page-toolbar-clearance) + 16px);
+  }
 }
 
 .content-header--page + * {

@@ -1,7 +1,7 @@
-// Native macOS hosts put the traffic lights and hosted titlebar buttons over
-// the top-left of the content column once the sidebar collapses. Page headers
-// there work like a native toolbar: actions ride in the titlebar row, the
-// title sits below it aligned with the page content.
+// Every non-chat page header is one toolbar row: title (or hub tabs) centered
+// like a window title, actions at the trailing edge. Native macOS hosts put the
+// traffic lights and hosted titlebar buttons in that row once the sidebar
+// collapses, so the row must share their centerline instead of sliding under.
 import path from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts"
 import { installNativeWebChrome } from "./native-nav.test-support.ts";
 
 const suite = createControlUiE2eSuite({
-  name: "Control UI native page header clearance E2E",
+  name: "Control UI page toolbar row E2E",
   startServerBeforeBrowser: true,
   unavailableMessage: (executablePath) => `Playwright Chromium is unavailable at ${executablePath}`,
 });
@@ -20,9 +20,13 @@ let proofDir: string | undefined;
 let context: BrowserContext | undefined;
 beforeEach(() => {
   proofDir = proofDirParent
-    ? createControlUiE2eArtifactDir("native-page-header-clearance", proofDirParent)
+    ? createControlUiE2eArtifactDir("page-toolbar-row", proofDirParent)
     : undefined;
 });
+
+type Box = { x: number; y: number; width: number; height: number };
+const centerY = (box: Box) => box.y + box.height / 2;
+const centerX = (box: Box) => box.x + box.width / 2;
 
 suite.define(() => {
   afterEach(async () => {
@@ -30,69 +34,104 @@ suite.define(() => {
     context = undefined;
   });
 
-  async function openAgentsPage(install: (page: Page) => Promise<void>): Promise<Page> {
+  async function openPage(
+    route: string,
+    install?: (page: Page) => Promise<void>,
+    ready = ".content .content-header .page-title",
+  ): Promise<Page> {
     context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
       viewport: { height: 900, width: 1280 },
     });
     const page = await context.newPage();
-    await install(page);
+    await install?.(page);
     await installMockGateway(page);
-    await page.goto(`${suite.server.baseUrl}agents`);
-    await page.locator(".content .content-header .page-title").waitFor({ state: "visible" });
+    await page.goto(`${suite.server.baseUrl}${route}`);
+    await page.locator(ready).first().waitFor({ state: "attached" });
     return page;
   }
 
-  async function expectCollapsed(page: Page): Promise<void> {
+  async function collapseNative(page: Page): Promise<Box> {
+    const toolbar = page.locator(".macos-titlebar-controls");
+    await toolbar.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect
       .poll(() => page.locator(".shell").getAttribute("class"))
       .toContain("shell--nav-collapsed");
+    const box = await toolbar.boundingBox();
+    expect(box).not.toBeNull();
+    return box!;
   }
 
-  it("moves the title below the web titlebar and lifts actions into it", async () => {
-    const page = await openAgentsPage(installNativeWebChrome);
-    const toolbar = page.locator(".macos-titlebar-controls");
-    await toolbar.getByRole("button", { name: "Collapse sidebar" }).click();
-    await expectCollapsed(page);
+  // The shell grid and header padding animate after a collapse, so geometry
+  // checks poll until the row settles.
+  async function expectOnCenterline(target: ReturnType<Page["locator"]>, center: number) {
+    await expect
+      .poll(async () => {
+        const box = await target.boundingBox();
+        return box ? Math.abs(centerY(box) - center) : Number.POSITIVE_INFINITY;
+      })
+      .toBeLessThanOrEqual(0.5);
+  }
+
+  async function expectCenteredIn(
+    target: ReturnType<Page["locator"]>,
+    container: ReturnType<Page["locator"]>,
+  ) {
+    await expect
+      .poll(async () => {
+        const [box, outer] = await Promise.all([target.boundingBox(), container.boundingBox()]);
+        return box && outer ? Math.abs(centerX(box) - centerX(outer)) : Number.POSITIVE_INFINITY;
+      })
+      .toBeLessThanOrEqual(1);
+  }
+
+  it("centers the title in the Mac titlebar row and keeps actions beside it", async () => {
+    const page = await openPage("agents", installNativeWebChrome);
+    const toolbar = await collapseNative(page);
+    expect(toolbar.y + toolbar.height).toBe(52);
     const header = page.locator(".content .content-header").first();
+    const title = header.locator(".page-title");
     if (proofDir) {
       await page.screenshot({
         animations: "disabled",
         path: path.join(proofDir, "native-web-collapsed-page-header.png"),
       });
     }
-    const toolbarBox = await toolbar.boundingBox();
-    expect(toolbarBox).not.toBeNull();
-    expect(toolbarBox!.y + toolbarBox!.height).toBe(52);
-    await expect
-      .poll(async () => (await header.locator(".page-title").boundingBox())?.y ?? -1)
-      .toBeGreaterThanOrEqual(52);
-    // The header padding transitions after the collapse, so poll the geometry.
-    const toolbarCenter = toolbarBox!.y + toolbarBox!.height / 2;
-    await expect
-      .poll(() =>
-        header.locator(".page-header-actions .btn").evaluateAll((buttons, center) => {
-          if (buttons.length === 0) {
-            return Number.POSITIVE_INFINITY;
-          }
-          return Math.max(
-            ...buttons.map((button) => {
-              const box = button.getBoundingClientRect();
-              return box.top < 0
-                ? Number.POSITIVE_INFINITY
-                : Math.abs(box.top + box.height / 2 - center);
-            }),
-          );
-        }, toolbarCenter),
-      )
-      .toBeLessThanOrEqual(0.5);
+    await expectOnCenterline(title, centerY(toolbar));
+    await expectCenteredIn(title, header);
+    const titleBox = (await title.boundingBox())!;
+    expect(titleBox.x).toBeGreaterThan(toolbar.x + toolbar.width);
+    const buttons = header.locator(".page-header-actions .btn");
+    expect(await buttons.count()).toBeGreaterThan(0);
+    for (let index = 0; index < (await buttons.count()); index += 1) {
+      await expectOnCenterline(buttons.nth(index), centerY(toolbar));
+      const box = (await buttons.nth(index).boundingBox())!;
+      expect(box.x).toBeGreaterThan(titleBox.x + titleBox.width);
+    }
+    // The subtitle stays as intro text under the row.
+    const subtitle = header.locator(".page-subtitle");
+    expect((await subtitle.boundingBox())!.y).toBeGreaterThanOrEqual(52);
   });
 
-  it("keeps the title below the legacy Mac app's lowered web controls", async () => {
+  it("puts hub tabs in the row instead of a redundant title", async () => {
+    const page = await openPage("sessions", installNativeWebChrome, ".hub-page-header__tabs");
+    const toolbar = await collapseNative(page);
+    const header = page.locator(".content .content-header.hub-page-header");
+    // The heading stays for assistive tech but takes no visible space.
+    const titleBox = (await header.locator(".page-title").boundingBox())!;
+    expect(Math.max(titleBox.width, titleBox.height)).toBeLessThanOrEqual(1);
+    const tabs = header.locator(".hub-page-header__tabs");
+    await expectOnCenterline(tabs, centerY(toolbar));
+    await expectCenteredIn(tabs, header);
+    const tabsBox = (await tabs.boundingBox())!;
+    expect(tabsBox.x).toBeGreaterThan(toolbar.x + toolbar.width);
+  });
+
+  it("keeps the legacy Mac app's lowered web controls clear of intro text", async () => {
     // Older apps stamp only openclaw-native-macos and keep the in-page
     // cluster, which drops below the drag region instead of into a titlebar.
-    const page = await openAgentsPage((target) =>
+    const page = await openPage("agents", (target) =>
       target.addInitScript(() => {
         const stamp = () => document.documentElement.classList.add("openclaw-native-macos");
         if (document.documentElement) {
@@ -103,16 +142,15 @@ suite.define(() => {
       }),
     );
     await page.locator(".sidebar-brand__collapse").click();
-    await expectCollapsed(page);
-    const controlsBottom = await page
-      .locator(".shell-chrome-controls")
-      .evaluate((element) => element.getBoundingClientRect().bottom);
-    expect(controlsBottom).toBeGreaterThan(52);
     await expect
-      .poll(
-        async () =>
-          (await page.locator(".content .content-header .page-title").boundingBox())?.y ?? -1,
-      )
-      .toBeGreaterThanOrEqual(controlsBottom);
+      .poll(() => page.locator(".shell").getAttribute("class"))
+      .toContain("shell--nav-collapsed");
+    const controls = (await page.locator(".shell-chrome-controls").boundingBox())!;
+    expect(controls.y + controls.height).toBeGreaterThan(52);
+    const header = page.locator(".content .content-header").first();
+    await expectOnCenterline(header.locator(".page-title"), 25);
+    await expect
+      .poll(async () => (await header.locator(".page-subtitle").boundingBox())?.y ?? -1)
+      .toBeGreaterThanOrEqual(controls.y + controls.height);
   });
 });
