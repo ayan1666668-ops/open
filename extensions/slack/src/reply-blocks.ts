@@ -59,24 +59,58 @@ export type SlackReplyBlockResolution = {
   segments: SlackReplyBlockSegment[];
 };
 
+const SLACK_LONG_MESSAGE_LINE_THRESHOLD = 5;
+
+function splitSlackLongMessage(text: string): { summary: string; details: string } | undefined {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < SLACK_LONG_MESSAGE_LINE_THRESHOLD) {
+    return undefined;
+  }
+  return {
+    summary: lines.slice(0, SLACK_LONG_MESSAGE_LINE_THRESHOLD - 1).join("\n"),
+    details: lines.slice(SLACK_LONG_MESSAGE_LINE_THRESHOLD - 1).join("\n"),
+  };
+}
+
+/** Applies the Slack-only long-message policy once at the adapter normalization boundary. */
+export function applySlackLongMessageGuard(payload: ReplyPayload): ReplyPayload {
+  if (hasSlackReplyStructuredContent(payload)) {
+    return payload;
+  }
+  const text = payload.text?.trim();
+  const split = text ? splitSlackLongMessage(text) : undefined;
+  if (!split) {
+    return payload;
+  }
+  return {
+    ...payload,
+    text: split.summary,
+    presentation: { blocks: [{ type: "context", text: split.details }] },
+  };
+}
+
 export function normalizeSlackReplyPayload(payload: ReplyPayload): ReplyPayload {
-  const previousSlackData = asOptionalRecord(payload.channelData?.slack) ?? {};
+  const guardedPayload = applySlackLongMessageGuard(payload);
+  const previousSlackData = asOptionalRecord(guardedPayload.channelData?.slack) ?? {};
   const { authoredPresentationText: _authoredPresentationText, ...slackData } = previousSlackData;
   if (
-    payload.presentationTextMode !== "fallback" ||
-    !normalizeMessagePresentation(payload.presentation)
+    guardedPayload.presentationTextMode !== "fallback" ||
+    !normalizeMessagePresentation(guardedPayload.presentation)
   ) {
     return Object.hasOwn(previousSlackData, "authoredPresentationText")
-      ? { ...payload, channelData: { ...payload.channelData, slack: slackData } }
-      : payload;
+      ? {
+          ...guardedPayload,
+          channelData: { ...guardedPayload.channelData, slack: slackData },
+        }
+      : guardedPayload;
   }
   // Core withholds alternative text during native rendering. Capture it after
   // policy rewrites so the same Slack compiler can preserve authored literals.
   return {
-    ...payload,
+    ...guardedPayload,
     channelData: {
-      ...payload.channelData,
-      slack: { ...slackData, authoredPresentationText: payload.text },
+      ...guardedPayload.channelData,
+      slack: { ...slackData, authoredPresentationText: guardedPayload.text },
     },
   };
 }

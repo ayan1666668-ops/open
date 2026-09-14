@@ -189,6 +189,32 @@ function createMixedPresentationPayload(): ReplyPayload {
 }
 
 describe("slackOutbound sendPayload", () => {
+  it("posts a five-line plain payload once as summary and detail blocks", async () => {
+    const source = { text: "one\ntwo\nthree\nfour\nfive\nsix" };
+    const normalized = slackOutbound.normalizePayload?.({
+      payload: source,
+      cfg: {},
+      accountId: "default",
+      to: "C12345",
+    });
+    if (!normalized) {
+      throw new Error("Expected normalized Slack payload");
+    }
+    const payload = await renderPayloadForSend(normalized, normalized.text);
+    const { run, sendMock } = createHarness({ payload });
+
+    await run();
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const sent = sentSlackMessage(sendMock, 0);
+    expect(sent.options.blocks).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: "one\ntwo\nthree\nfour", verbatim: true } },
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: "five\nsix", verbatim: true }],
+      },
+    ]);
+  });
   it("renders presentation blocks", async () => {
     const { run, sendMock, to } = createHarness({
       payload: {
