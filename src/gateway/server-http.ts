@@ -64,6 +64,11 @@ import {
   handleProviderOAuthCallback,
   PROVIDER_OAUTH_CALLBACK_PATH,
 } from "./provider-browser-auth.js";
+import type { GatewayServerExtraHttpRoute } from "./server-extra-handlers.js";
+import {
+  authorizeGatewayHttpRouteOrReply,
+  handleServerExtraHttpRoute,
+} from "./server-extra-http-routes.js";
 import {
   getCachedPluginGatewayAuthBypassPaths,
   shouldEnforceDefaultPluginGatewayAuth,
@@ -72,8 +77,6 @@ import {
 } from "./server-http-plugin-auth.js";
 import { handleGatewayProbeRequest } from "./server-http-probes.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
-import type { GatewayServerExtraHttpRoute } from "./server-extra-handlers.js";
-import { authorizeGatewayHttpRouteOrReply, handleServerExtraHttpRoute } from "./server-extra-http-routes.js";
 import type { HooksRequestHandler } from "./server/hooks-request-handler.js";
 import { runWithGatewayHttpWorkAdmission } from "./server/http-work-admission.js";
 import {
@@ -402,7 +405,12 @@ export function createGatewayHttpServer(opts: {
             getStartup,
           ),
       ];
-      requestStages.push(() => handleServerExtraHttpRoute(opts.serverExtraHttpRoutes, req, res, scopedRequestPath, { ...routeAuth, getResolvedAuth }));
+      requestStages.push(() =>
+        handleServerExtraHttpRoute(opts.serverExtraHttpRoutes, req, res, scopedRequestPath, {
+          ...routeAuth,
+          getResolvedAuth,
+        }),
+      );
       const addRequestStage = (
         enabled: boolean,
         stage: GatewayHttpRequestStage,

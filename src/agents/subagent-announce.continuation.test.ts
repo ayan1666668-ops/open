@@ -70,8 +70,8 @@ vi.mock("../plugins/hook-runner-global.js", () => ({
   }),
 }));
 
-import { findContinuationDelegateFlowByOriginRun } from "../auto-reply/continuation/delegate-flow-store.js";
 import { resetDelegateDispatchHedgesForTests } from "../auto-reply/continuation/delegate-dispatch-hedge.js";
+import { findContinuationDelegateFlowByOriginRun } from "../auto-reply/continuation/delegate-flow-store.js";
 import { hasLiveContinuationTimerRefs } from "../auto-reply/continuation/state.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import {

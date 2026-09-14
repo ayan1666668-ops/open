@@ -32,13 +32,13 @@ import {
   listTaskFlowsForOwnerKey,
   updateFlowRecordByIdExpectedRevision,
 } from "../../tasks/task-flow-runtime-internal.js";
-import * as delegateFlowDiagnostics from "./delegate-flow-diagnostics.js";
 import {
   projectDelegateFlow,
   releaseDelegateAttachmentPayload,
   resetDelegateAttachmentPayloadsForTests,
   storeDelegateAttachmentPayload,
 } from "./delegate-attachment-payload-store.js";
+import * as delegateFlowDiagnostics from "./delegate-flow-diagnostics.js";
 import { createContinuationRecipientAuthorityBinding } from "./recipient-authority-binding.js";
 import {
   CONTINUATION_DELEGATE_FANOUT_MODES,
@@ -405,7 +405,9 @@ export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDel
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: true });
 }
 
-export function decodeDelegateFlowMetadata(flow: TaskFlowRecord): PendingContinuationDelegate | undefined {
+export function decodeDelegateFlowMetadata(
+  flow: TaskFlowRecord,
+): PendingContinuationDelegate | undefined {
   return decodeDelegateFlowWithOptions(flow, { requireAttachmentPayload: false });
 }
 

@@ -11,10 +11,7 @@ type StoredDelegateState = PendingContinuationDelegate & {
   traceparentProvenance?: "internal";
 };
 
-const payloads = new Map<
-  string,
-  Pick<PendingContinuationDelegate, "attachments" | "attachAs">
->();
+const payloads = new Map<string, Pick<PendingContinuationDelegate, "attachments" | "attachAs">>();
 
 export function storeDelegateAttachmentPayload(
   flowId: string,
