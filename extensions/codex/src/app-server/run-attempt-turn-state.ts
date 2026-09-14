@@ -72,7 +72,7 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
     startupTimeoutMs,
   } = resources;
   const { connection } = prompt.context.runtime;
-  const { params, options, runAbortController } = connection;
+  const { params, nativeHookRelay, runAbortController } = connection;
   const state = new CodexAttemptState();
   const { promise: completion, resolve: resolveCompletion } = createDeferred<void>();
   const settlementExpired = createDeferred<void>();
@@ -114,7 +114,7 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
   const renewNativeHookRelayForTurnProgress = () => {
     if (
       !resourceState.nativeHookRelay ||
-      options.nativeHookRelay?.ttlMs !== undefined ||
+      nativeHookRelay?.ttlMs !== undefined ||
       pendingNativeHookRenewal
     ) {
       return;

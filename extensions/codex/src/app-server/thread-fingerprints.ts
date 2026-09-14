@@ -85,6 +85,48 @@ export function fingerprintJsonObject(value: JsonObject): string {
   return JSON.stringify(stabilizeJsonValue(value));
 }
 
+/** Compare the installed relay shape, excluding the renewable authority encoded in its commands. */
+export function fingerprintCodexNativeHookInstallation(
+  config: JsonObject | undefined,
+  generation?: string,
+): string {
+  const features = isJsonObject(config?.features) ? config.features : undefined;
+  const enabled = config?.["features.hooks"] ?? features?.hooks;
+  if (enabled === false) {
+    return "disabled";
+  }
+  const hooks = isJsonObject(config?.hooks) ? config.hooks : undefined;
+  const normalize = (value: JsonValue): JsonValue => {
+    if (Array.isArray(value)) {
+      return value.map(normalize);
+    }
+    if (!isJsonObject(value)) {
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        // The exact known generation is per-turn authority, not a new installation.
+        key === "command" && typeof entry === "string" && generation
+          ? entry.replaceAll(generation, "<relay-generation>")
+          : normalize(entry),
+      ]),
+    );
+  };
+  return fingerprintJsonObject({
+    enabled: enabled ?? null,
+    // State trust hashes derive from these commands; comparing them would turn
+    // authority renewal into a policy change. Event arrays own the installed shape.
+    // An omitted array inherits CLI hooks; an empty array replaces them.
+    events: Object.fromEntries(
+      ["PreToolUse", "PostToolUse", "PermissionRequest", "Stop"].map((event) => [
+        event,
+        normalize(config?.[`hooks.${event}`] ?? hooks?.[event] ?? null),
+      ]),
+    ),
+  });
+}
+
 /** Hash thread-creation identity; settings already applied by turn/start must not restart Codex. */
 export function fingerprintCodexThreadConfig(
   request: JsonObject,

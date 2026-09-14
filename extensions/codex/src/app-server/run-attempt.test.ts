@@ -47,6 +47,7 @@ import { prepareCodexAppServerAuthBinding } from "./auth-binding.js";
 import { resolveCodexAppServerFallbackApiKeyCacheKey } from "./auth-cache-key.js";
 import {
   consumeCodexAppServerLiveThread,
+  recordCodexEphemeralThreadCreation,
   releaseCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
@@ -7907,15 +7908,16 @@ describe("runCodexAppServerAttempt", () => {
   });
 
   it.each([
-    { transport: "stdio", hasAnswer: true },
-    { transport: "stdio", hasAnswer: false },
-    { transport: "proxy", hasAnswer: true },
-    { transport: "proxy", hasAnswer: false },
-    { transport: "websocket", hasAnswer: false },
-    { transport: "unix", hasAnswer: false },
+    { transport: "stdio", hasAnswer: true, creationCatalog: false },
+    { transport: "stdio", hasAnswer: false, creationCatalog: false },
+    { transport: "proxy", hasAnswer: true, creationCatalog: false },
+    { transport: "proxy", hasAnswer: false, creationCatalog: false },
+    { transport: "websocket", hasAnswer: false, creationCatalog: false },
+    { transport: "unix", hasAnswer: false, creationCatalog: false },
+    { transport: "stdio", hasAnswer: true, creationCatalog: true },
   ] as const)(
-    "preserves supervised native model and transport/home guards over $transport (answer: $hasAnswer)",
-    async ({ transport, hasAnswer }) => {
+    "preserves supervised native model and transport/home guards over $transport (answer: $hasAnswer, creation catalog: $creationCatalog)",
+    async ({ transport, hasAnswer, creationCatalog }) => {
       const { sessionFile, workspaceDir, agentDir } = createRunPaths();
       const beforePromptBuild = vi.fn(() => undefined);
       initializeGlobalHookRunner(
@@ -7924,14 +7926,16 @@ describe("runCodexAppServerAttempt", () => {
       const codexHome = path.join(tempDir, "review-codex-home");
       vi.stubEnv("CODEX_HOME", codexHome);
       const rolloutPath = path.join(codexHome, "sessions", "thread-existing.jsonl");
-      await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
-      await fs.writeFile(
-        rolloutPath,
-        JSON.stringify({
-          type: "session_meta",
-          payload: { id: "thread-existing", model_provider: "openai" },
-        }) + "\n",
-      );
+      if (!creationCatalog) {
+        await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+        await fs.writeFile(
+          rolloutPath,
+          JSON.stringify({
+            type: "session_meta",
+            payload: { id: "thread-existing", model_provider: "openai" },
+          }) + "\n",
+        );
+      }
       const pluginConfig = {
         appServer: {
           mode: "guardian",
@@ -7951,7 +7955,7 @@ describe("runCodexAppServerAttempt", () => {
         preserveNativeModel: true,
         conversationSourceTransferComplete: true,
         dynamicToolsFingerprint: codexDynamicToolsFingerprint([]),
-        rolloutPath,
+        rolloutPath: creationCatalog ? undefined : rolloutPath,
         appServerRuntimeFingerprint: buildCodexAppServerConnectionFingerprint(
           resolveCodexSupervisionAppServerRuntimeOptions({ pluginConfig }),
           agentDir,
@@ -7988,7 +7992,9 @@ describe("runCodexAppServerAttempt", () => {
           } else if (message.method === "config/read") {
             result = { config: { model_provider: "openai" }, origins: {} };
           } else if (message.method === "thread/read") {
-            result = { thread: { ...nativeResponse.thread, path: rolloutPath } };
+            result = {
+              thread: { ...nativeResponse.thread, path: creationCatalog ? null : rolloutPath },
+            };
           } else if (message.method === "thread/resume") {
             // Native resume tears down an idle, unsubscribed thread before applying overrides.
             // A successful response alone cannot prove that its configuration changed.
@@ -8007,7 +8013,24 @@ describe("runCodexAppServerAttempt", () => {
         },
       });
       const start = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-      const clientFactory = vi.fn(sharedClientModule.getLeasedSharedCodexAppServerClient);
+      const clientFactory = vi.fn(async (options?: CodexAppServerClientOptions) => {
+        const client = await sharedClientModule.getLeasedSharedCodexAppServerClient(options);
+        if (creationCatalog) {
+          recordCodexEphemeralThreadCreation(client, "thread-existing", {
+            hookInstallation: "created",
+            dynamicTools: [],
+          });
+        }
+        return client;
+      });
+      if (creationCatalog) {
+        const binding = await readCodexAppServerBinding(sessionFile);
+        assert(binding);
+        await writeCodexAppServerBinding(sessionFile, {
+          ...binding,
+          clientId: harness.client.getInstanceId(),
+        });
+      }
       testing.setOpenClawCodingToolsFactoryForTests(() => []);
       // This test owns review-policy projection, not requester-scoped MCP discovery.
       agentHarnessRuntimeMocks.forceModelToolsUnsupported = true;

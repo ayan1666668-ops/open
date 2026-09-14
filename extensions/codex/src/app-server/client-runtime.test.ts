@@ -29,6 +29,9 @@ const {
   hasCodexAppServerLiveThread,
   isCodexAppServerLiveThreadClaimed,
   protectCodexAppServerLiveThread,
+  recordCodexEphemeralThreadCreation,
+  readCodexNativeHookInstallation,
+  readCodexEphemeralThreadCatalog,
   releaseCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
   unsubscribeCodexAppServerLiveThread,
@@ -63,6 +66,51 @@ describe("Codex app-server client runtime", () => {
     expect(release.mock.calls.some(([threadId]) => threadId === "ephemeral")).toBe(false);
     await ownership?.release("ephemeral");
     expect(hasCodexAppServerLiveThread(client, "ephemeral")).toBe(false);
+  });
+
+  it("keeps hook creation facts and catalogs through claim return and clears only exact retirement", async () => {
+    const a = createClientHarness();
+    const b = createClientHarness();
+    clients.push(a.client, b.client);
+    for (const client of [a.client, b.client])
+      ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent" });
+    recordCodexEphemeralThreadCreation(a.client, "thread", {
+      hookInstallation: "installed",
+      dynamicTools: [],
+    });
+    recordCodexEphemeralThreadCreation(a.client, "sibling", {
+      hookInstallation: "sibling-installed",
+      dynamicTools: [],
+    });
+    expect(readCodexNativeHookInstallation(b.client, "thread")).toBeUndefined();
+    expect(readCodexEphemeralThreadCatalog(b.client, "thread")).toBeUndefined();
+    expect(readCodexEphemeralThreadCatalog(a.client, "thread")).toEqual([]);
+    const copy = readCodexEphemeralThreadCatalog(a.client, "thread")!;
+    copy.push({ type: "function", name: "changed", description: "Changed", inputSchema: {} });
+    expect(readCodexEphemeralThreadCatalog(a.client, "thread")).toEqual([]);
+    const release = vi.fn(async () => undefined);
+    await retainCodexAppServerLiveThread(a.client, "thread", release, "config", null, "policy");
+    const claim = await consumeCodexAppServerLiveThread(a.client, "thread");
+    expect(claim).toBeDefined();
+    expect(readCodexNativeHookInstallation(a.client, "thread")).toBe("installed");
+    await retainCodexAppServerLiveThread(
+      a.client,
+      "thread",
+      claim!.release,
+      "config",
+      null,
+      "policy",
+    );
+    a.send({ method: "thread/compacted", params: { threadId: "thread" } });
+    expect(readCodexNativeHookInstallation(a.client, "thread")).toBe("installed");
+    expect(readCodexEphemeralThreadCatalog(a.client, "thread")).toEqual([]);
+    await releaseCodexAppServerLiveThread(a.client, "thread");
+    expect(readCodexNativeHookInstallation(a.client, "thread")).toBeUndefined();
+    expect(readCodexEphemeralThreadCatalog(a.client, "thread")).toBeUndefined();
+    expect(readCodexNativeHookInstallation(a.client, "sibling")).toBe("sibling-installed");
+    a.client.close();
+    expect(readCodexNativeHookInstallation(a.client, "sibling")).toBeUndefined();
+    expect(readCodexEphemeralThreadCatalog(a.client, "sibling")).toBeUndefined();
   });
 
   it("installs shared handlers once per physical client", async () => {
@@ -113,6 +161,97 @@ describe("Codex app-server client runtime", () => {
         result: { accessToken: "refreshed", chatgptAccountId: "account" },
       }),
     );
+  });
+
+  it("shares creation facts and branded subscription ownership across module generations", async () => {
+    const { client } = createClientHarness();
+    const sibling = createClientHarness().client;
+    clients.push(client, sibling);
+    const notification = vi.spyOn(client, "addNotificationHandler");
+    const request = vi.spyOn(client, "addRequestHandler");
+    const close = vi.spyOn(client, "addCloseHandler");
+    ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent" });
+    ensureCodexAppServerClientRuntime(sibling, { agentDir: "/tmp/sibling" });
+    const creation = {
+      hookInstallation: "installed",
+      dynamicTools: [
+        { type: "function" as const, name: "read", description: "Read", inputSchema: {} },
+      ],
+    };
+    recordCodexEphemeralThreadCreation(client, "thread", creation);
+    recordCodexEphemeralThreadCreation(sibling, "thread", creation);
+    const release = vi.fn(async () => undefined);
+    await retainCodexAppServerLiveThread(client, "thread", release, "config", null, "policy");
+    const original = await consumeCodexAppServerLiveThread(client, "thread");
+    expect(original).toBeDefined();
+
+    vi.resetModules();
+    const replacement = await import("./client-runtime.js");
+    replacement.ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent", config: {} });
+    expect(notification).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(replacement.isCodexAppServerLiveThreadClaimed(client, "thread")).toBe(true);
+    expect(replacement.readCodexNativeHookInstallation(client, "thread")).toBe("installed");
+    expect(replacement.readCodexEphemeralThreadCatalog(client, "thread")).toEqual(
+      creation.dynamicTools,
+    );
+    expect(
+      await replacement.retainCodexAppServerLiveThread(
+        client,
+        "thread",
+        original!.release,
+        "config",
+        null,
+        "policy",
+      ),
+    ).toBe(true);
+    const successor = await replacement.consumeCodexAppServerLiveThread(client, "thread");
+    expect(successor).toMatchObject({ configFingerprint: "config", ephemeralPolicy: "policy" });
+    await original!.release("thread");
+    expect(release).not.toHaveBeenCalled();
+    expect(() => successor!.assertCurrent()).not.toThrow();
+    await successor!.release("thread");
+    expect(release).toHaveBeenCalledExactlyOnceWith("thread");
+    expect(readCodexNativeHookInstallation(client, "thread")).toBeUndefined();
+    expect(replacement.readCodexEphemeralThreadCatalog(client, "thread")).toBeUndefined();
+    expect(replacement.readCodexNativeHookInstallation(sibling, "thread")).toBe("installed");
+    sibling.close();
+    expect(replacement.readCodexNativeHookInstallation(sibling, "thread")).toBeUndefined();
+  });
+
+  it("keeps native-child protection and exact close ownership across module generations", async () => {
+    vi.useFakeTimers();
+    const { client } = createClientHarness();
+    const sibling = createClientHarness().client;
+    clients.push(client, sibling);
+    ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent" });
+    ensureCodexAppServerClientRuntime(sibling, { agentDir: "/tmp/sibling" });
+    const release = vi.fn(async () => undefined);
+    const unprotect = protectCodexAppServerLiveThread(client, "parent");
+    await retainCodexAppServerLiveThread(client, "parent", release, "config");
+    await retainCodexAppServerLiveThread(
+      sibling,
+      "sibling",
+      release,
+      "sibling-config",
+      null,
+      "policy",
+    );
+
+    vi.resetModules();
+    const replacement = await import("./client-runtime.js");
+    replacement.ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent" });
+    await replacement.retainCodexAppServerLiveThread(client, "parent", release, "config");
+    await vi.advanceTimersByTimeAsync(EXPECTED_LIVE_THREAD_IDLE_TIMEOUT_MS + 1);
+    expect(replacement.hasCodexAppServerLiveThread(client, "parent")).toBe(true);
+    expect(release).not.toHaveBeenCalled();
+    client.close();
+    unprotect();
+    expect(replacement.hasCodexAppServerLiveThread(client, "parent")).toBe(false);
+    expect(replacement.hasCodexAppServerLiveThread(sibling, "sibling")).toBe(true);
+    await replacement.releaseCodexAppServerLiveThread(sibling, "sibling");
+    expect(release).toHaveBeenCalledExactlyOnceWith("sibling");
   });
 
   it("rejects ChatGPT refresh on a prepared API-key client", async () => {

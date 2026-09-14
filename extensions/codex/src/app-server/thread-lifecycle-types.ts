@@ -41,6 +41,8 @@ type CodexThreadFinalConfigPatchDecision =
   | { action: "start" };
 
 export type CodexThreadFinalConfigPatchResult = {
+  /** Acquire callback ownership only after the prepared configuration is admitted. */
+  activate?: () => Promise<void>;
   configPatch?: JsonObject;
   nativeHookRelayGeneration?: string;
 };

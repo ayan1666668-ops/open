@@ -44,6 +44,7 @@ import {
   prepareCodexThreadLifecyclePreflight,
   resolveCodexThreadAgentDir,
 } from "./thread-lifecycle-preflight.js";
+import type { CodexThreadFinalConfigPatchResult } from "./thread-lifecycle-types.js";
 import type {
   CodexAppServerThreadLifecycleBinding,
   CodexStartOrResumeThreadParams,
@@ -162,10 +163,11 @@ export async function startOrResumeThread(
             params.pluginThreadConfig?.build(),
           )
         : undefined;
-      const finalConfigPatch = (await params.buildFinalConfigPatch?.({ action: "start" })) ?? {
-        configPatch: params.finalConfigPatch,
-        nativeHookRelayGeneration: params.nativeHookRelayGeneration,
-      };
+      const finalConfigPatch: CodexThreadFinalConfigPatchResult =
+        (await params.buildFinalConfigPatch?.({ action: "start" })) ?? {
+          configPatch: params.finalConfigPatch,
+          nativeHookRelayGeneration: params.nativeHookRelayGeneration,
+        };
       const config = lifecycleTiming.measureSync("merge-thread-config", () =>
         applyCodexNativeSkillIsolation(
           mergeCodexThreadConfigs(
@@ -177,6 +179,8 @@ export async function startOrResumeThread(
           nativeSkillIsolation,
         ),
       );
+      await finalConfigPatch.activate?.();
+      throwIfAborted();
       return await materializePendingSupervisionBranch({
         client: params.client,
         abandonClient:

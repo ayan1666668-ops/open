@@ -1,6 +1,6 @@
 import path from "node:path";
 import { resolveCodexAppServerLocalHomeDir } from "./auth-start-options.js";
-import { readCodexClientSessionMeta } from "./client-runtime.js";
+import { readCodexClientSessionMeta, readCodexEphemeralThreadCatalog } from "./client-runtime.js";
 import type { CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
@@ -118,12 +118,21 @@ export async function loadCodexNativeToolCatalog(params: {
       "Canonical Codex declarations require the original verified local binding and selected native connection; the thread is preserved.",
     );
   }
-  const metadata = await readCodexClientSessionMeta(
-    client,
-    path.join(home, "sessions"),
-    binding.rolloutPath,
-    binding.threadId,
-  );
+  const createdCatalog = readCodexEphemeralThreadCatalog(client, binding.threadId);
+  if (createdCatalog !== undefined && binding.clientId !== client.getInstanceId()) {
+    throw new Error(
+      "Codex ephemeral declarations require their original live client; the thread is preserved.",
+    );
+  }
+  const metadata =
+    createdCatalog !== undefined
+      ? { id: binding.threadId, dynamic_tools: createdCatalog }
+      : await readCodexClientSessionMeta(
+          client,
+          path.join(home, "sessions"),
+          binding.rolloutPath,
+          binding.threadId,
+        );
   assertCurrent();
   return parseCodexNativeToolCatalog(metadata, binding.threadId, binding.dynamicToolsFingerprint);
 }

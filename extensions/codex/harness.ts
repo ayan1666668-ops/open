@@ -10,6 +10,8 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolvePluginConfigObject } from "openclaw/plugin-sdk/plugin-config-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { CODEX_NATIVE_TOOL_REQUIREMENTS } from "./native-tool-policy.js";
+// The parse leaf is already loaded by plugin discovery; the config barrel loads runtime code.
+import { resolveCodexAppServerNativeHookRelay } from "./src/app-server/config-parsing.js";
 import { readCodexRuntimeModelId } from "./src/app-server/model-runtime.js";
 import { sessionBindingIdentity } from "./src/app-server/session-binding-record.js";
 import type { CodexAppServerBindingStore } from "./src/app-server/session-binding.js";
@@ -307,6 +309,7 @@ export function createCodexAppServerAgentHarness(
       } = await import("./src/app-server/cyber-failover.js");
       const { emitCodexCyberNotice } = await import("./src/app-server/cyber-failover-notice.js");
       const pluginConfig = resolveAttemptPluginConfig(params.config);
+      const nativeHookRelay = resolveCodexAppServerNativeHookRelay(pluginConfig);
       // The attempt resolves its turn model from runtimeModelId, so escalation
       // reroutes one turn without touching the session's stored selection.
       const attemptModel = readCodexRuntimeModelId(params.model, params.modelId);
@@ -320,7 +323,7 @@ export function createCodexAppServerAgentHarness(
             pluginConfig,
             runtime: sessionRuntime,
             runtimeModelId: model,
-            nativeHookRelay: { enabled: true },
+            nativeHookRelay,
           },
         );
 
@@ -427,12 +430,15 @@ export function createCodexAppServerAgentHarness(
     },
     runSideQuestion: async (params) => {
       const { runCodexAppServerSideQuestion } = await import("./src/app-server/side-question.js");
+      // Side questions keep the registration-time plugin config, matching the
+      // surrounding upstream call sites; only `runAttempt` resolves per-attempt.
+      const pluginConfig = options?.resolvePluginConfig?.() ?? options?.pluginConfig;
       return runCodexAppServerSideQuestion(params, {
         bindingStore: options.bindingStore,
-        pluginConfig: options?.resolvePluginConfig?.() ?? options?.pluginConfig,
+        pluginConfig,
         runtime: sessionRuntime,
         runtimeModelId: readCodexRuntimeModelId(params.runtimeModel, params.model),
-        nativeHookRelay: { enabled: true },
+        nativeHookRelay: resolveCodexAppServerNativeHookRelay(pluginConfig),
       });
     },
     compact: async (params) => {

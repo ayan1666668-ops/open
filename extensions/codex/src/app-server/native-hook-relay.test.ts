@@ -1,5 +1,8 @@
 // Codex tests cover native hook relay plugin behavior.
-import type { NativeHookRelayRegistrationHandle } from "openclaw/plugin-sdk/agent-harness-runtime";
+import type {
+  NativeHookRelayEvent,
+  NativeHookRelayRegistrationHandle,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
@@ -11,7 +14,10 @@ import {
   buildCodexNativeHookRelayConfig,
   buildCodexNativeHookRelayDisabledConfig,
   emitCodexNativePreToolUseFailureDiagnostic,
+  resolveCodexNativeHookRelayEvents,
+  resolveCodexNativeHookRelayForApprovalPolicy,
 } from "./native-hook-relay.js";
+import { fingerprintCodexNativeHookInstallation } from "./thread-fingerprints.js";
 
 afterEach(() => resetDiagnosticEventsForTest());
 
@@ -247,49 +253,37 @@ describe("Codex native hook relay config", () => {
     });
   });
 
-  it("clears omitted hook events when requested", () => {
-    expect(
-      buildCodexNativeHookRelayConfig({
-        relay: createRelay(),
-        events: ["permission_request"],
-        clearOmittedEvents: true,
-      }),
-    ).toEqual({
-      "features.hooks": true,
-      "hooks.PreToolUse": [],
-      "hooks.PostToolUse": [],
-      "hooks.PermissionRequest": [
-        {
-          hooks: [
-            {
-              type: "command",
-              command:
-                "openclaw hooks relay --provider codex --relay-id relay-1 --generation generation-1 --event permission_request --timeout 9000",
-              timeout: 10,
-              async: false,
-              statusMessage: "OpenClaw native hook relay",
-            },
-          ],
-        },
-      ],
-      "hooks.Stop": [],
-      "hooks.state": {
-        "/<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-        "<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-        "/<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-        "<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-        "/<session-flags>/config.toml:permission_request:0:0": {
-          enabled: true,
-          trusted_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-        },
-        "<session-flags>/config.toml:permission_request:0:0": {
-          enabled: true,
-          trusted_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-        },
-        "/<session-flags>/config.toml:stop:0:0": { enabled: false },
-        "<session-flags>/config.toml:stop:0:0": { enabled: false },
-      },
+  it("retains CLI inheritance differences when the approval guard narrows selected events", () => {
+    const relay = createRelay({ inactiveEvents: ["post_tool_use", "before_agent_finalize"] });
+    const appServer = { approvalPolicy: "on-request" } as const;
+    const requested: { enabled: boolean; events?: readonly NativeHookRelayEvent[] } = {
+      enabled: false,
+    };
+    const guarded = resolveCodexNativeHookRelayForApprovalPolicy({
+      requested,
+      approvalPolicy: appServer.approvalPolicy,
+      warn: vi.fn(),
     });
+    const initial = buildCodexNativeHookRelayConfig({
+      relay,
+      events: resolveCodexNativeHookRelayEvents({ appServer }),
+    });
+    const narrowed = buildCodexNativeHookRelayConfig({
+      relay,
+      events: resolveCodexNativeHookRelayEvents({ appServer, configuredEvents: guarded?.events }),
+    });
+    expect(initial["hooks.PreToolUse"]).toEqual(narrowed["hooks.PreToolUse"]);
+    expect(initial["hooks.Stop"]).toEqual([]);
+    expect(narrowed).not.toHaveProperty(["hooks.Stop"]);
+    expect(fingerprintCodexNativeHookInstallation(initial, relay.generation)).not.toBe(
+      fingerprintCodexNativeHookInstallation(narrowed, relay.generation),
+    );
+
+    // An explicitly scoped internal request already emits that exact overlay.
+    const preOnly = buildCodexNativeHookRelayConfig({ relay, events: ["pre_tool_use"] });
+    expect(fingerprintCodexNativeHookInstallation(preOnly, relay.generation)).toBe(
+      fingerprintCodexNativeHookInstallation(narrowed, relay.generation),
+    );
   });
 
   it("omits matchers so Codex MCP tool names reach the relay with a stable trust hash", () => {

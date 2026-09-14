@@ -36,7 +36,10 @@ import type {
   CodexThreadFinalConfigPatchResult,
 } from "./thread-lifecycle-types.js";
 import { retainCodexAppServerBindingSubscription } from "./thread-ownership.js";
-import { CodexIncognitoPolicyChangeError } from "./thread-policy.js";
+import {
+  assertCodexIncognitoHookInstallation,
+  CodexIncognitoPolicyChangeError,
+} from "./thread-policy.js";
 import { buildThreadResumeParams } from "./thread-requests.js";
 
 type CodexWarmThreadReuseParams = CodexThreadRequestContext & {
@@ -185,19 +188,78 @@ export async function tryReuseCodexLiveThread(
     userMcpServersConfigPatch,
   } = options;
   const incognito = isIncognitoSessionKey(params.params.sessionKey);
+  const prepareWarmConfiguration = async (
+    pluginThreadConfig: CodexPluginThreadConfig | undefined,
+  ) => {
+    const prebuiltFinalConfigPatch: CodexThreadFinalConfigPatchResult =
+      (await params.buildFinalConfigPatch?.({
+        action: "resume",
+        binding,
+      })) ?? {
+        configPatch: params.finalConfigPatch,
+        nativeHookRelayGeneration: params.nativeHookRelayGeneration,
+      };
+    const pluginAppsConfigPatch =
+      pluginThreadConfig?.configPatch ??
+      (params.pluginThreadConfig?.enabled && binding.pluginAppPolicyContext
+        ? buildCodexPluginAppsConfigPatchFromPolicyContext(binding.pluginAppPolicyContext)
+        : undefined);
+    const resumeAuthProfileId = params.params.authProfileId ?? binding.authProfileId;
+    const resumeConfig = mergeCodexThreadConfigs(
+      params.config,
+      userMcpServersConfigPatch,
+      pluginAppsConfigPatch,
+      prebuiltFinalConfigPatch.configPatch,
+    );
+    const resumeParams = lifecycleTiming.measureSync("warm-thread-resume-params", () =>
+      buildThreadResumeParams(params.params, {
+        threadId: binding.threadId,
+        cwd: params.cwd,
+        authProfileId: resumeAuthProfileId,
+        model: startModelSelection.model,
+        modelProvider: startModelProvider,
+        preserveNativeModel: binding.preserveNativeModel === true,
+        appServer: params.appServer,
+        dynamicTools: params.dynamicTools,
+        developerInstructions: params.developerInstructions,
+        config: applyCodexNativeSkillIsolation(resumeConfig, nativeSkillIsolation),
+        nativeCodeModeEnabled: params.nativeCodeModeEnabled,
+        nativeProviderWebSearchSupport: params.nativeProviderWebSearchSupport,
+        nativeCodeModeOnlyEnabled: params.nativeCodeModeOnlyEnabled,
+        webSearchAllowed: params.webSearchAllowed,
+        hostSystemAgentActive,
+        restrictedToolSurfaceInheritedMcpServerNames,
+        shellEnvironment: params.shellEnvironment,
+        disableLoginShell: params.disableLoginShell,
+      }),
+    );
+    return { prebuiltFinalConfigPatch, resumeParams, resumeAuthProfileId };
+  };
 
   // These native-owned ephemeral lifetimes do not enter ordinary
   // configuration ownership. Keep their existing live-only continuation path.
   if (incognito && (binding.preserveNativeModel || binding.connectionScope === "supervision")) {
-    if (
-      binding.clientId === clientId &&
-      binding.clientId &&
-      ((await options.buildLoadedPluginThreadConfig(binding))?.fingerprint ??
-        binding.pluginAppsFingerprint) === binding.pluginAppsFingerprint
-    ) {
-      await params.buildFinalConfigPatch?.({ action: "resume", binding });
-      throwIfAborted();
-      return { kind: "ready", binding: { ...binding, lifecycle: { action: "resumed" } } };
+    if (binding.clientId === clientId && binding.clientId) {
+      const pluginThreadConfig = await options.buildLoadedPluginThreadConfig(binding);
+      if (
+        (pluginThreadConfig?.fingerprint ?? binding.pluginAppsFingerprint) ===
+        binding.pluginAppsFingerprint
+      ) {
+        const { prebuiltFinalConfigPatch, resumeParams } =
+          await prepareWarmConfiguration(pluginThreadConfig);
+        throwIfAborted();
+        params.params.hostCapabilities.assertActive();
+        params.assertCurrent?.();
+        assertCodexIncognitoHookInstallation(
+          params.client,
+          binding.threadId,
+          resumeParams.config,
+          prebuiltFinalConfigPatch.nativeHookRelayGeneration ?? binding.nativeHookRelayGeneration,
+        );
+        await prebuiltFinalConfigPatch.activate?.();
+        throwIfAborted();
+        return { kind: "ready", binding: { ...binding, lifecycle: { action: "resumed" } } };
+      }
     }
     return { kind: "rotate" };
   }
@@ -248,47 +310,8 @@ export async function tryReuseCodexLiveThread(
     // Engine identity, projection epoch, and policy were checked by the owner
     // before this call; compatible bootstrap threads must keep their session.
 
-    const prebuiltFinalConfigPatch = (await params.buildFinalConfigPatch?.({
-      action: "resume",
-      binding,
-    })) ?? {
-      configPatch: params.finalConfigPatch,
-      nativeHookRelayGeneration: params.nativeHookRelayGeneration,
-    };
-    const pluginAppsConfigPatch =
-      pluginThreadConfig?.configPatch ??
-      (params.pluginThreadConfig?.enabled && binding.pluginAppPolicyContext
-        ? buildCodexPluginAppsConfigPatchFromPolicyContext(binding.pluginAppPolicyContext)
-        : undefined);
-    const resumeAuthProfileId = params.params.authProfileId ?? binding.authProfileId;
-    const resumeConfig = mergeCodexThreadConfigs(
-      params.config,
-      userMcpServersConfigPatch,
-      pluginAppsConfigPatch,
-      prebuiltFinalConfigPatch.configPatch,
-    );
-    const resumeParams = lifecycleTiming.measureSync("warm-thread-resume-params", () =>
-      buildThreadResumeParams(params.params, {
-        threadId: binding.threadId,
-        cwd: params.cwd,
-        authProfileId: resumeAuthProfileId,
-        model: startModelSelection.model,
-        modelProvider: startModelProvider,
-        preserveNativeModel: false,
-        appServer: params.appServer,
-        dynamicTools: params.dynamicTools,
-        developerInstructions: params.developerInstructions,
-        config: applyCodexNativeSkillIsolation(resumeConfig, nativeSkillIsolation),
-        nativeCodeModeEnabled: params.nativeCodeModeEnabled,
-        nativeProviderWebSearchSupport: params.nativeProviderWebSearchSupport,
-        nativeCodeModeOnlyEnabled: params.nativeCodeModeOnlyEnabled,
-        webSearchAllowed: params.webSearchAllowed,
-        hostSystemAgentActive,
-        restrictedToolSurfaceInheritedMcpServerNames,
-        shellEnvironment: params.shellEnvironment,
-        disableLoginShell: params.disableLoginShell,
-      }),
-    );
+    const { prebuiltFinalConfigPatch, resumeParams, resumeAuthProfileId } =
+      await prepareWarmConfiguration(pluginThreadConfig);
     const liveThreadConfigFingerprint = incognito
       ? retainedThread.configFingerprint
       : fingerprintCodexThreadConfig(
@@ -308,6 +331,19 @@ export async function tryReuseCodexLiveThread(
       preserveSubscription = true;
       throw new CodexIncognitoPolicyChangeError();
     }
+    if (incognito) {
+      try {
+        assertCodexIncognitoHookInstallation(
+          params.client,
+          binding.threadId,
+          resumeParams.config,
+          prebuiltFinalConfigPatch.nativeHookRelayGeneration ?? binding.nativeHookRelayGeneration,
+        );
+      } catch (error) {
+        preserveSubscription = true;
+        throw error;
+      }
+    }
     if (!incognito && retainedThread.configFingerprint !== liveThreadConfigFingerprint) {
       // Return the same owner first: cold-resume preparation must observe native teardown
       // before releasing it, otherwise a loaded resume can silently ignore new policy.
@@ -324,6 +360,8 @@ export async function tryReuseCodexLiveThread(
       lifecycleTiming,
       assertCurrent: assertWarmOwner,
     });
+    assertWarmOwner();
+    await prebuiltFinalConfigPatch.activate?.();
     assertWarmOwner();
     const nativeHookRelayGeneration =
       prebuiltFinalConfigPatch.nativeHookRelayGeneration ?? binding.nativeHookRelayGeneration;

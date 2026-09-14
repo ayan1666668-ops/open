@@ -352,7 +352,17 @@
             "type": "boolean",
             "default": true
           },
-          "requestTimeoutMs": {
+          "nativeHookRelay": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "requestTimeoutMs": {
             "type": "number",
             "minimum": 1,
             "default": 60000
@@ -680,6 +690,16 @@
     "appServer.loopDetectionPreToolUseRelay": {
       "label": "Loop Detection Pre-tool Relay",
       "help": "Install the Codex PreToolUse subprocess used only for OpenClaw loop detection and its no-policy marker. Disable to reduce per-tool process fan-out; before-tool and trusted policy relays remain enforced.",
+      "advanced": true
+    },
+    "appServer.nativeHookRelay": {
+      "label": "Native Hook Relay",
+      "help": "Control OpenClaw callbacks in Codex threads. Enabled by default. Native approval routing stays active.",
+      "advanced": true
+    },
+    "appServer.nativeHookRelay.enabled": {
+      "label": "Native Hook Relay Enabled",
+      "help": "Disable optional OpenClaw native hook callbacks to reduce relay subprocesses. If before-tool policy or prompting approvals are active, OpenClaw keeps the required PreToolUse relay and logs a warning. An honored opt-out removes OpenClaw native loop checks, post-tool middleware, and finalization checks, including checks that can stop or revise a reply. Full opt-out leaves native hook layers unchanged. Required relay events still take precedence over CLI hooks for the same events. Live incognito conversations cannot change the installed relay configuration: restore the previous setting or start a new incognito conversation.",
       "advanced": true
     },
     "appServer.requestTimeoutMs": {

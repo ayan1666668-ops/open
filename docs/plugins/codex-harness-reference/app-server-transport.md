@@ -103,6 +103,7 @@ managed stdio or the local Unix control socket for production workloads.
 | `clearEnv`                       | `[]`                                                   | Extra environment variable names removed from the spawned stdio app-server process after OpenClaw builds its inherited environment.                                                                                                                                                                                                                                                                                                |
 | `remoteWorkspaceRoot`            | unset                                                  | Remote Codex app-server workspace root. OpenClaw maps the local cwd into this root and transfers authoritative remote attachments over an output-capped, no-shell `command/exec` reader. Paths escaping either workspace, symbolic links, oversized files, and unbounded attachment batches fail closed; uploads retain the configured channel identity and app-server request timeout.                                            |
 | `loopDetectionPreToolUseRelay`   | `true`                                                 | Enables the Codex `PreToolUse` relay for loop detection when OpenClaw loop detection is enabled. OpenClaw installs no `PreToolUse` relay when no before-tool plugin hook, trusted-tool policy, or enabled loop detector has local work. Set `false` to disable the loop-detection relay even when detection is enabled; before-tool plugin hooks and trusted-tool policy still install their required fail-closed relay.           |
+| `nativeHookRelay`                | `{ enabled: true }`                                    | Native hook relay controls. `enabled: false` omits OpenClaw's hook configuration and leaves native hook layers unchanged. Honored only when the effective approval policy is `never` and no before-tool policy is active; otherwise it narrows to the required `pre_tool_use` relay with a warning.                                                                                                                                |
 | `requestTimeoutMs`               | `60000`                                                | Timeout for app-server control-plane calls.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mode`                           | `"yolo"` unless local Codex requirements disallow YOLO | Preset for YOLO or guardian-reviewed execution.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `approvalPolicy`                 | `"never"` or an allowed guardian approval policy       | Native Codex approval policy sent to thread start, resume, and turn.                                                                                                                                                                                                                                                                                                                                                               |
@@ -112,6 +113,33 @@ managed stdio or the local Unix control socket for production workloads.
 | `serviceTier`                    | unset                                                  | Native Codex app-server preference only. Any non-empty string passes through for forward compatibility; documented values are `"priority"` and `"flex"`. `null` clears the override, and legacy `"fast"` normalizes to `"priority"`. This is neither the shared Fast-mode setting nor a direct embedded OpenAI setting. A shared Fast run control supersedes it with `priority` or `null`, or decides per model call in auto mode. |
 | `networkProxy`                   | disabled                                               | Opt into Codex permissions-profile networking for app-server commands. OpenClaw defines the selected `permissions.<profile>.network` config and selects it with `default_permissions` instead of sending `sandbox`.                                                                                                                                                                                                                |
 | `experimental.sandboxExecServer` | `false`                                                | Preview opt-in that registers an OpenClaw sandbox-backed Codex environment with the supported Codex app-server so native Codex execution can run inside the active OpenClaw sandbox.                                                                                                                                                                                                                                               |
+
+An honored `nativeHookRelay.enabled: false` removes these OpenClaw checks from
+native Codex tool calls and replies:
+
+- Native tool loop detection.
+- `post_tool_use` middleware and callbacks.
+- `before_agent_finalize` callbacks, including checks that can stop or revise a reply.
+
+OpenClaw honors the full opt-out only when the effective approval policy is
+`never` and no before-tool policy is active. Otherwise, it keeps the required
+`pre_tool_use` relay and logs a warning. Native approval routing remains active.
+A full opt-out omits OpenClaw's event arrays and trust state from new native
+requests. Codex rebuilds configuration from its current CLI settings and the new
+request, so existing user, project, plugin, and managed hook layers remain active.
+`features.hooks` remains unchanged. When a required relay stays enabled, its
+selected event arrays still take precedence over CLI hooks for those same events.
+
+A live incognito conversation keeps the hook configuration installed when it
+started. While its native client remains live, a policy or plugin-consumer change
+that changes the effective relay events, matchers, or command configuration makes
+OpenClaw refuse the next turn. Restore the previous configuration to continue that
+conversation, or start a new incognito conversation to use the changed hooks.
+Changes that select the same effective hooks can continue on the same live client.
+
+A Codex plugin configuration reload can close its native client.
+Start a new incognito conversation after that reload; restoring a setting cannot
+recover an incognito conversation whose native client has closed.
 
 `appServer.args` accepts an array (recommended) or a quoted argument string.
 `OPENCLAW_CODEX_APP_SERVER_ARGS` uses the same string parsing on every platform:

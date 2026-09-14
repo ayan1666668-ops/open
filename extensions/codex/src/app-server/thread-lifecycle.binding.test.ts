@@ -12,6 +12,7 @@ import {
   ensureCodexAppServerClientRuntime,
   isCodexAppServerLiveThreadClaimed,
   retainCodexAppServerLiveThread,
+  readCodexNativeHookInstallation,
 } from "./client-runtime.js";
 import { CodexAppServerClient, CodexAppServerRpcError } from "./client.js";
 import { createFakeCodexAppServerClient } from "./codex-app-server.test-fixtures.js";
@@ -2933,6 +2934,122 @@ describe("Codex app-server thread lifecycle bindings", () => {
     },
   );
 
+  it.each(
+    ["ordinary", "native-model"].flatMap((scope) =>
+      ["off", "on", "narrow", "matcher", "inherit", "clear"].map((change) => ({ scope, change })),
+    ),
+  )(
+    "preserves live incognito hook ownership on $change refusal ($scope)",
+    async ({ scope, change }) => {
+      const sessionFile = path.join(tempDir, "hook-incognito.jsonl");
+      const workspaceDir = path.join(tempDir, "hook-incognito-workspace");
+      const params = createParams(sessionFile, workspaceDir);
+      params.sessionKey = "agent:main:dashboard:incognito-hook-policy";
+      const initial =
+        change === "on"
+          ? "off"
+          : change === "inherit"
+            ? "clear"
+            : change === "clear"
+              ? "inherit"
+              : "all";
+      let selected = initial;
+      let starts = 0;
+      const request = vi.fn(async (method: string) => {
+        if (method === "config/read") return { layers: [], config: { mcp_servers: {} } };
+        if (method === "configRequirements/read") return { requirements: null };
+        if (method === "thread/start") return threadStartResult(`thread-hooks-${++starts}`);
+        if (method === "thread/unsubscribe") return { status: "unsubscribed" };
+        throw new Error(`unexpected method: ${method}`);
+      });
+      const close = vi.fn();
+      const client = {
+        getInstanceId: () => "client-hooks",
+        request,
+        close,
+        addNotificationHandler: () => () => undefined,
+        addRequestHandler: () => () => undefined,
+        addCloseHandler: () => () => undefined,
+      } as never;
+      ensureCodexAppServerClientRuntime(client, { agentDir: workspaceDir });
+      const activate = vi.fn(async () => undefined);
+      const buildFinalConfigPatch = vi.fn(() => {
+        const hook = [
+          {
+            matcher: selected === "matcher" ? "Write" : "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "relay --generation creation",
+                timeout: 10,
+                async: false,
+              },
+            ],
+          },
+        ];
+        return {
+          nativeHookRelayGeneration: "creation",
+          activate,
+          configPatch: {
+            "features.hooks": true,
+            "hooks.PreToolUse": selected === "off" ? [] : hook,
+            ...(selected === "inherit" ? {} : { "hooks.Stop": selected === "all" ? hook : [] }),
+          },
+        };
+      });
+      const common = {
+        client,
+        params,
+        cwd: workspaceDir,
+        dynamicTools: [],
+        appServer: createThreadLifecycleAppServerOptions(),
+        userMcpServersEnabled: false,
+        buildFinalConfigPatch,
+      };
+      const first = await startOrResumeThread(common);
+      await retainCodexAppServerLiveThread(
+        client,
+        first.threadId,
+        undefined,
+        first.liveThreadConfigFingerprint,
+        null,
+        first.liveThreadEphemeralPolicy,
+      );
+      if (scope !== "ordinary") {
+        await writeRawCodexAppServerBinding(sessionFile, {
+          ...(await readCodexAppServerBinding(sessionFile))!,
+          preserveNativeModel: true,
+        });
+      }
+      const before = await readCodexAppServerBinding(sessionFile);
+      const installed = readCodexNativeHookInstallation(client, first.threadId);
+      expect(installed).toBeDefined();
+      const child = await claimCodexAppServerLiveThread(client, "retained-child");
+      expect(child).toBeDefined();
+      selected = change === "on" ? "all" : change;
+      await expect(startOrResumeThread(common)).rejects.toThrow(
+        "Restore the previous relay configuration",
+      );
+      expect(activate).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+      expect(readCodexNativeHookInstallation(client, first.threadId)).toBe(installed);
+      expect(() => child!.assertCurrent()).not.toThrow();
+      await expect(readCodexAppServerBinding(sessionFile)).resolves.toEqual(before);
+      expect(
+        request.mock.calls
+          .filter(([method]) => method.startsWith("thread/"))
+          .map(([method]) => method),
+      ).toEqual(["thread/start"]);
+      selected = initial;
+      const restored = await startOrResumeThread(common);
+      expect(restored.threadId).toBe(first.threadId);
+      expect(activate).toHaveBeenCalledTimes(2);
+      expect(readCodexNativeHookInstallation(client, first.threadId)).toBe(installed);
+      expect(() => child!.assertCurrent()).not.toThrow();
+      await child!.release("retained-child");
+    },
+  );
+
   it("resumes the same restricted OpenClaw thread so turn two retains native memory", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
@@ -3787,7 +3904,7 @@ describe("Codex app-server thread lifecycle bindings", () => {
         params.sessionKey = "agent:main:internal-session-effects:incognito-mcp-attestation";
       }
       const abandonClient = vi.fn(async () => {});
-      const request = vi.fn(async (method: string) => {
+      const respond = vi.fn(async (method: string) => {
         if (method === "config/read") {
           return { config: {}, layers: [] };
         }
@@ -3800,9 +3917,6 @@ describe("Codex app-server thread lifecycle bindings", () => {
         if (method === "thread/delete") {
           return {};
         }
-        if (method === "thread/unsubscribe") {
-          return { status: "unsubscribed" };
-        }
         if (method === "mcpServerStatus/list") {
           if (attestation instanceof Error) {
             throw attestation;
@@ -3812,9 +3926,14 @@ describe("Codex app-server thread lifecycle bindings", () => {
         throw new Error(`unexpected method: ${method}`);
       });
 
+      const { client, request } = await createLeasedCodexLifecycleHarness({
+        agentDir: path.join(tempDir, "agent"),
+        respond,
+      });
+
       await expect(
         startOrResumeThread({
-          client: { request } as never,
+          client,
           abandonClient,
           params,
           cwd: workspaceDir,

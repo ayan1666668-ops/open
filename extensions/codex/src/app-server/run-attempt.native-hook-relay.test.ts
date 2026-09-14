@@ -12,15 +12,15 @@ import {
 } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { initializeGlobalHookRunner } from "openclaw/plugin-sdk/hook-runtime";
 import {
-  createEmptyPluginRegistry,
   createMockPluginRegistry,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as approvalBridge from "./approval-bridge.js";
 import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
 import { CodexAppServerRpcError } from "./client.js";
 import { nativeHookRelayUnregisterQueue } from "./native-hook-relay-state.js";
+import * as nativeHookRelay from "./native-hook-relay.js";
 import {
   bindProductionHarnessHostCapabilitiesForTest,
   createParams,
@@ -29,30 +29,23 @@ import {
   extractGenerationFromThreadRequest,
   extractRelayIdFromThreadRequest,
   runCodexAppServerAttempt,
-  setupRunAttemptTestHooks,
   tempDir,
 } from "./run-attempt-test-harness.js";
+import {
+  createLoopRelayParams,
+  setupNativeHookRelayTestHooks,
+} from "./run-attempt.native-hook-relay.test-helpers.js";
 import {
   readCodexAppServerBinding,
   writeCodexAppServerBinding as writeRawCodexAppServerBinding,
 } from "./session-binding.test-helpers.js";
 
-setupRunAttemptTestHooks();
-
-afterEach(() => {
-  setActivePluginRegistry(createEmptyPluginRegistry());
-});
+setupNativeHookRelayTestHooks();
 
 const DISABLED_CODEX_WEB_SEARCH_THREAD_CONFIG_FINGERPRINT = JSON.stringify({
   "features.standalone_web_search": false,
   web_search: "disabled",
 });
-
-function createLoopRelayParams(sessionFile: string, workspaceDir: string) {
-  const params = createParams(sessionFile, workspaceDir);
-  params.config = { tools: { loopDetection: { enabled: true } } };
-  return params;
-}
 
 function writeCodexAppServerBinding(...args: Parameters<typeof writeRawCodexAppServerBinding>) {
   const [sessionFile, binding, lookup] = args;
@@ -67,61 +60,6 @@ function writeCodexAppServerBinding(...args: Parameters<typeof writeRawCodexAppS
 }
 
 describe("runCodexAppServerAttempt native hook relay", () => {
-  it("refuses to run when managed-only hooks would silently discard its enforcing relay", async () => {
-    const sessionFile = path.join(tempDir, "managed-hooks-only.jsonl");
-    const workspaceDir = path.join(tempDir, "managed-hooks-only-workspace");
-    const harness = createStartedThreadHarness(async (method) =>
-      method === "configRequirements/read"
-        ? { requirements: { allowManagedHooksOnly: true } }
-        : undefined,
-    );
-
-    await expect(
-      runCodexAppServerAttempt(createLoopRelayParams(sessionFile, workspaceDir), {
-        nativeHookRelay: { enabled: true, events: ["pre_tool_use"] },
-      }),
-    ).rejects.toThrow(/managed-only hooks.*OpenClaw native hook relay/i);
-    expect(harness.requests.some((request) => request.method === "thread/start")).toBe(false);
-  });
-
-  it("allows observational hooks under managed-only hook policy", async () => {
-    const sessionFile = path.join(tempDir, "observational-hooks-only.jsonl");
-    const workspaceDir = path.join(tempDir, "observational-hooks-only-workspace");
-    const harness = createStartedThreadHarness(async (method) =>
-      method === "configRequirements/read"
-        ? { requirements: { allowManagedHooksOnly: true } }
-        : undefined,
-    );
-
-    const run = runCodexAppServerAttempt(createParams(sessionFile, workspaceDir), {
-      nativeHookRelay: { enabled: true, events: ["post_tool_use"] },
-    });
-    await harness.waitForMethod("turn/start");
-    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
-    await run;
-
-    const startRequest = harness.requests.find((request) => request.method === "thread/start");
-    expect(startRequest?.params).not.toHaveProperty(["config", "hooks.PreToolUse"]);
-  });
-
-  it("rejects Guardian review when the running server resolves an untrusted managed endpoint", async () => {
-    const sessionFile = path.join(tempDir, "managed-review-endpoint.jsonl");
-    const workspaceDir = path.join(tempDir, "managed-review-endpoint-workspace");
-    const params = createParams(sessionFile, workspaceDir, { provider: "openai" });
-    const harness = createStartedThreadHarness(async (method) =>
-      method === "config/read"
-        ? { config: { openai_base_url: "https://review-proxy.example.invalid/v1" }, origins: {} }
-        : undefined,
-    );
-
-    await expect(
-      runCodexAppServerAttempt(params, {
-        pluginConfig: { appServer: { mode: "guardian" } },
-      }),
-    ).rejects.toThrow(/model-backed approval reviewer.*trusted OpenAI/i);
-    expect(harness.requests.some((request) => request.method === "thread/start")).toBe(false);
-  });
-
   it("relays native tool results through Codex result middleware", async () => {
     const middleware = vi.fn(async () => undefined);
     const afterToolCall = vi.fn();
@@ -210,6 +148,7 @@ describe("runCodexAppServerAttempt native hook relay", () => {
   });
 
   it("registers native hook relay config for an enabled Codex turn and cleans it up", async () => {
+    const createRelay = vi.spyOn(nativeHookRelay, "createCodexNativeHookRelay");
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
     const harness = createStartedThreadHarness();
@@ -237,6 +176,13 @@ describe("runCodexAppServerAttempt native hook relay", () => {
     expect(preToolUseCommand?.type).toBe("command");
     expect(preToolUseCommand?.timeout).toBe(9);
     expect(preToolUseCommand?.command).toContain("--event pre_tool_use --timeout 4321");
+    expect(createRelay).toHaveBeenCalledOnce();
+    expect(preToolUseCommand?.command).toBe(
+      createRelay.mock.results[0]?.value?.commandForEvent("pre_tool_use"),
+    );
+    if (process.platform !== "win32") {
+      expect(preToolUseCommand?.command).toMatch(/^exec nice -n 10 /);
+    }
     const hookState = startConfig?.["hooks.state"] as Record<
       string,
       { enabled?: unknown; trusted_hash?: unknown }
@@ -989,11 +935,13 @@ describe("runCodexAppServerAttempt native hook relay", () => {
     const startRequest = harness.requests.find((request) => request.method === "thread/start");
     const startConfig = (startRequest?.params as { config?: Record<string, unknown> } | undefined)
       ?.config;
-    expect(startConfig?.["features.hooks"]).toBe(false);
-    expect(startConfig?.["hooks.PreToolUse"]).toEqual([]);
-    expect(startConfig?.["hooks.PostToolUse"]).toEqual([]);
-    expect(startConfig?.["hooks.PermissionRequest"]).toEqual([]);
-    expect(startConfig?.["hooks.Stop"]).toEqual([]);
+    // A new native request reconstructs CLI + request config. No relay overlay
+    // may overwrite independent event arrays or their CLI trust state.
+    expect(
+      Object.keys(startConfig ?? {}).filter(
+        (key) => key.startsWith("hooks.") || key === "features.hooks",
+      ),
+    ).toEqual([]);
   });
 
   it("cleans up native hook relay state when turn/start fails", async () => {

@@ -9,6 +9,7 @@ import {
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
 import { resolveCodexAppServerLocalHomeDir } from "./auth-start-options.js";
+import { recordCodexEphemeralThreadCreation } from "./client-runtime.js";
 import {
   CodexAppServerRpcError,
   isCodexAppServerOverloadError,
@@ -32,6 +33,7 @@ import { isCodexThreadReadMissingError } from "./rpc-error.js";
 import type { CodexAppServerThreadBinding } from "./session-binding.js";
 import {
   fingerprintCodexThreadConfig,
+  fingerprintCodexNativeHookInstallation,
   readActiveCodexTurnIdsFromResume,
 } from "./thread-fingerprints.js";
 import {
@@ -45,6 +47,7 @@ import type {
   CodexResumeThreadContext,
   CodexStartThreadContext,
   CodexThreadResumePreparation,
+  CodexThreadFinalConfigPatchResult,
 } from "./thread-lifecycle-types.js";
 import { resolveCodexAppServerModelProvider } from "./thread-model-selection.js";
 import { CodexThreadPolicyHandoffError, refreshCodexThreadPolicy } from "./thread-policy.js";
@@ -111,7 +114,7 @@ export async function resumeExistingCodexThread(
       resumeBinding.connectionScope === "supervision"
         ? undefined
         : (params.params.authProfileId ?? resumeBinding.authProfileId);
-    const finalConfigPatch = context.prebuiltFinalConfigPatch ??
+    const finalConfigPatch: CodexThreadFinalConfigPatchResult = context.prebuiltFinalConfigPatch ??
       (await params.buildFinalConfigPatch?.({
         action: "resume",
         binding: resumeBinding,
@@ -165,6 +168,8 @@ export async function resumeExistingCodexThread(
         : undefined;
     // Keep ownership accounting atomic with the resume request: a
     // pre-aborted request retains no subscription, so it must not reserve.
+    throwIfAborted();
+    await finalConfigPatch.activate?.();
     throwIfAborted();
     resumeReservation = params.reserveResumeThread?.(resumeBinding.threadId);
     const response = await lifecycleTiming.measure("thread-resume-request", () =>
@@ -458,7 +463,9 @@ export async function startFreshCodexThread(
         params.pluginThreadConfig?.build(),
       )))
     : undefined;
-  const finalConfigPatch = (await params.buildFinalConfigPatch?.({ action: "start" })) ?? {
+  const finalConfigPatch: CodexThreadFinalConfigPatchResult = (await params.buildFinalConfigPatch?.(
+    { action: "start" },
+  )) ?? {
     configPatch: params.finalConfigPatch,
     nativeHookRelayGeneration: params.nativeHookRelayGeneration,
   };
@@ -513,6 +520,8 @@ export async function startFreshCodexThread(
       throw new Error("Codex inference route requires the native OpenAI provider");
     }
   };
+  await finalConfigPatch.activate?.();
+  assertCurrent();
   const threadStartResponse = await lifecycleTiming.measure("thread-start-request", async () => {
     try {
       assertCurrent();
@@ -546,6 +555,15 @@ export async function startFreshCodexThread(
   // A deny-by-default app becomes callable only under this exact thread's
   // allowlist. Never persist or run the thread before Codex confirms it.
   try {
+    if (startParams.ephemeral === true) {
+      recordCodexEphemeralThreadCreation(params.client, response.thread.id, {
+        hookInstallation: fingerprintCodexNativeHookInstallation(
+          startParams.config,
+          finalConfigPatch.nativeHookRelayGeneration,
+        ),
+        dynamicTools: startParams.dynamicTools ?? [],
+      });
+    }
     await attestCodexThreadToolSurface({
       client: params.client,
       threadId: response.thread.id,

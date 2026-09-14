@@ -9,10 +9,17 @@ import type {
   NativeHookRelayEvent,
   registerNativeHookRelay,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  embeddedAgentLog,
+  hasBeforeToolCallPolicy,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import { emitTrustedDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import { registerNativeHookRelayForBundledRuntime } from "openclaw/plugin-sdk/native-hook-relay-runtime";
+import {
+  buildNativeHookRelayCommandPlan,
+  registerNativeHookRelayForBundledRuntime,
+} from "openclaw/plugin-sdk/native-hook-relay-runtime";
 import type { NativeHookRelayCommandPlan } from "openclaw/plugin-sdk/native-hook-relay-runtime";
 import {
   addTimerTimeoutGraceMs,
@@ -183,8 +190,7 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
   });
 }
 
-/** Registers an OpenClaw native hook relay for a Codex app-server turn. */
-export function createCodexNativeHookRelay(params: {
+type CodexNativeHookRelayParams = {
   options:
     | {
         enabled?: boolean;
@@ -213,7 +219,51 @@ export function createCodexNativeHookRelay(params: {
   hostCapabilities: EmbeddedRunAttemptParams["hostCapabilities"];
   assertCurrent?: () => void;
   onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void | Promise<void>;
-}): CodexNativeHookRelay | undefined {
+};
+
+type CodexNativeHookRelayCommandParams = Pick<
+  CodexNativeHookRelayParams,
+  | "options"
+  | "generation"
+  | "agentId"
+  | "sessionId"
+  | "sessionKey"
+  | "config"
+  | "loopDetectionPreToolUseRelay"
+>;
+
+function buildCodexNativeHookRelayCommandInputs(params: CodexNativeHookRelayCommandParams) {
+  return {
+    provider: "codex" as const,
+    relayId: buildCodexNativeHookRelayId(params),
+    generation: params.generation,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    config: params.config,
+    preToolUseLoopDetection: params.loopDetectionPreToolUseRelay,
+    command: {
+      // Preparing and registering a relay must keep the same priority and deadline.
+      // Niced callbacks leave CPU available for the active reply turn.
+      nice: 10,
+      timeoutMs: params.options?.gatewayTimeoutMs,
+    },
+  };
+}
+
+/** Prepare the same command inputs that activation registers, without live callbacks. */
+export function buildCodexNativeHookRelayCommandPlan(
+  params: CodexNativeHookRelayCommandParams & { generation: string },
+): NativeHookRelayCommandPlan {
+  return buildNativeHookRelayCommandPlan({
+    ...buildCodexNativeHookRelayCommandInputs(params),
+    generation: params.generation,
+  });
+}
+
+/** Registers an OpenClaw native hook relay for a Codex app-server turn. */
+export function createCodexNativeHookRelay(
+  params: CodexNativeHookRelayParams,
+): CodexNativeHookRelay | undefined {
   if (params.options?.enabled === false) {
     return undefined;
   }
@@ -238,20 +288,11 @@ export function createCodexNativeHookRelay(params: {
     pendingDirectChildAdmissions.clear();
   };
   const relay = registerNativeHookRelayForBundledRuntime({
-    provider: "codex",
-    relayId: buildCodexNativeHookRelayId({
-      agentId: params.agentId,
-      sessionId: params.sessionId,
-      sessionKey: params.sessionKey,
-    }),
-    ...(params.generation ? { generation: params.generation } : {}),
+    ...buildCodexNativeHookRelayCommandInputs(params),
     ...(params.generationMismatchGraceMs
       ? { generationMismatchGraceMs: params.generationMismatchGraceMs }
       : {}),
-    ...(params.agentId ? { agentId: params.agentId } : {}),
     sessionId: params.sessionId,
-    ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-    ...(params.config ? { config: params.config } : {}),
     autoApproveMcpTools: params.autoApproveMcpTools,
     projectedMcpServers: params.projectedMcpServers,
     runId: params.runId,
@@ -259,7 +300,6 @@ export function createCodexNativeHookRelay(params: {
     ...(params.requester ? { requester: params.requester } : {}),
     ...(params.approvalContext ? { approvalContext: params.approvalContext } : {}),
     allowedEvents: params.events,
-    preToolUseLoopDetection: params.loopDetectionPreToolUseRelay,
     ttlMs: resolveCodexNativeHookRelayTtlMs({
       explicitTtlMs: params.options?.ttlMs,
       attemptTimeoutMs: params.attemptTimeoutMs,
@@ -333,12 +373,6 @@ export function createCodexNativeHookRelay(params: {
       },
     },
     onPreToolUseFailure: params.onPreToolUseFailure,
-    command: {
-      // Hook relay subprocesses are observational for most tool events; keep
-      // them lower priority so they do not compete with the active reply turn.
-      nice: 10,
-      timeoutMs: params.options?.gatewayTimeoutMs,
-    },
   });
   const unregister = () => {
     foregroundClosed = true;
@@ -400,6 +434,153 @@ function readCodexNativeChildThreadId(rawPayload: unknown): string | undefined {
   }
   const threadId = rawPayload.agent_id.trim();
   return threadId || undefined;
+}
+
+// The relay event the app-server approval bridge's native policy path is gated on
+// (`approval-bridge.ts`: `allowedEvents.includes("pre_tool_use")`), and where
+// trusted-tool policy runs. `permission_request` is deliberately not the floor:
+// `resolveCodexNativeHookRelayEvents` below excludes it while approvals are
+// active so the approval bridge owns escalation instead of a stale pre-guardian
+// plugin prompt.
+const CODEX_NATIVE_HOOK_RELAY_APPROVAL_POLICY_FLOOR_EVENT: NativeHookRelayEvent = "pre_tool_use";
+
+// The same override warns once per turn otherwise. Keyed by message: one line per
+// distinct effective-policy/requested/resolved triple per process.
+const warnedCodexNativeHookRelayNarrowings = new Set<string>();
+
+type CodexNativeHookRelayRequest = {
+  enabled?: boolean;
+  events?: readonly NativeHookRelayEvent[];
+};
+
+/**
+ * Applies the before-tool policy floor to an operator-configured relay shape,
+ * keyed on the **effective** approval policy of the run: the runtime-resolved
+ * value rather than the configured one.
+ *
+ * Two layers can move that value away from what the operator configured.
+ * `applyCodexSessionPermissionPolicy` (`session-permission-policy.ts`) replaces
+ * the whole approval/sandbox/reviewer tuple for a session permission mode, and
+ * `resolveCodexAppServerRuntimeOptions` (`config-options.ts`, the
+ * `forcedPolicy?.approvalPolicy ?? approvalPolicy` resolution) can force a
+ * prompting policy over a configured `"never"` — unknown-model or exec-mode
+ * reviewer forcing, a forced guardian reviewer, a forced danger-full-access
+ * sandbox, or `forcePerCommandApprovals` promoting to `"untrusted"`. Both run
+ * paths call this after that resolution and before the relay options are
+ * consumed, so no thread can drop the relay the approval bridge runs on while
+ * its own policy still prompts.
+ *
+ * The approval transport itself is out of reach here by construction: approvals
+ * ride the app-server approval bridge over JSON-RPC, which falls back to the
+ * in-process `before_tool_call` hook when no relay is registered.
+ *
+ * A full opt-out therefore needs two things to be true: approvals off **and** no
+ * active OpenClaw before-tool policy. `hasBeforeToolCallPolicy()` reports the
+ * second — a registered `before_tool_call` hook or any trusted-tool policy — and
+ * is the same predicate `nativeHookRelayEventHasLocalWork` uses to decide whether
+ * `pre_tool_use` has local work at all. Without it the opt-out would omit the
+ * relay that executes and can block that policy.
+ *
+ * That second predicate is not redundant with the first. Session permission mode
+ * `"full"` resolves to `approvalPolicy: "never"` with `danger-full-access`
+ * regardless of any live OpenClaw before-tool policy, so a policy-bearing run can
+ * legitimately reach this guard with approvals off. `hasBeforeToolCallPolicy()`
+ * is the only thing holding the relay open in that case.
+ *
+ * Narrowing to the floor event keeps the approval bridge armed even when the
+ * event installs no Codex-side hook: `approval-bridge.ts` gates on the
+ * registration's `allowedEvents.includes("pre_tool_use")`, not on whether
+ * `buildCodexNativeHookRelayConfig` emitted a populated `hooks.PreToolUse`
+ * array. With no before-tool policy and loop detection off, that array is empty
+ * by design and the registration still owns command approvals.
+ *
+ * An explicit `events` list passes through verbatim under every policy. That is
+ * upstream's own pre-existing contract, not a gap: #116117 (`a19132e7eb`,
+ * "prevent approval promotion from blocking unattended runs" / "honor hook
+ * approval ownership" / "keep permission grants human-gated") deliberately
+ * preserves an explicit `permission_request` relay under a prompting policy and
+ * pins it in `run-attempt.native-hook-relay.test.ts`. This config surface exposes
+ * those semantics unchanged; the floor applies only to the `enabled: false`
+ * opt-out, which would otherwise remove a relay the operator never scoped.
+ *
+ * Fields beyond `enabled`/`events` (ttl, timeouts) pass through untouched.
+ */
+export function resolveCodexNativeHookRelayForApprovalPolicy<
+  T extends CodexNativeHookRelayRequest,
+>(params: {
+  requested: T | undefined;
+  approvalPolicy: CodexAppServerRuntimeOptions["approvalPolicy"];
+  warn?: (message: string, meta: Record<string, unknown>) => void;
+}): T | undefined {
+  const requested = params.requested;
+  // Anything but the opt-out, including an explicit `events` scope, is the
+  // operator's to author under every policy (see the #116117 contract above).
+  if (!requested || requested.enabled !== false) {
+    return requested;
+  }
+  const approvalsPrompt = params.approvalPolicy !== "never";
+  const beforeToolPolicyActive = hasBeforeToolCallPolicy();
+  if (!approvalsPrompt && !beforeToolPolicyActive) {
+    // Nothing left for the relay to enforce: the full kill-switch is honored.
+    return requested;
+  }
+  // The opt-out narrows to the required relay; any `events` scope is subsumed.
+  return warnNarrowedCodexNativeHookRelay({
+    approvalPolicy: params.approvalPolicy,
+    approvalsPrompt,
+    beforeToolPolicyActive,
+    requested,
+    resolved: {
+      ...requested,
+      enabled: true,
+      events: [CODEX_NATIVE_HOOK_RELAY_APPROVAL_POLICY_FLOOR_EVENT],
+    },
+    warn: params.warn,
+  });
+}
+
+function warnNarrowedCodexNativeHookRelay<T extends CodexNativeHookRelayRequest>(params: {
+  approvalPolicy: CodexAppServerRuntimeOptions["approvalPolicy"];
+  approvalsPrompt: boolean;
+  beforeToolPolicyActive: boolean;
+  requested: T;
+  resolved: T;
+  warn?: (message: string, meta: Record<string, unknown>) => void;
+}): T {
+  // Two reasons can hold the relay open; name the one that actually applies so an
+  // operator who already set `approvalPolicy: "never"` is not told to set it again.
+  const reason = params.approvalsPrompt
+    ? `effective approval policy ${formatCodexEffectiveApprovalPolicy(
+        params.approvalPolicy,
+      )} requires the before-tool policy relay; approvals must be off (effective approvalPolicy "never") for a full opt-out`
+    : "an active OpenClaw before-tool policy (before_tool_call hook or trusted-tool policy) requires the before-tool policy relay; a full opt-out needs approvals off and no before-tool policy";
+  const message = `codex native hook relay ${formatCodexNativeHookRelayRequest(
+    params.requested,
+  )} narrowed to events [${(params.resolved.events ?? []).join(", ")}]: ${reason}`;
+  if (warnedCodexNativeHookRelayNarrowings.has(message)) {
+    return params.resolved;
+  }
+  warnedCodexNativeHookRelayNarrowings.add(message);
+  (params.warn ?? embeddedAgentLog.warn.bind(embeddedAgentLog))(message, {
+    approvalPolicy: params.approvalPolicy,
+    beforeToolPolicyActive: params.beforeToolPolicyActive,
+    requested: { enabled: params.requested.enabled, events: params.requested.events },
+    resolved: { enabled: params.resolved.enabled, events: params.resolved.events },
+  });
+  return params.resolved;
+}
+
+/** Renders the effective policy for the operator warning; it may be a granular object. */
+function formatCodexEffectiveApprovalPolicy(
+  approvalPolicy: CodexAppServerRuntimeOptions["approvalPolicy"],
+): string {
+  return typeof approvalPolicy === "string" ? `"${approvalPolicy}"` : "granular";
+}
+
+function formatCodexNativeHookRelayRequest(requested: CodexNativeHookRelayRequest): string {
+  return requested.enabled === false
+    ? "opt-out (enabled: false)"
+    : `events [${(requested.events ?? []).join(", ")}]`;
 }
 
 /** Selects the native hook events Codex should install for the current approval mode. */
@@ -476,7 +657,6 @@ export function buildCodexNativeHookRelayConfig(params: {
   relay: NativeHookRelayCommandPlan;
   events?: readonly NativeHookRelayEvent[];
   hookTimeoutSec?: number;
-  clearOmittedEvents?: boolean;
 }): JsonObject {
   const events = params.events?.length ? params.events : CODEX_NATIVE_HOOK_RELAY_EVENTS;
   const selectedEvents = new Set<NativeHookRelayEvent>(events);
@@ -489,15 +669,8 @@ export function buildCodexNativeHookRelayConfig(params: {
     const selected = selectedEvents.has(event);
     const shouldRelay = params.relay.shouldRelayEvent(event);
     if (!selected || !shouldRelay) {
-      if (selected || params.clearOmittedEvents) {
+      if (selected) {
         config[`hooks.${codexEvent}`] = [] satisfies JsonValue;
-      }
-      if (params.clearOmittedEvents) {
-        for (const sourcePath of CODEX_SESSION_FLAGS_HOOK_SOURCE_PATHS) {
-          hookState[`${sourcePath}:${CODEX_HOOK_KEY_LABEL_BY_NATIVE_EVENT[event]}:0:0`] = {
-            enabled: false,
-          } satisfies JsonValue;
-        }
       }
       continue;
     }
