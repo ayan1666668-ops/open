@@ -1,5 +1,24 @@
 // These consumers need the host-owned SQLite broker, which runs in forked processes.
 export const databaseWorkerCoreTestFiles = [
+  "src/system-agent/setup-inference-credentials.lifecycle.test.ts",
+  "src/system-agent/setup-inference.provider-install-owner.test.ts",
+  "src/system-agent/setup-inference.groq-external.integration.test.ts",
+  "src/system-agent/setup-inference-activate.test.ts",
+  "src/system-agent/setup-inference-detect.lifecycle.test.ts",
+  "src/wizard/setup.test.ts",
+  "src/flows/search-setup.test.ts",
+  "src/flows/channel-setup.test.ts",
+  "src/security/audit-config-symlink.test.ts",
+  "src/security/audit-filesystem-windows.test.ts",
+  "src/security/audit-plugins-trust.test.ts",
+  "src/security/audit-rosterless.test.ts",
+  "src/claws/lifecycle-state.test.ts",
+  "src/claws/update-plan.test.ts",
+  "src/claws/packages.test.ts",
+  "src/commands/doctor/auth-alias-migration.test.ts",
+  "src/commands/doctor/auth-alias-import-recovery.test.ts",
+  "src/commands/doctor/auth-alias-preservation.test.ts",
+  "src/commands/doctor/shared/missing-configured-plugin-install.test.ts",
   "src/plugins/registry-refresh.test.ts",
   "src/plugins/installed-plugin-index-store-write.receipt.test.ts",
   "src/plugins/install-record-commit.retention.test.ts",
@@ -50,8 +69,15 @@ export const databaseWorkerCoreTestFiles = [
 
 const databaseWorkerCoreTestFileSet = new Set(databaseWorkerCoreTestFiles);
 
-// Preserve watch admission for the two consumers previously inferred into fast lanes.
+// Preserve watch admission for consumers previously inferred into fast lanes.
 export const databaseWorkerCoreFormerFastKinds = new Map([
+  ["src/flows/search-setup.test.ts", "unitFastIsolated"],
+  ["src/security/audit-config-symlink.test.ts", "unitFastIsolated"],
+  ["src/security/audit-filesystem-windows.test.ts", "unitFastIsolated"],
+  ["src/security/audit-plugins-trust.test.ts", "unitFastIsolated"],
+  ["src/commands/doctor/auth-alias-migration.test.ts", "unitFast"],
+  ["src/commands/doctor/auth-alias-import-recovery.test.ts", "unitFast"],
+  ["src/commands/doctor/auth-alias-preservation.test.ts", "unitFast"],
   ["src/plugin-sdk/memory-host-events.test.ts", "unitFastFakeTimers"],
   ["src/plugin-sdk/outbound-media.bulk.test.ts", "unitFast"],
 ]);
