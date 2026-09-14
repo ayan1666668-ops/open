@@ -72,24 +72,29 @@ function officePreview(bytes: ArrayBuffer, kind: "spreadsheet" | "presentation")
   };
   if (kind === "spreadsheet") {
     const shared = xml("xl/sharedStrings.xml");
-    const strings = [...shared.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((match) => xmlText(match[1]));
+    const strings = [...shared.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((match) => xmlText(match[1] ?? ""));
     const sheets = Object.keys(files).filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name)).slice(0, 100);
     return sheets.map((name, index) => {
       const cells = new Map<string, string>();
-      const source = new TextDecoder().decode(files[name]);
+      const file = files[name];
+      if (!file) return { name: `Sheet ${index + 1}`, cells };
+      const source = new TextDecoder().decode(file);
       for (const match of source.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
-        const ref = match[1].match(/\br="([^"']+)/)?.[1];
-        const value = match[2].match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1] ?? "";
-        const inline = match[2].match(/<is[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/is>/)?.[1];
-        if (ref) cells.set(ref.toUpperCase(), inline !== undefined ? xmlText(inline) : match[2].includes('t="s"') ? strings[Number(value)] ?? "" : xmlText(value));
+        const attributes = match[1] ?? "";
+        const body = match[2] ?? "";
+        const ref = attributes.match(/\br="([^"']+)/)?.[1];
+        const value = body.match(/<v[^>]*>([\s\S]*?)<\/v>/)?.[1] ?? "";
+        const inline = body.match(/<is[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/is>/)?.[1];
+        if (ref) cells.set(ref.toUpperCase(), inline !== undefined ? xmlText(inline) : body.includes('t="s"') ? strings[Number(value)] ?? "" : xmlText(value));
       }
       return { name: `Sheet ${index + 1}`, cells };
     });
   }
   const slides = Object.keys(files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name)).slice(0, 200);
   return slides.map((name) => {
-    const source = new TextDecoder().decode(files[name]);
-    const paragraphs = [...source.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map((match) => xmlText(match[1])).filter(Boolean).slice(0, 2000);
+    const file = files[name];
+    const source = file ? new TextDecoder().decode(file) : "";
+    const paragraphs = [...source.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map((match) => xmlText(match[1] ?? "")).filter(Boolean).slice(0, 2000);
     return { title: paragraphs[0] ?? "Untitled slide", paragraphs };
   });
 }
@@ -100,7 +105,7 @@ function docxText(bytes: ArrayBuffer): string {
   if (!document) throw new Error("This Word document has no readable document body.");
   const source = new TextDecoder().decode(document);
   return [...source.matchAll(/<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g)]
-    .map((paragraph) => [...paragraph[1].matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)].map((text) => xmlText(text[1])).join(""))
+    .map((paragraph) => [...(paragraph[1] ?? "").matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)].map((text) => xmlText(text[1] ?? "")).join(""))
     .filter(Boolean).slice(0, 2000).join("\n\n");
 }
 
