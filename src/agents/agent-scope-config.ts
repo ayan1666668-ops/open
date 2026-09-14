@@ -25,6 +25,8 @@ import {
   tryResolveRawLegacyDefaultAgentId,
   tryResolveSoleAgentId,
 } from "./agent-roster.js";
+import { resolveDefaultAgentWorkspaceDir } from "./workspace-default.js";
+
 export {
   hasAgentRosterProperty,
   listAgentEntries,
@@ -35,7 +37,6 @@ export {
   tryResolveSoleAgentId,
   type ListedAgentEntry,
 } from "./agent-roster.js";
-import { resolveDefaultAgentWorkspaceDir } from "./workspace-default.js";
 
 type AgentEntry = NonNullable<NonNullable<OpenClawConfig["agents"]>["list"]>[number];
 type AgentEntriesConfig = NonNullable<NonNullable<OpenClawConfig["agents"]>["entries"]>;

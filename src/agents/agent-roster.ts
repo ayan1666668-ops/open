@@ -37,7 +37,7 @@ export function listAgentEntriesWithSource(cfg: AgentRosterConfig): ListedAgentE
   }
   return roster.value.flatMap((entry, index) =>
     entry !== null && typeof entry === "object"
-      ? [{ entry: entry as AgentEntry, source: { kind: "list" as const, index } }]
+      ? [{ entry: entry as AgentEntry, source: { kind: "list" as const, index } }] // SAFETY: Raw roster compatibility keeps objects verbatim; callers normalize ids.
       : [],
   );
 }
@@ -49,18 +49,18 @@ export function listAgentEntries(cfg: AgentRosterConfig): AgentEntry[] {
 
 /** Reads the explicitly owned raw roster without normalizing malformed values. */
 export function readAgentRosterProperty(raw: unknown): AgentRosterProperty | undefined {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!isRecord(raw)) {
     return undefined;
   }
-  const agents = (raw as { agents?: unknown }).agents;
-  if (!agents || typeof agents !== "object" || Array.isArray(agents)) {
+  const agents = raw.agents;
+  if (!isRecord(agents)) {
     return undefined;
   }
-  const entries = (agents as Record<string, unknown>)["entries"];
+  const entries = agents["entries"];
   if (Object.hasOwn(agents, "entries") && entries !== undefined) {
     return { kind: "entries", value: entries };
   }
-  const list = (agents as Record<string, unknown>)["list"];
+  const list = agents["list"];
   if (Object.hasOwn(agents, "list") && list !== undefined) {
     return { kind: "list", value: list };
   }
