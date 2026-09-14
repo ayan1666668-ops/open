@@ -209,8 +209,8 @@ suite.define(() => {
                 .toBe("1.2K");
               if (label === "7d") {
                 expect(
-                  (await page.locator(".cost-window-card__label").allTextContents()).map((label) =>
-                    label.trim(),
+                  (await page.locator(".cost-window-card__label").allTextContents()).map(
+                    (windowLabel) => windowLabel.trim(),
                   ),
                 ).toContain("Today");
               }

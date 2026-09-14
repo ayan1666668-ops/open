@@ -315,7 +315,7 @@ export function renderUsage(props: UsageProps) {
   ];
   const applyPreset = (days: number) => {
     const end = new Date();
-    const start = new Date(end.getTime());
+    const start = new Date(end);
     if (filters.timeZone === "utc") {
       start.setUTCDate(start.getUTCDate() - (days - 1));
     } else {
