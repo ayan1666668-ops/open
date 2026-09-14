@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { resolveConfigForRead } from "../config/io.read-helpers.js";
+import { coerceConfig, resolveConfigForRead } from "../config/io.read-helpers.js";
 import { setConfigResolutionFacts } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { withMockedWindowsAclVerificationUnavailable } from "../test-utils/vitest-spies.js";
@@ -256,49 +256,81 @@ describe("resolveRequiredConfiguredSecretRefInputString", () => {
   });
 });
 
-describe("resolveConfiguredSecretInputString record-key spellings", () => {
-  // Callers of this SDK entry point supply one `path` string, and extensions
-  // build record-key segments by hand. The canonical spelling and the
-  // hand-built one name the same segment sequence and must match the same fact.
-  async function resolveAccountToken(configPath: string) {
+describe("resolveConfiguredSecretInputString target identity", () => {
+  it.each([
+    { path: 'plugins.entries.fixture.config["simple"]', id: "SIMPLE_TOKEN" },
+    { path: 'plugins.entries.fixture.config["0"]', id: "OBJECT_TOKEN" },
+    { path: "plugins.entries.fixture.config.0", id: "OBJECT_TOKEN" },
+    { path: "plugins.entries.fixture.config.list[0]", id: "ARRAY_TOKEN" },
+    { path: "plugins.entries.fixture.config.list.0", id: "ARRAY_TOKEN" },
+  ])("resolves the actual config target at $path", async ({ path: configPath, id }) => {
     const read = resolveConfigForRead(
       {
-        channels: {
-          matrix: { accounts: { "prod.guild": { accessToken: "${MISSING_GUILD_TOKEN}" } } },
+        plugins: {
+          entries: {
+            fixture: {
+              config: {
+                simple: "${SIMPLE_TOKEN}",
+                "0": "${OBJECT_TOKEN}",
+                list: ["${ARRAY_TOKEN}"],
+              },
+            },
+          },
         },
-      } as OpenClawConfig,
+      },
       {},
     );
-    const config = read.resolvedConfigRaw as OpenClawConfig;
+    const config = coerceConfig(read.resolvedConfigRaw);
     setConfigResolutionFacts(config, read.resolutionFacts);
-    return await resolveConfiguredSecretInputString({
+
+    const resolved = await resolveConfiguredSecretInputString({
       config,
-      env: {} as NodeJS.ProcessEnv,
-      value: config.channels?.matrix?.accounts?.["prod.guild"]?.accessToken,
+      env: {},
+      value: `\${${id}}`,
       path: configPath,
     });
-  }
-
-  it("matches a record key the caller spelled without quoting", async () => {
-    const resolved = await resolveAccountToken("channels.matrix.accounts.prod.guild.accessToken");
 
     expect(resolved.value).toBeUndefined();
-    expect(resolved.unresolvedRefReason).toContain("env:default:MISSING_GUILD_TOKEN");
+    expect(resolved.unresolvedRefReason).toContain(`env:default:${id}`);
   });
 
-  it("matches the same record key in its canonical spelling", async () => {
-    const resolved = await resolveAccountToken(
-      'channels.matrix.accounts["prod.guild"].accessToken',
-    );
+  it.each([true, false])(
+    "keeps a literal target separate from a neighboring reference (available: %s)",
+    async (available) => {
+      const read = resolveConfigForRead(
+        {
+          plugins: {
+            entries: {
+              "foo.config.bar": { config: { token: "${SOURCE_A}" } },
+              foo: { config: { bar: { config: { token: "B_LITERAL" } } } },
+            },
+          },
+        },
+        {},
+      );
+      const config = coerceConfig(read.resolvedConfigRaw);
+      setConfigResolutionFacts(config, read.resolutionFacts);
+      const env = available ? { SOURCE_A: "A_REFERENCE" } : {};
+      const reference = await resolveConfiguredSecretInputString({
+        config,
+        env,
+        value: "${SOURCE_A}",
+        path: 'plugins.entries["foo.config.bar"].config.token',
+      });
+      const literal = await resolveConfiguredSecretInputString({
+        config,
+        env,
+        value: "B_LITERAL",
+        path: "plugins.entries.foo.config.bar.config.token",
+      });
 
-    expect(resolved.value).toBeUndefined();
-    expect(resolved.unresolvedRefReason).toContain("env:default:MISSING_GUILD_TOKEN");
-  });
-
-  it("still reports nothing for an unrelated path", async () => {
-    const resolved = await resolveAccountToken("channels.matrix.accounts.other.accessToken");
-
-    expect(resolved.unresolvedRefReason).toBeUndefined();
-    expect(resolved.value).toBe("${MISSING_GUILD_TOKEN}");
-  });
+      expect(literal).toEqual({ value: "B_LITERAL" });
+      if (available) {
+        expect(reference).toEqual({ value: "A_REFERENCE" });
+      } else {
+        expect(reference.value).toBeUndefined();
+        expect(reference.unresolvedRefReason).toContain("env:default:SOURCE_A");
+      }
+    },
+  );
 });

@@ -195,12 +195,7 @@ function substituteAny(
   if (isPlainObject(value)) {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
-      // Recorded provenance keys are looked up by canonical registry paths
-      // (`formatConcreteConfigPath`), so every record key must use the same
-      // grammar: a key needing quoting stays one segment instead of splitting
-      // into a path no consumer builds.
-      const childPath = appendConfigPathSegment(path, key);
-      result[key] = substituteAny(val, env, childPath, opts);
+      result[key] = substituteAny(val, env, appendConfigPathSegment(path, key), opts);
     }
     return result;
   }

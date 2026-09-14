@@ -125,7 +125,7 @@ export function collectAgentMemorySearchAssignments(params: {
     const agentPath =
       source.kind === "entries"
         ? appendConfigPathSegment("agents.entries", source.key)
-        : `agents.list.${source.index}`;
+        : `agents.list[${source.index}]`;
     const active =
       rawAgentRecord["enabled"] !== false &&
       (memorySearch?.enabled ?? defaultsMemorySearch?.enabled ?? true) !== false;

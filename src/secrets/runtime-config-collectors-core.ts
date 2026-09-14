@@ -464,7 +464,7 @@ function collectMediaRequestAssignments(params: {
           : "shared media model does not declare capabilities and none could be inferred from its provider.";
       collectProviderRequestAssignments({
         request: rawModel.request,
-        pathPrefix: `tools.media.models.${index}.request`,
+        pathPrefix: `tools.media.models[${index}].request`,
         defaults: params.defaults,
         context: params.context,
         active,
@@ -535,7 +535,7 @@ function collectAgentTtsAssignments(params: {
       pathPrefix:
         source.kind === "entries"
           ? `${appendConfigPathSegment("agents.entries", source.key)}.tts`
-          : `agents.list.${source.index}.tts`,
+          : `agents.list[${source.index}].tts`,
       defaults: params.defaults,
       context: params.context,
     });

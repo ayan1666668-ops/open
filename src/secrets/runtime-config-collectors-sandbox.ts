@@ -75,7 +75,7 @@ export function collectAgentSandboxAssignments(params: {
     agentPath:
       source.kind === "entries"
         ? appendConfigPathSegment("agents.entries", source.key)
-        : `agents.list.${source.index}`,
+        : `agents.list[${source.index}]`,
   }));
   const activeDefaultKeys = new Set<SandboxSshSecretKey>();
   const seenAgentIds = new Set<string>();

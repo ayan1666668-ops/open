@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveConfigForRead } from "../config/io.read-helpers.js";
+import { coerceConfig, resolveConfigForRead } from "../config/io.read-helpers.js";
 import {
   getAuthoredConfigSecretRef,
   setConfigResolutionFacts,
@@ -375,36 +375,86 @@ describe("resolveCommandSecretRefsViaGateway", () => {
     },
   );
 
-  it("drops provenance for a quoted record key the gateway resolved", async () => {
-    const quotedPath = 'talk.providers["acme.speech"].apiKey';
-    const read = resolveConfigForRead(
-      {
-        talk: { providers: { "acme.speech": { apiKey: "${ACME_SPEECH_KEY}" } } },
-      } as OpenClawConfig,
-      {},
-    );
-    const config = read.resolvedConfigRaw as OpenClawConfig;
-    setConfigResolutionFacts(config, read.resolutionFacts);
-    callGateway.mockResolvedValueOnce({
-      assignments: [
-        {
-          path: quotedPath,
-          pathSegments: ["talk", "providers", "acme.speech", "apiKey"],
-          value: "resolved-key",
+  describe.each([
+    {
+      name: "dotted object key",
+      config: { talk: { providers: { "acme.speech": { apiKey: "${SOURCE_KEY}" } } } },
+      targetPath: 'talk.providers["acme.speech"].apiKey',
+      pathSegments: ["talk", "providers", "acme.speech", "apiKey"],
+      targetId: "talk.providers.*.apiKey",
+      fixtureTarget: false,
+    },
+    {
+      name: "numeric object key",
+      config: { talk: { providers: { "0": { apiKey: "${SOURCE_KEY}" } } } },
+      targetPath: 'talk.providers["0"].apiKey',
+      pathSegments: ["talk", "providers", "0", "apiKey"],
+      targetId: "talk.providers.*.apiKey",
+      fixtureTarget: false,
+    },
+    {
+      name: "array index",
+      config: {
+        plugins: { entries: { fixture: { config: { tokens: ["${SOURCE_KEY}"] } } } },
+      },
+      targetPath: "plugins.entries.fixture.config.tokens[0]",
+      pathSegments: ["plugins", "entries", "fixture", "config", "tokens", "0"],
+      targetId: "plugins.entries.fixture.config.tokens.*",
+      fixtureTarget: true,
+    },
+  ])(
+    "gateway assignment for $name",
+    ({ config: input, targetPath, pathSegments, targetId, fixtureTarget }) => {
+      it.each(["canonical", "omitted", "display-only"])(
+        "applies and clears only the actual target when path is %s",
+        async (pathMode) => {
+          const read = resolveConfigForRead(input, {});
+          const config = coerceConfig(read.resolvedConfigRaw);
+          setConfigResolutionFacts(config, read.resolutionFacts);
+          const restoreDeps = fixtureTarget
+            ? setSingleSecretTargetDeps({ path: targetPath, pathSegments })
+            : undefined;
+          const resolvedLiteral = "${MATERIALIZED_LITERAL}";
+          callGateway.mockResolvedValueOnce({
+            assignments: [
+              {
+                ...(pathMode === "omitted"
+                  ? {}
+                  : { path: pathMode === "canonical" ? targetPath : "display-only" }),
+                pathSegments,
+                value: resolvedLiteral,
+              },
+            ],
+          });
+          const request = {
+            commandName: "memory status",
+            targetIds: new Set([targetId]),
+            allowedPaths: new Set([targetPath]),
+          };
+
+          try {
+            const result = await resolveCommandSecretRefsViaGateway({ ...request, config });
+
+            expect(readPath(result.resolvedConfig, pathSegments)).toBe(resolvedLiteral);
+            expect(getAuthoredConfigSecretRef(config, targetPath)?.id).toBe("SOURCE_KEY");
+            expect(getAuthoredConfigSecretRef(result.resolvedConfig, targetPath)).toBeNull();
+            expect(result.hadUnresolvedTargets).toBe(false);
+            expect(result.targetStatesByPath).toEqual({ [targetPath]: "resolved_gateway" });
+
+            const next = await resolveCommandSecretRefsViaGateway({
+              ...request,
+              config: result.resolvedConfig,
+            });
+            expect(readPath(next.resolvedConfig, pathSegments)).toBe(resolvedLiteral);
+            expect(next.hadUnresolvedTargets).toBe(false);
+            expect(callGateway).toHaveBeenCalledOnce();
+          } finally {
+            restoreDeps?.();
+          }
         },
-      ],
-    });
-
-    const result = await resolveCommandSecretRefsViaGateway({
-      config,
-      commandName: "memory status",
-      targetIds: new Set(["talk.providers.*.apiKey"]),
-    });
-
-    // A surviving fact would report the target the gateway just resolved as unresolved.
-    expect(getAuthoredConfigSecretRef(result.resolvedConfig, quotedPath)).toBeNull();
-    expect(result.hadUnresolvedTargets).toBe(false);
-  });
+      );
+    },
+  );
 
   it("uses the explicit agent owner during channels resolve secret preflight", async () => {
     const channelPath = "channels.telegram.botToken";

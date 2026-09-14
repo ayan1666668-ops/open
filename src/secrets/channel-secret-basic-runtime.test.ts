@@ -1,7 +1,7 @@
 /** Regression tests for bracket-quoted account keys in channel secret assignment paths. */
-import { describe, expect, it } from "vitest";
-import type { OpenClawConfig } from "../config/config.js";
-import { resolveConfigForRead } from "../config/io.read-helpers.js";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { assert, describe, expect, it } from "vitest";
+import { coerceConfig, resolveConfigForRead } from "../config/io.read-helpers.js";
 import { setConfigResolutionFacts } from "../config/resolution-facts.js";
 import {
   collectSimpleChannelFieldAssignments,
@@ -24,9 +24,10 @@ describe("collectSimpleChannelFieldAssignments", () => {
       },
       {},
     );
-    const sourceConfig = read.resolvedConfigRaw as OpenClawConfig;
+    const sourceConfig = coerceConfig(read.resolvedConfigRaw);
     setConfigResolutionFacts(sourceConfig, read.resolutionFacts);
-    const channel = sourceConfig.channels?.discord as unknown as Record<string, unknown>;
+    const channel = asOptionalRecord(sourceConfig.channels?.discord);
+    assert(channel);
     const context = createResolverContext({ sourceConfig, env: {} });
 
     collectSimpleChannelFieldAssignments({

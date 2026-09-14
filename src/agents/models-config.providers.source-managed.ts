@@ -65,10 +65,8 @@ function resolveSourceManagedHeaderMarkers(params: {
   sourceProvider: SourceProviderEntry;
   sourceConfig: OpenClawConfig | undefined;
 }): Record<string, string> {
-  const sourceHeaders = isRecord(params.sourceProvider.providerConfig.headers)
-    ? params.sourceProvider.providerConfig.headers
-    : undefined;
-  if (!sourceHeaders) {
+  const sourceHeaders = params.sourceProvider.providerConfig.headers;
+  if (!isRecord(sourceHeaders)) {
     return {};
   }
   const markers: Record<string, string> = {};

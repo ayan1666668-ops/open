@@ -88,7 +88,7 @@ export async function resolveLmstudioConfiguredApiKeyForProvider(params: {
     return undefined;
   }
 
-  const path = params.path ?? `models.providers.${params.providerId}.apiKey`;
+  const path = params.path ?? `models.providers[${JSON.stringify(params.providerId)}].apiKey`;
   const env = params.env ?? process.env;
   const directApiKey = normalizeOptionalSecretInput(apiKeyInput);
   const resolved = await resolveConfiguredSecretInputString({
@@ -149,7 +149,7 @@ export async function resolveLmstudioProviderHeaders(params: {
       config: params.config,
       env: params.env ?? process.env,
       value: headerValue,
-      path: `${pathPrefix}.${headerName}`,
+      path: `${pathPrefix}[${JSON.stringify(headerName)}]`,
       unresolvedReasonStyle: "detailed",
     });
     if (resolvedHeader.unresolvedRefReason) {
