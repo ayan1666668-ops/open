@@ -331,7 +331,10 @@ async function runModelRun(params: {
       model,
       ...(params.thinking ? { thinking: params.thinking } : {}),
       modelRun: true,
-      modelRunRequestedOverrides: params.requestedOverrides,
+      ...(params.requestedOverrides.maxTokens !== undefined ||
+      params.requestedOverrides.temperature !== undefined
+        ? { modelRunRequestedOverrides: params.requestedOverrides }
+        : {}),
       promptMode: "none",
       cleanupBundleMcpOnRunEnd: true,
       idempotencyKey: randomIdempotencyKey(),

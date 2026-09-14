@@ -1576,6 +1576,12 @@ describe("capability cli", () => {
     expect(firstJsonOutput()?.requestedOverrides).toEqual({ maxOutputTokens: 64, temperature: 0 });
   });
 
+  it("omits generation overrides from gateway requests when none were requested", async () => {
+    await runCap("capability", "model", "run", "--prompt", "hello", "--gateway", "--json");
+
+    expect(firstGatewayCall()?.params).not.toHaveProperty("modelRunRequestedOverrides");
+  });
+
   it("passes image files to gateway model probes as attachments", async () => {
     const tempInput = path.join(os.tmpdir(), `openclaw-model-run-gateway-image-${Date.now()}.png`);
     await fs.writeFile(tempInput, Buffer.from(PNG_1X1_BASE64, "base64"));
