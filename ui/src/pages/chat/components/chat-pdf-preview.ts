@@ -5,6 +5,7 @@ import { t } from "../../../i18n/index.ts";
 import { formatBytes } from "../../../lib/agents/display.ts";
 import { OpenClawLightDomContentsElement } from "../../../lit/openclaw-element.ts";
 import { renderAttachmentPreviewSkeleton } from "./chat-attachment-card.ts";
+import { resolveAttachmentFileIcon } from "./chat-attachment-file-icon.ts";
 import { safeAttachmentHref } from "./chat-attachment-href.ts";
 import { readResponseBytesWithinLimit } from "./chat-response-bytes.ts";
 
@@ -120,7 +121,9 @@ class ChatPdfPreview extends OpenClawLightDomContentsElement {
     return html`
       <div class="sidebar-pdf-preview" aria-label=${this.label}>
         <div class="sidebar-file-toolbar">
-          <span class="sidebar-file-toolbar__type" title=${this.mimeType}>PDF</span>
+          <span class="sidebar-file-toolbar__type" title=${this.mimeType}
+            >${resolveAttachmentFileIcon(this.label, this.mimeType).extensionLabel}</span
+          >
           ${this.sizeBytes === undefined ? nothing : html`<span>${formatBytes(this.sizeBytes)}</span>`}
           <span class="sidebar-file-toolbar__actions">
             ${
