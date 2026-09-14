@@ -544,11 +544,9 @@ export async function resolveEmbeddedModelSelection(params: {
       model,
     });
   let catalogForThinking =
-    allowedModelCatalog.length > 0
-      ? allowedModelCatalog
-      : modelCatalog && modelCatalog.length > 0
-        ? modelCatalog
-        : params.configuredThinkingCatalog;
+    visibilityPolicy.catalog.length > 0
+      ? visibilityPolicy.catalog
+      : params.configuredThinkingCatalog;
   if (
     params.pluginsEnabled &&
     primaryConfiguredThinkLevel !== "off" &&
@@ -565,7 +563,7 @@ export async function resolveEmbeddedModelSelection(params: {
         ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
       }),
     );
-    const allowedRuntimeCatalog = createModelVisibilityPolicy({
+    const runtimeThinkingCatalog = createModelVisibilityPolicy({
       cfg: params.cfg,
       catalog: runtimeCatalog,
       defaultProvider,
@@ -574,15 +572,15 @@ export async function resolveEmbeddedModelSelection(params: {
       allowManifestNormalization: true,
       allowPluginNormalization: params.pluginsEnabled,
       ...params.modelManifestContext,
-    }).allowedCatalog;
+    }).catalog;
     if (
       hasResolvedThinkingCatalogEntry({
-        catalog: allowedRuntimeCatalog,
+        catalog: runtimeThinkingCatalog,
         provider,
         model,
       })
     ) {
-      catalogForThinking = allowedRuntimeCatalog;
+      catalogForThinking = runtimeThinkingCatalog;
     }
   }
   const thinkingCatalog = catalogForThinking.length > 0 ? catalogForThinking : undefined;

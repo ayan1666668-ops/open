@@ -1553,6 +1553,7 @@ function resolveInitialModelSelection(
 
 export type ModelVisibilityPolicy = {
   allowAny: boolean;
+  catalog: ModelCatalogEntry[];
   configuredCatalog: readonly ModelCatalogEntry[];
   allowedCatalog: ModelCatalogEntry[];
   allowedKeys: Set<string>;
@@ -1653,6 +1654,7 @@ export function createModelVisibilityPolicyWithFallbacks(
   }
   const policy: ModelVisibilityPolicy = {
     allowAny: allowed.allowAny,
+    catalog: prepared.catalog,
     configuredCatalog,
     allowedCatalog: allowed.allowedCatalog,
     allowedKeys: allowed.allowedKeys,

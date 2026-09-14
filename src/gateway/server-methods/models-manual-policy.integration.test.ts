@@ -104,6 +104,21 @@ it.each([true, false])(
             .soft(client.request("sessions.patch", { key, model }))
             .rejects.toThrow("model not allowed");
         }
+        await client.request("chat.send", {
+          sessionKey: key,
+          message: "/model default",
+          idempotencyKey: `manual-policy-default-reset-${authenticated}`,
+        });
+        await expect
+          .poll(async () => {
+            const history = await client.request<{ sessionInfo: { model: string } }>(
+              "chat.history",
+              { sessionKey: key },
+            );
+            return history.sessionInfo.model;
+          })
+          .toBe("automatic");
+        await client.request("sessions.patch", { key, model: "fixture/manual" });
         await expect(client.request("sessions.patch", { key, model: null })).resolves.toBeDefined();
       } finally {
         await disconnectGatewayClient(client);

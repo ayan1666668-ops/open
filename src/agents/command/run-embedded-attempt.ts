@@ -41,6 +41,7 @@ import {
 import { resolveSessionRuntimeOverrideForProvider } from "../session-runtime-compat.js";
 import { measureAgentStartup } from "../startup-timing.js";
 import {
+  hasResolvedThinkingCatalogEntry,
   normalizeThinkingCatalogProviders,
   resolveCandidateThinkingLevel,
   resolveEffectiveAgentRuntime,
@@ -418,7 +419,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
                 workspaceDir,
               }),
             );
-            const allowedRuntimeCatalog = createModelVisibilityPolicy({
+            const runtimeThinkingCatalog = createModelVisibilityPolicy({
               cfg,
               catalog: runtimeCatalog,
               defaultProvider,
@@ -427,9 +428,15 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               allowManifestNormalization: true,
               allowPluginNormalization: true,
               ...modelManifestContext,
-            }).allowedCatalog;
-            if (allowedRuntimeCatalog.length > 0) {
-              candidateThinkingCatalog = allowedRuntimeCatalog;
+            }).catalog;
+            if (
+              hasResolvedThinkingCatalogEntry({
+                catalog: runtimeCatalog,
+                provider: providerOverride,
+                model: modelOverride,
+              })
+            ) {
+              candidateThinkingCatalog = runtimeThinkingCatalog;
             }
           }
           const candidateRequestedThinkLevel =

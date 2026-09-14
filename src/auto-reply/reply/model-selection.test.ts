@@ -15,6 +15,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import * as activeThinkingPolicy from "../../plugins/provider-thinking-active.js";
 import { prepareModelCatalogThinkingPolicies } from "../../plugins/provider-thinking.js";
+import { isThinkingLevelSupported } from "../thinking.js";
 import { createModelSelectionState, resolveContextTokens } from "./model-selection.js";
 
 type PersistReplySessionEntry =
@@ -163,6 +164,62 @@ const makeConfiguredModel = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("createModelSelectionState catalog loading", () => {
+  it.each([false, true])(
+    "retains automatic-primary reasoning from prepared=%s metadata outside manual policy",
+    async (prepared) => {
+      const automatic = {
+        provider: "fixture",
+        id: "automatic",
+        name: "Automatic",
+        api: "openai-completions" as const,
+        baseUrl: "https://fixture.invalid/v1",
+        reasoning: true,
+        compat: { supportedReasoningEfforts: ["xhigh"] },
+      };
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: "fixture/automatic",
+            modelPolicy: { allow: ["fixture/manual"] },
+          },
+        },
+        models: {
+          providers: {
+            fixture: {
+              api: "openai-completions",
+              baseUrl: "https://fixture.invalid/v1",
+              models: [
+                { id: "automatic", name: "Automatic" },
+                { id: "manual", name: "Manual", reasoning: false },
+              ],
+            },
+          },
+        },
+      };
+      vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValue([automatic]);
+      const state = await createModelSelectionState({
+        cfg,
+        agentCfg: cfg.agents?.defaults,
+        defaultProvider: "fixture",
+        defaultModel: "automatic",
+        provider: "fixture",
+        model: "automatic",
+        hasModelDirective: false,
+        ...(prepared ? { preparedModelCatalog: { entries: [automatic], routeVariants: [] } } : {}),
+      });
+      expect(state.modelPolicy.allows({ provider: "fixture", model: "automatic" })).toBe(false);
+      expect(
+        isThinkingLevelSupported({
+          provider: "fixture",
+          model: "automatic",
+          level: "xhigh",
+          catalog: await state.resolveThinkingCatalog(),
+        }),
+      ).toBe(true);
+      await expect(state.resolveDefaultReasoningLevel()).resolves.toBe("on");
+    },
+  );
+
   it("skips full catalog loading for ordinary allowlist-backed turns", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();
     const cfg = {

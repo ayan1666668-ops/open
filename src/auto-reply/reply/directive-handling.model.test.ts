@@ -1832,6 +1832,7 @@ describe("/model chat UX", () => {
       provider: "anthropic",
       model: "claude-opus-4-6",
       isDefault: true,
+      resetToDefault: true,
     });
   });
 

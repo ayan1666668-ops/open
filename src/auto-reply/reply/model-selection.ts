@@ -537,7 +537,7 @@ export async function createModelSelectionState(params: {
       defaultModel,
       agentId: params.agentId,
       ...runtimeModelNormalization,
-    }).allowedCatalog;
+    }).catalog;
   const thinkingCatalogs = new Map<string, ModelCatalog>();
   const resolveThinkingCatalog = async (
     selection: ThinkingDefaultSelection = { provider, model },
@@ -547,7 +547,7 @@ export async function createModelSelectionState(params: {
     if (cached) {
       return cached.length > 0 ? cached : undefined;
     }
-    let catalog = allowedModelCatalog;
+    let catalog = visibilityPolicy.catalog;
     if (
       findSelectedCatalogEntry({ catalog, provider: selection.provider, model: selection.model })
         ?.reasoning === undefined
@@ -623,7 +623,7 @@ export async function createModelSelectionState(params: {
       catalog: await resolveThinkingCatalog(selection),
     });
   const selectedCatalogEntry = findSelectedCatalogEntry({
-    catalog: modelCatalog ?? allowedModelCatalog,
+    catalog: visibilityPolicy.catalog,
     provider,
     model,
   });
