@@ -1,4 +1,4 @@
-import { getRuntimeConfig } from "../config/config.js";
+import { getRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
   isGatewayWorkAdmissionClosed,
   tryBeginGatewayIndependentRootWorkAdmission,
@@ -36,9 +36,12 @@ export function startGatewayTaskSupervision(params: {
     try {
       // Ordinary installations remain non-creating. The supervise CLI explicitly
       // activates this optional subsystem by admitting its first observer.
+      // Read the applied snapshot rather than the loader: this probe polls, and a
+      // loader call here would read config alongside the outbound retry drain
+      // that owns the runtime services' single config read per tick.
       if (
         !isTaskSupervisionActivated() &&
-        !Object.values(getRuntimeConfig().agents?.entries ?? {}).some(
+        !Object.values(getRuntimeConfigSnapshot()?.agents?.entries ?? {}).some(
           (agent) => agent.taskSupervision?.enabled,
         )
       ) {
