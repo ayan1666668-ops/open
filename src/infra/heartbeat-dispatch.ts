@@ -568,9 +568,16 @@ export async function deliverHeartbeatDispatch(
   signal?: AbortSignal,
 ) {
   const { cfg, agentId, startedAt } = policy.wake;
-  const { delivery, runSessionKey, storePath, outboundPolicySessionKey } = policy.prepared;
+  const { delivery, runSessionKey, storePath, outboundPolicySessionKey, isWebChatExecCompletion } =
+    policy.prepared;
   if (delivery.channel === "none" || !delivery.to) {
-    return { visibleReplySent: false };
+    // A WebChat-internal exec-completion reply has no external channel to
+    // send to, but it was already projected onto the session's own
+    // transcript by the ordinary turn-completion path (#147387). Report it
+    // as visibly sent so the triggering system event is consumed here too;
+    // otherwise a later wake would see the same event as still pending and
+    // relay the same completion a second time.
+    return { visibleReplySent: isWebChatExecCompletion === true };
   }
   const onDeliveredPayload = policy.projectTarget
     ? prepareHeartbeatTargetAwareness({
