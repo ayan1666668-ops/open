@@ -688,7 +688,6 @@ export async function resolveEmbeddedModelSelection(params: {
     defaultModel,
     configuredDefaultAuthProfileId,
     providerForAuthProfileValidation,
-    visibilityPolicy,
     hasExplicitRunOverride,
     storedProviderOverride,
     storedModelOverride,
