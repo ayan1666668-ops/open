@@ -1,7 +1,9 @@
+import { readClawInstallSchemaVersionRows } from "../claws/provenance-runtime-read.kernel.js";
 import {
   patchConfigHealthEntryInDatabase,
   readConfigHealthSnapshotInDatabase,
 } from "../config/io.health-state.kernel.js";
+import { loadMutableCronStoreInWorker } from "../cron/store/load.worker.js";
 import { executeSessionDeliveryCommand } from "../infra/session-delivery-queue.worker.js";
 import { createSqliteAuditRecordKernel } from "../infra/sqlite-audit-record.kernel.js";
 import {
@@ -46,6 +48,7 @@ import {
   retainOpenClawStateDatabase,
 } from "./openclaw-state-db-cache.js";
 import type { OpenClawStateDatabase } from "./openclaw-state-db-contract.js";
+import { assertOpenClawStateDatabaseOwner } from "./openclaw-state-db-maintenance.js";
 import {
   withArtifactPreservingStateReads,
   withExistingOpenClawStateDatabaseArtifactPreservingReadOnly,
@@ -138,6 +141,15 @@ function createSharedStateWorkerBackend(
           command.input.selector,
           { path: context.databasePath, env: getSqliteWorkerStateContext().environment },
           command.input.artifactPreservingReadOnly,
+        );
+      }
+      if (command.type === "claws.install-schema-versions") {
+        return withExistingOpenClawStateDatabaseArtifactPreservingReadOnly(
+          ({ db, path: pathname }) => {
+            assertOpenClawStateDatabaseOwner(db, { pathname });
+            return readClawInstallSchemaVersionRows(db);
+          },
+          { path: context.databasePath, env: getSqliteWorkerStateContext().environment },
         );
       }
       if (command.type === "database.generationMatches") {
@@ -261,6 +273,9 @@ function createSharedStateWorkerBackend(
         );
       }
       const database = open();
+      if (command.type === "cron.loadMutable") {
+        return loadMutableCronStoreInWorker(database, command.input.storeKey);
+      }
       if (
         command.type === "sessionDelivery.enqueue" ||
         command.type === "sessionDelivery.enqueueClaimed" ||
