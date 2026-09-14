@@ -695,16 +695,16 @@ async function dispatchChannelTurnWithDeliveryOwner(
         } catch (error: unknown) {
           settlementError = error;
         }
-        const settlementWins =
-          resolvePartialChannelDeliveryResult(settlementError) !== undefined ||
-          (settlementError !== undefined && dispatchError === undefined);
-        const error = settlementWins ? settlementError : dispatchError;
+        // oxfmt-ignore
+        const error = resolvePartialChannelDeliveryResult(settlementError) ? settlementError : dispatchError ?? settlementError;
         if (error === undefined) {
           return dispatchResult!;
         }
         throw toErrorObject(
           error,
-          settlementWins ? "channel delivery settlement failed" : "channel dispatch failed",
+          settlementError !== undefined && !dispatchError
+            ? "channel delivery settlement failed"
+            : "channel dispatch failed",
         );
       },
     },
