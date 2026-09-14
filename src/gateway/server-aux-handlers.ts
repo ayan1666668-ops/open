@@ -8,6 +8,7 @@ import {
   type AgentRunDelegatedAuthority,
   registerAgentRunDelegatedAuthorityClosedHandler,
 } from "../infra/agent-run-registry.js";
+import type { GatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime.types.js";
 import type { ChannelApprovalKind } from "../infra/approval-types.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import {
@@ -90,6 +91,7 @@ export function createGatewayAuxHandlers(
     registerWorkerTurnClaimClosedHandler?: (
       handler: (claim: WorkerSessionTurnClaim) => void,
     ) => () => void;
+    getNativeApprovalRuntime?: () => GatewayNativeApprovalRuntime | undefined;
   },
 ) {
   // Approval kinds share one durable first-answer-wins registry and
@@ -159,7 +161,11 @@ export function createGatewayAuxHandlers(
       };
     },
   );
-  const execApprovalForwarder = createExecApprovalForwarder();
+  const execApprovalForwarder = createExecApprovalForwarder({
+    // Forwarding is not a channel-account ALS task, so pass the owning Gateway
+    // coordinator instead of relying on getGatewayNativeApprovalRuntime().
+    getNativeApprovalRuntime: params.getNativeApprovalRuntime,
+  });
   const approvalWebPushDelivery = createApprovalWebPushDelivery({
     getRuntimeConfig,
     log: params.log,

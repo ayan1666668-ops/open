@@ -343,6 +343,7 @@ export async function startGatewayCoreRuntime(input: {
             secretEgressProxy?.revokeRun(authority.operationalRunInstance);
           }
         },
+        getNativeApprovalRuntime: () => runtime.gatewayInstanceRuntimeRef.current?.nativeApprovals,
       }),
       coreGatewayHandlers: coreGatewayHandlersLocal,
     };

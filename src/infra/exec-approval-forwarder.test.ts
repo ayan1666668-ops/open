@@ -8,6 +8,8 @@ import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
+import type { GatewayNativeApprovalRuntime } from "./approval-gateway-runtime.types.js";
+import { createApprovalNativeRouteCoordinator } from "./approval-native-route-coordinator.js";
 import { createExecApprovalForwarder } from "./exec-approval-forwarder.js";
 import type { ExecApprovalRequest } from "./exec-approvals.js";
 
@@ -39,9 +41,13 @@ const baseRequest = {
 };
 
 const activeForwarders: Array<ReturnType<typeof createExecApprovalForwarder>> = [];
+const nativeRouteCoordinators: Array<ReturnType<typeof createApprovalNativeRouteCoordinator>> = [];
 
 afterEach(async () => {
   await Promise.all(activeForwarders.splice(0).map((forwarder) => forwarder.stop()));
+  for (const coordinator of nativeRouteCoordinators.splice(0)) {
+    coordinator.close();
+  }
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -252,11 +258,32 @@ function makeTargetsCfg(targets: Array<{ channel: string; to: string }>): OpenCl
 
 const TARGETS_CFG = makeTargetsCfg([{ channel: "slack", to: "U123" }]);
 
+const TELEGRAM_SESSION_CFG = {
+  approvals: {
+    exec: {
+      enabled: true,
+      mode: "session",
+    },
+  },
+  channels: {
+    telegram: {
+      execApprovals: {
+        enabled: true,
+        approvers: ["123"],
+        target: "channel",
+      },
+    },
+  },
+} as OpenClawConfig;
+
 function createForwarder(params: {
   cfg: OpenClawConfig;
   deliver?: ReturnType<typeof vi.fn>;
   resolveSessionTarget?: NonNullable<
     NonNullable<Parameters<typeof createExecApprovalForwarder>[0]>["resolveSessionTarget"]
+  >;
+  getNativeApprovalRuntime?: NonNullable<
+    NonNullable<Parameters<typeof createExecApprovalForwarder>[0]>["getNativeApprovalRuntime"]
   >;
 }) {
   const deliver = params.deliver ?? vi.fn().mockResolvedValue([]);
@@ -270,9 +297,42 @@ function createForwarder(params: {
   if (params.resolveSessionTarget !== undefined) {
     deps.resolveSessionTarget = params.resolveSessionTarget;
   }
+  if (params.getNativeApprovalRuntime !== undefined) {
+    deps.getNativeApprovalRuntime = params.getNativeApprovalRuntime;
+  }
   const forwarder = createExecApprovalForwarder(deps);
   activeForwarders.push(forwarder);
   return { deliver, forwarder };
+}
+
+function startNativeRouteRuntime(params: { channel: string; accountId?: string }) {
+  const coordinator = createApprovalNativeRouteCoordinator();
+  nativeRouteCoordinators.push(coordinator);
+  const reporter = coordinator.createReporter({
+    handledKinds: new Set(["exec"]),
+    channel: params.channel,
+    accountId: params.accountId,
+    shouldHandle: () => true,
+    classifyRoute: () => "unbound",
+    requestGateway: async () => ({}),
+  });
+  reporter.start();
+  return coordinator;
+}
+
+function nativeApprovalRuntimeForCoordinator(
+  coordinator: ReturnType<typeof createApprovalNativeRouteCoordinator>,
+): GatewayNativeApprovalRuntime {
+  return {
+    routeCoordinator: coordinator,
+    request: async () => {
+      throw new Error("native approval request is unused in forwarder tests");
+    },
+    requestRoute: async () => {
+      throw new Error("native approval route request is unused in forwarder tests");
+    },
+    subscribe: () => () => {},
+  };
 }
 
 function makeSessionCfg(options: { discordExecApprovalsEnabled?: boolean } = {}): OpenClawConfig {
@@ -297,11 +357,15 @@ async function expectDiscordSessionTargetRequest(params: {
   cfg: OpenClawConfig;
   expectedAccepted: boolean;
   expectedDeliveryCount: number;
+  getNativeApprovalRuntime?: NonNullable<
+    NonNullable<Parameters<typeof createExecApprovalForwarder>[0]>["getNativeApprovalRuntime"]
+  >;
 }) {
   vi.useFakeTimers();
   const { deliver, forwarder } = createForwarder({
     cfg: params.cfg,
     resolveSessionTarget: () => ({ channel: "discord", to: "channel:123" }),
+    getNativeApprovalRuntime: params.getNativeApprovalRuntime,
   });
 
   await expect(forwarder.handleRequested(baseRequest)).resolves.toBe(params.expectedAccepted);
@@ -649,46 +713,49 @@ describe("exec approval forwarder", () => {
     expect(target.to).toBe("U123");
   });
 
-  it("skips telegram forwarding when telegram exec approvals handler is enabled", async () => {
-    vi.useFakeTimers();
-    const cfg = {
-      approvals: {
-        exec: {
-          enabled: true,
-          mode: "session",
-        },
-      },
-      channels: {
-        telegram: {
-          execApprovals: {
-            enabled: true,
-            approvers: ["123"],
-            target: "channel",
+  it.each([
+    { nativeRuntimeActive: false, expectedAccepted: true, expectedDeliveryCount: 1 },
+    { nativeRuntimeActive: true, expectedAccepted: false, expectedDeliveryCount: 0 },
+  ])(
+    "telegram session forwarding when native exec runtime active=$nativeRuntimeActive",
+    async ({ nativeRuntimeActive, expectedAccepted, expectedDeliveryCount }) => {
+      vi.useFakeTimers();
+      const coordinator = nativeRuntimeActive
+        ? startNativeRouteRuntime({ channel: "telegram", accountId: "default" })
+        : undefined;
+      const { deliver, forwarder } = createForwarder({
+        cfg: TELEGRAM_SESSION_CFG,
+        resolveSessionTarget: () => ({
+          channel: "telegram",
+          to: "-100999",
+          threadId: 77,
+          accountId: "default",
+        }),
+        getNativeApprovalRuntime: coordinator
+          ? () => nativeApprovalRuntimeForCoordinator(coordinator)
+          : undefined,
+      });
+
+      await expect(
+        forwarder.handleRequested({
+          ...baseRequest,
+          request: {
+            ...baseRequest.request,
+            turnSourceChannel: "telegram",
+            turnSourceTo: "-100999",
+            turnSourceThreadId: "77",
+            turnSourceAccountId: "default",
           },
-        },
-      },
-    } as OpenClawConfig;
+        }),
+      ).resolves.toBe(expectedAccepted);
 
-    const { deliver, forwarder } = createForwarder({
-      cfg,
-      resolveSessionTarget: () => ({ channel: "telegram", to: "-100999", threadId: 77 }),
-    });
-
-    await expect(
-      forwarder.handleRequested({
-        ...baseRequest,
-        request: {
-          ...baseRequest.request,
-          turnSourceChannel: "telegram",
-          turnSourceTo: "-100999",
-          turnSourceThreadId: "77",
-          turnSourceAccountId: "default",
-        },
-      }),
-    ).resolves.toBe(false);
-
-    expect(deliver).not.toHaveBeenCalled();
-  });
+      if (expectedDeliveryCount === 0) {
+        expect(deliver).not.toHaveBeenCalled();
+        return;
+      }
+      expect(deliver).toHaveBeenCalledTimes(expectedDeliveryCount);
+    },
+  );
 
   it.each(["webchat", "tui"])(
     "preserves configured session fallback for %s-originated exec approvals",
@@ -864,8 +931,8 @@ describe("exec approval forwarder", () => {
   it.each([
     {
       cfg: makeSessionCfg({ discordExecApprovalsEnabled: true }),
-      expectedAccepted: false,
-      expectedDeliveryCount: 0,
+      expectedAccepted: true,
+      expectedDeliveryCount: 1,
     },
     {
       cfg: makeSessionCfg(),
@@ -874,6 +941,16 @@ describe("exec approval forwarder", () => {
     },
   ])("handles discord session target forwarding case %j", async (params) => {
     await expectDiscordSessionTargetRequest(params);
+  });
+
+  it("skips discord forwarding when native exec runtime is active", async () => {
+    const coordinator = startNativeRouteRuntime({ channel: "discord" });
+    await expectDiscordSessionTargetRequest({
+      cfg: makeSessionCfg({ discordExecApprovalsEnabled: true }),
+      expectedAccepted: false,
+      expectedDeliveryCount: 0,
+      getNativeApprovalRuntime: () => nativeApprovalRuntimeForCoordinator(coordinator),
+    });
   });
 
   it("can forward resolved notices without pending cache when request payload is present", async () => {

@@ -17,6 +17,9 @@ import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { createPendingApprovalRegistry } from "../shared/pending-approval-registry.js";
 import { isDeliverableMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
+import { getGatewayNativeApprovalRuntime } from "./approval-gateway-runtime-context.js";
+import type { GatewayNativeApprovalRuntime } from "./approval-gateway-runtime.types.js";
+import { hasActiveApprovalNativeRouteRuntime } from "./approval-native-route-coordinator.js";
 import { matchesApprovalRequestFilters } from "./approval-request-filters.js";
 import type { ChannelApprovalKind } from "./approval-types.js";
 import {
@@ -83,11 +86,14 @@ export type ExecApprovalForwarder = {
   stop: () => Promise<void>;
 };
 
+type NativeRouteRuntimeQuery = Parameters<typeof hasActiveApprovalNativeRouteRuntime>[0];
+
 type ExecApprovalForwarderDeps = {
   getConfig?: () => OpenClawConfig;
   deliver?: DeliverApprovalPayloads;
   nowMs?: () => number;
   resolveSessionTarget?: ResolveSessionTargetFn;
+  getNativeApprovalRuntime?: () => GatewayNativeApprovalRuntime | undefined;
 };
 
 const SYNTHETIC_APPROVAL_REQUEST_ID = "__approval-routing__";
@@ -149,13 +155,23 @@ function shouldSkipForwardingFallback(params: {
   target: ExecApprovalForwardTarget;
   cfg: OpenClawConfig;
   routeRequest: ApprovalRouteRequest;
+  hasActiveNativeRouteRuntime: (query: NativeRouteRuntimeQuery) => boolean;
 }): boolean {
   const channel = normalizeMessageChannel(params.target.channel) ?? params.target.channel;
   if (!channel) {
     return false;
   }
-  // Channel adapters can suppress generic fallback delivery when they already
-  // own native approval UX for the same target.
+  // Configured native delivery is not coverage. Keep the fallback unless a
+  // native runtime is actually registered for this channel/account/kind.
+  if (
+    !params.hasActiveNativeRouteRuntime({
+      approvalKind: params.approvalKind,
+      channel,
+      accountId: params.target.accountId ?? params.routeRequest.turnSourceAccountId,
+    })
+  ) {
+    return false;
+  }
   const adapter = resolveChannelApprovalAdapter(getLoadedChannelPlugin(channel));
   return (
     adapter?.delivery?.shouldSuppressForwardingFallback?.({
@@ -327,6 +343,7 @@ function createApprovalHandlers<
   deliver: DeliverApprovalPayloads;
   nowMs: () => number;
   resolveSessionTarget: ResolveSessionTargetFn;
+  hasActiveNativeRouteRuntime: (query: NativeRouteRuntimeQuery) => boolean;
 }) {
   const pending = createPendingApprovalRegistry<PendingApproval>();
   const work = new AsyncWorkScope();
@@ -355,6 +372,7 @@ function createApprovalHandlers<
           target,
           cfg: paramsForRoute.cfg,
           routeRequest: paramsForRoute.routeRequest,
+          hasActiveNativeRouteRuntime: params.hasActiveNativeRouteRuntime,
         }),
     );
   };
@@ -517,6 +535,10 @@ export function createExecApprovalForwarder(
     });
   const nowMs = deps.nowMs ?? Date.now;
   const resolveSessionTarget = deps.resolveSessionTarget ?? defaultResolveSessionTarget;
+  const hasActiveNativeRouteRuntime = (query: NativeRouteRuntimeQuery) =>
+    deps.getNativeApprovalRuntime?.()?.routeCoordinator.hasActiveRuntime(query) ??
+    getGatewayNativeApprovalRuntime()?.routeCoordinator.hasActiveRuntime(query) ??
+    hasActiveApprovalNativeRouteRuntime(query);
 
   const execHandlers = createApprovalHandlers({
     strategy: execApprovalStrategy,
@@ -524,6 +546,7 @@ export function createExecApprovalForwarder(
     deliver,
     nowMs,
     resolveSessionTarget,
+    hasActiveNativeRouteRuntime,
   });
   const pluginHandlers = createApprovalHandlers({
     strategy: pluginApprovalStrategy,
@@ -531,6 +554,7 @@ export function createExecApprovalForwarder(
     deliver,
     nowMs,
     resolveSessionTarget,
+    hasActiveNativeRouteRuntime,
   });
 
   return {
