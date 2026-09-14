@@ -394,6 +394,7 @@ export function renderGroupedMessage(
   const bodyMarkdown = standaloneToolPayload ? null : markdown;
   const renderInOrder =
     normalizedRole === "assistant" &&
+    Boolean(markdown) &&
     !asyncQuestions &&
     (!disclosure?.expanded || Boolean(disclosure.message)) &&
     orderedContent.some((item) => item.type !== "text");
