@@ -55,7 +55,6 @@ export class PreparedModelCatalogGenerationRecoveryOwner {
       return true;
     }
 
-    const key = ownerKey(owner.input);
     const replacement = createPreparedModelRuntimeReplacement();
     const isReplacementCurrent = () => dependencies.getPendingReplacement() === replacement;
     dependencies.setPendingReplacement(replacement);
@@ -73,7 +72,7 @@ export class PreparedModelCatalogGenerationRecoveryOwner {
     notifyPreparedModelRuntimePublication({ phase: "invalidated" });
 
     const recovery = dependencies.enqueuePublication(async () => {
-      if (!isReplacementCurrent() || dependencies.owners.get(key) !== owner) {
+      if (!isReplacementCurrent() || dependencies.owners.get(ownerKey(owner.input)) !== owner) {
         return;
       }
       let recoveryError: Error | undefined;

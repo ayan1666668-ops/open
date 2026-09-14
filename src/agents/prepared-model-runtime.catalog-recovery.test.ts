@@ -176,6 +176,56 @@ describe("prepared model runtime catalog recovery", () => {
     ).resolves.toMatchObject({ agentId: "default", config: stampedConfig });
   });
 
+  it("continues queued recovery after auth rekeys its configured owner", async () => {
+    mocks.configuredAgentIds = ["secondary"];
+    const config = {};
+    await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
+    const secondaryInput = {
+      agentId: "secondary",
+      config,
+      agentDir: "/tmp/configured-secondary",
+      inheritedAuthDir: "/tmp/unused-agent",
+      workspaceDir: "/tmp/workspace-secondary",
+    };
+    const initialSecondary = getPreparedModelRuntimeSnapshot(secondaryInput);
+    expect(initialSecondary).toBeDefined();
+    if (!initialSecondary) {
+      throw new Error("secondary prepared model runtime owner was not published");
+    }
+
+    let releaseAuthBuild: (() => void) | undefined;
+    const authBuildBlocked = new Promise<void>((resolve) => {
+      releaseAuthBuild = resolve;
+    });
+    mocks.ensureOpenClawModelsJson.mockImplementationOnce(async (...args: unknown[]) => {
+      await authBuildBlocked;
+      return { agentDir: String(args[1]), wrote: false };
+    });
+    mocks.mutationListener?.({
+      agentDir: "/tmp/unused-agent",
+      affectsInheritedStores: false,
+    });
+    await vi.waitFor(() => expect(mocks.ensureOpenClawModelsJson).toHaveBeenCalledTimes(2));
+
+    const recovery =
+      replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(initialSecondary);
+    mocks.configuredAgentDirs.set("default", "/tmp/rekeyed-default-auth");
+    mocks.mutationListener?.({
+      agentDir: "/tmp/unused-agent",
+      affectsInheritedStores: false,
+    });
+    releaseAuthBuild?.();
+
+    await expect(recovery).resolves.toBe(true);
+    const dispatchResult = await Promise.race([
+      loadPublishedGatewayReplyDispatchRuntime({ agentId: "secondary" }),
+      new Promise<"pending">((resolve) => {
+        setTimeout(() => resolve("pending"), 100);
+      }),
+    ]);
+    expect(dispatchResult).toMatchObject({ agentId: "secondary" });
+  });
+
   it("preserves unfinished auth components when recovery adopts a running drain", async () => {
     mocks.configuredAgentIds = ["default", "secondary", "tertiary"];
     const config = {};
