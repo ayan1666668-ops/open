@@ -92,15 +92,17 @@ function respondChatHistoryUnavailable(
   );
 }
 
-async function handleChatHistoryRequest({
+export async function handleChatHistoryRequest({
   params,
   respond,
   client,
   context,
   method,
   signal,
+  retainedSessionId,
 }: GatewayRequestHandlerOptions & {
   method: ChatHistoryMethod;
+  retainedSessionId?: string;
 }) {
   if (!assertValidParams(params, validateChatHistoryParams, method, respond)) {
     return;
@@ -111,12 +113,13 @@ async function handleChatHistoryRequest({
     offset,
     cursor,
     messageId,
-    sessionId: requestedSessionId,
+    sessionId: wireSessionId,
     maxChars,
     maxBytes,
     pendingBefore,
     inputRunIds,
   } = params;
+  const requestedSessionId = retainedSessionId ?? wireSessionId;
   if (offset !== undefined && messageId !== undefined) {
     respond(
       false,
@@ -133,7 +136,7 @@ async function handleChatHistoryRequest({
     );
     return;
   }
-  if (requestedSessionId !== undefined && messageId === undefined) {
+  if (wireSessionId !== undefined && messageId === undefined) {
     respond(
       false,
       undefined,
@@ -677,9 +680,7 @@ async function handleChatHistoryRequest({
 }
 
 export const chatHistoryHandlers: GatewayRequestHandlers = {
-  "chat.history": async (opts) => {
-    await handleChatHistoryRequest({ ...opts, method: "chat.history" });
-  },
+  "chat.history": (opts) => handleChatHistoryRequest({ ...opts, method: "chat.history" }),
   "chat.startup": async (opts) => {
     if (!assertValidParams(opts.params, validateChatStartupParams, "chat.startup", opts.respond)) {
       return;
