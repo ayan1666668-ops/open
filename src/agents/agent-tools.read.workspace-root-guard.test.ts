@@ -17,9 +17,10 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./sandbox-paths.js", () => ({
-  assertSandboxPath: mocks.assertSandboxPath,
-}));
+vi.mock("./sandbox-paths.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sandbox-paths.js")>();
+  return { ...actual, assertSandboxPath: mocks.assertSandboxPath };
+});
 
 function createToolHarness() {
   const execute = vi.fn(async () => ({
