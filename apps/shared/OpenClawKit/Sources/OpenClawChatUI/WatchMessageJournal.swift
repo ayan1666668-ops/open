@@ -57,29 +57,11 @@ public actor OpenClawWatchMessageJournal {
                 sql: "SELECT * FROM gateway_routing_identity WHERE gateway_id = ?",
                 arguments: [gatewayStableID])
             else { return nil }
-            // Read the same selection_required/routing_contract columns the
-            // main-app decode path already persists here (ClientDatabases.
-            // loadSessionRoutingIdentity). The 3-arg initializer hardcodes
-            // selectionRequired: false and always reconstructs a display
-            // contract, so a Watch command captured through it can never
-            // agree with a live route lease built from the authoritative
-            // agents.list response once selection is actually required —
-            // permanently tripping WatchReplyCoordinator's routing-changed
-            // guard. Columns are nullable only for rows written before this
-            // migration; fall back to the legacy reconstruction there.
-            let hasFullIdentityColumns = (row["selection_required"] as Int?) != nil &&
-                (row["routing_contract"] as String?) != nil
-            guard let identity = hasFullIdentityColumns
-                ? OpenClawChatSessionRoutingIdentity(
-                    scope: row["scope"],
-                    mainSessionKey: row["main_session_key"],
-                    defaultAgentID: row["default_agent_id"],
-                    selectionRequired: (row["selection_required"] as Int?) == 1,
-                    sessionRoutingContract: row["routing_contract"])
-                : OpenClawChatSessionRoutingIdentity(
-                    scope: row["scope"],
-                    mainSessionKey: row["main_session_key"],
-                    defaultAgentID: row["default_agent_id"])
+            // Shared with requireContext's admission/claim check
+            // (WatchMessageJournal+Storage.swift) so a captured identity and
+            // its later validation can never independently drift out of
+            // agreement the way they did before this decode was unified.
+            guard let identity = Self.decodeRoutingIdentity(row)
             else { return nil }
             // Forget deletes this row. Never restore a generation captured before
             // the transaction: a newly paired owner must get a fresh identity.
