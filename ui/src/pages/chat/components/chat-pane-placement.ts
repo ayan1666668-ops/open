@@ -18,14 +18,12 @@ export function renderChatPanePlacement(props: {
   placementStartupStatus?: Pick<ApplicationPlacementStartupStatus, "phase" | "targetKind"> | null;
   placementMoving?: boolean;
   placementRestarting?: boolean;
-  placementDispatchDisabledReason?: string;
   placementMoveDisabledReason?: string;
   placementReclaimDisabledReason?: string;
-  placementRestartDisabledReason?: string;
+  placementRecoveryDisabledReason?: string;
   onPlacementMove?: () => void;
-  onPlacementDispatch?: () => void;
   onPlacementReclaim?: () => void;
-  onPlacementRestart?: () => void;
+  onPlacementRecover?: () => void;
 }): TemplateResult | typeof nothing {
   const session = props.session;
   const placement = session?.placement;
@@ -80,10 +78,9 @@ export function renderChatPanePlacement(props: {
               : dispatchRequired
                 ? t("sessionsView.repositoryWorkerRequiredLabel")
                 : worker.label;
-  const dispatchDisabledReason = props.placementDispatchDisabledReason;
   const moveDisabledReason = props.placementMoveDisabledReason;
   const reclaimDisabledReason = props.placementReclaimDisabledReason;
-  const restartDisabledReason = props.placementRestartDisabledReason;
+  const recoveryDisabledReason = props.placementRecoveryDisabledReason;
   const age = formatRelativeTimestamp(placement?.stateChangedAtMs, {
     fallback: "",
   });
@@ -138,21 +135,6 @@ export function renderChatPanePlacement(props: {
             : nothing
         }
         ${
-          dispatchRequired
-            ? html`<wa-dropdown-item
-                class="session-menu__item chat-pane__placement-dispatch"
-                ?disabled=${Boolean(dispatchDisabledReason)}
-                title=${dispatchDisabledReason ?? nothing}
-                @click=${() => !dispatchDisabledReason && props.onPlacementDispatch?.()}
-              >
-                <span slot="icon" class="session-menu__icon" aria-hidden="true"
-                  >${icons.monitor}</span
-                >
-                <span class="session-menu__text">${t("sessionsView.chooseWorker")}</span>
-              </wa-dropdown-item>`
-            : nothing
-        }
-        ${
           placementState === "active"
             ? html`<wa-dropdown-item
                 class="session-menu__item chat-pane__placement-move ${
@@ -177,17 +159,19 @@ export function renderChatPanePlacement(props: {
             : nothing
         }
         ${
-          restartable
+          dispatchRequired || restartable
             ? html`<wa-dropdown-item
-                class="session-menu__item chat-pane__placement-restart"
-                ?disabled=${Boolean(restartDisabledReason)}
-                title=${restartDisabledReason ?? nothing}
-                @click=${() => !restartDisabledReason && props.onPlacementRestart?.()}
+                class="session-menu__item chat-pane__placement-recovery"
+                ?disabled=${Boolean(recoveryDisabledReason)}
+                title=${recoveryDisabledReason ?? nothing}
+                @click=${() => !recoveryDisabledReason && props.onPlacementRecover?.()}
               >
                 <span slot="icon" class="session-menu__icon" aria-hidden="true"
                   >${icons.monitor}</span
                 >
-                <span class="session-menu__text">${t("sessionsView.restartSession")}</span>
+                <span class="session-menu__text"
+                  >${t(dispatchRequired ? "sessionsView.chooseWorker" : "sessionsView.restartSession")}</span
+                >
               </wa-dropdown-item>`
             : nothing
         }

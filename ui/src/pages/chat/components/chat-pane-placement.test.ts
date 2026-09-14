@@ -151,28 +151,36 @@ describe("chat pane device placement", () => {
       const container = document.createElement("div");
       document.body.append(container);
       containers.push(container);
-      const onPlacementDispatch = vi.fn();
+      const onPlacementRecover = vi.fn();
       const session: GatewaySessionRow = {
         key: "agent:main:repository",
         kind: "direct",
         updatedAt: 0,
         repositoryWorkspaceId: "repository-workspace-1",
         ...(placementState
-          ? { placement: { state: placementState } as GatewaySessionRow["placement"] }
+          ? {
+              placement: {
+                state: placementState,
+                generation: 1,
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                stateChangedAtMs: 1,
+              },
+            }
           : {}),
       };
 
-      render(renderChatPanePlacement({ session, onPlacementDispatch }), container);
+      render(renderChatPanePlacement({ session, onPlacementRecover }), container);
 
       expect(container.querySelector(".chat-pane__placement-chip")?.textContent?.trim()).toBe(
         "Worker required",
       );
-      const dispatch = container.querySelector<HTMLElement>(".chat-pane__placement-dispatch");
+      const dispatch = container.querySelector<HTMLElement>(".chat-pane__placement-recovery");
+      expect(container.querySelectorAll(".chat-pane__placement-recovery")).toHaveLength(1);
       expect(dispatch?.textContent?.trim()).toBe("Choose worker…");
       expect(container.querySelector(".chat-pane__placement-move")).toBeNull();
-      expect(container.querySelector(".chat-pane__placement-restart")).toBeNull();
       dispatch?.click();
-      expect(onPlacementDispatch).toHaveBeenCalledOnce();
+      expect(onPlacementRecover).toHaveBeenCalledOnce();
     },
   );
 
@@ -197,7 +205,7 @@ describe("chat pane device placement", () => {
 
     render(renderChatPanePlacement({ session }), container);
 
-    expect(container.querySelector(".chat-pane__placement-restart")?.textContent?.trim()).toBe(
+    expect(container.querySelector(".chat-pane__placement-recovery")?.textContent?.trim()).toBe(
       "Restart session…",
     );
     expect(container.querySelector(".chat-pane__placement-reclaim")).toBeNull();
@@ -224,7 +232,7 @@ describe("chat pane device placement", () => {
 
     render(renderChatPanePlacement({ session }), container);
 
-    expect(container.querySelector(".chat-pane__placement-restart")).toBeNull();
+    expect(container.querySelector(".chat-pane__placement-recovery")).toBeNull();
     expect(container.querySelector(".chat-pane__placement-reclaim")?.textContent?.trim()).toBe(
       "Stop worker…",
     );

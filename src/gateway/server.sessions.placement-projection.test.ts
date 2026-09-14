@@ -1,4 +1,9 @@
 import { expect, test, vi } from "vitest";
+import type { EnvironmentSummary } from "../../packages/gateway-protocol/src/index.js";
+import { listRegisteredAgentHarnesses, registerAgentHarness } from "../agents/harness/registry.js";
+import { restoreRegisteredAgentHarnesses } from "../agents/harness/registry.test-support.js";
+import { NodeRegistry } from "./node-registry.js";
+import { createOperatorWsClient } from "./server/ws-connection/authenticated-request-dispatch.test-support.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
 import { writeSessionStore } from "./test-helpers.js";
 import {
@@ -10,6 +15,102 @@ import type { WorkerSessionPlacementReader } from "./worker-environments/placeme
 import type { WorkerSessionPlacementRecord } from "./worker-environments/placement-store.js";
 
 const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
+
+test.each(["invocable", "pending-approval", "unauthorized", "undeclared"] as const)(
+  "sessions.list carries automatic runtime requirements into environments.list: %s",
+  async (state) => {
+    const registered = listRegisteredAgentHarnesses();
+    const command = "runtime.repository.v1";
+    const config = {
+      gateway: {
+        nodes: {
+          commands: {
+            allow: [command],
+            deny: state === "unauthorized" ? [command] : [],
+          },
+        },
+      },
+    };
+    const registry = new NodeRegistry({ getConfig: () => config });
+    const client = createOperatorWsClient({
+      clientInfo: { id: "node-host", mode: "node" },
+      socket: { readyState: 1, bufferedAmount: 0, send: vi.fn() },
+    });
+    const node = registry.register(
+      {
+        ...client,
+        connect: {
+          ...client.connect,
+          caps: ["session.host"],
+          commands: state === "invocable" || state === "unauthorized" ? [command] : [],
+          declaredCommands: state === "undeclared" ? [] : [command],
+        },
+      },
+      { pairingIdentity: "node-host" },
+    );
+    const connected = vi.spyOn(registry, "listConnectedForPairingStates").mockReturnValue([node]);
+    registerAgentHarness({
+      id: "repository-device",
+      label: "Repository device",
+      autoSelection: { providerIds: ["repository-provider"] },
+      supports: () => ({ supported: true }),
+      cloudPlacement: {
+        mode: "remote-exec",
+        devicePlacement: {
+          requiredNodeCommands: ["runtime.repository.v1"],
+          consumesWorkerSlot: false,
+        },
+      },
+      runAttempt: async () => {
+        throw new Error("projection must not execute the runtime");
+      },
+    });
+    try {
+      await createSessionStoreDir();
+      await writeSessionStore({
+        entries: {
+          "agent:main:repository": {
+            sessionId: "repository-session",
+            updatedAt: 200,
+            repositoryWorkspaceId: "repository-workspace",
+            providerOverride: "repository-provider",
+            modelOverride: "repository-model",
+          },
+        },
+      });
+      const result = await directSessionReq<{ sessions: GatewaySessionRow[] }>("sessions.list", {});
+      expect(result.ok).toBe(true);
+      const runtime = result.payload?.sessions.find(
+        (row) => row.sessionId === "repository-session",
+      )?.agentRuntime;
+      expect(runtime).toMatchObject({
+        id: "repository-device",
+        cloudPlacementExecutionMode: "remote-exec",
+        devicePlacement: {
+          requiredNodeCommands: ["runtime.repository.v1"],
+          consumesWorkerSlot: false,
+        },
+      });
+      const catalog = await directSessionReq<{ environments: EnvironmentSummary[] }>(
+        "environments.list",
+        { runtimeId: runtime?.id },
+        {
+          client: createOperatorWsClient(),
+          context: { nodeRegistry: registry, getRuntimeConfig: () => config },
+        },
+      );
+      expect(catalog.ok).toBe(true);
+      expect(
+        catalog.payload?.environments.find((environment) => environment.id === "node:node-host")
+          ?.requiredNodeCommand,
+      ).toEqual({ command, state });
+    } finally {
+      connected.mockRestore();
+      registry.unregister(node.connId);
+      restoreRegisteredAgentHarnesses(registered);
+    }
+  },
+);
 
 function activePlacementRecord(): Extract<WorkerSessionPlacementRecord, { state: "active" }> {
   return {

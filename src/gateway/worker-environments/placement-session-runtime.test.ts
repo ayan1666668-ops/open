@@ -43,31 +43,6 @@ describe("worker placement runtime capabilities", () => {
     });
   });
 
-  it("projects authoritative capabilities while preserving residual auto identity", () => {
-    expect(
-      projectWorkerPlacementAgentRuntime(
-        { id: "auto", source: "model" },
-        {
-          executionMode: "remote-exec",
-          devicePlacement: {
-            requiredNodeCommands: ["runtime.exec-server.v1"],
-            consumesWorkerSlot: false,
-          },
-        },
-      ),
-    ).toEqual({
-      id: "auto",
-      cloudPlacementSupported: true,
-      cloudPlacementExecutionMode: "remote-exec",
-      devicePlacement: {
-        requiredNodeCommands: ["runtime.exec-server.v1"],
-        consumesWorkerSlot: false,
-      },
-      devicePlacementSupported: true,
-      source: "model",
-    });
-  });
-
   it.each([
     {
       name: "ignores an unlocked historical runtime after selecting a different provider",
@@ -513,16 +488,6 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       requiredNodeCommands: ["runtime.exec-server.v1"],
       consumesWorkerSlot: false,
     });
-    expect(projectWorkerPlacementAgentRuntime({ id: "auto", source: "model" }, caps)).toMatchObject(
-      {
-        id: "auto",
-        cloudPlacementExecutionMode: "remote-exec",
-        devicePlacement: {
-          requiredNodeCommands: ["runtime.exec-server.v1"],
-          consumesWorkerSlot: false,
-        },
-      },
-    );
   });
 
   it("falls back to built-in openclaw placement capabilities for an unclaimed auto model", () => {

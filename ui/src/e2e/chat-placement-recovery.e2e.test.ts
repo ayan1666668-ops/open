@@ -124,7 +124,7 @@ suite.define(() => {
         stateChangedAtMs: 2,
       },
       agentRuntime: {
-        id: "auto",
+        id: "openclaw",
         cloudPlacementSupported: true,
         cloudPlacementExecutionMode: "worker-turn",
         devicePlacementSupported: true,
@@ -177,14 +177,14 @@ suite.define(() => {
         await page.screenshot({ path: path.join(proofDir, "worker-picker.png") });
       }
       await gateway.deferNext("sessions.dispatch");
-      await page.getByRole("button", { name: "Dispatch session", exact: true }).click();
+      await page.getByRole("button", { name: "Continue on worker", exact: true }).click();
       const request = await gateway.waitForRequest("sessions.dispatch");
       expect(request.params).toEqual({
         key: session.key,
         agentId: "main",
         deviceId: "runner",
       });
-      await page.getByText("Dispatching session…", { exact: true }).first().waitFor();
+      await page.getByText("Starting worker…", { exact: true }).first().waitFor();
 
       const recovered = {
         ...session,

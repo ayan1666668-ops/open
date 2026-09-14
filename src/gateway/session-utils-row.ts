@@ -77,7 +77,7 @@ import { parseGroupKey } from "./session-utils-store.js";
 import type { GatewaySessionRow, SessionListModelCatalog } from "./session-utils.types.js";
 import {
   projectWorkerPlacementAgentRuntime,
-  resolveWorkerPlacementSessionRuntimeCapabilities,
+  resolveWorkerPlacementSessionRuntime,
 } from "./worker-environments/placement-session-runtime.js";
 
 /** Opaque cache-busting revision for the channel-avatar route; never leaks the reference. */
@@ -493,17 +493,19 @@ export function buildGatewaySessionRow(params: {
         : resolveSessionModelOverrideSource(entry),
     modelSelectionLocked: entry?.modelSelectionLocked,
     runtimeSelectionLocked: thinkingProjection.runtimeSelectionLocked,
-    agentRuntime: projectWorkerPlacementAgentRuntime(
-      thinkingProjection.agentRuntime,
-      entry
-        ? resolveWorkerPlacementSessionRuntimeCapabilities({
-            cfg,
-            entry,
-            agentId: sessionAgentId,
-            sessionKey: key,
-          })
-        : undefined,
-    ),
+    agentRuntime: projectWorkerPlacementAgentRuntime({
+      ...thinkingProjection.agentRuntime,
+      id:
+        thinkingProjection.agentRuntime.id === "auto" && entry
+          ? resolveWorkerPlacementSessionRuntime({
+              cfg,
+              entry,
+              agentId: sessionAgentId,
+              sessionKey: key,
+              model: selectedModel,
+            })
+          : thinkingProjection.agentRuntime.id,
+    }),
     contextTokens,
     contextBudgetStatus: resolveProjectedSessionContextBudgetStatus({
       entry,

@@ -12,53 +12,16 @@ import type { WorkerPlacementExecutionMode } from "./placement-record.js";
 
 export { resolveWorkerPlacementCapabilities } from "./placement-capabilities.js";
 
+/** Dispatch and projection share CLI precedence and automatic harness selection. */
 export function resolveWorkerPlacementSessionRuntime(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry;
   agentId: string;
   sessionKey: string;
+  model?: ReturnType<typeof resolveSessionModelRef>;
 }): string {
-  const selectedModel = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
-  return resolveEffectiveAgentRuntime({
-    cfg: params.cfg,
-    provider: selectedModel.provider,
-    modelId: selectedModel.model,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    sessionEntry: params.entry,
-  });
-}
-
-export function resolveWorkerPlacementExecutionMode(
-  runtime: string,
-): WorkerPlacementExecutionMode | undefined {
-  return resolveWorkerPlacementCapabilities(runtime).executionMode;
-}
-
-/**
- * Resolves placement capabilities for the model a session would use after a
- * patch. Mirrors the dispatch path's CLI-classification precedence
- * (`agent-runner-fallback-candidate.ts`): resolve the session runtime override
- * first, skip CLI aliasing when a non-CLI override is active, and pass the
- * selected auth profile to the alias resolver. A model whose dispatch runs as
- * a local CLI process has no cloud placement capability, so it is rejected
- * before persistence instead of being misread as the built-in `openclaw`
- * worker-turn runtime.
- */
-export function resolveWorkerPlacementSessionRuntimeCapabilities(params: {
-  cfg: OpenClawConfig;
-  entry: SessionEntry;
-  agentId: string;
-  sessionKey: string;
-}): {
-  executionMode?: WorkerPlacementExecutionMode;
-  devicePlacement?: NonNullable<GatewayAgentRuntime["devicePlacement"]>;
-} {
-  const selectedModel = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
-  // Resolve the same session runtime override and pinned-harness state the
-  // dispatch path consults, so an explicit non-CLI override (e.g.
-  // agentRuntimeOverride="openclaw") bypasses CLI aliasing instead of being
-  // rejected before the override takes effect.
+  const selectedModel =
+    params.model ?? resolveSessionModelRef(params.cfg, params.entry, params.agentId);
   const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
     provider: selectedModel.provider,
     entry: params.entry,
@@ -91,22 +54,32 @@ export function resolveWorkerPlacementSessionRuntimeCapabilities(params: {
     (!sessionRuntimeOverride &&
       isCliProvider(cliExecutionProvider ?? selectedModel.provider, params.cfg));
   if (useCliExecution) {
-    return {};
+    return cliExecutionProvider ?? selectedModel.provider;
   }
-  const runtime = resolveEffectiveAgentRuntime({
+  return resolveEffectiveAgentRuntime({
     cfg: params.cfg,
     provider: selectedModel.provider,
     modelId: selectedModel.model,
-    agentId: params.agentId,
+    agentScope: { kind: "prepared", agentId: params.agentId },
     sessionKey: params.sessionKey,
     sessionEntry: params.entry,
   });
-  return resolveWorkerPlacementCapabilities(runtime);
+}
+
+export function resolveWorkerPlacementExecutionMode(
+  runtime: string,
+): WorkerPlacementExecutionMode | undefined {
+  return resolveWorkerPlacementCapabilities(runtime).executionMode;
+}
+
+export function resolveWorkerPlacementSessionRuntimeCapabilities(
+  params: Parameters<typeof resolveWorkerPlacementSessionRuntime>[0],
+) {
+  return resolveWorkerPlacementCapabilities(resolveWorkerPlacementSessionRuntime(params));
 }
 
 export function projectWorkerPlacementAgentRuntime(
   runtime: GatewayAgentRuntime,
-  capabilities = resolveWorkerPlacementCapabilities(runtime.id),
 ): GatewayAgentRuntime & {
   cloudPlacementSupported: boolean;
   cloudPlacementExecutionMode?: WorkerPlacementExecutionMode;
@@ -114,7 +87,7 @@ export function projectWorkerPlacementAgentRuntime(
   devicePlacementSupported: boolean;
 } {
   const { source, ...identity } = runtime;
-  const { executionMode, devicePlacement } = capabilities;
+  const { executionMode, devicePlacement } = resolveWorkerPlacementCapabilities(runtime.id);
   return {
     ...identity,
     cloudPlacementSupported: executionMode !== undefined,

@@ -37,8 +37,7 @@ function presentation(
     row,
     startupPending: false,
     workspaceResultReconciling: false,
-    onRestart: vi.fn(),
-    onDispatch: vi.fn(),
+    onRecover: vi.fn(),
     onReclaim: vi.fn(),
     ...overrides,
   });
@@ -119,18 +118,26 @@ describe("chat placement composer presentation", () => {
   it.each(["local", undefined] as const)(
     "blocks a repository-only session with %s placement and offers worker dispatch",
     (placementState) => {
-      const onDispatch = vi.fn();
+      const onRecover = vi.fn();
       const row: GatewaySessionRow = {
         key: "agent:main:repository",
         kind: "direct",
         updatedAt: 0,
         repositoryWorkspaceId: "repository-workspace-1",
         ...(placementState
-          ? { placement: { state: placementState } as GatewaySessionRow["placement"] }
+          ? {
+              placement: {
+                state: placementState,
+                generation: 1,
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                stateChangedAtMs: 1,
+              },
+            }
           : {}),
       };
 
-      const result = presentation(row, { onDispatch });
+      const result = presentation(row, { onRecover });
 
       expect(result.state).toEqual({ kind: "dispatch-required" });
       expect(result.blocksSend).toBe(true);
@@ -139,7 +146,7 @@ describe("chat placement composer presentation", () => {
         actionLabel: "Choose worker…",
       });
       result.disabledBanner?.onAction();
-      expect(onDispatch).toHaveBeenCalledOnce();
+      expect(onRecover).toHaveBeenCalledOnce();
     },
   );
 
@@ -157,10 +164,10 @@ describe("chat placement composer presentation", () => {
   it.each(["restart", "stop-first"] as const)(
     "projects failed %s recovery into an actionable composer banner",
     (recoveryAction) => {
-      const onRestart = vi.fn();
+      const onRecover = vi.fn();
       const onReclaim = vi.fn();
       const result = presentation(placementSession("failed", recoveryAction), {
-        onRestart,
+        onRecover,
         onReclaim,
       });
 
@@ -171,7 +178,7 @@ describe("chat placement composer presentation", () => {
         recoveryAction === "restart" ? "Restart session…" : "Stop cloud worker…",
       );
       result.disabledBanner?.onAction();
-      expect(recoveryAction === "restart" ? onRestart : onReclaim).toHaveBeenCalledOnce();
+      expect(recoveryAction === "restart" ? onRecover : onReclaim).toHaveBeenCalledOnce();
     },
   );
 

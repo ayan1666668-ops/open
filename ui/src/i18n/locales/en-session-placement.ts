@@ -43,7 +43,7 @@ const enSessionPlacement = {
       "The session restarts from its last saved workspace on the selected destination. Changes that the previous worker did not upload may be lost.",
     restartSessionAction: "Restart session",
     chooseWorker: "Choose worker…",
-    dispatchingSession: "Dispatching session…",
+    dispatchingSession: "Starting worker…",
     repositoryWorkerRequiredLabel: "Worker required",
     repositoryWorkerRequiredTitle: "Repository worker required",
     repositoryWorkerRequiredPrompt:
@@ -52,7 +52,7 @@ const enSessionPlacement = {
     dispatchSessionDescription: 'Choose where "{session}" should continue.',
     dispatchSessionNotice:
       "This repository exists only on workers, so the Gateway cannot run this session locally.",
-    dispatchSessionAction: "Dispatch session",
+    dispatchSessionAction: "Continue on worker",
     stoppingSession: "Stopping session…",
     finishingSessionMove: "Finishing session move…",
     syncingCloudFiles: "Cloud · syncing files",

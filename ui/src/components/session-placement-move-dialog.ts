@@ -93,39 +93,18 @@ export function showSessionPlacementTargetDialog(
       const selectedKey = targetKey(selected);
       const restart = options.mode === "restart";
       const dispatch = options.mode === "dispatch";
+      const title = t(`sessionsView.${options.mode}SessionTitle`);
+      const description = t(`sessionsView.${options.mode}SessionDescription`, {
+        session: options.sessionLabel,
+      });
+      const action = t(`sessionsView.${options.mode}SessionAction`);
       render(() => {
         return html`
-          <openclaw-modal-dialog
-            label=${t(
-              restart
-                ? "sessionsView.restartSessionTitle"
-                : dispatch
-                  ? "sessionsView.dispatchSessionTitle"
-                  : "sessionsView.moveSessionTitle",
-            )}
-            @modal-cancel=${() => finish(null)}
-          >
+          <openclaw-modal-dialog label=${title} @modal-cancel=${() => finish(null)}>
             <form class="exec-approval-card" @submit=${submit}>
               <div class="exec-approval-header">
-                <div class="exec-approval-title">
-                  ${t(
-                    restart
-                      ? "sessionsView.restartSessionTitle"
-                      : dispatch
-                        ? "sessionsView.dispatchSessionTitle"
-                        : "sessionsView.moveSessionTitle",
-                  )}
-                </div>
-                <div class="muted">
-                  ${t(
-                    restart
-                      ? "sessionsView.restartSessionDescription"
-                      : dispatch
-                        ? "sessionsView.dispatchSessionDescription"
-                        : "sessionsView.moveSessionDescription",
-                    { session: options.sessionLabel },
-                  )}
-                </div>
+                <div class="exec-approval-title">${title}</div>
+                <div class="muted">${description}</div>
               </div>
               ${
                 restart
@@ -281,13 +260,7 @@ export function showSessionPlacementTargetDialog(
                   class="btn primary"
                   ?disabled=${loading || Boolean(loadError) || !selected}
                 >
-                  ${t(
-                    restart
-                      ? "sessionsView.restartSessionAction"
-                      : dispatch
-                        ? "sessionsView.dispatchSessionAction"
-                        : "sessionsView.moveSessionAction",
-                  )}
+                  ${action}
                 </button>
                 <button type="button" class="btn" @click=${() => finish(null)}>
                   ${t("common.cancel")}
