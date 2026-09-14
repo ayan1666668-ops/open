@@ -91,12 +91,12 @@ export async function commitSetupInferenceActivation(params: {
   activate: () => Promise<void>;
 }): Promise<OpenClawConfig> {
   let undoConfig: SetupInferenceConfigUndo | undefined;
+  const config = await params.commit({
+    captureUndo: (undo) => {
+      undoConfig = undo;
+    },
+  });
   try {
-    const config = await params.commit({
-      captureUndo: (undo) => {
-        undoConfig = undo;
-      },
-    });
     await params.activate();
     return config;
   } catch (error) {
@@ -106,7 +106,7 @@ export async function commitSetupInferenceActivation(params: {
       throw new AggregateError(
         [error, recoveryError],
         `Activation failed and recovery could not complete. ${formatErrorMessage(recoveryError)}`,
-        { cause: error },
+        { cause: recoveryError },
       );
     }
     throw error;

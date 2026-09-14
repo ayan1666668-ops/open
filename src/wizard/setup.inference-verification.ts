@@ -23,7 +23,7 @@ import {
   projectInferenceRoute,
   sameDefaultInferenceRoute,
 } from "../system-agent/inference-route.js";
-import { activateSavedSetupCredential } from "../system-agent/setup-inference-credentials.js";
+import { activateSavedSetupCredential } from "../system-agent/setup-inference-credential-access.js";
 import { isSetupCredentialReplacement } from "../system-agent/setup-inference-credentials.js";
 import {
   commitSetupInferenceActivation,

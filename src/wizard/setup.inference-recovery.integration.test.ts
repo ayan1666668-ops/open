@@ -117,7 +117,9 @@ it.each([
         writeWizardConfigFile(next, { ...options, mergeBase: config }),
       );
     const editCredential = async () => {
-      if (!changed) return;
+      if (!changed) {
+        return;
+      }
       await updateAuthProfileStoreWithLock({
         agentDir,
         stateDir,
@@ -134,7 +136,9 @@ it.each([
     };
     mocks.verify.mockImplementation(async (params) => {
       const route = await resolveSystemAgentConfiguredRouteFromConfig(params.config);
-      if (!route) throw new Error("Missing fixture route");
+      if (!route) {
+        throw new Error("Missing fixture route");
+      }
       const auth = await resolveApiKeyForProviderCore({
         provider: "example",
         cfg: params.config,
@@ -191,8 +195,11 @@ it.each([
         },
       },
     });
-    if (changed) await expect(activation).rejects.toThrow("saved sign-in changed");
-    else await expect(activation).resolves.toMatchObject({ verified: true, persisted: true });
+    if (changed) {
+      await expect(activation).rejects.toThrow("saved sign-in changed");
+    } else {
+      await expect(activation).resolves.toMatchObject({ verified: true, persisted: true });
+    }
     const reopened = (await targetOwner.read()).config;
     const selected = splitTrailingAuthProfile(
       resolveAgentModelPrimaryValue(reopened.agents?.defaults?.model) ?? "",
@@ -239,7 +246,9 @@ it.each([
         },
       },
     };
-    if (pending) base.plugins = { installs: { fixture: { source: "npm", spec: "fixture@1.0.0" } } };
+    if (pending) {
+      base.plugins = { installs: { fixture: { source: "npm", spec: "fixture@1.0.0" } } };
+    }
     await state.writeConfig(base);
     const candidate = structuredClone(base);
     candidate.models!.providers!.example!.baseUrl = "https://replacement.invalid/v1";
@@ -277,3 +286,36 @@ it.each([
     }
   },
 );
+
+it("wizard precondition rejection preserves an intervening writer of the same candidate", async () => {
+  state = await createOpenClawTestState({ label: "wizard-write-refusal" });
+  const base: OpenClawConfig = { gateway: { mode: "local", port: 18789 } };
+  const candidate: OpenClawConfig = { gateway: { mode: "local", port: 18790 } };
+  await state.writeConfig(base);
+  const refusal = new Error("config write precondition refused");
+  const target = createWizardInferenceConfigTarget(async (config, options) => {
+    try {
+      return await writeWizardConfigFile(config, {
+        ...options,
+        writeOptions: {
+          beforeCommit: async () => {
+            throw refusal;
+          },
+        },
+      });
+    } catch (error) {
+      expect(error).toBe(refusal);
+      await writeWizardConfigFile(candidate);
+      throw error;
+    }
+  });
+  const activate = vi.fn(async () => {});
+  await expect(
+    commitSetupInferenceActivation({
+      commit: (options) => target.write(candidate, options),
+      activate,
+    }),
+  ).rejects.toBe(refusal);
+  expect(activate).not.toHaveBeenCalled();
+  expect((await target.read()).config.gateway?.port).toBe(18790);
+});
