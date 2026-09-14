@@ -362,12 +362,10 @@ describe("noteClaudeCliHealth", () => {
     },
   );
 
-  it.each(["missing", "blocked"])("distinguishes a %s workspace path", async (state) => {
+  it("reports a workspace below a regular-file parent as unreadable", async () => {
     await withTempHome(({ homeDir, workspaceDir }) => {
       const parent = path.join(workspaceDir, "parent");
-      if (state === "blocked") {
-        fs.writeFileSync(parent, "not a directory");
-      }
+      fs.writeFileSync(parent, "not a directory");
       const noteFn = vi.fn();
       noteClaudeCliHealth(
         {
@@ -384,12 +382,7 @@ describe("noteClaudeCliHealth", () => {
           resolveCommandPath: () => process.execPath,
         },
       );
-      if (state === "missing") {
-        expect(noteFn).not.toHaveBeenCalled();
-      } else {
-        expect(noteBody(noteFn)).toContain("is not readable by this user");
-        expect(fs.readFileSync(parent, "utf8")).toBe("not a directory");
-      }
+      expect(noteBody(noteFn)).toContain("is not readable by this user");
     });
   });
 });

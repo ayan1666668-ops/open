@@ -88,6 +88,14 @@ openclaw update repair --json
 openclaw update repair --accept-capabilities
 ```
 
+If an older updater publishes the new core but then reports
+`update-executor-settlement-failed` with `Parent executor is suspended for its candidate.`,
+wait for that updater to exit and run `openclaw update repair --yes --json` from
+the updated installation, preserving its profile and state/config overrides.
+This finishes Doctor and post-core convergence through a fresh owner. Check the
+repair result before restarting an already stopped Gateway through its service
+owner. Updating the candidate cannot change the older updater already in memory.
+
 | Flag                                             | Description                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--channel <stable\|extended-stable\|beta\|dev>` | Persist the core update channel before repair. For extended-stable, eligible official npm and trusted official ClawHub plugins that follow bare/default or `latest` intent target the exact installed core version. Extended-stable repair is rejected on Git checkouts without changing config. |
@@ -206,10 +214,16 @@ step fails. Codex runtime readiness remains owned by its plugin after restart.
 
 Finalization (including the supervisor-facing `update finalize` command) records
 phase starts and finishes immediately on stderr and in the update run ledger.
-The defaults are 30 seconds for preflight admission, config validation, config backup, and completion
-cache work; 120 seconds for Doctor migrations; 600 seconds for plugin registry
-and installation work; and 180 seconds for post-plugin Doctor and validation.
-`--timeout` overrides each phase budget.
+Preflight admission, config validation, config backup, and core completion-cache
+budgets scale with the shared SQLite database and its sidecars, with a five-minute
+startup allowance and conservative disk throughput. Repair Doctor and its enclosing
+convergence phase have no automatic wall-clock deadline. Post-plugin config and
+readiness checks share a budget derived from the existing shared and discovered
+agent database families after Doctor finishes, including WAL growth. Plugin
+updates retain the command owner's 20-minute allowance; missing-plugin repairs
+retain their installer defaults. The serial plugin phase and
+outer finalizer process add no competing default deadline. An explicit `--timeout`
+still overrides each phase and its child commands.
 
 A phase deadline produces exit code 1 and JSON with `status: "failed"`,
 `stuckPhase`, `elapsedMs`, `error`, and the existing `phaseTimings` array. The

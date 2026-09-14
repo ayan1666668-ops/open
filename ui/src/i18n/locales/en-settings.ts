@@ -349,7 +349,7 @@ const enSettings = {
     globalUsage: "Global usage and cost",
     noStats: "No live usage data reported by this provider.",
     localCost: "Global session spend · {days}d",
-    localCostDetail: "{tokens} tokens · {sessions} sessions",
+    localCostDetail: "{tokens} tokens · {messages} messages",
     saving: "Saving…",
     requestFailed: "Request failed.",
     configUnavailable: "Configuration is unavailable. Refresh and try again.",
@@ -998,7 +998,7 @@ const enSettings = {
         "Enter a CSS width such as 960px, 82%, min(1280px, 82%), or calc(100% - 2rem).",
       collapseTaskProgress: "Collapse task progress by default",
       collapseTaskProgressHint:
-        "Keep task progress collapsed while work is active, then expand it when the response finishes.",
+        "Keep task progress collapsed while work is active, then expand it at the bottom when the response finishes. Manual changes last for the current task.",
     },
     sessionSources: {
       title: "Session sources",
