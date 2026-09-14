@@ -152,8 +152,7 @@ type LockOwnerStatus = "alive" | "dead" | "unknown";
 
 function readLinuxCmdline(pid: number): string[] | null {
   try {
-    const raw = fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    return parseProcCmdline(raw);
+    return parseProcCmdline(fsSync.readFileSync(`/proc/${pid}/cmdline`, "utf8"));
   } catch {
     return null;
   }
