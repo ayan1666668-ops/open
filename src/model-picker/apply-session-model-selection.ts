@@ -62,7 +62,7 @@ export type ApplySessionModelSelectionParams = {
   defaultModel: string;
   currentProvider: string;
   currentModel: string;
-  modelPolicy?: ModelVisibilityPolicy;
+  modelPolicy?: Omit<ModelVisibilityPolicy, "catalog">;
   modelCatalog: readonly ModelCatalogEntry[];
   thinkingCatalog?: readonly ModelCatalogEntry[];
   canPersistStickyModelSelection?: boolean;
