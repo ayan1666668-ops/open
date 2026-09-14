@@ -65,6 +65,7 @@ describe("chat pane placement restart", () => {
       } as never;
       const session: GatewaySessionRow = {
         key: "agent:main:failed-worker",
+        sessionId: "failed-worker-session",
         label: "Failed worker session",
         kind: "direct",
         updatedAt: 0,
@@ -78,6 +79,9 @@ describe("chat pane placement restart", () => {
           recoveryAction: "restart",
         },
       };
+      state.sessionKey = session.key;
+      state.currentSessionId = session.sessionId;
+      state.sessionsResult = { sessions: [session] } as never;
       state.chatRunError = { summary: "Previous worker failed" };
       state.lastError = state.chatError = "Previous restart failed";
 

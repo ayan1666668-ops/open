@@ -34,12 +34,35 @@ describe("worker placement runtime capabilities", () => {
     resetPluginRuntimeStateForTest();
   });
 
-  it("projects residual auto policy with the built-in dispatch capabilities", () => {
+  it("fails closed when residual auto policy lacks model and session context", () => {
     expect(projectWorkerPlacementAgentRuntime({ id: "auto", source: "model" })).toEqual({
       id: "auto",
+      cloudPlacementSupported: false,
+      devicePlacementSupported: false,
+      source: "model",
+    });
+  });
+
+  it("projects authoritative capabilities while preserving residual auto identity", () => {
+    expect(
+      projectWorkerPlacementAgentRuntime(
+        { id: "auto", source: "model" },
+        {
+          executionMode: "remote-exec",
+          devicePlacement: {
+            requiredNodeCommands: ["runtime.exec-server.v1"],
+            consumesWorkerSlot: false,
+          },
+        },
+      ),
+    ).toEqual({
+      id: "auto",
       cloudPlacementSupported: true,
-      cloudPlacementExecutionMode: "worker-turn",
-      devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
+      cloudPlacementExecutionMode: "remote-exec",
+      devicePlacement: {
+        requiredNodeCommands: ["runtime.exec-server.v1"],
+        consumesWorkerSlot: false,
+      },
       devicePlacementSupported: true,
       source: "model",
     });
@@ -490,6 +513,16 @@ describe("resolveWorkerPlacementSessionRuntimeCapabilities", () => {
       requiredNodeCommands: ["runtime.exec-server.v1"],
       consumesWorkerSlot: false,
     });
+    expect(projectWorkerPlacementAgentRuntime({ id: "auto", source: "model" }, caps)).toMatchObject(
+      {
+        id: "auto",
+        cloudPlacementExecutionMode: "remote-exec",
+        devicePlacement: {
+          requiredNodeCommands: ["runtime.exec-server.v1"],
+          consumesWorkerSlot: false,
+        },
+      },
+    );
   });
 
   it("falls back to built-in openclaw placement capabilities for an unclaimed auto model", () => {

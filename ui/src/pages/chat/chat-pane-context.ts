@@ -145,6 +145,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       restartingKey: this.headerPlacementRestartingKey,
       row,
       isCurrent: () => this.ownsHeaderOutcomeScope(scope),
+      currentRow: () => (this.state ? selectedChatSessionRow(this.state) : undefined),
       onRestartingChange,
       publishError: (error: unknown) => this.publishHeaderError(error, scope.headerOutcomeOwner),
       refreshReplacement: (agentId?: string | null) => scope.sessions.refreshReplacement(agentId),

@@ -209,6 +209,17 @@ suite.define(() => {
       });
       await expect.poll(() => composer.isEnabled()).toBe(true);
       expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+
+      await composer.fill("Continue after repository recovery");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      const send = await gateway.waitForRequest("chat.send");
+      expect(send.params).toMatchObject({
+        sessionKey: session.key,
+        message: "Continue after repository recovery",
+      });
+      if (proofDir) {
+        await page.screenshot({ path: path.join(proofDir, "follow-up-accepted.png") });
+      }
     } finally {
       await suite.closeBrowserContext(context);
     }

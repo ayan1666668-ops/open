@@ -75,7 +75,10 @@ import {
 } from "./session-utils-projection.js";
 import { parseGroupKey } from "./session-utils-store.js";
 import type { GatewaySessionRow, SessionListModelCatalog } from "./session-utils.types.js";
-import { projectWorkerPlacementAgentRuntime } from "./worker-environments/placement-session-runtime.js";
+import {
+  projectWorkerPlacementAgentRuntime,
+  resolveWorkerPlacementSessionRuntimeCapabilities,
+} from "./worker-environments/placement-session-runtime.js";
 
 /** Opaque cache-busting revision for the channel-avatar route; never leaks the reference. */
 function channelAvatarRevision(reference: string): string {
@@ -490,7 +493,17 @@ export function buildGatewaySessionRow(params: {
         : resolveSessionModelOverrideSource(entry),
     modelSelectionLocked: entry?.modelSelectionLocked,
     runtimeSelectionLocked: thinkingProjection.runtimeSelectionLocked,
-    agentRuntime: projectWorkerPlacementAgentRuntime(thinkingProjection.agentRuntime),
+    agentRuntime: projectWorkerPlacementAgentRuntime(
+      thinkingProjection.agentRuntime,
+      entry
+        ? resolveWorkerPlacementSessionRuntimeCapabilities({
+            cfg,
+            entry,
+            agentId: sessionAgentId,
+            sessionKey: key,
+          })
+        : undefined,
+    ),
     contextTokens,
     contextBudgetStatus: resolveProjectedSessionContextBudgetStatus({
       entry,

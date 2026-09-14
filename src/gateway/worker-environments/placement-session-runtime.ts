@@ -2,10 +2,7 @@ import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-a
 import { isCliProvider } from "../../agents/model-selection-cli.js";
 import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
-import {
-  concretizeAgentRuntime,
-  resolveEffectiveAgentRuntime,
-} from "../../agents/thinking-runtime.js";
+import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -109,6 +106,7 @@ export function resolveWorkerPlacementSessionRuntimeCapabilities(params: {
 
 export function projectWorkerPlacementAgentRuntime(
   runtime: GatewayAgentRuntime,
+  capabilities = resolveWorkerPlacementCapabilities(runtime.id),
 ): GatewayAgentRuntime & {
   cloudPlacementSupported: boolean;
   cloudPlacementExecutionMode?: WorkerPlacementExecutionMode;
@@ -116,9 +114,7 @@ export function projectWorkerPlacementAgentRuntime(
   devicePlacementSupported: boolean;
 } {
   const { source, ...identity } = runtime;
-  const { executionMode, devicePlacement } = resolveWorkerPlacementCapabilities(
-    concretizeAgentRuntime(runtime.id),
-  );
+  const { executionMode, devicePlacement } = capabilities;
   return {
     ...identity,
     cloudPlacementSupported: executionMode !== undefined,

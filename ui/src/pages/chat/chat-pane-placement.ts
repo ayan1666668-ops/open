@@ -295,9 +295,11 @@ export function resolveChatPanePlacement(params: {
     ? t("common.loading")
     : moving || reclaiming || !dispatchRequired
       ? t("sessionsView.actionUnavailable")
-      : restartAccess.allowed
-        ? undefined
-        : restartAccess.reason;
+      : params.row?.archived
+        ? t("chat.archivedSessionDisabled")
+        : restartAccess.allowed
+          ? undefined
+          : restartAccess.reason;
   const reclaimDisabledReason = reclaiming
     ? t("common.loading")
     : restarting

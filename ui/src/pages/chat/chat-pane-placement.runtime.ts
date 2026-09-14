@@ -176,6 +176,7 @@ export async function restartChatPanePlacement(params: {
   restartingKey: string | null;
   row: GatewaySessionRow;
   isCurrent: (client: GatewayBrowserClient, generation: number) => boolean;
+  currentRow: () => GatewaySessionRow | undefined;
   onRestartingChange: (restartingKey: string | null) => void;
   publishError: (error: unknown) => void;
   refreshReplacement: SessionCapability["refreshReplacement"];
@@ -185,7 +186,12 @@ export async function restartChatPanePlacement(params: {
   const placement = params.row.placement;
   const dispatchRequired = repositorySessionNeedsWorker(params.row);
   const restartable = placement?.state === "failed" && placement.recoveryAction === "restart";
-  if (!client || params.restartingKey === params.row.key || (!restartable && !dispatchRequired)) {
+  if (
+    !client ||
+    params.restartingKey === params.row.key ||
+    params.row.archived === true ||
+    (!restartable && !dispatchRequired)
+  ) {
     return;
   }
   const access = readSessionMethodAccess(params.gatewaySnapshot, {
@@ -210,6 +216,23 @@ export async function restartChatPanePlacement(params: {
     return;
   }
   if (!params.isCurrent(client, params.connectionGeneration)) {
+    params.publishError(t("sessionsView.actionUnavailable"));
+    return;
+  }
+  const currentRow = params.currentRow();
+  const currentPlacement = currentRow?.placement;
+  const stillRestartable =
+    currentPlacement?.state === "failed" &&
+    currentPlacement.recoveryAction === "restart" &&
+    currentPlacement.generation === placement?.generation;
+  if (
+    !currentRow ||
+    currentRow.key !== params.row.key ||
+    currentRow.sessionId !== params.row.sessionId ||
+    currentRow.repositoryWorkspaceId !== params.row.repositoryWorkspaceId ||
+    currentRow.archived === true ||
+    (dispatchRequired ? !repositorySessionNeedsWorker(currentRow) : !stillRestartable)
+  ) {
     params.publishError(t("sessionsView.actionUnavailable"));
     return;
   }
