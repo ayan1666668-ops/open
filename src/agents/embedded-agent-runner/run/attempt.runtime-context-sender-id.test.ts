@@ -28,14 +28,15 @@ function makeCapturingContextEngine(bucket: {
       version: "0.0.1",
     },
     assemble: async (params) => {
-      bucket.assemble.push((params as { runtimeContext?: CapturedRuntimeContext }).runtimeContext);
+      bucket.assemble.push(params.runtimeContext);
       return { messages: params.messages, estimatedTokens: 1 };
     },
     ingest: async () => ({ ingested: true }),
+    compact: async () => ({ ok: true, compacted: false }),
     afterTurn: async (params) => {
-      bucket.afterTurn.push((params as { runtimeContext?: CapturedRuntimeContext }).runtimeContext);
+      bucket.afterTurn.push(params.runtimeContext);
     },
-  } as AttemptContextEngine;
+  };
 }
 
 describe("runEmbeddedAttempt runtime context sender identity", () => {
