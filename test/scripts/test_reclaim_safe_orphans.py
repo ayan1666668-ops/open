@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "tools" / "reclaim-safe-orphans.py"
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "reclaim-safe-orphans.py"
 
 
 def load_module():
