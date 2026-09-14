@@ -697,9 +697,6 @@ export {
   SupervisionGetResultSchema,
   SupervisionListResultSchema,
   SupervisionControlResultSchema,
-} from "./schema/tasks-supervision.js";
-
-export {
   SupervisionArtifactParamsSchema,
   SupervisionArtifactResultSchema,
 } from "./schema/tasks-supervision.js";

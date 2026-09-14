@@ -55,7 +55,7 @@ import {
   isPreRegistrationAbortedAgentDedupeEntryForSession,
   readGatewayDedupeEntry,
   setAbortedAgentDedupeEntries,
-  setGatewayDedupeEntries,
+  setAcceptedAgentDedupeEntries,
 } from "./agent-dedupe.js";
 import type { AgentDeliveryPhaseResult } from "./agent-delivery-phase.js";
 import type { RestoredCronContinuation } from "./agent-handler-helpers.js";
@@ -667,21 +667,7 @@ export async function prepareAgentRunDispatch(params: {
     return undefined;
   }
   params.markAgentRunAccepted(true);
-  setGatewayDedupeEntries({
-    dedupe: params.context.dedupe,
-    keys: params.agentDedupeKeys,
-    entry: {
-      ts: Date.now(),
-      ok: true,
-      payload: {
-        ...accepted,
-        controlUiVisible: !params.suppressVisibleSessionEffects,
-        dedupeKeys: params.agentDedupeKeys,
-        ownerConnId: params.ownerConnId,
-        ownerDeviceId: params.ownerDeviceId,
-      },
-    },
-  });
+  setAcceptedAgentDedupeEntries(params, accepted);
   // Pending input outlives admission; only the child controller and lifecycle
   // may reject its execution after this synchronous ownership transfer.
   assertInputAdmissionCurrent = undefined;

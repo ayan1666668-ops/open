@@ -1,6 +1,6 @@
 // Core gateway method descriptors keep handler names, auth scopes, startup availability, and write policy in one table.
 import type { OperatorScope } from "../operator-scopes.js";
-import { isCoreGatewayMethodProfileDependent } from "./core-profile-access.js";
+import { toCoreGatewayMethodDescriptorInput } from "./core-descriptor-input.js";
 import {
   DYNAMIC_GATEWAY_METHOD_SCOPE,
   NODE_GATEWAY_METHOD_SCOPE,
@@ -9,7 +9,7 @@ import {
   type GatewayMethodScope,
 } from "./descriptor.js";
 
-type CoreGatewayMethodSpec = {
+export type CoreGatewayMethodSpec = {
   name: string;
   family?: string;
   scope: GatewayMethodScope;
@@ -772,18 +772,7 @@ export function createCoreGatewayMethodDescriptors(
     if (!handler) {
       continue;
     }
-    descriptors.push({
-      name: spec.name,
-      handler,
-      owner: { kind: "core", area: "gateway" },
-      scope: spec.scope,
-      profileAccess: isCoreGatewayMethodProfileDependent(spec.name) ? "required" : "independent",
-      ...(spec.since ? { since: spec.since } : {}),
-      ...(spec.advertise === false ? { advertise: false } : {}),
-      ...(spec.startup === true ? { startup: "unavailable-until-sidecars" } : {}),
-      ...(spec.controlPlaneWrite === true ? { controlPlaneWrite: true } : {}),
-      ...(spec.description ? { description: spec.description } : {}),
-    });
+    descriptors.push(toCoreGatewayMethodDescriptorInput(spec, handler));
   }
   for (const name of Object.keys(handlers)) {
     if (!CORE_GATEWAY_METHOD_SPEC_BY_NAME.has(name)) {
