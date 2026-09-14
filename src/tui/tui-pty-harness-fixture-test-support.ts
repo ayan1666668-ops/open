@@ -36,6 +36,8 @@ export async function startTuiFixture(
   opts: { env?: NodeJS.ProcessEnv; execPath?: string; holdStartupHistory?: boolean } = {},
 ) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "openclaw-tui-pty-"));
+  const configPath = path.join(tempDir, "openclaw.json");
+  await writeFile(configPath, "{}\n");
   const scriptPath = await writeTuiPtyFixtureScript(tempDir);
   const logPath = path.join(tempDir, "fixture-log.jsonl");
   const startupHistoryReleasePath = opts.holdStartupHistory
@@ -49,6 +51,7 @@ export async function startTuiFixture(
       activeRuns,
       cwd: process.cwd(),
       env: {
+        OPENCLAW_CONFIG_PATH: configPath,
         OPENCLAW_THEME: "dark",
         OPENCLAW_TUI_PTY_LOG_PATH: logPath,
         NO_COLOR: undefined,
@@ -78,6 +81,17 @@ export async function startTuiFixture(
       }
     };
   }
+  const dispose = run.dispose;
+  run.dispose = async () => {
+    try {
+      await dispose();
+    } finally {
+      const index = activeRuns.indexOf(run);
+      if (index >= 0) {
+        activeRuns.splice(index, 1);
+      }
+    }
+  };
 
   return {
     run,
