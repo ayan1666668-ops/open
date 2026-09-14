@@ -48,6 +48,16 @@ function sanitizeOptionalTaskText(
   return sanitized || undefined;
 }
 
+function readExecTaskOutputTail(detail: TaskRecord["detail"]): string {
+  // Background exec finalization stores a bounded, redacted output tail in the record detail;
+  // surface it as the canonical completion result without flattening its layout.
+  const value =
+    detail && typeof detail === "object" && !Array.isArray(detail)
+      ? (detail as Record<string, unknown>).outputTail
+      : undefined;
+  return typeof value === "string" ? sanitizeTaskPromptText(value, TASK_RESULT_MAX_CHARS) : "";
+}
+
 export function mapTaskSummary(task: TaskRecord, opts?: { includePrompt?: boolean }): TaskSummary {
   const activity = getTaskActivitySnapshot(task.taskId);
   const execution = getTaskExecutionObservation(task);
@@ -63,10 +73,11 @@ export function mapTaskSummary(task: TaskRecord, opts?: { includePrompt?: boolea
   const prompt = opts?.includePrompt
     ? sanitizeTaskPromptText(task.task, TASK_PROMPT_MAX_CHARS) || undefined
     : undefined;
+  const outputTail = readExecTaskOutputTail(task.detail);
   const result = opts?.includePrompt
     ? (task.runtime === "subagent" || task.runtime === "acp"
         ? progressResult
-        : terminalResult || progressResult) || undefined
+        : outputTail || terminalResult || progressResult) || undefined
     : undefined;
   const toolUseCount =
     typeof task.toolUseCount === "number" && Number.isInteger(task.toolUseCount)
