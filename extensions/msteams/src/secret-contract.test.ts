@@ -159,6 +159,33 @@ describe("msteams secret contract", () => {
     ]);
   });
 
+  it("does not resolve a root appPassword when the channel is globally disabled", async () => {
+    const secretRef = { source: "env", provider: "default", id: "MSTEAMS_APP_PASSWORD" } as const;
+    const resolved = await resolveMSTeamsSecretAssignments(
+      {
+        channels: {
+          msteams: {
+            enabled: false,
+            appId: "default-app-id",
+            appPassword: secretRef,
+            accounts: {
+              default: { enabled: true },
+            },
+          },
+        },
+      } as OpenClawConfig,
+      { MSTEAMS_APP_PASSWORD: "should-not-resolve" },
+    );
+
+    expect(resolved.config.channels?.msteams?.appPassword).toEqual(secretRef);
+    expect(resolved.warnings).toEqual([
+      expect.objectContaining({
+        code: "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+        path: "channels.msteams.appPassword",
+      }),
+    ]);
+  });
+
   it("warns instead of resolving disabled account appPassword SecretRefs", async () => {
     const resolved = await resolveMSTeamsSecretAssignments(
       {

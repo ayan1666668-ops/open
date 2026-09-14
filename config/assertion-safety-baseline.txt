@@ -46,7 +46,7 @@ extensions/browser/src/browser-proxy-envelope.ts	8
 extensions/browser/src/browser-proxy-upload.ts	2
 extensions/browser/src/browser-tool-binding.ts	3
 extensions/browser/src/browser-tool-session-tabs.ts	3
-extensions/browser/src/browser-tool.actions.ts	14
+extensions/browser/src/browser-tool.actions.ts	13
 extensions/browser/src/browser-tool.snapshot.ts	2
 extensions/browser/src/browser-tool.ts	6
 extensions/browser/src/browser/bridge-server.ts	2
@@ -2225,9 +2225,7 @@ src/cli/cron-cli/register.cron-scratch.ts	2
 src/cli/cron-cli/register.cron-simple.ts	2
 src/cli/cron-cli/shared.ts	8
 src/cli/daemon-cli/launchd-recovery.ts	1
-src/cli/daemon-cli/lifecycle.ts	1
 src/cli/daemon-cli/restart-health-probe.ts	7
-src/cli/daemon-cli/restart-health.ts	1
 src/cli/daemon-cli/start-repair.ts	1
 src/cli/deps.ts	2
 src/cli/devices-cli.runtime.ts	10
@@ -2280,7 +2278,7 @@ src/cli/program/register.agent.ts	16
 src/cli/program/register.audit.ts	12
 src/cli/program/register.backup.ts	14
 src/cli/program/register.configure.ts	1
-src/cli/program/register.migrate.ts	12
+src/cli/program/register.migrate.ts	10
 src/cli/program/register.onboard.ts	27
 src/cli/program/register.setup.ts	2
 src/cli/program/register.status-health-sessions.ts	29
