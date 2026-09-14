@@ -189,6 +189,7 @@ export async function startOrResumeThread(
         dynamicTools: params.dynamicTools,
         appServer: params.appServer,
         developerInstructions: params.developerInstructions,
+        skillsInstructions: params.skillsInstructions,
         config,
         nativeCodeModeEnabled: params.nativeCodeModeEnabled,
         nativeProviderWebSearchSupport: params.nativeProviderWebSearchSupport,
