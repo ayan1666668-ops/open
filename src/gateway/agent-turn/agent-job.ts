@@ -482,7 +482,6 @@ export function setGatewayDedupeEntry(params: {
   dedupe: Map<string, DedupeEntry>;
   key: string;
   entry: DedupeEntry;
-  /** Admission owns a new attempt; retain request identity while retiring its old terminal. */
   startNewAttempt?: true;
 }) {
   ensureAgentRunListener();
