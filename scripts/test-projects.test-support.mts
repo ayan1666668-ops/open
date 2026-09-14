@@ -83,6 +83,7 @@ import { getChangedPathFacts } from "./lib/changed-path-facts.mjs";
 import {
   GIT_LS_FILES_MAX_BUFFER_BYTES,
   createExtensionTestProcessTargetChunks,
+  gitEnvironmentForRepositoryRoot,
   listTrackedTestPlanFiles,
   resolveExtensionTestConfig,
   splitExtensionTestProcessTargets,
@@ -1248,6 +1249,7 @@ function listExplicitTestTargetFilesFromGit(cwd: string) {
     {
       cwd,
       encoding: "utf8",
+      env: gitEnvironmentForRepositoryRoot(cwd),
       maxBuffer: GIT_LS_FILES_MAX_BUFFER_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -1736,6 +1738,7 @@ function listImportGraphGrepMatches(
   const spawnOptions: SpawnSyncOptionsWithStringEncoding = {
     cwd,
     encoding: "utf8",
+    env: gitEnvironmentForRepositoryRoot(cwd),
     // A frontier can exceed the platform argv limit; Git accepts stdin patterns.
     input: missing.join("\n"),
     maxBuffer: GIT_LS_FILES_MAX_BUFFER_BYTES,
