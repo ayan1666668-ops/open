@@ -451,6 +451,30 @@ function getFreshestDedupeSnapshot(
   return agent ?? chat;
 }
 
+function mergeChatDedupeWithLifecycle(
+  chat: AgentRunSnapshot,
+  lifecycle: AgentRunSnapshot,
+): AgentRunSnapshot {
+  const lifecycleOutcome = terminalOutcomeFromSnapshot(lifecycle);
+  if (lifecycleOutcome?.reason !== "completed") {
+    return mergeSnapshot(chat, lifecycle);
+  }
+  const merged = mergeSnapshot(lifecycle, chat);
+  return {
+    ...merged,
+    status: chat.status,
+    startedAt: chat.startedAt ?? merged.startedAt,
+    endedAt: chat.endedAt,
+    error: chat.error,
+    stopReason: chat.stopReason,
+    livenessState: chat.livenessState,
+    yielded: chat.yielded,
+    pendingError: chat.pendingError,
+    timeoutPhase: chat.timeoutPhase,
+    providerStarted: chat.providerStarted,
+  };
+}
+
 function getCanonicalAgentRunSnapshot(
   snapshotsBySource: Map<AgentJobSource, AgentRunSnapshot>,
   source?: "chat",
@@ -466,6 +490,9 @@ function getCanonicalAgentRunSnapshot(
   const lifecycle = snapshotsBySource.get("lifecycle");
   if (!dedupe || !lifecycle) {
     return dedupe ?? lifecycle;
+  }
+  if (source === "chat") {
+    return mergeChatDedupeWithLifecycle(dedupe, lifecycle);
   }
   return dedupe.version > lifecycle.version
     ? mergeSnapshot(lifecycle, dedupe)

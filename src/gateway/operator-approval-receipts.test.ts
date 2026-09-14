@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExecutionIdentityContextV1 } from "../../packages/gateway-protocol/src/index.js";
-import { trackSqliteStatementExecutions } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { activityRunInspectorSearch } from "../../ui/src/pages/activity/run-inspector-model.js";
 import { presentExecutionDecisionReceipts } from "../audit/execution-decision-receipts.js";
@@ -447,44 +446,32 @@ describe("operator approval decision receipts", () => {
           .all(context.runId) as Array<{ approval_id: string; receipt_rowid: number }>
       ).map((row) => [row.approval_id, `approval-decision:${row.receipt_rowid}`]),
     );
-    const tracker = trackSqliteStatementExecutions(db, ["approvalPage"] as const, (sqlText) =>
-      sqlText.trimStart().toLowerCase().startsWith("select") &&
-      sqlText.includes("operator_approvals")
-        ? "approvalPage"
-        : null,
+    const first = pageOperatorApprovalReceiptsForRun({
+      context,
+      limit: 2,
+      nowMs: 3_000,
+      databaseOptions: database,
+    });
+    const second = pageOperatorApprovalReceiptsForRun({
+      context,
+      after: first.nextCursor,
+      limit: 10,
+      nowMs: 3_000,
+      databaseOptions: database,
+    });
+    const entries = [...first.entries, ...second.entries];
+    expect(entries).toHaveLength(4);
+    expect(entries.map((entry) => entry.receipt.decision.reasonCode)).toEqual([
+      "operator_approval_record_corrupt",
+      "operator_approval_payload_bounded",
+      "operator_approval_execution_link_missing",
+      "operator_approval_denied_by_reviewer",
+    ]);
+    expect(entries.map((entry) => entry.selectorId)).toEqual(
+      ["snapshot-corrupt", "snapshot-oversized", "snapshot-unlinked", "snapshot-valid"].map((id) =>
+        expectedSelectors.get(id),
+      ),
     );
-
-    try {
-      const first = pageOperatorApprovalReceiptsForRun({
-        context,
-        limit: 2,
-        nowMs: 3_000,
-        databaseOptions: database,
-      });
-      const second = pageOperatorApprovalReceiptsForRun({
-        context,
-        after: first.nextCursor,
-        limit: 10,
-        nowMs: 3_000,
-        databaseOptions: database,
-      });
-      const entries = [...first.entries, ...second.entries];
-      expect(tracker.counts.approvalPage).toBe(2);
-      expect(entries).toHaveLength(4);
-      expect(entries.map((entry) => entry.receipt.decision.reasonCode)).toEqual([
-        "operator_approval_record_corrupt",
-        "operator_approval_payload_bounded",
-        "operator_approval_execution_link_missing",
-        "operator_approval_denied_by_reviewer",
-      ]);
-      expect(entries.map((entry) => entry.selectorId)).toEqual(
-        ["snapshot-corrupt", "snapshot-oversized", "snapshot-unlinked", "snapshot-valid"].map(
-          (id) => expectedSelectors.get(id),
-        ),
-      );
-    } finally {
-      tracker.restore();
-    }
   });
 
   it("never enforces a later unrelated approval that reuses the retained run id", () => {

@@ -65,7 +65,14 @@ const CORE_SHARD = {
   args: ["--tsconfig", "config/tsconfig/oxlint.core.json", "src", "ui", "packages"],
 };
 const CORE_TS_CONFIG = "config/tsconfig/oxlint.core.json";
-const CORE_SPLIT_TARGETS = ["ui", "packages"];
+const CORE_UI_TARGETS = [
+  "ui/src",
+  "ui/config",
+  "ui/vite.config.ts",
+  "ui/vitest.config.ts",
+  "ui/vitest.node.config.ts",
+];
+const PACKAGES_DIR = "packages";
 const EXTENSIONS_SHARD = {
   name: "extensions",
   args: ["--tsconfig", EXTENSION_TS_CONFIG, EXTENSIONS_DIR],
@@ -124,8 +131,16 @@ function createCoreOxlintShards({
     args: ["--tsconfig", CORE_TS_CONFIG, ...targets],
   }));
   const sourceEntries = sourceShards.length > 0 ? sourceShards : [createCoreShard("src")];
+  const packageEntries = listPackageTargetGroups({ cwd, readDir }).map((targets) => ({
+    name: targets.length === 1 ? `core:${targets[0]?.replaceAll("/", ":")}` : "core:packages:root",
+    args: ["--tsconfig", CORE_TS_CONFIG, ...targets],
+  }));
 
-  return [...sourceEntries, ...CORE_SPLIT_TARGETS.map((target) => createCoreShard(target))];
+  return [
+    ...sourceEntries,
+    { name: "core:ui", args: ["--tsconfig", CORE_TS_CONFIG, ...CORE_UI_TARGETS] },
+    ...packageEntries,
+  ];
 }
 
 function createCoreShard(target: string) {
@@ -264,6 +279,30 @@ function listSourceRootTargetGroups({ cwd, readDir }: DirectoryLookup) {
     .toSorted((left, right) => left.localeCompare(right));
 
   return [...dirs.map((target) => [target]), ...(rootFiles.length > 0 ? [rootFiles] : [])];
+}
+
+function listPackageTargetGroups({ cwd, readDir }: DirectoryLookup) {
+  const entries = readDirectoryEntries(readDir, path.join(cwd, PACKAGES_DIR));
+  const packageTargets = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const packageRoot = path.join(PACKAGES_DIR, entry.name);
+      const packageEntries = readDirectoryEntries(readDir, path.join(cwd, packageRoot));
+      const sourceDirs = packageEntries
+        .filter((packageEntry) => packageEntry.isDirectory() && packageEntry.name === "src")
+        .map((packageEntry) => `${packageRoot}/${packageEntry.name}`);
+      const rootFiles = packageEntries
+        .filter(
+          (packageEntry) =>
+            packageEntry.isFile() && OXLINT_SOURCE_FILE_PATTERN.test(packageEntry.name),
+        )
+        .map((packageEntry) => `${packageRoot}/${packageEntry.name}`)
+        .toSorted((left, right) => left.localeCompare(right));
+      return [...sourceDirs, ...rootFiles];
+    })
+    .filter((targets) => targets.length > 0);
+
+  return packageTargets;
 }
 
 /**
