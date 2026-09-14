@@ -114,7 +114,7 @@ export class PreparedModelCatalogGenerationRecoveryOwner {
       }
       dependencies.setPendingReplacement(undefined);
       dependencies.rejectAuthPublication(replacement, refreshError);
-      replacement.reject(refreshError);
+      replacement.resolve();
       notifyPreparedModelRuntimePublication({ phase: "failed", error: refreshError });
       throw refreshError;
     } finally {

@@ -492,7 +492,7 @@ describe("prepared model runtime catalog recovery", () => {
     );
   });
 
-  it("settles adopted auth work when the recovery build fails", async () => {
+  it("settles adopted auth work and healthy readers when recovery fails", async () => {
     mocks.configuredAgentIds = ["default", "secondary"];
     const config = {};
     await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
@@ -509,8 +509,18 @@ describe("prepared model runtime catalog recovery", () => {
       throw new Error("default prepared model runtime owner was not published");
     }
 
+    let signalRecoveryBuildStarted: (() => void) | undefined;
+    const recoveryBuildStarted = new Promise<void>((resolve) => {
+      signalRecoveryBuildStarted = resolve;
+    });
+    let releaseRecoveryBuild: (() => void) | undefined;
+    const recoveryBuildBlocked = new Promise<void>((resolve) => {
+      releaseRecoveryBuild = resolve;
+    });
     const recoveryError = new Error("default recovery failed");
     mocks.ensureOpenClawModelsJson.mockImplementationOnce(async () => {
+      signalRecoveryBuildStarted?.();
+      await recoveryBuildBlocked;
       mocks.mutationListener?.({
         agentDir: "/tmp/configured-secondary",
         affectsInheritedStores: false,
@@ -518,15 +528,25 @@ describe("prepared model runtime catalog recovery", () => {
       throw recoveryError;
     });
 
-    await expect(
-      replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(initialDefault),
-    ).rejects.toBe(recoveryError);
+    const recovery =
+      replacePreparedModelRuntimeSnapshotAfterCatalogGenerationMismatch(initialDefault);
+    await recoveryBuildStarted;
+    const healthyDispatch = loadPublishedGatewayReplyDispatchRuntime({ agentId: "secondary" });
+    const healthyRuntime = prepareModelRuntimeSnapshot({
+      agentId: "secondary",
+      config,
+      agentDir: "/tmp/configured-secondary",
+      inheritedAuthDir: "/tmp/unused-agent",
+      workspaceDir: "/tmp/workspace-secondary",
+    });
+    releaseRecoveryBuild?.();
+
+    await expect(recovery).rejects.toBe(recoveryError);
     await expect(loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" })).rejects.toThrow(
       "prepared reply dispatch runtime owner was not published for default",
     );
-    await expect(
-      loadPublishedGatewayReplyDispatchRuntime({ agentId: "secondary" }),
-    ).resolves.toMatchObject({ agentId: "secondary" });
+    await expect(healthyDispatch).resolves.toMatchObject({ agentId: "secondary" });
+    await expect(healthyRuntime).resolves.toMatchObject({ agentId: "secondary" });
   });
 
   it("defers to a config replacement that supersedes recovery", async () => {
