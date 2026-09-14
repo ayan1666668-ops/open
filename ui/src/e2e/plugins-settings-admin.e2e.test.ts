@@ -379,36 +379,21 @@ suite.define(() => {
     readOnly: boolean;
     pluginConfig: Record<string, Record<string, unknown>>;
   }>([
-    {
+    ...[false, true].map((readOnly) => ({
       pluginId: "brave",
       name: "Brave",
       section: "webSearch",
       sectionLabel: "Web Search",
       label: "Brave Search API Key",
       referenceLabel: "Brave Search Base URL",
-      readOnly: false,
+      readOnly,
       pluginConfig: {
         webSearch: {
           baseUrl: { source: "env", provider: "default", id: "BRAVE_PROXY_URL" },
           mode: "web",
         },
       },
-    },
-    {
-      pluginId: "brave",
-      name: "Brave",
-      section: "webSearch",
-      sectionLabel: "Web Search",
-      label: "Brave Search API Key",
-      referenceLabel: "Brave Search Base URL",
-      readOnly: true,
-      pluginConfig: {
-        webSearch: {
-          baseUrl: { source: "env", provider: "default", id: "BRAVE_PROXY_URL" },
-          mode: "web",
-        },
-      },
-    },
+    })),
     {
       pluginId: "firecrawl",
       name: "Firecrawl",
