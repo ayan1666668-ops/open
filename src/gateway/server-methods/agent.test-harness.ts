@@ -88,6 +88,20 @@ export function getAgentTestMocks() {
   return mocks;
 }
 
+// Handler tests own an in-memory run boundary. The dedicated agent-job durability suites
+// exercise the real SQLite receipt store without opening it for every handler fixture.
+vi.mock("../../state/agent-run-terminal-receipts.js", () => ({
+  AgentRunTerminalReceiptValidationError: class AgentRunTerminalReceiptValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "AgentRunTerminalReceiptValidationError";
+    }
+  },
+  deleteAgentRunTerminalReceipt: () => false,
+  readAgentRunTerminalReceipt: () => undefined,
+  writeAgentRunTerminalReceiptWithResult: () => ({ state: "written" as const }),
+}));
+
 function resolveAgentTestConfig(cfg: OpenClawConfig = mocks.loadConfigReturn): OpenClawConfig {
   if (cfg.agents?.list) {
     return cfg;
