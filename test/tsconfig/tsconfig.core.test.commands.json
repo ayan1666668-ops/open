@@ -8,9 +8,9 @@
     "../../src/agents/command/**/*.test.tsx",
     "../../src/commands/**/*.test.ts",
     "../../src/commands/**/*.test.tsx",
-    "../../src/tasks/**/*.test.ts",
-    "../../src/tasks/**/*.test.tsx",
     "../../src/tui/**/*.test.ts",
-    "../../src/tui/**/*.test.tsx"
+    "../../src/tui/**/*.test.tsx",
+    "../../src/wizard/**/*.test.ts",
+    "../../src/wizard/**/*.test.tsx"
   ]
 }
