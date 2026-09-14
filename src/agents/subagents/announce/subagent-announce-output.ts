@@ -597,14 +597,9 @@ export function buildChildCompletionFindings(
   );
 }
 
-export function dedupeLatestChildCompletionRows(
-  children: Array<
-    ChildCompletionRow & {
-      runId: string;
-      generation?: number;
-    }
-  >,
-) {
+export function dedupeLatestChildCompletionRows<
+  T extends ChildCompletionRow & { runId: string; generation?: number },
+>(children: T[]): T[] {
   const latestByChildSessionKey = new Map<string, (typeof children)[number]>();
   for (const child of children) {
     recordLatestSubagentRun(latestByChildSessionKey, child.childSessionKey, child);
@@ -612,14 +607,14 @@ export function dedupeLatestChildCompletionRows(
   return [...latestByChildSessionKey.values()];
 }
 
-export function filterCurrentDirectChildCompletionRows(
-  children: Array<
-    ChildCompletionRow & {
-      runId: string;
-      requesterSessionKey: string;
-      requesterAgentId?: string;
-    }
-  >,
+export function filterCurrentDirectChildCompletionRows<
+  T extends ChildCompletionRow & {
+    runId: string;
+    requesterSessionKey: string;
+    requesterAgentId?: string;
+  },
+>(
+  children: T[],
   params: {
     requesterSessionKey: string;
     requesterAgentId?: string;
@@ -632,7 +627,7 @@ export function filterCurrentDirectChildCompletionRows(
       | null
       | undefined;
   },
-) {
+): T[] {
   if (typeof params.getLatestSubagentRunByChildSessionKey !== "function") {
     return children;
   }

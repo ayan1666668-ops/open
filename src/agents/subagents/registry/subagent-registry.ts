@@ -156,6 +156,7 @@ const subagentLifecycleController = new SubagentLifecycleController({
   // Lifecycle wiring precedes publicApi construction; inject this read query
   // as a late-bound callback instead of threading a partially built API object.
   countPendingDescendantRuns: (rootSessionKey) => countPendingDescendantRuns(rootSessionKey),
+  getLatestRunForChildSession: getLatestLiveSubagentRunByChildSessionKey,
   suppressAnnounceForSteerRestart: contextCleanup.suppressAnnounceForSteerRestart,
   resolveSubagentTask: findSubagentTaskForRun,
   shouldEmitEndedHookForRun: contextCleanup.shouldEmitEndedHookForRun,

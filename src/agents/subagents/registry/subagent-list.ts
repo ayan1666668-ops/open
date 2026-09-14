@@ -26,10 +26,10 @@ import {
   getSubagentSessionRuntimeMs,
   getSubagentSessionStartedAt,
 } from "./subagent-registry-read.js";
-import { getSubagentRunsSnapshotForRead } from "./subagent-registry-state.js";
-import type { SubagentRunRecord } from "./subagent-registry.types.js";
+import { getSubagentSessionListRunsSnapshotForRead } from "./subagent-registry-state.js";
+import type { SubagentRunReadRecord, SubagentRunRecord } from "./subagent-registry.types.js";
 import {
-  isLiveUnendedSubagentRun,
+  isRetainedUnendedSubagentRun,
   shouldKeepSubagentRunChildLink,
 } from "./subagent-run-liveness.js";
 import { buildSubagentRunView } from "./subagent-run-view.js";
@@ -143,11 +143,15 @@ function resolveSessionEntryForKey(params: {
 
 /** Build child-session indexes from the latest run associated with each child key. */
 function buildLatestSubagentRunIndex(
-  runs: Map<string, SubagentRunRecord>,
+  runs: Map<string, SubagentRunReadRecord>,
   options?: { now?: number },
 ) {
   const now = options?.now ?? Date.now();
-  const readIndex = buildSubagentRunReadIndexFromRuns({ runs, now });
+  const readIndex = buildSubagentRunReadIndexFromRuns({
+    runs,
+    inMemoryRuns: subagentRuns.values(),
+    now,
+  });
 
   const childSessionsByController = new Map<string, string[]>();
   for (const [childSessionKey, entry] of readIndex.latestRunsByChildSessionKey) {
@@ -254,7 +258,7 @@ function buildSharedCwdIndex(params: {
   const identityMemo = new Map<string, string>();
   for (const run of params.runs) {
     // A wait expiry does not prove the child stopped accessing its directory.
-    if (!isLiveUnendedSubagentRun(run, params.now) && !isSubagentChildStopUnconfirmed(run)) {
+    if (!isRetainedUnendedSubagentRun(run, params.now) && !isSubagentChildStopUnconfirmed(run)) {
       continue;
     }
     const spawnedCwd = resolveSessionEntryForKey({
@@ -379,10 +383,11 @@ export function buildSubagentList(params: {
   runs: SubagentRunRecord[];
   recentMinutes: number;
   taskMaxChars?: number;
+  readSnapshot?: Map<string, SubagentRunReadRecord>;
 }): BuiltSubagentList {
   const now = Date.now();
   const cache = new Map<string, Record<string, SessionEntry>>();
-  const snapshot = getSubagentRunsSnapshotForRead(subagentRuns);
+  const snapshot = params.readSnapshot ?? getSubagentSessionListRunsSnapshotForRead(subagentRuns);
   const { childSessionsByController, readIndex } = buildLatestSubagentRunIndex(snapshot);
   const pendingDescendantCount = (sessionKey: string) =>
     readIndex.countPendingDescendantRuns(sessionKey);
