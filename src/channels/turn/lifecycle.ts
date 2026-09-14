@@ -688,7 +688,6 @@ async function dispatchChannelTurnWithDeliveryOwner(
         } catch (error: unknown) {
           dispatchError = error;
         }
-
         let settlementError: unknown;
         try {
           await settleChannelDeliveryAttempts(normalizationSuppressionAttempts, delivery);
@@ -700,12 +699,13 @@ async function dispatchChannelTurnWithDeliveryOwner(
           resolvePartialChannelDeliveryResult(settlementError) !== undefined ||
           (settlementError !== undefined && dispatchError === undefined);
         const error = settlementWins ? settlementError : dispatchError;
-        if (error !== undefined)
-          throw toErrorObject(
-            error,
-            settlementWins ? "channel delivery settlement failed" : "channel dispatch failed",
-          );
-        return dispatchResult!;
+        if (error === undefined) {
+          return dispatchResult!;
+        }
+        throw toErrorObject(
+          error,
+          settlementWins ? "channel delivery settlement failed" : "channel dispatch failed",
+        );
       },
     },
     { suppressObserveOnlyDispatch: false },
