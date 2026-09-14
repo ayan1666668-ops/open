@@ -326,7 +326,7 @@ export const finalizeSubagentTaskRun = (
       childSessionKey: maskLifecycleIdentifier(args.entry.childSessionKey, "session"),
       outcomeStatus: args.outcome.status,
     });
-    if (pendingTask) {
+    if (pendingTask || taskResolution.lookup === "unavailable") {
       throw err;
     }
     return [];
@@ -334,10 +334,11 @@ export const finalizeSubagentTaskRun = (
   // A failed task write must keep the native terminal owner replayable.
   // Otherwise cleanup can discard the only outcome that repairs the running task.
   if (
-    pendingTask &&
-    !finalized?.some(
-      (task) => task.taskId === pendingTask.taskId && isTerminalTaskStatus(task.status),
-    )
+    (pendingTask &&
+      !finalized?.some(
+        (task) => task.taskId === pendingTask.taskId && isTerminalTaskStatus(task.status),
+      )) ||
+    (taskResolution.lookup === "unavailable" && (finalized?.length ?? 0) === 0)
   ) {
     throw new Error("subagent task projection did not finalize");
   }
