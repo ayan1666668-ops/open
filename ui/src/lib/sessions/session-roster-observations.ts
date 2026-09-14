@@ -11,7 +11,10 @@ import {
   parseAgentSessionKey,
 } from "./session-key.ts";
 import type { ObservedSessionList } from "./session-list-query.ts";
-import { createSessionRowProvenance } from "./session-row-provenance.ts";
+import {
+  createSessionRowProvenance,
+  createSessionWriteObservation,
+} from "./session-row-provenance.ts";
 import { isOlderSessionSnapshot } from "./session-row-reconcile.ts";
 import {
   createSessionRunTerminalReconciler,
@@ -64,7 +67,7 @@ export function createSessionRosterObservations(
   lists: ReadonlyMap<string, ObservedSessionList>,
 ) {
   const provenance = createSessionRowProvenance();
-  const { owner, identity, inheritRow, mergeRow, observeReadRow, rowRevision } = provenance;
+  const { owner, identity, inheritRow, mergeRow, rowRevision } = provenance;
   const registeredRows = new Set<RegisteredSessionRow>();
   const registrationIsAttached = (entry: RegisteredSessionRow) =>
     registeredRows.has(entry) && entry.scope !== null && host.connection.isCurrent(entry.scope);
@@ -170,14 +173,33 @@ export function createSessionRosterObservations(
     const state = host.readState();
     const primaryRows = indexRows(state.result?.sessions ?? [], state.agentId);
     const epoch = host.connection.capture()?.epoch;
-    const managedRows = [...lists.values()]
-      .filter((entry) => entry.connectionEpoch === epoch)
-      .map((entry) => indexRows(entry.snapshot.result?.sessions ?? [], entry.snapshot.agentId));
-    const descriptors = [...registeredRows].flatMap((entry) => {
+    const observedRows = new Map<string, GatewaySessionRow[]>();
+    const append = (key: string, row: GatewaySessionRow) => {
+      const rows = observedRows.get(key);
+      if (rows) {
+        rows.push(row);
+      } else {
+        observedRows.set(key, [row]);
+      }
+    };
+    for (const entry of lists.values()) {
+      if (entry.connectionEpoch === epoch) {
+        for (const [key, row] of indexRows(
+          entry.snapshot.result?.sessions ?? [],
+          entry.snapshot.agentId,
+        )) {
+          append(key, row);
+        }
+      }
+    }
+    for (const entry of registeredRows) {
       const row = registeredRow(entry);
-      return row ? [indexRows([row], entry.target.agentId)] : [];
-    });
-    return { state, primaryRows, observedRows: [...managedRows, ...descriptors] };
+      const key = row && identity(row, entry.target.agentId);
+      if (row && key) {
+        append(key, row);
+      }
+    }
+    return { state, primaryRows, observedRows };
   };
   const createFieldProjection = () => {
     const { state, primaryRows, observedRows } = captureHeldRows();
@@ -195,27 +217,42 @@ export function createSessionRosterObservations(
             ? mergeRow(current, primary, agentId)
             : mergeRow(primary, current, agentId);
       }
-      for (const rows of observedRows) {
-        const offered = rows.get(key);
-        if (offered) {
-          current = mergeRow(current, offered, agentId);
-        }
+      for (const offered of observedRows.get(key) ?? []) {
+        current = mergeRow(current, offered, agentId);
       }
       return current;
     };
   };
   const projectFields = (row: GatewaySessionRow, agentId?: string | null) =>
     createFieldProjection()(row, agentId);
-  const heldRowsFor = (row: GatewaySessionRow, agentId?: string | null) => {
+  const heldRowsFor = (
+    row: GatewaySessionRow,
+    agentId?: string | null,
+    held?: ReturnType<typeof captureHeldRows>,
+  ) => {
     const key = identity(row, agentId);
     if (!key) {
       return [];
     }
-    const { primaryRows, observedRows } = captureHeldRows();
-    return [primaryRows, ...observedRows].flatMap((rows) => {
-      const current = rows.get(key);
-      return current ? [current] : [];
-    });
+    const { primaryRows, observedRows } = held ?? captureHeldRows();
+    const primary = primaryRows.get(key);
+    return [...(primary ? [primary] : []), ...(observedRows.get(key) ?? [])];
+  };
+  const observeReadRow = (row: GatewaySessionRow, revision: number, agentId?: string | null) =>
+    provenance.observeReadRow(row, revision, agentId, heldRowsFor(row, agentId));
+  const observeReadRows = (
+    rows: readonly GatewaySessionRow[],
+    revision: number,
+    agentId?: string | null,
+  ) => {
+    if (rows.length === 0) {
+      return [];
+    }
+    const held = captureHeldRows();
+    return rows.map((row) => ({
+      row,
+      select: provenance.observeReadRow(row, revision, agentId, heldRowsFor(row, agentId, held)),
+    }));
   };
   const currentRow = (row: GatewaySessionRow, agentId?: string | null) => {
     const held = heldRowsFor(row, agentId)[0];
@@ -531,7 +568,9 @@ export function createSessionRosterObservations(
       }
     },
     observeReadRow,
-    observeEvent: provenance.observeEvent,
+    observeReadRows,
+    observeFields: provenance.observeFields,
+    fieldObservation: provenance.fieldObservation,
     stageRunTerminal(
       this: void,
       terminal: SessionRunTerminal,
@@ -545,7 +584,12 @@ export function createSessionRosterObservations(
           observe: (row, source, fields) => {
             inheritRow(row, source);
             // Terminal time is local; only Gateway rows supply the updatedAt clock.
-            observations.observeEvent(row, fields, event.revision, null, agentId);
+            observations.observeFields(
+              row,
+              fields,
+              createSessionWriteObservation(event.revision, null),
+              agentId,
+            );
           },
         });
       const reconcile = (result: SessionsListResult | null, agentId: string | null) => {
