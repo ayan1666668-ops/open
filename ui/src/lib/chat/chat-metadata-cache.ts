@@ -60,7 +60,11 @@ export const chatMetadataCache = new WeakMap<
   GatewayBrowserClient,
   {
     entries: Map<string, ChatMetadataEntry>;
-    invalidate: (scope?: ChatMetadataParams, sessionDefaults?: UiSessionDefaultsHost) => void;
+    invalidate: (
+      scope?: ChatMetadataParams,
+      sessionDefaults?: UiSessionDefaultsHost,
+      sessionEvent?: Record<string, unknown> | null,
+    ) => void;
   }
 >();
 
@@ -85,15 +89,5 @@ export function invalidateChatMetadataForSessionEvent(
   const scope = changed ? { agentId, sessionKey: changed.key } : undefined;
   // Coalesced events can replace a mutation's reason with later activity.
   invalidateModelCatalogCache(client, scope ?? { agentId, sessionsOnly: true }, sessionDefaults);
-  if (
-    source?.reason !== "reset" &&
-    source?.phase !== "reset" &&
-    source?.reason !== "command-metadata" &&
-    source?.reason !== "patch"
-  ) {
-    return;
-  }
-  if (scope) {
-    chatMetadataCache.get(client)?.invalidate(scope, sessionDefaults);
-  }
+  chatMetadataCache.get(client)?.invalidate(scope, sessionDefaults, source);
 }

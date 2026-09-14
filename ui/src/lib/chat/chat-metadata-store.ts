@@ -51,7 +51,21 @@ function metadataEntryFor(
   let cache = chatMetadataCache.get(client);
   if (!cache) {
     const entries = new Map<string, ChatMetadataEntry>();
-    const invalidate = (scope?: ChatMetadataParams, sessionDefaults?: UiSessionDefaultsHost) => {
+    const invalidate = (
+      scope?: ChatMetadataParams,
+      sessionDefaults?: UiSessionDefaultsHost,
+      sessionEvent?: Record<string, unknown> | null,
+    ) => {
+      if (
+        sessionEvent !== undefined &&
+        (!scope ||
+          (sessionEvent?.reason !== "reset" &&
+            sessionEvent?.phase !== "reset" &&
+            sessionEvent?.reason !== "command-metadata" &&
+            sessionEvent?.reason !== "patch"))
+      ) {
+        return;
+      }
       const invalidated = Array.from(entries.values()).filter(
         (entry) =>
           (sessionDefaults && scope?.sessionKey
