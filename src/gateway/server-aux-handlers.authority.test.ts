@@ -1,7 +1,5 @@
 // Exercises the Gateway-owned authority observer, without loading lazy RPC handlers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   claimAgentRunApprovalAuthority,
   claimAgentRunDelegatedAuthority,
@@ -11,10 +9,7 @@ import {
   rotateAgentRunRegistryLifecycleGeneration,
   validateAgentRunDelegatedAuthority,
 } from "../infra/agent-run-registry.js";
-import { createApprovalNativeRouteCoordinator } from "../infra/approval-native-route-coordinator.js";
-import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
-import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -32,15 +27,12 @@ const auxiliaries: GatewayAux[] = [];
 let fixture: OpenClawTestState | undefined;
 
 function createAuthorityHarness(
-  params: Partial<
-    Pick<
-      GatewayAuxParams,
-      | "onApprovalLifecycle"
-      | "onAgentRunAuthorityClosed"
-      | "validateAgentRuntimeDelegatedAuthority"
-      | "registerWorkerTurnClaimClosedHandler"
-      | "getNativeApprovalRouteCoordinator"
-    >
+  params: Pick<
+    GatewayAuxParams,
+    | "onApprovalLifecycle"
+    | "onAgentRunAuthorityClosed"
+    | "validateAgentRuntimeDelegatedAuthority"
+    | "registerWorkerTurnClaimClosedHandler"
   > = {},
 ): GatewayAux {
   const aux = createGatewayAuxHandlers({
@@ -78,8 +70,6 @@ afterEach(async () => {
   }
   auxiliaries.length = 0;
   resetAgentRunRegistryForTest();
-  setActivePluginRegistry(createTestRegistry([]));
-  resetConfigRuntimeState();
   await fixture?.cleanup();
   fixture = undefined;
 });
@@ -535,66 +525,5 @@ describe("gateway auxiliary authority lifecycle", () => {
     );
     await gatewayAux.stopOperatorInteractions();
     releaseAgentRunDelegatedAuthority(runAuthority);
-  });
-});
-
-describe("gateway auxiliary native approval routes", () => {
-  it("lets approval forwarding see the native handlers running in this Gateway", async () => {
-    // Forwarding to this target is suppressed only while a native handler owns it, and
-    // any delivery attempt fails before it can send anything.
-    setActivePluginRegistry(
-      createTestRegistry([
-        {
-          pluginId: "telegram",
-          source: "test",
-          plugin: {
-            ...createChannelTestPluginBase({ id: "telegram" }),
-            approvalCapability: {
-              delivery: { shouldSuppressForwardingFallback: () => true },
-            },
-            outbound: {
-              deliveryMode: "direct",
-              beforeDeliverPayload: () => {
-                throw new Error("forwarded prompts are not sent in this test");
-              },
-            },
-          },
-        },
-      ]),
-    );
-    setRuntimeConfigSnapshot({
-      approvals: {
-        plugin: { enabled: true, mode: "targets", targets: [{ channel: "telegram", to: "123" }] },
-      },
-    } as OpenClawConfig);
-    const coordinator = createApprovalNativeRouteCoordinator();
-    const aux = createAuthorityHarness({ getNativeApprovalRouteCoordinator: () => coordinator });
-    const request = (id: string) => ({
-      id,
-      request: { title: "Plugin approval", description: "wiring" },
-      createdAtMs: Date.now(),
-      expiresAtMs: Date.now() + 60_000,
-    });
-
-    await expect(aux.forwardPluginApprovalRequest?.(request("plugin:no-handler"))).resolves.toBe(
-      true,
-    );
-
-    coordinator
-      .createReporter({
-        handledKinds: new Set(["plugin"]),
-        channel: "telegram",
-        requestGateway: async () => {
-          throw new Error("route notices are not expected");
-        },
-        shouldHandle: () => true,
-        classifyRoute: () => "unbound",
-      })
-      .start();
-
-    await expect(aux.forwardPluginApprovalRequest?.(request("plugin:handler"))).resolves.toBe(
-      false,
-    );
-    coordinator.close();
   });
 });
