@@ -57,6 +57,7 @@ function stringField(value: unknown, field: string): string {
 
 async function startFixtureGatewayGeneration(params: {
   bootId: string;
+  caseIds: readonly string[];
   configPath: string;
   port: number;
   token: string;
@@ -73,6 +74,7 @@ async function startFixtureGatewayGeneration(params: {
   };
   const service = createReturnCovenantGatewayService({
     binding,
+    caseIds: params.caseIds,
     config,
     env: process.env,
   });
@@ -132,6 +134,7 @@ describe("return-covenant authenticated Gateway seam", () => {
     state.applyEnv();
     const generation = await startFixtureGatewayGeneration({
       bootId: "return-covenant-test-generation",
+      caseIds: ["allowed-ordinary-new"],
       port,
       token,
       configPath: state.configPath,
@@ -300,6 +303,7 @@ describe("return-covenant authenticated Gateway seam", () => {
     state.applyEnv();
     const first = await startFixtureGatewayGeneration({
       bootId: "return-covenant-generation-a",
+      caseIds: ["allowed-gateway-restart-replay"],
       configPath: state.configPath,
       port: firstPort,
       token,
@@ -363,6 +367,7 @@ describe("return-covenant authenticated Gateway seam", () => {
 
       replacement = await startFixtureGatewayGeneration({
         bootId: "return-covenant-generation-b",
+        caseIds: ["allowed-gateway-restart-replay"],
         configPath: state.configPath,
         port: replacementPort,
         token,

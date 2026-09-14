@@ -66,6 +66,7 @@ function parseRestart(value: unknown): ReturnCovenantGatewayRestart | undefined 
 
 export function createReturnCovenantGatewayService(params: {
   binding: ReturnCovenantGatewayBinding;
+  caseIds?: readonly string[];
   config: OpenClawConfig;
   env: NodeJS.ProcessEnv;
   faults?: ReturnCovenantFixtureFaults;
@@ -105,6 +106,19 @@ export function createReturnCovenantGatewayService(params: {
             );
           }
           const plan = parseReturnCovenantPlan(request.plan);
+          const selectedCaseIds = params.caseIds ? new Set(params.caseIds) : undefined;
+          const executionPlan = selectedCaseIds
+            ? {
+                ...plan,
+                cases: plan.cases.filter((casePlan) => selectedCaseIds.has(casePlan.id)),
+              }
+            : plan;
+          if (selectedCaseIds && executionPlan.cases.length !== selectedCaseIds.size) {
+            throw new ReturnCovenantProtocolError(
+              "invalid-plan",
+              "return-covenant Gateway case selection is not present in the validated plan",
+            );
+          }
           const snapshot =
             request.snapshot === undefined
               ? undefined
@@ -114,14 +128,14 @@ export function createReturnCovenantGatewayService(params: {
                 config: params.config,
                 env: params.env,
                 ...(params.faults ? { faults: params.faults } : {}),
-                plan,
+                plan: executionPlan,
                 snapshot,
               })
             : await ReturnCovenantFixtureRun.create({
                 config: params.config,
                 env: params.env,
                 ...(params.faults ? { faults: params.faults } : {}),
-                plan,
+                plan: executionPlan,
               });
           assertActive();
           respond(true, { gateway: params.binding });
