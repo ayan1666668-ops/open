@@ -97,6 +97,7 @@ export async function startGatewayCoreRuntime(input: {
     chatRunState,
     removeChatRun,
     agentRunSeq,
+    nodeHasSessionSubscribers,
     nodeSendToSession,
     runtimeState,
     kernel,
@@ -118,11 +119,18 @@ export async function startGatewayCoreRuntime(input: {
     workerPlacementControlAvailable,
     workerDesktopObserveAvailable,
     desktopSessionRegistry,
+    gatewayComputerService,
     listStartupChannelGatewayMethods,
     workerEnvironmentStartup,
     activateRuntimeSecrets,
   } = runtime;
-  kernel.addGatewayLifetimeSidecar({ stop: () => desktopSessionRegistry.stopAll() });
+  runtime.registerGatewayLifetimeSidecars({
+    preparePluginReload: gatewayComputerService.preparePluginReload,
+    stop: async () => {
+      await gatewayComputerService.close();
+      await desktopSessionRegistry.stopAll();
+    },
+  });
   const secretEgressProxy =
     cfgAtStart.secrets?.egressProxy?.enabled === true
       ? await import("../secrets/egress-proxy/runtime.js").then((egressRuntime) =>
@@ -137,7 +145,7 @@ export async function startGatewayCoreRuntime(input: {
         )
       : undefined;
   if (secretEgressProxy) {
-    kernel.addGatewayLifetimeSidecar(secretEgressProxy);
+    runtime.registerGatewayLifetimeSidecars(secretEgressProxy);
   }
   let pendingThawRestartTargets: readonly ThawRestartTarget[] | undefined;
   let earlyRuntimePromise: Promise<GatewayEarlyRuntime> | undefined;
@@ -220,23 +228,31 @@ export async function startGatewayCoreRuntime(input: {
         import("./server-runtime-startup-services.js"),
       ]),
     );
-  const { sessionCompanion, sessionObserver, ...runtimeSubscriptionUnsubs } =
-    await startupTrace.measure("runtime.subscriptions", () =>
-      startGatewayEventSubscriptions({
-        log,
-        broadcast,
-        broadcastToConnIds,
-        nodeSendToSession,
-        agentRunSeq,
-        chatRunState,
-        toolEventRecipients,
-        sessionEventSubscribers,
-        sessionMessageSubscribers,
-        chatAbortControllers,
-        restartRecoveryCandidates,
-        terminalSessions,
-      }),
-    );
+  const {
+    sessionCompanion,
+    sessionObserver,
+    sessionActivitySummaries,
+    ...runtimeSubscriptionUnsubs
+  } = await startupTrace.measure("runtime.subscriptions", () =>
+    startGatewayEventSubscriptions({
+      signal: runtime.connectionWork.signal,
+      log,
+      broadcast,
+      broadcastToConnIds,
+      nodeHasSessionSubscribers,
+      nodeSendToSession,
+      agentRunSeq,
+      chatRunState,
+      toolEventRecipients,
+      sessionEventSubscribers,
+      sessionMessageSubscribers,
+      chatAbortControllers,
+      restartRecoveryCandidates,
+      terminalSessions,
+      refreshConnectedUserProfiles: () =>
+        runtime.resolvePluginGatewayContext()?.refreshConnectedUserProfile?.(),
+    }),
+  );
   Object.assign(runtimeState, runtimeSubscriptionUnsubs);
 
   await startupTrace.measure("runtime.services", () =>
@@ -316,8 +332,11 @@ export async function startGatewayCoreRuntime(input: {
             delegatedAuthority: authority,
           }),
         onApprovalLifecycle: approvalSessionEvents.publish,
-        onAgentRunAuthorityClosed: (authority) => {
-          secretEgressProxy?.revokeRun(authority.operationalRunInstance);
+        onAgentRunAuthorityClosed: (authority, approvalReason) => {
+          gatewayComputerService.revokeRunAuthority(authority);
+          if (!approvalReason) {
+            secretEgressProxy?.revokeRun(authority.operationalRunInstance);
+          }
         },
       }),
       coreGatewayHandlers: coreGatewayHandlersLocal,
@@ -328,7 +347,7 @@ export async function startGatewayCoreRuntime(input: {
   if (requestLifetime.aborted) {
     beginCloseApprovalObservers();
   }
-  kernel.addGatewayLifetimeSidecar({
+  runtime.registerGatewayLifetimeSidecars({
     stop: async () => {
       requestLifetime.removeEventListener("abort", beginCloseApprovalObservers);
       await stopOperatorInteractions();
@@ -494,6 +513,7 @@ export async function startGatewayCoreRuntime(input: {
     startEarlyRuntime,
     sessionCompanion,
     sessionObserver,
+    sessionActivitySummaries,
     approvalSessionEvents,
     execApprovalManager,
     questionManager,

@@ -1,5 +1,5 @@
 // Subagent followup tests cover followup handling after isolated cron agent runs.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SubagentRunRecord } from "../../agents/subagents/registry/subagent-registry.types.js";
 
 // vi.hoisted runs before module imports, ensuring FAST_TEST_MODE is picked up.
@@ -27,14 +27,13 @@ vi.mock("../../agents/run-wait.js", async () => {
   };
 });
 
-vi.mock("../../gateway/call.js", () => ({
-  callGateway: vi.fn().mockResolvedValue({ status: "ok" }),
-}));
+import * as gatewayCallRuntime from "../../gateway/call.js";
+const callGateway = vi.spyOn(gatewayCallRuntime, "callGateway").mockResolvedValue({ status: "ok" });
+afterAll(() => callGateway.mockRestore());
 
 const { listDescendantRunsForRequester } =
   await import("../../agents/subagents/registry/subagent-registry-read.js");
 const { readLatestAssistantReply } = await import("../../agents/run-wait.js");
-const { callGateway } = await import("../../gateway/call.js");
 
 async function resolveAfterAdvancingTimers<T>(promise: Promise<T>, advanceMs = 100): Promise<T> {
   await vi.advanceTimersByTimeAsync(advanceMs);
@@ -396,6 +395,39 @@ describe("waitForDescendantSubagentSummary", () => {
     const waitCall = gatewayCalls.find(([request]) => request.method === "agent.wait")?.[0];
     expect(waitCall?.method).toBe("agent.wait");
     expect(waitCall?.params?.runId).toBe("run-abc");
+  });
+
+  it("waits for a queued descendant's successor to produce the synthesis", async () => {
+    let descendants = [createDescendantRun({ runId: "queued-run", active: true })];
+    let parentReply = "on it";
+    vi.mocked(listDescendantRunsForRequester).mockImplementation(() => descendants);
+    vi.mocked(readLatestAssistantReply).mockImplementation(async () => parentReply);
+    callGateway.mockImplementation(async (request) => {
+      if ((request.params as { runId: string }).runId === "queued-run") {
+        return { status: "pending", timeoutPhase: "queue", providerStarted: false };
+      }
+      descendants = [];
+      parentReply = "The successor completed the report.";
+      return { status: "ok" };
+    });
+    const completion = setTimeout(() => {
+      descendants = [createDescendantRun({ runId: "successor-run", active: true })];
+    }, 0);
+
+    try {
+      const result = await waitForDescendantSubagentSummary({
+        sessionKey: "test-session",
+        initialReply: parentReply,
+        timeoutMs: 300,
+      });
+
+      expect(result).toBe("The successor completed the report.");
+      expect(
+        callGateway.mock.calls.map(([request]) => (request.params as { runId: string }).runId),
+      ).toEqual(["queued-run", "successor-run"]);
+    } finally {
+      clearTimeout(completion);
+    }
   });
 
   it.each(["on it", "on it\n\nMEDIA:/workspace/report.png"])(

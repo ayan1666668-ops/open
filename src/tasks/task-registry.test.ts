@@ -64,6 +64,7 @@ import {
 import type { TaskFlowRecord } from "./task-flow-registry.types.js";
 import { getTaskActivitySnapshot } from "./task-registry-activity.js";
 import { updateTaskStateByRunId } from "./task-registry-record-api.js";
+import { readTaskRegistryRevision } from "./task-registry-state.js";
 import {
   cancelTaskById,
   deleteTaskRecordById,
@@ -99,7 +100,7 @@ import {
   stopTaskRegistryMaintenance,
   sweepTaskRegistry,
 } from "./task-registry.maintenance.js";
-import { configureTaskRegistryRuntime } from "./task-registry.store.js";
+import { configureTaskRegistryRuntime, getTaskRegistryStore } from "./task-registry.store.js";
 import { summarizeTaskRecords } from "./task-registry.summary.js";
 import { createAcpTaskRecord, createTaskFixture } from "./task-registry.test-support.js";
 import type { TaskDeliveryState, TaskRecord } from "./task-registry.types.js";
@@ -1824,7 +1825,7 @@ describe("task-registry", () => {
     });
   });
 
-  it("replays an equivalent terminal task without rewriting its mirrored flow", async () => {
+  it("replays an equivalent terminal task without writes and repairs a stale mirrored flow", async () => {
     await withTaskRegistryTempDir(
       async () => {
         resetTaskFlowRegistryForTests({ persist: false });
@@ -1865,6 +1866,12 @@ describe("task-registry", () => {
         resetTaskFlowRegistryForTests({ persist: false });
         reloadTaskFlowRegistryFromStore();
         reloadTaskRegistryFromStore();
+        const store = getTaskRegistryStore();
+        const upsertTask = vi.fn(store.upsertTaskWithDeliveryState);
+        configureTaskRegistryRuntime({
+          store: { ...store, upsertTaskWithDeliveryState: upsertTask },
+        });
+        const restoredTaskRevision = readTaskRegistryRevision();
 
         finalizeSubagentTask(task, {
           status: "succeeded",
@@ -1885,6 +1892,8 @@ describe("task-registry", () => {
         });
         expect(replayedFlow?.revision).toBe(firstFlow?.revision);
         expect(replayedFlow?.status).toBe("succeeded");
+        expect(upsertTask).not.toHaveBeenCalled();
+        expect(readTaskRegistryRevision()).toBe(restoredTaskRevision);
 
         const stale = updateFlowRecordByIdExpectedRevision({
           flowId: flow.flowId,
@@ -1913,6 +1922,21 @@ describe("task-registry", () => {
         expect(repaired?.status).toBe("succeeded");
         expect(repaired?.endedAt).toBe(200);
         expect(repaired?.revision).toBe(stale.flow.revision + 1);
+        expect(upsertTask).not.toHaveBeenCalled();
+        expect(readTaskRegistryRevision()).toBe(restoredTaskRevision);
+
+        finalizeSubagentTask(task, {
+          status: "succeeded",
+          endedAt: 200,
+          lastEventAt: 200,
+          progressSummary: "corrected result",
+          terminalSummary: null,
+          suppressDelivery: true,
+        });
+        expect(upsertTask).toHaveBeenCalledOnce();
+        expect(readTaskRegistryRevision()).toBeGreaterThan(restoredTaskRevision);
+        reloadTaskRegistryFromStore();
+        expect(requireTaskById(task.taskId).progressSummary).toBe("corrected result");
       },
       { durableStore: true },
     );

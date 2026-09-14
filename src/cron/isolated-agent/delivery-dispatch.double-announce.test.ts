@@ -104,6 +104,7 @@ vi.mock("../../config/sessions/main-session.js", () => ({
 
 vi.mock("../../agents/subagents/registry/subagent-registry-read.js", () => ({
   countActiveDescendantRuns: countActiveDescendantRunsMock,
+  getLatestLiveSubagentRunByChildSessionKey: () => null,
 }));
 
 vi.mock("../../agents/agent-bundle-mcp-tools.js", () => ({
@@ -159,7 +160,7 @@ vi.mock("../../cli/outbound-send-deps.js", () => ({
   createOutboundSendDeps: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock("../../gateway/call.runtime.js", () => ({
+vi.mock("../../gateway/call.js", () => ({
   callGateway: vi.fn().mockResolvedValue({ ok: true, deleted: true }),
 }));
 
@@ -190,7 +191,7 @@ import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js"
 // Import after mocks
 import { countActiveDescendantRuns } from "../../agents/subagents/registry/subagent-registry-read.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.runtime.js";
-import { callGateway } from "../../gateway/call.runtime.js";
+import { callGateway } from "../../gateway/call.js";
 import { PlatformMessageNotDispatchedError } from "../../infra/outbound/deliver-types.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import {
@@ -4291,11 +4292,11 @@ describe("dispatchCronDelivery — double-announce guard", () => {
           }),
         );
 
+        expect(result.error).toBeUndefined();
         expect(sendText).toHaveBeenCalledTimes(2);
         expect(harness.runEmbeddedAgentMock).toHaveBeenCalledTimes(1);
         expect(deliverOutboundPayloads).toHaveBeenCalledTimes(partialSend ? 1 : 2);
         expect(result.status).toBe("ok");
-        expect(result.error).toBeUndefined();
         expect(result.deliveryAttempted).toBe(true);
         expect.soft(result.delivered).toBe(!partialSend);
         if (partialSend) {
