@@ -23,6 +23,7 @@ import {
   setChannelSourceTurnSameThreadRequired,
 } from "../../auto-reply/reply/source-turn-id.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import type { AutomaticSessionResetReason } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import type { MediaFact } from "../../media/media-facts.js";
@@ -82,6 +83,7 @@ export async function startAgentRunExecution(params: {
   activeSessionAgentId: string;
   delivery: AgentDeliveryPhaseResult;
   isNewSession: boolean;
+  automaticResetNoticeReason?: AutomaticSessionResetReason;
   isRawModelRun: boolean;
   isOneShotModelRun: boolean;
   isRestartRecoveryResumeRun: boolean;
@@ -396,6 +398,7 @@ export async function startAgentRunExecution(params: {
                 to: params.delivery.resolvedTo,
                 sessionId: params.resolvedSessionId,
                 sessionKey: params.resolvedSessionKey,
+                automaticResetNoticeReason: params.automaticResetNoticeReason,
                 thinking: prepared.effectiveThinking,
                 deliver: params.delivery.deliver,
                 deliveryTargetMode: params.delivery.deliveryTargetMode,

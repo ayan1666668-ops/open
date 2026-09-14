@@ -1,5 +1,6 @@
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
 import { getReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
+import { buildAutomaticSessionResetNoticePayload } from "../../auto-reply/reply/session-reset-notice.js";
 import { recordAgentRunTerminalOutcome } from "../../channels/turn/agent-run-terminal-outcome.js";
 import type { CliDeps } from "../../cli/deps.types.js";
 import { buildRestartRecoveryClaimCleanupPatch } from "../../config/sessions/restart-recovery-state.js";
@@ -225,6 +226,16 @@ export async function finalizeEmbeddedAgentCommand(params: {
           params.opts.internalDeliveryMediaUrls,
           params.opts.internalDeliverySuppressText === true,
         ),
+      };
+    }
+    const automaticResetNotice = buildAutomaticSessionResetNoticePayload({
+      reason: params.opts.automaticResetNoticeReason,
+      payloads: result.payloads ?? [],
+    });
+    if (automaticResetNotice) {
+      result = {
+        ...result,
+        payloads: [automaticResetNotice, ...(result.payloads ?? [])],
       };
     }
     const resultErrorPayload = result.payloads?.find((payload) => payload.isError === true);

@@ -10,6 +10,7 @@ import {
   resolveSessionPluginTraceLines,
   type SessionEntry,
 } from "../../config/sessions.js";
+import type { AutomaticSessionResetReason } from "../../config/sessions/reset.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
@@ -492,6 +493,7 @@ export type RunReplyAgentParams = {
   resolvedVerboseLevel: VerboseLevel;
   toolProgressDetail?: "explain" | "raw";
   isNewSession: boolean;
+  automaticResetNoticeReason?: AutomaticSessionResetReason;
   blockStreamingEnabled: boolean;
   blockReplyChunking?: {
     minChars: number;

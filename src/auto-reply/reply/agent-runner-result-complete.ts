@@ -25,6 +25,7 @@ import {
 import { readPostCompactionContext } from "./post-compaction-context.js";
 import { warnPrivateMessageToolFinal } from "./private-message-tool-final.js";
 import { enqueueFollowupRun, refreshQueuedFollowupSession } from "./queue.js";
+import { buildAutomaticSessionResetNoticePayload } from "./session-reset-notice.js";
 import {
   buildStrandedReplyDeliveryFailurePayload,
   resolveStrandedReplyRecovery,
@@ -47,6 +48,7 @@ export async function completeReplyAgentRun(input: {
   const {
     activeIsNewSession,
     activeSessionStore,
+    automaticResetNoticeReason,
     cfg,
     followupRun,
     isHeartbeat,
@@ -72,7 +74,13 @@ export async function completeReplyAgentRun(input: {
   let finalPayloads = guardedReplyPayloads;
   const prefixNotices: ReplyPayload[] = [];
 
-  if (verboseEnabled && activeIsNewSession) {
+  const automaticResetNotice = buildAutomaticSessionResetNoticePayload({
+    reason: automaticResetNoticeReason,
+    payloads: guardedReplyPayloads,
+  });
+  if (automaticResetNotice) {
+    prefixNotices.push(automaticResetNotice);
+  } else if (verboseEnabled && activeIsNewSession) {
     prefixNotices.push({ text: `🧭 New session: ${followupRun.run.sessionId}` });
   }
 

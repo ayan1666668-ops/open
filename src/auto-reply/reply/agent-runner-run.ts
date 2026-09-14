@@ -93,6 +93,7 @@ export async function runReplyAgent(
     resolvedVerboseLevel,
     toolProgressDetail,
     isNewSession,
+    automaticResetNoticeReason,
     blockStreamingEnabled,
     blockReplyChunking,
     resolvedBlockStreamingBreak,
@@ -623,6 +624,7 @@ export async function runReplyAgent(
   try {
     return await executePreparedReplyAgentRun({
       activeSessionStore,
+      automaticResetNoticeReason,
       admitUserTurn,
       applyReplyToMode,
       beginBeforeAgentReply,

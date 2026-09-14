@@ -133,7 +133,8 @@ async function initStoredSessionState(params: {
   text: string;
   updatedAt: number;
   reset?: SessionResetConfig;
-}): Promise<void> {
+  internalTurnSource?: string;
+}): Promise<Awaited<ReturnType<typeof initSessionState>>> {
   const { storePath } = await createStoredSession(params);
   const cfg = {
     session: {
@@ -142,8 +143,12 @@ async function initStoredSessionState(params: {
     },
   } as OpenClawConfig;
 
-  await initSessionState({
-    ctx: { Body: "hello", SessionKey: params.sessionKey },
+  return await initSessionState({
+    ctx: {
+      Body: "hello",
+      SessionKey: params.sessionKey,
+      ...(params.internalTurnSource ? { InternalTurnSource: params.internalTurnSource } : {}),
+    },
     cfg,
     commandAuthorized: true,
   });
@@ -645,11 +650,11 @@ describe("session hook context wiring", () => {
   it.each([
     {
       reason: "daily",
-      reset: { mode: "daily", atHour: 4 } as SessionResetConfig,
+      reset: { mode: "daily", atHour: 4, notifyUser: true } as SessionResetConfig,
     },
     {
       reason: "idle",
-      reset: { mode: "idle", idleMinutes: 30 } as SessionResetConfig,
+      reset: { mode: "idle", idleMinutes: 30, notifyUser: true } as SessionResetConfig,
     },
   ])("emits one session:auto-reset event for $reason rollover", async ({ reason, reset }) => {
     vi.useFakeTimers();
@@ -658,7 +663,7 @@ describe("session hook context wiring", () => {
       const listener = vi.fn();
       registerInternalHook("session:auto-reset", listener);
       const sessionKey = `agent:main:telegram:direct:auto-${reason}`;
-      await initStoredSessionState({
+      const result = await initStoredSessionState({
         prefix: `openclaw-session-auto-${reason}`,
         sessionKey,
         sessionId: `auto-${reason}-session`,
@@ -666,6 +671,8 @@ describe("session hook context wiring", () => {
         updatedAt: new Date(2026, 0, 18, 3, 0, 0).getTime(),
         reset,
       });
+
+      expect(result.automaticResetNoticeReason).toBe(reason);
 
       await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
       const [event] = listener.mock.calls[0] ?? [];
@@ -678,6 +685,28 @@ describe("session hook context wiring", () => {
         reason,
         nextSessionKey: sessionKey,
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not report an automatic reset when a system event reuses a stale session", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 0, 18, 5, 0, 0));
+      const result = await initStoredSessionState({
+        prefix: "openclaw-session-notice-system-event",
+        sessionKey: "agent:main:telegram:direct:notice-system-event",
+        sessionId: "notice-system-event-session",
+        text: "system event",
+        updatedAt: new Date(2026, 0, 18, 3, 0, 0).getTime(),
+        reset: { mode: "idle", idleMinutes: 30, notifyUser: true },
+        internalTurnSource: "heartbeat",
+      });
+
+      expect(result.isNewSession).toBe(false);
+      expect(result.previousSessionEntry).toBeUndefined();
+      expect(result.automaticResetNoticeReason).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

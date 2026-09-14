@@ -184,7 +184,7 @@ Opt into automatic resets globally, then override them per chat type or channel:
 ```json5
 {
   session: {
-    reset: { mode: "daily", atHour: 4 },
+    reset: { mode: "daily", atHour: 4, notifyUser: true },
     resetByType: {
       group: { mode: "idle", idleMinutes: 120 },
       thread: { mode: "daily", atHour: 6 },
@@ -197,6 +197,15 @@ Opt into automatic resets globally, then override them per chat type or channel:
 ```
 
 `resetByType` supports `direct`, `group`, and `thread`. Doctor migrates legacy `dm` entries to `direct` and `session.idleMinutes` to `session.reset.idleMinutes`; the schema rejects both retired forms.
+
+Set `notifyUser: true` on a reset policy to prepend a brief notice when a
+user-facing conversation turn produces a normal visible reply after an
+automatic idle or daily rollover. The notice uses the ordinary channel and
+thread routing path, remains disabled by default, and does not require verbose
+output. It replaces the generic verbose new-session notice for that rollover so
+only one lifecycle notice is shown. Delivery is best effort when the normal
+reply is suppressed. Manual `/new` and `/reset` behavior is unchanged, and
+system-owned isolated cron sessions do not emit this conversation notice.
 
 ## Gateway restart recovery
 

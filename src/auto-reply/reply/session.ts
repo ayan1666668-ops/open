@@ -30,6 +30,7 @@ import {
   resolveSessionResetPolicy,
   resolveSessionResetType,
   resolveThreadFlag,
+  type AutomaticSessionResetReason,
   type SessionFreshness,
 } from "../../config/sessions/reset.js";
 import {
@@ -208,6 +209,7 @@ export type SessionInitResult = {
   sessionKey: string;
   sessionId: string;
   isNewSession: boolean;
+  automaticResetNoticeReason?: AutomaticSessionResetReason;
   resetTriggered: boolean;
   systemSent: boolean;
   abortedLastRun: boolean;
@@ -865,6 +867,13 @@ async function initSessionStateAttemptLocked(
         entry,
         freshness: entryFreshness,
       });
+  const automaticResetNoticeReason =
+    previousSessionEntry !== undefined &&
+    !resetTriggered &&
+    resetPolicy.notifyUser &&
+    (previousSessionEndReason === "idle" || previousSessionEndReason === "daily")
+      ? previousSessionEndReason
+      : undefined;
   const lifecycleMutationMatches = Boolean(
     previousSessionEntry &&
     lifecycleMutationIdentity?.sessionKey === sessionKey &&
@@ -1388,6 +1397,7 @@ async function initSessionStateAttemptLocked(
       sessionKey,
       sessionId: sessionId ?? crypto.randomUUID(),
       isNewSession: isFirstSessionTurn,
+      automaticResetNoticeReason,
       resetTriggered,
       systemSent,
       abortedLastRun,

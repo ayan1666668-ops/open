@@ -49,6 +49,24 @@ function buildReusePatch(input: Partial<PatchParams>) {
 }
 
 describe("agent session reuse at mutation", () => {
+  it("reports the automatic rollover reason only for a visible expired turn", () => {
+    const notifyingResetPolicy = resolveSessionResetPolicy({
+      sessionCfg: { reset: { mode: "idle", idleMinutes: 1, notifyUser: true } },
+      resetType: "direct",
+    });
+
+    expect(buildReusePatch({ resetPolicy: notifyingResetPolicy }).automaticResetNoticeReason).toBe(
+      "idle",
+    );
+    expect(
+      buildReusePatch({ resetPolicy: notifyingResetPolicy, visibleRequest: false })
+        .automaticResetNoticeReason,
+    ).toBeUndefined();
+    expect(
+      buildReusePatch({ resetPolicy: notifyingResetPolicy, freshEntry }).automaticResetNoticeReason,
+    ).toBeUndefined();
+  });
+
   it.each([
     { name: "expired ordinary turn", input: {}, sessionId: "replacement", isNew: true },
     { name: "fresh ordinary turn", input: { freshEntry }, sessionId: "original", isNew: false },
