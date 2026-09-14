@@ -294,7 +294,9 @@ export async function waitForAgentRunsToDrain(params: {
     ) {
       // Queued or cached waits can resolve immediately. Let completion callbacks
       // run instead of repeatedly scanning an unchanged registry in microtasks.
-      await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, retryDelayMs);
+      });
       pendingRunIds = new Set<string>(normalizePendingRunIds(params.getPendingRunIds()));
     }
   }
