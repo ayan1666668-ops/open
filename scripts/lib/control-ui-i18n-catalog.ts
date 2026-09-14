@@ -83,29 +83,6 @@ export function loadControlUiSourceCatalog(): TranslationMap {
       }
     }
   }
-  const chatMessages: TranslationMap = {};
-  const messageMetadata = registerChatMessageMetadataEnglish.catalog.chat.messages;
-  for (const [key, value] of Object.entries(en.chat.messages)) {
-    chatMessages[key] = value;
-    if (key === "copySelection") {
-      Object.assign(chatMessages, {
-        viaSource: messageMetadata.viaSource,
-        sourceKinds: messageMetadata.sourceKinds,
-      });
-    } else if (key === "errorSender") {
-      Object.assign(chatMessages, {
-        forwardedFrom: messageMetadata.forwardedFrom,
-        forwardedFromAgent: messageMetadata.forwardedFromAgent,
-        forwardedMessage: messageMetadata.forwardedMessage,
-        fullContentLoadExhausted: messageMetadata.fullContentLoadExhausted,
-      });
-    } else if (key === "voiceNote") {
-      Object.assign(chatMessages, {
-        duplicatesCollapsed: messageMetadata.duplicatesCollapsed,
-        contextFor: messageMetadata.contextFor,
-      });
-    }
-  }
   const boardWidget: TranslationMap = {};
   for (const [key, value] of Object.entries(en.board.widget)) {
     boardWidget[key] = value;
@@ -120,7 +97,7 @@ export function loadControlUiSourceCatalog(): TranslationMap {
     // Preserve partial-fragment key order while keeping shared labels eager.
     {
       ...en,
-      chat: { ...en.chat, messages: chatMessages },
+      chat: { ...en.chat, messages: registerChatMessageMetadataEnglish.catalog.chat.messages },
       board: { ...en.board, widget: boardWidget },
       newSession,
       debug: registerDebugEnglish.catalog.debug,
