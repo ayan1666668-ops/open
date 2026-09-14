@@ -287,7 +287,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   });
   // Post rendering has no native tables, so block falls back to code there. An
   // explicit off, bullets or code converts before any card decision, so the mode
-  // applies in auto mode and to the text a streaming card commits.
+  // applies in auto mode and to the text a streaming card commits. Partial
+  // previews stream raw text, but streamed content enters the ownership state
+  // (closing record, settlement, delivered finals) and every comparison against
+  // a final in this one rendered form.
   const nativeTables = tableMode === "block";
   const postTableMode = nativeTables ? "code" : tableMode;
   const renderTables = (value: string): string =>
@@ -559,6 +562,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     const startPromiseToClose = streamingStartPromise;
     const updateQueueToClose = partialUpdateQueue;
     const finalizedAnswerText = streamText;
+    const answerText = renderTables(finalizedAnswerText);
     const finalizedReasoningText = reasoningText;
     const outcome = {
       disposition,
@@ -578,7 +582,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       let finalizationError: unknown;
       if (streamingToClose?.isActive()) {
         statusLine = "";
-        const answerText = renderTables(finalizedAnswerText);
         const text = buildCombinedStreamText(finalizedReasoningText, answerText);
         let closed;
         try {
@@ -633,7 +636,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // generation must never recover its obsolete prose through a new static card.
         rememberClosedStreamingSettlement(
           generationToClose,
-          finalizedAnswerText,
+          answerText,
           result,
           finalizationError,
           disposition,
@@ -648,7 +651,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       if (disposition === "discarded") {
         rememberClosedStreamingSettlement(
           generationToClose,
-          finalizedAnswerText,
+          answerText,
           noVisibleFeishuReplyDelivery,
           error,
           disposition,
@@ -678,7 +681,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     if (session && inFlightStreamingClose?.session === session) {
       return inFlightStreamingClose.promise;
     }
-    const content = streamText;
+    // The closing record must match the rendered final it may later inherit.
+    const content = renderTables(streamText);
     const closePromise = performStreamingClose(disposition);
     if (session && generation !== undefined) {
       const closing = { session, generation, content, disposition, promise: closePromise };

@@ -4630,6 +4630,42 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(tableMarkdown);
       },
     );
+
+    it.each(["bullets", "code"] as const)(
+      "assigns an idle-closed table preview to its matching final in %s mode",
+      async (tables) => {
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+        const { result, options } = createDispatcherHarness({
+          accountId: "main",
+          cfg: tableCfg(tables),
+        });
+        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+        const instance = requireStreamingInstance(0);
+        let resolveClose!: (closed: StreamingCloseResult) => void;
+        const closePromise = new Promise<StreamingCloseResult>((resolve) => {
+          resolveClose = resolve;
+        });
+        instance.closeWithResult.mockReturnValueOnce(closePromise);
+        const idle = Promise.resolve(options.onIdle?.());
+        await vi.waitFor(() => expect(instance.closeWithResult).toHaveBeenCalledTimes(1));
+        instance.active = false;
+        const committed = String(instance.closeWithResult.mock.calls[0]?.[0]);
+
+        const delivery = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+        resolveClose({ visibleReplySent: true, content: committed, messageId: "om-table" });
+        await idle;
+
+        expect(committed).not.toBe(tableMarkdown);
+        await expect(delivery?.finalization).resolves.toMatchObject({
+          messageIds: ["om-table"],
+          visibleReplySent: true,
+        });
+        expect(streamingInstances).toHaveLength(1);
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
