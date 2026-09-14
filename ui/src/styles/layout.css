@@ -4731,6 +4731,14 @@ html.openclaw-native-macos
   --page-toolbar-height: var(--openclaw-native-titlebar-height, 50px);
 }
 
+/* Desktop webviews draw caption buttons over the row's trailing edge. */
+html.openclaw-native-desktop
+  .shell:not(.shell--mobile-nav):not(.shell--settings)
+  .content:not(.content--chat)
+  .content-header {
+  padding-right: calc(var(--openclaw-native-window-controls-width, 0px) + 8px);
+}
+
 /* Collapsed navigation floats chrome over the row's leading edge; reserve it
    (measured from the content column's padding edge). */
 .shell--nav-collapsed:not(.shell--mobile-nav):not(.shell--settings) .content:not(.content--chat) {
