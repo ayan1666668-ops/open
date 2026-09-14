@@ -30,6 +30,7 @@ import { shouldSuppressSubagentRecoverySessionEffects } from "./subagent-recover
 import type { SubagentCompletionRequest, SubagentRunRecord } from "./subagent-registry.types.js";
 import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
 import { resolveSubagentRunDeadlineMs } from "./subagent-run-timeout.js";
+import { isSubagentChildStopUnconfirmed } from "./subagent-session-metrics.js";
 import type { SubagentSessionCompletion } from "./subagent-session-reconciliation.js";
 
 const log = createSubsystemLogger("agents/subagent-registry");
@@ -52,8 +53,15 @@ function resolveCompletionAfterHardRunDeadline(params: {
   entry: SubagentRunRecord;
   observedStartedAt?: number;
   observedEndedAt?: number;
+  observedSuccess?: boolean;
   now: number;
 }): number | undefined {
+  // A prior nonterminal observation is not an irrevocable timeout result.
+  // Let the child's subsequent terminal snapshot reach the lifecycle owner;
+  // explicit timeout snapshots still take completeAsRunTimeout below.
+  if (params.observedSuccess && isSubagentChildStopUnconfirmed(params.entry)) {
+    return undefined;
+  }
   const deadlineMs = resolveSubagentRunDeadlineMs(params.entry, params.observedStartedAt);
   if (deadlineMs === undefined) {
     return undefined;
@@ -243,6 +251,12 @@ export type SubagentManagerOptions = {
     provisionalKill?: boolean;
   }): void;
   completeSubagentRun(args: SubagentCompletionRequest): Promise<void>;
+  reportSubagentWaitExpiry(args: {
+    entry: SubagentRunRecord;
+    observedAt: number;
+    startedAt?: number;
+    lifecycleGeneration: string;
+  }): Promise<void>;
   resolveSubagentTask(entry: SubagentRunRecord): DetachedTaskFindResult;
 };
 
@@ -306,6 +320,7 @@ export class SubagentWaitManager {
     // A current Gateway may observe historical execution; the wait itself owns this generation.
     const lifecycleGeneration = getAgentEventLifecycleGeneration();
     let completionForRetry: Parameters<typeof this.options.completeSubagentRun>[0] | undefined;
+    let waitExpiryForRetry: Parameters<typeof this.options.reportSubagentWaitExpiry>[0] | undefined;
     const scheduleWaitRetry = (entry: SubagentRunRecord, reason: string, error?: string) => {
       this.options.scheduleSweep({ delayMs: 1_000 });
       const scheduledEntry = entry;
@@ -420,7 +435,7 @@ export class SubagentWaitManager {
       const completeAsRunTimeout = async (endedAt?: number, startedAt?: number) => {
         const timeoutCompletion: Parameters<typeof this.options.completeSubagentRun>[0] = {
           runId,
-          outcome: { status: "timeout" },
+          outcome: { status: "timeout", disposition: "exited" },
           reason: SUBAGENT_ENDED_REASON_COMPLETE,
           sendFarewell: true,
           accountId: entry.requesterOrigin?.accountId,
@@ -458,6 +473,7 @@ export class SubagentWaitManager {
             entry,
             observedStartedAt: completionStartedAt,
             observedEndedAt: completion.endedAt,
+            observedSuccess: completion.outcome.status === "ok",
             now,
           });
           if (completionAfterDeadline !== undefined) {
@@ -489,6 +505,24 @@ export class SubagentWaitManager {
           if (timeoutAfterDeadline !== undefined) {
             timeoutEndedAt = timeoutAfterDeadline;
           }
+          // Only `isTerminalWaitTimeout` carries evidence that the run stopped.
+          // Reaching the stored deadline is clock arithmetic on our own budget:
+          // it earns the parent a wake, but must stay outside terminal completion
+          // because that path owns browser/MCP/session cleanup.
+          if (!isTerminalWaitTimeout) {
+            waitExpiryForRetry = {
+              entry,
+              observedAt: timeoutEndedAt ?? now,
+              startedAt: observedStartedAt,
+              lifecycleGeneration,
+            };
+            await this.options.reportSubagentWaitExpiry(waitExpiryForRetry);
+            // Do not keep a second long-poll alive after the parent has been
+            // notified. The periodic registry sweeper remains the settlement
+            // backstop: it reconciles persisted terminal session evidence,
+            // retaining this row while the child's stop remains unconfirmed.
+            return;
+          }
           await completeAsRunTimeout(timeoutEndedAt, observedStartedAt);
           return;
         }
@@ -509,6 +543,7 @@ export class SubagentWaitManager {
         entry,
         observedStartedAt,
         observedEndedAt: wait.endedAt,
+        observedSuccess: waitStatus === "ok",
         now: Date.now(),
       });
       if (completionAfterDeadline !== undefined) {
@@ -568,6 +603,14 @@ export class SubagentWaitManager {
         }
       }
       if (!isAgentEventLifecycleGenerationCurrent(lifecycleGeneration)) {
+        return;
+      }
+      if (waitExpiryForRetry && typeof current.execution.endedAt !== "number") {
+        scheduleWaitRetry(
+          current,
+          "failed to publish subagent wait expiry; scheduling recovery",
+          error instanceof Error ? error.message : String(error),
+        );
         return;
       }
       if (
