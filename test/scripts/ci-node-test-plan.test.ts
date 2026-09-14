@@ -3087,6 +3087,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         a.localeCompare(b),
       ),
     );
+    expect(new Set(databaseWorkerCoreTestFiles).size).toBe(databaseWorkerCoreTestFiles.length);
     expect(new Set(actual).size).toBe(actual.length);
   });
 
