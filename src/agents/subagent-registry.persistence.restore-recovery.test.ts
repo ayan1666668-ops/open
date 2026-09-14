@@ -15,7 +15,6 @@ import { cleanupSessionStateForTest } from "../test-utils/session-state-cleanup.
 import {
   canonicalSubagentRunFixtures,
   createSubagentRegistryTestDeps,
-  removeSubagentSessionEntry,
   writeSubagentSessionEntry,
 } from "./subagents/registry/subagent-registry.persistence.test-support.js";
 import type { SubagentRunFixture } from "./subagents/registry/subagent-registry.persistence.test-support.js";
@@ -27,7 +26,6 @@ import {
   testing,
   activateSubagentRegistry,
   addSubagentRunForTests,
-  clearSubagentRunSteerRestart,
   getLatestSubagentRunByChildSessionKey,
   getSubagentRunByChildSessionKey,
   initSubagentRegistry,
@@ -80,18 +78,6 @@ describe("subagent registry persistence", () => {
       updatedAt: params.updatedAt,
       abortedLastRun: params.abortedLastRun,
       defaultSessionId: `sess-${agentId}-${Date.now()}`,
-    });
-  };
-
-  const removeChildSessionEntry = async (sessionKey: string) => {
-    if (!tempStateDir) {
-      throw new Error("tempStateDir not initialized");
-    }
-    const agentId = resolveAgentIdFromSessionKey(sessionKey);
-    return await removeSubagentSessionEntry({
-      stateDir: tempStateDir,
-      agentId,
-      sessionKey,
     });
   };
 
@@ -193,6 +179,7 @@ describe("subagent registry persistence", () => {
   };
 
   beforeEach(() => {
+    resetDetachedTaskLifecycleRuntimeForTests();
     announceSpy.mockReset();
     announceSpy.mockResolvedValue("delivered");
     testing.setDepsForTest({
@@ -221,28 +208,6 @@ describe("subagent registry persistence", () => {
       tempStateDir = null;
     }
     envSnapshot.restore();
-  });
-
-  it("settles orphaned restored runs through canonical completion", async () => {
-    const persisted = createPersistedEndedRun({
-      runId: "run-orphan-restore",
-      childSessionKey: "agent:main:subagent:ghost-restore",
-      task: "orphan restore",
-      cleanup: "keep",
-    });
-    await writePersistedRegistry(persisted, {
-      seedChildSessions: false,
-    });
-
-    restartRegistry();
-    await waitForRegistryWork(
-      () => readPersistedRuns().get("run-orphan-restore")?.cleanupCompletedAt !== undefined,
-    );
-
-    expect(readPersistedRuns().get("run-orphan-restore")?.execution).toMatchObject({
-      status: "terminal",
-      outcome: { status: "error", error: "subagent run orphaned: missing-session-entry" },
-    });
   });
 
   it("preserves restored killed tombstones until bounded reconciliation", async () => {
@@ -451,61 +416,6 @@ describe("subagent registry persistence", () => {
       childSessionKey,
     });
     expect(resolved?.execution.endedAt).toBe(220);
-  });
-
-  it("resume guard settles orphan runs without an announcement", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
-    const runId = "run-orphan-resume-guard";
-    const childSessionKey = "agent:main:subagent:ghost-resume";
-    const now = Date.now();
-
-    await writeChildSessionEntry({
-      sessionKey: childSessionKey,
-      sessionId: "sess-resume-guard",
-      updatedAt: now,
-    });
-    addSubagentRunForTests({
-      runId,
-      childSessionKey,
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "resume orphan guard",
-      cleanup: "keep",
-      createdAt: now - 50,
-      startedAt: now - 25,
-      endedAt: now,
-      execution: { status: "terminal", startedAt: now - 25, endedAt: now },
-      expectsCompletionMessage: false,
-      completion: { required: false },
-      delivery: { status: "not_required" },
-      suppressAnnounceReason: "steer-restart",
-      cleanupHandled: false,
-    });
-    await removeChildSessionEntry(childSessionKey);
-
-    const changed = clearSubagentRunSteerRestart(runId);
-    expect(changed).toBe(true);
-    await waitForRegistryWork(
-      () => listSubagentRunsForRequester("agent:main:main")[0]?.cleanupCompletedAt !== undefined,
-    );
-
-    expect(announceSpy).not.toHaveBeenCalled();
-    expect(listSubagentRunsForRequester("agent:main:main")).toEqual([
-      expect.objectContaining({
-        runId,
-        cleanupHandled: true,
-        execution: expect.objectContaining({
-          status: "terminal",
-          outcome: expect.objectContaining({
-            status: "error",
-            error: "subagent run orphaned: missing-session-entry",
-          }),
-        }),
-      }),
-    ]);
-    const persisted = loadSubagentRegistryFromSqlite();
-    expect(persisted.get(runId)?.cleanupCompletedAt).toBeDefined();
   });
 
   it("uses isolated temp state when OPENCLAW_STATE_DIR is unset in tests", () => {

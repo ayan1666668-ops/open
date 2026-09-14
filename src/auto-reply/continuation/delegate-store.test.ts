@@ -383,6 +383,30 @@ describe("delegate store — TaskFlow-backed", () => {
       ],
       attachAs: { mountPath: "handoff/path" },
     });
+    const stored = expectDefined(
+      [...mockFlows.values()].find((flow) => flow.ownerKey === "session-1"),
+      "stored delegate flow",
+    );
+    expect(stored.stateJson).toMatchObject({ attachmentCount: 2 });
+    expect(stored.stateJson).not.toHaveProperty("attachments");
+    expect(stored.stateJson).not.toHaveProperty("attachAs");
+  });
+
+  it("fails closed after restart when volatile attachment bytes are unavailable", () => {
+    enqueuePendingDelegate("session-restart-attachment", {
+      task: "attachment task after restart",
+      attachments: [{ name: "brief.md", content: "private handoff" }],
+    });
+
+    resetDelegateStoreForTests();
+
+    expect(consumePendingDelegates("session-restart-attachment")).toEqual([]);
+    const stored = expectDefined(
+      [...mockFlows.values()].find((flow) => flow.ownerKey === "session-restart-attachment"),
+      "failed delegate flow",
+    );
+    expect(stored.status).toBe("failed");
+    expect(JSON.stringify(stored.stateJson)).not.toContain("private handoff");
   });
 
   it("normalizes empty attachment state to absence", () => {

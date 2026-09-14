@@ -42,6 +42,10 @@ import {
 import type { ChainState, PendingContinuationDelegate } from "./types.js";
 
 const log = createSubsystemLogger("continuation/delegate-store");
+const delegateAttachmentPayloads = new Map<
+  string,
+  { attachments: InlineAttachment[]; attachAs?: { mountPath: string } }
+>();
 
 export { CONTINUATION_DELEGATE_CONTROLLER_ID, CONTINUATION_POST_COMPACTION_CONTROLLER_ID };
 
@@ -130,6 +134,7 @@ const PendingDelegateStateSchema = z
       .max(50)
       .transform((attachments) => (attachments.length > 0 ? attachments : undefined))
       .optional(),
+    attachmentCount: z.number().int().positive().max(50).optional(),
     attachAs: InlineAttachmentMountStateSchema.optional(),
     targetSessionKey: z.string().min(1).optional(),
     targetSessionKeys: z.array(z.string().min(1)).optional(),
@@ -306,6 +311,7 @@ function encodeDelegateState(
       ? { firstArmedAt: delegate.firstArmedAt ?? Date.now() }
       : {}),
     ...(attachments ? { attachments } : {}),
+    ...(attachments ? { attachmentCount: attachments.length } : {}),
     ...(attachAs ? { attachAs } : {}),
     ...(targetSessionKey ? { targetSessionKey } : {}),
     ...(targetSessionKeys.length > 0 ? { targetSessionKeys } : {}),
@@ -388,6 +394,15 @@ export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDel
   if (!state) {
     return undefined;
   }
+  const attachmentPayload = delegateAttachmentPayloads.get(flow.flowId);
+  const attachments = state.attachments ?? attachmentPayload?.attachments;
+  const attachAs = state.attachAs ?? attachmentPayload?.attachAs;
+  if (
+    state.attachmentCount !== undefined &&
+    (!attachments || attachments.length !== state.attachmentCount)
+  ) {
+    return undefined;
+  }
 
   let mode: PendingContinuationDelegate["mode"];
   if (state.postCompaction === true) {
@@ -402,8 +417,8 @@ export function decodeDelegateFlow(flow: TaskFlowRecord): PendingContinuationDel
     ...(state.delayMs !== undefined ? { delayMs: state.delayMs } : {}),
     ...(mode !== undefined ? { mode } : {}),
     ...(state.firstArmedAt !== undefined ? { firstArmedAt: state.firstArmedAt } : {}),
-    ...(state.attachments ? { attachments: state.attachments } : {}),
-    ...(state.attachAs ? { attachAs: state.attachAs } : {}),
+    ...(attachments ? { attachments: structuredClone(attachments) } : {}),
+    ...(attachAs ? { attachAs: { ...attachAs } } : {}),
     ...(state.targetSessionKey ? { targetSessionKey: state.targetSessionKey } : {}),
     ...(state.targetSessionKeys && state.targetSessionKeys.length > 0
       ? { targetSessionKeys: state.targetSessionKeys }
@@ -558,6 +573,7 @@ export function listQueuedPostCompactionFlows(sessionKey: string): TaskFlowRecor
 }
 
 export function scrubCancellationRequestedDelegateFlowState(flow: TaskFlowRecord): void {
+  delegateAttachmentPayloads.delete(flow.flowId);
   let current = flow;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (
@@ -619,7 +635,8 @@ export const delegateFlowRecords = {
             fanoutMode: params.delegate.fanoutMode,
           }),
         };
-    return createManagedTaskFlow({
+    const state = encodeDelegateState(delegate, params.attachmentConfig);
+    const flow = createManagedTaskFlow({
       ownerKey: params.ownerKey,
       controllerId:
         params.controller === "post-compaction"
@@ -628,8 +645,15 @@ export const delegateFlowRecords = {
       notifyPolicy: "silent",
       goal: delegateGoal(delegate),
       currentStep: params.currentStep,
-      stateJson: encodeDelegateState(delegate, params.attachmentConfig),
+      stateJson: scrubStoredDelegateAttachmentState(state),
     });
+    if (flow && state.attachments) {
+      delegateAttachmentPayloads.set(flow.flowId, {
+        attachments: state.attachments,
+        ...(state.attachAs ? { attachAs: state.attachAs } : {}),
+      });
+    }
+    return flow;
   },
   update(params: {
     flowId: string;
@@ -672,7 +696,7 @@ export const delegateFlowRecords = {
         current: undefined,
       };
     }
-    return finishFlow({
+    const result = finishFlow({
       flowId: params.flowId,
       expectedRevision: params.expectedRevision,
       currentStep: params.currentStep,
@@ -680,21 +704,35 @@ export const delegateFlowRecords = {
       updatedAt: params.updatedAt,
       endedAt: params.endedAt,
     });
+    if (result.applied || result.reason === "not_found") {
+      delegateAttachmentPayloads.delete(params.flowId);
+    }
+    return result;
   },
   fail(params: Parameters<typeof failFlow>[0]) {
     const current = getTaskFlowById(params.flowId);
     const stateJson = params.stateJson !== undefined ? params.stateJson : current?.stateJson;
-    return failFlow({
+    const result = failFlow({
       ...params,
       ...(stateJson !== undefined
         ? { stateJson: scrubStoredDelegateAttachmentState(stateJson) }
         : {}),
     });
+    if (result.applied || result.reason === "not_found") {
+      delegateAttachmentPayloads.delete(params.flowId);
+    }
+    return result;
   },
   get: getTaskFlowById,
   listAll: listTaskFlowRecords,
   listForOwner: listTaskFlowsForOwnerKey,
-  delete: deleteTaskFlowRecordById,
+  delete(flowId: string) {
+    const deleted = deleteTaskFlowRecordById(flowId);
+    if (deleted) {
+      delegateAttachmentPayloads.delete(flowId);
+    }
+    return deleted;
+  },
 };
 
 export function rejectCorruptDelegateFlow(
@@ -754,5 +792,6 @@ export function getContinuationDelegateQueueDepths(
 }
 
 export function resetDelegateFlowDiagnosticsForTests(): void {
+  delegateAttachmentPayloads.clear();
   continuationQueueDiagnostics.reset();
 }
