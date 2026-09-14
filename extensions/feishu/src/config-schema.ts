@@ -4,6 +4,7 @@ import {
   ContextVisibilityModeSchema,
   DmPolicySchema,
   GroupPolicySchema,
+  MarkdownConfigSchema,
   ReplyToModeSchema,
   buildChannelConfigSchema,
   buildGroupEntrySchema,
@@ -102,14 +103,6 @@ const DmConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     systemPrompt: z.string().optional(),
-  })
-  .strict()
-  .optional();
-
-const MarkdownConfigSchema = z
-  .object({
-    mode: z.enum(["native", "escape", "strip"]).optional(),
-    tableMode: z.enum(["native", "ascii", "simple"]).optional(),
   })
   .strict()
   .optional();

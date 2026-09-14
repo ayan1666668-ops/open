@@ -66,6 +66,46 @@ describe("Feishu custom domains", () => {
   });
 });
 
+describe.each(["root", "account"] as const)("Feishu markdown tables at %s scope", (scope) => {
+  it.each(["off", "bullets", "code", "block"])("accepts the shared %s table mode", (tables) => {
+    const entry = { markdown: { tables } };
+    const value = scope === "root" ? entry : { accounts: { work: entry } };
+    const parsed = FeishuConfigSchema.safeParse(value);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject(value);
+    }
+    expect(
+      validateJsonSchemaValue({
+        schema: FeishuChannelConfigSchema.schema,
+        cacheKey: "feishu-markdown-tables-test",
+        value,
+        applyDefaults: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("rejects an invalid table mode", () => {
+    const entry = { markdown: { tables: "ascii" } };
+    const value = scope === "root" ? entry : { accounts: { work: entry } };
+    expect(FeishuConfigSchema.safeParse(value).success).toBe(false);
+    expect(
+      validateJsonSchemaValue({
+        schema: FeishuChannelConfigSchema.schema,
+        cacheKey: "feishu-markdown-tables-test",
+        value,
+        applyDefaults: true,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects the retired local markdown fields", () => {
+    const entry = { markdown: { mode: "escape", tableMode: "ascii" } };
+    const value = scope === "root" ? entry : { accounts: { work: entry } };
+    expect(FeishuConfigSchema.safeParse(value).success).toBe(false);
+  });
+});
+
 describe("FeishuConfigSchema webhook validation", () => {
   it("applies top-level defaults", () => {
     const result = FeishuConfigSchema.parse({});

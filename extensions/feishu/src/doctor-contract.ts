@@ -34,6 +34,7 @@ const streamingAliasMigration = defineChannelAliasMigration({
 // generic alias migration moves the object verbatim, so strip the dead fields
 // afterwards or `doctor --fix` would emit a schema-invalid coalesce object.
 const LEGACY_COALESCE_FIELDS = ["enabled", "minDelayMs", "maxDelayMs"] as const;
+const LEGACY_MARKDOWN_FIELDS = ["mode", "tableMode"] as const;
 const LEGACY_HEARTBEAT_FIELDS = ["visibility", "intervalMs"] as const;
 const toolsBaseMigration = defineKeyMoveMigration({
   from: ["tools", "base"],
@@ -94,6 +95,29 @@ function sanitizeLegacyCoalesceFields(params: {
   };
 }
 
+function sanitizeLegacyMarkdownFields(params: {
+  entry: Record<string, unknown>;
+  pathPrefix: string;
+  changes: string[];
+}): { entry: Record<string, unknown>; changed: boolean } {
+  const markdown = asObjectRecord(params.entry.markdown);
+  if (!markdown) {
+    return { entry: params.entry, changed: false };
+  }
+  const removed = LEGACY_MARKDOWN_FIELDS.filter((field) => markdown[field] !== undefined);
+  if (removed.length === 0) {
+    return { entry: params.entry, changed: false };
+  }
+  const nextMarkdown = { ...markdown };
+  for (const field of removed) {
+    delete nextMarkdown[field];
+  }
+  params.changes.push(
+    `Removed ${params.pathPrefix}.markdown.{${removed.join(",")}} (legacy Feishu fields were never read by runtime).`,
+  );
+  return { entry: { ...params.entry, markdown: nextMarkdown }, changed: true };
+}
+
 function hasLegacyWebhookPath(value: unknown): boolean {
   const path = asObjectRecord(value)?.webhookPath;
   return typeof path === "string" && normalizeFeishuWebhookPath(path) !== path;
@@ -132,11 +156,17 @@ function normalizeFeishuLegacyConfigEntries(
     normalizeEntry: (params) => {
       const tools = toolsBaseMigration.normalize(params);
       const coalesce = sanitizeLegacyCoalesceFields({ ...params, entry: tools.entry });
-      const heartbeat = sanitizeLegacyHeartbeatFields({ ...params, entry: coalesce.entry });
+      const markdown = sanitizeLegacyMarkdownFields({ ...params, entry: coalesce.entry });
+      const heartbeat = sanitizeLegacyHeartbeatFields({ ...params, entry: markdown.entry });
       const webhook = normalizeLegacyWebhookPath({ ...params, entry: heartbeat.entry });
       return {
         entry: webhook.entry,
-        changed: tools.changed || coalesce.changed || heartbeat.changed || webhook.changed,
+        changed:
+          tools.changed ||
+          coalesce.changed ||
+          markdown.changed ||
+          heartbeat.changed ||
+          webhook.changed,
       };
     },
   }).config;
@@ -153,6 +183,24 @@ const feishuStrayEntryConfigMigration = defineStrayPluginEntryConfigMigration({
 export const legacyConfigRules: ChannelDoctorLegacyConfigRule[] = [
   ...streamingAliasMigration.legacyConfigRules,
   feishuStrayEntryConfigMigration.legacyConfigRule,
+  {
+    path: ["channels", "feishu"],
+    message:
+      'channels.feishu[.accounts.<id>].markdown.mode and markdown.tableMode are legacy. Run "openclaw doctor --fix".',
+    match: (value) => {
+      const entry = asObjectRecord(value);
+      const hasLegacyMarkdown = (candidate: unknown) => {
+        const markdown = asObjectRecord(asObjectRecord(candidate)?.markdown);
+        return Boolean(
+          markdown && LEGACY_MARKDOWN_FIELDS.some((field) => markdown[field] !== undefined),
+        );
+      };
+      return (
+        hasLegacyMarkdown(entry) ||
+        hasLegacyAccountStreamingAliases(entry?.accounts, hasLegacyMarkdown)
+      );
+    },
+  },
   {
     path: ["channels", "feishu"],
     message:

@@ -227,6 +227,57 @@ describe("feishu normalizeCompatibilityConfig streaming aliases", () => {
   });
 });
 
+describe.each([
+  ["root", "channels.feishu"],
+  ["account", "channels.feishu.accounts.work"],
+] as const)("feishu markdown doctor migration at %s scope", (scope, path) => {
+  const markdownRule = legacyConfigRules.find((rule) => rule.message.includes("markdown"));
+
+  it("detects each retired field but not the shared table shape", () => {
+    for (const markdown of [{ mode: "escape" }, { tableMode: "ascii" }]) {
+      const entry = { markdown };
+      const value = scope === "root" ? entry : { accounts: { work: entry } };
+      expect(markdownRule?.match?.(value, {})).toBe(true);
+    }
+    const entry = { markdown: { tables: "bullets" } };
+    const value = scope === "root" ? entry : { accounts: { work: entry } };
+    expect(markdownRule?.match?.(value, {})).toBe(false);
+  });
+
+  it.each([undefined, "off"])("strips retired fields and preserves tables %s", (tables) => {
+    const preserved = tables === undefined ? {} : { tables };
+    const entry = { markdown: { mode: "escape", tableMode: "ascii", ...preserved } };
+    const cfg = feishuConfig(scope === "root" ? entry : { accounts: { work: entry } });
+    const authored = structuredClone(cfg);
+    const result = normalizeCompatibilityConfig({ cfg });
+    const expected = { markdown: preserved };
+    expect(result.config.channels?.feishu).toEqual(
+      scope === "root" ? expected : { accounts: { work: expected } },
+    );
+    expect(result.changes).toEqual([
+      `Removed ${path}.markdown.{mode,tableMode} (legacy Feishu fields were never read by runtime).`,
+    ]);
+    expect(FeishuConfigSchema.safeParse(result.config.channels?.feishu).success).toBe(true);
+    expect(cfg).toEqual(authored);
+    const second = normalizeCompatibilityConfig({ cfg: result.config });
+    expect(second.changes).toEqual([]);
+    expect(second.config).toBe(result.config);
+  });
+
+  it("leaves other markdown keys for validation", () => {
+    const entry = { markdown: { mode: "escape", futureOption: true } };
+    const cfg = feishuConfig(scope === "root" ? entry : { accounts: { work: entry } });
+    const result = normalizeCompatibilityConfig({ cfg });
+    const expected = { markdown: { futureOption: true } };
+    expect(result.config.channels?.feishu).toEqual(
+      scope === "root" ? expected : { accounts: { work: expected } },
+    );
+    expect(result.changes).toEqual([
+      `Removed ${path}.markdown.{mode} (legacy Feishu fields were never read by runtime).`,
+    ]);
+  });
+});
+
 describe("feishu webhook route doctor migration", () => {
   const webhookRule = legacyConfigRules.find((rule) => rule.message.includes("webhookPath"));
 
