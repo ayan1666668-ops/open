@@ -718,7 +718,7 @@ Rules:
 }
 ```
 
-> **Note**: The `provider` value `"default"` is a built-in alias and does not need a corresponding `secrets.providers.default` entry. Use a custom alias only when you need to multiplex sources (e.g., multiple Vault paths) under a single name.
+> **Note**: The `provider` value `"default"` is a built-in alias for `env` and `store` sources and does not need a corresponding `secrets.providers.default` entry. For `file` and `exec` sources, `default` is not a built-in alias — you must declare a matching `secrets.providers.default` entry (or use a custom alias) or resolution will fail with `SECRET_PROVIDER_NOT_CONFIGURED`. Use a custom alias only when you need to multiplex sources (e.g., multiple Vault paths) under a single name.
 
 SecretRef details (including `secrets.providers` for `env`/`file`/`exec`/`store`) are in [Secrets Management](/gateway/secrets).
 Supported credential paths are listed in [SecretRef Credential Surface](/reference/secretref-credential-surface).
