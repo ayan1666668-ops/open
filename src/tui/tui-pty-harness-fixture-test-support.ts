@@ -81,6 +81,7 @@ export async function startTuiFixture(
       }
     };
   }
+
   return {
     run,
     logPath,
