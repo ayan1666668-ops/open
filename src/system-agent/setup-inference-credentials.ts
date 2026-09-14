@@ -239,6 +239,7 @@ export async function saveSetupCredential(params: {
 
 export async function activateSavedSetupCredential(params: {
   agentDir: string;
+  stateDir?: string;
   profileId: string;
   credential: AuthProfileCredential;
   beforeWrite?: () => void;
@@ -247,7 +248,8 @@ export async function activateSavedSetupCredential(params: {
     return;
   }
   const updated = await updateAuthProfileStoreWithLock({
-    agentDir: resolvePersistedAuthProfileOwnerAgentDir(params),
+    agentDir: params.stateDir ? params.agentDir : resolvePersistedAuthProfileOwnerAgentDir(params),
+    stateDir: params.stateDir,
     updater: (store) => {
       params.beforeWrite?.();
       const current = store.profiles[params.profileId];
