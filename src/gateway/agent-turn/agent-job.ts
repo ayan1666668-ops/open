@@ -14,7 +14,7 @@ import {
 } from "../../agents/agent-run-terminal-outcome.js";
 import { normalizeAgentRunTerminalReceipt } from "../../agents/agent-run-terminal-receipt.js";
 import { normalizeAgentRunTerminalReplySnapshot } from "../../agents/agent-run-terminal-reply.js";
-import { onAgentEvent } from "../../infra/agent-events.js";
+import { getAgentEventListenerResetEpoch, onAgentEvent } from "../../infra/agent-events.js";
 import { formatErrorMessageForDisplay } from "../../infra/error-diagnostics.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { isNonTerminalAgentRunStatus } from "../../shared/agent-run-status.js";
@@ -122,7 +122,7 @@ const agentRunOwners = (agentJobState.runOwners ??= new Map());
 const agentRunDurabilityFences = (agentJobState.durabilityFences ??= new Set());
 const agentRunApprovalReceipts = (agentJobState.approvalReceipts ??= new Map());
 const agentRunWaiters = agentJobState.waiters;
-let agentRunListenerStarted = false;
+let agentRunListenerResetEpoch: number | undefined;
 const agentJobLog = createSubsystemLogger("gateway/agent-job");
 
 function nextAgentRunVersion(): number {
@@ -337,10 +337,11 @@ function createSnapshotFromLifecycleEvent(params: {
 }
 
 function ensureAgentRunListener() {
-  if (agentRunListenerStarted) {
+  const resetEpoch = getAgentEventListenerResetEpoch();
+  if (agentRunListenerResetEpoch === resetEpoch) {
     return;
   }
-  agentRunListenerStarted = true;
+  agentRunListenerResetEpoch = resetEpoch;
   onAgentEvent((evt) => {
     if (!evt) {
       return;
@@ -484,6 +485,7 @@ export function setGatewayDedupeEntry(params: {
   /** Admission owns a new attempt; retain request identity while retiring its old terminal. */
   startNewAttempt?: true;
 }) {
+  ensureAgentRunListener();
   const existing = params.dedupe.get(params.key);
   const existingObservation = existing ? parseDedupeObservation(existing) : undefined;
   const incomingObservation = parseDedupeObservation(params.entry);
