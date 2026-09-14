@@ -551,7 +551,6 @@ it.each([
       check.click();
       pendingStatus.resolve();
       await statusOperation;
-      await flushMicrotasks();
       expect(modal.textContent).not.toContain("Run status read failed");
       expect(modal.querySelector('[role="status"]')?.textContent).toContain("Status refreshed.");
       expect(view.run).toEqual(run);
@@ -559,12 +558,9 @@ it.each([
         statusReadsBeforeCheck + 1,
       );
 
-      statusResponse = Promise.resolve().then(() => {
-        throw new Error("Status refresh unavailable");
-      });
+      statusResponse = Promise.reject(new Error("Status refresh unavailable"));
       findButton("Check status").click();
       await statusOperation;
-      await flushMicrotasks();
       expect(modal.textContent).toContain("Status refresh unavailable");
       expect(modal.textContent).not.toContain("Status refreshed.");
       expect(findButton("Check status").disabled).toBe(false);
