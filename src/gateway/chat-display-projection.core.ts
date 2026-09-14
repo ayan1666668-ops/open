@@ -1,10 +1,15 @@
 import { STREAM_ERROR_FALLBACK_TEXT } from "@openclaw/ai/internal/shared";
 import { GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT } from "@openclaw/gateway-protocol/gateway-error-details";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeLowercaseStringOrEmpty as normalizeErrorSignal } from "@openclaw/normalization-core/string-coerce";
-import { renderAssistantRequestFailureCopy } from "../agents/failover/assistant-request-failure-copy.js";
-import { isContextOverflowError } from "../agents/failover/classify.js";
-import { renderAssistantFormatFailureCopy } from "../agents/failover/user-copy.js";
+import {
+  normalizeLowercaseStringOrEmpty as normalizeErrorSignal,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
+import {
+  renderAssistantFormatFailureCopy,
+  renderAssistantRequestFailureCopy,
+} from "../agents/failover/assistant-request-failure-copy.js";
+import { isContextOverflowErrorFromTables } from "../agents/failover/context-overflow-tables.js";
 import { readTranscriptSenderIdentity } from "../chat/sender-identity.js";
 import { classifyGatewayStorageFailure } from "../infra/sqlite-error-diagnostics.js";
 import {
@@ -128,8 +133,7 @@ function isContextOverflowErrorSignal(value: unknown): boolean {
     return false;
   }
   return (
-    normalizeErrorSignal(value) === "context_overflow" ||
-    isContextOverflowError(value, { providerPlugin: null })
+    normalizeErrorSignal(value) === "context_overflow" || isContextOverflowErrorFromTables(value)
   );
 }
 
@@ -425,11 +429,22 @@ function projectEmptyAssistantErrorMessages(
   return changed ? projected : messages;
 }
 
-export function projectChatDisplayMessagesWithState(
+export function projectChatHistoryRecovery(
   messages: unknown[],
-  options?: ChatDisplayProjectionOptions,
-): ChatDisplayProjectionResult {
-  const projectedActivity = messages.map((message) => {
+  options?: Pick<
+    ChatDisplayProjectionOptions,
+    "maxChars" | "stripEnvelope" | "assistantErrorPending"
+  >,
+) {
+  const projectedMessages = messages.map((message) => {
+    const entry = asOptionalRecord(message);
+    if (entry?.role === "custom" && entry.customType === "run-failed-before-reply") {
+      const runId = normalizeOptionalString(asOptionalRecord(entry.details)?.runId);
+      if (runId) {
+        // Retain failure correlation before sanitation removes private report details.
+        return { ...entry, __openclaw: { ...asOptionalRecord(entry["__openclaw"]), runId } };
+      }
+    }
     const activity = readNestedToolActivity(message);
     if (!activity) {
       return message;
@@ -453,13 +468,20 @@ export function projectChatDisplayMessagesWithState(
   });
   const source =
     options?.stripEnvelope === false
-      ? projectedActivity
-      : stripEnvelopeFromMessages(projectedActivity);
+      ? projectedMessages
+      : stripEnvelopeFromMessages(projectedMessages);
   const mirrored = mirrorMessageToolVisibleReplies(source);
-  const recoveredErrors = projectRecoveredAssistantErrors(
+  return projectRecoveredAssistantErrors(
     toProjectedMessages(mirrored),
     options?.assistantErrorPending,
   );
+}
+
+export function projectChatDisplayMessagesWithState(
+  messages: unknown[],
+  options?: ChatDisplayProjectionOptions,
+): ChatDisplayProjectionResult {
+  const recoveredErrors = projectChatHistoryRecovery(messages, options);
   const projectedErrors = projectEmptyAssistantErrorMessages(recoveredErrors.messages);
   const sanitizedMessages = toProjectedMessages(
     sanitizeChatHistoryMessages(projectedErrors, Number.MAX_SAFE_INTEGER, {

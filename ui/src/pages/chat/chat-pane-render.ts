@@ -57,7 +57,7 @@ import {
 } from "./chat-state-route.ts";
 import type { ChatProps } from "./chat-view.ts";
 import { getChatComposerState } from "./components/chat-composer-state.ts";
-import { chatPullRequestId, createPullRequestBranch } from "./components/chat-pull-requests.ts";
+import { chatPullRequestId } from "./components/chat-pull-requests.ts";
 import {
   openSessionWorkspaceFile,
   revealSessionWorkspaceFile,
@@ -71,6 +71,9 @@ import { resolveChatProjectionRunId } from "./tool-stream-status.ts";
 import { workspaceResultConflictFromPlacement } from "./workspace-conflict.ts";
 
 export class ChatPane extends ChatPaneLayoutRender {
+  // Stable absent inputs let catalog renders reuse the transcript cache.
+  private readonly emptyTranscriptItems: [] = [];
+
   override render() {
     const state = this.state;
     if (!state) {
@@ -147,6 +150,7 @@ export class ChatPane extends ChatPaneLayoutRender {
     });
     const placementStartup = this.context.placementStartup.get(state.sessionKey);
     const sendHoldReason = chatSendHoldReason(state, state.sessionKey, placementStartup !== null);
+    const runActive = hasDirectSessionRun(state);
     const sessionParticipationBlocked = this.sessionParticipationTracker.resolve({
       catalog: catalogKey !== null,
       listLoading: state.sessionsLoading,
@@ -258,6 +262,7 @@ export class ChatPane extends ChatPaneLayoutRender {
           agentDefaultPermissionMode: selectedAgent?.defaultPermissionMode,
           modelAccess: mutationAccess.model,
           effortAccess: mutationAccess.effort,
+          contextWindowAccess: mutationAccess.contextWindow,
           permissionAccess: mutationAccess.permission,
           canSelectFull: hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null),
           onModelSetup: () => this.context.navigate("model-setup"),
@@ -368,7 +373,11 @@ export class ChatPane extends ChatPaneLayoutRender {
       showThinking: state.settings.chatShowThinking,
       showToolCalls: state.settings.chatShowToolCalls,
       persistCommentary: state.settings.chatPersistCommentary !== false,
-      loading: catalogKey ? this.catalogLoading : state.chatLoading,
+      // Recovery can temporarily withhold the first turn after history loaded empty.
+      // Keep its pane loading until startup can display the retained message again.
+      loading: catalogKey
+        ? this.catalogLoading
+        : state.chatLoading || (!runActive && sendHoldReason !== null && placementStartup === null),
       routeLoadingSkeleton: this.routeLoadingSkeleton && initialHistoryUnavailable,
       sending:
         (placementStartup !== null && placementStartup.phase !== "failed") ||
@@ -380,7 +389,7 @@ export class ChatPane extends ChatPaneLayoutRender {
         ? () => this.context.placementStartup.retry(state.sessionKey)
         : undefined,
       canAbort: sessionParticipationBlocked ? false : hasAbortableSessionRun(state),
-      runActive: hasDirectSessionRun(state),
+      runActive,
       runStatus: state.chatRunStatus,
       startupStatus: activeChatRunStartupStatus(state.chatRunStartup),
       waitingApproval: state.waitingApprovalStatuses.size > 0,
@@ -389,8 +398,12 @@ export class ChatPane extends ChatPaneLayoutRender {
       providerPolicyNotice: catalogKey ? null : state.providerPolicyNotice,
       progressCard: this.progressCard.card,
       collapseTaskProgress: state.settings.chatCollapseTaskProgress === true,
+      readingHistory: state.chatReadingHistory,
       onDismissProgressCard,
-      gatewayQuestionPrompts: catalogKey || sessionParticipationBlocked ? [] : this.questionPrompts,
+      gatewayQuestionPrompts:
+        catalogKey || sessionParticipationBlocked
+          ? this.emptyTranscriptItems
+          : this.questionPrompts,
       ...createChatQuestionActions({
         state,
         questionState: this.questionPromptState,
@@ -407,9 +420,9 @@ export class ChatPane extends ChatPaneLayoutRender {
               onShowEarlier: () => void this.loadOlderMessages(),
             }
           : undefined,
-      toolMessages: catalogKey ? [] : state.chatToolMessages,
-      guardianNotices: catalogKey ? [] : state.guardianNotices,
-      streamSegments: catalogKey ? [] : state.chatStreamSegments,
+      toolMessages: catalogKey ? this.emptyTranscriptItems : state.chatToolMessages,
+      guardianNotices: catalogKey ? this.emptyTranscriptItems : state.guardianNotices,
+      streamSegments: catalogKey ? this.emptyTranscriptItems : state.chatStreamSegments,
       stream: catalogKey ? null : state.chatStream,
       streamStartedAt: catalogKey ? null : state.chatStreamStartedAt,
       runId: catalogKey ? null : projectionRunId,
@@ -519,11 +532,7 @@ export class ChatPane extends ChatPaneLayoutRender {
         (pullRequest) => !this.dismissedSessionPullRequestIds.has(chatPullRequestId(pullRequest)),
       ),
       githubRepo: this.githubRepo,
-      pullRequestsBranch: createPullRequestBranch(
-        this.sessionPullRequests,
-        this.sessionPullRequestsBranch,
-      ),
-      // A dismissed open PR still exists, so the row must not offer a duplicate.
+      pullRequestsBranch: this.sessionPullRequestsBranch,
       pullRequestsRateLimited: this.sessionPullRequestsRateLimited,
       pullRequestsExpanded: this.sessionPullRequestsExpanded,
       onOpenSessionDiff: sessionWorkspace.onOpenDiff,
