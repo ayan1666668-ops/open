@@ -395,7 +395,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     if (blockDeliveryOutcome && (pendingBlock || !shouldRetryReplyDispatch(blockDeliveryOutcome))) {
       if (
         blockDeliveryOutcome === "channel-transform" ||
-        (blockDeliveryOutcome === "failed-deliver" && !pendingBlock) ||
+        (blockDeliveryOutcome === "failed-deliver" && !pendingBlock && !sourceRecovery) ||
         createBlockReplyContentKey(normalizedPayload) === createBlockReplyContentKey(payload)
       ) {
         return { blockDeliveryOutcome, pendingBlock, queuedFinal: false, routedFinalCount: 0 };
@@ -410,6 +410,8 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
         await suppressPendingFinalDelivery(payload, {
           preserveActivity: state.replyOperationRunState.heartbeat !== undefined,
         });
+      }
+      if (pendingBlock || sourceRecovery) {
         setReplyPayloadMetadata(normalizedPayload, { pendingFinalDeliveryCompletion: undefined });
         sourceReplyTranscriptMirror = sourceReplyTranscriptMirror
           ? transcriptMirrorForDeliveredPayload(sourceReplyTranscriptMirror, normalizedPayload)
@@ -460,6 +462,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
         });
       }
       return {
+        blockDeliveryOutcome: sourceRecovery ? blockDeliveryOutcome : undefined,
         pendingBlock,
         queuedFinal: result.ok,
         routedFinalCount: isRoutedReplyDelivered(result) ? 1 : 0,
@@ -544,6 +547,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
       );
     }
     return {
+      blockDeliveryOutcome: sourceRecovery ? blockDeliveryOutcome : undefined,
       pendingBlock,
       queuedFinal,
       routedFinalCount: 0,

@@ -89,6 +89,14 @@ it.each<{
     suffixCalls: 0,
   },
   {
+    name: "ambiguous prefix with final-only media",
+    prefix: "ambiguous",
+    prepared: true,
+    finalMedia: true,
+    expected: ["See "],
+    suffixCalls: 0,
+  },
+  {
     name: "failed suffix with sent media",
     suffix: "before-send",
     media: true,
@@ -166,7 +174,7 @@ it.each<{
     text: "See [",
     ...(scenario.media ? { mediaUrl: "https://example.com/image.png" } : {}),
   };
-  await dispatchReplyFromConfig({
+  const result = await dispatchReplyFromConfig({
     ctx: buildTestCtx({ Provider: "qa-channel", Surface: "qa-channel" }),
     cfg: emptyConfig,
     dispatcher,
@@ -291,10 +299,14 @@ it.each<{
     expect(delivered.filter((payload) => payload.mediaUrl === source.mediaUrl)).toHaveLength(1);
   }
   if (scenario.finalMedia) {
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toMatchObject({ mediaUrl: "https://example.com/final.opus" });
+    expect(delivered).toHaveLength(scenario.expected.length + 1);
+    const media = delivered.filter(
+      (payload) => payload.mediaUrl === "https://example.com/final.opus",
+    );
+    expect(media).toHaveLength(1);
+    expect(result.queuedFinal).toBe(true);
     expect(
-      getReplyPayloadMetadata(expectDefined(delivered[0], "final media"))
+      getReplyPayloadMetadata(expectDefined(media[0], "final media"))
         ?.pendingFinalDeliveryCompletion,
     ).toBeUndefined();
   }
