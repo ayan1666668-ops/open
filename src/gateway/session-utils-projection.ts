@@ -232,12 +232,8 @@ export function resolveGatewaySessionRuntimeProjection(params: {
   });
   if (agentRuntime.id === "auto" && entry) {
     agentRuntime.id = resolveWorkerPlacementModelRuntime({
-      cfg,
+      ...params,
       entry,
-      agentId,
-      sessionKey,
-      provider: params.provider,
-      model: params.model,
     });
   }
   return {

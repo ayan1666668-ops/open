@@ -1,3 +1,5 @@
+import { resolveEffectiveAgentDir } from "../../agents/agent-scope-config.js";
+import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection-cli.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
@@ -24,9 +26,7 @@ export function resolveWorkerPlacementSessionRuntime(params: {
   sessionKey: string;
 }): string {
   const selectedModel = resolveSessionSelectedModelRef({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
+    ...params,
     source: {
       entry: params.entry,
       loadSessionEntry: (key) => {
@@ -82,6 +82,13 @@ export function resolveWorkerPlacementModelRuntime(
           agentId: params.agentId,
           modelId: params.model,
           authProfileId: params.entry.authProfileOverride,
+          preparedAuthDirectories: {
+            agentDir: resolveEffectiveAgentDir(params.cfg, params.agentId),
+            inheritedAuthDir: resolveEffectiveAgentDir(
+              params.cfg,
+              resolveLegacyInheritedAuthAgentId(params.cfg),
+            ),
+          },
         }));
   const useCliExecution =
     pinnedCliRuntime !== undefined ||
