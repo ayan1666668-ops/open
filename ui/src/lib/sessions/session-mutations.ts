@@ -60,7 +60,7 @@ type SessionMutationsHost = PendingRowHost & {
   publishedRow: (key: string) => GatewaySessionRow | undefined;
   archiveFields: Pick<
     ReturnType<typeof createSessionRowProvenance>,
-    "fieldObservation" | "observeFields" | "inheritRow"
+    "fieldObservation" | "observeFields" | "inheritRow" | "mergeRow"
   >;
   readRevision: () => number;
   notifyCreated: (key: string, entry?: SessionCreateOutcome["entry"], agentId?: string) => void;
@@ -571,25 +571,35 @@ export function createSessionMutations(host: SessionMutationsHost) {
     if (!scope) {
       return null;
     }
-    const archived = patchParams.archived;
+    const { archived, pinned } = patchParams;
+    // Batch outcomes confirm pin intent without returning the Gateway's pin timestamp.
+    const pin: SessionPinFields | { pinned: true } | undefined =
+      pinned === true
+        ? { pinned: true }
+        : pinned === false
+          ? { pinned: false, pinnedAt: undefined }
+          : undefined;
+    const fields =
+      archived === undefined
+        ? pin
+        : { ...projectSessionArchiveFields(archived), ...(archived ? undefined : pin) };
     const snapshot = host.snapshot();
-    const confirmations =
-      typeof archived === "boolean"
-        ? targets.map((target) => {
-            const identity = resolvePendingConversation(snapshot, target.key, target.agentId);
-            const sessionId = target.expectedSessionId?.trim();
-            if (!identity || !sessionId) {
-              return null;
-            }
-            const owned = { ...identity, sessionId };
-            return { owned, confirm: host.capturePatchFields(owned) };
-          })
-        : [];
+    const confirmations = fields
+      ? targets.map((target) => {
+          const identity = resolvePendingConversation(snapshot, target.key, target.agentId);
+          const sessionId = target.expectedSessionId?.trim();
+          if (!identity || !sessionId) {
+            return null;
+          }
+          const owned = { ...identity, sessionId };
+          return { owned, confirm: host.capturePatchFields(owned) };
+        })
+      : [];
     const result = await requestSessionPatchMany(scope.client, { targets, patch: patchParams });
     if (!host.connection.isCurrent(scope)) {
       return result;
     }
-    if (typeof archived === "boolean") {
+    if (fields) {
       const readCutoff = host.readRevision();
       result.outcomes.forEach((outcome, index) => {
         const confirmation = confirmations[index];
@@ -600,7 +610,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
             sessionId: confirmation.owned.sessionId,
             updatedAt: null,
             readCutoff,
-            fields: projectSessionArchiveFields(archived),
+            fields,
           });
         }
       });

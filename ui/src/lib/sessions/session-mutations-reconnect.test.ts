@@ -442,11 +442,14 @@ describe("session mutation reconnect truth", () => {
         sessionId: "archive-read-fence",
         kind: "direct" as const,
         archived: false,
+        pinned: true,
+        pinnedAt: 10,
         updatedAt: 10,
       };
       const result = { outcomes: [{ ok: true, key: row.key, agentId: "main" }] };
       const response = createDeferred<typeof result>();
       const readResponse = createDeferred<typeof row | null>();
+      let currentDescription: typeof row | undefined;
       let listCalls = 0;
       const { sessions, client } = createMutationHarness({
         "sessions.list": async () => {
@@ -459,7 +462,9 @@ describe("session mutation reconnect truth", () => {
           const next = await readResponse.promise;
           return sessionsResult(next ? [next] : [], 30);
         },
-        "sessions.describe": async () => ({ session: await readResponse.promise }),
+        "sessions.describe": async () => ({
+          session: currentDescription ?? (await readResponse.promise),
+        }),
         "sessions.patchMany": () => response.promise,
       });
       const target = { key: row.key, agentId: "main" };
@@ -468,6 +473,7 @@ describe("session mutation reconnect truth", () => {
       let reading: Promise<unknown> | undefined;
       try {
         await sessions.refresh({ force: true });
+        expect(sessions.state.result?.sessions[0]).toMatchObject({ pinned: true, pinnedAt: 10 });
         archive = sessions.patchMany([{ ...target, expectedSessionId: row.sessionId }], {
           archived: true,
         });
@@ -485,19 +491,20 @@ describe("session mutation reconnect truth", () => {
           reading = sessions.refresh({ force: true });
         }
         response.resolve(result);
-        await archive;
+        await expect(archive).resolves.toEqual(result);
         if (readKind === "first descriptor") {
           expect(observer.row).toBeNull();
           expect(sessions.archiveVisibility(row.key)).toBe("archived");
         } else {
-          expect(observer.row?.archived).toBe(true);
+          expect(observer.row).toMatchObject({ archived: true, pinned: false });
+          expect(observer.row?.pinnedAt).toBeUndefined();
         }
         readResponse.resolve(
           readKind === "missing descriptor"
             ? null
             : readKind === "first descriptor"
               ? { ...row }
-              : { ...row, sessionId: "successor", updatedAt: 30 },
+              : { ...row, sessionId: "successor", updatedAt: 30, pinnedAt: 30 },
         );
         await reading;
         if (readKind === "missing descriptor") {
@@ -512,19 +519,27 @@ describe("session mutation reconnect truth", () => {
           expect(observer.row).toBeNull();
         } else if (readKind === "first descriptor") {
           expect(observer.isCurrent()).toBe(true);
-          expect(observer.row?.archived).toBe(true);
+          expect(observer.row).toMatchObject({ archived: true, pinned: false });
+          expect(observer.row?.pinnedAt).toBeUndefined();
+          // A later authoritative read can report an external restore and re-pin.
+          currentDescription = { ...row, updatedAt: 30, pinnedAt: 30 };
           const currentRead = observer.captureReconcile();
           const fresh = await client.request<{ session: typeof row | null }>(
             "sessions.describe",
             target,
           );
           currentRead(fresh.session ?? undefined);
-          expect(observer.row?.archived).toBe(false);
+          expect(observer.row).toMatchObject({ archived: false, pinned: true, pinnedAt: 30 });
           expect(sessions.archiveVisibility(row.key)).toBeUndefined();
         } else {
           expect(observer.isCurrent()).toBe(false);
           expect(observer.row).toBeNull();
-          expect(sessions.state.result?.sessions[0]?.sessionId).toBe("successor");
+          expect(sessions.state.result?.sessions[0]).toMatchObject({
+            sessionId: "successor",
+            archived: false,
+            pinned: true,
+            pinnedAt: 30,
+          });
         }
       } finally {
         observer?.dispose();
@@ -535,6 +550,90 @@ describe("session mutation reconnect truth", () => {
       }
     },
   );
+
+  it("retains confirmed archive fields in an invalidated descriptor after its refresh fails", async () => {
+    vi.useFakeTimers();
+    const row = {
+      key: "agent:main:invalidated-archive",
+      sessionId: "invalidated-archive",
+      kind: "direct" as const,
+      archived: false,
+      pinned: true,
+      pinnedAt: 10,
+      updatedAt: 10,
+    };
+    const unrelated = { ...row, key: "agent:main:unrelated", sessionId: "unrelated" };
+    const target = { key: row.key, agentId: "main" };
+    const result = { outcomes: [{ ok: true, ...target }] };
+    const response = createDeferred<typeof result>();
+    const readResponse = createDeferred<{ session: typeof row | null }>();
+    const describeDispatched = createDeferred();
+    const { sessions, client, emitEvent } = createMutationHarness({
+      "sessions.list": () => sessionsResult([{ ...row }, { ...unrelated }], 10),
+      "sessions.patchMany": () => response.promise,
+      "sessions.describe": () => {
+        describeDispatched.resolve();
+        return readResponse.promise;
+      },
+    });
+    let reading: Promise<unknown> | undefined;
+    let archive: ReturnType<typeof sessions.patchMany> | undefined;
+    const invalidated = vi.fn(() => {
+      const reconcile = observer.captureReconcile();
+      reading = client
+        .request<{ session: typeof row | null }>("sessions.describe", target)
+        .then((value) => reconcile(value.session ?? undefined))
+        .catch((error: unknown) => error);
+    });
+    const observer = sessions.observeRow(target, () => {}, { onInvalidate: invalidated });
+    const otherObserver = sessions.observeRow({ key: unrelated.key, agentId: "main" }, () => {});
+    try {
+      await sessions.refresh({ force: true });
+      expect(observer.row).toMatchObject(row);
+      archive = sessions.patchMany([{ ...target, expectedSessionId: row.sessionId }], {
+        archived: true,
+      });
+      emitEvent({
+        type: "event",
+        event: "sessions.changed",
+        payload: { ...target, sessionKey: row.key, sessionId: row.sessionId, reason: "patch" },
+      });
+      await describeDispatched.promise;
+      expect(invalidated).toHaveBeenCalledTimes(1);
+      expect(observer.row).toMatchObject(row);
+
+      response.resolve(result);
+      await expect(archive).resolves.toEqual(result);
+      expect(sessions.state.result?.sessions[0]).toMatchObject({
+        sessionId: row.sessionId,
+        archived: true,
+        pinned: false,
+      });
+      expect(sessions.state.result?.sessions[0]?.pinnedAt).toBeUndefined();
+      expect(sessions.archiveVisibility(row.key)).toBe("archived");
+      readResponse.reject(new Error("Descriptor refresh unavailable"));
+      await expect(reading).resolves.toMatchObject({ message: "Descriptor refresh unavailable" });
+      expect(otherObserver.row).toMatchObject(unrelated);
+      expect(observer.isCurrent()).toBe(true);
+      expect(observer.row).toMatchObject({
+        sessionId: row.sessionId,
+        archived: true,
+        pinned: false,
+      });
+      expect(observer.row?.pinnedAt).toBeUndefined();
+    } finally {
+      try {
+        observer.dispose();
+        otherObserver.dispose();
+        sessions.dispose();
+        response.resolve(result);
+        readResponse.resolve({ session: row });
+        await Promise.allSettled([archive, reading]);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
 
   it("retires archive progress on disconnect without letting an old completion clear a retry", async () => {
     const key = "agent:main:archive-retry";

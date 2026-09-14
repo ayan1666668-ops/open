@@ -532,6 +532,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     captureReconciliation: () => observations.captureReconciliation(++requestRevision),
     copyRow: observations.copyRow,
     inheritRow: observations.inheritRow,
+    mergeRow: observations.mergeRow,
     registerRow: observations.registerRow,
     currentRow: observations.currentRow,
     mergeRows: observations.mergeRows,

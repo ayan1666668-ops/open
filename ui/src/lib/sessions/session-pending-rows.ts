@@ -40,6 +40,7 @@ export type SessionPatchRowFact = {
   readCutoff?: number;
   fields:
     | SessionPinFields
+    | { pinned: true }
     | SessionReadFields
     | (SessionPinFields & SessionReadFields)
     | SessionArchiveFields

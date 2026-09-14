@@ -190,7 +190,6 @@ export function createSessionReconciliation(host: Host) {
         (entry) => reconcileResult(entry.snapshot.result, entry.snapshot.agentId),
         (entry) => ({
           row: entry.row ? reconcileRow(entry.row, entry.target.agentId) : null,
-          observationRevision: captured.revision,
         }),
       );
       if (!current()) {
@@ -321,11 +320,11 @@ export function createSessionReconciliation(host: Host) {
       decorate: (row) =>
         deletions.deletionState(row.key, owned.agentId, row.sessionId)
           ? null
-          : host.mutations.applyConfirmedArchiveRow(
-              host.mutations.applyPendingRow(
+          : host.mutations.applyPendingRow(
+              host.mutations.applyConfirmedArchiveRow(
                 host.permissions.applyRow(row, roster.rowRevision(row), owned.agentId),
-                owned.agentId,
               ),
+              owned.agentId,
             ),
     });
     const held = roster.publishedRow((row, agentId) => {
@@ -576,7 +575,6 @@ export function createSessionReconciliation(host: Host) {
         }
         return {
           row: reduced.row ?? null,
-          observationRevision: eventObservation.revision,
           ...(!reduced.deletedKey ? { invalidateRevision: eventObservation.revision } : {}),
         };
       },

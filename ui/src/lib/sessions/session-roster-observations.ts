@@ -88,21 +88,23 @@ export function createSessionRosterObservations(
   };
   const registeredRow = (entry: RegisteredSessionRow) =>
     registrationIsCurrent(entry) ? entry.snapshot.row : null;
+  const acceptsRowIdentity = (entry: RegisteredSessionRow, row: GatewaySessionRow) =>
+    registrationIsCurrent(entry) &&
+    matchesTarget(row, entry.target) &&
+    Boolean(row.sessionId && entry.isValid(row.sessionId)) &&
+    (entry.snapshot.sessionId === null || entry.snapshot.sessionId === row.sessionId);
   const acceptsRow = (
     entry: RegisteredSessionRow,
     row: GatewaySessionRow,
     revision: number,
     seedHeld = false,
   ) =>
-    registrationIsCurrent(entry) &&
-    matchesTarget(row, entry.target) &&
-    Boolean(row.sessionId && entry.isValid(row.sessionId)) &&
+    acceptsRowIdentity(entry, row) &&
     (revision > entry.snapshot.invalidatedRevision ||
       (seedHeld &&
         entry.snapshot.sessionId === null &&
         entry.snapshot.invalidatedRevision === 0 &&
-        provenance.hasObservation(row))) &&
-    (entry.snapshot.sessionId === null || entry.snapshot.sessionId === row.sessionId);
+        provenance.hasObservation(row)));
   const successorRetirement = (
     entry: RegisteredSessionRow,
     admissions: readonly SessionRowAdmission[],
@@ -309,14 +311,16 @@ export function createSessionRosterObservations(
       const row =
         projected.row &&
         (held !== null || admitRead) &&
-        // Invalidation fences incoming reads; unrelated passes retain the already-held facts.
+        // Invalidation fences incoming reads, not accepted updates to the held incarnation.
         (projected.row === held ||
-          acceptsRow(
-            entry,
-            projected.row,
-            projected.observationRevision ?? rowRevision(projected.row),
-            admitRead,
-          ))
+          (admitRead
+            ? acceptsRow(
+                entry,
+                projected.row,
+                projected.observationRevision ?? rowRevision(projected.row),
+                true,
+              )
+            : acceptsRowIdentity(entry, projected.row)))
           ? projected.row
           : null;
       const decorated = row ? entry.decorate(row) : null;
@@ -510,6 +514,7 @@ export function createSessionRosterObservations(
       };
     },
     inheritRow,
+    mergeRow,
     currentRow,
     mergeRows: merge,
     publishedRow(
@@ -616,7 +621,6 @@ export function createSessionRosterObservations(
           });
           return {
             row: entry.row && matches ? reconcileRow(entry.target.agentId)(entry.row) : entry.row,
-            observationRevision: event.revision,
             ...(!entry.row && matches ? { invalidateRevision: event.revision } : {}),
           };
         },

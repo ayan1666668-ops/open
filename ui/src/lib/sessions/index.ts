@@ -150,7 +150,7 @@ export function createSessionCapability(
     // Preserve receipts before a pending intent makes another tracked copy.
     roster.inherit(annotated, projected);
     const decorated = deletions.apply(
-      mutations.applyConfirmedArchives(mutations.applyPendingRows(annotated, owner.scope.agentId)),
+      mutations.applyPendingRows(mutations.applyConfirmedArchives(annotated), owner.scope.agentId),
       owner,
     );
     roster.inherit(decorated, result);
@@ -174,6 +174,7 @@ export function createSessionCapability(
       }
       if (previousError !== null && error === null) {
         // Observer outages do not replay events; every held query must close the gap.
+        githubPublication.invalidate();
         void roster.refreshAutomatic({
           ...roster.lastOptions(),
           backgroundHydrate: true,

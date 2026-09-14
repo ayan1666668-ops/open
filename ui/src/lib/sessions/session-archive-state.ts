@@ -40,7 +40,7 @@ export function createSessionArchiveState(
   onChange: () => void,
   provenance: Pick<
     ReturnType<typeof createSessionRowProvenance>,
-    "fieldObservation" | "observeFields" | "inheritRow"
+    "fieldObservation" | "observeFields" | "inheritRow" | "mergeRow"
   >,
 ) {
   const confirmed = new Map<string, ConfirmedArchiveState>();
@@ -104,21 +104,26 @@ export function createSessionArchiveState(
     if (!current || current.sessionId !== row.sessionId) {
       return row;
     }
-    const projected =
-      row.archived === current.archived
-        ? row
-        : provenance.inheritRow(
-            {
-              ...row,
-              archived: current.archived,
-              archivedAt: current.archived ? current.archivedAt : undefined,
-              archivedBy: current.archived ? current.archivedBy : undefined,
-              archiveReason: current.archived ? current.archiveReason : undefined,
-            },
-            row,
-          );
-    provenance.observeFields(projected, ["archived"], current.observation);
-    return projected;
+    const fields = projectSessionArchiveFields(current.archived);
+    if (current.archived) {
+      if (current.archivedAt !== undefined) {
+        fields.archivedAt = current.archivedAt;
+      }
+      if (current.archivedBy !== undefined) {
+        fields.archivedBy = current.archivedBy;
+      }
+      if (current.archiveReason !== undefined) {
+        fields.archiveReason = current.archiveReason;
+      }
+    }
+    const offered = provenance.inheritRow({ ...row, ...fields }, row);
+    for (const [name, value] of Object.entries(fields)) {
+      if (value === undefined) {
+        Reflect.deleteProperty(offered, name);
+      }
+    }
+    provenance.observeFields(offered, Object.keys(fields), current.observation);
+    return provenance.mergeRow(row, offered);
   };
   return {
     clear,
