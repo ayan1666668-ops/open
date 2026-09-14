@@ -235,6 +235,7 @@ export async function startGatewayCoreRuntime(input: {
     ...runtimeSubscriptionUnsubs
   } = await startupTrace.measure("runtime.subscriptions", () =>
     startGatewayEventSubscriptions({
+      signal: runtime.connectionWork.signal,
       log,
       broadcast,
       broadcastToConnIds,
@@ -248,6 +249,8 @@ export async function startGatewayCoreRuntime(input: {
       chatAbortControllers,
       restartRecoveryCandidates,
       terminalSessions,
+      refreshConnectedUserProfiles: () =>
+        runtime.resolvePluginGatewayContext()?.refreshConnectedUserProfile?.(),
     }),
   );
   Object.assign(runtimeState, runtimeSubscriptionUnsubs);

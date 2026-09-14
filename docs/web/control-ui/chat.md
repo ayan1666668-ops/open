@@ -95,6 +95,9 @@ original conversation. If history fails to load, the queued message stays
 available while you resolve the history error. Goals and other slash commands
 wait for history; `/stop` and `/approve` remain available.
 
+Background refreshes for saved sidebar filters and automation status wait until
+the conversation appears. A filter change you make refreshes immediately.
+
 Panes share outbox recovery for the same conversation. Activity in another
 conversation does not restart that recovery; reconnecting checks every saved outbox.
 
@@ -370,6 +373,8 @@ Use `trusted` only when the embedded document genuinely needs same-origin behavi
 Absolute external `http(s)` embed URLs stay blocked by default. To let `[embed url="https://..."]` load third-party pages, set `gateway.controlUi.allowExternalEmbedUrls: true`.
 
 Widgets created by `show_widget` load through the authenticated Gateway connection in every sandbox mode, including while settings are loading. In `strict` mode, their content remains visible but scripted interactions are disabled.
+
+While a widget loads, a subtle shimmer reserves its space without displaying loading text. With reduced motion enabled, the placeholder stays still.
 
 The core [`show_widget`](/tools/show-widget) tool renders self-contained SVG or HTML directly from a tool call. The browser and supported native chat clients advertise the `inline-widgets` Gateway capability, and the resulting Canvas document remains available when chat history reloads. Channel plugins such as Discord Activities can register contextual presenters behind that same tool. Channel-originated runs without an eligible presenter or inline client do not receive it.
 

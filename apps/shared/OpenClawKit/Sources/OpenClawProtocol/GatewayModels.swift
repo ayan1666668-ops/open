@@ -1511,6 +1511,7 @@ public struct ArtifactsDownloadParams: Codable, Sendable {
     public let runid: String?
     public let taskid: String?
     public let agentid: String?
+    public let messagerole: String?
     public let artifactid: String
 
     public init(
@@ -1518,12 +1519,14 @@ public struct ArtifactsDownloadParams: Codable, Sendable {
         runid: String? = nil,
         taskid: String? = nil,
         agentid: String? = nil,
+        messagerole: String? = nil,
         artifactid: String)
     {
         self.sessionkey = sessionkey
         self.runid = runid
         self.taskid = taskid
         self.agentid = agentid
+        self.messagerole = messagerole
         self.artifactid = artifactid
     }
 
@@ -1532,6 +1535,7 @@ public struct ArtifactsDownloadParams: Codable, Sendable {
         case runid = "runId"
         case taskid = "taskId"
         case agentid = "agentId"
+        case messagerole = "messageRole"
         case artifactid = "artifactId"
     }
 }
@@ -1571,6 +1575,7 @@ public struct ArtifactsGetParams: Codable, Sendable {
     public let runid: String?
     public let taskid: String?
     public let agentid: String?
+    public let messagerole: String?
     public let artifactid: String
 
     public init(
@@ -1578,12 +1583,14 @@ public struct ArtifactsGetParams: Codable, Sendable {
         runid: String? = nil,
         taskid: String? = nil,
         agentid: String? = nil,
+        messagerole: String? = nil,
         artifactid: String)
     {
         self.sessionkey = sessionkey
         self.runid = runid
         self.taskid = taskid
         self.agentid = agentid
+        self.messagerole = messagerole
         self.artifactid = artifactid
     }
 
@@ -1592,6 +1599,7 @@ public struct ArtifactsGetParams: Codable, Sendable {
         case runid = "runId"
         case taskid = "taskId"
         case agentid = "agentId"
+        case messagerole = "messageRole"
         case artifactid = "artifactId"
     }
 }
@@ -1611,17 +1619,20 @@ public struct ArtifactsListParams: Codable, Sendable {
     public let runid: String?
     public let taskid: String?
     public let agentid: String?
+    public let messagerole: String?
 
     public init(
         sessionkey: String? = nil,
         runid: String? = nil,
         taskid: String? = nil,
-        agentid: String? = nil)
+        agentid: String? = nil,
+        messagerole: String? = nil)
     {
         self.sessionkey = sessionkey
         self.runid = runid
         self.taskid = taskid
         self.agentid = agentid
+        self.messagerole = messagerole
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1629,6 +1640,7 @@ public struct ArtifactsListParams: Codable, Sendable {
         case runid = "runId"
         case taskid = "taskId"
         case agentid = "agentId"
+        case messagerole = "messageRole"
     }
 }
 
@@ -6891,19 +6903,22 @@ public struct EventFrame: Codable, Sendable {
     public let payload: AnyCodable?
     public let seq: Int?
     public let stateversion: StateVersion?
+    public let recipientprofileid: String?
 
     public init(
         type: String,
         event: String,
         payload: AnyCodable? = nil,
         seq: Int? = nil,
-        stateversion: StateVersion? = nil)
+        stateversion: StateVersion? = nil,
+        recipientprofileid: String? = nil)
     {
         self.type = type
         self.event = event
         self.payload = payload
         self.seq = seq
         self.stateversion = stateversion
+        self.recipientprofileid = recipientprofileid
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -6912,6 +6927,7 @@ public struct EventFrame: Codable, Sendable {
         case payload
         case seq
         case stateversion = "stateVersion"
+        case recipientprofileid = "recipientProfileId"
     }
 }
 
@@ -12278,19 +12294,31 @@ public struct RequestFrame: Codable, Sendable {
     public let method: String
     public let params: AnyCodable?
     public let traceparent: String?
+    public let expectedprofileid: String?
 
     public init(
         type: String,
         id: String,
         method: String,
         params: AnyCodable? = nil,
-        traceparent: String? = nil)
+        traceparent: String? = nil,
+        expectedprofileid: String? = nil)
     {
         self.type = type
         self.id = id
         self.method = method
         self.params = params
         self.traceparent = traceparent
+        self.expectedprofileid = expectedprofileid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case id
+        case method
+        case params
+        case traceparent
+        case expectedprofileid = "expectedProfileId"
     }
 }
 
@@ -15775,6 +15803,7 @@ public struct SessionsCreateParams: Codable, Sendable {
     public let projectgiturl: String?
     public let repository: [String: AnyCodable]?
     public let worktree: Bool?
+    public let worktreesource: String?
     public let worktreebaseref: String?
     public let worktreename: String?
     public let execnode: String?
@@ -15812,6 +15841,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         projectgiturl: String? = nil,
         repository: [String: AnyCodable]? = nil,
         worktree: Bool? = nil,
+        worktreesource: String? = nil,
         worktreebaseref: String? = nil,
         worktreename: String? = nil,
         execnode: String? = nil,
@@ -15848,6 +15878,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         self.projectgiturl = projectgiturl
         self.repository = repository
         self.worktree = worktree
+        self.worktreesource = worktreesource
         self.worktreebaseref = worktreebaseref
         self.worktreename = worktreename
         self.execnode = execnode
@@ -15886,6 +15917,7 @@ public struct SessionsCreateParams: Codable, Sendable {
         case projectgiturl = "projectGitUrl"
         case repository
         case worktree
+        case worktreesource = "worktreeSource"
         case worktreebaseref = "worktreeBaseRef"
         case worktreename = "worktreeName"
         case execnode = "execNode"
