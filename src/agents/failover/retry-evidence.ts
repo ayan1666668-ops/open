@@ -28,7 +28,7 @@ const TRANSIENT_RETRY_EVIDENCE_RE =
 const LONG_WINDOW_RATE_LIMIT_RE =
   /\b(?:daily|weekly|monthly|tokens per day|requests per day|usage limit|subscription|insufficient[_ -]?quota|current quota|quota[_ -]?exceeded|(?:go|free)usagelimiterror|available balance|out of budget)\b/i;
 const GOOGLE_AMBIGUOUS_CURRENT_QUOTA_429_RE =
-  /Google Generative AI API error\s*\(429\):\s*You exceeded your current quota, please check your plan and billing details\..*\[code=RESOURCE_EXHAUSTED\]/i;
+  /Google Generative AI API error\s*\(429\):\s*You exceeded your current quota, please check your plan and billing details\.[\s\S]*\[code=RESOURCE_EXHAUSTED\]/i;
 const SHORT_RATE_LIMIT_UNIT_RE =
   /\b(?:requests per minute|tokens per minute|per-minute|rpm|tpm)\b/i;
 const SHORT_WINDOW_RATE_LIMIT_RE =
