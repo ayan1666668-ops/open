@@ -259,7 +259,7 @@ async function openPage(params: QaWebOpenPageParams, owner?: Set<string>, signal
     const cleanupErrors = await closeSession(pageId, session);
     if (cleanupErrors.length) {
       throw new AggregateError([failure, ...cleanupErrors], "web page open and cleanup failed", {
-        cause: failure,
+        cause: error,
       });
     }
     throw failure;

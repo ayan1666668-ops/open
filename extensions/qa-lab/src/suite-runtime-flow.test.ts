@@ -9,16 +9,16 @@ const runScenarioFlow = vi.hoisted(() => vi.fn(async (params: { api: unknown }) 
 const waitForOutboundMessage = vi.hoisted(() => vi.fn());
 const runRuntimeToolFixture = vi.hoisted(() => vi.fn());
 const { webOpenPage, createWebPageOpener } = vi.hoisted(() => {
-  const webOpenPage = vi.fn(async (_params: { url: string; repoRoot?: string }) => ({
+  const openPageMock = vi.fn(async (_params: { url: string; repoRoot?: string }) => ({
     pageId: "page-1",
   }));
-  const createWebPageOpener = vi.fn(
+  const createOpenerMock = vi.fn(
     (owner: Set<string>) => (params: { url: string; repoRoot?: string }) => {
       owner.add("page-1");
-      return webOpenPage(params);
+      return openPageMock(params);
     },
   );
-  return { webOpenPage, createWebPageOpener };
+  return { webOpenPage: openPageMock, createWebPageOpener: createOpenerMock };
 });
 
 vi.mock("./scenario-runtime-api.js", () => ({

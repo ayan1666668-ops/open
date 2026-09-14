@@ -251,6 +251,7 @@ describe("QA web acquisition ownership", () => {
     const fixture = makeBrowser();
     const controller = new AbortController();
     const reason = new Error("scenario timed out");
+    const acquisitionError = new Error("navigation failed during cancellation");
     const contextError = new Error("context cleanup failed");
     const browserError = new Error("browser cleanup failed");
     expectedTeardownErrors = [contextError, browserError];
@@ -258,6 +259,7 @@ describe("QA web acquisition ownership", () => {
     launch.mockResolvedValueOnce(fixture.browser);
     fixture.page.goto.mockImplementationOnce(async () => {
       controller.abort(reason);
+      throw acquisitionError;
     });
     fixture.context.close.mockRejectedValueOnce(contextError);
     fixture.browser.close.mockRejectedValueOnce(browserError);
@@ -271,7 +273,7 @@ describe("QA web acquisition ownership", () => {
         .catch((failure: unknown) => failure),
       [reason, contextError, browserError],
     );
-    expect(error.cause).toBe(reason);
+    expect(error.cause).toBe(acquisitionError);
     expect(owner.size).toBe(1);
     expectCleanupErrors(
       await webRuntime.closeQaWebSessions(owner).catch((failure: unknown) => failure),
