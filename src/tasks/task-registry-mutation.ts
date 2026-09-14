@@ -13,7 +13,8 @@ import {
   cloneTaskDeliveryState,
   cloneTaskRecord,
   cloneTaskRecordForObserver,
-  applyTaskRecordPatch,
+  isEquivalentTaskRecord,
+  normalizeTaskTimestamps,
 } from "./task-registry-records.js";
 import {
   withTaskRegistryMutation,
@@ -88,69 +89,93 @@ function syncManagedFlowCancellationFromTask(task: TaskRecord): void {
 }
 
 export function updateTask(taskId: string, patch: Partial<TaskRecord>): TaskRecord | null {
-  return withTaskRegistryMutation(
-    () => {
-      const current = tasks.get(taskId);
-      if (!current) {
-        return null;
-      }
-      const next = applyTaskRecordPatch(current, patch);
-      const becomesTerminal =
-        !isTerminalTaskStatus(current.status) && isTerminalTaskStatus(next.status);
-      const sessionIndexChanged =
-        normalizeOptionalString(current.requesterSessionKey) !==
-          normalizeOptionalString(next.requesterSessionKey) ||
-        normalizeOptionalString(current.ownerKey) !== normalizeOptionalString(next.ownerKey) ||
-        normalizeOptionalString(current.childSessionKey) !==
-          normalizeOptionalString(next.childSessionKey);
-      const parentFlowIndexChanged = current.parentFlowId?.trim() !== next.parentFlowId?.trim();
-      ensureLinkedTaskFlowRegistryReady(current);
-      ensureLinkedTaskFlowRegistryReady(next);
-      if (becomesTerminal) {
-        flushTaskActivity(taskId);
-      }
-      // Persist before mutating memory. If the store rejects the write, keep the
-      // in-memory mirror at the durable value and report that no mutation applied.
-      if (!tryPersistTaskUpsert(next, "update")) {
-        return null;
-      }
-      tasks.set(taskId, next);
-      bumpTaskRegistryRevision();
-      if (becomesTerminal) {
-        clearTaskActivity(taskId);
-      }
-      if (patch.runId && patch.runId !== current.runId) {
-        rebuildRunIdIndex();
-      }
-      if (sessionIndexChanged) {
-        deleteOwnerKeyIndex(taskId, current);
-        addOwnerKeyIndex(taskId, next);
-        deleteRelatedSessionKeyIndex(taskId, current);
-        addRelatedSessionKeyIndex(taskId, next);
-      }
-      if (parentFlowIndexChanged) {
-        deleteParentFlowIdIndex(taskId, current);
-        addParentFlowIdIndex(taskId, next);
-      }
-      syncFlowFromTaskAfterTaskMutation(next, "update");
-      try {
-        syncManagedFlowCancellationFromTask(next);
-      } catch (error) {
-        taskRegistryLog.warn("Failed to finalize managed flow cancellation from task update", {
-          taskId,
-          flowId: next.parentFlowId,
-          error,
-        });
-      }
-      emitTaskRegistryObserverEvent(() => ({
-        kind: "upserted",
-        task: cloneTaskRecordForObserver(next),
-        previous: cloneTaskRecordForObserver(current),
-      }));
-      return cloneTaskRecord(next);
-    },
-    () => null,
-  );
+  const current = tasks.get(taskId);
+  if (!current) {
+    return null;
+  }
+  const updated = {
+    ...current,
+    ...patch,
+    ...(patch.detail !== undefined ? { detail: structuredClone(patch.detail) } : {}),
+  };
+  const becomesTerminal =
+    !isTerminalTaskStatus(current.status) && isTerminalTaskStatus(updated.status);
+  if (becomesTerminal && patch.endedAt === undefined) {
+    updated.endedAt = patch.lastEventAt ?? Date.now();
+  }
+  const next = normalizeTaskTimestamps(updated);
+  if (Object.hasOwn(patch, "error") && patch.error === undefined) {
+    delete next.error;
+  }
+  if (Object.hasOwn(patch, "childSessionKey") && patch.childSessionKey === undefined) {
+    delete next.childSessionKey;
+  }
+  if (isTerminalTaskStatus(next.status) && typeof next.cleanupAfter !== "number") {
+    const createdAt = next.createdAt ?? Date.now();
+    next.cleanupAfter = resolveTaskCleanupAfter({ ...next, createdAt });
+  }
+  const sessionIndexChanged =
+    normalizeOptionalString(current.requesterSessionKey) !==
+      normalizeOptionalString(next.requesterSessionKey) ||
+    normalizeOptionalString(current.ownerKey) !== normalizeOptionalString(next.ownerKey) ||
+    normalizeOptionalString(current.childSessionKey) !==
+      normalizeOptionalString(next.childSessionKey);
+  const parentFlowIndexChanged = current.parentFlowId?.trim() !== next.parentFlowId?.trim();
+  ensureLinkedTaskFlowRegistryReady(current);
+  ensureLinkedTaskFlowRegistryReady(next);
+  const equivalent =
+    isTerminalTaskStatus(current.status) &&
+    isTerminalTaskStatus(next.status) &&
+    isEquivalentTaskRecord(current, next);
+  if (!equivalent) {
+    if (becomesTerminal) {
+      flushTaskActivity(taskId);
+    }
+    // Persist before mutating memory. If the store rejects the write, keep the
+    // in-memory mirror at the durable value and report that no mutation applied.
+    if (!tryPersistTaskUpsert(next, "update")) {
+      return null;
+    }
+    tasks.set(taskId, next);
+    bumpTaskRegistryRevision();
+    if (becomesTerminal) {
+      clearTaskActivity(taskId);
+    }
+    if (patch.runId && patch.runId !== current.runId) {
+      rebuildRunIdIndex();
+    }
+    if (sessionIndexChanged) {
+      deleteOwnerKeyIndex(taskId, current);
+      addOwnerKeyIndex(taskId, next);
+      deleteRelatedSessionKeyIndex(taskId, current);
+      addRelatedSessionKeyIndex(taskId, next);
+    }
+    if (parentFlowIndexChanged) {
+      deleteParentFlowIdIndex(taskId, current);
+      addParentFlowIdIndex(taskId, next);
+    }
+  }
+  // Equivalent task replay still reconciles the linked flow independently so a
+  // stale mirrored projection can recover without a redundant task write.
+  const authoritative = equivalent ? current : next;
+  syncFlowFromTaskAfterTaskMutation(authoritative, "update");
+  try {
+    syncManagedFlowCancellationFromTask(authoritative);
+  } catch (error) {
+    taskRegistryLog.warn("Failed to finalize managed flow cancellation from task update", {
+      taskId,
+      flowId: authoritative.parentFlowId,
+      error,
+    });
+  }
+  if (!equivalent) {
+    emitTaskRegistryObserverEvent(() => ({
+      kind: "upserted",
+      task: cloneTaskRecordForObserver(next),
+      previous: cloneTaskRecordForObserver(current),
+    }));
+  }
+  return cloneTaskRecord(authoritative);
 }
 
 export function upsertTaskDeliveryState(state: TaskDeliveryState): TaskDeliveryState {

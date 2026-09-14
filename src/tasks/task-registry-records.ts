@@ -1,3 +1,5 @@
+// Clones and normalizes task registry records at persistence boundaries.
+import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
@@ -73,6 +75,17 @@ export function cloneTaskRecord(record: TaskRecord): TaskRecord {
     ...(record.executionOwner ? { executionOwner: { ...record.executionOwner } } : {}),
     ...(record.detail !== undefined ? { detail: structuredClone(record.detail) } : {}),
   };
+}
+
+function omitUndefinedProperties(value: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined));
+}
+
+/** Restored or replayed projections must not persist when they already match durable state. */
+export function isEquivalentTaskRecord(current: TaskRecord, next: TaskRecord): boolean {
+  // SQLite restores omit NULL optionals such as terminal_summary; finalizers
+  // materialize the same absence as explicit undefined.
+  return isDeepStrictEqual(omitUndefinedProperties(current), omitUndefinedProperties(next));
 }
 
 /** Observer notifications need detached metadata, never runtime-owned detail. */

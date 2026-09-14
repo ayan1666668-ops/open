@@ -166,16 +166,30 @@ export function cloneFlowRecord(record: TaskFlowRecord): TaskFlowRecord {
   };
 }
 
-/** Optional record fields decode without own undefined properties; JSON payloads retain their shape. */
-export function areTaskFlowRecordsEqual(
-  left: TaskFlowRecord | undefined,
-  right: TaskFlowRecord | undefined,
+function omitUndefinedProperties(value: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined));
+}
+
+function canonicalizeMirroredFlowProjection(flow: TaskFlowRecord): Record<string, unknown> {
+  const { revision: _revision, ...projection } = flow;
+  const canonical = omitUndefinedProperties(projection);
+  // Mirrored sync writes waitJson: null; older rows stored SQL NULL and restore
+  // without the field. Treat those as the same cleared wait state.
+  if (canonical.waitJson === null) {
+    delete canonical.waitJson;
+  }
+  return canonical;
+}
+
+/** Mirrored sync must not bump revision when the derived projection is unchanged. */
+export function isEquivalentMirroredFlowProjection(
+  current: TaskFlowRecord,
+  next: TaskFlowRecord,
 ): boolean {
-  const fields = (record: TaskFlowRecord | undefined) =>
-    record
-      ? Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
-      : undefined;
-  return isDeepStrictEqual(fields(left), fields(right));
+  return isDeepStrictEqual(
+    canonicalizeMirroredFlowProjection(current),
+    canonicalizeMirroredFlowProjection(next),
+  );
 }
 
 export function normalizeRestoredFlowRecord(record: TaskFlowRecord): TaskFlowRecord {

@@ -17,6 +17,7 @@ import {
   buildManagedTaskFlowPatch,
   cloneFlowRecord,
   deriveTaskFlowStatusFromTask,
+  isEquivalentMirroredFlowProjection,
   isTerminalTaskFlowStatus,
   normalizeRestoredFlowRecord,
   prepareTaskMirroredFlowSyncFromCurrent,
@@ -604,6 +605,9 @@ export function syncFlowFromTaskResult(task: TaskFlowSyncInput): TaskFlowSyncRes
     return { ok: true, flow };
   }
   const prepared = prepareTaskMirroredFlowSyncFromCurrent(task, flow);
+  if (isEquivalentMirroredFlowProjection(prepared.current, prepared.next)) {
+    return { ok: true, flow: cloneFlowRecord(prepared.current) };
+  }
   const updated = writeFlowRecord(prepared.next, prepared.current);
   if (!updated) {
     return {
