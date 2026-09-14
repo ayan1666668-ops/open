@@ -121,6 +121,72 @@ describe("sandbox fs bridge boundary validation", () => {
     },
   );
 
+  it("admits an allowed read whose resolved identity is stable", async () => {
+    await withTempDir("openclaw-fs-admission-control-", async (stateDir) => {
+      const workspaceDir = path.join(stateDir, "workspace");
+      const pubDir = path.join(workspaceDir, "pub");
+      await fs.mkdir(pubDir, { recursive: true });
+      await fs.writeFile(path.join(pubDir, "note.txt"), "allowed-public");
+      const bridge = createSandboxFsBridge({
+        sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+      });
+
+      const policyPath = await resolveSandboxFilePolicyPath({
+        bridge,
+        filePath: "/workspace/pub/note.txt",
+      });
+      expect(policyPath).toBe("/workspace/pub/note.txt");
+      await expect(bridge.readFile({ filePath: policyPath })).resolves.toEqual(
+        Buffer.from("allowed-public"),
+      );
+    });
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a read whose target is replaced between canonical resolution and descriptor admission",
+    async () => {
+      await withTempDir("openclaw-fs-admission-swap-", async (stateDir) => {
+        const workspaceDir = path.join(stateDir, "workspace");
+        const pubDir = path.join(workspaceDir, "pub");
+        const privateDir = path.join(workspaceDir, "private");
+        await fs.mkdir(pubDir, { recursive: true });
+        await fs.mkdir(privateDir, { recursive: true });
+        await fs.writeFile(path.join(pubDir, "note.txt"), "allowed-public");
+        await fs.writeFile(path.join(privateDir, "secret.txt"), "denied-secret-content");
+        let swapApplied = false;
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+          beforeDescriptorAdmission: () => {
+            if (swapApplied) {
+              return;
+            }
+            swapApplied = true;
+            // Replace the authorized path's object with the denied file after
+            // the opener captured the resolution-time identity but before it
+            // admitted the descriptor.
+            fsSync.renameSync(path.join(privateDir, "secret.txt"), path.join(pubDir, "note.txt"));
+          },
+        });
+
+        const policyPath = await resolveSandboxFilePolicyPath({
+          bridge,
+          filePath: "/workspace/pub/note.txt",
+        });
+        expect(policyPath).toBe("/workspace/pub/note.txt");
+
+        await expect(bridge.readFile({ filePath: policyPath })).rejects.toThrow(
+          /identity changed between canonical resolution and descriptor admission/,
+        );
+        // The denied object really did occupy the authorized path in the
+        // window, and no read effect returned any of its bytes.
+        expect(swapApplied).toBe(true);
+        expect(await fs.readFile(path.join(pubDir, "note.txt"))).toEqual(
+          Buffer.from("denied-secret-content"),
+        );
+      });
+    },
+  );
+
   it.runIf(process.platform === "win32")(
     "maps differently cased host paths back to canonical policy paths",
     async () => {

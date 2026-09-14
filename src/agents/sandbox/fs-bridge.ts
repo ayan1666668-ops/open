@@ -52,8 +52,10 @@ const PINNED_MUTATION_ACTION_LABELS = {
 /** Create the filesystem bridge for local Docker-style mounted sandboxes. */
 export function createSandboxFsBridge(params: {
   sandbox: SandboxFsBridgeContext;
+  /** Test seam: runs between the opener's identity observation and descriptor admission. */
+  beforeDescriptorAdmission?: (resolvedHostPath: string) => void | Promise<void>;
 }): SandboxFsBridge {
-  return new SandboxFsBridgeImpl(params.sandbox);
+  return new SandboxFsBridgeImpl(params.sandbox, params.beforeDescriptorAdmission);
 }
 
 class SandboxFsBridgeImpl implements SandboxFsBridge {
@@ -61,7 +63,10 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
   private readonly mounts: ReturnType<typeof buildSandboxFsMounts>;
   private readonly pathGuard: SandboxFsPathGuard;
 
-  constructor(sandbox: SandboxFsBridgeContext) {
+  constructor(
+    sandbox: SandboxFsBridgeContext,
+    beforeDescriptorAdmission?: (resolvedHostPath: string) => void | Promise<void>,
+  ) {
     this.sandbox = sandbox;
     this.mounts = buildSandboxFsMounts(sandbox);
     const mountsByContainer = [...this.mounts].toSorted(
@@ -72,6 +77,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     this.pathGuard = new SandboxFsPathGuard({
       mountsByContainer,
       runCommand: (script, options) => this.runCommand(script, options),
+      beforeDescriptorAdmission,
     });
   }
 
