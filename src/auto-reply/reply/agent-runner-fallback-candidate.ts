@@ -343,6 +343,9 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           candidate.bootstrapPromptWarningSignaturesSeen;
         params.state.maintenanceAuthProfile = candidate.maintenanceAuthProfile;
         params.state.compactionRequestBudget = candidate.compactionRequestBudget;
+        if (candidate.sessionCompactionRequest) {
+          params.state.sessionCompactionRequest = candidate.sessionCompactionRequest;
+        }
         return candidate.result;
       },
     }),
