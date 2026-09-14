@@ -17,7 +17,10 @@ import {
   type DevicePlacementRequirement,
 } from "../new-session/device-placement.ts";
 import { draftCloudProfileSupportsExecutionMode } from "../new-session/discovery.ts";
-import { resolveChatPaneWorkerPresentation } from "./chat-pane-placement.ts";
+import {
+  repositorySessionNeedsWorker,
+  resolveChatPaneWorkerPresentation,
+} from "./chat-pane-placement.ts";
 
 async function loadPlacementMoveCatalog(
   client: GatewayBrowserClient,
@@ -35,7 +38,7 @@ async function loadPlacementMoveCatalog(
 async function selectChatPanePlacementTarget(params: {
   client: GatewayBrowserClient;
   gatewaySnapshot: ApplicationGatewaySnapshot;
-  mode: "move" | "restart";
+  mode: "dispatch" | "move" | "restart";
   row: GatewaySessionRow;
 }): Promise<SessionMoveTarget | null> {
   const { showSessionPlacementTargetDialog } =
@@ -46,7 +49,7 @@ async function selectChatPanePlacementTarget(params: {
     requiredScope: "operator.write",
   });
   const workerAccess = readSessionMethodAccess(params.gatewaySnapshot, {
-    method: params.mode === "restart" ? "sessions.dispatch" : "sessions.move",
+    method: params.mode === "move" ? "sessions.move" : "sessions.dispatch",
     requiredScope: "operator.write",
   });
   return await showSessionPlacementTargetDialog({
@@ -180,12 +183,9 @@ export async function restartChatPanePlacement(params: {
 }): Promise<void> {
   const client = params.client;
   const placement = params.row.placement;
-  if (
-    !client ||
-    params.restartingKey === params.row.key ||
-    placement?.state !== "failed" ||
-    placement.recoveryAction !== "restart"
-  ) {
+  const dispatchRequired = repositorySessionNeedsWorker(params.row);
+  const restartable = placement?.state === "failed" && placement.recoveryAction === "restart";
+  if (!client || params.restartingKey === params.row.key || (!restartable && !dispatchRequired)) {
     return;
   }
   const access = readSessionMethodAccess(params.gatewaySnapshot, {
@@ -196,14 +196,14 @@ export async function restartChatPanePlacement(params: {
     method: "sessions.reclaim",
     requiredScope: "operator.write",
   });
-  if (!access.allowed && !localAccess.allowed) {
+  if (!access.allowed && (!restartable || !localAccess.allowed)) {
     params.publishError(access.reason);
     return;
   }
   const target = await selectChatPanePlacementTarget({
     client,
     gatewaySnapshot: params.gatewaySnapshot,
-    mode: "restart",
+    mode: dispatchRequired ? "dispatch" : "restart",
     row: params.row,
   });
   if (!target) {
@@ -217,6 +217,10 @@ export async function restartChatPanePlacement(params: {
   params.onRestartingChange(params.row.key);
   try {
     if (target.kind === "gateway") {
+      if (!restartable || !placement || placement.state !== "failed") {
+        params.publishError(t("sessionsView.actionUnavailable"));
+        return;
+      }
       await client.request(
         "sessions.reclaim",
         {

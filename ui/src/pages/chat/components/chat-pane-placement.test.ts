@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { render } from "lit";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewaySessionRow } from "../../../api/types.ts";
 import type { ApplicationPlacementStartupStatus } from "../../../app/session-placement-startup.ts";
 import { renderChatPanePlacement } from "./chat-pane-placement.ts";
@@ -142,6 +142,37 @@ describe("chat pane device placement", () => {
         expect(note).toBeNull();
         expect(reclaim?.hasAttribute("disabled")).toBe(false);
       }
+    },
+  );
+
+  it.each(["local", undefined] as const)(
+    "offers worker dispatch for a repository-only session with %s placement",
+    (placementState) => {
+      const container = document.createElement("div");
+      document.body.append(container);
+      containers.push(container);
+      const onPlacementDispatch = vi.fn();
+      const session: GatewaySessionRow = {
+        key: "agent:main:repository",
+        kind: "direct",
+        updatedAt: 0,
+        repositoryWorkspaceId: "repository-workspace-1",
+        ...(placementState
+          ? { placement: { state: placementState } as GatewaySessionRow["placement"] }
+          : {}),
+      };
+
+      render(renderChatPanePlacement({ session, onPlacementDispatch }), container);
+
+      expect(container.querySelector(".chat-pane__placement-chip")?.textContent?.trim()).toBe(
+        "Worker required",
+      );
+      const dispatch = container.querySelector<HTMLElement>(".chat-pane__placement-dispatch");
+      expect(dispatch?.textContent?.trim()).toBe("Choose worker…");
+      expect(container.querySelector(".chat-pane__placement-move")).toBeNull();
+      expect(container.querySelector(".chat-pane__placement-restart")).toBeNull();
+      dispatch?.click();
+      expect(onPlacementDispatch).toHaveBeenCalledOnce();
     },
   );
 

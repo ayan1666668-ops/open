@@ -38,6 +38,7 @@ function presentation(
     startupPending: false,
     workspaceResultReconciling: false,
     onRestart: vi.fn(),
+    onDispatch: vi.fn(),
     onReclaim: vi.fn(),
     ...overrides,
   });
@@ -113,6 +114,44 @@ describe("chat placement composer presentation", () => {
 
     expect(result.blocksSend).toBe(true);
     expect(result.busyMessage).toBe("Finishing session move…");
+  });
+
+  it.each(["local", undefined] as const)(
+    "blocks a repository-only session with %s placement and offers worker dispatch",
+    (placementState) => {
+      const onDispatch = vi.fn();
+      const row: GatewaySessionRow = {
+        key: "agent:main:repository",
+        kind: "direct",
+        updatedAt: 0,
+        repositoryWorkspaceId: "repository-workspace-1",
+        ...(placementState
+          ? { placement: { state: placementState } as GatewaySessionRow["placement"] }
+          : {}),
+      };
+
+      const result = presentation(row, { onDispatch });
+
+      expect(result.state).toEqual({ kind: "dispatch-required" });
+      expect(result.blocksSend).toBe(true);
+      expect(result.disabledBanner).toMatchObject({
+        title: "Repository worker required",
+        actionLabel: "Choose worker…",
+      });
+      result.disabledBanner?.onAction();
+      expect(onDispatch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("preserves automatic redispatch for a reclaimed repository session", () => {
+    const row = placementSession("reclaimed");
+    row.repositoryWorkspaceId = "repository-workspace-1";
+
+    const result = presentation(row);
+
+    expect(result.state).toEqual({ kind: "ready" });
+    expect(result.blocksSend).toBe(false);
+    expect(result.disabledBanner).toBeUndefined();
   });
 
   it.each(["restart", "stop-first"] as const)(

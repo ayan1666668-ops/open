@@ -8,24 +8,30 @@ import { isCloudWorkerPlacementState } from "../../../components/session-row-bad
 import { t } from "../../../i18n/index.ts";
 import { formatBytes } from "../../../lib/agents/display.ts";
 import { formatRelativeTimestamp } from "../../../lib/format.ts";
-import { resolveChatPaneWorkerPresentation } from "../chat-pane-placement.ts";
+import {
+  repositorySessionNeedsWorker,
+  resolveChatPaneWorkerPresentation,
+} from "../chat-pane-placement.ts";
 
 export function renderChatPanePlacement(props: {
   session: GatewaySessionRow | undefined;
   placementStartupStatus?: Pick<ApplicationPlacementStartupStatus, "phase" | "targetKind"> | null;
   placementMoving?: boolean;
   placementRestarting?: boolean;
+  placementDispatchDisabledReason?: string;
   placementMoveDisabledReason?: string;
   placementReclaimDisabledReason?: string;
   placementRestartDisabledReason?: string;
   onPlacementMove?: () => void;
+  onPlacementDispatch?: () => void;
   onPlacementReclaim?: () => void;
   onPlacementRestart?: () => void;
 }): TemplateResult | typeof nothing {
   const session = props.session;
   const placement = session?.placement;
   const placementState = placement?.state;
-  if (!session || !isCloudWorkerPlacementState(placementState)) {
+  const dispatchRequired = repositorySessionNeedsWorker(session);
+  if (!session || (!isCloudWorkerPlacementState(placementState) && !dispatchRequired)) {
     return nothing;
   }
   const placementMove = session.placementMove;
@@ -58,7 +64,11 @@ export function renderChatPanePlacement(props: {
     : placementMove && moveTarget
       ? t("sessionsView.movingSession", { target: moveTarget })
       : props.placementRestarting
-        ? t("sessionsView.restartingSession")
+        ? t(
+            session.repositoryWorkspaceId && placementState !== "failed"
+              ? "sessionsView.dispatchingSession"
+              : "sessionsView.restartingSession",
+          )
         : props.placementMoving
           ? t("sessionsView.movingSessionGeneric")
           : deviceOffline
@@ -67,7 +77,10 @@ export function renderChatPanePlacement(props: {
                 placementState === "draining" ||
                 placementState === "reconciling"
               ? t("sessionsView.syncingCloudFiles")
-              : worker.label;
+              : dispatchRequired
+                ? t("sessionsView.repositoryWorkerRequiredLabel")
+                : worker.label;
+  const dispatchDisabledReason = props.placementDispatchDisabledReason;
   const moveDisabledReason = props.placementMoveDisabledReason;
   const reclaimDisabledReason = props.placementReclaimDisabledReason;
   const restartDisabledReason = props.placementRestartDisabledReason;
@@ -76,7 +89,7 @@ export function renderChatPanePlacement(props: {
   });
   const exceptionState = placementMove?.error
     ? placementMove.error
-    : placementState === "active" || hasFacts
+    : dispatchRequired || placementState === "active" || hasFacts
       ? nothing
       : `${placementState}${age ? ` · ${age}` : ""}`;
   return html`
@@ -122,6 +135,21 @@ export function renderChatPanePlacement(props: {
                     : nothing
                 }
               </dl>`
+            : nothing
+        }
+        ${
+          dispatchRequired
+            ? html`<wa-dropdown-item
+                class="session-menu__item chat-pane__placement-dispatch"
+                ?disabled=${Boolean(dispatchDisabledReason)}
+                title=${dispatchDisabledReason ?? nothing}
+                @click=${() => !dispatchDisabledReason && props.onPlacementDispatch?.()}
+              >
+                <span slot="icon" class="session-menu__icon" aria-hidden="true"
+                  >${icons.monitor}</span
+                >
+                <span class="session-menu__text">${t("sessionsView.chooseWorker")}</span>
+              </wa-dropdown-item>`
             : nothing
         }
         ${

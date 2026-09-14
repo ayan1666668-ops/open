@@ -34,6 +34,17 @@ describe("worker placement runtime capabilities", () => {
     resetPluginRuntimeStateForTest();
   });
 
+  it("projects residual auto policy with the built-in dispatch capabilities", () => {
+    expect(projectWorkerPlacementAgentRuntime({ id: "auto", source: "model" })).toEqual({
+      id: "auto",
+      cloudPlacementSupported: true,
+      cloudPlacementExecutionMode: "worker-turn",
+      devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
+      devicePlacementSupported: true,
+      source: "model",
+    });
+  });
+
   it.each([
     {
       name: "ignores an unlocked historical runtime after selecting a different provider",

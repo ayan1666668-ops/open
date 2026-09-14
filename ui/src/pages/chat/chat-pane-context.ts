@@ -85,6 +85,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
         (row?.placement?.state === "active" || row?.placement?.state === "draining") &&
         row.placement.workspaceResultReconciling === true,
       onRestart: () => row && void this.restartHeaderPlacement(row),
+      onDispatch: () => row && void this.restartHeaderPlacement(row),
       onReclaim: () => row && void this.reclaimHeaderPlacement(row),
     });
   }

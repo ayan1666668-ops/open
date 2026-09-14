@@ -30,6 +30,80 @@ afterEach(async () => {
 });
 
 describe("chat pane placement", () => {
+  it("dispatches a local repository-only session to an authoritative worker target", async () => {
+    const request = dialogs.mockRequest(async (method: string) => {
+      if (method === "environments.list") {
+        return {
+          profiles: [{ id: "aws", providerId: "crabbox" }],
+          environments: [
+            {
+              id: "node:runner",
+              type: "node",
+              label: "Writer runner",
+              status: "available",
+              sessionHost: true,
+              workerSlots: { total: 1, available: 1 },
+            },
+          ],
+        };
+      }
+      return { ok: true };
+    });
+    const refreshReplacement = vi.fn(async () => undefined);
+    const { pane } = createTestChatPane({
+      client: { request } as unknown as GatewayBrowserClient,
+      sessions: { refreshReplacement } as unknown as SessionCapability,
+    });
+    pane.context.gateway.snapshot.hello = {
+      features: { methods: ["sessions.dispatch"] },
+      auth: {
+        role: "operator",
+        scopes: ["operator.admin", "operator.read", "operator.write"],
+      },
+    } as never;
+    const session = {
+      key: "agent:main:repository",
+      label: "Repository recovery",
+      kind: "direct",
+      updatedAt: 0,
+      repositoryWorkspaceId: "repository-workspace-1",
+      placement: {
+        state: "local",
+        generation: 1,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        stateChangedAtMs: 1,
+      },
+      agentRuntime: {
+        id: "auto",
+        cloudPlacementSupported: true,
+        cloudPlacementExecutionMode: "worker-turn",
+        devicePlacementSupported: true,
+        devicePlacement: { requiredNodeCommands: [], consumesWorkerSlot: true },
+        source: "model",
+      },
+    } satisfies GatewaySessionRow;
+
+    const dispatching = dialogs.track(pane.restartHeaderPlacement(session));
+    await dialogs.waitFor(() => {
+      expect(document.body.querySelector('[data-value="device:runner"]')).not.toBeNull();
+    });
+    expect(document.body.querySelector('[data-value="gateway"]')).toBeNull();
+    document.body.querySelector<HTMLButtonElement>('[data-value="device:runner"]')?.click();
+    [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.trim() === "Dispatch session")
+      ?.click();
+    await dispatching;
+
+    expect(request).toHaveBeenCalledWith("environments.list", { runtimeId: "auto" });
+    expect(request).toHaveBeenCalledWith("sessions.dispatch", {
+      key: session.key,
+      agentId: "main",
+      deviceId: "runner",
+    });
+    expect(refreshReplacement).toHaveBeenCalledWith("main");
+  });
+
   it("shows authoritative device targets to writers and moves to the selected device", async () => {
     const request = dialogs.mockRequest(async (method: string) => {
       if (method === "environments.list") {
