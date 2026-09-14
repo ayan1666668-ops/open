@@ -696,6 +696,17 @@ describe("ConfigPage Updates integration", () => {
     document.body.append(container);
     const restoreDialogPolyfill = installDialogPolyfill();
 
+    state.context.overlays.snapshot.updateStatusRefreshing = true;
+    render(page.render(), container);
+    const checkingButton = container.querySelector<HTMLButtonElement>(".btn.primary")!;
+    expect(checkingButton.textContent?.trim()).toBe("Update now");
+    expect(checkingButton.disabled).toBe(true);
+    expect(checkingButton.title).toBe("Checking for updates…");
+    expect(container.querySelector(".settings-status")?.textContent).toContain(
+      "Checking for updates…",
+    );
+    expect(container.querySelector("wa-radio-group")?.hasAttribute("disabled")).toBe(true);
+    state.context.overlays.snapshot.updateStatusRefreshing = false;
     render(page.render(), container);
 
     const channel = container.querySelector<HTMLElement & { value: string }>("wa-radio-group");
