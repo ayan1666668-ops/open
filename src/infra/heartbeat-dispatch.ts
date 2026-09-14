@@ -419,11 +419,14 @@ async function prepareHeartbeatDispatchReply(
       return {};
     }
   }
-  if (!channel || !delivery.to || !visibility.showAlerts || (failed && outcome.shouldSkipMain)) {
+  // Exec-completion wakes on a WebChat-internal session have no external
+  // channel/route by design (delivery.channel stays "none"), but the reply
+  // still belongs on the originating session's own transcript, so the
+  // no-channel/no-target gate below does not apply to this case (#147387).
+  const noChannelTarget = !prepared.isWebChatExecCompletion && (!channel || !delivery.to);
+  if (noChannelTarget || !visibility.showAlerts || (failed && outcome.shouldSkipMain)) {
     if (!failed) {
-      await unconfirmed(
-        !channel || !delivery.to ? (delivery.reason ?? "no-target") : "alerts-disabled",
-      );
+      await unconfirmed(noChannelTarget ? (delivery.reason ?? "no-target") : "alerts-disabled");
       if (!visibility.showAlerts) {
         await restoreActivity();
       }
@@ -435,10 +438,10 @@ async function prepareHeartbeatDispatchReply(
         : {
             ...event,
             status: "skipped",
-            reason: !channel || !delivery.to ? (delivery.reason ?? "no-target") : "alerts-disabled",
+            reason: noChannelTarget ? (delivery.reason ?? "no-target") : "alerts-disabled",
             hasMedia: outcome.mediaUrls.length > 0,
             indicatorType:
-              channel && delivery.to && !visibility.showAlerts && visibility.useIndicator
+              !noChannelTarget && !visibility.showAlerts && visibility.useIndicator
                 ? resolveIndicatorType("sent")
                 : undefined,
           },
@@ -446,9 +449,13 @@ async function prepareHeartbeatDispatchReply(
     );
     return {};
   }
-  const readiness = await resolveHeartbeatChannelPlugin(channel)
-    ?.heartbeat?.checkReady?.({ cfg, accountId: delivery.accountId, deps: opts.deps })
-    .catch((error: unknown) => ({ ok: false, reason: formatErrorMessage(error) }));
+  // A WebChat exec-completion reply has no channel plugin to ready-check;
+  // it delivers straight to the originating session's own transcript.
+  const readiness = channel
+    ? await resolveHeartbeatChannelPlugin(channel)
+        ?.heartbeat?.checkReady?.({ cfg, accountId: delivery.accountId, deps: opts.deps })
+        .catch((error: unknown) => ({ ok: false, reason: formatErrorMessage(error) }))
+    : undefined;
   if (readiness && !readiness.ok) {
     await unconfirmed(readiness.reason ?? HEARTBEAT_SKIP_CHANNEL_NOT_READY);
     await restoreActivity();
