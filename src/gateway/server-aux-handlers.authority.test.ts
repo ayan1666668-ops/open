@@ -32,13 +32,15 @@ const auxiliaries: GatewayAux[] = [];
 let fixture: OpenClawTestState | undefined;
 
 function createAuthorityHarness(
-  params: Pick<
-    GatewayAuxParams,
-    | "onApprovalLifecycle"
-    | "onAgentRunAuthorityClosed"
-    | "validateAgentRuntimeDelegatedAuthority"
-    | "registerWorkerTurnClaimClosedHandler"
-    | "getNativeApprovalRouteCoordinator"
+  params: Partial<
+    Pick<
+      GatewayAuxParams,
+      | "onApprovalLifecycle"
+      | "onAgentRunAuthorityClosed"
+      | "validateAgentRuntimeDelegatedAuthority"
+      | "registerWorkerTurnClaimClosedHandler"
+      | "getNativeApprovalRouteCoordinator"
+    >
   > = {},
 ): GatewayAux {
   const aux = createGatewayAuxHandlers({

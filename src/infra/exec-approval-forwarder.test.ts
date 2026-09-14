@@ -12,6 +12,7 @@ import {
   createApprovalNativeRouteCoordinator,
   type ApprovalNativeRouteCoordinator,
 } from "./approval-native-route-coordinator.js";
+import type { ChannelApprovalKind } from "./approval-types.js";
 import { createExecApprovalForwarder } from "./exec-approval-forwarder.js";
 import type { ExecApprovalRequest } from "./exec-approvals.js";
 
@@ -45,12 +46,15 @@ const baseRequest = {
 const activeForwarders: Array<ReturnType<typeof createExecApprovalForwarder>> = [];
 const activeRouteCoordinators: ApprovalNativeRouteCoordinator[] = [];
 
-function startNativeApprovalRoute(params: {
-  coordinator: ApprovalNativeRouteCoordinator;
+type NativeRouteFixture = {
   channel: string;
   accountId?: string;
-  handledKinds?: Array<"exec" | "plugin" | "system-agent">;
-}) {
+  handledKinds?: ChannelApprovalKind[];
+};
+
+function startNativeApprovalRoute(
+  params: NativeRouteFixture & { coordinator: ApprovalNativeRouteCoordinator },
+) {
   const reporter = params.coordinator.createReporter({
     handledKinds: new Set(params.handledKinds ?? ["exec", "plugin", "system-agent"]),
     channel: params.channel,
@@ -287,11 +291,7 @@ function createForwarder(params: {
     NonNullable<Parameters<typeof createExecApprovalForwarder>[0]>["resolveSessionTarget"]
   >;
   /** Native approval handlers running in the owning Gateway when the request arrives. */
-  nativeRoutes?: Array<{
-    channel: string;
-    accountId?: string;
-    handledKinds?: Array<"exec" | "plugin" | "system-agent">;
-  }>;
+  nativeRoutes?: NativeRouteFixture[];
 }) {
   const deliver = params.deliver ?? vi.fn().mockResolvedValue([]);
   const coordinator = createApprovalNativeRouteCoordinator();
@@ -760,7 +760,7 @@ describe("exec approval forwarder", () => {
       expect(deliver).toHaveBeenCalledTimes(1);
     });
 
-    it.each([
+    it.each<{ nativeRoutes: NativeRouteFixture[]; forwarded: boolean }>([
       { nativeRoutes: [], forwarded: true },
       { nativeRoutes: [{ channel: "telegram", accountId: "default" }], forwarded: false },
       {
