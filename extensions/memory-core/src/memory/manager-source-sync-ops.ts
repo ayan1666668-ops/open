@@ -11,6 +11,7 @@ import {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { runSqliteImmediateTransaction } from "openclaw/plugin-sdk/sqlite-runtime";
 import { MemoryIndexRevisionConflictError } from "./manager-db.js";
+import type { MemoryIndexEntry } from "./manager-index-preparation.js";
 import { MemoryManagerSessionSyncOps } from "./manager-session-sync-ops.js";
 import {
   isMemorySessionIndexable,
@@ -23,7 +24,6 @@ import {
   type MemorySourceFileStateRow,
 } from "./manager-source-state.js";
 import type {
-  MemoryIndexEntry,
   MemoryIndexWorkItem,
   MemorySourceSyncPlan,
   MemorySyncProgressState,
