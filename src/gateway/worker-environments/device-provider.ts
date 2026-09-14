@@ -8,7 +8,7 @@ import {
 import {
   WorkerProviderError,
   type WorkerProfile,
-  type WorkerProvider,
+  type WorkerProviderV1,
 } from "../../plugins/types.js";
 import type {
   NodeWorkerSupervisorNodeProof,
@@ -136,7 +136,7 @@ export function createDeviceWorkerRuntime(options: DeviceWorkerRuntimeOptions) {
       ...(unavailableReason ? { unavailableReason } : {}),
     };
   };
-  const provider: WorkerProvider = {
+  const provider: WorkerProviderV1 = {
     id: DEVICE_WORKER_PROVIDER_ID,
     liveAuthorityVersion: 1,
     supportedExecutionModes: ["worker-turn", "remote-exec"],
