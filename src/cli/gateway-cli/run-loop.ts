@@ -251,20 +251,18 @@ export async function runGatewayLoop(params: {
     cleanupSignals();
     params.runtime.exit(code);
   };
-  const flushLogsBeforeExit = async () => {
+  const flushLogsBeforeExit = async (timeoutMs = LOG_FLUSH_EXIT_TIMEOUT_MS) => {
     flushDiagnosticsTimeline();
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
     const flushed = await Promise.race([
       flushLogger().then(() => true),
       new Promise<false>((resolve) => {
-        flushTimer = setTimeout(() => resolve(false), LOG_FLUSH_EXIT_TIMEOUT_MS);
+        flushTimer = setTimeout(() => resolve(false), timeoutMs);
       }),
     ]);
     clearTimeout(flushTimer);
     if (!flushed) {
-      gatewayLog.warn(
-        `log flush did not settle within ${LOG_FLUSH_EXIT_TIMEOUT_MS}ms; continuing shutdown`,
-      );
+      gatewayLog.warn(`log flush did not settle within ${timeoutMs}ms; continuing shutdown`);
     }
   };
   const exitProcessAfterLogFlush = async (
@@ -406,7 +404,8 @@ export async function runGatewayLoop(params: {
       writeStabilityBundle(reason, failure?.error, failure?.step);
     } finally {
       // Exit rescue cannot replay an issued file append; join it before final authority checks.
-      await flushLogsBeforeExit();
+      // Reserve half the hard-exit grace for final shutdown bookkeeping.
+      await flushLogsBeforeExit(HARD_EXIT_WATCHDOG_GRACE_MS / 2);
       const owner = getManagedUpdateOwner();
       if (owner) {
         forceActiveRestartExit?.();

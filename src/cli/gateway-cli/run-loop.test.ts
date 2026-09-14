@@ -1940,34 +1940,34 @@ describe("runGatewayLoop", () => {
     });
   });
 
-  it.each(["SIGTERM", "SIGUSR1"] as const)(
-    "bounds the file-log flush before a %s exit",
-    async (signal) => {
-      vi.clearAllMocks();
+  it.each([
+    { signal: "SIGTERM", timeoutMs: 4_000 },
+    { signal: "SIGUSR1", timeoutMs: 1_000 },
+  ] as const)("bounds the file-log flush before a $signal exit", async ({ signal, timeoutMs }) => {
+    vi.clearAllMocks();
 
-      await withIsolatedSignals(async ({ captureSignal }) => {
-        const { close, runtime, exited } = await createSignaledLoopHarness();
-        if (signal === "SIGUSR1") {
-          close.mockRejectedValueOnce(new Error("close owner failed"));
-        }
-        const signalExit = captureSignal(signal);
-        flushLogger.mockReturnValueOnce(new Promise<void>(() => {}));
-        vi.useFakeTimers();
-        try {
-          signalExit();
-          await vi.advanceTimersByTimeAsync(4_000);
+    await withIsolatedSignals(async ({ captureSignal }) => {
+      const { close, runtime, exited } = await createSignaledLoopHarness();
+      if (signal === "SIGUSR1") {
+        close.mockRejectedValueOnce(new Error("close owner failed"));
+      }
+      const signalExit = captureSignal(signal);
+      flushLogger.mockReturnValueOnce(new Promise<void>(() => {}));
+      vi.useFakeTimers();
+      try {
+        signalExit();
+        await vi.advanceTimersByTimeAsync(timeoutMs);
 
-          await expect(exited).resolves.toBe(signal === "SIGUSR1" ? 1 : 0);
-          expect(runtime.exit).toHaveBeenCalledWith(signal === "SIGUSR1" ? 1 : 0);
-          expect(gatewayLog.warn).toHaveBeenCalledWith(
-            "log flush did not settle within 4000ms; continuing shutdown",
-          );
-        } finally {
-          vi.useRealTimers();
-        }
-      });
-    },
-  );
+        await expect(exited).resolves.toBe(signal === "SIGUSR1" ? 1 : 0);
+        expect(runtime.exit).toHaveBeenCalledWith(signal === "SIGUSR1" ? 1 : 0);
+        expect(gatewayLog.warn).toHaveBeenCalledWith(
+          `log flush did not settle within ${timeoutMs}ms; continuing shutdown`,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 
   it("exits after draining a SIGTERM restart intent without starting a successor", async () => {
     vi.clearAllMocks();

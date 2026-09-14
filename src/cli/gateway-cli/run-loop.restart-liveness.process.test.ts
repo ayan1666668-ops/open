@@ -13,12 +13,16 @@ const tempDirs = createTempDirTracker();
 const children = new Map<ChildProcess, Promise<unknown[]>>();
 const runLoopUrl = resolveRuntimeWorkerUrl(gatewayDirectStopEntrypoints.runLoop).href;
 const restartUrl = resolveRuntimeWorkerUrl(gatewayDirectStopEntrypoints.restartPolicy).href;
+const fileLogTransportUrl = resolveRuntimeWorkerUrl(
+  gatewayDirectStopEntrypoints.fileLogTransport,
+).href;
 
 const childScript = `
   import fs from "node:fs";
   import http from "node:http";
   import { runGatewayLoop } from ${JSON.stringify(runLoopUrl)};
   import { setGatewaySigusr1RestartPolicy } from ${JSON.stringify(restartUrl)};
+  import { fileLogTransport } from ${JSON.stringify(fileLogTransportUrl)};
   const faultPath = process.argv[1];
   const closeFailure = process.argv[2];
   setGatewaySigusr1RestartPolicy({ allowExternal: true });
@@ -40,6 +44,14 @@ const childScript = `
           getTailscaleIngressEndpoint: () => undefined,
           startupSettled: Promise.resolve(),
           close: () => {
+            if (closeFailure === "pending") {
+              fileLogTransport.setAppenderForTests(() => {
+                process.stdout.write("append:pending\\n");
+                return new Promise(() => {});
+              });
+              process.stdout.write("close:pending\\n");
+              return new Promise(() => {});
+            }
             if (closeFailure) {
               const error = new TypeError("fixture close owner failed");
               error.stack = "TypeError: fixture close owner failed\\n    at closeOwner (fixture.js:12:3)";
@@ -107,6 +119,9 @@ function startFixture(initialFailure = false, closeFailure = "") {
         OPENCLAW_STATE_DIR: stateDir,
         OPENCLAW_CONFIG_PATH: path.join(directory, "openclaw.json"),
         OPENCLAW_NO_RESPAWN: "1",
+        ...(closeFailure === "pending"
+          ? { OPENCLAW_LAUNCHD_LABEL: "ai.openclaw.gateway.test" }
+          : {}),
         NODE_DISABLE_COMPILE_CACHE: "1",
         TSX_DISABLE_CACHE: "1",
         ESBUILD_WORKER_THREADS: "0",
@@ -151,6 +166,25 @@ async function expectFailedRestartWaiting(
 
 describe("runGatewayLoop failed-restart process lifetime", () => {
   const posixIt = process.platform === "win32" ? it.skip : it;
+
+  it.skipIf(process.platform !== "darwin")(
+    "exits before the hard watchdog when a shutdown-deadline log append stalls",
+    async () => {
+      const fixture = startFixture(false, "pending");
+      await fixture.waitForOutput("ready:1");
+      expect(fixture.child.kill("SIGTERM")).toBe(true);
+      await fixture.waitForOutput("close:pending");
+      expect(await fixture.closed, fixture.output()).toEqual([0, null]);
+      expect(fixture.output()).toContain("append:pending");
+      const bundleDir = path.join(fixture.stateDir, "logs", "stability");
+      const files = fs.readdirSync(bundleDir);
+      expect(files).toHaveLength(1);
+      expect(JSON.parse(fs.readFileSync(path.join(bundleDir, files[0]!), "utf8"))).toMatchObject({
+        reason: "gateway.stop_shutdown_timeout",
+      });
+    },
+    60_000,
+  );
 
   posixIt.each(["sync", "rejected"])(
     "persists %s close failures before a SIGUSR1 force-exit",
