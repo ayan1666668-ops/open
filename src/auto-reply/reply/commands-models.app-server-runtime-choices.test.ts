@@ -84,7 +84,7 @@ describe("buildPreparedModelsProviderData app-server runtime choices", () => {
     expect(choices?.map((choice) => choice.id)).toEqual(["openclaw", "copilot"]);
     expect(choices?.find((choice) => choice.id === "copilot")).toMatchObject({
       label: "GitHub Copilot",
-      description: "Use the GitHub Copilot runtime selected by the effective harness policy.",
+      description: "Use GitHub Copilot to run this model.",
     });
     expect(data.runtimeChoicesByProvider?.get("github-copilot")).toEqual(choices);
   });
