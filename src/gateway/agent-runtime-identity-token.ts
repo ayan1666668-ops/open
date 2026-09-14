@@ -29,7 +29,7 @@ import {
   resolveMessageActionTurnCapability,
   type AgentRuntimeMessageActionContext,
 } from "./message-action-turn-capability.js";
-import type { GatewayUiCommandTarget } from "./ui-command-target.js";
+import type { GatewayUiCommandTarget } from "./ui-command-target.types.js";
 import type { WorkerSessionTurnClaim } from "./worker-environments/placement-record.js";
 
 const AGENT_RUNTIME_IDENTITY_TOKEN_CONTEXT = "openclaw:gateway-agent-runtime-identity-token:v1";

@@ -50,6 +50,12 @@ it with queued turns and worker execution. If that browser disconnects or the
 turn has no Control UI target, the command fails with `UNAVAILABLE`. Ask again
 from the open Control UI; the command never falls back to a broadcast.
 
+Standalone RPC and MCP callers that previously used `ui.command` to broadcast
+must invoke it from a requesting Control UI connection or an agent turn started
+there. Without that browser target, they now receive `UNAVAILABLE`, even if
+other dashboards are connected. This intentionally replaces the legacy
+broadcast contract.
+
 The Gateway RPC requires `operator.write`. The tool can change presentation
 state only: it cannot read pixels, take screenshots, click arbitrary page
 content, or bypass the permissions of the selected session and operator

@@ -2,7 +2,7 @@
 import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { DmScope, ReplyToMode } from "../config/types.base.js";
 import type { GroupToolPolicyConfig } from "../config/types.tools.js";
-import type { GatewayUiCommandTarget } from "../gateway/ui-command-target.js";
+import type { GatewayUiCommandTarget } from "../gateway/ui-command-target.types.js";
 import type {
   MediaUnderstandingDecision,
   MediaUnderstandingOutput,

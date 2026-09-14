@@ -3,7 +3,7 @@ import type { TrustedSubagentCompletionHandoff } from "../../agents/subagents/an
 import type { ChatType } from "../../channels/chat-type.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { GroupToolPolicyConfig } from "../../config/types.tools.js";
-import type { GatewayUiCommandTarget } from "../../gateway/ui-command-target.js";
+import type { GatewayUiCommandTarget } from "../../gateway/ui-command-target.types.js";
 import type { ImageContent } from "../../llm/types.js";
 import type { MediaFact } from "../../media/media-facts.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";

@@ -38,7 +38,7 @@ export type McpLoopbackRequestContext = {
   modelHasVision?: boolean;
   messageProvider?: string;
   clientCaps?: string[];
-  gatewayUiCommandTarget?: import("./ui-command-target.js").GatewayUiCommandTarget;
+  gatewayUiCommandTarget?: import("./ui-command-target.types.js").GatewayUiCommandTarget;
   /** Host-selected pinned authoring capability; never sourced from MCP request headers. */
   pinnedWidgetAuthoring?: boolean;
   currentChannelId?: string;

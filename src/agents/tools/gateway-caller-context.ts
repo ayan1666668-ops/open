@@ -6,7 +6,7 @@ import type {
   GatewayContextResolver,
   GatewayRequestContext,
 } from "../../gateway/server-methods/types.js";
-import type { GatewayUiCommandTarget } from "../../gateway/ui-command-target.js";
+import type { GatewayUiCommandTarget } from "../../gateway/ui-command-target.types.js";
 import type { WorkerSessionTurnClaim } from "../../gateway/worker-environments/placement-record.js";
 import type { WorkerTurnExecutionIdentityCapability } from "../../gateway/worker-environments/placement-turn-claim-events.js";
 import type { AgentRunDelegatedAuthority } from "../../infra/agent-run-registry.js";

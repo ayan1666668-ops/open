@@ -201,7 +201,7 @@ type OpenClawCodingToolsOptions = {
   questionPrompt?: QuestionPromptDelivery;
   /** Capabilities declared by the gateway client that originated this run. */
   clientCaps?: string[];
-  gatewayUiCommandTarget?: import("../gateway/ui-command-target.js").GatewayUiCommandTarget;
+  gatewayUiCommandTarget?: import("../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
   /** Host-admitted dashboard authoring without an originating inline renderer. */
   pinnedWidgetAuthoring?: boolean;
   /** Out-of-band plugin bindings attached by the run initiator. */
