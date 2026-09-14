@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
 import * as sessionDirs from "../agents/session-dirs.js";
-import { pinRuntimePaths } from "../config/paths.js";
+import * as runtimePaths from "../config/paths.js";
 import type { InternalSessionEntry } from "../config/sessions.js";
 import {
   appendTranscriptEvent,
@@ -240,7 +240,7 @@ test("automatic list and search projection reuse conventional state-directory pr
     await withEnvAsync(
       { OPENCLAW_HOME: home, OPENCLAW_STATE_DIR: undefined, OPENCLAW_TEST_FAST: "0" },
       async () => {
-        pinRuntimePaths();
+        runtimePaths.pinRuntimePaths();
         const agentIds = Array.from({ length: 29 }, (_, index) => `agent-${index}`);
         const storeTemplate = path.join(
           stateDir,
@@ -265,7 +265,7 @@ test("automatic list and search projection reuse conventional state-directory pr
           metadata,
           async () => {
             const observations = [];
-            for (const search of [undefined, "unmatched-runtime-search"]) {
+            for (const search of [undefined, "unmatched-runtime-search", "openclaw"]) {
               const request = { configuredAgentsOnly: true, includeGlobal: false, search };
               const counts = [];
               for (const agentRuntimeOverride of ["openclaw", undefined]) {
@@ -289,6 +289,7 @@ test("automatic list and search projection reuse conventional state-directory pr
                 const readlink = vi.spyOn(fsSync, "readlinkSync");
                 const realpath = vi.spyOn(fsSync.realpathSync, "native");
                 const stat = vi.spyOn(fsSync, "statSync");
+                const environments = vi.spyOn(runtimePaths, "captureRuntimeStateEnvironment");
                 syncBuiltinESMExports();
                 try {
                   const listed = await directSessionReq<{ sessions: Array<{ key: string }> }>(
@@ -296,7 +297,12 @@ test("automatic list and search projection reuse conventional state-directory pr
                     request,
                   );
                   expect(listed.ok).toBe(true);
-                  expect(listed.payload?.sessions).toHaveLength(search ? 0 : agentIds.length);
+                  expect(listed.payload?.sessions).toHaveLength(
+                    search === "unmatched-runtime-search" ? 0 : agentIds.length,
+                  );
+                  expect
+                    .soft(environments.mock.calls.length, search ?? "list")
+                    .toBe(agentRuntimeOverride ? 0 : 1);
                   counts.push({
                     exists: exists.mock.calls.length,
                     stateDirectoryExists: exists.mock.calls.filter(
@@ -308,7 +314,7 @@ test("automatic list and search projection reuse conventional state-directory pr
                     stat: stat.mock.calls.length,
                   });
                 } finally {
-                  for (const spy of [exists, lstat, readlink, realpath, stat]) {
+                  for (const spy of [exists, lstat, readlink, realpath, stat, environments]) {
                     spy.mockRestore();
                   }
                   syncBuiltinESMExports();
@@ -329,7 +335,7 @@ test("automatic list and search projection reuse conventional state-directory pr
       },
     );
   } finally {
-    pinRuntimePaths();
+    runtimePaths.pinRuntimePaths();
   }
 });
 

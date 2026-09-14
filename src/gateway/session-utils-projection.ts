@@ -10,6 +10,7 @@ import { selectModelCatalogRuntimeEntry } from "../agents/model-catalog-view.js"
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
 import { resolveSessionModelIdentityRef } from "../agents/session-model-ref.js";
 import { buildSubagentSessionListReadIndex } from "../agents/subagents/registry/subagent-registry-read.js";
+import { captureRuntimeStateEnvironment } from "../config/paths.js";
 import { resolveSessionStorePathCore, type SessionEntry } from "../config/sessions.js";
 import type { GatewayStoredSessionTargets } from "../config/sessions/combined-store-gateway.js";
 import { resolveConcreteSessionStorePath } from "../config/sessions/paths.js";
@@ -234,6 +235,9 @@ export function resolveGatewaySessionRuntimeProjection(params: {
     agentRuntime.id = resolveWorkerPlacementModelRuntime({
       ...params,
       entry,
+      preparedEnvironment: params.rowContext
+        ? (params.rowContext.workerPlacementEnvironment ??= captureRuntimeStateEnvironment())
+        : undefined,
     });
   }
   return {

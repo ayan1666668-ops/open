@@ -4,7 +4,7 @@ import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-a
 import { isCliProvider } from "../../agents/model-selection-cli.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
-import { STATE_DIR } from "../../config/paths.js";
+import { captureRuntimeStateEnvironment } from "../../config/paths.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -48,6 +48,7 @@ export function resolveWorkerPlacementModelRuntime(
   params: Parameters<typeof resolveWorkerPlacementSessionRuntime>[0] & {
     provider: string;
     model: string;
+    preparedEnvironment?: NodeJS.ProcessEnv;
   },
 ): string {
   const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider(params);
@@ -71,10 +72,7 @@ export function resolveWorkerPlacementModelRuntime(
           modelId: params.model,
           authProfileId: params.entry.authProfileOverride,
           preparedAuthDirectories: {
-            env: {
-              ...process.env,
-              OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR?.trim() || STATE_DIR,
-            },
+            env: params.preparedEnvironment ?? captureRuntimeStateEnvironment(),
             get agentDir() {
               return resolveEffectiveAgentDir(params.cfg, params.agentId, { env: this.env });
             },
