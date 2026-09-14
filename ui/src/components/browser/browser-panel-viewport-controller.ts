@@ -24,6 +24,22 @@ const VIEWPORT_RESIZE_DELAY_MS = 300;
 const MIN_VIEWPORT_DIMENSION = 100;
 const MAX_VIEWPORT_DIMENSION = 8192;
 
+// Opt back into the legacy panel-driven viewport resizing.
+const VIEWPORT_FOLLOW_PREF_KEY = "openclaw.browserPanel.followViewport";
+
+/**
+ * The panel is a viewer: the remote page owns its viewport, and the live frame
+ * scales to the panel. Users who prefer the legacy panel-driven resizing can
+ * opt back in with this localStorage flag.
+ */
+function followPanelViewportPreferred(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(VIEWPORT_FOLLOW_PREF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** Reconciles the visible screenshot stage with its remote page's CSS viewport. */
 export class BrowserPanelViewportController {
   observedViewportSize: { width: number; height: number } | null = null;
@@ -77,6 +93,11 @@ export class BrowserPanelViewportController {
       return;
     }
     this.controller.stream.resize();
+    // Locked by default: the panel is a viewer, not the owner of the page's
+    // layout viewport. The live frame scales to the panel instead.
+    if (!followPanelViewportPreferred()) {
+      return;
+    }
     const width = Math.min(
       MAX_VIEWPORT_DIMENSION,
       Math.max(MIN_VIEWPORT_DIMENSION, Math.round(observed.width)),

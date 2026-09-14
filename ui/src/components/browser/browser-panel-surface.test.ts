@@ -1,9 +1,47 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BROWSER_ANNOTATION_EVENT, type BrowserAnnotationDraft } from "./browser-annotation.ts";
 import {
+  browserPanelNormalizedPoint,
   dispatchCompositedBrowserAnnotation,
   type BrowserPanelView,
 } from "./browser-panel-surface.ts";
+
+describe("browserPanelNormalizedPoint", () => {
+  it("maps pointers against the rendered frame box when present", () => {
+    const stage = document.createElement("div");
+    const shot = document.createElement("img");
+    shot.className = "bp-shot";
+    stage.appendChild(shot);
+    vi.spyOn(shot, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 20,
+      width: 200,
+      height: 100,
+    } as DOMRect);
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 400,
+      height: 400,
+    } as DOMRect);
+    expect(browserPanelNormalizedPoint(stage, { clientX: 110, clientY: 70 } as MouseEvent)).toEqual(
+      { x: 0.5, y: 0.5 },
+    );
+  });
+
+  it("falls back to the stage when no frame is rendered", () => {
+    const stage = document.createElement("div");
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 400,
+      height: 200,
+    } as DOMRect);
+    expect(browserPanelNormalizedPoint(stage, { clientX: 100, clientY: 50 } as MouseEvent)).toEqual(
+      { x: 0.25, y: 0.25 },
+    );
+  });
+});
 
 describe("dispatchCompositedBrowserAnnotation", () => {
   afterEach(() => {

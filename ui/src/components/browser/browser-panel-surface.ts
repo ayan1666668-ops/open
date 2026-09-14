@@ -60,6 +60,13 @@ export function browserPanelShouldForwardKey(key: string): boolean {
   return FORWARDED_KEYS.has(key) || key.length === 1;
 }
 
+/** Bounding box of the rendered live frame inside the stage, when measurable. */
+function renderedFrameBox(stage: HTMLElement | null): DOMRect | null {
+  const shot = stage?.querySelector<HTMLElement>(".bp-shot");
+  const rect = shot?.getBoundingClientRect();
+  return rect && rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
 /** Normalized [0..1] stage coordinates for a pointer event. */
 export function browserPanelNormalizedPoint(
   stage: HTMLElement | null,
@@ -68,7 +75,10 @@ export function browserPanelNormalizedPoint(
   if (!stage) {
     return null;
   }
-  const rect = stage.getBoundingClientRect();
+  // The live frame may letterbox inside the stage (locked viewport, or a
+  // stream frame that still matches an older panel size); pointers must map
+  // against the rendered frame box, not the surrounding stage.
+  const rect = renderedFrameBox(stage) ?? stage.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) {
     return null;
   }
@@ -133,7 +143,31 @@ export function paintBrowserPanelOverlay(
     return;
   }
   context.clearRect(0, 0, width, height);
-  paintAnnotations(context, { width, height, strokes, highlight });
+  // Strokes/highlights are normalized against the rendered frame, which may
+  // letterbox inside the stage; map them into stage space before painting.
+  const frameBox = renderedFrameBox(stage);
+  const shotWidth = frameBox ? Math.max(1, Math.round(frameBox.width)) : width;
+  const shotHeight = frameBox ? Math.max(1, Math.round(frameBox.height)) : height;
+  const scaleX = shotWidth / width;
+  const scaleY = shotHeight / height;
+  const offsetX = (width - shotWidth) / 2;
+  const offsetY = (height - shotHeight) / 2;
+  const scaledStrokes = strokes.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({
+      x: point.x * scaleX + offsetX,
+      y: point.y * scaleY + offsetY,
+    })),
+  }));
+  const scaledHighlight = highlight
+    ? {
+        x: highlight.x * scaleX + offsetX,
+        y: highlight.y * scaleY + offsetY,
+        width: highlight.width * scaleX,
+        height: highlight.height * scaleY,
+      }
+    : null;
+  paintAnnotations(context, { width, height, strokes: scaledStrokes, highlight: scaledHighlight });
 }
 
 export function dispatchCompositedBrowserAnnotation(
