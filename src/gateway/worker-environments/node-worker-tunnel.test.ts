@@ -1,6 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
@@ -54,6 +56,38 @@ vi.mock("../../logging/subsystem.js", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+function hasGitDirectoryAncestor(start: string): boolean {
+  let current = path.resolve(start);
+  for (;;) {
+    if (fsSync.existsSync(path.join(current, ".git"))) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+}
+
+function resolveNonGitTempRoot(): string {
+  const candidates = [
+    os.tmpdir(),
+    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const root = fsSync.realpathSync.native(candidate);
+      if (!hasGitDirectoryAncestor(root)) {
+        return root;
+      }
+    } catch {
+      // Try the next platform temp root candidate.
+    }
+  }
+  throw new Error("Could not resolve a temp root outside a git checkout");
+}
 
 describe("node worker tunnel manager", () => {
   it.each([
@@ -632,7 +666,7 @@ describe("node worker tunnel manager", () => {
   it("preserves a typed workspace transfer cause from the node", async () => {
     workspaceInfo.mockClear();
     const record = environment();
-    const localPath = tempDirs.make("node-worker-transfer-error-");
+    const localPath = tempDirs.make("node-worker-transfer-error-", resolveNonGitTempRoot());
     const rawManifest = serializeWorkerWorkspaceManifest({
       version: 1,
       baseCommit: null,

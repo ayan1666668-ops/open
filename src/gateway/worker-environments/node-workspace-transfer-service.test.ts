@@ -1,5 +1,7 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +17,38 @@ import { startNodeWorkspaceTransferTestServer } from "./node-workspace-transfer.
 import { serializeWorkerWorkspaceManifest } from "./workspace-manifest.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+function hasGitDirectoryAncestor(start: string): boolean {
+  let current = path.resolve(start);
+  for (;;) {
+    if (fsSync.existsSync(path.join(current, ".git"))) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+}
+
+function resolveNonGitTempRoot(): string {
+  const candidates = [
+    os.tmpdir(),
+    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const root = fsSync.realpathSync.native(candidate);
+      if (!hasGitDirectoryAncestor(root)) {
+        return root;
+      }
+    } catch {
+      // Try the next platform temp root candidate.
+    }
+  }
+  throw new Error("Could not resolve a temp root outside a git checkout");
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -102,7 +136,7 @@ function retryOrUploadStatus(retryStarted: Promise<void>, upload: Promise<unknow
 
 describe("node workspace transfer service", () => {
   it("keeps a plain workspace transferable after durable result staging initializes Git", async () => {
-    const root = tempDirs.make("node-workspace-transfer-unborn-git-");
+    const root = tempDirs.make("node-workspace-transfer-unborn-git-", resolveNonGitTempRoot());
     const localPath = path.join(root, "workspace");
     await fs.mkdir(localPath);
     await fs.writeFile(path.join(localPath, "input.txt"), "gateway input\n");

@@ -1,4 +1,6 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
@@ -33,6 +35,39 @@ vi.mock("../../logging/subsystem.js", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+function hasGitDirectoryAncestor(start: string): boolean {
+  let current = path.resolve(start);
+  for (;;) {
+    if (fsSync.existsSync(path.join(current, ".git"))) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+}
+
+function resolveNonGitTempRoot(): string {
+  const candidates = [
+    os.tmpdir(),
+    ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"]),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const root = fsSync.realpathSync.native(candidate);
+      if (!hasGitDirectoryAncestor(root)) {
+        return root;
+      }
+    } catch {
+      // Try the next platform temp root candidate.
+    }
+  }
+  throw new Error("Could not resolve a temp root outside a git checkout");
+}
+
 afterEach(() => {
   workspaceWarning.mockReset();
   vi.unstubAllEnvs();
@@ -173,8 +208,9 @@ describe("worker workspace reconciliation publication", () => {
     ["preserves publication failures and rollback when scratch cleanup fails", true, true],
     ["removes disposable scratch without warning when cleanup succeeds", false, false],
   ])("%s", async (_name, cleanupFails, publicationFails) => {
-    const local = tempDirs.make("openclaw-workspace-result-cleanup-local-");
-    const payload = tempDirs.make("openclaw-workspace-result-cleanup-payload-");
+    const tempRoot = resolveNonGitTempRoot();
+    const local = tempDirs.make("openclaw-workspace-result-cleanup-local-", tempRoot);
+    const payload = tempDirs.make("openclaw-workspace-result-cleanup-payload-", tempRoot);
     await fs.writeFile(path.join(local, "result.txt"), "base\n");
     await fs.writeFile(path.join(payload, "result.txt"), "worker\n");
     const base = await readActualWorkspaceManifest({ root: local, baseCommit: null });
@@ -204,7 +240,7 @@ describe("worker workspace reconciliation publication", () => {
       },
     });
     const remove = fs.rm;
-    const scratch = tempDirs.make("openclaw-workspace-result-cleanup-scratch-");
+    const scratch = tempDirs.make("openclaw-workspace-result-cleanup-scratch-", tempRoot);
     const makeScratch = vi.spyOn(fs, "mkdtemp").mockResolvedValueOnce(scratch);
     const removeSpy = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
       if (target === scratch) {
