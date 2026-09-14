@@ -192,7 +192,7 @@ describe("sandbox effective filesystem mounts", () => {
             "read-only",
           );
         }
-        if (source !== "canonical")
+        if (source !== "canonical") {
           expect(
             (
               await bridge.readFile({
@@ -200,6 +200,7 @@ describe("sandbox effective filesystem mounts", () => {
               })
             ).toString(),
           ).toBe("HIDDEN");
+        }
       });
     },
   );

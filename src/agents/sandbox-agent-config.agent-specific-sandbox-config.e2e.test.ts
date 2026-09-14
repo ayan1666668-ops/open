@@ -57,7 +57,12 @@ function inspectCreatedDockerMounts(containerName: string | undefined) {
       writable: !sandboxMountOptionsReadOnly(options),
       type: "tmpfs",
     })),
-  ].map((mount, index) => ({ ...mount, id: index + 2 }));
+  ].map(({ destination, writable, type }, index) => ({
+    destination,
+    writable,
+    type,
+    id: index + 2,
+  }));
   const escapePath = (value: string) =>
     value.replace(/[\\ \t\n]/g, (char) => `\\${char.charCodeAt(0).toString(8).padStart(3, "0")}`);
   const rootMode = create.args.includes("--read-only") ? "ro" : "rw";
@@ -68,7 +73,7 @@ function inspectCreatedDockerMounts(containerName: string | undefined) {
     ...entries.map((entry) => {
       const parent = entries
         .filter((other) => entry.destination.startsWith(`${other.destination}/`))
-        .sort((a, b) => b.destination.length - a.destination.length)[0];
+        .toSorted((a, b) => b.destination.length - a.destination.length)[0];
       const mode = entry.writable ? "rw" : "ro";
       const backing = entry.type === "bind" ? `8:1 /bind-${entry.id}` : `0:${entry.id} /`;
       const filesystem = entry.type === "bind" ? "ext4 /dev/test rw" : `tmpfs tmpfs ${mode}`;

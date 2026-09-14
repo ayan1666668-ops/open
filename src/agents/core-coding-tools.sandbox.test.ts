@@ -19,13 +19,15 @@ function installLocalTransport(bridge: ReturnType<typeof createSandboxFsBridge>)
   );
   // Keep real path guards and pinned reads; injected transport persists bytes
   // so the session tools still enforce their ordinary readback verification.
-  const write = vi.spyOn(bridge, "writeFile").mockImplementation(local.writeFile);
+  const write = vi
+    .spyOn(bridge, "writeFile")
+    .mockImplementation((params) => local.writeFile(params));
   const create = vi
     .spyOn(bridge, "createFileExclusive")
-    .mockImplementation(local.createFileExclusive!);
-  const remove = vi.spyOn(bridge, "remove").mockImplementation(local.remove);
-  vi.spyOn(bridge, "mkdirp").mockImplementation(local.mkdirp);
-  vi.spyOn(bridge, "stat").mockImplementation(local.stat);
+    .mockImplementation((params) => local.createFileExclusive!(params));
+  const remove = vi.spyOn(bridge, "remove").mockImplementation((params) => local.remove(params));
+  vi.spyOn(bridge, "mkdirp").mockImplementation((params) => local.mkdirp(params));
+  vi.spyOn(bridge, "stat").mockImplementation((params) => local.stat(params));
   const list = vi.spyOn(bridge, "readDirectory").mockImplementation(async (params) =>
     (await fs.readdir(bridge.resolvePath(params).hostPath!, { withFileTypes: true })).map(
       (entry) => ({
@@ -272,7 +274,7 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
           applyPatchWorkspaceOnly: workspaceOnly,
           execDefaults: {},
           processDefaults: {},
-        }).find((tool) => tool.name === "apply_patch");
+        }).find((entry) => entry.name === "apply_patch");
         if (!tool) {
           throw new Error("Missing apply_patch tool");
         }
