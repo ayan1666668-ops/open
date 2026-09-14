@@ -2513,6 +2513,28 @@ describe("feishuOutbound comment-thread routing", () => {
     resetOutboundMocks();
   });
 
+  it.each([
+    ["bullets", convertMarkdownTables(tableMarkdown, "bullets")],
+    ["code", convertMarkdownTables(tableMarkdown, "code")],
+    [undefined, convertMarkdownTables(tableMarkdown, "code")],
+    ["off", tableMarkdown],
+  ] as const)(
+    "converts a table for a document-comment target in %s mode",
+    async (tables, expected) => {
+      const cfg: ClawdbotConfig = tables ? { channels: { feishu: { markdown: { tables } } } } : {};
+
+      await sendText({
+        cfg,
+        to: "comment:docx:doxcn123:7623358762119646411",
+        text: tableMarkdown,
+        accountId: "main",
+      });
+
+      expect(commentThreadParams()?.content).toBe(expected);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(feishuSecretRefPolicyCases)(
     "permits document-comment delivery only under configured SecretRef policy: $name",
     async (testCase) => {

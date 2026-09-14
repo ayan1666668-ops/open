@@ -1,5 +1,12 @@
 // Feishu tests cover comment dispatcher plugin behavior.
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
+import {
+  createEmptyPluginRegistry,
+  createTestRegistry,
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveFeishuRuntimeAccountMock = vi.hoisted(() => vi.fn());
 const createFeishuClientMock = vi.hoisted(() => vi.fn());
@@ -120,6 +127,8 @@ describe("createFeishuCommentReplyDispatcher", () => {
         text: {
           resolveTextChunkLimit: vi.fn(() => 4000),
           resolveChunkMode: vi.fn(() => "line"),
+          resolveMarkdownTableMode: vi.fn(() => "code"),
+          convertMarkdownTables: vi.fn((text: string) => text),
           chunkTextWithMode: vi.fn((text: string) => [text]),
         },
         reply: { resolveHumanDelayConfig: vi.fn(() => undefined) },
@@ -392,6 +401,8 @@ describe("createFeishuCommentReplyDispatcher", () => {
         text: {
           resolveTextChunkLimit: vi.fn(() => 12),
           resolveChunkMode: vi.fn(() => "line"),
+          resolveMarkdownTableMode: vi.fn(() => "code"),
+          convertMarkdownTables: vi.fn((text: string) => text),
           chunkTextWithMode,
         },
       },
@@ -411,12 +422,85 @@ describe("createFeishuCommentReplyDispatcher", () => {
     expect(result).toMatchObject({ content: expected, visibleReplySent: true });
   });
 
+  describe("markdown table modes", () => {
+    const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+    let actual: typeof import("openclaw/plugin-sdk/markdown-table-runtime");
+
+    beforeEach(async () => {
+      actual = await vi.importActual<typeof import("openclaw/plugin-sdk/markdown-table-runtime")>(
+        "openclaw/plugin-sdk/markdown-table-runtime",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveMarkdownTableMode: actual.resolveMarkdownTableMode,
+            convertMarkdownTables: actual.convertMarkdownTables,
+          },
+        },
+      });
+      // Feishu declares block as its plugin default; the harness registers the
+      // same meta because it does not load the runtime setup.
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "feishu",
+            source: "test",
+            plugin: {
+              id: "feishu",
+              meta: { id: "feishu" },
+              messaging: { defaultMarkdownTableMode: "block" },
+            },
+          },
+        ]),
+      );
+    });
+
+    afterEach(() => {
+      resetPluginRuntimeStateForTest();
+      setActivePluginRegistry(createEmptyPluginRegistry());
+    });
+
+    it.each(["bullets", "code", undefined, "off"] as const)(
+      "converts a table before comment delivery in %s mode",
+      async (tables: MarkdownTableMode | undefined) => {
+        const expected =
+          tables === "off"
+            ? tableMarkdown
+            : actual.convertMarkdownTables(
+                tableMarkdown,
+                tables === "bullets" ? "bullets" : "code",
+              );
+        const created = createFeishuCommentReplyDispatcher({
+          cfg: (tables ? { channels: { feishu: { markdown: { tables } } } } : {}) as never,
+          agentId: "main",
+          runtime: { log: vi.fn(), error: vi.fn() } as never,
+          accountId: "main",
+          fileToken: "doc_token_1",
+          fileType: "docx",
+          commentId: "comment_1",
+          replyId: "reply_1",
+          isWholeComment: false,
+        });
+
+        await replyDispatcherOptions(created).deliver({ text: tableMarkdown }, { kind: "final" });
+
+        expect(deliverCommentThreadTextMock.mock.calls[0]?.[1]?.content).toBe(expected);
+      },
+    );
+  });
+
   it("retains the accepted comment reply id and text when a later chunk fails", async () => {
     getFeishuRuntimeMock.mockReturnValue({
       channel: {
         text: {
           resolveTextChunkLimit: vi.fn(() => 4),
           resolveChunkMode: vi.fn(() => "line"),
+          resolveMarkdownTableMode: vi.fn(() => "code"),
+          convertMarkdownTables: vi.fn((text: string) => text),
           chunkTextWithMode: vi.fn(() => ["first", "second"]),
         },
         reply: { resolveHumanDelayConfig: vi.fn(() => undefined) },

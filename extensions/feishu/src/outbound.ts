@@ -253,13 +253,21 @@ async function sendCommentThreadReply(params: {
   }
   const account = resolveFeishuAccount({ cfg: params.cfg, accountId: params.accountId });
   const client = createFeishuClient(account);
+  // Comments have no native table renderer, so block falls back to code here.
+  const tableMode = resolveMarkdownTableMode({
+    cfg: params.cfg,
+    channel: "feishu",
+    accountId: account.accountId,
+    supportsBlockTables: false,
+  });
+  const content = convertMarkdownTables(params.text, tableMode);
   const replyId = params.replyId?.trim();
   try {
     const result = await deliverCommentThreadText(client, {
       file_token: target.fileToken,
       file_type: target.fileType,
       comment_id: target.commentId,
-      content: params.text,
+      content,
     });
     return {
       messageId:
