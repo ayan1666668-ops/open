@@ -1,11 +1,8 @@
 // Loads global dotenv files into process environment when requested.
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { parse as parseDotEnv } from "dotenv";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { resolveConfigDir } from "../utils.js";
-import { resolveRequiredHomeDir } from "./home-dir.js";
+import { resolveGlobalRuntimeDotEnvPaths } from "./dotenv-paths.js";
 import { normalizeEnvVarKey } from "./host-env-security.js";
 import { readRegularFileSync } from "./regular-file.js";
 
@@ -160,30 +157,19 @@ function loadParsedDotEnvFiles(
 /** Load global runtime dotenv files into `process.env` with first-wins precedence. */
 export function loadGlobalRuntimeDotEnvFiles(opts?: GlobalRuntimeDotEnvOptions) {
   const quiet = opts?.quiet ?? true;
-  const stateEnvPath = opts?.stateEnvPath ?? path.join(resolveConfigDir(process.env), ".env");
-  const globalEnvPaths = [...new Set([stateEnvPath, ...(opts?.additionalEnvPaths ?? [])])];
-  const defaultStateEnvPath = path.join(
-    resolveRequiredHomeDir(process.env, os.homedir),
-    ".openclaw",
-    ".env",
-  );
-  const hasExplicitNonDefaultStateDir =
-    process.env.OPENCLAW_STATE_DIR?.trim() !== undefined &&
-    path.resolve(stateEnvPath) !== path.resolve(defaultStateEnvPath);
+  const { gatewayEnvPath, globalEnvPaths } = resolveGlobalRuntimeDotEnvPaths({
+    additionalEnvPaths: opts?.additionalEnvPaths,
+    stateEnvPath: opts?.stateEnvPath,
+  });
   const globalEnvs = globalEnvPaths.map((filePath) =>
     readDotEnvFile({ entryFilter: opts?.entryFilter, filePath, quiet }),
   );
   const parsedFiles = [...globalEnvs];
   let gatewayEnv: LoadedDotEnvFile | null = null;
-  if (!hasExplicitNonDefaultStateDir) {
+  if (gatewayEnvPath) {
     gatewayEnv = readDotEnvFile({
       entryFilter: opts?.entryFilter,
-      filePath: path.join(
-        resolveRequiredHomeDir(process.env, os.homedir),
-        ".config",
-        "openclaw",
-        "gateway.env",
-      ),
+      filePath: gatewayEnvPath,
       quiet,
     });
     parsedFiles.push(gatewayEnv);
