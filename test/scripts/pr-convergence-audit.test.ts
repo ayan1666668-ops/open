@@ -26,6 +26,18 @@ type ProviderOptions = {
   headShaFinal?: string;
   prLastEditedAtInitial?: string | null;
   prLastEditedAtFinal?: string | null;
+  prTitleInitial?: string;
+  prTitleFinal?: string;
+  prTitleEditedAtInitial?: string | null;
+  prTitleEditedAtFinal?: string | null;
+  prBaseEditedAtInitial?: string | null;
+  prBaseEditedAtFinal?: string | null;
+  baseRefInitial?: string;
+  baseRefFinal?: string;
+  prStateInitial?: string;
+  prStateFinal?: string;
+  draftInitial?: boolean;
+  draftFinal?: boolean;
   prAuthor?: string;
 };
 
@@ -87,10 +99,36 @@ function createProvider(options: ProviderOptions = {}) {
             sha: pullReads === 1 ? initialHead : finalHead,
             ref: "codex/pr-convergence-audit",
           },
+          base: {
+            ref:
+              pullReads === 1
+                ? (options.baseRefInitial ?? "main")
+                : (options.baseRefFinal ?? options.baseRefInitial ?? "main"),
+          },
+          state:
+            pullReads === 1
+              ? (options.prStateInitial ?? "OPEN")
+              : (options.prStateFinal ?? options.prStateInitial ?? "OPEN"),
+          draft:
+            pullReads === 1
+              ? (options.draftInitial ?? false)
+              : (options.draftFinal ?? options.draftInitial ?? false),
+          title:
+            pullReads === 1
+              ? (options.prTitleInitial ?? "Audit PR convergence")
+              : (options.prTitleFinal ?? options.prTitleInitial ?? "Audit PR convergence"),
           last_edited_at:
             pullReads === 1
               ? (options.prLastEditedAtInitial ?? null)
               : (options.prLastEditedAtFinal ?? options.prLastEditedAtInitial ?? null),
+          title_edited_at:
+            pullReads === 1
+              ? (options.prTitleEditedAtInitial ?? null)
+              : (options.prTitleEditedAtFinal ?? options.prTitleEditedAtInitial ?? null),
+          base_edited_at:
+            pullReads === 1
+              ? (options.prBaseEditedAtInitial ?? null)
+              : (options.prBaseEditedAtFinal ?? options.prBaseEditedAtInitial ?? null),
           user: { login: options.prAuthor ?? "pr-author" },
         };
       },
@@ -246,6 +284,8 @@ describe("pr-convergence-audit", () => {
     "No actionable findings.",
     "No P1 findings remain.",
     "Actionable findings: 0",
+    "Actionable findings: **0**",
+    "P0: 0, P1: 0, P2: 0",
     "The exact-head review is not BLOCKED.",
   ])("does not create blockers from negated review prose: %s", (body) => {
     const findings = extractFindingsFromEvidenceItem(
@@ -265,6 +305,333 @@ describe("pr-convergence-audit", () => {
     );
 
     expect(findings).toEqual([]);
+  });
+
+  it("does not misread a do-not-merge instruction as a negated P1", () => {
+    const item = {
+      id: "active-p1",
+      surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+      url: `${prUrl}#pullrequestreview-active-p1`,
+      author: "maintainer",
+      createdAt: "2026-07-26T09:00:00Z",
+      effectiveAt: "2026-07-26T09:00:00Z",
+      body: "Do not merge until P1 is fixed.",
+      reviewState: "CHANGES_REQUESTED",
+      reviewedSha: headSha,
+      commitId: headSha,
+    };
+
+    expect(extractFindingsFromEvidenceItem(item, headSha)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "p1", currentHead: true })]),
+    );
+  });
+
+  it.each(["P1: False success when an upload fails", "P1: Fixed-size buffer overflows"])(
+    "does not interpret a finding title as resolved: %s",
+    (body) => {
+      const findings = extractFindingsFromEvidenceItem(
+        {
+          id: "finding-title",
+          surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+          url: `${prUrl}#pullrequestreview-finding-title`,
+          author: "maintainer",
+          createdAt: "2026-07-26T09:00:00Z",
+          effectiveAt: "2026-07-26T09:00:00Z",
+          body,
+          reviewState: "COMMENTED",
+          reviewedSha: headSha,
+          commitId: headSha,
+        },
+        headSha,
+      );
+
+      expect(findings).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: "p1", currentHead: true })]),
+      );
+    },
+  );
+
+  it.each(["No P0/P1/P2 findings.", "No **P0**/**P1**/**P2** findings.", "**P1**: 0"])(
+    "recognizes negated severity lists and Markdown formatting: %s",
+    (body) => {
+      const findings = extractFindingsFromEvidenceItem(
+        {
+          id: "formatted-negation",
+          surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+          url: `${prUrl}#pullrequestreview-formatted-negation`,
+          author: "maintainer",
+          createdAt: "2026-07-26T09:00:00Z",
+          effectiveAt: "2026-07-26T09:00:00Z",
+          body,
+          reviewState: "COMMENTED",
+          reviewedSha: headSha,
+          commitId: headSha,
+        },
+        headSha,
+      );
+
+      expect(findings).toEqual([]);
+    },
+  );
+
+  it("retains a BLOCKED finding from an authenticated repository actor", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      issueComments: [
+        clawsweeperComment({ id: 9107, body: passBody }),
+        {
+          id: 9108,
+          html_url: `${prUrl}#issuecomment-9108`,
+          created_at: "2026-07-26T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: [
+            "BLOCKED: authentication bypass remains.",
+            `<!-- clawsweeper-verdict:note item=${pr} sha=${headSha} -->`,
+          ].join("\n"),
+        },
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.BLOCKED);
+    expect(result.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "blocked", currentHead: true })]),
+    );
+  });
+
+  it("retains an unresolved BLOCKED inline thread from an authenticated reviewer", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      inlineReviewComments: [
+        {
+          id: 9112,
+          html_url: `${prUrl}#discussion_r9112`,
+          created_at: "2026-07-26T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "BLOCKED: authentication bypass remains.",
+          commit_id: headSha,
+          thread_resolved: false,
+        },
+      ],
+      issueComments: [clawsweeperComment({ id: 9113, body: passBody })],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.BLOCKED);
+    expect(result.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "blocked", currentHead: true })]),
+    );
+  });
+
+  it("preserves a resolved inline thread as evidence without keeping its finding active", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      inlineReviewComments: [
+        {
+          id: 9114,
+          html_url: `${prUrl}#discussion_r9114`,
+          created_at: "2026-07-26T10:00:00Z",
+          author_association: "MEMBER",
+          user: { login: "maintainer", type: "User" },
+          body: "P1: Historical finding in a resolved thread.",
+          commit_id: headSha,
+          thread_resolved: true,
+        },
+      ],
+      issueComments: [clawsweeperComment({ id: 9115, body: passBody })],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.READY);
+    expect(result.evidence.inlineReviewComments).toHaveLength(1);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("uses only the latest decisive formal review from each reviewer", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      formalReviews: [
+        {
+          id: 100,
+          html_url: `${prUrl}#pullrequestreview-100`,
+          submitted_at: "2026-07-26T09:00:00Z",
+          user: { login: "reviewer" },
+          body: "P1: Fix the unsafe path.",
+          state: "CHANGES_REQUESTED",
+          commit_id: headSha,
+        },
+        {
+          id: 101,
+          html_url: `${prUrl}#pullrequestreview-101`,
+          submitted_at: "2026-07-26T09:05:00Z",
+          user: { login: "reviewer" },
+          body: "The requested change is resolved.",
+          state: "APPROVED",
+          commit_id: headSha,
+        },
+      ],
+      issueComments: [
+        clawsweeperComment({
+          id: 9109,
+          body: passBody,
+          updatedAt: "2026-07-26T09:06:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.READY);
+    expect(result.evidence.formalReviews).toHaveLength(2);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("lets a later approval supersede an earlier COMMENTED body finding", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      formalReviews: [
+        {
+          id: 102,
+          html_url: `${prUrl}#pullrequestreview-102`,
+          submitted_at: "2026-07-26T09:00:00Z",
+          user: { login: "reviewer" },
+          body: "P1: Fix the unsafe path.",
+          state: "COMMENTED",
+          commit_id: headSha,
+        },
+        {
+          id: 103,
+          html_url: `${prUrl}#pullrequestreview-103`,
+          submitted_at: "2026-07-26T09:05:00Z",
+          user: { login: "reviewer" },
+          body: "Approved after the fix.",
+          state: "APPROVED",
+          commit_id: headSha,
+        },
+      ],
+      issueComments: [
+        clawsweeperComment({
+          id: 9116,
+          body: passBody,
+          updatedAt: "2026-07-26T09:06:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.READY);
+    expect(result.evidence.formalReviews).toHaveLength(2);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("does not let a stale-head approval supersede a current-head blocker", async () => {
+    const { provider } = createProvider({
+      formalReviews: [
+        {
+          id: 104,
+          submitted_at: "2026-07-26T09:00:00Z",
+          user: { login: "reviewer" },
+          body: "P1: Current-head blocker.",
+          state: "CHANGES_REQUESTED",
+          commit_id: headSha,
+        },
+        {
+          id: 105,
+          submitted_at: "2026-07-26T09:05:00Z",
+          user: { login: "reviewer" },
+          body: "Approval accidentally submitted against a stale commit.",
+          state: "APPROVED",
+          commit_id: staleSha,
+        },
+      ],
+      issueComments: [
+        clawsweeperComment({
+          id: 9119,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:06:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.BLOCKED);
+    expect(result.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "changes_requested" })]),
+    );
+  });
+
+  it("lets a newer authenticated exact-head pass supersede an older bot blocker", async () => {
+    const { provider } = createProvider({
+      issueComments: [
+        clawsweeperComment({
+          id: 9117,
+          body: `P1: Old blocker.\n<!-- clawsweeper-verdict:block item=${pr} sha=${staleSha} -->`,
+          updatedAt: "2026-07-26T09:00:00Z",
+        }),
+        clawsweeperComment({
+          id: 9118,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:01:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.READY);
+    expect(result.evidence.issueComments).toHaveLength(2);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("lets a newer exact-head bot pass supersede an older same-head bot blocker", async () => {
+    const { provider } = createProvider({
+      issueComments: [
+        clawsweeperComment({
+          id: 9120,
+          body: `P1: Old blocker.\n<!-- clawsweeper-verdict:block item=${pr} sha=${headSha} -->`,
+          updatedAt: "2026-07-26T09:00:00Z",
+        }),
+        clawsweeperComment({
+          id: 9121,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:01:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.READY);
+    expect(result.findings).toEqual([]);
+  });
+
+  it("does not let a later bot pass suppress an unstamped bot blocker", async () => {
+    const { provider } = createProvider({
+      issueComments: [
+        clawsweeperComment({
+          id: 9122,
+          body: "P1: Blocker without an exact-head marker.",
+          updatedAt: "2026-07-26T09:00:00Z",
+        }),
+        clawsweeperComment({
+          id: 9123,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:01:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("missing an exact reviewed SHA");
   });
 
   it("keeps dismissed formal review findings as evidence without treating them as active", () => {
@@ -292,6 +659,7 @@ describe("pr-convergence-audit", () => {
     "Actionable findings: 1",
     "BLOCKED before merge.",
     "No P1 findings from the previous review; P1: New regression.",
+    "P0: 0, P1: New regression.",
   ])("retains active review findings: %s", (body) => {
     const findings = extractFindingsFromEvidenceItem(
       {
@@ -384,6 +752,50 @@ describe("pr-convergence-audit", () => {
       currentHead: false,
       effectiveAt: "2026-07-26T08:59:00Z",
     });
+  });
+
+  it("does not let an old receipt suppress a later edit to the acknowledged request", async () => {
+    const { provider } = createProvider({
+      prAuthor: "contributor",
+      issueComments: [
+        {
+          id: 9010,
+          html_url: `${prUrl}#issuecomment-9010`,
+          created_at: "2026-07-26T08:58:00Z",
+          updated_at: "2026-07-26T09:02:00Z",
+          author_association: "CONTRIBUTOR",
+          user: { login: "contributor", type: "User" },
+          body: "@clawsweeper re-review",
+        },
+        clawsweeperComment({
+          id: 9110,
+          body: [
+            "<!-- clawsweeper-command-ack:9010 -->",
+            `<!-- clawsweeper-command-status:${pr}:re_review:${staleSha} -->`,
+            `<!-- clawsweeper-command:9010:2026-07-26T08:59:00Z:re_review:${staleSha} -->`,
+          ].join("\n"),
+          updatedAt: "2026-07-26T08:59:00Z",
+        }),
+        clawsweeperComment({
+          id: 9111,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:01:00Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "re_review_request",
+          sourceId: "9010",
+          effectiveAt: "2026-07-26T09:02:00Z",
+        }),
+      ]),
+    );
   });
 
   it("does not treat re-review instructions inside a ClawSweeper verdict as a request", async () => {
@@ -609,7 +1021,11 @@ describe("pr-convergence-audit", () => {
       pr,
       headSha,
       headRef: "branch",
+      baseRef: "main",
       prUrl,
+      prTitle: "Audit PR convergence",
+      prState: "OPEN",
+      isDraft: false,
       prLastEditedAt: null,
       formalReviews: [
         {
@@ -663,7 +1079,11 @@ describe("pr-convergence-audit", () => {
       pr,
       headSha,
       headRef: "branch",
+      baseRef: "main",
       prUrl,
+      prTitle: "Audit PR convergence",
+      prState: "OPEN",
+      isDraft: false,
       prLastEditedAt: null,
       formalReviews: [
         {
@@ -760,6 +1180,49 @@ describe("pr-convergence-audit", () => {
     expect(result.nextAction).toMatch(/fresh exact-head ClawSweeper review/i);
   });
 
+  it("invalidates an exact-head pass when the PR title was edited afterward", async () => {
+    const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
+    const { provider } = createProvider({
+      prTitleInitial: "Updated audit title",
+      prTitleEditedAtInitial: "2026-07-26T10:00:00Z",
+      issueComments: [
+        clawsweeperComment({
+          id: 9654,
+          body: passBody,
+          updatedAt: "2026-07-26T09:59:59Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("does not verifiably postdate");
+    expect(result.evidence.prTitle).toBe("Updated audit title");
+    expect(result.evidence.prLastEditedAt).toBe("2026-07-26T10:00:00Z");
+  });
+
+  it("invalidates an exact-head pass when the PR base was retargeted afterward", async () => {
+    const { provider } = createProvider({
+      baseRefInitial: "stable",
+      prBaseEditedAtInitial: "2026-07-26T10:00:00Z",
+      issueComments: [
+        clawsweeperComment({
+          id: 9658,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T09:59:59Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("does not verifiably postdate");
+    expect(result.evidence.baseRef).toBe("stable");
+    expect(result.evidence.prLastEditedAt).toBe("2026-07-26T10:00:00Z");
+  });
+
   it("accepts an in-place exact-head verdict update after the latest PR content edit", async () => {
     const passBody = `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`;
     const { provider } = createProvider({
@@ -818,6 +1281,63 @@ describe("pr-convergence-audit", () => {
     expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
     expect(result.reason).toContain("changed between the initial and final audit reads");
     expect(result.nextAction).toMatch(/content stabilizes/i);
+  });
+
+  it("fails closed when the PR title changes during evidence collection", async () => {
+    const { provider } = createProvider({
+      prTitleInitial: "Original title",
+      prTitleFinal: "Edited title",
+      prTitleEditedAtFinal: "2026-07-26T10:01:00Z",
+      issueComments: [
+        clawsweeperComment({
+          id: 9655,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+          updatedAt: "2026-07-26T10:01:01Z",
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("changed between the initial and final audit reads");
+    expect(result.evidence.prTitle).toBe("Edited title");
+  });
+
+  it("fails closed when the PR base branch changes during evidence collection", async () => {
+    const { provider } = createProvider({
+      baseRefInitial: "main",
+      baseRefFinal: "stable",
+      issueComments: [
+        clawsweeperComment({
+          id: 9656,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("changed between the initial and final audit reads");
+    expect(result.evidence.baseRef).toBe("stable");
+  });
+
+  it("never reports a draft pull request as ready", async () => {
+    const { provider } = createProvider({
+      draftInitial: true,
+      issueComments: [
+        clawsweeperComment({
+          id: 9657,
+          body: `<!-- clawsweeper-verdict:pass item=${pr} sha=${headSha} confidence=high -->`,
+        }),
+      ],
+    });
+
+    const result = await auditPrConvergence({ repo, pr, provider });
+
+    expect(result.decision).toBe(CONVERGENCE_DECISIONS.UNKNOWN);
+    expect(result.reason).toContain("still a draft");
   });
 
   it("returns UNKNOWN when actionable evidence lacks an exact reviewed SHA", async () => {

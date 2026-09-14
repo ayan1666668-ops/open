@@ -17,6 +17,7 @@ export type NormalizedEvidenceItem = {
   reviewState: string | null;
   reviewedSha: string | null;
   commitId: string | null;
+  reviewThreadResolved?: boolean | null;
 };
 
 export type NormalizedFinding = {
@@ -48,7 +49,11 @@ export type EvidenceCollection = {
   pr: number;
   headSha: string;
   headRef: string;
+  baseRef: string;
   prUrl: string;
+  prTitle: string;
+  prState: string;
+  isDraft: boolean;
   prLastEditedAt: string | null;
   formalReviews: NormalizedEvidenceItem[];
   inlineReviewComments: NormalizedEvidenceItem[];
@@ -78,7 +83,13 @@ export type PrConvergenceProvider = {
     number: number;
     html_url: string;
     head: { sha: string; ref: string };
+    base: { ref: string };
+    state: string;
+    draft: boolean;
+    title: string;
     last_edited_at?: string | null;
+    title_edited_at?: string | null;
+    base_edited_at?: string | null;
     user?: { login?: string };
   }>;
   fetchFormalReviews: (params: { repo: string; pr: number }) => Promise<{

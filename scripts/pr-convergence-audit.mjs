@@ -21,6 +21,7 @@ import {
  * @property {string | null} reviewState
  * @property {string | null} reviewedSha
  * @property {string | null} commitId
+ * @property {boolean | null} [reviewThreadResolved]
  */
 
 /**
@@ -55,7 +56,11 @@ import {
  * @property {number} pr
  * @property {string} headSha
  * @property {string} headRef
+ * @property {string} baseRef
  * @property {string} prUrl
+ * @property {string} prTitle
+ * @property {string} prState
+ * @property {boolean} isDraft
  * @property {string | null} prLastEditedAt
  * @property {NormalizedEvidenceItem[]} formalReviews
  * @property {NormalizedEvidenceItem[]} inlineReviewComments
@@ -87,7 +92,13 @@ import {
  *   number: number;
  *   html_url: string;
  *   head: { sha: string; ref: string };
+ *   base: { ref: string };
+ *   state: string;
+ *   draft: boolean;
+ *   title: string;
  *   last_edited_at?: string | null;
+ *   title_edited_at?: string | null;
+ *   base_edited_at?: string | null;
  *   user?: { login?: string };
  * }>} fetchPullRequest
  * @property {(params: { repo: string; pr: number }) => Promise<{
@@ -278,6 +289,20 @@ function latestClawSweeperPassAt({ pullRequest, comments, newerThan = null }) {
   return latestPassAt;
 }
 
+function latestContentEditTimestamp(bodyEditedAt, titleEditedAt, baseEditedAt) {
+  const normalized = [bodyEditedAt, titleEditedAt, baseEditedAt].map((value) =>
+    normalizeNullableTimestamp(value),
+  );
+  if (normalized.includes("")) {
+    return "";
+  }
+  const present = normalized.filter((value) => value !== null);
+  if (present.length === 0) {
+    return null;
+  }
+  return present.toSorted((left, right) => Date.parse(right) - Date.parse(left))[0];
+}
+
 function normalizeFormalReview(review, repo, pr) {
   const id = String(review?.id ?? "");
   const commitId = normalizeSha(review?.commit_id ?? review?.commitId);
@@ -312,6 +337,8 @@ function normalizeInlineReviewComment(comment, repo, pr) {
     reviewState: null,
     reviewedSha: commitId,
     commitId,
+    reviewThreadResolved:
+      typeof comment?.thread_resolved === "boolean" ? comment.thread_resolved : null,
   };
 }
 
@@ -369,13 +396,42 @@ function bodyLooksLikeReviewEvidence(body = "") {
   return FINDING_KIND_PATTERNS.some((pattern) => pattern.regex.test(body));
 }
 
-function findingMatchIsNegated(line, match) {
+function findingMatchIsInNegatedSeverityList(line, match, kind) {
+  if (!/^p[012]$/iu.test(kind)) {
+    return false;
+  }
+  const listMatcher =
+    /(?:^|\W)(?:no|without|zero|0)\s+(?:[*_`~]*P[012][*_`~]*)(?:\s*(?:\/|,(?:\s*(?:and|or))?|\band\b|\bor\b)\s*(?:[*_`~]*P[012][*_`~]*))+\s+findings?\b/giu;
+  const findingIndex = match.index ?? -1;
+  for (const listMatch of line.matchAll(listMatcher)) {
+    const start = listMatch.index ?? -1;
+    const end = start + listMatch[0].length;
+    if (findingIndex >= start && findingIndex < end) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findingMatchIsNegated(line, match, kind) {
   const before = line.slice(0, match.index);
   const after = line.slice((match.index ?? 0) + match[0].length);
-  const negatedPrefix = /(?:^|\W)(?:no|not|without|zero|0)(?:\s+[\w-]+){0,4}\s*$/iu;
+  const plainBefore = before.replace(/[*_`~]+$/gu, "");
+  const plainAfter = after.replace(/[*_`~]/gu, "");
+  const absentPrefix =
+    /(?:^|\W)(?:no|without|zero|0)(?:\s+(?:active|current|new|open|remaining|unresolved)){0,2}\s*$/iu;
+  const directlyNegated =
+    kind === "blocked" && /(?:^|\W)not(?:\s+(?:currently|now|still))?\s*$/iu.test(plainBefore);
   const resolvedSuffix =
-    /^\s*(?::|=|-)?\s*(?:none|false|zero|0|resolved|fixed|addressed|cleared)(?:\W|$)/iu;
-  return negatedPrefix.test(before) || resolvedSuffix.test(after);
+    /^\s*(?::|=|-)?\s*(?:none|false|zero|0|resolved|fixed|addressed|cleared)\s*[.!;,]*\s*$/iu;
+  const zeroCountSegment = /^\s*(?::|=|-)?\s*(?:none|false|zero|0)\s*(?=[,;/|]|[.!]?\s*$)/iu;
+  return (
+    absentPrefix.test(plainBefore) ||
+    directlyNegated ||
+    zeroCountSegment.test(plainAfter) ||
+    resolvedSuffix.test(plainAfter) ||
+    findingMatchIsInNegatedSeverityList(line, match, kind)
+  );
 }
 
 function bodyHasActiveFinding(body, pattern) {
@@ -383,7 +439,7 @@ function bodyHasActiveFinding(body, pattern) {
   const matcher = new RegExp(pattern.regex.source, flags);
   for (const line of body.split(/\r?\n/u)) {
     for (const match of line.matchAll(matcher)) {
-      if (!findingMatchIsNegated(line, match)) {
+      if (!findingMatchIsNegated(line, match, pattern.kind)) {
         return true;
       }
     }
@@ -399,8 +455,7 @@ export function extractFindingsFromEvidenceItem(item, headSha) {
   const currentHead = reviewedSha !== null && reviewedSha === headSha;
   const trustedClawSweeper =
     item.surface === EVIDENCE_SURFACES.ISSUE_COMMENT && isTrustedClawSweeperComment(item);
-  const trustedRepositoryActor =
-    item.surface === EVIDENCE_SURFACES.ISSUE_COMMENT && isTrustedRepositoryActor(item);
+  const trustedRepositoryActor = isTrustedRepositoryActor(item);
   const trustedReReviewRequester =
     item.surface === EVIDENCE_SURFACES.ISSUE_COMMENT &&
     !trustedClawSweeper &&
@@ -429,6 +484,12 @@ export function extractFindingsFromEvidenceItem(item, headSha) {
     return findings;
   }
   if (trustedClawSweeper && isClawSweeperCommandReceipt(body)) {
+    return findings;
+  }
+  if (
+    item.surface === EVIDENCE_SURFACES.INLINE_REVIEW_COMMENT &&
+    item.reviewThreadResolved === true
+  ) {
     return findings;
   }
   if (item.surface === EVIDENCE_SURFACES.FORMAL_REVIEW && item.reviewState === "DISMISSED") {
@@ -483,6 +544,7 @@ export function extractFindingsFromEvidenceItem(item, headSha) {
     if (
       pattern.kind === "blocked" &&
       !trustedClawSweeper &&
+      !trustedRepositoryActor &&
       item.surface !== EVIDENCE_SURFACES.FORMAL_REVIEW &&
       item.reviewState !== "CHANGES_REQUESTED"
     ) {
@@ -514,6 +576,45 @@ function withActorFields(normalized, raw, pullRequestAuthor = "") {
     isPullRequestAuthor:
       Boolean(pullRequestAuthor) &&
       normalized.author.toLowerCase() === pullRequestAuthor.toLowerCase(),
+  });
+}
+
+function selectActiveFormalReviewItems(items, headSha) {
+  const latestCurrentHeadApprovalByAuthor = new Map();
+  const ambiguousAuthors = new Set();
+  for (const item of items) {
+    if (item.reviewState !== "APPROVED" || item.reviewedSha !== headSha) {
+      continue;
+    }
+    const author = item.author.toLowerCase();
+    const effectiveAtMs = Date.parse(item.effectiveAt ?? "");
+    if (!author || !Number.isFinite(effectiveAtMs)) {
+      if (author) {
+        ambiguousAuthors.add(author);
+      }
+      continue;
+    }
+    const latest = latestCurrentHeadApprovalByAuthor.get(author);
+    if (!latest || effectiveAtMs > latest.effectiveAtMs) {
+      latestCurrentHeadApprovalByAuthor.set(author, { id: item.id, effectiveAtMs });
+    } else if (effectiveAtMs === latest.effectiveAtMs && item.id !== latest.id) {
+      ambiguousAuthors.add(author);
+    }
+  }
+  return items.filter((item) => {
+    const author = item.author.toLowerCase();
+    if (
+      ["COMMENTED", "CHANGES_REQUESTED"].includes(item.reviewState) &&
+      author &&
+      !ambiguousAuthors.has(author)
+    ) {
+      const latest = latestCurrentHeadApprovalByAuthor.get(author);
+      const itemMs = Date.parse(item.effectiveAt ?? "");
+      if (latest && Number.isFinite(itemMs) && itemMs < latest.effectiveAtMs) {
+        return false;
+      }
+    }
+    return true;
   });
 }
 
@@ -613,6 +714,20 @@ export function decidePrConvergence({
       decision: CONVERGENCE_DECISIONS.UNKNOWN,
       reason: "GitHub evidence changed between consecutive validation reads.",
       nextAction: "Re-run the convergence audit after the evidence bundle stabilizes.",
+    };
+  }
+  if (evidence.prState !== "OPEN") {
+    return {
+      decision: CONVERGENCE_DECISIONS.UNKNOWN,
+      reason: `The pull request is not open (state: ${evidence.prState || "unknown"}).`,
+      nextAction: "Reopen or refresh the pull request before running the convergence audit.",
+    };
+  }
+  if (evidence.isDraft) {
+    return {
+      decision: CONVERGENCE_DECISIONS.UNKNOWN,
+      reason: "The pull request is still a draft.",
+      nextAction: "Mark the pull request ready for review before running the convergence audit.",
     };
   }
   if (evidence.errors.length > 0) {
@@ -865,7 +980,11 @@ function buildProviderFailureAuditResult({
       pr,
       headSha,
       headRef,
+      baseRef: "",
       prUrl,
+      prTitle: "",
+      prState: "",
+      isDraft: false,
       prLastEditedAt: null,
       formalReviews: [],
       inlineReviewComments: [],
@@ -916,8 +1035,16 @@ export async function auditPrConvergence({ repo, pr, provider }) {
         pr,
         headSha: "",
         headRef: initialPull?.head?.ref ?? "",
+        baseRef: initialPull?.base?.ref ?? "",
         prUrl: initialPull?.html_url ?? fallbackPrUrl,
-        prLastEditedAt: normalizeNullableTimestamp(initialPull?.last_edited_at),
+        prTitle: typeof initialPull?.title === "string" ? initialPull.title : "",
+        prState: initialPull?.state ?? "",
+        isDraft: initialPull?.draft ?? false,
+        prLastEditedAt: latestContentEditTimestamp(
+          initialPull?.last_edited_at,
+          initialPull?.title_edited_at,
+          initialPull?.base_edited_at,
+        ),
         formalReviews: [],
         inlineReviewComments: [],
         issueComments: [],
@@ -972,10 +1099,43 @@ export async function auditPrConvergence({ repo, pr, provider }) {
   }
 
   const finalHeadSha = normalizeSha(finalPull?.head?.sha) ?? "";
-  const headStable = finalHeadSha === initialHeadSha;
-  const initialPrLastEditedAt = normalizeNullableTimestamp(initialPull?.last_edited_at);
-  const finalPrLastEditedAt = normalizeNullableTimestamp(finalPull?.last_edited_at);
-  const prContentStable = finalPrLastEditedAt === initialPrLastEditedAt;
+  const initialHeadRef = initialPull?.head?.ref ?? "";
+  const finalHeadRef = finalPull?.head?.ref ?? "";
+  const initialBaseRef = initialPull?.base?.ref ?? "";
+  const finalBaseRef = finalPull?.base?.ref ?? "";
+  const initialPrState = (initialPull?.state ?? "").toUpperCase();
+  const finalPrState = (finalPull?.state ?? "").toUpperCase();
+  const initialDraft = initialPull?.draft ?? false;
+  const finalDraft = finalPull?.draft ?? false;
+  const headStable = finalHeadSha === initialHeadSha && finalHeadRef === initialHeadRef;
+  const initialPrTitle = typeof initialPull?.title === "string" ? initialPull.title : null;
+  const finalPrTitle = typeof finalPull?.title === "string" ? finalPull.title : null;
+  const initialBodyEditedAt = normalizeNullableTimestamp(initialPull?.last_edited_at);
+  const finalBodyEditedAt = normalizeNullableTimestamp(finalPull?.last_edited_at);
+  const initialTitleEditedAt = normalizeNullableTimestamp(initialPull?.title_edited_at);
+  const finalTitleEditedAt = normalizeNullableTimestamp(finalPull?.title_edited_at);
+  const initialBaseEditedAt = normalizeNullableTimestamp(initialPull?.base_edited_at);
+  const finalBaseEditedAt = normalizeNullableTimestamp(finalPull?.base_edited_at);
+  const initialPrLastEditedAt = latestContentEditTimestamp(
+    initialPull?.last_edited_at,
+    initialPull?.title_edited_at,
+    initialPull?.base_edited_at,
+  );
+  const finalPrLastEditedAt = latestContentEditTimestamp(
+    finalPull?.last_edited_at,
+    finalPull?.title_edited_at,
+    finalPull?.base_edited_at,
+  );
+  const prContentStable =
+    initialPrTitle !== null &&
+    finalPrTitle !== null &&
+    finalPrTitle === initialPrTitle &&
+    finalBaseRef === initialBaseRef &&
+    finalPrState === initialPrState &&
+    finalDraft === initialDraft &&
+    finalBodyEditedAt === initialBodyEditedAt &&
+    finalTitleEditedAt === initialTitleEditedAt &&
+    finalBaseEditedAt === initialBaseEditedAt;
   const evidenceStable =
     evidenceSnapshotFingerprint(initialEvidenceSnapshot) ===
     evidenceSnapshotFingerprint(validatedEvidenceSnapshot);
@@ -1002,8 +1162,12 @@ export async function auditPrConvergence({ repo, pr, provider }) {
     repo,
     pr,
     headSha: finalHeadSha || initialHeadSha,
-    headRef: finalPull?.head?.ref ?? initialPull?.head?.ref ?? "",
+    headRef: finalHeadRef || initialHeadRef,
+    baseRef: finalBaseRef || initialBaseRef,
     prUrl,
+    prTitle: finalPrTitle ?? initialPrTitle ?? "",
+    prState: finalPrState || initialPrState,
+    isDraft: finalDraft,
     prLastEditedAt: finalPrLastEditedAt,
     formalReviews,
     inlineReviewComments,
@@ -1034,19 +1198,29 @@ export async function auditPrConvergence({ repo, pr, provider }) {
       },
     },
     errors:
-      initialPrLastEditedAt === "" || finalPrLastEditedAt === ""
+      initialPrLastEditedAt === "" ||
+      finalPrLastEditedAt === "" ||
+      initialBodyEditedAt === "" ||
+      finalBodyEditedAt === "" ||
+      initialTitleEditedAt === "" ||
+      finalTitleEditedAt === "" ||
+      initialBaseEditedAt === "" ||
+      finalBaseEditedAt === ""
         ? ["PR last-edited timestamp is invalid or ambiguous."]
-        : [],
+        : initialPrTitle === null || finalPrTitle === null
+          ? ["PR title evidence is missing or ambiguous."]
+          : [],
   };
 
-  const findingItems = [
-    ...(formalReviewsResult.items ?? []).map((item) =>
-      withActorFields(
-        normalizeFormalReview(item, repo, pr),
-        item,
-        finalPull?.user?.login ?? initialPull?.user?.login,
-      ),
+  const formalReviewFindingItems = (formalReviewsResult.items ?? []).map((item) =>
+    withActorFields(
+      normalizeFormalReview(item, repo, pr),
+      item,
+      finalPull?.user?.login ?? initialPull?.user?.login,
     ),
+  );
+  const findingItems = [
+    ...selectActiveFormalReviewItems(formalReviewFindingItems, evidence.headSha),
     ...(inlineReviewCommentsResult.items ?? []).map((item) =>
       withActorFields(
         normalizeInlineReviewComment(item, repo, pr),
@@ -1066,8 +1240,20 @@ export async function auditPrConvergence({ repo, pr, provider }) {
   const reReviewReceipts = (issueCommentsResult.items ?? [])
     .map((comment) => extractClawSweeperReReviewReceipt(comment))
     .filter((receipt) => receipt?.reviewedSha);
-  const acknowledgedReReviewSourceIds = new Set(
-    reReviewReceipts.map((receipt) => receipt.commandCommentId),
+  const passIdentity = {
+    pullRequest: { number: pr, head: { sha: evidence.headSha } },
+    comments: issueCommentsResult.items ?? [],
+  };
+  const latestExactHeadClawSweeperPassAt = latestClawSweeperPassAt(passIdentity);
+  const latestExactHeadClawSweeperPassMs = Date.parse(latestExactHeadClawSweeperPassAt ?? "");
+  const trustedClawSweeperSourceIds = new Set(
+    (issueCommentsResult.items ?? [])
+      .filter((comment) => isTrustedClawSweeperComment(comment))
+      .map((comment) =>
+        typeof comment?.id === "string" || typeof comment?.id === "number"
+          ? String(comment.id)
+          : "",
+      ),
   );
   const hasAuthenticatedReceiptAtOrAfter = (effectiveAt) => {
     const requestMs = Date.parse(effectiveAt ?? "");
@@ -1084,9 +1270,16 @@ export async function auditPrConvergence({ repo, pr, provider }) {
       .flatMap((item) => extractFindingsFromEvidenceItem(item, evidence.headSha))
       .filter(
         (finding) =>
-          finding.kind !== "re_review_request" ||
-          (!acknowledgedReReviewSourceIds.has(finding.sourceId) &&
-            !hasAuthenticatedReceiptAtOrAfter(finding.effectiveAt)),
+          (finding.kind !== "re_review_request" ||
+            !hasAuthenticatedReceiptAtOrAfter(finding.effectiveAt)) &&
+          !(
+            finding.sourceSurface === EVIDENCE_SURFACES.ISSUE_COMMENT &&
+            trustedClawSweeperSourceIds.has(finding.sourceId) &&
+            finding.reviewedSha !== null &&
+            Number.isFinite(latestExactHeadClawSweeperPassMs) &&
+            Number.isFinite(Date.parse(finding.effectiveAt ?? "")) &&
+            latestExactHeadClawSweeperPassMs > Date.parse(finding.effectiveAt ?? "")
+          ),
       ),
     ...reReviewReceipts.map((receipt) => ({
       id: `${EVIDENCE_SURFACES.ISSUE_COMMENT}:${receipt.receiptCommentId}:re_review_request`,
@@ -1103,11 +1296,6 @@ export async function auditPrConvergence({ repo, pr, provider }) {
     })),
   ].toSorted((left, right) => compareStrings(left.id, right.id));
 
-  const passIdentity = {
-    pullRequest: { number: pr, head: { sha: evidence.headSha } },
-    comments: issueCommentsResult.items ?? [],
-  };
-  const latestExactHeadClawSweeperPassAt = latestClawSweeperPassAt(passIdentity);
   const hasExactHeadClawSweeperPass = latestExactHeadClawSweeperPassAt !== null;
   const hasFreshExactHeadClawSweeperPass =
     latestClawSweeperPassAt({

@@ -7,9 +7,89 @@ const PULL_REQUEST_QUERY = `query($owner: String!, $name: String!, $number: Int!
       url
       headRefName
       headRefOid
+      baseRefName
+      state
+      isDraft
+      title
       lastEditedAt
+      titleEdits: timelineItems(last: 1, itemTypes: [RENAMED_TITLE_EVENT]) {
+        nodes {
+          ... on RenamedTitleEvent {
+            createdAt
+          }
+        }
+      }
+      baseEdits: timelineItems(last: 1, itemTypes: [BASE_REF_CHANGED_EVENT]) {
+        nodes {
+          ... on BaseRefChangedEvent {
+            createdAt
+          }
+        }
+      }
       author {
         login
+      }
+    }
+  }
+}`;
+
+const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          comments(first: 100) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              fullDatabaseId
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+const REVIEW_THREAD_COMMENTS_QUERY = `query($threadId: ID!, $cursor: String!) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          fullDatabaseId
+        }
+      }
+    }
+  }
+}`;
+
+const REQUIRED_CHECK_POLICY_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      baseRefName
+      baseRef {
+        branchProtectionRule {
+          requiresStatusChecks
+          requiredStatusCheckContexts
+          requiredStatusChecks {
+            context
+            app {
+              databaseId
+            }
+          }
+        }
       }
     }
   }
@@ -42,29 +122,61 @@ function flattenArrayPages(value, label) {
   return value.flat();
 }
 
-function commandFailureText(error) {
-  return [error?.message, error?.stderr, error?.stdout]
-    .map((value) => String(value ?? ""))
-    .filter(Boolean)
-    .join("\n");
+function normalizeIntegrationId(value, label) {
+  if (value == null) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} returned an invalid integration ID`);
+  }
+  return value;
 }
 
-function commandFailureStdout(error) {
-  return String(error?.stdout ?? "").trim();
+function normalizeFullDatabaseId(value, label) {
+  if (typeof value === "string" && /^[1-9]\d*$/u.test(value)) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return String(value);
+  }
+  throw new Error(`${label} returned an invalid comment identity`);
 }
 
-function normalizeRequiredCheck(check, headSha, index) {
-  const bucket = String(check?.bucket ?? "").toLowerCase();
-  if (!bucket || !["pass", "fail", "pending", "skipping"].includes(bucket)) {
-    throw new Error(`required check ${String(check?.name ?? index)} has an unknown bucket`);
+function normalizePolicyCheckObservation(observation, headSha, requirement, index) {
+  const source = observation.source;
+  const raw = observation.raw;
+  let status;
+  let conclusion;
+  if (source === "check_run") {
+    status = String(raw?.status ?? "").toLowerCase();
+    const rawConclusion = raw?.conclusion == null ? null : String(raw.conclusion).toLowerCase();
+    if (!status) {
+      throw new Error(`check run ${requirement.context} omitted status`);
+    }
+    if (status === "completed" && rawConclusion === null) {
+      throw new Error(`completed check run ${requirement.context} omitted its conclusion`);
+    }
+    conclusion =
+      status !== "completed"
+        ? null
+        : ["success", "neutral", "skipped"].includes(rawConclusion ?? "")
+          ? "success"
+          : rawConclusion;
+  } else {
+    const state = String(raw?.state ?? "").toLowerCase();
+    if (!state || !["success", "failure", "error", "pending"].includes(state)) {
+      throw new Error(`commit status ${requirement.context} has an unknown state`);
+    }
+    status = state === "pending" ? "in_progress" : "completed";
+    conclusion = state === "pending" ? null : state === "success" ? "success" : "failure";
   }
   return {
-    id: `${String(check?.name ?? "check")}:${index}`,
-    name: String(check?.name ?? `check-${index}`),
-    status: bucket === "pending" ? "in_progress" : "completed",
-    conclusion: bucket === "pending" ? null : bucket === "fail" ? "failure" : "success",
+    id: `${requirement.context}:${requirement.integrationId}:${source}:${String(raw?.id ?? index)}`,
+    name: requirement.context,
+    status: status === "completed" ? "completed" : "in_progress",
+    conclusion,
     head_sha: headSha,
-    html_url: String(check?.link ?? ""),
+    html_url: String(raw?.html_url ?? raw?.details_url ?? raw?.target_url ?? ""),
     required: true,
   };
 }
@@ -77,6 +189,190 @@ export function createGhPrConvergenceProvider({ readGh = defaultReadGh } = {}) {
   const readJson = (args, label) => parseJson(readGh(args), label);
   const readArrayPages = (endpoint, label) =>
     flattenArrayPages(readJson(["api", "--paginate", "--slurp", endpoint], label), label);
+
+  const readCheckRunPages = (endpoint, label) => {
+    const pages = readJson(["api", "--paginate", "--slurp", endpoint], label);
+    if (
+      !Array.isArray(pages) ||
+      pages.some((page) => !page || typeof page !== "object" || !Array.isArray(page.check_runs))
+    ) {
+      throw new Error(`${label} returned an invalid paginated response`);
+    }
+    return pages.flatMap((page) => page.check_runs);
+  };
+
+  const fetchReviewThreadResolution = (repo, pr) => {
+    const { owner, name } = splitRepo(repo);
+    const resolutionByCommentId = new Map();
+    let cursor = null;
+    do {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${REVIEW_THREADS_QUERY}`,
+        "-F",
+        `owner=${owner}`,
+        "-F",
+        `name=${name}`,
+        "-F",
+        `number=${pr}`,
+      ];
+      if (cursor !== null) {
+        args.push("-F", `cursor=${cursor}`);
+      }
+      const response = readJson(args, "review threads query");
+      if (Array.isArray(response?.errors) && response.errors.length > 0) {
+        throw new Error("review threads query returned GraphQL errors");
+      }
+      const threads = response?.data?.repository?.pullRequest?.reviewThreads;
+      if (!threads || !Array.isArray(threads.nodes) || !threads.pageInfo) {
+        throw new Error("review threads query returned an invalid response");
+      }
+      for (const thread of threads.nodes) {
+        if (
+          typeof thread?.id !== "string" ||
+          !thread.id ||
+          typeof thread?.isResolved !== "boolean" ||
+          !Array.isArray(thread?.comments?.nodes) ||
+          !thread.comments.pageInfo
+        ) {
+          throw new Error("review threads query returned an invalid thread");
+        }
+        const comments = [...thread.comments.nodes];
+        let commentCursor =
+          thread.comments.pageInfo.hasNextPage === true ? thread.comments.pageInfo.endCursor : null;
+        if (
+          thread.comments.pageInfo.hasNextPage === true &&
+          (typeof commentCursor !== "string" || !commentCursor)
+        ) {
+          throw new Error("review thread comments omitted their next cursor");
+        }
+        while (commentCursor !== null) {
+          const commentResponse = readJson(
+            [
+              "api",
+              "graphql",
+              "-f",
+              `query=${REVIEW_THREAD_COMMENTS_QUERY}`,
+              "-F",
+              `threadId=${thread.id}`,
+              "-F",
+              `cursor=${commentCursor}`,
+            ],
+            "review thread comments query",
+          );
+          if (Array.isArray(commentResponse?.errors) && commentResponse.errors.length > 0) {
+            throw new Error("review thread comments query returned GraphQL errors");
+          }
+          const commentPage = commentResponse?.data?.node?.comments;
+          if (!commentPage || !Array.isArray(commentPage.nodes) || !commentPage.pageInfo) {
+            throw new Error("review thread comments query returned an invalid response");
+          }
+          comments.push(...commentPage.nodes);
+          const hasNextCommentPage = commentPage.pageInfo.hasNextPage === true;
+          commentCursor = hasNextCommentPage ? commentPage.pageInfo.endCursor : null;
+          if (hasNextCommentPage && (typeof commentCursor !== "string" || !commentCursor)) {
+            throw new Error("review thread comments query omitted its next cursor");
+          }
+        }
+        for (const comment of comments) {
+          const commentId = normalizeFullDatabaseId(
+            comment?.fullDatabaseId,
+            "review threads query",
+          );
+          resolutionByCommentId.set(commentId, thread.isResolved);
+        }
+      }
+      const hasNextPage = threads.pageInfo.hasNextPage === true;
+      cursor = hasNextPage ? threads.pageInfo.endCursor : null;
+      if (hasNextPage && (typeof cursor !== "string" || !cursor)) {
+        throw new Error("review threads query omitted its next cursor");
+      }
+    } while (cursor !== null);
+    return resolutionByCommentId;
+  };
+
+  const resolveRequiredCheckPolicy = (repo, pr) => {
+    const { owner, name } = splitRepo(repo);
+    const response = readJson(
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${REQUIRED_CHECK_POLICY_QUERY}`,
+        "-F",
+        `owner=${owner}`,
+        "-F",
+        `name=${name}`,
+        "-F",
+        `number=${pr}`,
+      ],
+      "required-check policy query",
+    );
+    if (Array.isArray(response?.errors) && response.errors.length > 0) {
+      throw new Error("required-check policy query returned GraphQL errors");
+    }
+    const pull = response?.data?.repository?.pullRequest;
+    const baseRefName = pull?.baseRefName;
+    if (typeof baseRefName !== "string" || !baseRefName) {
+      throw new Error("required-check policy query omitted the PR base branch");
+    }
+
+    const requirements = new Map();
+    const addRequirement = (context, integrationId) => {
+      if (typeof context !== "string" || !context) {
+        throw new Error("required-check policy returned an invalid context");
+      }
+      const normalizedIntegrationId = normalizeIntegrationId(
+        integrationId,
+        `required check ${context}`,
+      );
+      requirements.set(`${context}\0${normalizedIntegrationId ?? "any"}`, {
+        context,
+        integrationId: normalizedIntegrationId,
+      });
+    };
+    const branchProtection = pull?.baseRef?.branchProtectionRule;
+    if (branchProtection?.requiresStatusChecks === true) {
+      const statusChecks = branchProtection.requiredStatusChecks;
+      const statusCheckContexts = branchProtection.requiredStatusCheckContexts;
+      if (!Array.isArray(statusChecks) || !Array.isArray(statusCheckContexts)) {
+        throw new Error("branch protection omitted required-check policy fields");
+      }
+      if (statusChecks.length > 0) {
+        for (const check of statusChecks) {
+          addRequirement(check?.context, check?.app?.databaseId);
+        }
+      } else {
+        for (const context of statusCheckContexts) {
+          addRequirement(context, null);
+        }
+      }
+    }
+
+    const rules = readArrayPages(
+      `repos/${repo}/rules/branches/${encodeURIComponent(baseRefName)}`,
+      "base-branch rules",
+    );
+    for (const rule of rules) {
+      const type = String(rule?.type ?? "");
+      if (type === "workflows" || type === "required_workflows") {
+        throw new Error("required workflow policy cannot be resolved completely");
+      }
+      if (type !== "required_status_checks") {
+        continue;
+      }
+      const requiredChecks = rule?.parameters?.required_status_checks;
+      if (!Array.isArray(requiredChecks)) {
+        throw new Error("ruleset returned invalid required status checks");
+      }
+      for (const check of requiredChecks) {
+        addRequirement(check?.context, check?.integration_id);
+      }
+    }
+    return [...requirements.values()];
+  };
 
   return {
     async fetchPullRequest({ repo, pr }) {
@@ -107,14 +403,25 @@ export function createGhPrConvergenceProvider({ readGh = defaultReadGh } = {}) {
        *   number: number;
        *   html_url: string;
        *   head: { sha: string; ref: string };
+       *   base: { ref: string };
+       *   state: string;
+       *   draft: boolean;
        *   last_edited_at: string | null;
+       *   title_edited_at: string | null;
+       *   base_edited_at: string | null;
        *   user?: { login: string };
        * }} */
       const normalizedPull = {
         number: pull.number,
         html_url: pull.url,
         head: { sha: pull.headRefOid, ref: pull.headRefName },
+        base: { ref: pull.baseRefName },
+        state: String(pull.state ?? ""),
+        draft: pull.isDraft === true,
+        title: String(pull.title ?? ""),
         last_edited_at: pull.lastEditedAt ?? null,
+        title_edited_at: pull.titleEdits?.nodes?.[0]?.createdAt ?? null,
+        base_edited_at: pull.baseEdits?.nodes?.[0]?.createdAt ?? null,
         user: { login: pull.author?.login ?? "" },
       };
       return normalizedPull;
@@ -128,11 +435,20 @@ export function createGhPrConvergenceProvider({ readGh = defaultReadGh } = {}) {
     },
 
     async fetchInlineReviewComments({ repo, pr }) {
+      const items = readArrayPages(
+        `repos/${repo}/pulls/${pr}/comments?per_page=100`,
+        "inline review comments",
+      );
+      const resolutionByCommentId = fetchReviewThreadResolution(repo, pr);
+      for (const item of items) {
+        const id = String(item?.id ?? "");
+        if (!id || !resolutionByCommentId.has(id)) {
+          throw new Error(`inline review comment ${id || "<missing>"} has no review thread`);
+        }
+        item.thread_resolved = resolutionByCommentId.get(id);
+      }
       return {
-        items: readArrayPages(
-          `repos/${repo}/pulls/${pr}/comments?per_page=100`,
-          "inline review comments",
-        ),
+        items,
         complete: true,
       };
     },
@@ -173,37 +489,115 @@ export function createGhPrConvergenceProvider({ readGh = defaultReadGh } = {}) {
     },
 
     async fetchCheckRuns({ repo, pr, headSha }) {
-      let raw;
+      let requirements;
       try {
-        raw = readGh([
-          "pr",
-          "checks",
-          String(pr),
-          "--repo",
-          repo,
-          "--required",
-          "--json",
-          "name,bucket,state,link",
-        ]);
-      } catch (error) {
-        const failure = commandFailureText(error);
-        if (/no required checks reported on the .+ branch/i.test(failure)) {
-          return { items: [], complete: true, requiredPolicy: "resolved" };
-        }
-        if (error?.status !== 8 || !commandFailureStdout(error)) {
-          throw error;
-        }
-        raw = commandFailureStdout(error);
+        requirements = resolveRequiredCheckPolicy(repo, pr);
+      } catch {
+        return { items: [], complete: true, requiredPolicy: "unknown" };
       }
-      const checks = parseJson(raw, "required checks");
-      if (!Array.isArray(checks)) {
-        throw new Error("required checks returned an invalid response");
+      if (requirements.length === 0) {
+        return { items: [], complete: true, requiredPolicy: "resolved" };
       }
-      return {
-        items: checks.map((check, index) => normalizeRequiredCheck(check, headSha, index)),
-        complete: true,
-        requiredPolicy: "resolved",
+
+      let exactHeadCheckRuns;
+      let exactHeadStatuses;
+      try {
+        exactHeadCheckRuns = readCheckRunPages(
+          `repos/${repo}/commits/${headSha}/check-runs?filter=latest&per_page=100`,
+          "exact-head check runs",
+        );
+        exactHeadStatuses = readArrayPages(
+          `repos/${repo}/commits/${headSha}/statuses?per_page=100`,
+          "exact-head commit statuses",
+        );
+      } catch {
+        return { items: [], complete: true, requiredPolicy: "unknown" };
+      }
+
+      const normalized = [];
+      const appIdBySlug = new Map();
+      const resolveStatusIntegrationId = (status) => {
+        const login = String(status?.creator?.login ?? "");
+        const match = login.match(/^(.+)\[bot\]$/i);
+        if (!match) {
+          return null;
+        }
+        const slug = match[1];
+        if (!appIdBySlug.has(slug)) {
+          const app = readJson(["api", `apps/${encodeURIComponent(slug)}`], `GitHub App ${slug}`);
+          appIdBySlug.set(slug, normalizeIntegrationId(app?.id, `GitHub App ${slug}`));
+        }
+        return appIdBySlug.get(slug);
       };
+
+      try {
+        for (const requirement of requirements) {
+          const checkRunObservations = exactHeadCheckRuns
+            .filter(
+              (checkRun) =>
+                checkRun?.name === requirement.context &&
+                (requirement.integrationId === null ||
+                  checkRun?.app?.id === requirement.integrationId),
+            )
+            .map((checkRun) => ({ source: "check_run", raw: checkRun }));
+          // GitHub guarantees newest-first ordering for commit statuses. Preserve
+          // that ordering so same-second updates are resolved by API position.
+          // Select the newest context first: an unexpected source must not expose
+          // an older success from the app required by branch protection.
+          const latestContextStatus = exactHeadStatuses.find(
+            (status) =>
+              String(status?.context ?? "").toLowerCase() === requirement.context.toLowerCase(),
+          );
+          const latestStatusIntegrationId =
+            latestContextStatus && requirement.integrationId !== null
+              ? resolveStatusIntegrationId(latestContextStatus)
+              : null;
+          const statusSourceMismatch =
+            latestContextStatus !== undefined &&
+            requirement.integrationId !== null &&
+            latestStatusIntegrationId !== requirement.integrationId;
+          const statusObservation =
+            latestContextStatus &&
+            (requirement.integrationId === null ||
+              latestStatusIntegrationId === requirement.integrationId)
+              ? [{ source: "commit_status", raw: latestContextStatus }]
+              : [];
+          const observations = [...checkRunObservations, ...statusObservation];
+          if (statusSourceMismatch) {
+            normalized.push({
+              id: `${requirement.context}:${requirement.integrationId}:commit_status:unexpected-source`,
+              name: requirement.context,
+              status: "queued",
+              conclusion: null,
+              head_sha: headSha,
+              html_url: String(latestContextStatus?.target_url ?? ""),
+              required: true,
+            });
+          }
+          if (observations.length === 0) {
+            if (!statusSourceMismatch) {
+              normalized.push({
+                id: `${requirement.context}:${requirement.integrationId ?? "any"}:missing`,
+                name: requirement.context,
+                status: "queued",
+                conclusion: null,
+                head_sha: headSha,
+                html_url: "",
+                required: true,
+              });
+            }
+            continue;
+          }
+          normalized.push(
+            ...observations.map((observation, index) =>
+              normalizePolicyCheckObservation(observation, headSha, requirement, index),
+            ),
+          );
+        }
+      } catch {
+        return { items: [], complete: true, requiredPolicy: "unknown" };
+      }
+      return { items: normalized, complete: true, requiredPolicy: "resolved" };
     },
   };
 }

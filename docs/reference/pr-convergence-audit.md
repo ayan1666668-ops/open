@@ -24,11 +24,12 @@ or write to GitHub.
 
 The audit normalizes a complete evidence bundle for one PR:
 
-- live PR identity and exact head SHA
+- live open/non-draft PR identity, base branch, title-edit history, and exact head SHA
 - formal `reviews[]`
-- inline review comments
+- inline review comments and thread-resolution state
 - ordinary issue/PR comments
 - requested reviewers
+- required-check policy from classic branch protection and active inherited rulesets
 - check runs for the exact head
 
 The audit collects these mutable surfaces twice and compares canonicalized

@@ -12,7 +12,13 @@ function createProvider({ withPass }: { withPass: boolean }) {
         number: pr,
         html_url: `https://github.com/${repo}/pull/${pr}`,
         head: { sha: headSha, ref: "feat/audit" },
+        base: { ref: "main" },
+        state: "OPEN",
+        draft: false,
+        title: "Audit PR convergence",
         last_edited_at: null,
+        title_edited_at: null,
+        base_edited_at: null,
       };
     },
     async fetchFormalReviews() {
