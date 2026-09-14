@@ -3707,7 +3707,7 @@ describe("message tool schema scoping", () => {
           continue;
         }
         expectStringSchema(properties.teamId);
-        expect(tool.parameters.required ?? []).not.toContain("teamId");
+        expect(Value.Check(tool.parameters, { action })).toBe(true);
         for (const teamId of ["11111111-1111-1111-1111-111111111111", "T11111111"]) {
           expect(Value.Check(tool.parameters, { action, teamId })).toBe(true);
         }
