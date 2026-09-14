@@ -880,6 +880,7 @@ describe("dispatchAndStartWorkboardCards", () => {
     });
 
     expect(result.started).toEqual([]);
+    expect(result.count).toBe(0);
     expect(result.skipped).toEqual([
       expect.objectContaining({
         cardId: ready.id,

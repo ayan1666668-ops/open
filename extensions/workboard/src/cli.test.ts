@@ -139,7 +139,7 @@ describe("registerWorkboardCli", () => {
   });
 
   it("shows active diagnostic counts in compact text output", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     await store.create({ title: "Bare manual running", status: "running" });
     const program = createProgram(store);
 
@@ -218,7 +218,7 @@ describe("registerWorkboardCli", () => {
   });
 
   it("includes skipped workers in text dispatch output", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const program = createProgram(store);
     gatewayRuntime.callGatewayFromCli.mockResolvedValueOnce({
       started: [],

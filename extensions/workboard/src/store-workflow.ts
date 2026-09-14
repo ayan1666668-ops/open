@@ -135,7 +135,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       if (activeClaim) {
         throw new Error(`card already claimed by ${activeClaim.ownerId}.`);
       }
-      const metadata = clearDiagnostics(guarded.metadata, ["stranded_ready"]);
+      const metadata = clearDiagnostics(guarded.metadata, [
+        "stranded_ready",
+        "running_without_execution",
+      ]);
       const card = await this.updateCard(
         id,
         {
@@ -184,7 +187,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
             )
           : undefined,
       };
-      const metadata = clearDiagnostics(existing.metadata, ["running_without_heartbeat"]);
+      const metadata = clearDiagnostics(existing.metadata, [
+        "running_without_heartbeat",
+        "running_without_execution",
+      ]);
       return {
         ...metadata,
         claim: removeUndefinedMetadataFields({ claim: nextClaim }).claim,

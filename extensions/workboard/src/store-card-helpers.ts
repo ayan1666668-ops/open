@@ -15,6 +15,7 @@ import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   BLOCKED_TOO_LONG_MS,
+  isWorkboardClaimReclaimable,
   MAX_CARD_ATTEMPTS,
   MAX_CARD_EVENTS,
   READY_STRANDED_MS,
@@ -399,6 +400,7 @@ export function computeCardDiagnostics(card: WorkboardCard, now: number): Workbo
     return diagnostics;
   }
   const claim = card.metadata?.claim;
+  const liveClaim = claim && !isWorkboardClaimReclaimable(claim, now) ? claim : undefined;
   const lastHeartbeatAt = claim?.lastHeartbeatAt ?? card.execution?.updatedAt ?? card.updatedAt;
   if (
     (card.status === "todo" || card.status === "backlog" || card.status === "ready") &&
@@ -415,7 +417,7 @@ export function computeCardDiagnostics(card: WorkboardCard, now: number): Workbo
   }
   if (
     card.status === "running" &&
-    !claim &&
+    !liveClaim &&
     !cardSessionKey(card) &&
     !cardRunId(card) &&
     !card.execution &&

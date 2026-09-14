@@ -640,6 +640,6 @@ async function runWorkboardDispatch(
     started,
     startFailures,
     skipped,
-    count: dispatch.count + started.length + startFailures.length + skipped.length,
+    count: dispatch.count + started.length + startFailures.length,
   };
 }

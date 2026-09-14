@@ -3534,6 +3534,77 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("treats reclaimable expired claims as missing execution backing", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const store = createWorkboardSqliteTestStore();
+      const card = await store.create({ title: "Expired claimed run", status: "running" });
+      const claimed = await store.claim(card.id, { ownerId: "old-worker", ttlSeconds: 60 });
+      const expiresAt = claimed.card.metadata?.claim?.expiresAt;
+      if (expiresAt === undefined) {
+        throw new Error("expected a timed claim");
+      }
+
+      vi.setSystemTime(expiresAt + 5 * 60_000 + 1);
+      await store.refreshDiagnostics(Date.now());
+
+      await expect(store.get(card.id)).resolves.toMatchObject({
+        metadata: {
+          diagnostics: expect.arrayContaining([
+            expect.objectContaining({ kind: "running_without_execution" }),
+          ]),
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears running execution diagnostics when a card is claimed and heartbeaten", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const store = createWorkboardSqliteTestStore();
+      const card = await store.create({ title: "Recovered manual run", status: "running" });
+      await store.refreshDiagnostics(Date.now());
+      await expect(store.get(card.id)).resolves.toMatchObject({
+        metadata: {
+          diagnostics: expect.arrayContaining([
+            expect.objectContaining({ kind: "running_without_execution" }),
+          ]),
+        },
+      });
+
+      const claimed = await store.claim(card.id, { ownerId: "worker", ttlSeconds: 60 });
+      expect(claimed.card.metadata?.diagnostics ?? []).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: "running_without_execution" })]),
+      );
+
+      await store.refreshDiagnostics(Date.now() + 21 * 60_000);
+      await expect(store.get(card.id)).resolves.toMatchObject({
+        metadata: {
+          diagnostics: expect.arrayContaining([
+            expect.objectContaining({ kind: "running_without_heartbeat" }),
+          ]),
+        },
+      });
+
+      const heartbeat = await store.heartbeat(card.id, {
+        ownerId: "worker",
+        token: claimed.token,
+      });
+      expect(heartbeat.metadata?.diagnostics ?? []).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "running_without_execution" }),
+          expect.objectContaining({ kind: "running_without_heartbeat" }),
+        ]),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps archived cards out of diagnostics without rewriting their history", async () => {
     const store = createWorkboardSqliteTestStore();
     const card = await store.create({ title: "Archived completed work", status: "done" });
