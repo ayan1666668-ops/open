@@ -165,14 +165,7 @@ function readOptionalBoolean(
   field: string,
   context: string,
 ): boolean | undefined {
-  const candidate = value[field];
-  if (candidate === undefined || candidate === null) {
-    return undefined;
-  }
-  if (typeof candidate !== "boolean") {
-    throw new Error(`Malformed ClawHub ${context}: expected ${field} to be boolean.`);
-  }
-  return candidate;
+  return value[field] == null ? undefined : readRequiredBoolean(value, field, context);
 }
 
 function readOptionalRank(
@@ -276,13 +269,7 @@ function parsePluginCategories(value: unknown): ClawHubPluginCategory[] {
   return categories.toSorted((left, right) => left.order - right.order);
 }
 
-function parseCatalogList(
-  value: unknown,
-  baseUrl?: string,
-): {
-  items: ClawHubPluginCatalogEntry[];
-  nextCursor?: string;
-} {
+function parseCatalogList(value: unknown, baseUrl?: string) {
   if (!isRecord(value) || !Array.isArray(value.items)) {
     throw new Error("Malformed ClawHub plugin catalog response: expected items to be an array.");
   }
@@ -295,10 +282,7 @@ function parseCatalogList(
   };
 }
 
-function parseCatalogSearch(
-  value: unknown,
-  baseUrl?: string,
-): { items: ClawHubPluginCatalogEntry[] } {
+function parseCatalogSearch(value: unknown, baseUrl?: string) {
   if (!isRecord(value) || !Array.isArray(value.results)) {
     throw new Error("Malformed ClawHub plugin search response: expected results to be an array.");
   }

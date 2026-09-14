@@ -165,13 +165,12 @@ describe("renderPluginCatalogResults", () => {
         heading.textContent?.trim(),
       ),
     ).toEqual(["Official", "Community"]);
+    const sections = container.querySelectorAll(".plugin-catalog-section");
     for (const [index, entries] of [official, community].entries()) {
       expect(
-        [
-          ...container
-            .querySelectorAll(".plugin-catalog-section")
-            [index]!.querySelectorAll<HTMLElement>(".plugin-catalog-card"),
-        ].map((card) => card.dataset.pluginId),
+        [...sections[index]!.querySelectorAll<HTMLElement>(".plugin-catalog-card")].map(
+          (card) => card.dataset.pluginId,
+        ),
       ).toEqual(entries.map((entry) => entry.id));
     }
     const loadMore = container.querySelectorAll<HTMLButtonElement>(
