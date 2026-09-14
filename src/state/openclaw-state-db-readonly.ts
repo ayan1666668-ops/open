@@ -144,7 +144,7 @@ export function withSynchronousArtifactPreservingStateSnapshot<T>(operation: () 
     synchronousReadSnapshots.current = undefined;
     for (const reader of readers.values()) {
       try {
-        if (reader.close() === false) {
+        if (!reader.close()) {
           cleanupErrors.push(new Error("Shared-state metadata snapshot cleanup is incomplete."));
         }
       } catch (error) {
