@@ -218,11 +218,11 @@ export function prepareAgentRequestPreflight(params: {
     return undefined;
   }
   if (request.modelRunRequestedOverrides !== undefined && !isOneShotModelRun) {
-    params.respond(
+    params.io.emitAcceptance([
       false,
       undefined,
       errorShape(ErrorCodes.INVALID_REQUEST, "modelRunRequestedOverrides requires modelRun=true."),
-    );
+    ]);
     return undefined;
   }
   if (requestedModelOverride && !allowModelOverride) {

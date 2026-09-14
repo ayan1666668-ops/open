@@ -1404,102 +1404,123 @@ describe("capability cli", () => {
 
   describe.runIf(process.platform !== "win32")("POSIX prompt files", () => {
     it("reads private model prompts from a mode-0600 prompt file", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-model-run-prompt-"));
-    const promptFile = path.join(tempDir, "prompt.txt");
-    await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
+      const tempDir = tempDirs.make("openclaw-model-run-prompt-");
+      const promptFile = path.join(tempDir, "prompt.txt");
+      await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
 
-    try {
-      await runCap("capability", "model", "run", "--prompt-file", promptFile, "--json");
+      try {
+        await runCap("capability", "model", "run", "--prompt-file", promptFile, "--json");
 
-      expect(firstCompletionCall()?.context?.messages?.[0]?.content).toBe("private prompt");
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
+        expect(firstCompletionCall()?.context?.messages?.[0]?.content).toBe("private prompt");
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
 
-  it("rejects prompt text combined with a prompt file", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-model-run-prompt-"));
-    const promptFile = path.join(tempDir, "prompt.txt");
-    await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
+    it("rejects prompt text combined with a prompt file", async () => {
+      const tempDir = tempDirs.make("openclaw-model-run-prompt-");
+      const promptFile = path.join(tempDir, "prompt.txt");
+      await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
 
-    try {
-      await expect(
-        runCap(
-          "capability",
-          "model",
-          "run",
-          "--prompt",
-          "argv prompt",
-          "--prompt-file",
-          promptFile,
-          "--json",
-        ),
-      ).rejects.toThrow("exit 1");
+      try {
+        await expect(
+          runCap(
+            "capability",
+            "model",
+            "run",
+            "--prompt",
+            "argv prompt",
+            "--prompt-file",
+            promptFile,
+            "--json",
+          ),
+        ).rejects.toThrow("exit 1");
 
-      expectRuntimeErrorContains("Use exactly one of --prompt or --prompt-file.");
-      expect(mocks.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
-      expect(mocks.callGateway).not.toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
+        expectRuntimeErrorContains("Use exactly one of --prompt or --prompt-file.");
+        expect(mocks.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
+        expect(mocks.callGateway).not.toHaveBeenCalled();
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
 
-  it.each([
-    {
-      name: "group-readable file",
-      setup: async (tempDir: string) => {
-        const promptFile = path.join(tempDir, "prompt.txt");
-        await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
-        await fs.chmod(promptFile, 0o640);
-        return promptFile;
+    it.each([
+      {
+        name: "group-readable file",
+        setup: async (tempDir: string) => {
+          const promptFile = path.join(tempDir, "prompt.txt");
+          await fs.writeFile(promptFile, "private prompt", { mode: 0o600 });
+          await fs.chmod(promptFile, 0o640);
+          return promptFile;
+        },
+        expected: "must have mode 0600",
       },
-      expected: "must have mode 0600",
-    },
-    {
-      name: "symbolic link",
-      setup: async (tempDir: string) => {
-        const target = path.join(tempDir, "target.txt");
-        const promptFile = path.join(tempDir, "prompt.txt");
-        await fs.writeFile(target, "private prompt", { mode: 0o600 });
-        await fs.symlink(target, promptFile);
-        return promptFile;
+      {
+        name: "symbolic link",
+        setup: async (tempDir: string) => {
+          const target = path.join(tempDir, "target.txt");
+          const promptFile = path.join(tempDir, "prompt.txt");
+          await fs.writeFile(target, "private prompt", { mode: 0o600 });
+          await fs.symlink(target, promptFile);
+          return promptFile;
+        },
+        expected: "must not be a symbolic link",
       },
-      expected: "must not be a symbolic link",
-    },
-    {
-      name: "empty file",
-      setup: async (tempDir: string) => {
-        const promptFile = path.join(tempDir, "prompt.txt");
-        await fs.writeFile(promptFile, "", { mode: 0o600 });
-        return promptFile;
+      {
+        name: "empty file",
+        setup: async (tempDir: string) => {
+          const promptFile = path.join(tempDir, "prompt.txt");
+          await fs.writeFile(promptFile, "", { mode: 0o600 });
+          return promptFile;
+        },
+        expected: "cannot be empty",
       },
-      expected: "cannot be empty",
-    },
-    {
-      name: "oversized file",
-      setup: async (tempDir: string) => {
-        const promptFile = path.join(tempDir, "prompt.txt");
-        await fs.writeFile(promptFile, Buffer.alloc(1024 * 1024 + 1, 0x61), { mode: 0o600 });
-        return promptFile;
+      {
+        name: "oversized file",
+        setup: async (tempDir: string) => {
+          const promptFile = path.join(tempDir, "prompt.txt");
+          await fs.writeFile(promptFile, Buffer.alloc(1024 * 1024 + 1, 0x61), { mode: 0o600 });
+          return promptFile;
+        },
+        expected: "must not exceed 1048576 bytes",
       },
-      expected: "must not exceed 1048576 bytes",
-    },
-  ])("rejects an unsafe $name prompt input", async ({ setup, expected }) => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-model-run-prompt-"));
-    try {
-      const promptFile = await setup(tempDir);
+    ])("rejects an unsafe $name prompt input", async ({ setup, expected }) => {
+      const tempDir = tempDirs.make("openclaw-model-run-prompt-");
+      try {
+        const promptFile = await setup(tempDir);
+        await expect(
+          runCap("capability", "model", "run", "--prompt-file", promptFile, "--json"),
+        ).rejects.toThrow("exit 1");
+
+        expectRuntimeErrorContains(expected);
+        expect(mocks.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
+        expect(mocks.callGateway).not.toHaveBeenCalled();
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("bounds reads when a prompt file grows after its initial stat", async () => {
+      const tempDir = tempDirs.make("openclaw-model-run-prompt-");
+      const promptFile = path.join(tempDir, "prompt.txt");
+      await fs.writeFile(promptFile, Buffer.alloc(1024 * 1024 + 1, 0x61), { mode: 0o600 });
+      const currentStat = await fs.lstat(promptFile);
+      vi.spyOn(fs, "lstat").mockResolvedValueOnce(
+        new Proxy(currentStat, {
+          get(target, property, receiver) {
+            return property === "size" ? 1 : Reflect.get(target, property, receiver);
+          },
+        }),
+      );
+
       await expect(
         runCap("capability", "model", "run", "--prompt-file", promptFile, "--json"),
       ).rejects.toThrow("exit 1");
 
-      expectRuntimeErrorContains(expected);
+      expectRuntimeErrorContains("must not exceed 1048576 bytes");
       expect(mocks.completeWithPreparedSimpleCompletionModel).not.toHaveBeenCalled();
       expect(mocks.callGateway).not.toHaveBeenCalled();
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
+    });
   });
 
   it.runIf(process.platform === "win32")(
