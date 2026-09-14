@@ -104,7 +104,7 @@ enum AppKitTestSupport {
             cell.performClick(withFrame: owner.bounds, in: owner)
         } else {
             let windowMatches = (button.accessibilityWindow?() as? NSWindow) === window
-            guard role == .button,
+            guard role == .button || role == .menuButton,
                   windowMatches
             else {
                 throw InteractionFailure(message:
