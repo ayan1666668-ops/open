@@ -476,6 +476,7 @@ export async function runClawsAddCommand(
   try {
     addResult = await applyClawAddPlan(plan, {
       reloadPlugins: await resolvePluginBatchReload(),
+      config,
       consentPlanIntegrity: opts.planIntegrity,
       resumeRecord: resumableInstallRecord,
       resumePlan: legacyResumePlan,

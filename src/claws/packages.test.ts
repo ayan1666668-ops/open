@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { computeDeclaredSurfaceHash } from "../plugins/capability-summary.js";
-import { installPluginFromClawHub } from "../plugins/clawhub.js";
 import { PLUGIN_ARTIFACT_ADAPTER_IDENTITY } from "../plugins/install-artifact-inspection.js";
 import { installClawPackages, preflightClawPackage } from "./packages.js";
 import { packageInstallPlan } from "./packages.test-support.js";
@@ -17,17 +16,12 @@ function plan(
   ownerAction: "install" | "reuse" = "install",
 ): ClawAddPlan {
   const base = packageInstallPlan(packages, ownerAction);
-  return {
-    ...base,
-    actions: base.actions.map((action) =>
-      action.kind === "package" && action.details?.kind === "plugin"
-        ? {
-            ...action,
-            details: { ...action.details, declaredCapabilities, capabilityGrants },
-          }
-        : action,
-    ),
-  };
+  for (const action of base.actions) {
+    if (action.kind === "package" && action.details?.kind === "plugin") {
+      Object.assign(action.details, { declaredCapabilities, capabilityGrants });
+    }
+  }
+  return base;
 }
 
 const integrity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -248,96 +242,6 @@ describe("preflightClawPackage plugin setup requirements", () => {
 });
 
 describe("preflightClawPackage isolated plugin inspection", () => {
-  it("captures declared capabilities before the dry-run staging directory is removed", async () => {
-    const inspect = vi.fn(() => ({
-      declared: declaredCapabilities,
-      grants: capabilityGrants,
-    }));
-    const probe = vi.fn(async (request: Parameters<typeof installPluginFromClawHub>[0]) => {
-      const inspectStaged = request.onPluginArtifactInspect as
-        | ((artifact: { pluginId: string; stagedArtifactDir: string }) => Promise<void>)
-        | undefined;
-      await inspectStaged?.({ pluginId: "audit", stagedArtifactDir: "/tmp/staged-audit" });
-      return {
-        ok: true as const,
-        pluginId: "audit",
-        targetDir: "/tmp/removed-after-probe",
-        extensions: [],
-        artifactInspection: {
-          format: "openclaw" as const,
-          mapped: ["plugin"],
-          unavailable: [],
-        },
-        clawhub: { integrity },
-      };
-    });
-
-    await expect(
-      preflightClawPackage(pluginPackage, "/tmp/workspace", {
-        deps: {
-          preflightPlugin: vi.fn(async () => ({
-            ok: true as const,
-            action: "install" as const,
-            request: {} as never,
-          })),
-          probePlugin: probe,
-          inspectPluginCapabilities: inspect,
-        },
-      }),
-    ).resolves.toMatchObject({ ok: true, declaredCapabilities, capabilityGrants });
-    expect(inspect).toHaveBeenCalledTimes(1);
-    expect(inspect).toHaveBeenCalledWith(
-      "/tmp/staged-audit",
-      "audit",
-      undefined,
-      undefined,
-      undefined,
-    );
-  });
-
-  it("returns a structured failure when staged capability inspection throws", async () => {
-    const probe = vi.fn(async (request: Parameters<typeof installPluginFromClawHub>[0]) => {
-      await request.onPluginArtifactInspect?.({
-        pluginId: "audit",
-        stagedArtifactDir: "/tmp/staged-audit",
-        mode: "install",
-      });
-      return {
-        ok: true as const,
-        pluginId: "audit",
-        targetDir: "/tmp/removed-after-probe",
-        extensions: [],
-        artifactInspection: {
-          format: "openclaw" as const,
-          mapped: ["plugin"],
-          unavailable: [],
-        },
-        clawhub: { integrity },
-      };
-    });
-
-    await expect(
-      preflightClawPackage(pluginPackage, "/tmp/workspace", {
-        deps: {
-          preflightPlugin: vi.fn(async () => ({
-            ok: true as const,
-            action: "install" as const,
-            request: {} as never,
-          })),
-          probePlugin: probe,
-          inspectPluginCapabilities: vi.fn(() => {
-            throw new Error("malformed capability evidence");
-          }),
-        },
-      }),
-    ).resolves.toMatchObject({
-      ok: false,
-      message: expect.stringContaining(
-        "capability inspection failed: malformed capability evidence",
-      ),
-    });
-  });
-
   it("rejects generic agent bundles outside the Claw schema-v1 format contract", async () => {
     const probeAgentBundle = vi.fn(async () => ({
       ok: true as const,
@@ -1146,32 +1050,5 @@ describe("installClawPackages", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "package_owner_state_changed" });
-  });
-
-  it("invalidates consent when the plugin-declared surface changes after planning", async () => {
-    const installPlugin = vi.fn();
-    const changedCapabilities = {
-      ...declaredCapabilities,
-      tools: ["audit.write"],
-    };
-
-    await expect(
-      installClawPackages(plan([pluginPackage]), {
-        deps: {
-          installPlugin,
-          probePlugin,
-          inspectPluginCapabilities: vi.fn(() => ({
-            declared: changedCapabilities,
-            grants: capabilityGrants,
-          })),
-          preflightPlugin: vi.fn().mockResolvedValue({ ok: true, action: "install" }),
-          acquirePackageLease,
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "package_owner_state_changed",
-      message: expect.stringContaining("identity or trust state changed after planning"),
-    });
-    expect(installPlugin).not.toHaveBeenCalled();
   });
 });

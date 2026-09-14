@@ -21,6 +21,25 @@ import {
 } from "./types.js";
 import { CLAW_UPDATE_PLAN_SCHEMA_VERSION, type ClawUpdatePlan } from "./update-plan.js";
 
+const declaredCapabilities = {
+  channels: [],
+  providers: [],
+  tools: [],
+  contracts: [],
+  hooks: [],
+  mcpServers: [],
+  cliCommands: [],
+  cliBackends: [],
+  skills: [],
+  dangerousConfigFlags: [],
+};
+const capabilityGrants = {
+  hooks: {
+    allowPromptInjection: { effective: false },
+    allowConversationAccess: { effective: false },
+  },
+};
+
 const dirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(closeOpenClawStateDatabaseForTest);
 
@@ -138,7 +157,9 @@ const addPlan: ClawAddPlan = {
       ...pkg,
       integrity: `sha256:${pkg.ref}-${pkg.version}`,
       ownerAction: "install",
-      ...(pkg.kind === "plugin" ? { installId: pkg.ref } : {}),
+      ...(pkg.kind === "plugin"
+        ? { installId: pkg.ref, declaredCapabilities, capabilityGrants }
+        : {}),
     },
     blocked: false,
   })),
@@ -585,6 +606,10 @@ describe("applyClawPackageUpdate", () => {
                   },
                 };
               },
+              inspectPluginCapabilities: () => ({
+                declared: declaredCapabilities,
+                grants: capabilityGrants,
+              }),
             },
           },
         );
