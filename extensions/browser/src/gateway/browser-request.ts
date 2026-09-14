@@ -63,6 +63,9 @@ const dashboardRequestSchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
   instanceId: z.string().min(1).optional(),
 });
+const dashboardControlRequestSchema = dashboardRequestSchema.extend({
+  resume: z.boolean().optional(),
+});
 
 type BrowserRequestParams = {
   target?: "host" | "node";
@@ -155,9 +158,7 @@ export async function handleBrowserGatewayRequest({
       );
       return;
     }
-    const request = dashboardRequestSchema
-      .extend({ resume: z.boolean().optional() })
-      .safeParse(methodRaw === "GET" ? query : body);
+    const request = dashboardControlRequestSchema.safeParse(methodRaw === "GET" ? query : body);
     if (!request.success) {
       respond(
         false,

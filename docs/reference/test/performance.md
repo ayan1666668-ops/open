@@ -46,6 +46,9 @@ Zod errors. Async parsing, recursive schemas, and unsupported features use the
 runtime parser. Compilation respects the Control UI's `jitless` setting, which
 keeps its strict Content Security Policy intact.
 
+Reuse stable schemas across calls. Constructing an array, object, or extended
+schema inside a reader pays the compilation cost again on every call.
+
 Keep refinement and transform callbacks pure: an invalid compiled parse can
 fall back to the runtime parser and execute those callbacks twice. Benchmark
 the cold first parse, including compilation, separately from warm repeated
