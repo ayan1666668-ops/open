@@ -10,6 +10,7 @@ import {
   retainGatewayRootWorkAdmissionContinuation,
   runOutsideGatewayRootWorkAdmission,
 } from "../../process/gateway-work-admission.js";
+import { trackAsyncWork } from "../../shared/async-work-scope.js";
 import {
   createIngressDrainOwnerId,
   deregisterLiveIngressDrainInstance,
@@ -450,8 +451,12 @@ export function createChannelIngressDrain<
     // settles; when the inherited root is already released, dispatch outside it
     // so the dead lease cannot make session admission refuse the turn as
     // draining. A real restart drain still refuses both paths at admission.
+    // The task also outlives the async work scope it inherits: a detached webhook
+    // pump's scope drains once the pump returns, and the turn this dispatch starts
+    // would then fail its first tracked step with "Async work scope is closed".
+    // Register the task with that scope so it stays open until the task settles.
     const releaseRootWork = retainGatewayRootWorkAdmissionContinuation();
-    state.task = (async () => {
+    state.task = trackAsyncWork(async () => {
       try {
         const result = await (releaseRootWork
           ? options.dispatchClaimedEvent(claim, lifecycle)
@@ -522,7 +527,7 @@ export function createChannelIngressDrain<
       } finally {
         releaseRootWork?.();
       }
-    })();
+    });
 
     activeByClaim.set(activeClaimKey(claim), state);
     laneOwnerByKey.set(laneKey, state);
