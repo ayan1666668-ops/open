@@ -692,12 +692,24 @@ function native(directory, architecture, publishedOnly = false) {
 
     lockedParent = path.join(task, "inaccessible-package-parent");
     fs.mkdirSync(lockedParent);
-    const inaccessible = path.join(lockedParent, "owned-file");
+    // A final directory's metadata remains inspectable without searching it.
+    // Put the registered parent below the locked directory to deny its lookup.
+    const registeredParent = path.join(lockedParent, "nested");
+    fs.mkdirSync(registeredParent);
+    const inaccessible = path.join(registeredParent, "owned-file");
     fs.writeFileSync(inaccessible, "unrelated package file\n");
     withRegistration("inaccessible", inaccessible, () => {
       fs.chmodSync(lockedParent, 0o700);
-      const access = command("/bin/test", ["-r", inaccessible], asUser);
-      assert.equal(access.status, 1, "fixture user must not read the registered parent");
+      success(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          'import assert from "node:assert/strict"; import { lstat } from "node:fs/promises"; await assert.rejects(lstat(process.argv[1]), { code: "EACCES" });',
+          registeredParent,
+        ],
+        asUser,
+      );
       cli("inaccessible registered parent remains unknown", {
         reason: "pkg-ownership-unavailable",
         stateUnchanged: true,
