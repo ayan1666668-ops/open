@@ -6,10 +6,6 @@ const mocked = vi.hoisted(() => ({
   readLatestAssistantReplyMock: vi.fn(
     async (_sessionKey?: string): Promise<string | undefined> => "raw subagent reply",
   ),
-  registerContinuationTimerHandleMock: vi.fn(),
-  retainContinuationTimerRefMock: vi.fn(),
-  releaseContinuationTimerRefMock: vi.fn(),
-  unregisterContinuationTimerHandleMock: vi.fn(),
   countActiveDescendantRunsMock: vi.fn((_key?: string) => 0),
   countPendingDescendantRunsMock: vi.fn((_key?: string) => 0),
   isSubagentSessionRunActiveMock: vi.fn((_key?: string) => true),
@@ -31,18 +27,6 @@ vi.mock("./tools/agent-step.js", () => ({
 vi.mock("../infra/heartbeat-wake.js", () => ({
   markTrustedContinuationHeartbeatWake: <T>(request: T) => request,
   requestHeartbeatNow: (...args: unknown[]) => mocked.requestHeartbeatNowMock(...args),
-}));
-
-vi.mock("../auto-reply/continuation/state.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../auto-reply/continuation/state.js")>()),
-  registerContinuationTimerHandle: (...args: unknown[]) =>
-    mocked.registerContinuationTimerHandleMock(...args),
-  retainContinuationTimerRef: (...args: unknown[]) =>
-    mocked.retainContinuationTimerRefMock(...args),
-  releaseContinuationTimerRef: (...args: unknown[]) =>
-    mocked.releaseContinuationTimerRefMock(...args),
-  unregisterContinuationTimerHandle: (...args: unknown[]) =>
-    mocked.unregisterContinuationTimerHandleMock(...args),
 }));
 
 vi.mock("./subagents/spawn/subagent-depth.js", () => ({
@@ -87,6 +71,8 @@ vi.mock("../plugins/hook-runner-global.js", () => ({
 }));
 
 import { findContinuationDelegateFlowByOriginRun } from "../auto-reply/continuation/delegate-flow-store.js";
+import { resetDelegateDispatchHedgesForTests } from "../auto-reply/continuation/delegate-dispatch-hedge.js";
+import { hasLiveContinuationTimerRefs } from "../auto-reply/continuation/state.js";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import {
   setRuntimeConfigSnapshot,
@@ -168,6 +154,7 @@ describe("subagent announce continuation chaining", () => {
 
   beforeEach(async () => {
     vi.useRealTimers();
+    resetDelegateDispatchHedgesForTests();
     // Use vi.spyOn instead of vi.mock for subagent-spawn — vitest 4.x forks
     // pool doesn't reliably intercept vi.mock for modules imported by the SUT.
     spawnSpy = vi
@@ -180,10 +167,6 @@ describe("subagent announce continuation chaining", () => {
     });
     mocked.requestHeartbeatNowMock.mockReset();
     mocked.readLatestAssistantReplyMock.mockReset().mockResolvedValue("raw subagent reply");
-    mocked.registerContinuationTimerHandleMock.mockReset();
-    mocked.retainContinuationTimerRefMock.mockReset();
-    mocked.releaseContinuationTimerRefMock.mockReset();
-    mocked.unregisterContinuationTimerHandleMock.mockReset();
     mocked.countActiveDescendantRunsMock.mockReset().mockReturnValue(0);
     mocked.countPendingDescendantRunsMock.mockReset().mockReturnValue(0);
     mocked.isSubagentSessionRunActiveMock.mockReset().mockReturnValue(true);
@@ -198,6 +181,7 @@ describe("subagent announce continuation chaining", () => {
   });
 
   afterEach(() => {
+    resetDelegateDispatchHedgesForTests();
     spawnSpy.mockRestore();
     clearRuntimeConfigSnapshot();
   });
@@ -528,11 +512,8 @@ describe("subagent announce continuation chaining", () => {
 
     // The shared hedge is child-owned; the durable row remains the source of
     // truth, so restart recovery can re-arm it without requester-owned state.
-    expect(mocked.registerContinuationTimerHandleMock).toHaveBeenCalledWith(
-      "agent:main:subagent:worker-live-tolerance",
-      expect.anything(),
-    );
-    expect(mocked.retainContinuationTimerRefMock).not.toHaveBeenCalledWith("agent:main:main");
+    expect(hasLiveContinuationTimerRefs("agent:main:subagent:worker-live-tolerance")).toBe(true);
+    expect(hasLiveContinuationTimerRefs("agent:main:main")).toBe(false);
 
     // The hedge matures the durable delegate after the (clamped) delay and spawns
     // the next hop exactly once.

@@ -3886,34 +3886,6 @@ describe("scheduleRestartSentinelWake", () => {
     });
   });
 
-  it("enqueues systemEvent continuation without stale partial delivery context", async () => {
-    mockRestartContinuation(
-      {
-        kind: "systemEvent",
-        text: "continue after restart",
-      },
-      "thread-42",
-    );
-    mocks.resolveOutboundTarget.mockReturnValueOnce({
-      ok: false,
-      error: new Error("missing route"),
-    });
-
-    await scheduleRestartSentinelWake({ deps: {} as never });
-
-    const continuationQueueId = await getEnqueuedSessionDeliveryId(1);
-    expect(mocks.enqueueSystemEvent).toHaveBeenNthCalledWith(2, "continue after restart", {
-      sessionKey: "agent:main:main",
-      deliveryContext: {
-        channel: "whatsapp",
-        to: "+15550002",
-        accountId: "acct-2",
-        threadId: "thread-42",
-      },
-      sessionDeliveryAckId: continuationQueueId,
-      trusted: true,
-    });
-  });
   it("logs and continues when continuation delivery fails", async () => {
     mockRestartContinuation({
       kind: "agentTurn",

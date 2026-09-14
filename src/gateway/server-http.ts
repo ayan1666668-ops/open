@@ -72,6 +72,8 @@ import {
 } from "./server-http-plugin-auth.js";
 import { handleGatewayProbeRequest } from "./server-http-probes.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
+import type { GatewayServerExtraHttpRoute } from "./server-extra-handlers.js";
+import { authorizeGatewayHttpRouteOrReply, handleServerExtraHttpRoute } from "./server-extra-http-routes.js";
 import type { HooksRequestHandler } from "./server/hooks-request-handler.js";
 import { runWithGatewayHttpWorkAdmission } from "./server/http-work-admission.js";
 import {
@@ -137,7 +139,6 @@ const getDevicePairingJoinHttpModule = createLazyRuntimeModule(
 const getPluginNodeCapabilityAuthModule = createLazyRuntimeModule(
   () => import("./server/plugin-node-capability-auth.js"),
 );
-const getHttpAuthUtilsModule = createLazyRuntimeModule(() => import("./http-auth-utils.js"));
 const getPluginRouteRuntimeScopesModule = createLazyRuntimeModule(
   () => import("./server/plugin-route-runtime-scopes.js"),
 );
@@ -170,6 +171,7 @@ export function createGatewayHttpServer(opts: {
   handleWorkerBootstrapArtifactTransferRequest?: WorkerBootstrapArtifactTransferHttpCallback;
   /** Authenticator/dispatcher for the reserved node workspace transfer namespace. */
   handleNodeWorkspaceTransferRequest?: NodeWorkspaceTransferHttpCallback;
+  serverExtraHttpRoutes?: readonly GatewayServerExtraHttpRoute[];
   getReadiness?: ReadinessChecker;
   getStartup?: StartupChecker;
   getRuntimeConfig?: () => OpenClawConfig;
@@ -400,6 +402,7 @@ export function createGatewayHttpServer(opts: {
             getStartup,
           ),
       ];
+      requestStages.push(() => handleServerExtraHttpRoute(opts.serverExtraHttpRoutes, req, res, scopedRequestPath, { ...routeAuth, getResolvedAuth }));
       const addRequestStage = (
         enabled: boolean,
         stage: GatewayHttpRequestStage,
@@ -643,10 +646,9 @@ export function createGatewayHttpServer(opts: {
             }
             // Bypass paths come only from activated channel plugins; every other protected
             // route must authorize before runtime scopes are derived.
-            const { authorizePluginGatewayHttpRequestOrReply } = await getHttpAuthUtilsModule();
             const { resolvePluginRouteRuntimeOperatorScopes } =
               await getPluginRouteRuntimeScopesModule();
-            const authResult = await authorizePluginGatewayHttpRequestOrReply({
+            const authResult = await authorizeGatewayHttpRouteOrReply({
               req,
               res,
               ...routeAuth,
