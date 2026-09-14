@@ -195,6 +195,26 @@ describe("isRetryableAssistantError", () => {
     ).toBe(true);
   });
 
+  it("retries Gemini's ambiguous current-quota RESOURCE_EXHAUSTED 429", () => {
+    expect(
+      isRetryableAssistantError(
+        errorMessage(
+          "Google Generative AI API error (429): You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. [code=RESOURCE_EXHAUSTED]",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps non-Gemini current-quota billing failures non-retryable", () => {
+    expect(
+      isRetryableAssistantError(
+        errorMessage(
+          "OpenAI API error (429): You exceeded your current quota, please check your plan and billing details.",
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     "OpenAI API error (500): 500 The server had an error while processing your request. Sorry about that!",
     "Azure OpenAI API error (502): Bad gateway from upstream",

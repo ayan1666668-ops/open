@@ -27,6 +27,8 @@ const TRANSIENT_RETRY_EVIDENCE_RE =
   /overloaded|rate.?limit|too many requests|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|resource[_ -]?exhausted/i;
 const LONG_WINDOW_RATE_LIMIT_RE =
   /\b(?:daily|weekly|monthly|tokens per day|requests per day|usage limit|subscription|insufficient[_ -]?quota|current quota|quota[_ -]?exceeded|(?:go|free)usagelimiterror|available balance|out of budget)\b/i;
+const GOOGLE_AMBIGUOUS_CURRENT_QUOTA_429_RE =
+  /Google Generative AI API error\s*\(429\):\s*You exceeded your current quota, please check your plan and billing details\..*\[code=RESOURCE_EXHAUSTED\]/i;
 const SHORT_RATE_LIMIT_UNIT_RE =
   /\b(?:requests per minute|tokens per minute|per-minute|rpm|tpm)\b/i;
 const SHORT_WINDOW_RATE_LIMIT_RE =
@@ -125,9 +127,17 @@ export function resolveRetryAfterMs(
 
 /** Usage-window evidence is distinct from a temporary throttle's retry floor. */
 export function hasLongWindowRateLimitEvidence(message: string | undefined): boolean {
-  return Boolean(
-    message && LONG_WINDOW_RATE_LIMIT_RE.test(message) && !SHORT_RATE_LIMIT_UNIT_RE.test(message),
-  );
+  if (!message || SHORT_RATE_LIMIT_UNIT_RE.test(message)) {
+    return false;
+  }
+  // Gemini can wrap a temporary free-tier throttle in generic "current quota" billing text.
+  // Keep that exact ambiguous 429 replayable; explicit daily/weekly/monthly quota evidence still
+  // takes the long-window path through LONG_WINDOW_RATE_LIMIT_RE.
+  if (GOOGLE_AMBIGUOUS_CURRENT_QUOTA_429_RE.test(message)) {
+    const withoutGenericCurrentQuota = message.replace(/\bcurrent quota\b/gi, "");
+    return LONG_WINDOW_RATE_LIMIT_RE.test(withoutGenericCurrentQuota);
+  }
+  return LONG_WINDOW_RATE_LIMIT_RE.test(message);
 }
 
 /** Classify provider rate-limit text without deciding a caller's retry policy. */
