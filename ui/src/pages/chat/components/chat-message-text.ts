@@ -298,7 +298,9 @@ function renderMarkdownText(
     parts[terminalPart] = appendDuplicateSuffix(parts[terminalPart], duplicateSuffix);
   }
   const content = markdownParts(messageKey, markdown, parts, media);
-  return html` <div class="chat-text" dir="${detectTextDirection(markdown)}">${content}</div> `;
+  return html`
+    <div class="chat-text" dir="${detectTextDirection(media?.text ?? markdown)}">${content}</div>
+  `;
 }
 
 function appendDuplicateSuffix(rendered: string, suffix: DuplicateSuffix): string {

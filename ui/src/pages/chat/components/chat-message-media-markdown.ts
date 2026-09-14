@@ -6,6 +6,7 @@ import type { ProjectedMessageContent } from "./chat-message-media.ts";
 type PositionedMedia = Exclude<ProjectedMessageContent, { type: "text" }>;
 export type MarkdownMedia = {
   prefix: string;
+  text: string;
   items: PositionedMedia[];
   render: (item: PositionedMedia, index: number) => unknown;
 };
@@ -29,7 +30,7 @@ export function prepareMarkdownMedia(
       return `${prefix}${items.length - 1}END`;
     })
     .join("\n");
-  return { markdown, media: { prefix, items, render } };
+  return { markdown, media: { prefix, text, items, render } };
 }
 
 class MarkdownMediaDirective extends Directive {
@@ -50,6 +51,7 @@ class MarkdownMediaDirective extends Directive {
       const marker = new RegExp(`${media.prefix}(\\d+)END`, "g");
       const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
       const nodes: Text[] = [];
+      const slots: Comment[] = [];
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (node instanceof Text && node.data.includes(media.prefix)) {
           nodes.push(node);
@@ -62,11 +64,37 @@ class MarkdownMediaDirective extends Directive {
         let offset = 0;
         for (const match of node.data.matchAll(marker)) {
           fragment.append(node.data.slice(offset, match.index));
-          fragment.append(document.createComment(match[0]));
+          const slot = document.createComment(match[0]);
+          slots.push(slot);
+          fragment.append(slot);
           offset = match.index + match[0].length;
         }
         fragment.append(node.data.slice(offset));
         node.replaceWith(fragment);
+      }
+      // Media cards are blocks. Split their containing paragraph while retaining
+      // list items, quotes, and other surrounding Markdown structure.
+      for (const slot of slots) {
+        const paragraph = slot.parentElement?.closest("p");
+        if (!paragraph) {
+          continue;
+        }
+        const before = paragraph.cloneNode(false);
+        const range = document.createRange();
+        range.setStart(paragraph, 0);
+        range.setEndBefore(slot);
+        before.appendChild(range.extractContents());
+        if (
+          Array.from(before.childNodes).some(
+            (node) => node.nodeType !== Node.TEXT_NODE || node.textContent?.trim(),
+          )
+        ) {
+          paragraph.before(before);
+        }
+        paragraph.before(slot);
+        if (!paragraph.innerHTML.trim()) {
+          paragraph.remove();
+        }
       }
       const parts = template.innerHTML.split(new RegExp(`<!--${media.prefix}(\\d+)END-->`, "g"));
       const strings = parts.filter((_, index) => index % 2 === 0);

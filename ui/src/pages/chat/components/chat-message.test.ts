@@ -901,6 +901,20 @@ describe("grouped chat rendering", () => {
     });
   });
 
+  it("uses the visible caption direction when an assistant image comes first", () => {
+    const container = document.createElement("div");
+    markdownRenderMock.withImplementation(renderMarkdownHtml, () => {
+      renderAssistantMessage(
+        container,
+        createAssistantMessage(
+          "MEDIA:https://example.com/preview.png\n\n<thinking>Hidden English</thinking>שלום",
+        ),
+      );
+    });
+    expect(container.querySelector(".chat-text")?.getAttribute("dir")).toBe("rtl");
+    expect(container.querySelector(".chat-text")?.textContent?.trim()).toBe("שלום");
+  });
+
   it("renders a compact count for collapsed duplicate messages", () => {
     const container = document.createElement("div");
     renderAssistantMessageEntries(container, [

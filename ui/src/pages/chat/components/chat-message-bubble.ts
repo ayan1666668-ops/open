@@ -536,7 +536,7 @@ export function renderGroupedMessage(
       },
       markdownRenderOptions,
       markdown ? duplicateSuffix : undefined,
-      prepared.media,
+      { ...prepared.media, text: bodyMarkdown ?? "" },
     );
   };
   const renderMessageContent = () => (renderInOrder ? renderOrderedContent() : renderText());
