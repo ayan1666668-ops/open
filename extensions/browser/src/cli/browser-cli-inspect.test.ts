@@ -378,4 +378,72 @@ describe("browser cli snapshot defaults", () => {
       fsSync.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  const emptyAiSnapshot = (snapshot: string): SnapshotResult => ({
+    ok: true,
+    format: "ai",
+    targetId: "t1",
+    url: "https://example.com",
+    snapshot,
+  });
+
+  it.each([
+    { label: "empty", snapshot: "" },
+    { label: "whitespace-only", snapshot: " \n\t " },
+  ])("fails instead of reporting success on an $label AI snapshot", async ({ snapshot }) => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(snapshot));
+
+    await expect(runSnapshot([])).rejects.toThrow("__exit__:1");
+
+    expect(runtime.error.mock.calls.at(-1)?.[0]).toContain("came back empty");
+    expect(runtime.log).not.toHaveBeenCalled();
+  });
+
+  it("fails on an empty AI snapshot in JSON mode too", async () => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
+
+    await expect(runBrowserInspect(["snapshot"], true)).rejects.toThrow("__exit__:1");
+
+    expect(runtime.error.mock.calls.at(-1)?.[0]).toContain("came back empty");
+    expect(runtime.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("does not write an empty AI snapshot over an existing file", async () => {
+    const tempDir = fsSync.mkdtempSync(path.join(tmpdir(), "openclaw-browser-snapshot-"));
+    try {
+      const outputPath = path.join(tempDir, "snapshot.txt");
+      fsSync.writeFileSync(outputPath, "previous snapshot\n");
+      const priorBytes = fsSync.readFileSync(outputPath);
+      sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
+
+      await expect(runSnapshot(["--out", outputPath])).rejects.toThrow("__exit__:1");
+
+      expect(fsSync.readFileSync(outputPath)).toEqual(priorBytes);
+    } finally {
+      fsSync.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still prints a non-empty AI snapshot", async () => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot("- generic [ref=e1]"));
+
+    await runSnapshot([]);
+
+    expect(runtime.log).toHaveBeenCalledWith("- generic [ref=e1]");
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
+
+  it("leaves an ARIA snapshot with no nodes alone", async () => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ok: true,
+      format: "aria",
+      targetId: "t1",
+      url: "https://example.com",
+      nodes: [],
+    });
+
+    await runSnapshot(["--format", "aria"]);
+
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
 });

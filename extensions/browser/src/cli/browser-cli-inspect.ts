@@ -196,6 +196,20 @@ export function registerBrowserInspectCommands(
           query,
         });
 
+        // An AI snapshot of a live page is never empty: the root element alone produces
+        // output. Empty means the capture did not happen - the page has not painted yet,
+        // or the connection to the browser is wedged. Printing that as success is
+        // indistinguishable from "this page has no content", so fail loudly instead.
+        if (result.format === "ai" && !result.snapshot.trim()) {
+          defaultRuntime.error(
+            danger(
+              "Browser snapshot came back empty. The page may not have finished loading, or the browser connection is wedged. Retry, or restart the browser with `openclaw browser start`.",
+            ),
+          );
+          defaultRuntime.exit(1);
+          return;
+        }
+
         if (opts.out) {
           const payload =
             result.format === "ai" ? result.snapshot : JSON.stringify(result, null, 2);
