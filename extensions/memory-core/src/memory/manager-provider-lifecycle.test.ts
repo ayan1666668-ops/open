@@ -1,6 +1,7 @@
 // Memory Core tests cover manager provider lifecycle availability behavior.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { hashText } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { describe, expect, it, vi } from "vitest";
 import { createManagerIndexFixture } from "./manager-index.test-support.js";
@@ -216,7 +217,7 @@ describe("memory index", () => {
     if (!fields.provider) {
       throw new Error("Expected a test embedding provider");
     }
-    const providerCloseStarted = Promise.withResolvers<void>();
+    const providerCloseStarted = createDeferred<void>();
     const closeProvider = fields.provider.close.bind(fields.provider);
     fields.provider.close = () => {
       const closing = closeProvider();
