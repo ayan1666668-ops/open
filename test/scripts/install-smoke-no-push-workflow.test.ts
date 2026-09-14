@@ -457,6 +457,18 @@ describe("install smoke no-push root image transport", () => {
       symlinkSync(tooling, path.join(workspace, ".release-harness"), "dir");
       const bin = path.join(workspace, "bin");
       mkdirSync(bin);
+      const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+      writeFileSync(
+        path.join(bin, "git"),
+        `#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1" = "-C" ] && [ "$3" = "--version" ]; then
+  printf '%s\n' 'git version 2.45.0'
+  exit 0
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+        { mode: 0o755 },
+      );
       const dockerCalls = path.join(workspace, "docker-calls");
       writeFileSync(
         path.join(bin, "docker"),
