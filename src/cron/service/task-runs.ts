@@ -444,6 +444,12 @@ export function tryFinishCronTaskRun(
       ...(result.scriptResult ? { scriptResult: result.scriptResult } : {}),
       ...(result.triggerEval ? { triggerEval: result.triggerEval } : {}),
     });
+    // A task already terminal-cancelled owns its operator cancellation reason;
+    // a finished event must never overwrite it. The skip reason (for example
+    // `heartbeat skipped: empty-heartbeat-file`) still lives in the cron
+    // history detail, so a cancelled task does not need it on the task row.
+    const operatorCancelled =
+      existingCandidate?.runtime === "cron" && existingCandidate.status === "cancelled";
     const finalize = (
       runId: string,
       status: Extract<
@@ -457,11 +463,7 @@ export function tryFinishCronTaskRun(
         status,
         endedAt: entry.ts,
         lastEventAt: entry.ts,
-        // Operator cancellation owns the task status and reason, so its
-        // finished event drops the execution error. A skipped run that maps to
-        // cancelled (an intentional no-op such as an empty heartbeat file) is
-        // not operator-cancelled: keep its skip reason for diagnostics.
-        ...(status === "cancelled" && entry.status !== "skipped"
+        ...(status === "cancelled" && operatorCancelled
           ? {}
           : {
               error: entry.error,

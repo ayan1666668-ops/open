@@ -118,10 +118,9 @@ describe("cron task run history", () => {
     },
   );
 
-  it("does not classify an intentional skipped run as a failed task", () => {
-    // A heartbeat skip (empty-heartbeat-file) or an unmet trigger condition is
-    // an intentional no-op, not a failed run; it must not surface under
-    // `tasks list --status failed`.
+  it("does not classify an intentional heartbeat skip as a failed task", () => {
+    // A heartbeat no-op (empty-heartbeat-file) is an intentional non-execution,
+    // not a failed run; it must not surface under `tasks list --status failed`.
     expect(
       cronRunStatusToTaskStatus({
         ts: 100,
@@ -131,6 +130,31 @@ describe("cron task run history", () => {
         error: "heartbeat skipped: empty-heartbeat-file",
       }),
     ).toBe("cancelled");
+  });
+
+  it("keeps unsuccessful skipped runs classified as failed tasks", () => {
+    // Failed preflights and unmet trigger conditions also report `skipped`, but
+    // they are real failures: they must stay under `tasks list --status failed`
+    // (reporting contract from openclaw/openclaw#123787).
+    expect(
+      cronRunStatusToTaskStatus({
+        ts: 100,
+        jobId: JOB_ID,
+        action: "finished",
+        status: "skipped",
+        error: "local provider preflight failed ... ECONNREFUSED",
+      }),
+    ).toBe("failed");
+    expect(
+      cronRunStatusToTaskStatus({
+        ts: 100,
+        jobId: JOB_ID,
+        action: "finished",
+        status: "skipped",
+        completionStatus: "failed",
+        error: "queued manual run skipped: trigger condition not met",
+      }),
+    ).toBe("failed");
   });
 
   it("reads executions produced by the cron service from the ledger", async () => {

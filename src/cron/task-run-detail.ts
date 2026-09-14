@@ -325,9 +325,14 @@ export function cronRunStatusToTaskStatus(
     return completionStatus === "succeeded" ? "succeeded" : "failed";
   }
   if (entry.status === "skipped") {
-    // An intentional skip (for example an empty-heartbeat-file no-op) is not a
-    // failed run and must not surface under `tasks list --status failed`.
-    return "cancelled";
+    // A heartbeat no-op skip (for example an empty-heartbeat-file or
+    // no-pending-event) is an intentional non-execution, not a failed run, so
+    // it must not surface under `tasks list --status failed`. Every other
+    // skipped outcome — a failed model/cron preflight or setup, an unmet
+    // trigger condition, a released reservation — is an unsuccessful run and
+    // stays a failed task per the established reporting contract (see
+    // openclaw/openclaw#123787).
+    return entry.error?.startsWith("heartbeat skipped:") ? "cancelled" : "failed";
   }
   return entry.status === "error" && isCronTimeoutErrorText(entry.error) ? "timed_out" : "failed";
 }
