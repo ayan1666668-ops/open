@@ -1292,6 +1292,10 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
               cfg,
               accountId: accountInfo.accountId,
               target: ctxPayload.To as string,
+              // Thread the bubble as a reply to the message the turn is
+              // working on; an unthreaded bubble in a group chat reads as
+              // the response itself and anchors later human replies.
+              replyToId: ctxPayload.MessageSidFull,
               runtime,
             });
             await progressBubble.update(payload.text);

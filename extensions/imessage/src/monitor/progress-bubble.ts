@@ -39,6 +39,11 @@ type ProgressBubbleParams = {
   accountId?: string;
   /** Delivery target (handle or chat identifier) used for the send. */
   target: string;
+  /** GUID of the inbound message the turn is working on; threading the
+   *  bubble as a reply keeps it visually attached to that message (in group
+   *  chats an unthreaded bubble reads as the response itself, and later
+   *  human replies anchor to it). */
+  replyToId?: string;
   runtime: RuntimeEnv;
 };
 
@@ -67,7 +72,7 @@ function resolveSentBubbleGuid(result: {
 export function createIMessageProgressBubble(
   params: ProgressBubbleParams,
 ): IMessageProgressBubble {
-  const { cfg, accountId, target, runtime } = params;
+  const { cfg, accountId, target, replyToId, runtime } = params;
   const cliPath = "imsg";
   let client: IMessageRpcClient | undefined;
   let clientPromise: Promise<IMessageRpcClient> | undefined;
@@ -99,6 +104,7 @@ export function createIMessageProgressBubble(
     const sent = await sendMessageIMessage(target, text, {
       config: cfg,
       ...(accountId ? { accountId } : {}),
+      ...(replyToId ? { replyToId } : {}),
     });
     const guid = resolveSentBubbleGuid(sent);
     if (!guid) {

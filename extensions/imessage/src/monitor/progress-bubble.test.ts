@@ -43,6 +43,9 @@ describe("iMessage progress bubble", () => {
     channels: { imessage: { accounts: { default: {} } } },
   } as unknown as OpenClawConfig;
   const runtime = { log: vi.fn() } as unknown as RuntimeEnv;
+  // The turn's inbound message guid — every bubble send must thread back to
+  // it, or the bubble reads as a standalone response in group chats.
+  const inboundGuid = "inbound-msg-guid";
 
   beforeAll(async () => {
     ({ createIMessageProgressBubble } = await import("./progress-bubble.js"));
@@ -61,11 +64,18 @@ describe("iMessage progress bubble", () => {
       cfg,
       accountId: "default",
       target: "+15043825603",
+      replyToId: inboundGuid,
       runtime,
     });
     await bubble.update("starting");
     await bubble.update("halfway");
     expect(sendMessageIMessageMock).toHaveBeenCalledTimes(1);
+    // The bubble must thread to the message the turn is working on.
+    expect(sendMessageIMessageMock).toHaveBeenCalledWith(
+      "+15043825603",
+      expect.stringContaining("starting"),
+      expect.objectContaining({ replyToId: inboundGuid }),
+    );
     const edits = rpcRequests.filter((r) => r.method === "message.edit");
     expect(edits).toHaveLength(1);
     expect(edits[0]?.params.text).toContain("halfway");
@@ -78,6 +88,7 @@ describe("iMessage progress bubble", () => {
       cfg,
       accountId: "default",
       target: "+15043825603",
+      replyToId: inboundGuid,
       runtime,
     });
     await bubble.update("first");
@@ -99,9 +110,13 @@ describe("iMessage progress bubble", () => {
 
     // Let the queued update pass its stopped check and block inside the
     // rotate-send, so it is genuinely mid-flight when dispose runs.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 5);
+    });
     const disposePromise = bubble.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
     releaseBlockedSend?.();
     await queued;
     await disposePromise;
@@ -112,5 +127,12 @@ describe("iMessage progress bubble", () => {
     // The rotated bubble's guid (guid-for:… second) must be retracted; had
     // dispose snapshotted before awaiting the chain, it would be orphaned.
     expect(unsent).toContain("guid-for:… second");
+    // Rotation sends thread like the initial send — every bubble send
+    // carries the reply target, not just the first one.
+    expect(sendMessageIMessageMock).toHaveBeenLastCalledWith(
+      "+15043825603",
+      expect.stringContaining("second"),
+      expect.objectContaining({ replyToId: inboundGuid }),
+    );
   });
 });
