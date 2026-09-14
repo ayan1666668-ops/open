@@ -869,7 +869,9 @@ enum DeviceIdentitySQLiteStore {
             && lhs.identity.publicKey == rhs.identity.publicKey
             && lhs.identity.privateKey == rhs.identity.privateKey
     }
+}
 
+extension DeviceIdentitySQLiteStore {
     private static func relocateLegacyAuthIfNeeded(
         claims: [LegacyClaim],
         destinationStateDirURL: URL,
