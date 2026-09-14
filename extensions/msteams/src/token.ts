@@ -32,6 +32,11 @@ export type MSTeamsFederatedCredentials = {
 
 export type MSTeamsCredentials = MSTeamsSecretCredentials | MSTeamsFederatedCredentials;
 
+export type MSTeamsCredentialInspection = {
+  credentials?: MSTeamsFederatedCredentials;
+  status: "available" | "configured_unavailable" | "missing";
+};
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function resolveAuthType(
@@ -61,6 +66,20 @@ function resolveFederatedPath(configValue?: string, envValue?: string): string |
     return envValue;
   }
   return undefined;
+}
+
+function resolveMSTeamsAppId(cfg: MSTeamsConfig | undefined, allowEnvFallback: boolean) {
+  return (
+    normalizeSecretInputString(cfg?.appId) ||
+    (allowEnvFallback ? normalizeSecretInputString(process.env.MSTEAMS_APP_ID) : undefined)
+  );
+}
+
+function resolveMSTeamsTenantId(cfg: MSTeamsConfig | undefined, allowEnvFallback: boolean) {
+  return (
+    normalizeSecretInputString(cfg?.tenantId) ||
+    (allowEnvFallback ? normalizeSecretInputString(process.env.MSTEAMS_TENANT_ID) : undefined)
+  );
 }
 
 // ── hasConfiguredMSTeamsCredentials ────────────────────────────────────────
@@ -106,13 +125,8 @@ export function resolveMSTeamsCredentials(
   const pathPrefix = options?.pathPrefix ?? "channels.msteams";
   const authType = resolveAuthType(cfg, { allowEnvFallback });
 
-  const appId =
-    normalizeSecretInputString(cfg?.appId) ||
-    (allowEnvFallback ? normalizeSecretInputString(process.env.MSTEAMS_APP_ID) : undefined);
-
-  const tenantId =
-    normalizeSecretInputString(cfg?.tenantId) ||
-    (allowEnvFallback ? normalizeSecretInputString(process.env.MSTEAMS_TENANT_ID) : undefined);
+  const appId = resolveMSTeamsAppId(cfg, allowEnvFallback);
+  const tenantId = resolveMSTeamsTenantId(cfg, allowEnvFallback);
 
   if (!appId || !tenantId) {
     return undefined;
@@ -167,6 +181,41 @@ export function resolveMSTeamsCredentials(
   }
 
   return { type: "secret", appId, appPassword, tenantId };
+}
+
+/** Read credential availability for diagnostics without redeeming unresolved SecretRefs. */
+export function inspectMSTeamsCredentials(
+  cfg?: MSTeamsConfig,
+  options?: { allowEnvFallback?: boolean },
+): MSTeamsCredentialInspection {
+  const allowEnvFallback = options?.allowEnvFallback ?? true;
+  const authType = resolveAuthType(cfg, { allowEnvFallback });
+  const appId = resolveMSTeamsAppId(cfg, allowEnvFallback);
+  const tenantId = resolveMSTeamsTenantId(cfg, allowEnvFallback);
+  if (!appId || !tenantId) {
+    return { status: "missing" };
+  }
+
+  if (authType === "federated") {
+    const credentials = resolveMSTeamsCredentials(cfg, { allowEnvFallback });
+    return credentials?.type === "federated"
+      ? { credentials, status: "available" }
+      : { status: "missing" };
+  }
+
+  const configuredPassword = normalizeSecretInputString(cfg?.appPassword);
+  if (configuredPassword) {
+    return { status: "available" };
+  }
+  // A configured ref remains authoritative while unavailable. Inspection must not
+  // imply that a lower-precedence environment credential is active.
+  if (hasConfiguredSecretInput(cfg?.appPassword)) {
+    return { status: "configured_unavailable" };
+  }
+  const envPassword = allowEnvFallback
+    ? normalizeSecretInputString(process.env.MSTEAMS_APP_PASSWORD)
+    : undefined;
+  return envPassword ? { status: "available" } : { status: "missing" };
 }
 
 // ---------------------------------------------------------------------------

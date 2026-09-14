@@ -6,7 +6,11 @@ import {
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { tryReadSecretFileSync } from "openclaw/plugin-sdk/secret-file-runtime";
 import type { MSTeamsConfig, OpenClawConfig } from "../runtime-api.js";
-import { hasConfiguredMSTeamsCredentials, resolveMSTeamsCredentials } from "./token.js";
+import {
+  hasConfiguredMSTeamsCredentials,
+  inspectMSTeamsCredentials,
+  resolveMSTeamsCredentials,
+} from "./token.js";
 
 export type MSTeamsMultiAccountConfig = MSTeamsConfig & {
   accounts?: Record<string, Partial<MSTeamsConfig>>;
@@ -181,9 +185,10 @@ export function resolveMSTeamsRuntimeAccount(params: {
   return { accountId, config, credentials };
 }
 
-export function resolveMSTeamsAccount(params: {
+function resolveMSTeamsAccountWithMode(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
+  mode: "runtime" | "inspect";
 }): ResolvedMSTeamsAccount {
   const accountId = normalizeAccountId(
     params.accountId ?? resolveDefaultMSTeamsAccountId(params.cfg),
@@ -195,10 +200,22 @@ export function resolveMSTeamsAccount(params: {
     accountId === DEFAULT_ACCOUNT_ID
       ? "channels.msteams"
       : `channels.msteams.accounts.${accountId}`;
-  const credentials = resolveMSTeamsCredentials(config, {
-    allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
-    pathPrefix,
-  });
+  const credentialResolution =
+    params.mode === "inspect"
+      ? inspectMSTeamsCredentials(config, {
+          allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
+        })
+      : (() => {
+          const credentials = resolveMSTeamsCredentials(config, {
+            allowEnvFallback: accountId === DEFAULT_ACCOUNT_ID,
+            pathPrefix,
+          });
+          return {
+            credentials,
+            status: credentials ? ("available" as const) : ("missing" as const),
+          };
+        })();
+  const credentials = credentialResolution.credentials;
   const certificatePath =
     credentials?.type === "federated" && !credentials.useManagedIdentity
       ? credentials.certificatePath
@@ -216,26 +233,46 @@ export function resolveMSTeamsAccount(params: {
         configPath: certificateConfigPath,
       })
     : undefined;
-  const unavailable = certificate?.status === "configured_unavailable";
+  const unavailable =
+    credentialResolution.status === "configured_unavailable" ||
+    certificate?.status === "configured_unavailable";
+  const credentialDiagnostics =
+    certificate?.status === "configured_unavailable" ? [certificate.diagnostic] : undefined;
   return {
     accountId,
     enabled: channelEnabled && accountEnabled,
-    configured: Boolean(credentials),
-    tokenStatus: !credentials ? "missing" : unavailable ? "configured_unavailable" : "available",
-    ...(unavailable ? { credentialDiagnostics: [certificate.diagnostic] } : {}),
+    configured: credentialResolution.status !== "missing",
+    tokenStatus:
+      credentialResolution.status === "missing"
+        ? "missing"
+        : unavailable
+          ? "configured_unavailable"
+          : "available",
+    ...(credentialDiagnostics ? { credentialDiagnostics } : {}),
     config,
   };
+}
+
+export function resolveMSTeamsAccount(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+}): ResolvedMSTeamsAccount {
+  return resolveMSTeamsAccountWithMode({ ...params, mode: "runtime" });
 }
 
 export function inspectMSTeamsAccount(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
 }): Record<string, unknown> {
-  const account = resolveMSTeamsAccount(params);
+  const account = resolveMSTeamsAccountWithMode({ ...params, mode: "inspect" });
   return {
     accountId: account.accountId,
     enabled: account.enabled,
     configured: account.configured,
+    tokenStatus: account.tokenStatus,
+    ...(account.credentialDiagnostics
+      ? { credentialDiagnostics: account.credentialDiagnostics }
+      : {}),
     hasIdentity:
       account.accountId === DEFAULT_ACCOUNT_ID ||
       accountDefinesIdentity(
