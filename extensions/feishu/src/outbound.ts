@@ -309,7 +309,7 @@ async function sendOutboundText(params: {
 
   // Tables need contiguous source rows, so convert them before the parser
   // materializes prose soft breaks for Feishu post rendering.
-  const tableMode = resolveMarkdownTableMode({ cfg, channel: "feishu" });
+  const tableMode = resolveMarkdownTableMode({ cfg, channel: "feishu", accountId });
   const normalizedText = useCard
     ? text
     : materializeFeishuPostMarkdownSoftBreaks(convertMarkdownTables(text, tableMode));

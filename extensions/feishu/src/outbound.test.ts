@@ -13,6 +13,12 @@ import {
   type MessagePresentation,
   type MessagePresentationAction,
 } from "openclaw/plugin-sdk/interactive-runtime";
+import {
+  createEmptyPluginRegistry,
+  createTestRegistry,
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig, ReplyPayload } from "../runtime-api.js";
 import {
@@ -180,6 +186,17 @@ const cardRenderConfig: ClawdbotConfig = {
   channels: {
     feishu: {
       renderMode: "card",
+    },
+  },
+};
+
+const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+const tableModeConfig: ClawdbotConfig = {
+  channels: {
+    feishu: {
+      renderMode: "raw",
+      markdown: { tables: "bullets" },
+      accounts: { work: { markdown: { tables: "off" } } },
     },
   },
 };
@@ -627,6 +644,31 @@ describe("feishuOutbound.sendText local-image auto-convert", () => {
     expect(sendMessageCall()?.to).toBe("chat_1");
     expect(sendMessageCall()?.text).toBe("please upload /tmp/example.png");
     expect(sendMessageCall()?.accountId).toBe("main");
+  });
+
+  it("resolves the markdown table mode for the named account on the post path", async () => {
+    // The shared resolver reads config only for a registered channel id, and this
+    // harness does not load the runtime setup, so register a minimal feishu plugin.
+    setActivePluginRegistry(
+      createTestRegistry([
+        { pluginId: "feishu", source: "test", plugin: { id: "feishu", meta: { id: "feishu" } } },
+      ]),
+    );
+    try {
+      await sendText({
+        cfg: tableModeConfig,
+        to: "chat_1",
+        text: tableMarkdown,
+        accountId: "work",
+      });
+      await sendText({ cfg: tableModeConfig, to: "chat_1", text: tableMarkdown });
+    } finally {
+      resetPluginRuntimeStateForTest();
+      setActivePluginRegistry(createEmptyPluginRegistry());
+    }
+
+    expect(sendMessageCall(0)?.text).toBe(tableMarkdown);
+    expect(sendMessageCall(1)?.text).toBe("**Ada**  \n• Role: Lead");
   });
 
   it("sends wrapped interactive card text as a native Feishu card", async () => {

@@ -5,9 +5,16 @@ import {
   createChannelPartialDeliveryError,
   isChannelPartialDeliveryError,
 } from "openclaw/plugin-sdk/channel-inbound";
+import {
+  createEmptyPluginRegistry,
+  createTestRegistry,
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "openclaw/plugin-sdk/plugin-test-runtime";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { afterAll, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import type { ClawdbotConfig } from "../runtime-api.js";
 
 type StreamingSessionStub = {
   active: boolean;
@@ -278,6 +285,60 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     dispatcher.markComplete();
     await dispatcher.waitForIdle();
     expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({ text: expected }));
+  });
+
+  it("resolves the markdown table mode for the named account on post replies", async () => {
+    const { convertMarkdownTables, resolveMarkdownTableMode } = await vi.importActual<
+      typeof import("openclaw/plugin-sdk/markdown-table-runtime")
+    >("openclaw/plugin-sdk/markdown-table-runtime");
+    const runtime = getFeishuRuntimeMock();
+    getFeishuRuntimeMock.mockReturnValue({
+      ...runtime,
+      channel: {
+        ...runtime.channel,
+        text: {
+          ...runtime.channel.text,
+          resolveMarkdownTableMode,
+          convertMarkdownTables,
+        },
+      },
+    });
+    resolveFeishuAccountMock.mockReturnValue({
+      ...createReplyAccount("auto", "off", "feishu"),
+      config: { renderMode: "raw", streaming: { mode: "off" } },
+    });
+    const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          markdown: { tables: "bullets" },
+          accounts: { work: { markdown: { tables: "off" } } },
+        },
+      },
+    };
+
+    // The shared resolver reads config only for a registered channel id, and this
+    // harness does not load the runtime setup, so register a minimal feishu plugin.
+    setActivePluginRegistry(
+      createTestRegistry([
+        { pluginId: "feishu", source: "test", plugin: { id: "feishu", meta: { id: "feishu" } } },
+      ]),
+    );
+    try {
+      for (const accountId of ["work", undefined]) {
+        const { result } = createDispatcherHarness({ accountId, cfg });
+        const dispatcher = createReplyDispatcher(toTypingDispatcherOptions(result));
+        dispatcher.sendFinalReply({ text: tableMarkdown });
+        dispatcher.markComplete();
+        await dispatcher.waitForIdle();
+      }
+    } finally {
+      resetPluginRuntimeStateForTest();
+      setActivePluginRegistry(createEmptyPluginRegistry());
+    }
+
+    expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toBe(tableMarkdown);
+    expect(sendMessageFeishuMock.mock.calls[1]?.[0]?.text).toBe("**Ada**  \n• Role: Lead");
   });
 
   it("keeps card attribution on the selected-model prefix context", async () => {

@@ -485,7 +485,7 @@ export async function sendMessageFeishu(
   const { client, receiveId, receiveIdType } = resolveFeishuSendTarget({ cfg, to, accountId });
   let messageText = text;
   if (!preparedPostText) {
-    const tableMode = resolveMarkdownTableMode({ cfg, channel: "feishu" });
+    const tableMode = resolveMarkdownTableMode({ cfg, channel: "feishu", accountId });
     messageText = materializeFeishuPostMarkdownSoftBreaks(
       convertMarkdownTables(text ?? "", tableMode),
     );
@@ -574,6 +574,7 @@ export async function editMessageFeishu(params: {
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "feishu",
+    accountId,
   });
   const messageText = convertMarkdownTables(text!, tableMode);
   const normalizedText = materializeFeishuPostMarkdownSoftBreaks(messageText);
