@@ -67,7 +67,7 @@ export function createDiscordQaScenarioEnvironment(params: {
               : undefined;
           const applyConfig = async (transcriptVoiceAuthorized?: boolean) => {
             const snapshot = await readLiveQaGatewayConfig(input.gateway);
-            const cfg = discordQaScenarioSupport.testing.buildDiscordQaConfig(
+            let cfg = discordQaScenarioSupport.testing.buildDiscordQaConfig(
               snapshot.config as OpenClawConfig,
               {
                 guildId: params.runtimeEnv.guildId,
@@ -103,13 +103,24 @@ export function createDiscordQaScenarioEnvironment(params: {
                 statusReactionsToolOnly: run.kind === "status-reactions-tool-only",
               },
             );
+            // Changing the caller allowlist reloads the Discord plugin owner. Force the
+            // transcript runtime through its restart boundary before admitting capture.
+            if (run.kind === "transcripts-voice-authorization" && transcriptVoiceAuthorized) {
+              cfg = { ...cfg, transcripts: { ...cfg.transcripts, autoStart: [] } };
+            }
             await patchLiveQaGatewayConfig({
               gateway: input.gateway,
               patch: cfg as Record<string, unknown>,
               replacePaths: [
                 "channels.discord",
+                ...(run.kind === "transcripts-voice-authorization"
+                  ? ["channels.discord.allowFrom"]
+                  : []),
                 "messages",
                 "plugins",
+                ...(run.kind === "transcripts-voice-authorization" && transcriptVoiceAuthorized
+                  ? ["transcripts.autoStart"]
+                  : []),
                 ...(run.kind === "transcripts-voice-authorization" && voiceChannel
                   ? [
                       `channels.discord.accounts.${params.accountId}.guilds.${params.runtimeEnv.guildId}.channels.${voiceChannel.id}.users`,

@@ -2,6 +2,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createTranscriptsTool } from "../agents/tools/transcripts-tool.js";
+import { PluginInstance } from "../plugins/plugin-instance.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { withPluginRuntimeRegistryScope } from "../plugins/runtime/gateway-request-scope.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -17,6 +18,47 @@ afterEach(() => {
 });
 
 describe("transcript provider cleanup custody", () => {
+  it("retains the admitted plugin owner until an active capture stops", async () => {
+    const stateDir = tempDirs.make("transcript-plugin-custody-");
+    const stop = vi.fn<NonNullable<TranscriptSourceProvider["stop"]>>(async ({ sessionId }) => ({
+      ok: true,
+      sessionId,
+    }));
+    const instance = new PluginInstance("retained-capture");
+    const provider = instance.wrap<TranscriptSourceProvider>({
+      id: "retained-capture",
+      name: "Retained capture",
+      sourceKinds: ["live-caption"],
+      start: async (request) => ({ ok: true, session: request.session }),
+      stop,
+    });
+    const registry = createEmptyPluginRegistry();
+    registry.transcriptSourceProviders.push({
+      pluginId: provider.id,
+      provider,
+      source: import.meta.url,
+    });
+    const tool = createTranscriptsTool({
+      stateDir,
+      agentId: "main",
+      config: { plugins: { enabled: true } },
+      logger: { warn: vi.fn() },
+      caller: { kind: "operator", source: "local" },
+    });
+
+    await withPluginRuntimeRegistryScope(registry, async () => {
+      await tool.execute("start", {
+        action: "start",
+        providerId: provider.id,
+        sessionId: "notes",
+      });
+      const disposing = instance.dispose();
+      await tool.execute("stop", { action: "stop", sessionId: "notes" });
+      await expect(disposing).resolves.toEqual({ errors: [] });
+    });
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { owner: "tool", failure: "returned", registryChange: "none" },
     { owner: "tool", failure: "thrown", registryChange: "none" },

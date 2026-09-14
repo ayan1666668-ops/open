@@ -181,6 +181,7 @@ describe("discord live qa runtime", () => {
     );
 
     expect(next.channels?.discord?.voice).toEqual({
+      daveEncryption: false,
       enabled: true,
       mode: "stt-tts",
       autoJoin: [
@@ -211,7 +212,9 @@ describe("discord live qa runtime", () => {
     );
 
     const account = next.channels?.discord?.accounts?.sut;
+    expect(next.channels?.discord?.allowFrom).toEqual([]);
     expect(next.channels?.discord?.voice).toEqual({
+      daveEncryption: false,
       enabled: true,
       mode: "stt-tts",
       autoJoin: [],
@@ -222,6 +225,7 @@ describe("discord live qa runtime", () => {
     expect(
       account?.guilds?.["123456789012345678"]?.channels?.["523456789012345678"]?.users,
     ).toEqual(["323456789012345678"]);
+    expect(account?.guilds?.["123456789012345678"]?.users).toBeUndefined();
     expect(next.tools?.alsoAllow).toContain("transcripts");
     expect(next.agents?.entries?.qa?.tools?.alsoAllow).toContain("transcripts");
   });

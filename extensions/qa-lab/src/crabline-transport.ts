@@ -26,18 +26,17 @@ import {
 import { readQaJsonResponse } from "./ignored-response-body.js";
 import {
   QaStateBackedTransportAdapter,
+  type QaTransportActionName,
+  type QaTransportAdapter,
+  type QaTransportGatewayConfig,
+  type QaTransportNativeCommandInput,
+  type QaTransportOutboundEvent,
+  type QaTransportOutboundSequenceMatch,
+  type QaTransportPolicy,
+  type QaTransportReportParams,
+  type QaTransportState,
   waitForQaTransportAccountReady,
   waitForQaTransportOutboundSequence,
-} from "./qa-transport.js";
-import type {
-  QaTransportActionName,
-  QaTransportGatewayConfig,
-  QaTransportNativeCommandInput,
-  QaTransportOutboundEvent,
-  QaTransportOutboundSequenceMatch,
-  QaTransportPolicy,
-  QaTransportReportParams,
-  QaTransportState,
 } from "./qa-transport.js";
 import type {
   QaBusInboundMessageInput,
@@ -335,18 +334,22 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
   readonly #adapter: StartedOpenClawCrablineCorrelatedAdapter;
   readonly #selection: OpenClawCrablineChannelDriverSelection;
   readonly #transportPolicy?: QaTransportPolicy;
+  readonly #voiceCaPath?: string;
   readonly #state: QaCrablineTransportState;
   readonly sendNativeCommand?: (input: QaTransportNativeCommandInput) => Promise<void>;
   readonly waitForOutboundSequence?: (input: QaTransportOutboundSequenceMatch) => Promise<{
     events: QaTransportOutboundEvent[];
     final: QaBusMessage;
   }>;
+  readonly prepareFlow?: QaTransportAdapter["prepareFlow"];
+  #releaseDiscordQaApiBase?: () => void;
 
   constructor(params: {
     adapter: StartedOpenClawCrablineCorrelatedAdapter;
     transportPolicy?: QaTransportPolicy;
     selection: OpenClawCrablineChannelDriverSelection;
     state: QaCrablineTransportState;
+    voiceCaPath?: string;
   }) {
     super({
       id: "crabline",
@@ -358,7 +361,60 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     this.#adapter = params.adapter;
     this.#selection = params.selection;
     this.#transportPolicy = params.transportPolicy;
+    this.#voiceCaPath = params.voiceCaPath;
     this.#state = params.state;
+    if (params.selection.channel === "discord") {
+      // SAFETY: The selected Discord channel uses Crabline's fixture and endpoint manifest contract.
+      const manifest = params.adapter.manifest as unknown as {
+        applicationId: string;
+        botToken: string;
+        driverBotToken: string;
+        driverBotUserId: string;
+        endpoints: { apiRoot: string };
+        fixture: { channelId: string; guildId: string; voiceChannelId: string };
+      };
+      let prepared:
+        | Promise<
+            ReturnType<
+              typeof import("./live-transports/discord/scenario-environment.js").createDiscordQaScenarioEnvironment
+            >
+          >
+        | undefined;
+      const prepareEnvironment = () => {
+        prepared ??= (async () => {
+          const scenarioRuntime = await import("./live-transports/discord/discord-live.runtime.js");
+          this.#releaseDiscordQaApiBase = scenarioRuntime.registerDiscordQaApiBase({
+            apiBaseUrl: `${manifest.endpoints.apiRoot}/v10`,
+            tokens: [manifest.botToken, manifest.driverBotToken],
+          });
+          const [sutIdentity, driverIdentity] = await Promise.all([
+            scenarioRuntime.discordQaScenarioSupport.testing.getCurrentDiscordUser(
+              manifest.botToken,
+            ),
+            scenarioRuntime.discordQaScenarioSupport.testing.getCurrentDiscordUser(
+              manifest.driverBotToken,
+            ),
+          ]);
+          const { createDiscordQaScenarioEnvironment } =
+            await import("./live-transports/discord/scenario-environment.js");
+          return createDiscordQaScenarioEnvironment({
+            accountId: params.adapter.accountId,
+            driverIdentity,
+            runtimeEnv: {
+              channelId: manifest.fixture.channelId,
+              driverBotToken: manifest.driverBotToken,
+              guildId: manifest.fixture.guildId,
+              sutApplicationId: manifest.applicationId,
+              sutBotToken: manifest.botToken,
+              voiceChannelId: manifest.fixture.voiceChannelId,
+            },
+            sutIdentity,
+          });
+        })();
+        return prepared;
+      };
+      this.prepareFlow = async (input) => (await prepareEnvironment()).prepareFlow(input);
+    }
     if (params.selection.channel === "telegram") {
       this.sendNativeCommand = async (input) => {
         const { command, ...message } = input;
@@ -463,7 +519,10 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
 
   createRuntimeEnvPatch = () =>
     this.#adapter.manifest.provider === "discord"
-      ? { DISCORD_API_URL: `${this.#adapter.manifest.endpoints.apiRoot}/v10` }
+      ? {
+          DISCORD_API_URL: `${this.#adapter.manifest.endpoints.apiRoot}/v10`,
+          ...(this.#voiceCaPath ? { NODE_EXTRA_CA_CERTS: this.#voiceCaPath } : {}),
+        }
       : this.#adapter.createProviderReadinessEnv({});
 
   handleAction = async (_params: {
@@ -481,6 +540,7 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
   ];
 
   async cleanupAfterGatewayStop() {
+    this.#releaseDiscordQaApiBase?.();
     await this.#state.cleanup();
   }
 }
@@ -518,6 +578,19 @@ export async function createQaCrablineTransportAdapter(params: {
     recorderPath,
   });
 
+  let voiceCaPath: string | undefined;
+  if (adapter.channel === "discord") {
+    // SAFETY: This branch admits only Crabline's Discord manifest, which may expose the test voice CA.
+    const manifest = adapter.manifest as unknown as {
+      endpoints?: { voiceCaCertificate?: string };
+    };
+    const certificate = manifest.endpoints?.voiceCaCertificate;
+    if (certificate) {
+      voiceCaPath = path.join(params.outputDir, "artifacts", "crabline", "discord-voice-ca.pem");
+      await fs.writeFile(voiceCaPath, `${certificate.trim()}\n`, { encoding: "utf8", mode: 0o600 });
+    }
+  }
+
   const state = createCrablineState({
     adapter,
     state: params.state ?? createQaBusState(),
@@ -528,5 +601,6 @@ export async function createQaCrablineTransportAdapter(params: {
     transportPolicy: params.transportPolicy,
     selection: params.selection,
     state,
+    ...(voiceCaPath ? { voiceCaPath } : {}),
   });
 }

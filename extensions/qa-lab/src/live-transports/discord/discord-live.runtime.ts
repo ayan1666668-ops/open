@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import {
   DiscordApiError,
   handleDiscordMessageAction,
-  requestDiscord,
+  requestDiscord as requestDiscordLive,
 } from "@openclaw/discord/api.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
@@ -212,6 +212,8 @@ type DiscordThreadReplyAttachmentEvidence = {
 
 const DISCORD_QA_CAPTURE_UI_METADATA_ENV = "OPENCLAW_QA_DISCORD_CAPTURE_UI_METADATA";
 const DISCORD_QA_KEEP_THREADS_ENV = "OPENCLAW_QA_DISCORD_KEEP_THREADS";
+const DISCORD_PUBLIC_API_BASE = "https://discord.com/api/v10";
+const discordQaApiBaseByToken = new Map<string, string>();
 const DISCORD_QA_ENV_KEYS = [
   "OPENCLAW_QA_DISCORD_GUILD_ID",
   "OPENCLAW_QA_DISCORD_CHANNEL_ID",
@@ -219,6 +221,69 @@ const DISCORD_QA_ENV_KEYS = [
   "OPENCLAW_QA_DISCORD_SUT_BOT_TOKEN",
   "OPENCLAW_QA_DISCORD_SUT_APPLICATION_ID",
 ] as const;
+
+type DiscordQaRequestOptions = NonNullable<Parameters<typeof requestDiscordLive>[2]>;
+
+function createDiscordQaEndpointFetcher(apiBaseUrl: string): typeof fetch {
+  const base = new URL(apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`);
+  return async (input, init) => {
+    const request = new Request(input, init);
+    if (!request.url.startsWith(`${DISCORD_PUBLIC_API_BASE}/`)) {
+      throw new Error(`Discord QA request escaped the expected API base: ${request.url}`);
+    }
+    const suffix = request.url.slice(`${DISCORD_PUBLIC_API_BASE}/`.length);
+    return await fetch(new Request(new URL(suffix, base), request));
+  };
+}
+
+async function requestDiscord<T>(
+  requestPath: string,
+  token: string,
+  options?: DiscordQaRequestOptions,
+): Promise<T> {
+  const apiBaseUrl = discordQaApiBaseByToken.get(token);
+  return await requestDiscordLive<T>(requestPath, token, {
+    ...options,
+    ...(apiBaseUrl
+      ? { endpointRuntime: null, fetcher: createDiscordQaEndpointFetcher(apiBaseUrl) }
+      : {}),
+  });
+}
+
+export function registerDiscordQaApiBase(params: {
+  apiBaseUrl: string;
+  tokens: readonly string[];
+}): () => void {
+  const normalized = new URL(params.apiBaseUrl).toString().replace(/\/$/u, "");
+  for (const token of params.tokens) {
+    discordQaApiBaseByToken.set(token, normalized);
+  }
+  return () => {
+    for (const token of params.tokens) {
+      if (discordQaApiBaseByToken.get(token) === normalized) {
+        discordQaApiBaseByToken.delete(token);
+      }
+    }
+  };
+}
+
+async function withRegisteredDiscordQaApiBase<T>(token: string, run: () => Promise<T>): Promise<T> {
+  const apiBaseUrl = discordQaApiBaseByToken.get(token);
+  if (!apiBaseUrl) {
+    return await run();
+  }
+  const previous = process.env.DISCORD_API_URL;
+  process.env.DISCORD_API_URL = apiBaseUrl;
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DISCORD_API_URL;
+    } else {
+      process.env.DISCORD_API_URL = previous;
+    }
+  }
+}
 
 export const discordQaCanaryScenario: DiscordQaScenarioImplementation = {
   buildRun: (sutApplicationId) => {
@@ -423,6 +488,7 @@ function buildDiscordQaConfig(
     options.voiceAutoJoin || options.voiceChannelAccess
       ? {
           ...baseCfg.channels?.discord?.voice,
+          daveEncryption: false,
           enabled: true,
           mode: "stt-tts" as const,
           ...(options.voiceAutoJoin ? { autoJoin: [options.voiceAutoJoin] } : { autoJoin: [] }),
@@ -465,6 +531,7 @@ function buildDiscordQaConfig(
       discord: {
         enabled: true,
         defaultAccount: params.sutAccountId,
+        ...(options.voiceChannelAccess ? { allowFrom: [] } : {}),
         ...(voiceConfig ? { voice: voiceConfig } : {}),
         accounts: {
           [params.sutAccountId]: {
@@ -487,7 +554,7 @@ function buildDiscordQaConfig(
             guilds: {
               [params.guildId]: {
                 requireMention: !options.statusReactionsToolOnly,
-                users: [params.driverBotId],
+                ...(options.voiceChannelAccess ? {} : { users: [params.driverBotId] }),
                 channels: {
                   [params.channelId]: {
                     enabled: true,
@@ -643,6 +710,13 @@ async function sendChannelMessage(token: string, channelId: string, content: str
         parse: ["users"],
       },
     },
+    timeoutMs: 15_000,
+  });
+}
+
+async function deleteChannelMessage(token: string, channelId: string, messageId: string) {
+  await requestDiscord<void>(`/channels/${channelId}/messages/${messageId}`, token, {
+    method: "DELETE",
     timeoutMs: 15_000,
   });
 }
@@ -1246,18 +1320,20 @@ async function runDiscordThreadReplyFilePathAttachmentScenario(params: {
       token: params.runtimeEnv.sutBotToken,
       threadId: thread.id,
     });
-    await handleDiscordMessageAction({
-      action: "thread-reply",
-      params: {
-        threadId: thread.id,
-        message: params.scenarioRun.replyContent,
-        filePath: attachmentPath,
-      },
-      cfg: params.cfg,
-      accountId: params.sutAccountId,
-      requesterSenderId: params.driverBotId,
-      mediaLocalRoots: [params.outputDir],
-      mediaReadFile: async (filePath) => await fs.readFile(filePath),
+    await withRegisteredDiscordQaApiBase(params.runtimeEnv.sutBotToken, async () => {
+      await handleDiscordMessageAction({
+        action: "thread-reply",
+        params: {
+          threadId: thread.id,
+          message: params.scenarioRun.replyContent,
+          filePath: attachmentPath,
+        },
+        cfg: params.cfg,
+        accountId: params.sutAccountId,
+        requesterSenderId: params.driverBotId,
+        mediaLocalRoots: [params.outputDir],
+        mediaReadFile: async (filePath) => await fs.readFile(filePath),
+      });
     });
 
     const reply = await pollThreadReplyMessage({
@@ -1442,6 +1518,7 @@ const testing = {
   buildDiscordQaConfig,
   buildDiscordWebMessageUrl,
   computeDiscordRttMs,
+  deleteChannelMessage,
   getCurrentDiscordUser,
   observeStatusReactionTimeline,
   pollChannelMessages,

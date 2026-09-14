@@ -1,4 +1,5 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { resolveGlobalSingleton } from "openclaw/plugin-sdk/global-singleton";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
 import { summarizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -36,7 +37,6 @@ type DiscordTranscriptsManager = {
     listener: (state: { occupied: boolean }) => void,
   ) => () => void;
 };
-const managersByAccountId = new Map<string, DiscordTranscriptsManager>();
 type CaptureRegistration = NonNullable<VoiceSessionEntry["transcripts"]> & {
   source: CaptureSource;
   readonly subscriptionToken: symbol;
@@ -44,7 +44,24 @@ type CaptureRegistration = NonNullable<VoiceSessionEntry["transcripts"]> & {
   channelName?: string;
   onStatus: TranscriptStartRequest["onStatus"];
 };
-const captures = new Map<string, CaptureRegistration>();
+type DiscordTranscriptsRuntimeState = {
+  captures: Map<string, CaptureRegistration>;
+  managerWaiters: Set<{ accountId?: string; resolve: () => void }>;
+  managersByAccountId: Map<string, DiscordTranscriptsManager>;
+};
+
+// The transcript source provider and a restarted Discord account can be loaded
+// from different plugin module generations during hot reload. Keep their live
+// handoff state process-wide so the retained provider can see the new manager.
+const runtimeState = resolveGlobalSingleton(
+  Symbol.for("openclaw.discord.transcriptsRuntimeState"),
+  (): DiscordTranscriptsRuntimeState => ({
+    captures: new Map(),
+    managerWaiters: new Set(),
+    managersByAccountId: new Map(),
+  }),
+);
+const { captures, managerWaiters, managersByAccountId } = runtimeState;
 const logger = createSubsystemLogger("discord/voice");
 
 function captureKey(source: CaptureSource): string {
@@ -84,11 +101,6 @@ export function resolveDiscordTranscriptsCapture(
     ? captures.get(captureKey(source))
     : undefined;
 }
-const managerWaiters = new Set<{
-  accountId?: string;
-  resolve: () => void;
-}>();
-
 const ACCOUNT_ID_ERROR_MAX_CHARS = 64;
 const ACCOUNT_ID_ERROR_MAX_ENTRIES = 4;
 

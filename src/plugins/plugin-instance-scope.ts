@@ -87,6 +87,11 @@ export function runPluginCleanup<T>(value: object, run: () => T): T {
   return instance ? instance.runCleanup(run) : run();
 }
 
+/** Retains the exact plugin owner for host-managed work that outlives its admitting call. */
+export function retainPluginValueConsumer(value: object): PluginInstanceConsumer | undefined {
+  return pluginInstanceState.values.get(value)?.retainConsumer();
+}
+
 /** Named SDK slots share only within the exact managed plugin instance. */
 export function getPluginInstanceRuntimeSlot(
   key: string | symbol,

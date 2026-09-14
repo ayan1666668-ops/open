@@ -32,6 +32,7 @@ describe("Crabline Discord transport", () => {
         expect(transport.requiredPluginIds).toEqual(["discord"]);
         expect(runtimeEnv).toEqual({
           DISCORD_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/v10$/u),
+          NODE_EXTRA_CA_CERTS: expect.stringMatching(/discord-voice-ca\.pem$/u),
         });
         expect(discord).toMatchObject({
           allowFrom: [expect.stringMatching(/^\d{17,20}$/u)],
