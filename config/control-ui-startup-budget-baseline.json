@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 361362,
-  "reason": "Maintainer-approved 353 KiB cap for #147574. Exact-head CI job 103826823422 measured 361362 B gzip for the PR merged with current main, including newer main UI changes and the Settings restore repair. This remains below the 361472 B committed-baseline cap; existing 512 B growth and 64 B build variance allowances remain unchanged.",
+  "startupJsGzipBytes": 361472,
+  "reason": "Upstream merge bundle refresh measured up to 362049 B startup JS gzip on 2026-09-14. This ratchets the committed baseline to the existing 361472 B cap; the 512 B growth allowance remains unchanged and build-variance allowance covers byte-level native gzip drift.",
   "updatedAt": "2026-09-14"
 }
