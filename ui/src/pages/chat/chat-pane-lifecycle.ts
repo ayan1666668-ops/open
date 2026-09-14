@@ -565,7 +565,9 @@ export abstract class ChatPaneLifecycle extends ChatPaneSessionCreation {
     if (!this.state || !isSidebarSlotVisible(this.state.sidebarLayout, "companion")) {
       // A later opening owns fresh presentation focus, even if this rail never mounted.
       this.sessionCompanionFocusGeneration += 1;
-      this.sessionCompanionFocusRequest = undefined;
+      if (this.sessionCompanionFocusRequest !== undefined) {
+        this.sessionCompanionFocusRequest = undefined;
+      }
     }
     if (changedProperties.has("sessionKey") && this.state) {
       const catalogKey = parseCatalogSessionKey(this.sessionKey);
