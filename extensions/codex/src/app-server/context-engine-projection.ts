@@ -124,7 +124,7 @@ export async function projectContextEngineAssemblyForCodex(params: {
     ...(context.imageGroups.length && promptPrefix
       ? {
           imageGroups: context.imageGroups.map((group) => ({
-            ...group,
+            images: group.images,
             start: group.start + promptPrefix.length,
             end: group.end + promptPrefix.length,
           })),

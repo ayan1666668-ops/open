@@ -381,7 +381,7 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
         imageOffset === undefined
           ? []
           : contextImageGroups.map((group) => ({
-              ...group,
+              images: group.images,
               start: group.start + imageOffset,
               end: group.end + imageOffset,
             })),
