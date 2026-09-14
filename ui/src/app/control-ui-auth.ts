@@ -29,7 +29,7 @@ export async function readControlUiJsonResponse(response: Response, signal: Abor
   };
 }
 
-type ControlUiAuthSource = {
+export type ControlUiAuthSource = {
   hello?: { auth?: { deviceToken?: string | null } | null } | null;
   settings?: { token?: string | null } | null;
   password?: string | null;

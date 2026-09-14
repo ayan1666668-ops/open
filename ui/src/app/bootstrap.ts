@@ -116,7 +116,6 @@ export function bootstrapApplication(): ApplicationRuntime {
     startupLocation.pathname || globalThis.location?.pathname || "/",
   );
   const documentMode = resolveControlUiDocumentMode(startupLocation.pathname, basePath);
-  const stopBrowserAuthRecovery = startBrowserAuthRecovery(resourceBasePath);
   const persistedSettings = loadSettings();
   const initialSettings = documentMode
     ? resolvePageGatewaySettings(persistedSettings)
@@ -181,6 +180,19 @@ export function bootstrapApplication(): ApplicationRuntime {
         : {}),
       ...(startup.nativeClient ? { clientOptions: startup.nativeClient } : {}),
     },
+  );
+  const getGatewayAuth = () => ({
+    hello: gateway.snapshot.hello,
+    settings: { token: gateway.connection.token },
+    password: gateway.connection.password,
+  });
+  const documentGatewayScope = gatewayCredentialScope(
+    `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${resourceBasePath}`,
+  );
+  const stopBrowserAuthRecovery = startBrowserAuthRecovery(resourceBasePath, () =>
+    gatewayCredentialScope(gateway.connection.gatewayUrl) === documentGatewayScope
+      ? getGatewayAuth()
+      : {},
   );
   const liveActivity = createLiveActivity(gateway);
   const connectionBootstrap = createConnectionBootstrapCoordinator();
@@ -283,11 +295,7 @@ export function bootstrapApplication(): ApplicationRuntime {
   const scopeUpgrade = createScopeUpgradeCapability(gateway);
   const config = createApplicationConfigCapability({
     resourceBasePath,
-    getAuth: () => ({
-      hello: gateway.snapshot.hello,
-      settings: { token: gateway.connection.token },
-      password: gateway.connection.password,
-    }),
+    getAuth: getGatewayAuth,
   });
   const sessions = createSessionCapability(gateway, agentSelection, {
     bootRecord,

@@ -5,9 +5,17 @@ import { withPromiseModalHost } from "../components/promise-modal-host.ts";
 import { t } from "../i18n/index.ts";
 import { openExternalUrlSafe } from "../lib/open-external-url.ts";
 import { notifyBrowserAuthRestored, subscribeBrowserHttpFailures } from "./browser-http.ts";
+import {
+  fetchWithControlUiAuth,
+  resolveControlUiAuthCandidates,
+  type ControlUiAuthSource,
+} from "./control-ui-auth.ts";
 
 /** The document owns proxy sign-in; a healthy WebSocket does not establish HTTP access. */
-export function startBrowserAuthRecovery(resourceBasePath: string): () => void {
+export function startBrowserAuthRecovery(
+  resourceBasePath: string,
+  getAuth: () => ControlUiAuthSource = () => ({}),
+): () => void {
   const root = new URL(`${normalizeBasePath(resourceBasePath)}/`, window.location.origin);
   const probeUrl = new URL(CONTROL_UI_BOOTSTRAP_CONFIG_PATH.slice(1), root);
   const lifetime = new AbortController();
@@ -87,18 +95,32 @@ export function startBrowserAuthRecovery(resourceBasePath: string): () => void {
       return pending;
     }
     lastProbeAt = Date.now();
+    const authCandidates = resolveControlUiAuthCandidates(getAuth());
+    const isCurrent = () => {
+      const current = resolveControlUiAuthCandidates(getAuth());
+      return (
+        !lifetime.signal.aborted &&
+        current.length === authCandidates.length &&
+        current.every((candidate, index) => candidate === authCandidates[index])
+      );
+    };
     const probe = (async () => {
       try {
         // This canonical endpoint never redirects. Manual mode exposes an edge
-        // redirect without following it into a CSP/CORS failure or sending tokens.
-        const response = await fetch(probeUrl.href, {
-          method: "HEAD",
-          credentials: "same-origin",
-          cache: "no-store",
-          redirect: "manual",
-          signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(5_000)]),
-        });
-        if (lifetime.signal.aborted) {
+        // redirect without following it or forwarding Gateway credentials to it.
+        const response = await fetchWithControlUiAuth(
+          probeUrl.href,
+          {
+            method: "HEAD",
+            credentials: "same-origin",
+            cache: "no-store",
+            redirect: "manual",
+            signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(5_000)]),
+          },
+          authCandidates,
+          isCurrent,
+        );
+        if (!isCurrent()) {
           return;
         }
         if (response.type === "opaqueredirect") {
@@ -121,7 +143,9 @@ export function startBrowserAuthRecovery(resourceBasePath: string): () => void {
           probeResult = "unavailable";
         }
       } catch {
-        probeResult = "unavailable";
+        if (isCurrent()) {
+          probeResult = "unavailable";
+        }
       }
     })();
     pending = probe.finally(() => {

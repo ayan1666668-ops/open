@@ -242,6 +242,17 @@ export function retryAssistantAttachmentAvailability(
     return;
   }
   const resource = observeAssistantAttachment(source, options);
+  resetAssistantAttachmentAvailability(resource);
+  if (allowImage) {
+    resolveAssistantAttachmentAvailability(source, options, true);
+  }
+  notifyChatMediaResourceSubscribers(resource);
+  options.onRequestUpdate?.();
+}
+
+function resetAssistantAttachmentAvailability(
+  resource: ChatMediaResource<AssistantAttachmentAvailability>,
+): void {
   resource.abortController?.abort();
   resource.abortController = undefined;
   resource.pending = undefined;
@@ -249,11 +260,6 @@ export function retryAssistantAttachmentAvailability(
   resource.retainUntil = undefined;
   resource.retryAttempted = false;
   scheduleAssistantAttachmentRefresh(resource, { status: "checking" });
-  if (allowImage) {
-    resolveAssistantAttachmentAvailability(source, options, true);
-  }
-  notifyChatMediaResourceSubscribers(resource);
-  options.onRequestUpdate?.();
 }
 
 function createUnavailableAssistantAttachment(
@@ -291,7 +297,8 @@ function observeAssistantAttachment(source: string, options: ImageRenderOptions)
   if (resource.subscribers.size > 0 && !resource.releaseAuthRecovery) {
     resource.releaseAuthRecovery = subscribeBrowserAuthRestored(() => {
       if (isChatMediaResourceCurrent(resource) && resource.value?.status === "unavailable") {
-        retryAssistantAttachmentAvailability(source, options);
+        resetAssistantAttachmentAvailability(resource);
+        notifyChatMediaResourceSubscribers(resource);
       }
     });
   }

@@ -61,6 +61,7 @@ describe("browser sign-in recovery", () => {
       );
       const results = await Promise.allSettled(requests);
       expect(results.every((result) => result.status === "rejected")).toBe(true);
+      await expect.poll(() => document.querySelector("openclaw-modal-dialog")).not.toBeNull();
       const { dialog } = await getRenderedModalDialog(document.body);
       expect(dialog.getAttribute("aria-label")).toBe("Sign in to continue loading content");
       expect(document.querySelectorAll("openclaw-modal-dialog")).toHaveLength(1);
@@ -124,6 +125,104 @@ describe("browser sign-in recovery", () => {
       expect(document.querySelector("openclaw-modal-dialog")).toBeNull();
     },
   );
+
+  it.each(["stored-token", "stored-password"])(
+    "verifies renewed website access using the current %s credential",
+    async (acceptedCredential) => {
+      stop();
+      stop = startBrowserAuthRecovery("/nested", () => ({
+        hello: { auth: { deviceToken: "expired-device-token" } },
+        settings: { token: "stored-token" },
+        password: "stored-password",
+      }));
+      let signedIn = false;
+      const credentials: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          if (init?.method !== "HEAD") {
+            throw new TypeError("Failed to fetch");
+          }
+          expect(init.redirect).toBe("manual");
+          if (!signedIn) {
+            return redirectResponse();
+          }
+          const authorization = new Headers(init.headers).get("Authorization") ?? "";
+          credentials.push(authorization);
+          return authorization === `Bearer ${acceptedCredential}`
+            ? new Response(null, { headers: { "content-type": "application/json" } })
+            : new Response(null, { status: 401 });
+        }),
+      );
+      const restored = vi.fn();
+      const unsubscribe = subscribeBrowserAuthRestored(restored);
+      try {
+        await expect(
+          fetchControlUiResource("/nested/__openclaw__/assistant-media"),
+        ).rejects.toThrow();
+        await getRenderedModalDialog(document.body);
+        signedIn = true;
+        window.dispatchEvent(new Event("focus"));
+        await expect.poll(() => restored.mock.calls.length).toBe(1);
+        expect(credentials).toEqual([
+          "Bearer expired-device-token",
+          "Bearer stored-token",
+          ...(acceptedCredential === "stored-password" ? ["Bearer stored-password"] : []),
+        ]);
+        expect(document.querySelector("openclaw-modal-dialog")).toBeNull();
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
+
+  it("discards recovery from a credential replaced while the probe was pending", async () => {
+    stop();
+    let token = "original-token";
+    vi.spyOn(window, "open").mockReturnValue(null);
+    stop = startBrowserAuthRecovery("/nested", () => ({ settings: { token } }));
+    let finishProbe!: (response: Response) => void;
+    const success = () => new Response(null, { headers: { "content-type": "application/json" } });
+    let probes = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method !== "HEAD") {
+          throw new TypeError("Failed to fetch");
+        }
+        probes += 1;
+        if (probes === 1) {
+          return redirectResponse();
+        }
+        if (probes === 2) {
+          return new Promise<Response>((resolve) => {
+            finishProbe = resolve;
+          });
+        }
+        expect(new Headers(init.headers).get("Authorization")).toBe("Bearer replacement-token");
+        return success();
+      }),
+    );
+    const restored = vi.fn();
+    const unsubscribe = subscribeBrowserAuthRestored(restored);
+    try {
+      await expect(
+        fetchControlUiResource("/nested/__openclaw__/assistant-media"),
+      ).rejects.toThrow();
+      await getRenderedModalDialog(document.body);
+      button("Sign in").click();
+      window.dispatchEvent(new Event("focus"));
+      token = "replacement-token";
+      finishProbe(success());
+      await expect.poll(() => button("Check again").disabled).toBe(false);
+      expect(restored).not.toHaveBeenCalled();
+      expect(document.querySelector("openclaw-modal-dialog")).not.toBeNull();
+      button("Check again").click();
+      await expect.poll(() => restored.mock.calls.length).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
 
   it("keeps dismissal quiet across later automatic attachment retries", async () => {
     vi.stubGlobal(
