@@ -55,10 +55,7 @@ function clampProgressText(text: string): string {
   return `${cleaned.slice(0, PROGRESS_BUBBLE_MAX_CHARS - 3).trimEnd()}...`;
 }
 
-function resolveSentBubbleGuid(result: {
-  guid?: string;
-  messageId: string;
-}): string | undefined {
+function resolveSentBubbleGuid(result: { guid?: string; messageId: string }): string | undefined {
   const guid = result.guid?.trim();
   if (guid) {
     return guid;
@@ -69,9 +66,7 @@ function resolveSentBubbleGuid(result: {
   return messageId && !/^(ok|unknown)$/i.test(messageId) ? messageId : undefined;
 }
 
-export function createIMessageProgressBubble(
-  params: ProgressBubbleParams,
-): IMessageProgressBubble {
+export function createIMessageProgressBubble(params: ProgressBubbleParams): IMessageProgressBubble {
   const { cfg, accountId, target, replyToId, runtime } = params;
   const cliPath = "imsg";
   let client: IMessageRpcClient | undefined;

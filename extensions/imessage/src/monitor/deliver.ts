@@ -36,7 +36,16 @@ export async function deliverIMessageReply(params: {
    *  "not_applicable"). */
   inboundMessageGuid?: string;
 }) {
-  const { payload, target, runtime, maxBytes, textLimit, accountId, sentMessageCache, inboundMessageGuid } = params;
+  const {
+    payload,
+    target,
+    runtime,
+    maxBytes,
+    textLimit,
+    accountId,
+    sentMessageCache,
+    inboundMessageGuid,
+  } = params;
   const scope = `${accountId ?? ""}:${target}`;
   const { cfg } = params;
   const replyToId = payload.replyToId ?? inboundMessageGuid;

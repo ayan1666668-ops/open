@@ -7,9 +7,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 type SendResult = { guid?: string; messageId?: string };
 
-const sendMessageIMessageMock = vi.hoisted(() =>
-  vi.fn<Promise<SendResult>, [string, string]>(),
-);
+const sendMessageIMessageMock = vi.hoisted(() => vi.fn<Promise<SendResult>, [string, string]>());
 
 const rpcRequests: Array<{ method: string; params: Record<string, unknown> }> = [];
 
