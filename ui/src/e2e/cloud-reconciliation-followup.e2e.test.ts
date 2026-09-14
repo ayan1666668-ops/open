@@ -173,7 +173,7 @@ suite.define(() => {
         const resumedReply = {
           role: "assistant",
           content: "The queued follow-up started automatically.",
-          __openclaw: { id: resumedReplyId, seq: 3 },
+          __openclaw: { id: resumedReplyId, seq: 3, runId },
         };
         const activeHistory = {
           inFlightRun: null,
