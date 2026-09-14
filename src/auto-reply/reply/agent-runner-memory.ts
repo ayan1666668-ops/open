@@ -19,6 +19,11 @@ import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-en
 import { createDeferredEmbeddedRunLifecycleManager } from "../../agents/embedded-agent-runner/run/deferred-lifecycle-owner.js";
 import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent-runner/run/internal-params.js";
 import { createToolResultPromptProjectionState } from "../../agents/embedded-agent-runner/session-prompt-state.js";
+import {
+  bindExtraSystemPromptContext,
+  composeExtraSystemPromptContext,
+  readExtraSystemPromptContext,
+} from "../../agents/extra-system-prompt-context.js";
 import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import { isCliRuntimeAliasForProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
@@ -1561,9 +1566,11 @@ export async function runMemoryFlushIfNeeded(params: {
       workspaceDir: params.followupRun.run.workspaceDir,
       relativePath: writePath,
     });
-    const systemPrompt = [params.followupRun.run.extraSystemPrompt, plan.systemPrompt]
-      .filter(Boolean)
-      .join("\n\n");
+    const sourceContext = readExtraSystemPromptContext(params.followupRun.run);
+    const systemPromptContext = composeExtraSystemPromptContext([
+      ...(sourceContext ? [sourceContext] : []),
+      { text: plan.systemPrompt, reducible: false },
+    ]);
     const selection = resolveMemoryFlushModelFallbackOptions(
       params.followupRun.run,
       plan.model,
@@ -1579,7 +1586,8 @@ export async function runMemoryFlushIfNeeded(params: {
     return {
       plan,
       writePath,
-      systemPrompt,
+      systemPrompt: systemPromptContext.text,
+      systemPromptContext,
       selection,
       preparedRunAdmission,
       memorySession,
@@ -1598,6 +1606,7 @@ export async function runMemoryFlushIfNeeded(params: {
     plan: activeMemoryFlushPlan,
     writePath: memoryFlushWritePath,
     systemPrompt: flushSystemPrompt,
+    systemPromptContext: flushSystemPromptContext,
     selection,
     preparedRunAdmission,
     memorySession,
@@ -1750,6 +1759,7 @@ export async function runMemoryFlushIfNeeded(params: {
           prompt: activeMemoryFlushPlan.prompt,
           transcriptPrompt: "",
           extraSystemPrompt: flushSystemPrompt,
+          ...bindExtraSystemPromptContext({}, flushSystemPromptContext),
           isFinalFallbackAttempt: runOptions.isFinalFallbackAttempt,
           bootstrapPromptWarningSignaturesSeen,
           bootstrapPromptWarningSignature:
