@@ -54,7 +54,7 @@ suite.define(() => {
       const status: ModelAuthStatusResult = await call("models.authStatus", { agentId: "main" });
       return status.providers
         .flatMap((provider) => provider.profiles)
-        .find((profile) => profile.profileId === `${loginProvider}:default`);
+        .find((entry) => entry.profileId === `${loginProvider}:default`);
     };
     const callbacks: Array<{ url: string; status: number }> = [];
     let finalHistory: unknown;

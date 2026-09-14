@@ -54,101 +54,111 @@ export async function startProviderBrowserLoginFixture() {
   const requests: string[] = [];
   const provider = createServer(
     { key: PROXY_FIXTURE_KEY, cert: PROXY_FIXTURE_CERTIFICATE },
-    async (request, response) => {
-      const url = new URL(request.url ?? "/", "https://provider.fixture");
-      requests.push(url.pathname);
-      if (url.pathname === "/authorize") {
-        const state = url.searchParams.get("state");
-        const redirect = url.searchParams.get("redirect_uri");
-        if (!state || !redirect || new URL(redirect).origin !== loginOrigin) {
-          response.writeHead(400).end("Unexpected callback origin");
+    (request, response) => {
+      void (async () => {
+        const url = new URL(request.url ?? "/", "https://provider.fixture");
+        requests.push(url.pathname);
+        if (url.pathname === "/authorize") {
+          const state = url.searchParams.get("state");
+          const redirect = url.searchParams.get("redirect_uri");
+          if (!state || !redirect || new URL(redirect).origin !== loginOrigin) {
+            response.writeHead(400).end("Unexpected callback origin");
+            return;
+          }
+          authorizations.push({ state, redirect });
+          response.setHeader("Content-Type", "text/html; charset=utf-8");
+          response.end(
+            `<!doctype html><title>Fixture provider</title><h1>Authorize fixture account</h1><form action="/complete"><input type="hidden" name="state" value="${state}"><button>Approve sign-in</button></form>`,
+          );
           return;
         }
-        authorizations.push({ state, redirect });
-        response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(
-          `<!doctype html><title>Fixture provider</title><h1>Authorize fixture account</h1><form action="/complete"><input type="hidden" name="state" value="${state}"><button>Approve sign-in</button></form>`,
-        );
-        return;
-      }
-      if (url.pathname === "/complete") {
-        const state = url.searchParams.get("state");
-        const authorization = authorizations.find((entry) => entry.state === state);
-        if (!authorization) {
-          response.writeHead(400).end();
+        if (url.pathname === "/complete") {
+          const state = url.searchParams.get("state");
+          const authorization = authorizations.find((entry) => entry.state === state);
+          if (!authorization) {
+            response.writeHead(400).end();
+            return;
+          }
+          const code = `fixture-code-${authorizations.length}`;
+          codes.set(code, authorization.state);
+          const callback = new URL(authorization.redirect);
+          callback.searchParams.set("state", authorization.state);
+          callback.searchParams.set("code", code);
+          response.writeHead(302, { Location: callback.href }).end();
           return;
         }
-        const code = `fixture-code-${authorizations.length}`;
-        codes.set(code, authorization.state);
-        const callback = new URL(authorization.redirect);
-        callback.searchParams.set("state", authorization.state);
-        callback.searchParams.set("code", code);
-        response.writeHead(302, { Location: callback.href }).end();
-        return;
-      }
-      if (url.pathname === "/token") {
-        let body = "";
-        for await (const chunk of request) body += chunk.toString();
-        const { code, state } = JSON.parse(body);
-        if (typeof code !== "string" || typeof state !== "string" || codes.get(code) !== state) {
+        if (url.pathname === "/token") {
+          let body = "";
+          for await (const chunk of request) {
+            body += chunk.toString();
+          }
+          const { code, state } = JSON.parse(body);
+          if (typeof code !== "string" || typeof state !== "string" || codes.get(code) !== state) {
+            response.writeHead(401).end();
+            return;
+          }
+          codes.delete(code);
+          response.setHeader("Content-Type", "application/json");
+          response.end(JSON.stringify({ key: loginCredential }));
+          return;
+        }
+        if (request.headers.authorization !== `Bearer ${loginCredential}`) {
           response.writeHead(401).end();
           return;
         }
-        codes.delete(code);
         response.setHeader("Content-Type", "application/json");
-        response.end(JSON.stringify({ key: loginCredential }));
-        return;
-      }
-      if (request.headers.authorization !== `Bearer ${loginCredential}`) {
-        response.writeHead(401).end();
-        return;
-      }
-      response.setHeader("Content-Type", "application/json");
-      if (url.pathname === "/models") {
-        response.end(
-          JSON.stringify([
-            {
-              id: "ready",
-              name: "Signed-in fixture model",
-              reasoning: false,
-              input: ["text"],
-              contextWindow: 32768,
-              maxTokens: 4096,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            },
-          ]),
-        );
-      } else if (url.pathname === "/chat/completions") {
-        response.setHeader("Content-Type", "text/event-stream");
-        response.end(
-          [
-            {
-              id: "fixture-reply",
-              object: "chat.completion.chunk",
-              created: 1,
-              model: "ready",
-              choices: [
-                {
-                  index: 0,
-                  delta: { role: "assistant", content: "Signed-in fixture reply" },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              id: "fixture-reply",
-              object: "chat.completion.chunk",
-              created: 1,
-              model: "ready",
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            },
-          ]
-            .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
-            .join("") + "data: [DONE]\n\n",
-        );
-      } else {
-        response.writeHead(404).end();
-      }
+        if (url.pathname === "/models") {
+          response.end(
+            JSON.stringify([
+              {
+                id: "ready",
+                name: "Signed-in fixture model",
+                reasoning: false,
+                input: ["text"],
+                contextWindow: 32768,
+                maxTokens: 4096,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              },
+            ]),
+          );
+        } else if (url.pathname === "/chat/completions") {
+          response.setHeader("Content-Type", "text/event-stream");
+          response.end(
+            [
+              {
+                id: "fixture-reply",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "ready",
+                choices: [
+                  {
+                    index: 0,
+                    delta: { role: "assistant", content: "Signed-in fixture reply" },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              {
+                id: "fixture-reply",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "ready",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              },
+            ]
+              .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+              .join("") + "data: [DONE]\n\n",
+          );
+        } else {
+          response.writeHead(404).end();
+        }
+      })().catch((error: unknown) => {
+        console.error("Provider browser login fixture failed", error);
+        if (!response.headersSent) {
+          response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        }
+        response.end("Provider browser login fixture failed");
+      });
     },
   );
   const close = async () => {
@@ -157,9 +167,9 @@ export async function startProviderBrowserLoginFixture() {
       async () => {
         provider.closeAllConnections();
         if (provider.listening) {
-          await new Promise<void>((resolve, reject) =>
-            provider.close((error) => (error ? reject(error) : resolve())),
-          );
+          await new Promise<void>((resolve, reject) => {
+            provider.close((error) => (error ? reject(error) : resolve()));
+          });
         }
       },
       () => instance.cleanup(),
@@ -187,8 +197,9 @@ export async function startProviderBrowserLoginFixture() {
     provider.listen(0, "127.0.0.1");
     await once(provider, "listening");
     const address = provider.address();
-    if (!address || typeof address === "string")
+    if (!address || typeof address === "string") {
       throw new Error("Provider fixture did not bind TCP");
+    }
     const providerOrigin = `https://127.0.0.1:${address.port}`;
     const pluginDir = path.join(root, "plugin");
     await fs.cp(
