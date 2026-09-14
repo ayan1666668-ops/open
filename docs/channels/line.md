@@ -541,9 +541,10 @@ list the approvers as LINE user IDs:
   one-to-one chat for a request raised from a LINE conversation. A request raised in an
   approver's own chat shows the card there; a group, or another user's chat, gets a notice
   that the request went to LINE DMs. Only listed approvers can then decide that approval type
-  from LINE, including with typed `/approve`. Forwarded text prompts are still delivered
-  as well, including to chats that get the card, because LINE cannot confirm that the card
-  handler is running when the prompt is sent. Requests raised elsewhere, such as the
+  from LINE, including with typed `/approve`. While the account's card handler is running,
+  a chat that gets the card or that notice does not also get the forwarded text prompt;
+  other forwarding targets, such as an operations group, still do, and if the handler is
+  not running, every forwarded prompt is delivered. Requests raised elsewhere, such as the
   Control UI, reach LINE only as the text prompt of a `targets` or `both` forwarding target.
 - **Otherwise** (forwarding off, only `targets` forwarding, or no approvers listed, for
   example `allowFrom: ["*"]`), no card is drawn. A request raised from a LINE chat stays

@@ -175,11 +175,10 @@ describe("line approval capability", () => {
     ).toBe(false);
   });
 
-  // Forwarding cannot see whether the card handler is running, so it never drops the text
-  // prompt, not even for chats a card is routed to: the origin chat, approver DMs, or an
-  // operations group. The local prompt, which core gates on a running handler, still
-  // yields to the card.
-  it("keeps every forwarded prompt, including chats cards are routed to", () => {
+  // Native delivery replaces the forwarded prompt only in the chats it reaches; a
+  // configured operations group is not one of them and keeps its text prompt. Whether the
+  // card handler is running is core's check, applied on top of this answer.
+  it("drops forwarded prompts only for chats cards reach", () => {
     const opsGroup = "line:group:C11111111111111111111111111111111";
     const raisingGroup = "line:group:C0123456789abcdef0123456789abcdef";
     const cfg = buildConfig({
@@ -204,14 +203,14 @@ describe("line approval capability", () => {
         request: buildExecRequest(`line:${APPROVER}`),
       })?.enabled,
     ).toBe(true);
-    for (const [to, source, origin] of [
-      [`line:${APPROVER}`, "session", `line:${APPROVER}`],
-      [`line:${APPROVER}`, "target", `line:${APPROVER}`],
-      [raisingGroup, "session", raisingGroup],
-      [opsGroup, "target", `line:${APPROVER}`],
-    ] as const) {
-      expect(suppressed(to, source, origin)).toBe(false);
-    }
+    expect(suppressed(opsGroup, "target", `line:${APPROVER}`)).toBe(false);
+    expect(suppressed(`line:${APPROVER}`, "target", `line:${APPROVER}`)).toBe(true);
+    expect(suppressed(`line:${APPROVER}`, "session", `line:${APPROVER}`)).toBe(true);
+    // A group that raised the request gets the routed notice, not a second prompt, and the
+    // approver's DM, reached here only as an approver and not as the origin, keeps just
+    // the card.
+    expect(suppressed(raisingGroup, "session", raisingGroup)).toBe(true);
+    expect(suppressed(`line:${APPROVER}`, "target", raisingGroup)).toBe(true);
   });
 
   it("suppresses the local prompt when approvers receive the card", () => {

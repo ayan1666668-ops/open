@@ -7,6 +7,7 @@ import {
   createChannelApproverDmTargetResolver,
   createChannelNativeOriginTargetResolver,
   createNativeApprovalChannelRouteGates,
+  createNativeApprovalForwardingFallbackSuppressor,
   createNativeApprovalMessagingTargetResolvers,
   shouldSuppressLocalNativeExecApprovalPrompt,
 } from "openclaw/plugin-sdk/approval-native-runtime";
@@ -185,15 +186,32 @@ const {
   nativeRuntime: lineLazyApprovalNativeRuntime,
 });
 
+// Forwarding is dropped only for the chats cards already cover: the originating chat (its
+// card or routed notice) and the approver DMs. Any other configured target, such as an
+// operations group, still gets the text prompt. Core honors this only while the account's
+// card handler is running, so a stopped handler never leaves a chat without the prompt.
+const shouldSuppressLineForwardingFallback = createNativeApprovalForwardingFallbackSuppressor<
+  NonNullable<ReturnType<typeof resolveLineOriginTarget>>
+>({
+  channel: "line",
+  normalizeForwardTarget: lineApprovalTargetResolvers.normalizeForwardTarget,
+  // Native targets carry the account; a forwarding target without one matches them
+  // under the account the request resolved to.
+  resolveForwardingTargetForMatch: ({ forwardingTarget, accountId }) => ({
+    ...forwardingTarget,
+    accountId,
+  }),
+  isSessionRouteEligible: shouldHandleLineNativeApprovalRequest,
+  isExplicitTargetEligible: shouldHandleLineNativeApprovalRequest,
+  resolveOriginTarget: resolveLineOriginTarget,
+  resolveApproverDmTargets: resolveLineApproverDmTargets,
+});
+
 export const lineApprovalCapability: ChannelApprovalCapability = {
   ...lineNativeApprovalCapability,
   delivery: {
     ...lineNativeApprovalCapability.delivery,
-    // Forwarding cannot tell whether this account's card handler is actually running: it
-    // starts with the account and can fail or be disabled after that, and the plugin SDK
-    // exposes no readiness. Dropping the forwarded prompt without that fact can leave a
-    // chat with neither a card nor the prompt, so the text prompt always stays (#148031).
-    shouldSuppressForwardingFallback: () => false,
+    shouldSuppressForwardingFallback: shouldSuppressLineForwardingFallback,
   },
   // Cards are added on top of same-chat `/approve`, never in place of it. A `disabled`
   // state would make the Gateway expire a request no other client holds, taking away
