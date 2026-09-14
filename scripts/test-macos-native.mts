@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { root as openCaptureRoot } from "@openclaw/fs-safe/root";
 import { runWithFailedTrailer } from "./lib/failed-trailer.mts";
 import { runManagedCommand } from "./lib/managed-child-process.mts";
 
@@ -38,9 +39,11 @@ await runWithFailedTrailer("macos-native", async () => {
     const home = path.join(root, "home");
     const state = path.join(root, "state");
     const tmp = path.join(root, "tmp");
-    for (const dir of [home, state, tmp]) {
+    const menuCaptures = path.join(root, "menu-captures");
+    for (const dir of [home, state, tmp, menuCaptures]) {
       fs.mkdirSync(dir, { mode: 0o700 });
     }
+    const captureRoot = await openCaptureRoot(menuCaptures);
     const childEnv: NodeJS.ProcessEnv = {};
     for (const key of [
       "PATH",
@@ -74,6 +77,7 @@ await runWithFailedTrailer("macos-native", async () => {
       OPENCLAW_PROFILE: profileMode === "named" ? `test-${randomUUID()}` : "default",
       OPENCLAW_STATE_DIR: state,
       OPENCLAW_CONFIG_PATH: path.join(state, "openclaw.json"),
+      OPENCLAW_TEST_MENU_CAPTURE_DIR: menuCaptures,
     });
 
     // Keep SwiftPM's build cache available without inheriting the runner's app state.
@@ -135,6 +139,83 @@ await runWithFailedTrailer("macos-native", async () => {
         "--event-stream-version",
         "6.3",
       ]);
+      // Preserve only the ordinary run's synthetic images after every child/output closes.
+      // A later diagnostic replay may fail cleanup or overwrite its private capture files.
+      try {
+        const exported = fs.mkdtempSync(
+          path.join(env.RUNNER_TEMP, `openclaw-menu-${profileMode}-`),
+        );
+        const names =
+          profileMode === "default"
+            ? ["catalog", "selected", "effort", "fast", "inherited"]
+            : ["thread-reasoning", "thread-tool-activity", "thread-restored"];
+        const allowed = new RegExp(
+          `^(?:${names.join("|")})(?:-window\\.png|-menu-[0-9]+\\.png|-capture-status\\.json)$`,
+        );
+        const files: string[] = [];
+        for (const entry of fs.readdirSync(menuCaptures, { withFileTypes: true })) {
+          if (!entry.isFile() || !allowed.test(entry.name)) {
+            continue;
+          }
+          const source = await captureRoot.open(entry.name, {
+            hardlinks: "reject",
+            symlinks: "reject",
+          });
+          try {
+            const before = await source.handle.stat({ bigint: true });
+            const bytes = await source.handle.readFile();
+            const after = await source.handle.stat({ bigint: true });
+            const current = await fs.promises.lstat(path.join(menuCaptures, entry.name), {
+              bigint: true,
+            });
+            if (
+              BigInt(bytes.byteLength) !== before.size ||
+              [before, after, current].some(
+                (stat) =>
+                  !stat.isFile() ||
+                  stat.nlink !== 1n ||
+                  stat.dev !== before.dev ||
+                  stat.ino !== before.ino ||
+                  stat.size !== before.size ||
+                  stat.mtimeNs !== before.mtimeNs ||
+                  stat.ctimeNs !== before.ctimeNs,
+              )
+            ) {
+              throw new Error(`Menu capture changed before export: ${entry.name}`);
+            }
+            fs.writeFileSync(path.join(exported, entry.name), bytes, { flag: "wx", mode: 0o600 });
+            files.push(entry.name);
+          } finally {
+            await source.handle.close();
+          }
+        }
+        fs.writeFileSync(
+          path.join(exported, "capture-export.json"),
+          JSON.stringify(
+            {
+              profileMode,
+              source: "ordinary-swift-run",
+              swiftExitCode: process.exitCode,
+              files,
+              missingCaptureStatus: names.filter(
+                (name) => !files.includes(`${name}-capture-status.json`),
+              ),
+              requiresVisualInspection: true,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+        if (env.GITHUB_OUTPUT) {
+          fs.appendFileSync(env.GITHUB_OUTPUT, `menu-${profileMode}-artifact-path=${exported}\n`);
+        }
+        console.error(`[macos-native] Synthetic menu capture artifacts: ${exported}`);
+      } catch (captureError) {
+        console.error(
+          "[macos-native] Menu capture export unavailable; preserving test outcome",
+          captureError,
+        );
+      }
       if (process.exitCode === 0) {
         try {
           let phase: "pending" | "running" | "ended" = "pending";
@@ -230,7 +311,7 @@ await runWithFailedTrailer("macos-native", async () => {
                 "-o",
                 "version",
                 "-o",
-                'breakpoint set --name exit --name _exit -C "register read x0" -C "thread backtrace all" --auto-continue true',
+                'breakpoint set --func-regex "^(exit|_exit)$" -C "register read x0" -C "thread backtrace all" --auto-continue true',
                 "-o",
                 'breakpoint set --name CFRunLoopStop --name _CFRunLoopStopMode -C "register read x0 x1" -C "thread backtrace all" --auto-continue true',
                 "-o",

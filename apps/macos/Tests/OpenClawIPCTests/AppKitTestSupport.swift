@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Testing
 
 @MainActor
@@ -102,10 +103,12 @@ enum AppKitTestSupport {
             ownerType = String(reflecting: type(of: owner))
             cell.performClick(withFrame: owner.bounds, in: owner)
         } else {
+            let windowMatches = (button.accessibilityWindow?() as? NSWindow) === window
             guard role == .button,
-                  (button.accessibilityWindow?() as? NSWindow) === window
+                  windowMatches
             else {
-                throw InteractionFailure(message: "Unsupported menu element or fixture window: \(controlType)")
+                throw InteractionFailure(message:
+                    "Unsupported menu element or fixture window: \(controlType), role=\(String(describing: role)), windowMatches=\(windowMatches)")
             }
             action = "accessibility-press"
             pressed = button.accessibilityPerformPress?()
@@ -127,6 +130,81 @@ enum AppKitTestSupport {
         guard completed else {
             throw InteractionFailure(message: "The native menu inspection must complete before its tracking deadline")
         }
+    }
+
+    static func record(menu: NSMenu, content: NSView?, name: String) throws {
+        guard let directory = ProcessInfo.processInfo.environment["OPENCLAW_TEST_MENU_CAPTURE_DIR"] else {
+            throw InteractionFailure(message: "Menu capture requires the native launcher's capture directory")
+        }
+        let output = URL(fileURLWithPath: directory, isDirectory: true)
+        var blockers: [String] = []
+        var pngs: [String] = []
+        func items(_ menu: NSMenu) -> [[String: Any]] {
+            menu.items.map { item in
+                var row: [String: Any] = [
+                    "title": item.title, "enabled": item.isEnabled, "selected": item.state == .on,
+                ]
+                if let submenu = item.submenu { row["children"] = items(submenu) }
+                return row
+            }
+        }
+        func capture(_ view: NSView?, filename: String) throws {
+            guard let view, !view.bounds.isEmpty,
+                  let image = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            else {
+                throw InteractionFailure(message: "No cacheable view for \(filename)")
+            }
+            view.cacheDisplay(in: view.bounds, to: image)
+            guard let data = image.representation(using: .png, properties: [:]), !data.isEmpty else {
+                throw InteractionFailure(message: "No PNG representation for \(filename)")
+            }
+            try data.write(to: output.appendingPathComponent(filename))
+            pngs.append(filename)
+        }
+        let windowContent = content?.window?.contentView
+        var frameError: Error?
+        do {
+            try capture(windowContent?.superview ?? windowContent, filename: "\(name)-window.png")
+        } catch {
+            frameError = error
+            blockers.append("Required frame capture failed: \(error.localizedDescription)")
+        }
+        var menuWindowCount = 0
+        if let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], 0) as? [[String: Any]]
+        {
+            for window in windows
+                where window[kCGWindowOwnerPID as String] as? Int32 == ProcessInfo.processInfo.processIdentifier
+            {
+                guard window[kCGWindowLayer as String] as? Int == NSWindow.Level.popUpMenu.rawValue,
+                      let number = window[kCGWindowNumber as String] as? UInt32 else { continue }
+                menuWindowCount += 1
+                let popupContent = NSApp.window(withWindowNumber: Int(number))?.contentView
+                do {
+                    try capture(popupContent?.superview ?? popupContent, filename: "\(name)-menu-\(number).png")
+                } catch {
+                    blockers.append("Popup \(number) capture unavailable: \(error.localizedDescription)")
+                }
+            }
+        }
+        if menuWindowCount == 0 {
+            blockers.append("No owned popup window was listed")
+        }
+        let status: [String: Any] = [
+            "name": name,
+            "method": "NSView.cacheDisplay",
+            "menu": items(menu),
+            "menuWindowCount": menuWindowCount,
+            "pngs": pngs,
+            "blockers": blockers,
+            "requiresVisualInspection": true,
+        ]
+        if !blockers.isEmpty {
+            print("Menu capture blocked for \(name): \(blockers.joined(separator: "; "))")
+        }
+        try JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("\(name)-capture-status.json"))
+        if let frameError { throw frameError }
     }
 
     private struct InteractionFailure: LocalizedError {
@@ -160,6 +238,9 @@ private final class AppKitTestMenuTracking: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(self.beganTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(self.endedTracking(_:)),
+            name: NSMenu.didEndTrackingNotification, object: nil)
         let deadline = Timer(
             timeInterval: Self.timeout,
             target: self,
@@ -198,6 +279,11 @@ private final class AppKitTestMenuTracking: NSObject {
         }
     }
 
+    @objc private func endedTracking(_ notification: Notification) {
+        guard let menu = notification.object as? NSMenu, self.menu === menu else { return }
+        self.menu = nil
+    }
+
     @objc private func inspectMenu() {
         guard let menu = self.menu else { return }
         guard !self.timedOut, ContinuousClock.now < self.expiresAt else {
@@ -207,7 +293,7 @@ private final class AppKitTestMenuTracking: NSObject {
         defer {
             self.inspectionCompleted = true
             self.deadline?.invalidate()
-            menu.cancelTrackingWithoutAnimation()
+            self.cancelTracking()
             self.resumeWaiter()
         }
         do { try self.inspect(menu) } catch { self.error = error }
@@ -216,16 +302,22 @@ private final class AppKitTestMenuTracking: NSObject {
     @objc private func expire() {
         guard !self.inspectionCompleted else { return }
         self.timedOut = true
-        self.menu?.cancelTrackingWithoutAnimation()
+        self.cancelTracking()
         self.resumeWaiter()
     }
 
     func stop() {
         self.inspection?.invalidate()
         self.deadline?.invalidate()
-        self.menu?.cancelTrackingWithoutAnimation()
+        self.cancelTracking()
         NotificationCenter.default.removeObserver(self)
         self.resumeWaiter()
+    }
+
+    private func cancelTracking() {
+        let menu = self.menu
+        self.menu = nil
+        menu?.cancelTrackingWithoutAnimation()
     }
 
     private func resumeWaiter() {

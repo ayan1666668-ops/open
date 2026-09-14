@@ -70,7 +70,9 @@ struct AppStateIsolationTests {
                 #expect(AppDefaults.standard.object(forKey: otherKey) as? Bool == otherEnabled)
                 #expect(defaultDefaults.object(forKey: reasoningKey) as? Bool == true)
                 #expect(defaultDefaults.object(forKey: toolActivityKey) as? Bool == true)
-                let reopenedStates = try await self.threadPreferenceStates(in: window)
+                let reopenedStates = try await self.threadPreferenceStates(
+                    in: window,
+                    captureName: key == reasoningKey ? "thread-reasoning" : "thread-tool-activity")
                 #expect(reopenedStates == [.off, key == reasoningKey ? .on : .off])
             }
 
@@ -118,7 +120,8 @@ struct AppStateIsolationTests {
             #expect(restoredPin)
             #expect(AppDefaults.standard.stringArray(forKey: recentsKey) == ["fixture/fresh"])
             #expect(defaultDefaults.stringArray(forKey: recentsKey) == ["fixture/default"])
-            let restoredThreadStates = try await self.threadPreferenceStates(in: reopenedWindow)
+            let restoredThreadStates = try await self.threadPreferenceStates(
+                in: reopenedWindow, captureName: "thread-restored")
             #expect(restoredThreadStates == [.off, .off])
             #expect(defaultDefaults.object(forKey: reasoningKey) as? Bool == true)
             #expect(defaultDefaults.object(forKey: toolActivityKey) as? Bool == true)
@@ -136,7 +139,10 @@ struct AppStateIsolationTests {
         }
     }
 
-    private func threadPreferenceStates(in window: NSWindow) async throws -> [NSControl.StateValue] {
+    private func threadPreferenceStates(
+        in window: NSWindow,
+        captureName: String) async throws -> [NSControl.StateValue]
+    {
         let button = try await self.threadMenuButton(in: window)
         var states: [NSControl.StateValue] = []
         try await AppKitTestSupport.pressMenu(button, in: window) { menu in
@@ -144,6 +150,7 @@ struct AppStateIsolationTests {
                 let item = try #require(menu.items.first { $0.title == title })
                 return item.state
             }
+            try AppKitTestSupport.record(menu: menu, content: window.contentView, name: captureName)
         }
         return states
     }

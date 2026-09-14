@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 import Observation
 import OpenClawChatUI
 import SwiftUI
@@ -55,7 +54,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             })
 
             try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
-                try Self.record(menu: menu, content: content, name: "catalog")
+                try AppKitTestSupport.record(menu: menu, content: content, name: "catalog")
                 let provider = try XCTUnwrap(menu.items.first { $0.submenu != nil })
                 let choices = try XCTUnwrap(provider.submenu)
                 let unavailable = try XCTUnwrap(choices.items.first { $0.title.hasPrefix("Locked fixture") })
@@ -77,7 +76,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertEqual(model.displayedModelSelectionID, "fixture/allowed")
 
             try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
-                try Self.record(menu: menu, content: content, name: "selected")
+                try AppKitTestSupport.record(menu: menu, content: content, name: "selected")
                 let provider = try XCTUnwrap(menu.items.first { $0.submenu != nil })
                 let selected = try XCTUnwrap(provider.submenu?.items.first {
                     $0.title.hasPrefix("Allowed fixture")
@@ -89,7 +88,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertEqual(model.selectedThinkingLevel, "high")
             XCTAssertTrue(model.modelControlLabel.contains("Thorough"))
             try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
-                try Self.record(menu: menu, content: content, name: "effort")
+                try AppKitTestSupport.record(menu: menu, content: content, name: "effort")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items.map(\.title), ["Session default", "Fast", "Normal"])
                 XCTAssertTrue(speed.items.allSatisfy(\.isEnabled))
@@ -101,7 +100,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertEqual(model.speed.override, .on)
             XCTAssertTrue(model.modelControlLabel.contains("Fast"))
             try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
-                try Self.record(menu: menu, content: content, name: "fast")
+                try AppKitTestSupport.record(menu: menu, content: content, name: "fast")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items[1].state, .on)
                 speed.performActionForItem(at: 0)
@@ -111,7 +110,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertFalse(model.speed.isEnabled)
             XCTAssertEqual(model.selectedThinkingLevel, "high")
             try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
-                try Self.record(menu: menu, content: content, name: "inherited")
+                try AppKitTestSupport.record(menu: menu, content: content, name: "inherited")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items.map(\.state), [.on, .off, .off])
                 let choices = try XCTUnwrap(menu.items.first { $0.title == "Fixture" }?.submenu)
@@ -139,50 +138,6 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
         observation.stop()
         XCTAssertEqual(result, .completed)
         XCTAssertTrue(condition())
-    }
-
-    private static func record(menu: NSMenu, content: NSView, name: String) throws {
-        func items(_ menu: NSMenu) -> [[String: Any]] {
-            menu.items.map { item in
-                var row: [String: Any] = [
-                    "title": item.title, "enabled": item.isEnabled, "selected": item.state == .on,
-                ]
-                if let submenu = item.submenu { row["children"] = items(submenu) }
-                return row
-            }
-        }
-        let output = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("quick-chat-proof", isDirectory: true)
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: items(menu), options: [.prettyPrinted, .sortedKeys])
-            .write(to: output.appendingPathComponent("\(name)-menu.json"))
-        let image = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: image)
-        try XCTUnwrap(image.representation(using: .png, properties: [:]))
-            .write(to: output.appendingPathComponent("\(name)-window.png"))
-        if CGPreflightScreenCaptureAccess(),
-           let windows = CGWindowListCopyWindowInfo(
-               [.optionOnScreenOnly, .excludeDesktopElements],
-               0) as? [[String: Any]]
-        {
-            for window in windows
-                where window[kCGWindowOwnerPID as String] as? Int32 == ProcessInfo.processInfo.processIdentifier
-            {
-                guard window[kCGWindowLayer as String] as? Int == NSWindow.Level.popUpMenu.rawValue,
-                      let number = window[kCGWindowNumber as String] as? UInt32 else { continue }
-                let capture = Process()
-                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                capture.arguments = [
-                    "-x",
-                    "-l",
-                    String(number),
-                    output.appendingPathComponent("\(name)-menu-\(number).png").path,
-                ]
-                try capture.run()
-                capture.waitUntilExit()
-                XCTAssertEqual(capture.terminationStatus, 0)
-            }
-        }
     }
 
     private static func makeGateway(fixture: QuickChatCatalogFixture) -> GatewayConnection {

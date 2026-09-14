@@ -83,6 +83,18 @@ if (tool === 'security') {
   const owned = args.at(-1);
   assert.equal(path.dirname(owned), keychains);
   const operation = args[0];
+  if (operation === 'delete-keychain' && env.OPENCLAW_TEST_MENU_CAPTURE_DIR) {
+    const mode = env.OPENCLAW_PROFILE === 'default' ? 'default' : 'named';
+    const name = mode === 'default' ? 'catalog' : 'thread-reasoning';
+    const image = path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, name + '-window.png');
+    if (fs.existsSync(image)) {
+      const prefix = 'menu-' + mode + '-artifact-path=';
+      const exported = fs.readFileSync(${JSON.stringify(path.join(root, "outputs"))}, 'utf8')
+        .split('\\n').filter(line => line.startsWith(prefix)).at(-1)?.slice(prefix.length);
+      assert.ok(exported && fs.existsSync(env.HOME));
+      assert.deepEqual(fs.readFileSync(path.join(exported, name + '-window.png')), fs.readFileSync(image));
+    }
+  }
   if (operation === 'create-keychain' || operation === 'unlock-keychain') {
     assert.deepEqual(args.slice(1, -1), ['-p', '']);
   } else if (operation === 'list-keychains' || operation === 'default-keychain') {
@@ -134,6 +146,12 @@ if (tool === 'swiftpm-testing-helper' || tool === 'xctest') {
   throw new Error('The fixture native target must only be a fake debugger argument');
 }
 if (tool === 'swift' && args[0] === 'test') {
+  if (env.OPENCLAW_TEST_MENU_CAPTURE_DIR) {
+    const captureName = env.OPENCLAW_PROFILE === 'default' ? 'catalog' : 'thread-reasoning';
+    fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-window.png'), 'synthetic-png-bytes');
+    fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-capture-status.json'), JSON.stringify({name: captureName, blockers: ['synthetic fixture, not visual proof']}));
+    fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, 'unrelated.log'), 'must remain private');
+  }
   const eventPathIndex = args.indexOf('--event-stream-output-path');
   if (eventPathIndex !== -1) {
     const eventPath = args[eventPathIndex + 1];
@@ -195,6 +213,17 @@ if (tool === 'swift' && args[0] === 'test') {
     root,
     env,
     log,
+    capturePath: (profileMode: "default" | "named") => {
+      if (!fs.existsSync(env.GITHUB_OUTPUT)) {
+        return undefined;
+      }
+      const prefix = `menu-${profileMode}-artifact-path=`;
+      return fs
+        .readFileSync(env.GITHUB_OUTPUT, "utf8")
+        .split("\n")
+        .findLast((line) => line.startsWith(prefix))
+        ?.slice(prefix.length);
+    },
     calls: () =>
       fs
         .readFileSync(log, "utf8")
@@ -309,6 +338,30 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
           expect(test.present[key]).toBe(key !== "OPENCLAW_CONFIG_PATH");
         }
         expect(fs.existsSync(ownedRoot)).toBe(false);
+        const profileMode = index === 0 ? "default" : "named";
+        const captureName = index === 0 ? "catalog" : "thread-reasoning";
+        const exported = f.capturePath(profileMode);
+        if (!exported) {
+          throw new Error("The joined Swift partition must publish its capture path");
+        }
+        expect(exported.startsWith(`${f.env.RUNNER_TEMP}/`)).toBe(true);
+        expect(fs.readFileSync(path.join(exported, `${captureName}-window.png`), "utf8")).toBe(
+          "synthetic-png-bytes",
+        );
+        expect(fs.readdirSync(exported).toSorted()).toEqual(
+          [
+            "capture-export.json",
+            `${captureName}-capture-status.json`,
+            `${captureName}-window.png`,
+          ].toSorted(),
+        );
+        expect(
+          JSON.parse(fs.readFileSync(path.join(exported, "capture-export.json"), "utf8")),
+        ).toMatchObject({
+          profileMode,
+          source: "ordinary-swift-run",
+          swiftExitCode: index === 0 ? defaultCode : namedCode,
+        });
       }
       expect(roots.size).toBe(tests.length);
       expect(fs.existsSync(f.env.HOME)).toBe(true);
@@ -347,7 +400,7 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
         "-o",
         "version",
         "-o",
-        'breakpoint set --name exit --name _exit -C "register read x0" -C "thread backtrace all" --auto-continue true',
+        'breakpoint set --func-regex "^(exit|_exit)$" -C "register read x0" -C "thread backtrace all" --auto-continue true',
         "-o",
         'breakpoint set --name CFRunLoopStop --name _CFRunLoopStopMode -C "register read x0 x1" -C "thread backtrace all" --auto-continue true',
         "-o",
@@ -524,6 +577,13 @@ process.on('disconnect', () => console.log('fake-output-held'));
 const timer = setInterval(() => {
   if (!fs.existsSync(${JSON.stringify(release)})) return;
   clearInterval(timer);
+  const captures = process.env.OPENCLAW_TEST_MENU_CAPTURE_DIR;
+  if (captures) {
+    fs.writeFileSync(captures + '/thread-reasoning-window.png', 'synthetic-png-bytes');
+    fs.writeFileSync(captures + '/thread-reasoning-capture-status.json', JSON.stringify({blockers: ['synthetic fixture, not visual proof']}));
+    fs.writeFileSync(captures + '/unrelated.log', 'must remain private');
+    fs.mkdirSync(captures + '/ignored-directory');
+  }
   const settings = JSON.parse(fs.readFileSync(process.env.HOME + '/Library/Preferences/fixture-keychain.json', 'utf8'));
   fs.appendFileSync(${JSON.stringify(f.log)}, JSON.stringify({tool: 'output-close', keychainPresent: fs.existsSync(settings.default)}) + '\\n');
 }, 10);
@@ -575,6 +635,7 @@ child.once('message', () => process.exit(0));
       const ownedKeychain = calls[0].args.at(-1);
       expect(fs.existsSync(ownedKeychain)).toBe(true);
       expect(calls.some((call) => call.args?.[0] === "delete-keychain")).toBe(false);
+      expect(f.capturePath("named")).toBeUndefined();
       if (mode === "drained") {
         fs.writeFileSync(release, "release");
       }
@@ -584,7 +645,26 @@ child.once('message', () => process.exit(0));
         expect(f.calls().at(-2)).toEqual({ tool: "output-close", keychainPresent: true });
         expect(f.calls().at(-1).args).toEqual(["delete-keychain", ownedKeychain]);
         expect(fs.existsSync(ownedRoot)).toBe(false);
+        const exported = f.capturePath("named");
+        if (!exported) {
+          throw new Error("Capture export must follow output drainage");
+        }
+        expect(exported.startsWith(`${f.env.RUNNER_TEMP}/`)).toBe(true);
+        expect(fs.readdirSync(exported).toSorted()).toEqual([
+          "capture-export.json",
+          "thread-reasoning-capture-status.json",
+          "thread-reasoning-window.png",
+        ]);
+        expect(fs.readFileSync(path.join(exported, "thread-reasoning-window.png"), "utf8")).toBe(
+          "synthetic-png-bytes",
+        );
+        expect(
+          JSON.parse(
+            fs.readFileSync(path.join(exported, "thread-reasoning-capture-status.json"), "utf8"),
+          ),
+        ).toEqual({ blockers: ["synthetic fixture, not visual proof"] });
       } else {
+        expect(f.capturePath("named")).toBeUndefined();
         expect(fs.existsSync(ownedKeychain)).toBe(true);
         expect(f.calls().some((call) => call.args?.[0] === "delete-keychain")).toBe(false);
         expect(stderr).toContain("EPROCESSGROUP_CLEANUP_FAILED");
