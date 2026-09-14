@@ -55,11 +55,7 @@ import {
 } from "./update-command-plugins.js";
 import { UpdateCommandFailure } from "./update-command-result.js";
 import { completeSourceUpdateRuntime } from "./update-command-runtime.js";
-import {
-  resolveServiceRefreshEnv,
-  withOwnedManagedUpdateEnv,
-  withUpdateInProgressEnv,
-} from "./update-command-service-env.js";
+import { resolveServiceRefreshEnv, withUpdateInProgressEnv } from "./update-command-service-env.js";
 import { reportPreMutationUpdateResult } from "./update-command-terminal.js";
 import { withUpdateFailureTriage } from "./update-command-triage.js";
 import { UpdateFinalizationLifecycle } from "./update-finalization-lifecycle.js";
@@ -116,32 +112,31 @@ export async function updateFinalizeCommand(
           [UPDATE_RUN_ID_ENV]: runId,
         },
       };
-      await withOwnedManagedUpdateEnv(target.env, () =>
-        withUpdateFailureTriage(
-          { ...opts, invocationCwd, run: { runId, env: target.env } },
-          target,
-          () =>
-            withUpdateInProgressEnv(invocationCwd, async () => {
-              try {
-                const prepared = await lifecycle.run("targetConfigValidation", () =>
-                  prepareUpdateFinalization(opts, root, installKind, requestedChannel),
-                );
-                await updateFinalizeCommandInternal(
-                  opts,
-                  prepared,
-                  lifecycle,
-                  recoveryRunIds ?? [],
-                );
-              } catch (error) {
-                if (error instanceof UpdateCommandFailure) {
-                  lifecycle.complete(error.exitCode);
-                } else {
-                  lifecycle.fail();
-                }
-                throw error;
+      await withUpdateFailureTriage(
+        { ...opts, invocationCwd, run: { runId, env: target.env } },
+        target,
+        () =>
+          withUpdateInProgressEnv(invocationCwd, async () => {
+            try {
+              const prepared = await lifecycle.run("targetConfigValidation", () =>
+                prepareUpdateFinalization(opts, root, installKind, requestedChannel),
+              );
+              await updateFinalizeCommandInternal(
+                opts,
+                prepared,
+                lifecycle,
+                recoveryRunIds ?? [],
+                runId,
+              );
+            } catch (error) {
+              if (error instanceof UpdateCommandFailure) {
+                lifecycle.complete(error.exitCode);
+              } else {
+                lifecycle.fail();
               }
-            }),
-        ),
+              throw error;
+            }
+          }),
       );
     } catch (error) {
       if (!lifecycle.completed) {
@@ -220,6 +215,7 @@ async function updateFinalizeCommandInternal(
   prepared: Awaited<ReturnType<typeof prepareUpdateFinalization>>,
   lifecycle: UpdateFinalizationLifecycle,
   recoveryRunIds: readonly string[],
+  invokingRunId: string,
 ): Promise<void> {
   const { root, preFinalizeConfig, requestedChannel, storedChannel, effectiveChannel, channel } =
     prepared;
@@ -243,6 +239,7 @@ async function updateFinalizeCommandInternal(
       runUpdateFinalizationDoctorInFreshProcess({
         phase: "pre-plugin",
         root,
+        runId: invokingRunId,
         yes: opts.yes === true,
         json: opts.json === true,
         workspaceSuggestions: true,
@@ -288,6 +285,7 @@ async function updateFinalizeCommandInternal(
     async () => {
       const result = await completePostCorePluginUpdate({
         root,
+        runId: invokingRunId,
         pluginUpdate: initialPluginUpdate,
         freshDoctorRequired: initialPluginUpdate.changed,
         yes: opts.yes === true,
