@@ -193,9 +193,13 @@ export function createIMessageProgressBubble(
 
   const dispose = async (): Promise<void> => {
     stopped = true;
+    // Let any queued update settle before reading the guid: a rotation that
+    // lands while dispose waits sends a NEW bubble, and snapshotting first
+    // would orphan it (the 08:14 leak). The stopped flag keeps it from
+    // sending anything after this point.
+    await chain.catch(() => {});
     const guid = bubbleGuid;
     bubbleGuid = undefined;
-    await chain.catch(() => {});
     if (guid) {
       await unsendBubble(guid);
     }
