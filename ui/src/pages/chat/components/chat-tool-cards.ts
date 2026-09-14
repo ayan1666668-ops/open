@@ -1,6 +1,7 @@
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { html, nothing } from "lit";
+import { styleMap } from "lit/directives/style-map.js";
 import { stripShellPreamble } from "../../../../../src/agents/tool-display-exec-shell.js";
 import {
   browserTabKey,
@@ -27,7 +28,7 @@ import {
 } from "../../../lib/chat/tool-cards.ts";
 import { resolveToolDisplay } from "../../../lib/chat/tool-display.ts";
 import { renderPluginSurface } from "../../../plugins/control-ui-view.ts";
-import type { PluginToolIcon } from "../chat-tool-icon-controller.ts";
+import type { PluginToolIcons } from "../chat-tool-icon-controller.ts";
 import { renderHighlightedCommand } from "./chat-command-highlight.ts";
 import { renderDiffStatChips } from "./chat-diff-render.ts";
 import {
@@ -88,19 +89,19 @@ export function shouldToggleSelectableDisclosure(event: MouseEvent): boolean {
   );
 }
 
-export function renderToolIcon(name: string, pluginIcon?: PluginToolIcon) {
-  // Memory activity keeps its semantic glyph instead of the plugin's app tile.
-  if (name === "memory") {
-    return icons.memory;
-  }
-  if (pluginIcon) {
-    return html`<img
-      src=${pluginIcon.url}
-      alt=""
-      width="16"
-      height="16"
-      @error=${pluginIcon.onError}
-    />`;
+export function renderToolIcon(
+  name: string,
+  tool?: { toolName: string; pluginToolIcons?: PluginToolIcons },
+) {
+  const activityIcon = tool?.pluginToolIcons?.get(tool.toolName);
+  if (activityIcon) {
+    return html`<span
+      class="chat-tool-activity-icon"
+      aria-hidden="true"
+      style=${styleMap({ maskImage: `url("${activityIcon.url}")` })}
+    >
+      <img hidden src=${activityIcon.url} alt="" @error=${activityIcon.onError} />
+    </span>`;
   }
   // SAFETY: Unknown display icon names produce undefined and use the fallback.
   return icons[name as IconName] ?? icons.puzzle;
@@ -469,7 +470,7 @@ export function renderToolCard(
   const isFileRow = Boolean(workspaceFilePath);
   const rowContent = html`
     <span class="chat-tool-msg-summary__icon"
-      >${renderToolIcon(icon, opts.pluginToolIcons?.get(card.name))}</span
+      >${renderToolIcon(icon, { toolName: display.name, pluginToolIcons: opts.pluginToolIcons })}</span
     >
     <span class="chat-tool-disclosure__content"
       >${renderToolRowContent(
