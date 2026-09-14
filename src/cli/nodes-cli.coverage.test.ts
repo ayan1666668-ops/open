@@ -299,22 +299,7 @@ describe("nodes-cli coverage", () => {
         "--idempotency-key",
         "",
       ],
-      message: "--idempotency-key must not be blank.",
-    },
-    {
-      label: "invoke with a blank idempotency key",
-      command: "invoke",
-      args: [
-        "nodes",
-        "invoke",
-        "--node",
-        "mac-1",
-        "--command",
-        "canvas.eval",
-        "--idempotency-key",
-        "   ",
-      ],
-      message: "--idempotency-key must not be blank.",
+      message: "--idempotency-key must not be empty.",
     },
     {
       label: "rename with a blank name",
@@ -417,6 +402,22 @@ describe("nodes-cli coverage", () => {
     // The Gateway deduplicates pending actions by exact key equality, so a padded
     // key must reach it byte-for-byte instead of being trimmed to a new identity.
     expect(supplied.params?.idempotencyKey).toBe("  caller-key  ");
+    expect(randomIdempotencyKey).not.toHaveBeenCalled();
+
+    lastNodeInvokeCall = null;
+    const whitespaceOnly = await runNodesCommand([
+      "nodes",
+      "invoke",
+      "--node",
+      "mac-1",
+      "--command",
+      "canvas.eval",
+      "--idempotency-key",
+      "   ",
+    ]);
+    // The shipped Gateway accepts whitespace-only keys, so rejecting or trimming one
+    // would break a retry that already queued an action under that exact key.
+    expect(whitespaceOnly.params?.idempotencyKey).toBe("   ");
     expect(randomIdempotencyKey).not.toHaveBeenCalled();
 
     lastNodeInvokeCall = null;
