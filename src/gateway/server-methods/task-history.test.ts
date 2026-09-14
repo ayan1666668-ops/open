@@ -8,6 +8,7 @@ import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import {
   appendTranscriptMessage,
   deleteSessionEntryLifecycle,
+  patchSessionEntryCore,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -25,6 +26,7 @@ import {
 } from "../../tasks/task-registry.test-support.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
+import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
 import { identifiedClient, runTaskHandler } from "./tasks.test-helpers.js";
 
 type ReadTaskHistory = NonNullable<AgentHarness["taskHistory"]>["read"];
@@ -242,6 +244,54 @@ describe("tasks.history", () => {
       );
       expect(second.payload?.messages).toMatchObject([{ content: "Old first" }]);
       expect(second.payload?.nextCursor).toBeUndefined();
+      const rotationContext = createDirectChatContext({
+        readChatStartupProjection: async () => {
+          await upsertSessionEntryCore(oldScope, { sessionId: "concurrent-new-run", updatedAt: 3 });
+          return undefined;
+        },
+      });
+      const duringRotation = await runTaskHandler(
+        "tasks.history",
+        { taskId: task.taskId, limit: 2 },
+        {},
+        null,
+        rotationContext,
+      );
+      expect(duringRotation.calls[0]?.[0]).toBe(true);
+      expect(duringRotation.payload?.messages).toMatchObject([
+        { content: "Old second" },
+        { content: "Old last" },
+      ]);
+      const baseScope = { agentId: "main", sessionKey: baseKey };
+      await upsertSessionEntryCore(baseScope, {
+        sessionId: "shared-new-run",
+        updatedAt: 4,
+        visibility: "shared",
+        createdActor: { type: "human", source: "profile", id: "another-owner" },
+      });
+      const revokedContext = createDirectChatContext({
+        readChatStartupProjection: async () => {
+          await upsertSessionEntryCore(baseScope, {
+            sessionId: "private-new-run",
+            updatedAt: 5,
+          });
+          await patchSessionEntryCore(baseScope, () => ({ visibility: "draft" }));
+          return undefined;
+        },
+      });
+      const revoked = await runTaskHandler(
+        "tasks.history",
+        { taskId: task.taskId },
+        {},
+        identifiedClient(["operator.read"], "retained-viewer"),
+        revokedContext,
+      );
+      expect(loadGatewaySessionEntryReadOnly(baseKey, { agentId: "main" }).entry).toMatchObject({
+        sessionId: "private-new-run",
+        visibility: "draft",
+      });
+      expect(revoked.calls[0]).toMatchObject([false, undefined, { code: "INVALID_REQUEST" }]);
+      expect(revoked.payload?.messages).toBeUndefined();
       const changedContext = createDirectChatContext({
         readChatStartupProjection: async () => {
           markTaskTerminalById({

@@ -413,8 +413,8 @@ export async function handleChatHistoryRequest({
             storePath: currentSharingState.storePath,
           }
         : null;
-    // History rows replace roster rows in clients. Publish current caller facts,
-    // never roles from the pre-await snapshot or a replacement session instance.
+    // Publish current caller facts, never pre-await roles. Retained task history
+    // revalidates its fixed transcript owner separately; its active run may advance.
     if (
       entry &&
       (!initialStoreKey ||
@@ -422,10 +422,11 @@ export async function handleChatHistoryRequest({
         sharingTarget.agentId !== sessionAgentId ||
         sharingTarget.canonicalKey !== canonicalKey ||
         sharingTarget.storeKey !== initialStoreKey ||
-        sharingTarget.entry.sessionId !== entry.sessionId ||
-        sharingTarget.entry.lifecycleRevision !== entry.lifecycleRevision ||
-        (entry.sessionStartedAt !== undefined &&
-          sharingTarget.entry.sessionStartedAt !== entry.sessionStartedAt) ||
+        (!retainedSessionId &&
+          (sharingTarget.entry.sessionId !== entry.sessionId ||
+            sharingTarget.entry.lifecycleRevision !== entry.lifecycleRevision ||
+            (entry.sessionStartedAt !== undefined &&
+              sharingTarget.entry.sessionStartedAt !== entry.sessionStartedAt))) ||
         sharingTarget.storePath !== storePath)
     ) {
       respondChatHistoryUnavailable(
