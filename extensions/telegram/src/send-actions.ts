@@ -79,7 +79,10 @@ export async function sendTypingTelegram(
       });
       const threadParams = buildTypingThreadParams(target.messageThreadId ?? opts.messageThreadId);
       const signalArgs: [Parameters<TelegramApi["sendChatAction"]>[3]?] = apiAbort
-        ? [apiAbort.signal as Parameters<TelegramApi["sendChatAction"]>[3]]
+        ? [
+            // SAFETY: grammy's transitive AbortSignal type is narrower than the platform signal it forwards to fetch.
+            apiAbort.signal as Parameters<TelegramApi["sendChatAction"]>[3],
+          ]
         : [];
       await requestWithDiag(
         () =>
