@@ -26,20 +26,25 @@ struct AppleEventPermissionTests {
 
     @Test func `concurrent passive checks share one blocking probe`() async {
         let gate = BlockingProbeGate(status: noErr)
+        let coordinator = AppleEventPermissionProbeCoordinator()
         let probe = AppleEventPermissionProbe(
             determinePermission: gate.determine,
             passiveTimeout: .seconds(5),
-            coordinator: AppleEventPermissionProbeCoordinator())
+            coordinator: coordinator)
+        defer { gate.release() }
 
         let states = await withTaskGroup(of: AppleEventPermissionState.self) { group in
             for _ in 0..<32 {
                 group.addTask { await probe.state(askUserIfNeeded: false) }
             }
-            // Every caller is parked on the single in-flight probe; nothing else may block.
+            // Release only once every caller is parked on the single in-flight probe.
             await gate.waitUntilEntered()
+            await Self.waitUntil { await coordinator.waiterCount(askUserIfNeeded: false) == 32 }
             gate.release()
             var collected: [AppleEventPermissionState] = []
-            for await state in group { collected.append(state) }
+            for await state in group {
+                collected.append(state)
+            }
             return collected
         }
 
@@ -50,10 +55,12 @@ struct AppleEventPermissionTests {
 
     @Test func `a hung passive probe times out instead of blocking callers`() async {
         let gate = BlockingProbeGate(status: noErr)
+        let coordinator = AppleEventPermissionProbeCoordinator()
         let probe = AppleEventPermissionProbe(
             determinePermission: gate.determine,
             passiveTimeout: .milliseconds(200),
-            coordinator: AppleEventPermissionProbeCoordinator())
+            coordinator: coordinator)
+        defer { gate.release() }
 
         let clock = ContinuousClock()
         let start = clock.now
@@ -63,7 +70,34 @@ struct AppleEventPermissionTests {
         #expect(state == .failed(OSStatus(errAETimeout)))
         #expect(TerminalAutomationPermission.authorizationStatus(for: state) == .unknown)
         #expect(elapsed < .seconds(3))
+        // The native call is still running; the coordinator must keep tracking it.
+        #expect(await coordinator.isProbeInFlight(askUserIfNeeded: false))
+    }
+
+    @Test func `timed-out callers never enqueue a second native call behind the hung one`() async {
+        let gate = BlockingProbeGate(status: noErr)
+        let coordinator = AppleEventPermissionProbeCoordinator()
+        let probe = AppleEventPermissionProbe(
+            determinePermission: gate.determine,
+            passiveTimeout: .milliseconds(200),
+            coordinator: coordinator)
+        defer { gate.release() }
+
+        #expect(await probe.state(askUserIfNeeded: false) == .failed(OSStatus(errAETimeout)))
+
+        // Deadline already passed for this operation: answer at once, start nothing new.
+        let clock = ContinuousClock()
+        let start = clock.now
+        #expect(await probe.state(askUserIfNeeded: false) == .failed(OSStatus(errAETimeout)))
+        #expect(clock.now - start < .milliseconds(150))
+        #expect(gate.callCount == 1)
+        #expect(await coordinator.isProbeInFlight(askUserIfNeeded: false))
+
+        // Once the target answers, the retained operation drains and the next probe runs fresh.
         gate.release()
+        await Self.waitUntil { await !coordinator.isProbeInFlight(askUserIfNeeded: false) }
+        #expect(await probe.state(askUserIfNeeded: false) == .authorized)
+        #expect(gate.callCount == 2)
     }
 
     @Test func `interactive prompts are never timed out`() async {
@@ -72,6 +106,7 @@ struct AppleEventPermissionTests {
             determinePermission: gate.determine,
             passiveTimeout: .milliseconds(50),
             coordinator: AppleEventPermissionProbeCoordinator())
+        defer { gate.release() }
 
         async let pending = probe.state(askUserIfNeeded: true)
         await gate.waitUntilEntered()
@@ -80,6 +115,15 @@ struct AppleEventPermissionTests {
 
         #expect(await pending == .authorized)
         #expect(gate.callCount == 1)
+    }
+
+    /// Polls until `condition` holds or five seconds pass; the assertion that follows reports the failure.
+    private static func waitUntil(_ condition: @Sendable () async -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if await condition() { return }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
     }
 
     @Test func `target not running is an unknown capability state`() {
@@ -237,12 +281,13 @@ private final class PermissionUIRecorder {
 }
 
 /// Blocks inside `determine` until released, mimicking `AEDeterminePermissionToAutomateTarget`
-/// waiting on a target app or on tccd.
+/// waiting on a target app or on tccd. `release()` opens the gate for good, so every
+/// native call a test started can finish during cleanup.
 private final class BlockingProbeGate: @unchecked Sendable {
     private let status: OSStatus
     private let entered = DispatchSemaphore(value: 0)
-    private let gate = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
+    private let condition = NSCondition()
+    private var open = false
     private var calls = 0
 
     init(status: OSStatus) {
@@ -250,13 +295,19 @@ private final class BlockingProbeGate: @unchecked Sendable {
     }
 
     var callCount: Int {
-        self.lock.withLock { self.calls }
+        self.condition.lock()
+        defer { self.condition.unlock() }
+        return self.calls
     }
 
     func determine(askUserIfNeeded _: Bool) -> OSStatus {
-        self.lock.withLock { self.calls += 1 }
+        self.condition.lock()
+        self.calls += 1
         self.entered.signal()
-        self.gate.wait()
+        while !self.open {
+            self.condition.wait()
+        }
+        self.condition.unlock()
         return self.status
     }
 
@@ -271,6 +322,9 @@ private final class BlockingProbeGate: @unchecked Sendable {
     }
 
     func release() {
-        self.gate.signal()
+        self.condition.lock()
+        self.open = true
+        self.condition.broadcast()
+        self.condition.unlock()
     }
 }
