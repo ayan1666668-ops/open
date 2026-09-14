@@ -141,7 +141,7 @@ export async function resolveConfiguredSecretInputWithFallback(
   secretRefConfigured: boolean;
 }> {
   const resolved = await resolveConfiguredSecretInput(params);
-  const configValue = !resolved.refConfigured ? normalizeOptionalString(params.value) : undefined;
+  const configValue = !resolved.refConfigured ? resolved.value : undefined;
   if (configValue) {
     return {
       value: configValue,
