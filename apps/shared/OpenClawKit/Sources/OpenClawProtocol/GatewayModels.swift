@@ -5486,6 +5486,7 @@ public struct CronJob: Codable, Sendable {
 }
 
 public struct CronListParams: Codable, Sendable {
+    public let sessionkey: String?
     public let includedisabled: Bool?
     public let limit: Int?
     public let offset: Int?
@@ -5501,6 +5502,7 @@ public struct CronListParams: Codable, Sendable {
     public let includedeliverypreviews: Bool?
 
     public init(
+        sessionkey: String? = nil,
         includedisabled: Bool? = nil,
         limit: Int? = nil,
         offset: Int? = nil,
@@ -5515,6 +5517,7 @@ public struct CronListParams: Codable, Sendable {
         compact: Bool? = nil,
         includedeliverypreviews: Bool? = nil)
     {
+        self.sessionkey = sessionkey
         self.includedisabled = includedisabled
         self.limit = limit
         self.offset = offset
@@ -5531,6 +5534,7 @@ public struct CronListParams: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
         case includedisabled = "includeDisabled"
         case limit
         case offset
