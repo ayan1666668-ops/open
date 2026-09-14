@@ -202,7 +202,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
   type BlockDelivery = { outcome: ReplyDispatchDeliveryOutcome; pending?: boolean };
   const blockDeliveryOutcomes = new Map<string, Array<Promise<BlockDelivery>>>();
   const recordBlockOutcome = (payload: ReplyPayload, outcome: Promise<BlockDelivery>) => {
-    setBlockReplyDelivery(outcome);
+    setBlockReplyDelivery(outcome, payload);
     const key = createBlockReplyContentKey(payload);
     const outcomes = blockDeliveryOutcomes.get(key) ?? [];
     outcomes.push(outcome);
@@ -218,6 +218,8 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
           pending: delivery.hasPendingDelivery?.(),
         })) ?? Promise.resolve({ outcome: "failed-deliver" }),
       );
+    } else {
+      recordBlockOutcome(payload, Promise.resolve({ outcome: "cancelled" }));
     }
     return delivery;
   };
@@ -226,6 +228,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     result: Awaited<ReturnType<typeof sendPayloadAsync>>,
   ): ReplyDispatchDeliveryOutcome | undefined => {
     if (!result) {
+      recordBlockOutcome(payload, Promise.resolve({ outcome: "cancelled" }));
       return undefined;
     }
     const outcome = resolveRoutedReplyDeliveryOutcome(result);
@@ -375,7 +378,28 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
       normalizedPayload = buildCaptionedFinalTextFallback(ttsPayload);
     }
     throwIfFinalDeliveryAborted();
-    const block = await getBlockReplyOutcome(payload, abortSignal);
+    const sourceRecovery = getReplyPayloadMetadata(payload)?.blockReplySources;
+    if (sourceRecovery) {
+      for (const source of sourceRecovery) {
+        normalizedPayload = await runWithDispatchAbortSignal(abortSignal, () =>
+          source.recover(normalizedPayload),
+        );
+        throwIfFinalDeliveryAborted();
+      }
+      if (sourceRecovery.some((source) => source.pending)) {
+        await suppressPendingFinalDelivery(payload, {
+          preserveActivity: state.replyOperationRunState.heartbeat !== undefined,
+        });
+        setReplyPayloadMetadata(normalizedPayload, { pendingFinalDeliveryCompletion: undefined });
+        sourceReplyTranscriptMirror = sourceReplyTranscriptMirror
+          ? transcriptMirrorForDeliveredPayload(sourceReplyTranscriptMirror, normalizedPayload)
+          : undefined;
+      }
+      if (!hasOutboundReplyContent(normalizedPayload, { trimText: true })) {
+        return { queuedFinal: false, routedFinalCount: 0 };
+      }
+    }
+    const block = sourceRecovery ? undefined : await getBlockReplyOutcome(payload, abortSignal);
     throwIfFinalDeliveryAborted();
     const blockDeliveryOutcome = block?.outcome;
     const pendingBlock = block?.pending && blockDeliveryOutcome !== "delivered";
