@@ -15,6 +15,7 @@ import {
 } from "../../auto-reply/reply-payload.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { resolveSendableOutboundReplyParts } from "../../infra/outbound/reply-payload-parts.js";
+import { runWithGatewayDetachedWorkAdmission } from "../../process/gateway-work-admission.js";
 import { getPluginRuntimeGatewayRequestScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -38,6 +39,22 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     throw new Error("Plugin embedded-agent execution cannot supply host run authority.");
   }
   params.abortSignal?.throwIfAborted();
+  // A deferred caller (e.g. a plugin hook scheduling follow-up work after its
+  // triggering command's root already released) must not inherit that released
+  // root via AsyncLocalStorage: subordinate admission checks would reject this
+  // run as draining even though the Gateway is healthy. Own a fresh detached
+  // root so the run is judged on current admission state instead.
+  return await runWithGatewayDetachedWorkAdmission(
+    () => runAdmittedPluginEmbeddedAgent(pluginId, params),
+    `plugin:${pluginId}:run-embedded-agent`,
+    params.abortSignal,
+  );
+};
+
+async function runAdmittedPluginEmbeddedAgent(
+  pluginId: string,
+  params: Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0],
+): ReturnType<PluginRuntime["agent"]["runEmbeddedAgent"]> {
   const decisionOccurrenceId = randomUUID();
   let admittedRunContext: AdmittedRunContext | undefined;
   const config = params.config ?? getRuntimeConfig();
@@ -136,4 +153,4 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     params.abortSignal?.removeEventListener("abort", close);
     close();
   }
-};
+}

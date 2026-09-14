@@ -11,6 +11,10 @@ import {
 import { configureRuntimeActionDecisionSink } from "../../audit/runtime-action-decision.js";
 import { setReplyPayloadMetadata } from "../../auto-reply/reply-payload.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  isGatewaySubordinateWorkAdmissionClosed,
+  tryBeginGatewayRootWorkAdmission,
+} from "../../process/gateway-work-admission.js";
 import { withPluginRuntimePluginScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -390,6 +394,38 @@ describe("plugin embedded-agent runtime admission", () => {
       },
     ]);
     expect(JSON.stringify(receipts)).not.toContain("private-plugin-id");
+  });
+
+  it("admits a plugin run deferred until after its triggering command root released", async () => {
+    const triggeringRoot = tryBeginGatewayRootWorkAdmission("command:new");
+    expect(triggeringRoot).not.toBeNull();
+    let admissionClosedDuringRun: boolean | undefined;
+    mocks.runEmbeddedAgentCore.mockImplementationOnce(async () => {
+      admissionClosedDuringRun = isGatewaySubordinateWorkAdmissionClosed();
+      return { payloads: [] };
+    });
+
+    let continueRun = () => {};
+    const gate = new Promise<void>((resolve) => {
+      continueRun = resolve;
+    });
+    let runResult: Promise<unknown> | undefined;
+    // Mirrors the real bug: a hook callback registered during the triggering
+    // command fires only after that command's root work is released, but
+    // still inherits the released root via Node's automatic AsyncLocalStorage
+    // propagation rather than a lexical reference to it.
+    await triggeringRoot?.run(async () => {
+      runResult = withPluginRuntimePluginScope({ pluginId: "memory-plugin" }, async () => {
+        await gate;
+        return runPluginEmbeddedAgent(params);
+      });
+    });
+
+    triggeringRoot?.release();
+    continueRun();
+
+    await expect(runResult).resolves.toEqual({ payloads: [] });
+    expect(admissionClosedDuringRun).toBe(false);
   });
 
   it("revokes admission immediately when a pending plugin run aborts", async () => {
