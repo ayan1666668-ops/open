@@ -52,16 +52,16 @@ describe("parseSpeechDirectiveNumberOverride", () => {
       parseSpeechDirectiveNumberOverride({
         ctx: {
           key: "speed",
-          get value() {
+          get value(): never {
             throw new Error("disabled settings must not read the token");
           },
           policy: { ...policy, allowVoiceSettings: false },
         },
         overrideKey: "speed",
-        get range() {
+        get range(): never {
           throw new Error("disabled settings must not read the range");
         },
-        get warning() {
+        get warning(): never {
           throw new Error("disabled settings must not read the warning");
         },
       }),
@@ -111,7 +111,7 @@ describe("parseSpeechDirectiveNumberOverride", () => {
         parseSpeechDirectiveNumberOverride({
           ctx: { key: "speed", value, policy },
           overrideKey: "speed",
-          get range() {
+          get range(): never {
             throw new Error("invalid tokens must not read the range");
           },
           warning,
