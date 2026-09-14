@@ -783,6 +783,51 @@ describe("session sharing policy", () => {
     });
   });
 
+  it("does not authorize a run-only abort from an incognito retained terminal receipt", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = rolePolicyConfig();
+      const solo = client({});
+      const sessionKey = "agent:main:dashboard:incognito-durable-abort";
+      const sessionId = "session-incognito-durable-abort";
+      const runId = "run-incognito-durable-abort";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          incognito: true,
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: "durable-abort-incognito-owner",
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "main", sessionKey, sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: solo,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toMatchObject({
+        code: "INVALID_REQUEST",
+        details: { code: "SESSION_MUTATION_TARGET_REQUIRED" },
+      });
+    });
+  });
+
   it("scopes a main alias plus agent ID to the retained run owner's session", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       const cfg = {

@@ -2,7 +2,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { isIncognitoSessionKey } from "../shared/incognito-session-key.js";
-import { readAgentRunTerminalReceipt } from "../state/agent-run-terminal-receipts.js";
+import { readDurableAgentJobTerminalReceipt } from "./agent-turn/agent-job.js";
 import { resolveAuthorizedBoardViewTicketClaims } from "./board-view-ticket.js";
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import {
@@ -259,7 +259,7 @@ export function resolveSessionMutationTargets(params: {
   if (run) {
     return [{ sessionKey: run.sessionKey, ...(run.agentId ? { agentId: run.agentId } : {}) }];
   }
-  const retainedOwner = runId ? readAgentRunTerminalReceipt({ runId })?.owner : undefined;
+  const retainedOwner = runId ? readDurableAgentJobTerminalReceipt(runId)?.owner : undefined;
   return retainedOwner?.sessionKey
     ? [{ sessionKey: retainedOwner.sessionKey, agentId: retainedOwner.agentId }]
     : undefined;
