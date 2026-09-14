@@ -87,8 +87,11 @@ with `plugins.entries.perplexity.config.webSearch.model`.
 | `domain_filter`                      | Max 20 domains; allowlist or `-`-prefixed denylist, never mixed                         | Native only |
 | `max_tokens` / `max_tokens_per_page` | Content budget across all results / per page                                            | Native only |
 
-Native-only filters return a descriptive error on the chat-completions path.
-`freshness` cannot be combined with `date_after`/`date_before`.
+In legacy mode, the `web_search` tool schema omits the seven native-only filter
+properties, so agents cannot request them through the tool. If a caller bypasses
+the schema and supplies one directly, the runtime returns a descriptive
+unsupported-option error. `freshness` cannot be combined with
+`date_after`/`date_before`.
 
 ## Advanced configuration
 
