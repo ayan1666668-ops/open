@@ -848,6 +848,17 @@ describe("persistCustomProviderCredential", () => {
     });
   });
 
+  it("throws when the locked store write fails to persist (lock contention)", async () => {
+    vi.mocked(updateAuthProfileStoreWithLock).mockResolvedValueOnce(null);
+    await expect(
+      persistCustomProviderCredential({
+        config: configWithApiKey("sk-literal"),
+        providerId: "custom",
+        target,
+      }),
+    ).rejects.toThrow("agent auth profile store could not be updated");
+  });
+
   it("skips env-ref and marker keys and keeps them config-owned", async () => {
     for (const apiKey of [{ source: "env", id: "CUSTOM_API_KEY" }, "custom-local"]) {
       vi.mocked(updateAuthProfileStoreWithLock).mockClear();

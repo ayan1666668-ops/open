@@ -57,7 +57,9 @@ export async function persistCustomProviderCredential(params: {
   const provider = normalizeProviderId(params.providerId);
   const agentDir =
     params.target?.agentDir ?? resolveAgentDir(params.config, resolveDefaultAgentId(params.config));
-  await updateAuthProfileStoreWithLock({
+  // A null return means SQLite lock contention swallowed the write; treating it
+  // as success would leave doctor's repair prompt as a surprise.
+  const updated = await updateAuthProfileStoreWithLock({
     agentDir,
     saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false },
     updater: (store) => {
@@ -70,4 +72,7 @@ export async function persistCustomProviderCredential(params: {
       return true;
     },
   });
+  if (!updated) {
+    throw new Error("agent auth profile store could not be updated");
+  }
 }
