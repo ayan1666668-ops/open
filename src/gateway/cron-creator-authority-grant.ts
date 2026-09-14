@@ -15,6 +15,7 @@ import type { CronCreatorAuthorityGrant } from "./cron-creator-authority-grant.t
 export const CRON_MANAGEMENT_METHODS = [
   "cron.list",
   "cron.get",
+  "cron.runs",
   "cron.update",
   "cron.run",
   "cron.remove",

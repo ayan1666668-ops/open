@@ -143,7 +143,7 @@ export function bindCronManagementGrant(runId: string | undefined) {
       if (!CRON_MANAGEMENT_METHODS.some((allowed) => allowed === method)) {
         if (managementOnly) {
           throw new Error(
-            "This Control UI turn can only list, get, update, run, or remove automations. Use the Automations page for other actions.",
+            "This Control UI turn can only list, get, update, run, inspect run history, or remove automations. Use the Automations page for other actions.",
           );
         }
         return undefined;
