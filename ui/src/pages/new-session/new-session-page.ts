@@ -6,10 +6,12 @@ import { applicationContext, type ApplicationContext } from "../../app/context.t
 import { readPresenceEntries } from "../../app/user-profile.ts";
 import type { ImageLightboxItem } from "../../components/image-lightbox.ts";
 import { t } from "../../i18n/index.ts";
+import { registerNewSessionSetupEnglish } from "../../i18n/locales/en-new-session-setup.ts";
 import { normalizeAgentTargetLabel, resolveAgentTextAvatar } from "../../lib/agents/display.ts";
 import { resolveAgentAvatarUrl } from "../../lib/avatar.ts";
-import "../../components/web-awesome-popover.ts";
 import type { HumanMention } from "../../lib/chat/chat-types.ts";
+import "../../components/web-awesome-popover.ts";
+import { createIdleImport } from "../../lib/idle-import.ts";
 import { sessionNavigationTarget } from "../../lib/sessions/route-navigation.ts";
 import { buildAgentMainSessionKey } from "../../lib/sessions/session-key.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
@@ -42,6 +44,8 @@ import {
 import type { SubmissionOutcomeReason } from "./session-placement-recovery-state.ts";
 import { renderAgentSelect, renderNewSessionPlaceControls } from "./target-controls.ts";
 
+registerNewSessionSetupEnglish();
+
 const { activateDraft, restoreDraft, restoreDraftOwner, retainDraft } = drafts;
 
 export class NewSessionPage extends OpenClawLightDomElement {
@@ -51,6 +55,9 @@ export class NewSessionPage extends OpenClawLightDomElement {
   private context?: ApplicationContext;
 
   private openedFor: string | null = null;
+  private readonly critterImport = createIdleImport(
+    () => import("../../components/lobster-pet.runtime.ts"),
+  );
   private openedGroupDefaults = "";
   private openedAgentId = "";
   private messageOwnerKey = "";
@@ -245,11 +252,13 @@ export class NewSessionPage extends OpenClawLightDomElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    this.critterImport.schedule();
     document.addEventListener("keydown", this, true);
     window.addEventListener("beforeunload", this.flushDraft);
   }
 
   override disconnectedCallback() {
+    this.critterImport.dispose();
     document.removeEventListener("keydown", this, true);
     window.removeEventListener("beforeunload", this.flushDraft);
     retainDraft(this.context, this.submission, this.openedFor, this.messageOwnerKey);
