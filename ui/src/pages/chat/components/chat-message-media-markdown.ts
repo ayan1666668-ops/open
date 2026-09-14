@@ -1,0 +1,86 @@
+import { html } from "lit";
+import { Directive, directive } from "lit/directive.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import type { ProjectedMessageContent } from "./chat-message-media.ts";
+
+type PositionedMedia = Exclude<ProjectedMessageContent, { type: "text" }>;
+export type MarkdownMedia = {
+  prefix: string;
+  items: PositionedMedia[];
+  render: (item: PositionedMedia, index: number) => unknown;
+};
+
+export function prepareMarkdownMedia(
+  content: readonly ProjectedMessageContent[],
+  render: MarkdownMedia["render"],
+): { markdown: string; media: MarkdownMedia } {
+  const text = content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n");
+  let prefix = "OPENCLAWMEDIASLOT";
+  while (text.includes(prefix)) {
+    prefix += "X";
+  }
+  const items: PositionedMedia[] = [];
+  const markdown = content
+    .map((item) => {
+      if (item.type === "text") {
+        return item.text;
+      }
+      items.push(item);
+      return `${prefix}${items.length - 1}END`;
+    })
+    .join("\n");
+  return { markdown, media: { prefix, items, render } };
+}
+
+class MarkdownMediaDirective extends Directive {
+  private source = "";
+  private prefix = "";
+  private strings: TemplateStringsArray | undefined;
+  private indexes: number[] = [];
+
+  render(sanitizedHtml: string, media?: MarkdownMedia) {
+    if (!media) {
+      return unsafeHTML(sanitizedHtml);
+    }
+    if (this.source !== sanitizedHtml || this.prefix !== media.prefix || !this.strings) {
+      this.source = sanitizedHtml;
+      this.prefix = media.prefix;
+      const template = document.createElement("template");
+      template.innerHTML = sanitizedHtml;
+      const marker = new RegExp(`${media.prefix}(\\d+)END`, "g");
+      const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node instanceof Text && node.data.includes(media.prefix)) {
+          nodes.push(node);
+        }
+      }
+      // Only our collision-free text markers become bindings. Never interpolate
+      // attribute values or unsanitized model HTML into a Lit template.
+      for (const node of nodes) {
+        const fragment = document.createDocumentFragment();
+        let offset = 0;
+        for (const match of node.data.matchAll(marker)) {
+          fragment.append(node.data.slice(offset, match.index));
+          fragment.append(document.createComment(match[0]));
+          offset = match.index + match[0].length;
+        }
+        fragment.append(node.data.slice(offset));
+        node.replaceWith(fragment);
+      }
+      const parts = template.innerHTML.split(new RegExp(`<!--${media.prefix}(\\d+)END-->`, "g"));
+      const strings = parts.filter((_, index) => index % 2 === 0);
+      this.strings = Object.assign(strings, { raw: strings });
+      this.indexes = parts.filter((_, index) => index % 2 === 1).map(Number);
+    }
+    return html(
+      this.strings,
+      ...this.indexes.map((index) => {
+        const item = media.items[index];
+        return item ? media.render(item, index) : undefined;
+      }),
+    );
+  }
+}
+
+export const renderMarkdownMedia = directive(MarkdownMediaDirective);
