@@ -27,6 +27,8 @@ export type EmbeddedAttemptExecutionPhaseInput = {
   agentDir: string;
   isRawModelRun: boolean;
   resolveActiveContextEnginePluginId: () => string | undefined;
+  /** Keeps retained engine completions from outliving the admitting run. */
+  assertRunAuthorityActive?: () => void;
   runAbortController: AbortController;
   externalAbortController: Pick<
     EmbeddedAttemptExternalAbortController,

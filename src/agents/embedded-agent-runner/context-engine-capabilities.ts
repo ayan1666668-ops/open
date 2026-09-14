@@ -13,6 +13,12 @@ type ResolveContextEngineCapabilitiesParams = {
   authProfileId?: string;
   contextEnginePluginId?: string;
   purpose: string;
+  /**
+   * Asserts the admitting run still owns execution authority. Engines retain
+   * the returned capability beyond the call that minted it, so the gate keeps
+   * a retained completion from acting after close, replacement, or abort.
+   */
+  assertRunAuthorityActive?: () => void;
 };
 
 /**
@@ -31,6 +37,7 @@ export function resolveContextEngineCapabilities(
   return {
     llm: {
       complete: async (request) => {
+        params.assertRunAuthorityActive?.();
         const { createRuntimeLlm } = await import("../../plugins/runtime/runtime-llm.runtime.js");
         return await createRuntimeLlm({
           getConfig: () => params.config,

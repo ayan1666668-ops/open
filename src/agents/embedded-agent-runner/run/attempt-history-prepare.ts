@@ -225,6 +225,9 @@ export async function prepareEmbeddedAttemptHistory(
           cwd: effectiveCwd,
           agentDir: input.agentDir,
           contextEnginePluginId: input.resolveActiveContextEnginePluginId(),
+          ...(input.assertRunAuthorityActive
+            ? { assertRunAuthorityActive: input.assertRunAuthorityActive }
+            : {}),
         }),
         maxOutputTokens: reserveTokens,
         contextEngineHostSupport: OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST,

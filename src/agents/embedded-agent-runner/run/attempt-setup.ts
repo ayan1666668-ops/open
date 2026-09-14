@@ -178,6 +178,8 @@ export function installEmbeddedAttemptContextGuards(input: {
   activeContextEngine?: ContextEngine;
   activeSession: AgentSession;
   agentDir: string;
+  /** Keeps retained engine completions from outliving the admitting run. */
+  assertRunAuthorityActive?: () => void;
   attempt: EmbeddedRunAttemptParams;
   computerContextEpoch: { value: number };
   dropThinkingBlocksForEstimate: boolean;
@@ -333,6 +335,9 @@ export function installEmbeddedAttemptContextGuards(input: {
           // allowedCompletionModels keeps applying to engine-initiated
           // completions; an unbound context-engine caller would skip it.
           contextEnginePluginId: resolveContextEngineOwnerPluginId(activeContextEngine),
+          ...(input.assertRunAuthorityActive
+            ? { assertRunAuthorityActive: input.assertRunAuthorityActive }
+            : {}),
           tokenBudget: attempt.contextTokenBudget,
           promptCache:
             input.getPromptCache() ??

@@ -203,4 +203,25 @@ describe("context-engine capability completion policy", () => {
       agentId: "main",
     });
   });
+
+  it("rejects a retained completion before acquisition once run authority is revoked", async () => {
+    // Engines can retain the minted capability past the runtime call that
+    // supplied it; the run-authority gate keeps that retained handle from
+    // completing after close, replacement, or abort.
+    const runtimeContext = resolveContextEngineCapabilities({
+      config: cfg,
+      sessionKey: "agent:main:session:abc",
+      purpose: "context-engine.after-turn",
+      assertRunAuthorityActive: () => {
+        throw new Error("admitted run authority is no longer active");
+      },
+    });
+
+    await expect(
+      runtimeContext.llm!.complete({
+        messages: [{ role: "user", content: "summarize" }],
+      }),
+    ).rejects.toThrow("admitted run authority is no longer active");
+    expect(hoisted.acquireSimpleCompletionModelForAgent).not.toHaveBeenCalled();
+  });
 });

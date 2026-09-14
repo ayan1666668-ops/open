@@ -17,6 +17,13 @@ const hoisted = getHoisted();
 
 type CapturedRuntimeContext = Record<string, unknown> | undefined;
 
+function capturedComplete(
+  runtimeContext: CapturedRuntimeContext,
+): ((request: unknown) => Promise<unknown>) | undefined {
+  return (runtimeContext?.llm as { complete?: (request: unknown) => Promise<unknown> } | undefined)
+    ?.complete;
+}
+
 function makeCapturingContextEngine(bucket: {
   assemble: CapturedRuntimeContext[];
   afterTurn: CapturedRuntimeContext[];
@@ -79,10 +86,41 @@ describe("runEmbeddedAttempt runtime context sender identity", () => {
     expect(captured.assemble[0]?.senderId).toBe("user-42");
     // Recall receives the same executable capability face as capture; the
     // runtime-llm suite owns the proof that its completion policy binding holds.
-    expect((captured.assemble[0]?.llm as { complete?: unknown } | undefined)?.complete).toBeTypeOf(
-      "function",
-    );
+    expect(capturedComplete(captured.assemble[0])).toBeTypeOf("function");
     expect(captured.afterTurn.length).toBeGreaterThan(0);
     expect(captured.afterTurn[0]?.senderId).toBe("user-42");
+  });
+
+  it("revokes retained engine completion authority once the admitting run closes", async () => {
+    const captured = { assemble: [], afterTurn: [] } as {
+      assemble: CapturedRuntimeContext[];
+      afterTurn: CapturedRuntimeContext[];
+    };
+    const result = await createContextEngineAttemptRunner({
+      contextEngine: makeCapturingContextEngine(captured),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        senderId: "user-42",
+      },
+    });
+
+    expect(projectAgentRunAttemptTerminal(result.terminal).promptError).toBeNull();
+    const retainedAssembleComplete = capturedComplete(captured.assemble[0]);
+    const retainedAfterTurnComplete = capturedComplete(captured.afterTurn[0]);
+    expect(retainedAssembleComplete).toBeTypeOf("function");
+    expect(retainedAfterTurnComplete).toBeTypeOf("function");
+
+    // The harness closed the admission before returning, so a callback the
+    // engine retained across turns must refuse to act on stale run authority.
+    const staleRequest = {
+      messages: [{ role: "user", content: "retained call" }],
+    } as Parameters<NonNullable<typeof retainedAssembleComplete>>[0];
+    await expect(retainedAssembleComplete?.(staleRequest)).rejects.toThrow(
+      /admitted run authority is no longer active/u,
+    );
+    await expect(retainedAfterTurnComplete?.(staleRequest)).rejects.toThrow(
+      /admitted run authority is no longer active/u,
+    );
   });
 });

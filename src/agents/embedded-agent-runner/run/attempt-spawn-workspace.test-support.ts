@@ -1388,6 +1388,7 @@ export async function createContextEngineAttemptRunner(params: {
     info?: Partial<ContextEngineInfo>;
   };
   attemptOverrides?: Partial<Parameters<Awaited<ReturnType<typeof loadRunEmbeddedAttempt>>>[0]>;
+  configPatch?: Record<string, unknown>;
   createSession?: () => EmbeddedAttemptSession;
   sessionMessages?: AgentMessage[];
   sessionMessagesAfterRepair?: AgentMessage[];
@@ -1462,7 +1463,9 @@ export async function createContextEngineAttemptRunner(params: {
       },
       workspaceDir,
       agentDir,
-      config: { session: { store: sessionStore } },
+      // configPatch adds plugin/slot policy without clobbering session.store;
+      // attemptOverrides.config still replaces the whole object when needed.
+      config: { session: { store: sessionStore }, ...params.configPatch },
       prompt: "hello",
       timeoutMs: 10_000,
       runId: "run-context-engine-forwarding",
