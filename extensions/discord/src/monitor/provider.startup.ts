@@ -1,19 +1,22 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+// Discord provider module implements model/runtime integration.
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-name-runtime";
 import { danger } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import type { DiscordCommandDeployHashStore } from "../command-deploy-store.js";
 import {
   Client,
   ReadyListener,
-  type BaseCommand,
   type BaseMessageInteractiveComponent,
+  type DiscordCommand,
   type Modal,
   type Plugin,
 } from "../internal/discord.js";
 import type { GatewayPlugin } from "../internal/gateway.js";
 import { VoicePlugin } from "../internal/voice.js";
-import { createDiscordRequestClient, DISCORD_REST_TIMEOUT_MS } from "../proxy-request-client.js";
+import { parseApplicationIdFromToken } from "../probe.js";
+import { DISCORD_REST_TIMEOUT_MS } from "../proxy-request-client.js";
 import type { DiscordGuildEntryResolved } from "./allow-list.js";
 import { createDiscordAutoPresenceController } from "./auto-presence.js";
 import type { DiscordDmPolicy } from "./dm-command-auth.js";
@@ -23,15 +26,21 @@ import {
   waitForDiscordGatewayPluginRegistration,
 } from "./gateway-plugin.js";
 import { createDiscordGatewaySupervisor } from "./gateway-supervisor.js";
+import { DiscordGuildJoinIntroductionListener } from "./listeners.guild-join.js";
 import {
   DiscordMessageListener,
+  DiscordPresenceGuildCreateListener,
+  DiscordPresenceGuildDeleteListener,
   DiscordInteractionListener,
   DiscordPresenceListener,
+  DiscordPresenceReadyListener,
   DiscordReactionListener,
   DiscordReactionRemoveListener,
+  DiscordThreadDeleteListener,
   DiscordThreadUpdateListener,
   registerDiscordListener,
 } from "./listeners.js";
+import type { DiscordLivePolicyReader } from "./live-policy.js";
 import { resolveDiscordPresenceUpdate } from "./presence.js";
 
 type DiscordAutoPresenceController = ReturnType<typeof createDiscordAutoPresenceController>;
@@ -54,7 +63,7 @@ function registerLatePlugin(client: Client, plugin: Plugin) {
   }
 }
 
-export function createDiscordStatusReadyListener(params: {
+function createDiscordStatusReadyListener(params: {
   discordConfig: Parameters<typeof resolveDiscordPresenceUpdate>[0];
   getAutoPresenceController: () => DiscordAutoPresenceController | null;
 }): ReadyListener {
@@ -85,18 +94,14 @@ export async function createDiscordMonitorClient(params: {
   accountId: string;
   applicationId: string;
   token: string;
-  proxyFetch?: typeof fetch;
-  commands: BaseCommand[];
+  restFetch?: typeof fetch;
+  commands: DiscordCommand[];
   components: BaseMessageInteractiveComponent[];
   modals: Modal[];
   voiceEnabled: boolean;
-  discordConfig: Parameters<typeof resolveDiscordPresenceUpdate>[0] & {
-    eventQueue?: Pick<
-      DiscordEventQueueOptions,
-      "listenerTimeout" | "maxQueueSize" | "maxConcurrency"
-    >;
-  };
+  discordConfig: Parameters<typeof resolveDiscordPresenceUpdate>[0];
   runtime: RuntimeEnv;
+  commandDeployHashStore?: DiscordCommandDeployHashStore;
   createClient: CreateClientFn;
   createGatewayPlugin: typeof createDiscordGatewayPlugin;
   createGatewaySupervisor: typeof createDiscordGatewaySupervisor;
@@ -121,7 +126,6 @@ export async function createDiscordMonitorClient(params: {
   const eventQueueOpts = {
     listenerTimeout: 120_000,
     slowListenerThreshold: 30_000,
-    ...params.discordConfig.eventQueue,
   } satisfies DiscordEventQueueOptions;
   const readyListener = createDiscordStatusReadyListener({
     discordConfig: params.discordConfig,
@@ -135,10 +139,12 @@ export async function createDiscordMonitorClient(params: {
       publicKey: "a",
       token: params.token,
       autoDeploy: false,
+      commandDeployHashStore: params.commandDeployHashStore,
       requestOptions: {
         timeout: DISCORD_REST_TIMEOUT_MS,
         runtimeProfile: "persistent",
         maxQueueSize: 1000,
+        ...(params.restFetch ? { fetch: params.restFetch } : {}),
       },
       eventQueue: eventQueueOpts,
     },
@@ -152,14 +158,6 @@ export async function createDiscordMonitorClient(params: {
   );
   if (voicePlugin) {
     registerLatePlugin(client, voicePlugin);
-  }
-  if (params.proxyFetch) {
-    client.rest = createDiscordRequestClient(params.token, {
-      fetch: params.proxyFetch,
-      timeout: DISCORD_REST_TIMEOUT_MS,
-      runtimeProfile: "persistent",
-      maxQueueSize: 1000,
-    });
   }
   const gateway = client.getPlugin<GatewayPlugin>("gateway") as MutableDiscordGateway | undefined;
   await waitForDiscordGatewayPluginRegistration(gateway);
@@ -190,10 +188,20 @@ export async function createDiscordMonitorClient(params: {
 
 export async function fetchDiscordBotIdentity(params: {
   client: Pick<Client, "fetchUser">;
+  token?: string;
   runtime: RuntimeEnv;
   logStartupPhase: (phase: string, details?: string) => void;
 }) {
   params.logStartupPhase("fetch-bot-identity:start");
+  const parsedBotUserId = parseApplicationIdFromToken(params.token ?? "");
+  if (parsedBotUserId) {
+    params.logStartupPhase(
+      "fetch-bot-identity:done",
+      `botUserId=${parsedBotUserId} botUserName=<missing> source=token`,
+    );
+    return { botUserId: parsedBotUserId, botUserName: undefined };
+  }
+
   let botUser: Awaited<ReturnType<typeof params.client.fetchUser>>;
   try {
     botUser = await params.client.fetchUser("@me");
@@ -226,6 +234,7 @@ export async function fetchDiscordBotIdentity(params: {
 }
 
 export function registerDiscordMonitorListeners(params: {
+  readPolicy?: DiscordLivePolicyReader;
   cfg: OpenClawConfig;
   client: Pick<Client, "listeners">;
   accountId: string;
@@ -251,8 +260,21 @@ export function registerDiscordMonitorListeners(params: {
     params.client.listeners,
     new DiscordMessageListener(params.messageHandler, params.logger, params.trackInboundEvent),
   );
+  registerDiscordListener(
+    params.client.listeners,
+    new DiscordGuildJoinIntroductionListener({
+      readPolicy: params.readPolicy,
+      cfg: params.cfg,
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      groupPolicy: params.groupPolicy,
+      guildEntries: params.guildEntries,
+      logger: params.logger,
+    }),
+  );
 
   const reactionListenerOptions: ConstructorParameters<typeof DiscordReactionListener>[0] = {
+    readPolicy: params.readPolicy,
     cfg: params.cfg,
     accountId: params.accountId,
     runtime: params.runtime,
@@ -278,13 +300,34 @@ export function registerDiscordMonitorListeners(params: {
   );
   registerDiscordListener(
     params.client.listeners,
-    new DiscordThreadUpdateListener(params.cfg, params.accountId, params.logger),
+    new DiscordThreadUpdateListener(params.cfg, params.logger),
+  );
+  registerDiscordListener(
+    params.client.listeners,
+    new DiscordThreadDeleteListener(params.cfg, params.accountId, params.logger),
   );
 
   if (params.discordConfig.intents?.presence) {
+    const presenceListener = new DiscordPresenceListener({
+      readPolicy: params.readPolicy,
+      cfg: params.cfg,
+      logger: params.logger,
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      guildEntries: params.guildEntries,
+    });
+    registerDiscordListener(params.client.listeners, presenceListener);
     registerDiscordListener(
       params.client.listeners,
-      new DiscordPresenceListener({ logger: params.logger, accountId: params.accountId }),
+      new DiscordPresenceGuildCreateListener(presenceListener),
+    );
+    registerDiscordListener(
+      params.client.listeners,
+      new DiscordPresenceGuildDeleteListener(presenceListener),
+    );
+    registerDiscordListener(
+      params.client.listeners,
+      new DiscordPresenceReadyListener(presenceListener),
     );
     params.runtime.log?.("discord: GuildPresences intent enabled — presence listener registered");
   }

@@ -1,3 +1,4 @@
+// Status overview value tests cover compact display values for agents, events, tasks, and services.
 import { describe, expect, it } from "vitest";
 import {
   buildStatusAllAgentsValue,
@@ -6,7 +7,6 @@ import {
   buildStatusProbesValue,
   buildStatusSecretsValue,
   buildStatusSessionsOverviewValue,
-  countActiveStatusAgents,
 } from "./status-overview-values.ts";
 
 describe("status-overview-values", () => {
@@ -21,7 +21,6 @@ describe("status-overview-values", () => {
       ],
     };
 
-    expect(countActiveStatusAgents({ agentStatus })).toBe(1);
     expect(buildStatusAllAgentsValue({ agentStatus })).toBe(
       "3 total · 2 bootstrapping · 1 active · 3 sessions",
     );
@@ -58,6 +57,12 @@ describe("status-overview-values", () => {
         },
         formatKTokens: (value) => `${Math.round(value / 1000)}k`,
       }),
-    ).toBe("2 active · default gpt-5.5 (12k ctx) · 2 stores");
+    ).toBe("2 stored · default gpt-5.5 (12k ctx) · 2 stores");
+    expect(
+      buildStatusSessionsOverviewValue({
+        sessions: { count: 0, paths: [], defaults: {} },
+        formatKTokens: (value) => `${Math.round(value / 1000)}k`,
+      }),
+    ).toBe("0 stored · default unknown · unknown");
   });
 });

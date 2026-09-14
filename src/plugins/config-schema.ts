@@ -1,6 +1,8 @@
+// Builds plugin config schemas from manifest metadata.
 import { z, type ZodTypeAny } from "zod";
 import type { JsonSchemaObject } from "../shared/json-schema.types.js";
 import type { PluginConfigUiHint } from "./manifest-types.js";
+import { parseJsonSchemaIssuePath, validateJsonSchemaValue } from "./schema-validator.js";
 import type { OpenClawPluginConfigSchema } from "./types.js";
 
 type Issue = { path: Array<string | number>; message: string };
@@ -9,11 +11,15 @@ type SafeParseResult =
   | { success: true; data?: unknown }
   | { success: false; error: { issues: Issue[] } };
 
-type ZodSchemaWithToJsonSchema = ZodTypeAny & {
-  toJSONSchema?: (params?: Record<string, unknown>) => unknown;
+type BuildPluginConfigSchemaOptions = {
+  /** @deprecated Declare top-level `uiHints` in `openclaw.plugin.json`. */
+  uiHints?: Record<string, PluginConfigUiHint>;
+  safeParse?: OpenClawPluginConfigSchema["safeParse"];
 };
 
-type BuildPluginConfigSchemaOptions = {
+type BuildJsonPluginConfigSchemaOptions = {
+  cacheKey?: string;
+  /** @deprecated Declare top-level `uiHints` in `openclaw.plugin.json`. */
   uiHints?: Record<string, PluginConfigUiHint>;
   safeParse?: OpenClawPluginConfigSchema["safeParse"];
 };
@@ -77,18 +83,61 @@ function normalizeJsonSchema(schema: unknown): unknown {
   return record;
 }
 
+function safeParseJsonSchema(
+  schema: JsonSchemaObject,
+  cacheKey: string,
+  value: unknown,
+): SafeParseResult {
+  const result = validateJsonSchemaValue({
+    schema,
+    cacheKey,
+    value,
+    applyDefaults: true,
+  });
+  if (result.ok) {
+    return { success: true, data: result.value };
+  }
+  return {
+    success: false,
+    error: {
+      issues: result.errors.map((issue) => ({
+        path: parseJsonSchemaIssuePath(issue.path),
+        message: issue.message,
+      })),
+    },
+  };
+}
+
+/** Build a plugin config schema from JSON Schema with runtime validation/default support. */
+export function buildJsonPluginConfigSchema(
+  schema: JsonSchemaObject,
+  options?: BuildJsonPluginConfigSchemaOptions,
+): OpenClawPluginConfigSchema {
+  const safeParse =
+    options?.safeParse ??
+    ((value: unknown) =>
+      safeParseJsonSchema(schema, options?.cacheKey ?? "plugin-config-schema:json", value));
+  return {
+    safeParse,
+    ...(options?.uiHints ? { uiHints: options.uiHints } : {}),
+    jsonSchema: normalizeJsonSchema(schema) as JsonSchemaObject,
+  };
+}
+
+/** Build a plugin config schema from Zod, exporting JSON Schema when the Zod runtime supports it. */
 export function buildPluginConfigSchema(
   schema: ZodTypeAny,
   options?: BuildPluginConfigSchemaOptions,
 ): OpenClawPluginConfigSchema {
-  const schemaWithJson = schema as ZodSchemaWithToJsonSchema;
   const safeParse = options?.safeParse ?? ((value) => safeParseRuntimeSchema(schema, value));
-  if (typeof schemaWithJson.toJSONSchema === "function") {
+  if ("_zod" in schema) {
     return {
       safeParse,
       ...(options?.uiHints ? { uiHints: options.uiHints } : {}),
+      // Normalize generated schema so plugin consumers see a stable draft-07-ish shape.
       jsonSchema: normalizeJsonSchema(
-        schemaWithJson.toJSONSchema({
+        // Plugin roots can contain newer SDK schemas; the host must own their conversion context.
+        z.toJSONSchema(schema, {
           target: "draft-07",
           io: "input",
           unrepresentable: "any",
@@ -107,6 +156,7 @@ export function buildPluginConfigSchema(
   };
 }
 
+/** Return a schema for plugins that intentionally accept no config keys. */
 export function emptyPluginConfigSchema(): OpenClawPluginConfigSchema {
   return {
     safeParse(value: unknown): SafeParseResult {

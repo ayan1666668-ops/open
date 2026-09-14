@@ -1,72 +1,48 @@
-export type PluginLruCacheResult<T> = { hit: true; value: T } | { hit: false };
+// Generic cache storage stays independent of plugin lifecycle owners.
+import { pruneMapToMaxSize } from "../infra/map-size.js";
 
+/** Small process-local LRU cache for runtime registries and compiled validators. */
 export class PluginLruCache<T> {
-  readonly #defaultMaxEntries: number;
-  #maxEntries: number;
+  readonly #maxEntries: number;
   readonly #entries = new Map<string, T>();
 
-  constructor(defaultMaxEntries: number) {
-    this.#defaultMaxEntries = normalizeMaxEntries(defaultMaxEntries, 1);
-    this.#maxEntries = this.#defaultMaxEntries;
-  }
-
-  get maxEntries(): number {
-    return this.#maxEntries;
+  constructor(maxEntries: number) {
+    this.#maxEntries =
+      Number.isFinite(maxEntries) && maxEntries > 0 ? Math.max(1, Math.floor(maxEntries)) : 1;
   }
 
   get size(): number {
     return this.#entries.size;
   }
 
-  setMaxEntriesForTest(value?: number): void {
-    this.#maxEntries =
-      typeof value === "number"
-        ? normalizeMaxEntries(value, this.#defaultMaxEntries)
-        : this.#defaultMaxEntries;
-    this.#evictOldestEntries();
-  }
-
   clear(): void {
     this.#entries.clear();
   }
 
-  get(cacheKey: string): T | undefined {
-    const cached = this.getResult(cacheKey);
-    return cached.hit ? cached.value : undefined;
+  deleteValue(value: T): void {
+    for (const [key, entry] of this.#entries) {
+      if (entry === value) {
+        this.#entries.delete(key);
+      }
+    }
   }
 
-  getResult(cacheKey: string): PluginLruCacheResult<T> {
+  /** Returns a cached value and refreshes its recency when present. */
+  get(cacheKey: string): T | undefined {
     if (!this.#entries.has(cacheKey)) {
-      return { hit: false };
+      return undefined;
     }
+    // SAFETY: has() proved the key exists; undefined remains a valid cached T.
     const cached = this.#entries.get(cacheKey) as T;
     this.#entries.delete(cacheKey);
     this.#entries.set(cacheKey, cached);
-    return { hit: true, value: cached };
+    return cached;
   }
 
+  /** Stores a value as the newest entry and evicts oldest entries past capacity. */
   set(cacheKey: string, value: T): void {
-    if (this.#entries.has(cacheKey)) {
-      this.#entries.delete(cacheKey);
-    }
+    this.#entries.delete(cacheKey);
     this.#entries.set(cacheKey, value);
-    this.#evictOldestEntries();
+    pruneMapToMaxSize(this.#entries, this.#maxEntries);
   }
-
-  #evictOldestEntries(): void {
-    while (this.#entries.size > this.#maxEntries) {
-      const oldestEntry = this.#entries.keys().next();
-      if (oldestEntry.done) {
-        break;
-      }
-      this.#entries.delete(oldestEntry.value);
-    }
-  }
-}
-
-function normalizeMaxEntries(value: number, fallback: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.max(1, Math.floor(value));
 }

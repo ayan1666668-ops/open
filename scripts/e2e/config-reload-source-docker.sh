@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Bash 5.3+ can deadlock writing heredoc pipes on macOS before the reader starts.
+if [[ ${OSTYPE:-} == darwin* && $BASH != /bin/bash ]] && ((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 3))); then
+  exec /bin/bash "$0" "$@"
+fi
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,6 +21,27 @@ trap cleanup EXIT
 
 docker_e2e_build_or_reuse "$IMAGE_NAME" config-reload "$ROOT_DIR/scripts/e2e/Dockerfile" "$ROOT_DIR" "" "$SKIP_BUILD"
 OPENCLAW_TEST_STATE_SCRIPT_B64="$(docker_e2e_test_state_shell_b64 config-reload empty)"
+
+check_rpc_status() {
+  local out_file="$1"
+  docker_e2e_docker_cmd exec "$CONTAINER_NAME" bash -lc "
+source /tmp/openclaw-test-state-env
+source scripts/lib/openclaw-e2e-instance.sh
+entry=\"\$(openclaw_e2e_resolve_entrypoint)\"
+deadline=\$((SECONDS + 120))
+last_status=1
+while [ \"\$SECONDS\" -lt \"\$deadline\" ]; do
+  if node \"\$entry\" gateway status --url ws://127.0.0.1:$PORT --token '$TOKEN' --require-rpc --timeout 30000 >'$out_file' 2>'$out_file.err'; then
+    exit 0
+  else
+    last_status=\$?
+  fi
+  sleep 1
+done
+cat '$out_file.err' >&2 || true
+exit \"\$last_status\"
+"
+}
 
 echo "Starting gateway container..."
 docker_e2e_run_detached_with_harness \
@@ -47,12 +72,7 @@ if ! docker_e2e_wait_container_bash "$CONTAINER_NAME" 180 0.5 "source scripts/li
 fi
 
 echo "Checking initial RPC status..."
-docker_e2e_docker_cmd exec "$CONTAINER_NAME" bash -lc "
-source /tmp/openclaw-test-state-env
-source scripts/lib/openclaw-e2e-instance.sh
-entry=\"\$(openclaw_e2e_resolve_entrypoint)\"
-node \"\$entry\" gateway status --url ws://127.0.0.1:$PORT --token '$TOKEN' --require-rpc --timeout 30000 >/tmp/config-reload-status-before.log
-"
+check_rpc_status /tmp/config-reload-status-before.log
 
 echo "Mutating hot-reload gateway metadata..."
 docker_e2e_docker_cmd exec "$CONTAINER_NAME" bash -lc "source /tmp/openclaw-test-state-env
@@ -67,12 +87,7 @@ if [ "$(docker_e2e_docker_cmd inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 
 fi
 
 echo "Checking post-write RPC status..."
-docker_e2e_docker_cmd exec "$CONTAINER_NAME" bash -lc "
-source /tmp/openclaw-test-state-env
-source scripts/lib/openclaw-e2e-instance.sh
-entry=\"\$(openclaw_e2e_resolve_entrypoint)\"
-node \"\$entry\" gateway status --url ws://127.0.0.1:$PORT --token '$TOKEN' --require-rpc --timeout 30000 >/tmp/config-reload-status-after.log
-"
+check_rpc_status /tmp/config-reload-status-after.log
 
 echo "Checking reload log..."
 docker_e2e_docker_cmd exec "$CONTAINER_NAME" bash -lc "node scripts/e2e/lib/config-reload/assert-log.mjs"

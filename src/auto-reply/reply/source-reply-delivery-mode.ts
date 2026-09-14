@@ -1,58 +1,132 @@
+/** Source-reply visibility and suppression policy for auto-reply delivery. */
 import { normalizeChatType } from "../../channels/chat-type.js";
+import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type { SessionSendPolicyDecision } from "../../sessions/send-policy.js";
+import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
+import { resolveCommandTurnContext, type CommandTurnContext } from "../command-turn-context.js";
+import { isExplicitCommandTurnContext } from "../command-turn-detection.js";
 import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";
 
-const log = createSubsystemLogger("auto-reply");
-
-let visibleRepliesPrivateDefaultWarned = false;
-
+/** Minimal inbound context needed for source-reply delivery decisions. */
 export type SourceReplyDeliveryModeContext = {
   ChatType?: string;
+  InboundEventKind?: InboundEventKind;
+  Provider?: string;
+  Surface?: string;
+  ExplicitDeliverRoute?: boolean;
+  CommandAuthorized?: boolean;
+  CommandBody?: string;
   CommandSource?: "text" | "native";
+  CommandTurn?: CommandTurnContext;
+  BotUsername?: string;
+  WasMentioned?: boolean;
+  InputProvenance?: InputProvenance;
 };
 
-/** @internal Test-only reset for the process-level one-shot warning. */
-export function resetVisibleRepliesPrivateDefaultWarningForTest(): void {
-  visibleRepliesPrivateDefaultWarned = false;
+function toSessionStableDeliveryModeContext(
+  ctx: SourceReplyDeliveryModeContext,
+): SourceReplyDeliveryModeContext {
+  return {
+    ChatType: ctx.ChatType,
+    Provider: ctx.Provider,
+    Surface: ctx.Surface,
+    ExplicitDeliverRoute: ctx.ExplicitDeliverRoute,
+  };
 }
 
+/** Returns true when the turn explicitly invoked a source-visible command. */
+export function isExplicitSourceReplyCommand(
+  ctx: SourceReplyDeliveryModeContext,
+  cfg: OpenClawConfig,
+): boolean {
+  return isExplicitCommandTurnContext(ctx, cfg);
+}
+
+/**
+ * Room events remain ambient despite stale mention/direct facts. Explicit commands stay directed
+ * because their parsed command context is authoritative.
+ */
+export function isDirectedSourceReplyTurn(
+  ctx: SourceReplyDeliveryModeContext,
+  cfg: OpenClawConfig,
+  isDirectChat: boolean,
+  inboundEventKind = ctx.InboundEventKind,
+): boolean {
+  return (
+    isExplicitSourceReplyCommand(ctx, cfg) ||
+    (inboundEventKind !== "room_event" && (isDirectChat || ctx.WasMentioned === true))
+  );
+}
+
+/** Returns true for text slash commands that lack authorization metadata. */
+export function isUnauthorizedTextSlashCommand(ctx: SourceReplyDeliveryModeContext): boolean {
+  const commandTurn = resolveCommandTurnContext(ctx);
+  return (
+    commandTurn.kind === "text-slash" &&
+    !commandTurn.authorized &&
+    (commandTurn.commandName !== undefined || commandTurn.body?.trim().startsWith("/") === true)
+  );
+}
+
+function isInternalRoomEvent(ctx: SourceReplyDeliveryModeContext): boolean {
+  return ctx.InboundEventKind === "room_event" && isInternalSourceReplyChannel(ctx);
+}
+
+/** Returns true for internal message-channel turns that should remain local. */
+export function isInternalSourceReplyChannel(ctx: SourceReplyDeliveryModeContext): boolean {
+  const providerChannel = normalizeMessageChannel(ctx.Provider);
+  const surfaceChannel = normalizeMessageChannel(ctx.Surface);
+  const currentSurface = providerChannel ?? surfaceChannel;
+  return (
+    currentSurface === INTERNAL_MESSAGE_CHANNEL &&
+    (surfaceChannel === INTERNAL_MESSAGE_CHANNEL || !surfaceChannel) &&
+    ctx.ExplicitDeliverRoute !== true
+  );
+}
+
+/** Resolves whether normal final text should auto-deliver or require the message tool. */
 export function resolveSourceReplyDeliveryMode(params: {
   cfg: OpenClawConfig;
   ctx: SourceReplyDeliveryModeContext;
   requested?: SourceReplyDeliveryMode;
+  strictMessageToolOnly?: boolean;
   messageToolAvailable?: boolean;
+  defaultVisibleReplies?: "automatic" | "message_tool";
 }): SourceReplyDeliveryMode {
+  if (params.strictMessageToolOnly === true) {
+    return "message_tool_only";
+  }
+  if (params.ctx.InboundEventKind === "room_event" && !isInternalRoomEvent(params.ctx)) {
+    return "message_tool_only";
+  }
+  if (
+    params.requested &&
+    (params.requested !== "message_tool_only" || params.messageToolAvailable !== false)
+  ) {
+    return params.requested;
+  }
+  if (isExplicitSourceReplyCommand(params.ctx, params.cfg)) {
+    return "automatic";
+  }
+  const chatType = normalizeChatType(params.ctx.ChatType);
+  if (
+    (chatType === "group" || chatType === "channel") &&
+    isUnauthorizedTextSlashCommand(params.ctx)
+  ) {
+    return "message_tool_only";
+  }
   let mode: SourceReplyDeliveryMode;
-  if (params.requested) {
-    mode = params.requested;
-  } else if (params.ctx.CommandSource === "native") {
-    mode = "automatic";
+  if (chatType === "group" || chatType === "channel") {
+    const configuredMode =
+      params.cfg.messages?.groupChat?.visibleReplies ?? params.cfg.messages?.visibleReplies;
+    mode = configuredMode === "message_tool" ? "message_tool_only" : "automatic";
   } else {
-    const chatType = normalizeChatType(params.ctx.ChatType);
-    if (chatType === "group" || chatType === "channel") {
-      const configuredMode =
-        params.cfg.messages?.groupChat?.visibleReplies ?? params.cfg.messages?.visibleReplies;
-      mode = configuredMode === "automatic" ? "automatic" : "message_tool_only";
-      if (
-        mode === "message_tool_only" &&
-        configuredMode === undefined &&
-        params.messageToolAvailable !== false &&
-        !visibleRepliesPrivateDefaultWarned
-      ) {
-        visibleRepliesPrivateDefaultWarned = true;
-        log.warn(
-          `Group/channel replies are private by default since 2026.4.27. ` +
-            `To restore automatic room posting, set messages.groupChat.visibleReplies to "automatic" in openclaw.json and save the config. ` +
-            `The gateway hot-reloads messages config; restart only if file watching/reload is disabled. ` +
-            `Relates to https://github.com/openclaw/openclaw/issues/74876`,
-        );
-      }
-    } else {
-      mode =
-        params.cfg.messages?.visibleReplies === "message_tool" ? "message_tool_only" : "automatic";
-    }
+    const configuredMode =
+      params.cfg.messages?.visibleReplies ??
+      (isInternalSourceReplyChannel(params.ctx) ? "automatic" : params.defaultVisibleReplies);
+    mode = configuredMode === "message_tool" ? "message_tool_only" : "automatic";
   }
   if (mode === "message_tool_only" && params.messageToolAvailable === false) {
     return "automatic";
@@ -60,8 +134,22 @@ export function resolveSourceReplyDeliveryMode(params: {
   return mode;
 }
 
-export type SourceReplyVisibilityPolicy = {
+/** Returns true when a lifecycle turn must not redefine session-stable reply policy. */
+export function isSyntheticSourceReplyTurn(params: {
+  inputProvenance?: InputProvenance;
+  isHeartbeat?: boolean;
+}): boolean {
+  return (
+    params.isHeartbeat === true ||
+    params.inputProvenance?.kind === "inter_session" ||
+    params.inputProvenance?.kind === "internal_system"
+  );
+}
+
+/** Full source-reply suppression decision consumed by run and hook code. */
+type SourceReplyVisibilityPolicy = {
   sourceReplyDeliveryMode: SourceReplyDeliveryMode;
+  sessionStableSourceReplyDeliveryMode: SourceReplyDeliveryMode;
   sendPolicyDenied: boolean;
   suppressAutomaticSourceDelivery: boolean;
   suppressDelivery: boolean;
@@ -71,22 +159,50 @@ export type SourceReplyVisibilityPolicy = {
   deliverySuppressionReason: string;
 };
 
+/** Resolves source delivery, hooks, lifecycle, and typing suppression flags. */
 export function resolveSourceReplyVisibilityPolicy(params: {
   cfg: OpenClawConfig;
   ctx: SourceReplyDeliveryModeContext;
   requested?: SourceReplyDeliveryMode;
+  strictMessageToolOnly?: boolean;
   sendPolicy: SessionSendPolicyDecision;
   suppressAcpChildUserDelivery?: boolean;
   explicitSuppressTyping?: boolean;
   shouldSuppressTyping?: boolean;
   messageToolAvailable?: boolean;
+  /**
+   * Sender-independent availability for the session-stable mode. The stable
+   * mode feeds CLI binding facts shared by every turn kind, so a sender-scoped
+   * message-tool denial must not downgrade it while sender-less synthetic
+   * turns resolve tool-only — that hash split resets the CLI session (#121485).
+   */
+  sessionStableMessageToolAvailable?: boolean;
+  defaultVisibleReplies?: "automatic" | "message_tool";
+  isHeartbeat?: boolean;
 }): SourceReplyVisibilityPolicy {
   const sourceReplyDeliveryMode = resolveSourceReplyDeliveryMode({
     cfg: params.cfg,
     ctx: params.ctx,
     requested: params.requested,
+    strictMessageToolOnly: params.strictMessageToolOnly,
     messageToolAvailable: params.messageToolAvailable,
+    defaultVisibleReplies: params.defaultVisibleReplies,
   });
+  const hasStableTurnOverride =
+    !isSyntheticSourceReplyTurn({
+      inputProvenance: params.ctx.InputProvenance,
+      isHeartbeat: params.isHeartbeat,
+    }) &&
+    (params.requested !== undefined || isExplicitSourceReplyCommand(params.ctx, params.cfg));
+  const sessionStableSourceReplyDeliveryMode = hasStableTurnOverride
+    ? sourceReplyDeliveryMode
+    : resolveSourceReplyDeliveryMode({
+        cfg: params.cfg,
+        ctx: toSessionStableDeliveryModeContext(params.ctx),
+        messageToolAvailable:
+          params.sessionStableMessageToolAvailable ?? params.messageToolAvailable,
+        defaultVisibleReplies: params.defaultVisibleReplies,
+      });
   const sendPolicyDenied = params.sendPolicy === "deny";
   const suppressAutomaticSourceDelivery = sourceReplyDeliveryMode === "message_tool_only";
   const suppressDelivery = sendPolicyDenied || suppressAutomaticSourceDelivery;
@@ -98,6 +214,7 @@ export function resolveSourceReplyVisibilityPolicy(params: {
 
   return {
     sourceReplyDeliveryMode,
+    sessionStableSourceReplyDeliveryMode,
     sendPolicyDenied,
     suppressAutomaticSourceDelivery,
     suppressDelivery,

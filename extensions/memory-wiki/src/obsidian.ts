@@ -1,49 +1,50 @@
-import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import { runExec } from "openclaw/plugin-sdk/process-runtime";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 
-const execFileAsync = promisify(execFile);
-
-export type ObsidianCliProbe = {
+type ObsidianCliProbe = {
   available: boolean;
   command: string | null;
 };
 
-export type ObsidianCliResult = {
+type ObsidianCliResult = {
   command: string;
   argv: string[];
   stdout: string;
   stderr: string;
 };
 
+// User-triggered CLI helpers must not pin the gateway when Obsidian stops responding.
+const OBSIDIAN_CLI_TIMEOUT_MS = 10_000;
+
 type ObsidianCliDeps = {
-  exec?: typeof execFileAsync;
+  exec?: (
+    command: string,
+    args: string[],
+    options: { logOutput: false; timeoutMs: number },
+  ) => Promise<{ stdout: string; stderr: string }>;
   resolveCommand?: (command: string) => Promise<string | null>;
 };
 
 async function isExecutableFile(inputPath: string): Promise<boolean> {
   try {
     await fs.access(inputPath, process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
-    return true;
+    // X_OK also succeeds for searchable directories; follow symlinks to check the target type.
+    return (await fs.stat(inputPath)).isFile();
   } catch {
     return false;
   }
 }
 
-export async function resolveCommandOnPath(command: string): Promise<string | null> {
+async function resolveCommandOnPath(command: string): Promise<string | null> {
   const pathValue = process.env.PATH ?? "";
   const pathEntries = pathValue.split(path.delimiter).filter(Boolean);
   const windowsExts =
     process.platform === "win32"
       ? (process.env.PATHEXT?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT"])
       : [""];
-
-  if (command.includes(path.sep)) {
-    return (await isExecutableFile(command)) ? command : null;
-  }
 
   for (const dir of pathEntries) {
     for (const extension of windowsExts) {
@@ -57,10 +58,6 @@ export async function resolveCommandOnPath(command: string): Promise<string | nu
   return null;
 }
 
-function buildVaultPrefix(config: ResolvedMemoryWikiConfig): string[] {
-  return config.obsidian.vaultName ? [`vault=${config.obsidian.vaultName}`] : [];
-}
-
 export async function probeObsidianCli(
   deps?: Pick<ObsidianCliDeps, "resolveCommand">,
 ): Promise<ObsidianCliProbe> {
@@ -72,20 +69,27 @@ export async function probeObsidianCli(
   };
 }
 
-export async function runObsidianCli(params: {
+async function runObsidianCli(params: {
   config: ResolvedMemoryWikiConfig;
   subcommand: string;
   args?: string[];
   deps?: ObsidianCliDeps;
 }): Promise<ObsidianCliResult> {
-  const resolveCommand = params.deps?.resolveCommand ?? resolveCommandOnPath;
-  const exec = params.deps?.exec ?? execFileAsync;
-  const probe = await probeObsidianCli({ resolveCommand });
+  const probe = await probeObsidianCli(params.deps);
   if (!probe.command) {
     throw new Error("Obsidian CLI is not available on PATH.");
   }
-  const argv = [...buildVaultPrefix(params.config), params.subcommand, ...(params.args ?? [])];
-  const { stdout, stderr } = await exec(probe.command, argv, { encoding: "utf8" });
+  const { vaultName } = params.config.obsidian;
+  const argv = [
+    ...(vaultName ? [`vault=${vaultName}`] : []),
+    params.subcommand,
+    ...(params.args ?? []),
+  ];
+  const exec = params.deps?.exec ?? runExec;
+  const { stdout, stderr } = await exec(probe.command, argv, {
+    logOutput: false,
+    timeoutMs: OBSIDIAN_CLI_TIMEOUT_MS,
+  });
   return {
     command: probe.command,
     argv,

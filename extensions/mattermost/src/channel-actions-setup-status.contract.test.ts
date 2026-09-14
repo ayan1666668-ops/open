@@ -1,10 +1,11 @@
+// Mattermost tests cover channel actions setup status.contract plugin behavior.
 import {
   installChannelActionsContractSuite,
   installChannelSetupContractSuite,
   installChannelStatusContractSuite,
 } from "openclaw/plugin-sdk/channel-test-helpers";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
-import { describe, expect } from "vitest";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { describe, expect, it } from "vitest";
 import { mattermostPlugin, mattermostSetupPlugin } from "../channel-plugin-api.js";
 
 describe("mattermost actions contract", () => {
@@ -13,7 +14,7 @@ describe("mattermost actions contract", () => {
     unsupportedAction: "poll",
     cases: [
       {
-        name: "configured account exposes send and react",
+        name: "configured account exposes send and react while reads stay opt in",
         cfg: {
           channels: {
             mattermost: {
@@ -27,7 +28,7 @@ describe("mattermost actions contract", () => {
         expectedCapabilities: ["presentation"],
       },
       {
-        name: "reactions can be disabled while send stays available",
+        name: "disabled reactions do not enable message reads",
         cfg: {
           channels: {
             mattermost: {
@@ -39,6 +40,21 @@ describe("mattermost actions contract", () => {
           },
         } as OpenClawConfig,
         expectedActions: ["send"],
+        expectedCapabilities: ["presentation"],
+      },
+      {
+        name: "message reads can be disabled while send and react stay available",
+        cfg: {
+          channels: {
+            mattermost: {
+              enabled: true,
+              botToken: "test-token-placeholder",
+              baseUrl: "https://chat.example.com",
+              actions: { messages: false },
+            },
+          },
+        } as OpenClawConfig,
+        expectedActions: ["send", "react"],
         expectedCapabilities: ["presentation"],
       },
       {
@@ -70,9 +86,13 @@ describe("mattermost setup contract", () => {
         },
         expectedAccountId: "default",
         assertPatchedConfig: (cfg) => {
-          expect(cfg.channels?.mattermost?.enabled).toBe(true);
-          expect(cfg.channels?.mattermost?.botToken).toBe("test-token");
-          expect(cfg.channels?.mattermost?.baseUrl).toBe("https://chat.example.com");
+          const mattermostConfig = cfg.channels?.mattermost;
+          if (!mattermostConfig) {
+            throw new Error("expected Mattermost config patch");
+          }
+          expect(mattermostConfig.enabled).toBe(true);
+          expect(mattermostConfig.botToken).toBe("test-token");
+          expect(mattermostConfig.baseUrl).toBe("https://chat.example.com");
         },
       },
       {
@@ -118,5 +138,31 @@ describe("mattermost status contract", () => {
         },
       },
     ],
+  });
+});
+
+describe.each([
+  ["runtime", mattermostPlugin],
+  ["setup", mattermostSetupPlugin],
+] as const)("mattermost %s account inspection", (_name, plugin) => {
+  it("inspects source SecretRefs while strict account resolution rejects them", () => {
+    const cfg = {
+      channels: {
+        mattermost: {
+          baseUrl: "https://chat.example.com",
+          accounts: {
+            alpha: { botToken: { source: "env", provider: "default", id: "BOT_TOKEN" } },
+          },
+        },
+      },
+    } as OpenClawConfig;
+    expect(plugin.config.listAccountIds(cfg)).toContain("alpha");
+    expect(plugin.config.inspectAccount?.(cfg, "alpha")).toMatchObject({
+      accountId: "alpha",
+      configured: true,
+      botTokenStatus: "configured_unavailable",
+      botToken: undefined,
+    });
+    expect(() => plugin.config.resolveAccount(cfg, "alpha")).toThrow();
   });
 });

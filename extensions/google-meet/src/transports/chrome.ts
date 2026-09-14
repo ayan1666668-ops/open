@@ -1,802 +1,199 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
-import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import {
+  leaveMeetingWithBrowser,
+  readMeetingTranscriptWithBrowser,
+  recoverMeetingBrowserTab,
+  resolveLocalMeetingBrowserRequest,
+  MeetingPlatformAdapter,
+  type MeetingBrowserRequestCaller,
+} from "openclaw/plugin-sdk/meeting-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
-import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
-import type { GoogleMeetConfig } from "../config.js";
+import { resolveTranscriptsConfig } from "openclaw/plugin-sdk/transcripts";
+import type { GoogleMeetConfig, GoogleMeetMode } from "../config.js";
+import { callBrowserProxyOnNode, resolveChromeNode } from "./chrome-browser-proxy.js";
+import { GOOGLE_MEET_PLATFORM_ADAPTER } from "./google-meet-platform-adapter.js";
 import {
-  startNodeRealtimeAudioBridge,
-  type ChromeNodeRealtimeAudioBridgeHandle,
-} from "../realtime-node.js";
-import {
-  startCommandRealtimeAudioBridge,
-  type ChromeRealtimeAudioBridgeHandle,
-} from "../realtime.js";
-import {
-  asBrowserTabs,
-  callBrowserProxyOnNode,
-  isSameMeetUrlForReuse,
-  normalizeMeetUrlForReuse,
-  readBrowserTab,
-  resolveChromeNode,
-  type BrowserTab,
-} from "./chrome-browser-proxy.js";
-import type { GoogleMeetChromeHealth } from "./types.js";
+  GOOGLE_MEET_BROWSER_NODE_ADAPTER,
+  GOOGLE_MEET_NODE_COMMAND,
+} from "./google-meet-platform-constants.js";
+import type {
+  GoogleMeetBrowserTab,
+  GoogleMeetChromeHealth,
+  GoogleMeetSession,
+  GoogleMeetTranscriptSnapshot,
+} from "./types.js";
 
-export const GOOGLE_MEET_SYSTEM_PROFILER_COMMAND = "/usr/sbin/system_profiler";
+const chromeTransport = MeetingPlatformAdapter.createChromeTransportWithExternalAudio<
+  GoogleMeetConfig,
+  GoogleMeetMode,
+  GoogleMeetChromeHealth,
+  GoogleMeetTranscriptSnapshot
+>({
+  browserNodeAdapter: GOOGLE_MEET_BROWSER_NODE_ADAPTER,
+  isRealtimeRouteReady: (mode, health) =>
+    !MeetingPlatformAdapter.isTalkBackMode(mode) ||
+    MeetingPlatformAdapter.isRealtimeRouteReady(mode, health),
+  isTalkBackMode: MeetingPlatformAdapter.isTalkBackMode,
+  meetingLabel: "Google Meet",
+  nodeCommandName: GOOGLE_MEET_NODE_COMMAND,
+  platform: GOOGLE_MEET_PLATFORM_ADAPTER,
+  preserveTrackedBrowserOnEngineFailure: false,
+  startupFailurePolicy: "owned",
+  runtime: MeetingPlatformAdapter.createChromeRuntimeBindings(),
+});
 
-type BrowserRequestParams = {
-  method: "GET" | "POST" | "DELETE";
-  path: string;
-  body?: unknown;
-  timeoutMs: number;
-};
+export const assertGoogleMeetAudioAvailable = chromeTransport.assertAudioDeviceAvailable;
+export const launchChromeMeetOnNode = chromeTransport.launchOnNode;
 
-type BrowserRequestCaller = (params: BrowserRequestParams) => Promise<unknown>;
-
-const chromeTransportDeps: {
-  callGatewayFromCli: typeof callGatewayFromCli;
-} = {
-  callGatewayFromCli,
-};
-
-export const __testing = {
-  setDepsForTest(deps: { callGatewayFromCli?: typeof callGatewayFromCli } | null) {
-    chromeTransportDeps.callGatewayFromCli = deps?.callGatewayFromCli ?? callGatewayFromCli;
-  },
-};
-
-export function outputMentionsBlackHole2ch(output: string): boolean {
-  return /\bBlackHole\s+2ch\b/i.test(output);
+export async function launchChromeMeet(
+  params: Parameters<typeof chromeTransport.launchInChrome>[0],
+): ReturnType<typeof chromeTransport.launchInChrome> {
+  const result = await chromeTransport.launchInChrome(params);
+  return { ...result, audioBridge: result.audioBridge };
 }
 
-export async function assertBlackHole2chAvailable(params: {
-  runtime: PluginRuntime;
-  timeoutMs: number;
-}): Promise<void> {
-  if (process.platform !== "darwin") {
-    throw new Error("Chrome Meet transport with blackhole-2ch audio is currently macOS-only");
-  }
-
-  const result = await params.runtime.system.runCommandWithTimeout(
-    [GOOGLE_MEET_SYSTEM_PROFILER_COMMAND, "SPAudioDataType"],
-    { timeoutMs: params.timeoutMs },
-  );
-  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  if (result.code !== 0 || !outputMentionsBlackHole2ch(output)) {
-    const hint =
-      params.runtime.system.formatNativeDependencyHint?.({
-        packageName: "BlackHole 2ch",
-        downloadCommand: "brew install blackhole-2ch",
-      }) ?? "";
-    throw new Error(
-      [
-        "BlackHole 2ch audio device not found.",
-        "Install BlackHole 2ch and route Chrome input/output through the OpenClaw audio bridge.",
-        hint,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    );
-  }
-}
-
-export async function launchChromeMeet(params: {
-  runtime: PluginRuntime;
-  config: GoogleMeetConfig;
-  fullConfig: OpenClawConfig;
-  meetingSessionId: string;
-  mode: "realtime" | "transcribe";
-  url: string;
-  logger: RuntimeLogger;
-}): Promise<{
-  launched: boolean;
-  audioBridge?:
-    | { type: "external-command" }
-    | ({ type: "command-pair" } & ChromeRealtimeAudioBridgeHandle);
-  browser?: GoogleMeetChromeHealth;
-}> {
-  let audioBridge:
-    | { type: "external-command" }
-    | ({ type: "command-pair" } & ChromeRealtimeAudioBridgeHandle)
-    | undefined;
-
-  if (params.mode === "realtime") {
-    await assertBlackHole2chAvailable({
-      runtime: params.runtime,
-      timeoutMs: Math.min(params.config.chrome.joinTimeoutMs, 10_000),
-    });
-
-    if (params.config.chrome.audioBridgeHealthCommand) {
-      const health = await params.runtime.system.runCommandWithTimeout(
-        params.config.chrome.audioBridgeHealthCommand,
-        { timeoutMs: params.config.chrome.joinTimeoutMs },
-      );
-      if (health.code !== 0) {
-        throw new Error(
-          `Chrome audio bridge health check failed: ${health.stderr || health.stdout || health.code}`,
-        );
-      }
-    }
-
-    if (params.config.chrome.audioBridgeCommand) {
-      const bridge = await params.runtime.system.runCommandWithTimeout(
-        params.config.chrome.audioBridgeCommand,
-        { timeoutMs: params.config.chrome.joinTimeoutMs },
-      );
-      if (bridge.code !== 0) {
-        throw new Error(
-          `failed to start Chrome audio bridge: ${bridge.stderr || bridge.stdout || bridge.code}`,
-        );
-      }
-      audioBridge = { type: "external-command" };
-    } else {
-      if (!params.config.chrome.audioInputCommand || !params.config.chrome.audioOutputCommand) {
-        throw new Error(
-          "Chrome realtime mode requires chrome.audioInputCommand and chrome.audioOutputCommand, or chrome.audioBridgeCommand for an external bridge.",
-        );
-      }
-      audioBridge = {
-        type: "command-pair",
-        ...(await startCommandRealtimeAudioBridge({
-          config: params.config,
-          fullConfig: params.fullConfig,
-          runtime: params.runtime,
-          meetingSessionId: params.meetingSessionId,
-          inputCommand: params.config.chrome.audioInputCommand,
-          outputCommand: params.config.chrome.audioOutputCommand,
-          logger: params.logger,
-        })),
-      };
-    }
-  }
-
-  if (!params.config.chrome.launch) {
-    return { launched: false, audioBridge };
-  }
-
-  let commandPairBridgeStopped = false;
-  const stopCommandPairBridge = async () => {
-    if (commandPairBridgeStopped) {
-      return;
-    }
-    commandPairBridgeStopped = true;
-    if (audioBridge?.type === "command-pair") {
-      await audioBridge.stop();
-    }
-  };
-
-  try {
-    const result = await openMeetWithBrowserRequest({
-      callBrowser: callLocalBrowserRequest,
-      config: params.config,
-      mode: params.mode,
-      url: params.url,
-    });
-    return { ...result, audioBridge };
-  } catch (error) {
-    await stopCommandPairBridge();
-    throw error;
-  }
-}
-
-function parseNodeStartResult(raw: unknown): {
-  launched?: boolean;
-  bridgeId?: string;
-  audioBridge?: { type?: string };
-  browser?: GoogleMeetChromeHealth;
-} {
-  const value =
-    raw && typeof raw === "object" && "payload" in raw
-      ? (raw as { payload?: unknown }).payload
-      : raw;
-  if (!value || typeof value !== "object") {
-    throw new Error("Google Meet node returned an invalid start result.");
-  }
-  return value as {
-    launched?: boolean;
-    bridgeId?: string;
-    audioBridge?: { type?: string };
-    browser?: GoogleMeetChromeHealth;
-  };
-}
-
-function parseMeetBrowserStatus(result: unknown): GoogleMeetChromeHealth | undefined {
-  const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
-  const raw = record.result;
-  if (typeof raw !== "string" || !raw.trim()) {
-    return undefined;
-  }
-  const parsed = JSON.parse(raw) as {
-    inCall?: boolean;
-    micMuted?: boolean;
-    manualActionRequired?: boolean;
-    manualActionReason?: GoogleMeetChromeHealth["manualActionReason"];
-    manualActionMessage?: string;
-    url?: string;
-    title?: string;
-    notes?: string[];
-  };
-  return {
-    inCall: parsed.inCall,
-    micMuted: parsed.micMuted,
-    manualActionRequired: parsed.manualActionRequired,
-    manualActionReason: parsed.manualActionReason,
-    manualActionMessage: parsed.manualActionMessage,
-    browserUrl: parsed.url,
-    browserTitle: parsed.title,
-    status: "browser-control",
-    notes: Array.isArray(parsed.notes)
-      ? parsed.notes.filter((note): note is string => typeof note === "string")
-      : undefined,
-  };
-}
-
-async function callLocalBrowserRequest(params: BrowserRequestParams) {
-  return await chromeTransportDeps.callGatewayFromCli(
-    "browser.request",
-    {
-      json: true,
-      timeout: String(params.timeoutMs + 5_000),
-    },
-    {
-      method: params.method,
-      path: params.path,
-      body: params.body,
-      timeoutMs: params.timeoutMs,
-    },
-    { progress: false },
-  );
-}
-
-function mergeBrowserNotes(
-  browser: GoogleMeetChromeHealth | undefined,
-  notes: string[],
-): GoogleMeetChromeHealth | undefined {
-  if (!browser || notes.length === 0) {
-    return browser;
-  }
-  return {
-    ...browser,
-    notes: [...new Set([...(browser.notes ?? []), ...notes])],
-  };
-}
-
-function parsePermissionGrantNotes(result: unknown): string[] {
-  const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
-  const unsupportedPermissions = Array.isArray(record.unsupportedPermissions)
-    ? record.unsupportedPermissions.filter((value): value is string => typeof value === "string")
-    : [];
-  const notes = ["Granted Meet microphone/camera permissions through browser control."];
-  if (unsupportedPermissions.includes("speakerSelection")) {
-    notes.push("Chrome did not accept the optional Meet speaker-selection permission.");
-  }
-  return notes;
-}
-
-async function grantMeetMediaPermissions(params: {
-  callBrowser: BrowserRequestCaller;
-  timeoutMs: number;
-  allowMicrophone: boolean;
-}): Promise<string[]> {
-  if (!params.allowMicrophone) {
-    return ["Observe-only mode skips Meet microphone/camera permission grants."];
-  }
-  try {
-    const result = await params.callBrowser({
-      method: "POST",
-      path: "/permissions/grant",
-      body: {
-        origin: "https://meet.google.com",
-        permissions: ["audioCapture", "videoCapture"],
-        optionalPermissions: ["speakerSelection"],
-        timeoutMs: Math.min(params.timeoutMs, 5_000),
-      },
-      timeoutMs: Math.min(params.timeoutMs, 5_000),
-    });
-    return parsePermissionGrantNotes(result);
-  } catch (error) {
-    return [
-      `Could not grant Meet media permissions automatically: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    ];
-  }
-}
-
-function meetStatusScript(params: {
-  allowMicrophone: boolean;
-  autoJoin: boolean;
-  guestName: string;
-}) {
-  return `() => {
-  const text = (node) => (node?.innerText || node?.textContent || "").trim();
-  const allowMicrophone = ${JSON.stringify(params.allowMicrophone)};
-  const buttons = [...document.querySelectorAll('button')];
-  const notes = [];
-  const findButton = (pattern) =>
-    buttons.find((button) => {
-      const label = [
-        button.getAttribute("aria-label"),
-        button.getAttribute("data-tooltip"),
-        text(button),
-      ]
-        .filter(Boolean)
-        .join(" ");
-      return pattern.test(label) && !button.disabled;
-    });
-  const input = [...document.querySelectorAll('input')].find((el) =>
-    /your name/i.test(el.getAttribute('aria-label') || el.placeholder || '')
-  );
-  if (${JSON.stringify(params.autoJoin)} && input && !input.value) {
-    input.focus();
-    input.value = ${JSON.stringify(params.guestName)};
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  const pageText = text(document.body).toLowerCase();
-  const host = location.hostname.toLowerCase();
-  const pageUrl = location.href;
-  const permissionNeeded = /permission needed|allow.*(microphone|camera)|blocked.*(microphone|camera)|permission.*(microphone|camera|speaker)/i.test(pageText);
-  const mic = buttons.find((button) => /turn off microphone|turn on microphone|microphone/i.test(button.getAttribute('aria-label') || text(button)));
-  if (!allowMicrophone && mic && /turn off microphone/i.test(mic.getAttribute('aria-label') || text(mic))) {
-    mic.click();
-    notes.push("Muted Meet microphone for observe-only mode.");
-  }
-  const join = ${JSON.stringify(params.autoJoin)}
-    ? findButton(/join now|ask to join/i)
-    : null;
-  if (join) join.click();
-  const microphoneChoice = findButton(/\\buse microphone\\b/i);
-  const noMicrophoneChoice = findButton(/\\b(continue|join|use) without (microphone|mic)\\b|\\bnot now\\b/i);
-  if (allowMicrophone && microphoneChoice) {
-    microphoneChoice.click();
-    notes.push("Accepted Meet microphone prompt with browser automation.");
-  } else if (!allowMicrophone && noMicrophoneChoice) {
-    noMicrophoneChoice.click();
-    notes.push("Skipped Meet microphone prompt for observe-only mode.");
-  }
-  const inCall = buttons.some((button) => /leave call/i.test(button.getAttribute('aria-label') || text(button)));
-  let manualActionReason;
-  let manualActionMessage;
-  if (!inCall && (host === "accounts.google.com" || /use your google account|to continue to google meet|choose an account|sign in to (join|continue)/i.test(pageText))) {
-    manualActionReason = "google-login-required";
-    manualActionMessage = "Sign in to Google in the OpenClaw browser profile, then retry the Meet join.";
-  } else if (!inCall && /asking to be let in|you.?ll join when someone lets you in|waiting to be let in|ask to join/i.test(pageText)) {
-    manualActionReason = "meet-admission-required";
-    manualActionMessage = "Admit the OpenClaw browser participant in Google Meet, then retry speech.";
-  } else if (permissionNeeded) {
-    manualActionReason = "meet-permission-required";
-    manualActionMessage = allowMicrophone
-      ? "Allow microphone/camera/speaker permissions for Meet in the OpenClaw browser profile, then retry."
-      : "Join without microphone/camera permissions in the OpenClaw browser profile, then retry.";
-  } else if (!inCall && (allowMicrophone ? !microphoneChoice : !noMicrophoneChoice) && /do you want people to hear you in the meeting/i.test(pageText)) {
-    manualActionReason = "meet-audio-choice-required";
-    manualActionMessage = allowMicrophone
-      ? "Meet is showing the microphone choice. Click Use microphone in the OpenClaw browser profile, then retry."
-      : "Meet is showing the microphone choice. Choose the no-microphone option in the OpenClaw browser profile, then retry.";
-  }
-  return JSON.stringify({
-    clickedJoin: Boolean(join),
-    clickedMicrophoneChoice: Boolean(allowMicrophone && microphoneChoice),
-    inCall,
-    micMuted: mic ? /turn on microphone/i.test(mic.getAttribute('aria-label') || text(mic)) : undefined,
-    manualActionRequired: Boolean(manualActionReason),
-    manualActionReason,
-    manualActionMessage,
-    title: document.title,
-    url: pageUrl,
-    notes
-  });
-}`;
-}
-
-async function openMeetWithBrowserProxy(params: {
-  runtime: PluginRuntime;
-  nodeId: string;
-  config: GoogleMeetConfig;
-  mode: "realtime" | "transcribe";
-  url: string;
-}): Promise<{ launched: boolean; browser?: GoogleMeetChromeHealth }> {
-  return await openMeetWithBrowserRequest({
-    callBrowser: async (request) =>
-      await callBrowserProxyOnNode({
-        runtime: params.runtime,
-        nodeId: params.nodeId,
-        method: request.method,
-        path: request.path,
-        body: request.body,
-        timeoutMs: request.timeoutMs,
-      }),
-    config: params.config,
-    mode: params.mode,
-    url: params.url,
-  });
-}
-
-async function openMeetWithBrowserRequest(params: {
-  callBrowser: BrowserRequestCaller;
-  config: GoogleMeetConfig;
-  mode: "realtime" | "transcribe";
-  url: string;
-}): Promise<{ launched: boolean; browser?: GoogleMeetChromeHealth }> {
-  if (!params.config.chrome.launch) {
-    return { launched: false };
-  }
-
-  const timeoutMs = Math.max(1_000, params.config.chrome.joinTimeoutMs);
-  let targetId: string | undefined;
-  let tab: BrowserTab | undefined;
-  if (params.config.chrome.reuseExistingTab) {
-    const tabs = asBrowserTabs(
-      await params.callBrowser({
-        method: "GET",
-        path: "/tabs",
-        timeoutMs: Math.min(timeoutMs, 5_000),
-      }),
-    );
-    tab = tabs.find((entry) => isSameMeetUrlForReuse(entry.url, params.url));
-    targetId = tab?.targetId;
-    if (targetId) {
-      await params.callBrowser({
-        method: "POST",
-        path: "/tabs/focus",
-        body: { targetId },
-        timeoutMs: Math.min(timeoutMs, 5_000),
-      });
-    }
-  }
-  if (!targetId) {
-    tab = readBrowserTab(
-      await params.callBrowser({
-        method: "POST",
-        path: "/tabs/open",
-        body: { url: params.url },
-        timeoutMs,
-      }),
-    );
-    targetId = tab?.targetId;
-  }
-  if (!targetId) {
-    return {
-      launched: true,
-      browser: {
-        status: "browser-control",
-        notes: ["Browser proxy opened Meet but did not return a targetId."],
-        browserUrl: tab?.url,
-        browserTitle: tab?.title,
-      },
-    };
-  }
-
-  const permissionNotes = await grantMeetMediaPermissions({
-    allowMicrophone: params.mode === "realtime",
-    callBrowser: params.callBrowser,
-    timeoutMs,
-  });
-  const deadline = Date.now() + Math.max(0, params.config.chrome.waitForInCallMs);
-  let browser: GoogleMeetChromeHealth | undefined = {
-    status: "browser-control",
-    browserUrl: tab?.url,
-    browserTitle: tab?.title,
-    notes: permissionNotes,
-  };
-  do {
-    try {
-      const evaluated = await params.callBrowser({
-        method: "POST",
-        path: "/act",
-        body: {
-          kind: "evaluate",
-          targetId,
-          fn: meetStatusScript({
-            allowMicrophone: params.mode === "realtime",
-            guestName: params.config.chrome.guestName,
-            autoJoin: params.config.chrome.autoJoin,
-          }),
-        },
-        timeoutMs: Math.min(timeoutMs, 10_000),
-      });
-      browser = mergeBrowserNotes(parseMeetBrowserStatus(evaluated) ?? browser, permissionNotes);
-      if (browser?.inCall === true) {
-        return { launched: true, browser };
-      }
-      if (browser?.manualActionRequired === true) {
-        return { launched: true, browser };
-      }
-    } catch (error) {
-      browser = {
-        ...browser,
-        inCall: false,
-        manualActionRequired: true,
-        manualActionReason: "browser-control-unavailable",
-        manualActionMessage:
-          "Open the OpenClaw browser profile, finish Google Meet login, admission, or permission prompts, then retry.",
-        notes: [
-          ...permissionNotes,
-          `Browser control could not inspect or auto-join Meet: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        ],
-      };
-      break;
-    }
-    if (Date.now() <= deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-    }
-  } while (Date.now() <= deadline);
-  return { launched: true, browser };
-}
-
-function isRecoverableMeetTab(tab: BrowserTab, url?: string): boolean {
-  if (url) {
-    return isSameMeetUrlForReuse(tab.url, url);
-  }
-  if (normalizeMeetUrlForReuse(tab.url)) {
-    return true;
-  }
-  const tabUrl = tab.url ?? "";
+function shouldCaptureCaptions(mode: GoogleMeetMode, fullConfig?: OpenClawConfig): boolean {
   return (
-    tabUrl.startsWith("https://accounts.google.com/") &&
-    /sign in|google accounts|meet/i.test(tab.title ?? "")
+    mode === "transcribe" || !fullConfig || resolveTranscriptsConfig(fullConfig.transcripts).enabled
   );
 }
 
-async function inspectRecoverableMeetTab(params: {
-  callBrowser: BrowserRequestCaller;
-  config: GoogleMeetConfig;
-  timeoutMs: number;
-  tab: BrowserTab;
-  targetId: string;
-}) {
-  await params.callBrowser({
-    method: "POST",
-    path: "/tabs/focus",
-    body: { targetId: params.targetId },
-    timeoutMs: Math.min(params.timeoutMs, 5_000),
-  });
-  const permissionNotes = await grantMeetMediaPermissions({
-    allowMicrophone: true,
-    callBrowser: params.callBrowser,
-    timeoutMs: params.timeoutMs,
-  });
-  const evaluated = await params.callBrowser({
-    method: "POST",
-    path: "/act",
-    body: {
-      kind: "evaluate",
-      targetId: params.targetId,
-      fn: meetStatusScript({
-        allowMicrophone: true,
-        guestName: params.config.chrome.guestName,
-        autoJoin: false,
-      }),
-    },
-    timeoutMs: Math.min(params.timeoutMs, 10_000),
-  });
-  const browser = mergeBrowserNotes(
-    parseMeetBrowserStatus(evaluated) ?? {
-      status: "browser-control",
-      browserUrl: params.tab.url,
-      browserTitle: params.tab.title,
-    },
-    permissionNotes,
-  );
-  const manual = browser?.manualActionRequired
-    ? browser.manualActionMessage || browser.manualActionReason
-    : undefined;
-  return {
-    found: true,
-    targetId: params.targetId,
-    tab: params.tab,
-    browser,
-    message:
-      manual ?? (browser?.inCall ? "Existing Meet tab is in-call." : "Existing Meet tab focused."),
-  };
-}
-
-export async function recoverCurrentMeetTab(params: {
-  config: GoogleMeetConfig;
-  url?: string;
-}): Promise<{
-  transport: "chrome";
-  nodeId?: undefined;
-  found: boolean;
-  targetId?: string;
-  tab?: BrowserTab;
-  browser?: GoogleMeetChromeHealth;
-  message: string;
-}> {
-  const timeoutMs = Math.max(1_000, params.config.chrome.joinTimeoutMs);
-  const tabs = asBrowserTabs(
-    await callLocalBrowserRequest({
-      method: "GET",
-      path: "/tabs",
-      timeoutMs: Math.min(timeoutMs, 5_000),
-    }),
-  );
-  const tab = tabs.find((entry) => isRecoverableMeetTab(entry, params.url));
-  const targetId = tab?.targetId;
-  if (!tab || !targetId) {
-    return {
-      transport: "chrome",
-      found: false,
-      tab,
-      message: params.url
-        ? `No existing Meet tab matched ${params.url}.`
-        : "No existing Meet tab found in local Chrome.",
-    };
-  }
-  return {
-    transport: "chrome",
-    ...(await inspectRecoverableMeetTab({
-      callBrowser: callLocalBrowserRequest,
-      config: params.config,
-      timeoutMs,
-      tab,
-      targetId,
-    })),
-  };
-}
-
-export async function recoverCurrentMeetTabOnNode(params: {
+type ChromeBrowserRouteParams = {
   runtime: PluginRuntime;
   config: GoogleMeetConfig;
-  url?: string;
-}): Promise<{
-  transport: "chrome-node";
-  nodeId: string;
-  found: boolean;
-  targetId?: string;
-  tab?: BrowserTab;
-  browser?: GoogleMeetChromeHealth;
-  message: string;
-}> {
-  const nodeId = await resolveChromeNode({
-    runtime: params.runtime,
-    requestedNode: params.config.chromeNode.node,
-  });
-  const timeoutMs = Math.max(1_000, params.config.chrome.joinTimeoutMs);
-  const tabs = asBrowserTabs(
+  transport?: "chrome" | "chrome-node";
+  nodeId?: string;
+};
+
+function chromeNodeBrowserRequest(
+  runtime: PluginRuntime,
+  nodeId: string,
+): MeetingBrowserRequestCaller {
+  return async (request) =>
     await callBrowserProxyOnNode({
-      runtime: params.runtime,
+      runtime,
       nodeId,
-      method: "GET",
-      path: "/tabs",
-      timeoutMs: Math.min(timeoutMs, 5_000),
-    }),
-  );
-  const tab = tabs.find((entry) => isRecoverableMeetTab(entry, params.url));
-  const targetId = tab?.targetId;
-  if (!tab || !targetId) {
-    return {
-      transport: "chrome-node",
-      nodeId,
-      found: false,
-      tab,
-      message: params.url
-        ? `No existing Meet tab matched ${params.url}.`
-        : "No existing Meet tab found on the selected Chrome node.",
-    };
-  }
-  return {
-    transport: "chrome-node",
-    nodeId,
-    ...(await inspectRecoverableMeetTab({
-      callBrowser: async (request) =>
-        await callBrowserProxyOnNode({
-          runtime: params.runtime,
-          nodeId,
-          method: request.method,
-          path: request.path,
-          body: request.body,
-          timeoutMs: request.timeoutMs,
-        }),
-      config: params.config,
-      timeoutMs,
-      tab,
-      targetId,
-    })),
-  };
+      method: request.method,
+      path: request.path,
+      body: request.body,
+      timeoutMs: request.timeoutMs,
+    });
 }
 
-export type GoogleMeetCurrentTabRecoveryResult = Awaited<
-  ReturnType<typeof recoverCurrentMeetTab | typeof recoverCurrentMeetTabOnNode>
->;
+export async function leaveChromeMeet(
+  params: ChromeBrowserRouteParams & {
+    meetingSessionId: string;
+    meetingUrl: string;
+    tab: GoogleMeetBrowserTab;
+  },
+): Promise<{ left: boolean; note: string }> {
+  // A pinned session node bypasses inventory, including the empty-string value.
+  // Keep this await conditional; launch:false leave still resolves the route.
+  const node =
+    params.transport === "chrome-node"
+      ? {
+          nodeId:
+            params.nodeId ??
+            (await resolveChromeNode({
+              runtime: params.runtime,
+              requestedNode: params.config.chromeNode.node,
+            })),
+        }
+      : undefined;
+  return await leaveMeetingWithBrowser({
+    adapter: GOOGLE_MEET_PLATFORM_ADAPTER,
+    callBrowser: node
+      ? chromeNodeBrowserRequest(params.runtime, node.nodeId)
+      : await resolveLocalMeetingBrowserRequest(params.runtime),
+    launch: params.config.chrome.launch,
+    meetingSessionId: params.meetingSessionId,
+    meetingUrl: params.meetingUrl,
+    tab: params.tab,
+    timeoutMs: params.config.chrome.joinTimeoutMs,
+  });
+}
 
-export async function launchChromeMeetOnNode(params: {
-  runtime: PluginRuntime;
-  config: GoogleMeetConfig;
-  fullConfig: OpenClawConfig;
-  meetingSessionId: string;
-  mode: "realtime" | "transcribe";
-  url: string;
-  logger: RuntimeLogger;
-}): Promise<{
-  nodeId: string;
-  launched: boolean;
-  audioBridge?:
-    | { type: "external-command" }
-    | ({ type: "node-command-pair" } & ChromeNodeRealtimeAudioBridgeHandle);
-  browser?: GoogleMeetChromeHealth;
-}> {
-  const nodeId = await resolveChromeNode({
-    runtime: params.runtime,
-    requestedNode: params.config.chromeNode.node,
+export async function readChromeMeetTranscript(
+  params: ChromeBrowserRouteParams & {
+    finalize?: boolean;
+    meetingUrl: string;
+    meetingSessionId: string;
+    tab: GoogleMeetBrowserTab;
+  },
+): Promise<GoogleMeetTranscriptSnapshot> {
+  const node =
+    params.transport === "chrome-node"
+      ? {
+          nodeId:
+            params.nodeId ??
+            (await resolveChromeNode({
+              runtime: params.runtime,
+              requestedNode: params.config.chromeNode.node,
+            })),
+        }
+      : undefined;
+  return await readMeetingTranscriptWithBrowser({
+    adapter: GOOGLE_MEET_PLATFORM_ADAPTER,
+    callBrowser: node
+      ? chromeNodeBrowserRequest(params.runtime, node.nodeId)
+      : await resolveLocalMeetingBrowserRequest(params.runtime),
+    finalize: params.finalize === true,
+    meetingUrl: params.meetingUrl,
+    meetingSessionId: params.meetingSessionId,
+    tab: params.tab,
+    timeoutMs: Math.min(Math.max(1_000, params.config.chrome.joinTimeoutMs), 10_000),
   });
-  try {
-    await params.runtime.nodes.invoke({
-      nodeId,
-      command: "googlemeet.chrome",
-      params: {
-        action: "stopByUrl",
-        url: params.url,
-        mode: params.mode,
-      },
-      timeoutMs: 5_000,
-    });
-  } catch (error) {
-    params.logger.debug?.(
-      `[google-meet] node bridge cleanup before join ignored: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  const browserControl = await openMeetWithBrowserProxy({
-    runtime: params.runtime,
-    nodeId,
-    config: params.config,
-    mode: params.mode,
-    url: params.url,
-  });
-  const raw = await params.runtime.nodes.invoke({
-    nodeId,
-    command: "googlemeet.chrome",
-    params: {
-      action: "start",
-      url: params.url,
-      mode: params.mode,
-      launch: false,
-      browserProfile: params.config.chrome.browserProfile,
-      joinTimeoutMs: params.config.chrome.joinTimeoutMs,
-      audioInputCommand: params.config.chrome.audioInputCommand,
-      audioOutputCommand: params.config.chrome.audioOutputCommand,
-      audioBridgeCommand: params.config.chrome.audioBridgeCommand,
-      audioBridgeHealthCommand: params.config.chrome.audioBridgeHealthCommand,
-    },
-    timeoutMs: params.config.chrome.joinTimeoutMs + 5_000,
-  });
-  const result = parseNodeStartResult(raw);
-  if (result.audioBridge?.type === "node-command-pair") {
-    if (!result.bridgeId) {
-      throw new Error("Google Meet node did not return an audio bridge id.");
-    }
-    const bridge = await startNodeRealtimeAudioBridge({
-      config: params.config,
-      fullConfig: params.fullConfig,
-      runtime: params.runtime,
-      meetingSessionId: params.meetingSessionId,
-      nodeId,
-      bridgeId: result.bridgeId,
-      logger: params.logger,
-    });
-    return {
-      nodeId,
-      launched: browserControl.launched || result.launched === true,
-      audioBridge: bridge,
-      browser: browserControl.browser ?? result.browser,
-    };
-  }
-  if (result.audioBridge?.type === "external-command") {
-    return {
-      nodeId,
-      launched: browserControl.launched || result.launched === true,
-      audioBridge: { type: "external-command" },
-      browser: browserControl.browser ?? result.browser,
-    };
-  }
+}
+
+export async function recoverCurrentMeetTab(
+  params: Omit<ChromeBrowserRouteParams, "nodeId"> & {
+    fullConfig?: OpenClawConfig;
+    mode?: GoogleMeetMode;
+    readOnly?: boolean;
+    trackedMeetingUrl?: string;
+    trackedTargetId?: string;
+    url?: string;
+  },
+): Promise<
+  Awaited<
+    ReturnType<
+      typeof recoverMeetingBrowserTab<
+        GoogleMeetSession,
+        GoogleMeetMode,
+        GoogleMeetChromeHealth,
+        GoogleMeetTranscriptSnapshot
+      >
+    >
+  > &
+    ({ transport: "chrome"; nodeId?: undefined } | { transport: "chrome-node"; nodeId: string })
+> {
+  // Recovery deliberately re-resolves the configured node, not the session pin.
+  const node =
+    params.transport === "chrome-node"
+      ? {
+          nodeId: await resolveChromeNode({
+            runtime: params.runtime,
+            requestedNode: params.config.chromeNode.node,
+          }),
+        }
+      : undefined;
   return {
-    nodeId,
-    launched: browserControl.launched || result.launched === true,
-    browser: browserControl.browser ?? result.browser,
+    ...(node
+      ? { transport: "chrome-node" as const, nodeId: node.nodeId }
+      : { transport: "chrome" as const }),
+    ...(await recoverMeetingBrowserTab({
+      adapter: GOOGLE_MEET_PLATFORM_ADAPTER,
+      callBrowser: node
+        ? chromeNodeBrowserRequest(params.runtime, node.nodeId)
+        : await resolveLocalMeetingBrowserRequest(params.runtime),
+      captureCaptions: shouldCaptureCaptions(params.mode ?? "bidi", params.fullConfig),
+      config: params.config.chrome,
+      locationLabel: node ? "on the selected Chrome node" : "in local Chrome",
+      mode: params.mode ?? "bidi",
+      readOnly: params.readOnly,
+      requestedMeetingUrl: params.url,
+      trackedMeetingUrl: params.trackedMeetingUrl,
+      trackedTargetId: params.trackedTargetId,
+    })),
   };
 }

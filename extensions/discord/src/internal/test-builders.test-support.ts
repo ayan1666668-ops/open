@@ -1,9 +1,13 @@
+// Discord plugin module implements test builders support behavior.
 import { ComponentType, InteractionType } from "discord-api-types/v10";
 import { vi, type Mock } from "vitest";
 import { Client } from "./client.js";
-import type { BaseCommand } from "./commands.js";
+import type { DiscordCommand } from "./commands.js";
 import type { RawInteraction } from "./interactions.js";
-import type { QueuedRequest, RequestClient, RequestData } from "./rest.js";
+import type { RequestClient, RequestData } from "./rest.js";
+
+type ClientOptions = ConstructorParameters<typeof Client>[0];
+type RequestQuery = Parameters<RequestClient["get"]>[1];
 
 type RestMock = Partial<Record<"get" | "post" | "patch" | "put" | "delete", Mock>>;
 type RestMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -12,25 +16,17 @@ type RawInteractionOverrides = Omit<Partial<RawInteraction>, "data" | "type"> &
     data?: Record<string, unknown>;
   };
 
-export type FakeRestCall = {
+type FakeRestCall = {
   method: RestMethod;
   path: string;
   data?: RequestData;
-  query?: QueuedRequest["query"];
+  query?: RequestQuery;
 };
 
-export type FakeRestClient = RequestClient & {
+type FakeRestClient = RequestClient & {
   calls: FakeRestCall[];
   enqueueResponse: (value: unknown) => void;
 };
-
-export function createDeferred<T>() {
-  let resolve: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve: resolve! };
-}
 
 export function createJsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -58,19 +54,23 @@ export function createAbortableFetchMock() {
   };
 }
 
-export function createInternalTestClient(commands: BaseCommand[] = []): Client {
+export function createInternalTestClient(
+  commands: DiscordCommand[] = [],
+  options?: Partial<ClientOptions>,
+): Client {
   return new Client(
     {
       baseUrl: "http://localhost",
       clientId: "app1",
       publicKey: "public",
       token: "token",
+      ...options,
     },
     { commands },
   );
 }
 
-export function createRestMock(overrides: RestMock = {}): RestMock & RequestClient {
+function createRestMock(overrides: RestMock = {}): RestMock & RequestClient {
   return {
     get: vi.fn(async () => undefined),
     post: vi.fn(async () => undefined),
@@ -94,7 +94,7 @@ export function createFakeRestClient(responses: unknown[] = []): FakeRestClient 
     method: RestMethod,
     path: string,
     data?: RequestData,
-    query?: QueuedRequest["query"],
+    query?: RequestQuery,
   ) => {
     calls.push({ method, path, data, query });
     return queued.shift();

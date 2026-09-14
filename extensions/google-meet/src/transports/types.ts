@@ -1,82 +1,108 @@
-import type { GoogleMeetMode, GoogleMeetTransport } from "../config.js";
+// Google Meet type declarations define plugin contracts.
+import type { MeetingPlatformAdapter } from "openclaw/plugin-sdk/meeting-runtime";
+import type {
+  GoogleMeetConfig,
+  GoogleMeetMode,
+  GoogleMeetModeInput,
+  GoogleMeetTransport,
+} from "../config.js";
 
-export type GoogleMeetSessionState = "active" | "ended";
+export const GOOGLE_MEET_TRANSCRIPT_MAX_LINES = 2_000;
 
-export type GoogleMeetJoinRequest = {
-  url: string;
-  transport?: GoogleMeetTransport;
-  mode?: GoogleMeetMode;
-  message?: string;
+type GoogleMeetManualActionReason =
+  | "google-login-required"
+  | "meet-admission-required"
+  | "meet-permission-required"
+  | "meet-audio-choice-required"
+  | "meet-locale-required"
+  | "meet-session-conflict"
+  | "browser-control-unavailable";
+
+type GoogleMeetSpeechBlockedReason =
+  | GoogleMeetManualActionReason
+  | "not-in-call"
+  | "browser-unverified"
+  | "audio-bridge-unavailable"
+  | "meet-microphone-muted";
+
+type GoogleMeetPluginConfig = GoogleMeetConfig & {
+  chrome: GoogleMeetConfig["chrome"] & {
+    audioInputCommand: string[];
+    audioOutputCommand: string[];
+  };
+};
+
+type GoogleMeetPluginTypes = ReturnType<
+  typeof MeetingPlatformAdapter.pluginTypes<
+    GoogleMeetPluginConfig,
+    GoogleMeetTransport,
+    GoogleMeetModeInput,
+    GoogleMeetManualActionReason,
+    GoogleMeetSpeechBlockedReason,
+    {
+      leaveReason?: string;
+      realtimeTranscriptLines?: number;
+      lastRealtimeTranscriptAt?: string;
+      lastRealtimeTranscriptRole?: "user" | "assistant";
+      lastRealtimeTranscriptText?: string;
+      recentRealtimeTranscript?: Array<{
+        at: string;
+        role: "user" | "assistant";
+        text: string;
+      }>;
+      lastRealtimeEventAt?: string;
+      lastRealtimeEventType?: string;
+      lastRealtimeEventDetail?: string;
+      recentRealtimeEvents?: Array<{
+        at: string;
+        direction: "client" | "server";
+        type: string;
+        detail?: string;
+      }>;
+      recentTalkEvents?: Array<{
+        id: string;
+        type: string;
+        sessionId: string;
+        turnId?: string;
+        seq: number;
+        timestamp: string;
+        final?: boolean;
+      }>;
+      lastSuppressedInputAt?: string;
+      lastClearAt?: string;
+      suppressedInputBytes?: number;
+      consecutiveInputErrors?: number;
+      lastInputError?: string;
+      clearCount?: number;
+      queuedInputChunks?: number;
+    }
+  >
+>;
+
+export type GoogleMeetTranscriptSnapshot = GoogleMeetPluginTypes["TranscriptSnapshot"];
+
+export type GoogleMeetJoinRequest = GoogleMeetPluginTypes["JoinRequest"] & {
   dialInNumber?: string;
   pin?: string;
   dtmfSequence?: string;
 };
 
-export type GoogleMeetManualActionReason =
-  | "google-login-required"
-  | "meet-admission-required"
-  | "meet-permission-required"
-  | "meet-audio-choice-required"
-  | "browser-control-unavailable";
+export type GoogleMeetChromeHealth = Omit<
+  GoogleMeetPluginTypes["ChromeHealth"],
+  "cameraOff" | "captionCaptureRequested" | "audioOutputRouteRetryable"
+>;
 
-export type GoogleMeetSpeechBlockedReason =
-  | GoogleMeetManualActionReason
-  | "not-in-call"
-  | "browser-unverified"
-  | "audio-bridge-unavailable";
+export type GoogleMeetBrowserTab = GoogleMeetPluginTypes["BrowserTab"];
 
-export type GoogleMeetChromeHealth = {
-  inCall?: boolean;
-  micMuted?: boolean;
-  manualActionRequired?: boolean;
-  manualActionReason?: GoogleMeetManualActionReason;
-  manualActionMessage?: string;
-  speechReady?: boolean;
-  speechBlockedReason?: GoogleMeetSpeechBlockedReason;
-  speechBlockedMessage?: string;
-  providerConnected?: boolean;
-  realtimeReady?: boolean;
-  audioInputActive?: boolean;
-  audioOutputActive?: boolean;
-  lastInputAt?: string;
-  lastOutputAt?: string;
-  lastClearAt?: string;
-  lastInputBytes?: number;
-  lastOutputBytes?: number;
-  consecutiveInputErrors?: number;
-  lastInputError?: string;
-  clearCount?: number;
-  queuedInputChunks?: number;
-  browserUrl?: string;
-  browserTitle?: string;
-  bridgeClosed?: boolean;
-  status?: string;
-  notes?: string[];
-};
+type GoogleMeetPluginSession = GoogleMeetPluginTypes["Session"];
+type GoogleMeetPluginChrome = NonNullable<GoogleMeetPluginSession["chrome"]>;
+type GoogleMeetPluginAudioBridge = NonNullable<GoogleMeetPluginChrome["audioBridge"]>;
 
-export type GoogleMeetSession = {
-  id: string;
-  url: string;
-  transport: GoogleMeetTransport;
+export type GoogleMeetSession = Omit<GoogleMeetPluginSession, "chrome" | "mode"> & {
   mode: GoogleMeetMode;
-  state: GoogleMeetSessionState;
-  createdAt: string;
-  updatedAt: string;
-  participantIdentity: string;
-  realtime: {
-    enabled: boolean;
-    provider?: string;
-    model?: string;
-    toolPolicy: string;
-  };
-  chrome?: {
-    audioBackend: "blackhole-2ch";
-    launched: boolean;
-    nodeId?: string;
-    browserProfile?: string;
-    audioBridge?: {
-      type: "command-pair" | "node-command-pair" | "external-command";
-      provider?: string;
+  chrome?: Omit<GoogleMeetPluginChrome, "audioBridge" | "health"> & {
+    audioBridge?: Omit<GoogleMeetPluginAudioBridge, "type"> & {
+      type: GoogleMeetPluginAudioBridge["type"] | "external-command";
     };
     health?: GoogleMeetChromeHealth;
   };
@@ -86,11 +112,10 @@ export type GoogleMeetSession = {
     dtmfSequence?: string;
     voiceCallId?: string;
     dtmfSent?: boolean;
+    introSent?: boolean;
   };
-  notes: string[];
 };
 
-export type GoogleMeetJoinResult = {
+export type GoogleMeetJoinResult = Omit<GoogleMeetPluginTypes["JoinResult"], "session"> & {
   session: GoogleMeetSession;
-  spoken?: boolean;
 };

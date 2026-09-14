@@ -1,12 +1,40 @@
+// Active Memory tests cover config plugin behavior.
 import fs from "node:fs";
-import { type JsonSchemaObject, validateJsonSchemaValue } from "openclaw/plugin-sdk/config-schema";
+import {
+  type JsonSchemaObject,
+  validateJsonSchemaValue,
+} from "openclaw/plugin-sdk/json-schema-runtime";
 import { describe, expect, it } from "vitest";
+import { applyCliRuntimeRecallTimeoutDefault, normalizePluginConfig } from "./config.js";
 
 const manifest = JSON.parse(
   fs.readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf-8"),
 ) as { configSchema: JsonSchemaObject };
 
 describe("active-memory manifest config schema", () => {
+  it.each([
+    [{}, true, 45_000, true],
+    [{}, false, 15_000, true],
+    [{ timeoutMs: 20_000 }, true, 20_000, false],
+  ] as const)("applies CLI timeout defaults to %#", (input, eligible, timeoutMs, isDefault) => {
+    const config = normalizePluginConfig(input);
+    expect(config.timeoutMsIsDefault).toBe(isDefault);
+    expect(applyCliRuntimeRecallTimeoutDefault(config, eligible).timeoutMs).toBe(timeoutMs);
+  });
+
+  it.each(["escalate", "always", "off"])("accepts mode=%s", (mode) => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: `active-memory.manifest.mode.${mode}`,
+      value: { mode },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("defaults runtime mode to escalate", () => {
+    expect(normalizePluginConfig({}).mode).toBe("escalate");
+  });
+
   it("accepts modelFallback for CLI and config.patch flows", () => {
     const result = validateJsonSchemaValue({
       schema: manifest.configSchema,
@@ -22,6 +50,62 @@ describe("active-memory manifest config schema", () => {
     expect(result.ok).toBe(true);
   });
 
+  it.each([true, false, "auto"])("accepts fastMode=%s", (fastMode) => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: `active-memory.manifest.fast-mode.${String(fastMode)}`,
+      value: {
+        enabled: true,
+        agents: ["main"],
+        fastMode,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects unsupported fastMode strings", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.fast-mode.invalid",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        fastMode: "on",
+      },
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts custom toolsAllow entries", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.tools-allow",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        toolsAllow: ["lcm_grep", "lcm_describe", "lcm_expand_query"],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects wildcard and group toolsAllow entries", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.tools-allow.reserved",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        toolsAllow: ["*", "group:plugins"],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
   it("accepts timeoutMs values at the runtime ceiling", () => {
     const result = validateJsonSchemaValue({
       schema: manifest.configSchema,
@@ -30,6 +114,20 @@ describe("active-memory manifest config schema", () => {
         enabled: true,
         agents: ["main"],
         timeoutMs: 120_000,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts setupGraceTimeoutMs values at the runtime ceiling", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.setup-grace-timeout-ceiling",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        setupGraceTimeoutMs: 30_000,
       },
     });
 
@@ -50,6 +148,20 @@ describe("active-memory manifest config schema", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts max thinking overrides", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.thinking.max",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        thinking: "max",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects timeoutMs values above the runtime ceiling", () => {
     const result = validateJsonSchemaValue({
       schema: manifest.configSchema,
@@ -58,6 +170,20 @@ describe("active-memory manifest config schema", () => {
         enabled: true,
         agents: ["main"],
         timeoutMs: 120_001,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects setupGraceTimeoutMs values above the runtime ceiling", () => {
+    const result = validateJsonSchemaValue({
+      schema: manifest.configSchema,
+      cacheKey: "active-memory.manifest.setup-grace-timeout-above-ceiling",
+      value: {
+        enabled: true,
+        agents: ["main"],
+        setupGraceTimeoutMs: 30_001,
       },
     });
 

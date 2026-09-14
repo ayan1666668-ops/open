@@ -1,11 +1,14 @@
+// Auto-reply trigger harness builds trigger handling scenarios for tests.
 import { rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, vi } from "vitest";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../../../src/agents/auth-profiles.js";
-import { withFastReplyConfig } from "../../../src/auto-reply/reply/get-reply-fast-path.js";
+import type { EmbeddedAgentQueueMessageOutcome } from "../../../src/agents/embedded-agent-runner/runs.js";
+import { withFastReplyConfig } from "../../../src/auto-reply/reply/get-reply-fast-path.test-support.js";
 import type { OpenClawConfig } from "../../../src/config/types.openclaw.js";
+import { captureEnv } from "../../../src/test-utils/env.js";
 
 // Avoid exporting vitest mock types (TS2742 under pnpm + d.ts emit).
 type AnyMock = any;
@@ -20,51 +23,68 @@ function getSharedMocks<T>(key: string, create: () => T): T {
   return store[symbol];
 }
 
-const piEmbeddedMocks = getSharedMocks("openclaw.trigger-handling.pi-embedded-mocks", () => ({
-  abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
-  compactEmbeddedPiSession: vi.fn(),
-  runEmbeddedPiAgent: vi.fn(),
-  queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
+const embeddedAgentMocks = getSharedMocks("openclaw.trigger-handling.embedded-agent-mocks", () => ({
+  abortEmbeddedAgentRun: vi.fn().mockReturnValue(false),
+  compactEmbeddedAgentSession: vi.fn(),
+  runEmbeddedAgent: vi.fn(),
+  queueEmbeddedAgentMessageWithOutcome: vi.fn(
+    (sessionId: string, _text?: string, _options?: unknown): EmbeddedAgentQueueMessageOutcome => ({
+      queued: false,
+      sessionId,
+      reason: "not_streaming",
+      gatewayHealth: "live",
+    }),
+  ),
   resolveActiveEmbeddedRunSessionId: vi.fn().mockReturnValue(undefined),
-  isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
-  isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
+  isEmbeddedAgentRunActive: vi.fn().mockReturnValue(false),
+  isEmbeddedAgentRunStreaming: vi.fn().mockReturnValue(false),
 }));
 
-export function getAbortEmbeddedPiRunMock(): AnyMock {
-  return piEmbeddedMocks.abortEmbeddedPiRun;
+export function getAbortEmbeddedAgentRunMock(): AnyMock {
+  return embeddedAgentMocks.abortEmbeddedAgentRun;
 }
 
-export function getCompactEmbeddedPiSessionMock(): AnyMock {
-  return piEmbeddedMocks.compactEmbeddedPiSession;
+export function getCompactEmbeddedAgentSessionMock(): AnyMock {
+  return embeddedAgentMocks.compactEmbeddedAgentSession;
 }
 
-export function getRunEmbeddedPiAgentMock(): AnyMock {
-  return piEmbeddedMocks.runEmbeddedPiAgent;
+export function getRunEmbeddedAgentMock(): AnyMock {
+  return embeddedAgentMocks.runEmbeddedAgent;
 }
 
-export function getQueueEmbeddedPiMessageMock(): AnyMock {
-  return piEmbeddedMocks.queueEmbeddedPiMessage;
-}
-
-const installPiEmbeddedMock = () =>
-  vi.doMock("../../../src/agents/pi-embedded.js", () => ({
-    abortEmbeddedPiRun: (...args: unknown[]) => piEmbeddedMocks.abortEmbeddedPiRun(...args),
-    compactEmbeddedPiSession: (...args: unknown[]) =>
-      piEmbeddedMocks.compactEmbeddedPiSession(...args),
-    runEmbeddedPiAgent: (...args: unknown[]) => piEmbeddedMocks.runEmbeddedPiAgent(...args),
-    queueEmbeddedPiMessage: (...args: unknown[]) => piEmbeddedMocks.queueEmbeddedPiMessage(...args),
+const installEmbeddedAgentMock = () =>
+  vi.doMock("../../../src/agents/embedded-agent.js", () => ({
+    abortEmbeddedAgentRun: (...args: unknown[]) =>
+      embeddedAgentMocks.abortEmbeddedAgentRun(...args),
+    compactEmbeddedAgentSession: (...args: unknown[]) =>
+      embeddedAgentMocks.compactEmbeddedAgentSession(...args),
+    runEmbeddedAgent: (...args: unknown[]) => embeddedAgentMocks.runEmbeddedAgent(...args),
+    queueEmbeddedAgentMessageWithOutcome: (sessionId: string, text: string, options?: unknown) =>
+      embeddedAgentMocks.queueEmbeddedAgentMessageWithOutcome(sessionId, text, options),
     resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
     resolveActiveEmbeddedRunSessionId: (...args: unknown[]) =>
-      piEmbeddedMocks.resolveActiveEmbeddedRunSessionId(...args),
-    isEmbeddedPiRunActive: (...args: unknown[]) => piEmbeddedMocks.isEmbeddedPiRunActive(...args),
-    isEmbeddedPiRunStreaming: (...args: unknown[]) =>
-      piEmbeddedMocks.isEmbeddedPiRunStreaming(...args),
+      embeddedAgentMocks.resolveActiveEmbeddedRunSessionId(...args),
+    isEmbeddedAgentRunActive: (...args: unknown[]) =>
+      embeddedAgentMocks.isEmbeddedAgentRunActive(...args),
+    isEmbeddedAgentRunStreaming: (...args: unknown[]) =>
+      embeddedAgentMocks.isEmbeddedAgentRunStreaming(...args),
   }));
 
-installPiEmbeddedMock();
+installEmbeddedAgentMock();
 
-vi.doMock("../../../src/agents/pi-embedded-runner/runs.js", () => ({
-  abortEmbeddedPiRun: (...args: unknown[]) => piEmbeddedMocks.abortEmbeddedPiRun(...args),
+vi.doMock("../../../src/agents/embedded-agent-runner/runs.js", () => ({
+  abortEmbeddedAgentRun: (...args: unknown[]) => embeddedAgentMocks.abortEmbeddedAgentRun(...args),
+  formatEmbeddedAgentQueueFailureSummary: (outcome: { reason?: string; sessionId?: string }) =>
+    outcome.reason && outcome.sessionId
+      ? `queue_message_failed reason=${outcome.reason} sessionId=${outcome.sessionId} gatewayHealth=live`
+      : undefined,
+  queueEmbeddedAgentMessageWithOutcome: (sessionId: string, text: string, options?: unknown) =>
+    embeddedAgentMocks.queueEmbeddedAgentMessageWithOutcome(sessionId, text, options),
+}));
+
+vi.doMock("../../../src/agents/embedded-agent-runner/active-run-projections.js", () => ({
+  resolveActiveEmbeddedRunSessionId: (...args: unknown[]) =>
+    embeddedAgentMocks.resolveActiveEmbeddedRunSessionId(...args),
 }));
 
 const providerUsageMocks = vi.hoisted(() => ({
@@ -72,7 +92,6 @@ const providerUsageMocks = vi.hoisted(() => ({
     updatedAt: 0,
     providers: [],
   }),
-  formatUsageSummaryLine: vi.fn().mockReturnValue("📊 Usage: Claude 80% left"),
   formatUsageWindowSummary: vi.fn().mockReturnValue("Claude 80% left"),
   resolveUsageProviderId: vi.fn((provider: string) => provider.split("/")[0]),
 }));
@@ -83,39 +102,56 @@ export function getProviderUsageMocks(): AnyMocks {
 
 vi.mock("../../../src/infra/provider-usage.js", () => providerUsageMocks);
 
-const modelCatalogMocks = getSharedMocks("openclaw.trigger-handling.model-catalog-mocks", () => ({
-  loadModelCatalog: vi.fn().mockResolvedValue([
-    {
-      provider: "anthropic",
-      id: "claude-opus-4-6",
-      name: "Claude Opus 4.5",
-      contextWindow: 200000,
-    },
-    {
-      provider: "openrouter",
-      id: "anthropic/claude-opus-4-6",
-      name: "Claude Opus 4.5 (OpenRouter)",
-      contextWindow: 200000,
-    },
-    { provider: "openai", id: "gpt-4.1-mini", name: "GPT-4.1 mini" },
-    { provider: "openai", id: "gpt-5.5", name: "GPT-5.5" },
-    { provider: "openai-codex", id: "gpt-5.5", name: "GPT-5.5 (Codex)" },
-    { provider: "minimax", id: "MiniMax-M2.7", name: "MiniMax M2.7" },
-  ]),
-  resetModelCatalogCacheForTest: vi.fn(),
-}));
+const DEFAULT_MODEL_CATALOG = [
+  {
+    provider: "anthropic",
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    contextWindow: 200000,
+  },
+  {
+    provider: "openrouter",
+    id: "anthropic/claude-opus-4-7",
+    name: "Claude Opus 4.7 (OpenRouter)",
+    contextWindow: 200000,
+  },
+  { provider: "openai", id: "gpt-5.5-mini", name: "GPT-5.5 mini" },
+  { provider: "openai", id: "gpt-5.5", name: "GPT-5.5" },
+  { provider: "openai", id: "gpt-5.5", name: "GPT-5.5 (Codex)" },
+  { provider: "minimax", id: "MiniMax-M2.7", name: "MiniMax M2.7" },
+];
 
-export function getModelCatalogMocks(): AnyMocks {
-  return modelCatalogMocks;
-}
+const modelCatalogMocks = getSharedMocks("openclaw.trigger-handling.model-catalog-mocks", () => ({
+  loadManifestModelCatalog: vi.fn(() => DEFAULT_MODEL_CATALOG),
+  readPreparedModelCatalog: vi.fn().mockResolvedValue(DEFAULT_MODEL_CATALOG),
+}));
 
 const installModelCatalogMock = () =>
   vi.doMock("../../../src/agents/model-catalog.js", () => modelCatalogMocks);
 
 installModelCatalogMock();
 
+vi.doMock("../../../src/agents/prepared-model-catalog.js", () => ({
+  getPreparedModelCatalogOwnerSnapshot: () => undefined,
+  materializePreparedModelCatalogOwner: (owner: object) => owner,
+  readPreparedModelCatalog: (...args: unknown[]) =>
+    modelCatalogMocks.readPreparedModelCatalog(...args),
+  loadPreparedModelCatalogSnapshot: async (...args: unknown[]) => {
+    const entries = await modelCatalogMocks.readPreparedModelCatalog(...args);
+    return { entries, routeVariants: entries, authoritative: true };
+  },
+}));
+
 vi.doMock("../../../src/agents/model-catalog.runtime.js", () => ({
-  loadModelCatalog: (...args: unknown[]) => modelCatalogMocks.loadModelCatalog(...args),
+  loadManifestModelCatalog: () => modelCatalogMocks.loadManifestModelCatalog(),
+  readPreparedModelCatalog: (...args: unknown[]) =>
+    modelCatalogMocks.readPreparedModelCatalog(...args),
+  loadPreparedModelCatalogSnapshot: async (...args: unknown[]) => {
+    const entries = await modelCatalogMocks.readPreparedModelCatalog(...args);
+    return { entries, routeVariants: entries, authoritative: true };
+  },
+  loadProviderScopedThinkingCatalog: async (...args: unknown[]) =>
+    await modelCatalogMocks.readPreparedModelCatalog(...args),
 }));
 
 vi.doMock("../../../src/plugins/provider-runtime.runtime.js", () => ({
@@ -143,12 +179,8 @@ const modelFallbackMocks = getSharedMocks("openclaw.trigger-handling.model-fallb
   ),
 }));
 
-export function getModelFallbackMocks(): AnyMocks {
-  return modelFallbackMocks;
-}
-
 const installModelFallbackMock = () =>
-  vi.doMock("../../../src/agents/model-fallback.js", () => modelFallbackMocks);
+  vi.doMock("../../../src/agents/model-fallback-runner.js", () => modelFallbackMocks);
 
 installModelFallbackMock();
 
@@ -162,10 +194,6 @@ const webSessionMocks = getSharedMocks("openclaw.trigger-handling.web-session-mo
   readWebSelfId: vi.fn().mockReturnValue({ e164: "+1999" }),
 }));
 
-export function getWebSessionMocks(): AnyMocks {
-  return webSessionMocks;
-}
-
 const installWebSessionMock = () =>
   vi.doMock("../../../src/plugins/runtime/runtime-web-channel-plugin.js", () => ({
     webAuthExists: (...args: unknown[]) => webSessionMocks.webAuthExists(...args),
@@ -177,45 +205,8 @@ installWebSessionMock();
 
 export const MAIN_SESSION_KEY = "agent:main:main";
 
-type TempHomeEnvSnapshot = {
-  home: string | undefined;
-  userProfile: string | undefined;
-  homeDrive: string | undefined;
-  homePath: string | undefined;
-  openclawHome: string | undefined;
-  stateDir: string | undefined;
-};
-
 let suiteTempHomeRoot = "";
 let suiteTempHomeId = 0;
-
-function snapshotTempHomeEnv(): TempHomeEnvSnapshot {
-  return {
-    home: process.env.HOME,
-    userProfile: process.env.USERPROFILE,
-    homeDrive: process.env.HOMEDRIVE,
-    homePath: process.env.HOMEPATH,
-    openclawHome: process.env.OPENCLAW_HOME,
-    stateDir: process.env.OPENCLAW_STATE_DIR,
-  };
-}
-
-function restoreTempHomeEnv(snapshot: TempHomeEnvSnapshot): void {
-  const restoreKey = (key: string, value: string | undefined) => {
-    if (value === undefined) {
-      delete process.env[key];
-      return;
-    }
-    process.env[key] = value;
-  };
-
-  restoreKey("HOME", snapshot.home);
-  restoreKey("USERPROFILE", snapshot.userProfile);
-  restoreKey("HOMEDRIVE", snapshot.homeDrive);
-  restoreKey("HOMEPATH", snapshot.homePath);
-  restoreKey("OPENCLAW_HOME", snapshot.openclawHome);
-  restoreKey("OPENCLAW_STATE_DIR", snapshot.stateDir);
-}
 
 function setTempHomeEnv(home: string): void {
   process.env.HOME = home;
@@ -253,22 +244,36 @@ afterAll(async () => {
 
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = join(suiteTempHomeRoot, `case-${++suiteTempHomeId}`);
-  const snapshot = snapshotTempHomeEnv();
+  const snapshot = captureEnv([
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENCLAW_HOME",
+    "OPENCLAW_STATE_DIR",
+  ]);
   await fs.mkdir(join(home, ".openclaw", "agents", "main", "sessions"), { recursive: true });
   setTempHomeEnv(home);
 
   try {
     // Hard reset shared mocks so non-isolated runs don't inherit prior behavior.
-    piEmbeddedMocks.runEmbeddedPiAgent.mockReset();
-    piEmbeddedMocks.abortEmbeddedPiRun.mockReset().mockReturnValue(false);
-    piEmbeddedMocks.compactEmbeddedPiSession.mockReset();
-    piEmbeddedMocks.queueEmbeddedPiMessage.mockReset().mockReturnValue(false);
-    piEmbeddedMocks.isEmbeddedPiRunActive.mockReset().mockReturnValue(false);
-    piEmbeddedMocks.isEmbeddedPiRunStreaming.mockReset().mockReturnValue(false);
+    embeddedAgentMocks.runEmbeddedAgent.mockReset();
+    embeddedAgentMocks.abortEmbeddedAgentRun.mockReset().mockReturnValue(false);
+    embeddedAgentMocks.compactEmbeddedAgentSession.mockReset();
+    embeddedAgentMocks.queueEmbeddedAgentMessageWithOutcome
+      .mockReset()
+      .mockImplementation((sessionId: string) => ({
+        queued: false,
+        sessionId,
+        reason: "not_streaming",
+        gatewayHealth: "live",
+      }));
+    embeddedAgentMocks.isEmbeddedAgentRunActive.mockReset().mockReturnValue(false);
+    embeddedAgentMocks.isEmbeddedAgentRunStreaming.mockReset().mockReturnValue(false);
     modelFallbackMocks.runWithModelFallback.mockClear();
     return await fn(home);
   } finally {
-    restoreTempHomeEnv(snapshot);
+    snapshot.restore();
   }
 }
 
@@ -276,13 +281,20 @@ export function makeCfg(home: string): OpenClawConfig {
   return withFastReplyConfig({
     agents: {
       defaults: {
-        model: { primary: "anthropic/claude-opus-4-6" },
+        model: { primary: "anthropic/claude-opus-4-7" },
+        models: {
+          "anthropic/claude-haiku-4-5-20251001": {},
+          "anthropic/claude-opus-4-7": {},
+          "openai/gpt-4.1-mini": {},
+          "openai/gpt-5.4": {},
+        },
         workspace: join(home, "openclaw"),
         // Test harness: avoid 1s coalescer idle sleeps that dominate trigger suites.
         blockStreamingCoalesce: { idleMs: 1 },
         // Trigger tests assert routing/authorization behavior, not delivery pacing.
         humanDelay: { mode: "off" },
       },
+      list: [{ id: "main", default: true }],
     },
     channels: {
       whatsapp: {
@@ -298,13 +310,13 @@ export function makeCfg(home: string): OpenClawConfig {
   } as OpenClawConfig);
 }
 
-export async function loadGetReplyFromConfig() {
-  return (await import("../../../src/auto-reply/reply.js")).getReplyFromConfig;
+async function loadGetReplyFromConfig() {
+  return (await import("../../../src/auto-reply/reply/get-reply.js")).getReplyFromConfig;
 }
 
 export function installTriggerHandlingReplyHarness(
   setGetReplyFromConfig: (
-    getReplyFromConfig: typeof import("../../../src/auto-reply/reply.js").getReplyFromConfig,
+    getReplyFromConfig: typeof import("../../../src/auto-reply/reply/get-reply.js").getReplyFromConfig,
   ) => void,
 ): void {
   beforeAll(async () => {
@@ -321,76 +333,16 @@ export function requireSessionStorePath(cfg: { session?: { store?: string } }): 
   return storePath;
 }
 
-export async function readSessionStore(cfg: {
-  session?: { store?: string };
-}): Promise<Record<string, { elevatedLevel?: string }>> {
-  const storeRaw = await fs.readFile(requireSessionStorePath(cfg), "utf-8");
-  return JSON.parse(storeRaw) as Record<string, { elevatedLevel?: string }>;
-}
-
-export function makeWhatsAppElevatedCfg(
-  home: string,
-  opts?: { elevatedEnabled?: boolean; requireMentionInGroups?: boolean },
-): OpenClawConfig {
-  const cfg = makeCfg(home);
-  cfg.channels ??= {};
-  cfg.channels.whatsapp = {
-    ...cfg.channels.whatsapp,
-    allowFrom: ["+1000"],
-  };
-  if (opts?.requireMentionInGroups !== undefined) {
-    cfg.channels.whatsapp.groups = { "*": { requireMention: opts.requireMentionInGroups } };
-  }
-
-  cfg.tools = {
-    ...cfg.tools,
-    elevated: {
-      allowFrom: { whatsapp: ["+1000"] },
-      ...(opts?.elevatedEnabled === false ? { enabled: false } : {}),
-    },
-  };
-  return cfg;
-}
-
-export async function runDirectElevatedToggleAndLoadStore(params: {
-  cfg: OpenClawConfig;
-  getReplyFromConfig: typeof import("../../../src/auto-reply/reply.js").getReplyFromConfig;
-  body?: string;
-}): Promise<{
-  text: string | undefined;
-  store: Record<string, { elevatedLevel?: string }>;
-}> {
-  const res = await params.getReplyFromConfig(
-    {
-      Body: params.body ?? "/elevated on",
-      From: "+1000",
-      To: "+2000",
-      Provider: "whatsapp",
-      SenderE164: "+1000",
-      CommandAuthorized: true,
-    },
-    {},
-    params.cfg,
-  );
-  const text = Array.isArray(res) ? res[0]?.text : res?.text;
-  const storePath = params.cfg.session?.store;
-  if (!storePath) {
-    throw new Error("session.store is required in test config");
-  }
-  const store = await readSessionStore(params.cfg);
-  return { text, store };
-}
-
 export async function expectInlineCommandHandledAndStripped(params: {
   home: string;
-  getReplyFromConfig: typeof import("../../../src/auto-reply/reply.js").getReplyFromConfig;
+  getReplyFromConfig: typeof import("../../../src/auto-reply/reply/get-reply.js").getReplyFromConfig;
   body: string;
   stripToken: string;
   blockReplyContains: string;
   requestOverrides?: Record<string, unknown>;
 }) {
-  const runEmbeddedPiAgentMock = mockRunEmbeddedPiAgentOk();
-  runEmbeddedPiAgentMock.mockClear();
+  const runEmbeddedAgentMock = mockRunEmbeddedAgentOk();
+  runEmbeddedAgentMock.mockClear();
   const { blockReplies, handlers } = createBlockReplyCollector();
   const res = await params.getReplyFromConfig(
     {
@@ -407,8 +359,9 @@ export async function expectInlineCommandHandledAndStripped(params: {
   const text = Array.isArray(res) ? res[0]?.text : res?.text;
   expect(blockReplies.length).toBe(1);
   expect(blockReplies[0]?.text).toContain(params.blockReplyContains);
-  expect(runEmbeddedPiAgentMock).toHaveBeenCalled();
-  const prompt = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0]?.prompt ?? "";
+  expect(runEmbeddedAgentMock).toHaveBeenCalled();
+  const lastCall = runEmbeddedAgentMock.mock.calls[runEmbeddedAgentMock.mock.calls.length - 1];
+  const prompt = lastCall?.[0]?.prompt ?? "";
   expect(prompt).not.toContain(params.stripToken);
   expect(text).toBe("ok");
 }
@@ -416,11 +369,11 @@ export async function expectInlineCommandHandledAndStripped(params: {
 export async function expectBareNewOrResetAcknowledged(params: {
   home: string;
   body: "/new" | "/reset";
-  getReplyFromConfig: typeof import("../../../src/auto-reply/reply.js").getReplyFromConfig;
+  getReplyFromConfig: typeof import("../../../src/auto-reply/reply/get-reply.js").getReplyFromConfig;
 }) {
-  const runEmbeddedPiAgentMock = getRunEmbeddedPiAgentMock();
-  runEmbeddedPiAgentMock.mockClear();
-  runEmbeddedPiAgentMock.mockResolvedValue({
+  const runEmbeddedAgentMock = getRunEmbeddedAgentMock();
+  runEmbeddedAgentMock.mockClear();
+  runEmbeddedAgentMock.mockResolvedValue({
     payloads: [{ text: "hello" }],
     meta: {
       durationMs: 1,
@@ -440,29 +393,29 @@ export async function expectBareNewOrResetAcknowledged(params: {
   );
   const text = Array.isArray(res) ? res[0]?.text : res?.text;
   expect(text).toBe(params.body === "/reset" ? "✅ Session reset." : "✅ New session started.");
-  expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+  expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
 }
 
-export function installTriggerHandlingE2eTestHooks() {
+function installTriggerHandlingE2eTestHooks() {
   afterEach(() => {
     clearRuntimeAuthProfileStoreSnapshots();
     vi.clearAllMocks();
   });
 }
 
-export function mockRunEmbeddedPiAgentOk(text = "ok"): AnyMock {
-  const runEmbeddedPiAgentMock = getRunEmbeddedPiAgentMock();
-  runEmbeddedPiAgentMock.mockResolvedValue({
+export function mockRunEmbeddedAgentOk(text = "ok"): AnyMock {
+  const runEmbeddedAgentMock = getRunEmbeddedAgentMock();
+  runEmbeddedAgentMock.mockResolvedValue({
     payloads: [{ text }],
     meta: {
       durationMs: 1,
       agentMeta: { sessionId: "s", provider: "p", model: "m" },
     },
   });
-  return runEmbeddedPiAgentMock;
+  return runEmbeddedAgentMock;
 }
 
-export function createBlockReplyCollector() {
+function createBlockReplyCollector() {
   const blockReplies: Array<{ text?: string }> = [];
   return {
     blockReplies,

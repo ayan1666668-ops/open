@@ -1,62 +1,47 @@
+// Lazy command implementations for routes that can bypass full Commander registration.
 import { defaultRuntime } from "../../runtime.js";
+import { createLazyPromise } from "../../shared/lazy-promise.js";
 import {
   parseAgentsListRouteArgs,
   parseChannelsListRouteArgs,
   parseChannelsStatusRouteArgs,
   parseConfigGetRouteArgs,
   parseConfigUnsetRouteArgs,
+  parseGatewayHealthRouteArgs,
   parseGatewayStatusRouteArgs,
   parseHealthRouteArgs,
   parseModelsListRouteArgs,
   parseModelsStatusRouteArgs,
+  parsePluginsListRouteArgs,
   parseSessionsRouteArgs,
   parseStatusRouteArgs,
   parseTasksAuditRouteArgs,
   parseTasksListRouteArgs,
 } from "./route-args.js";
 
-type RouteArgParser<TArgs> = (argv: string[]) => TArgs | null;
-
-type ParsedRouteArgs<TParse extends RouteArgParser<unknown>> = Exclude<ReturnType<TParse>, null>;
-type ConfigCliModule = typeof import("../config-cli.js");
-type ModelsListCommandModule = typeof import("../../commands/models/list.list-command.js");
-type ModelsStatusCommandModule = typeof import("../../commands/models/list.status-command.js");
-
-export type RoutedCommandDefinition<TParse extends RouteArgParser<unknown>> = {
-  parseArgs: TParse;
-  runParsedArgs: (args: ParsedRouteArgs<TParse>) => Promise<void>;
-};
-
-export type AnyRoutedCommandDefinition = {
-  parseArgs: RouteArgParser<unknown>;
-  runParsedArgs: (args: never) => Promise<void>;
-};
-
-function defineRoutedCommand<TParse extends RouteArgParser<unknown>>(
-  definition: RoutedCommandDefinition<TParse>,
-): RoutedCommandDefinition<TParse> {
-  return definition;
+function defineRoutedCommand<TArgs>(definition: {
+  parseArgs: (argv: string[]) => TArgs | null;
+  runParsedArgs: (args: TArgs) => Promise<void>;
+}) {
+  return (argv: string[]) => {
+    const args = definition.parseArgs(argv);
+    return args === null ? null : () => definition.runParsedArgs(args);
+  };
 }
 
-let configCliPromise: Promise<ConfigCliModule> | undefined;
-let modelsListCommandPromise: Promise<ModelsListCommandModule> | undefined;
-let modelsStatusCommandPromise: Promise<ModelsStatusCommandModule> | undefined;
+const loadConfigCli = createLazyPromise(() => import("../config-cli.js"));
+const loadAgentsListCommand = createLazyPromise(
+  () => import("../../commands/agents.commands.list.js"),
+);
+const loadModelsListCommand = createLazyPromise(
+  () => import("../../commands/models/list.list-command.js"),
+);
+const loadModelsStatusCommand = createLazyPromise(
+  () => import("../../commands/models/list.status-command.js"),
+);
+const loadTasksJsonCommand = createLazyPromise(() => import("../../commands/tasks-json.js"));
 
-function loadConfigCli(): Promise<ConfigCliModule> {
-  configCliPromise ??= import("../config-cli.js");
-  return configCliPromise;
-}
-
-function loadModelsListCommand(): Promise<ModelsListCommandModule> {
-  modelsListCommandPromise ??= import("../../commands/models/list.list-command.js");
-  return modelsListCommandPromise;
-}
-
-function loadModelsStatusCommand(): Promise<ModelsStatusCommandModule> {
-  modelsStatusCommandPromise ??= import("../../commands/models/list.status-command.js");
-  return modelsStatusCommandPromise;
-}
-
+/** Route id to lazy parser/runner definition. */
 export const routedCommandDefinitions = {
   health: defineRoutedCommand({
     parseArgs: parseHealthRouteArgs,
@@ -75,6 +60,7 @@ export const routedCommandDefinitions = {
             deep: args.deep,
             all: args.all,
             usage: args.usage,
+            ...(args.agent !== undefined ? { agent: args.agent } : {}),
             timeoutMs: args.timeoutMs,
           },
           defaultRuntime,
@@ -92,6 +78,13 @@ export const routedCommandDefinitions = {
       await runDaemonStatus(args);
     },
   }),
+  "gateway-health": defineRoutedCommand({
+    parseArgs: parseGatewayHealthRouteArgs,
+    runParsedArgs: async (args) => {
+      const { runGatewayHealthJsonRoute } = await import("../gateway-cli/health-route.js");
+      await runGatewayHealthJsonRoute(args, defaultRuntime);
+    },
+  }),
   sessions: defineRoutedCommand({
     parseArgs: parseSessionsRouteArgs,
     runParsedArgs: async (args) => {
@@ -102,7 +95,7 @@ export const routedCommandDefinitions = {
   "agents-list": defineRoutedCommand({
     parseArgs: parseAgentsListRouteArgs,
     runParsedArgs: async (args) => {
-      const { agentsListCommand } = await import("../../commands/agents.js");
+      const { agentsListCommand } = await loadAgentsListCommand();
       await agentsListCommand(args, defaultRuntime);
     },
   }),
@@ -137,14 +130,14 @@ export const routedCommandDefinitions = {
   "tasks-list": defineRoutedCommand({
     parseArgs: parseTasksListRouteArgs,
     runParsedArgs: async (args) => {
-      const { tasksListJsonCommand } = await import("../../commands/tasks-json.js");
+      const { tasksListJsonCommand } = await loadTasksJsonCommand();
       await tasksListJsonCommand(args, defaultRuntime);
     },
   }),
   "tasks-audit": defineRoutedCommand({
     parseArgs: parseTasksAuditRouteArgs,
     runParsedArgs: async (args) => {
-      const { tasksAuditJsonCommand } = await import("../../commands/tasks-json.js");
+      const { tasksAuditJsonCommand } = await loadTasksJsonCommand();
       await tasksAuditJsonCommand(args, defaultRuntime);
     },
   }),
@@ -160,6 +153,13 @@ export const routedCommandDefinitions = {
     runParsedArgs: async (args) => {
       const { channelsStatusCommand } = await import("../../commands/channels/status.js");
       await channelsStatusCommand(args, defaultRuntime);
+    },
+  }),
+  "plugins-list": defineRoutedCommand({
+    parseArgs: parsePluginsListRouteArgs,
+    runParsedArgs: async (args) => {
+      const { runPluginsListCommand } = await import("../plugins-list-command.js");
+      await runPluginsListCommand(args, defaultRuntime);
     },
   }),
 };

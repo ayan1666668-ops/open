@@ -1,26 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+// Model manifest catalog tests cover loading model catalog entries from plugin manifests.
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  loadPluginRegistrySnapshot: vi.fn(),
+  loadPluginMetadataSnapshot: vi.fn(),
   resolvePluginContributionOwners: vi.fn(),
   getPluginRecord: vi.fn(),
   isPluginEnabled: vi.fn(),
-  loadPluginManifestRegistryForInstalledIndex: vi.fn(),
+  getRemoteModelCatalogProviderOverlay: vi.fn(),
 }));
 
-vi.mock("../../plugins/plugin-registry.js", () => ({
-  loadPluginRegistrySnapshot: mocks.loadPluginRegistrySnapshot,
+vi.mock("../../plugins/plugin-registry-contributions.js", () => ({
   resolvePluginContributionOwners: mocks.resolvePluginContributionOwners,
+}));
+
+vi.mock("../../plugins/plugin-registry-snapshot.js", () => ({
   getPluginRecord: mocks.getPluginRecord,
   isPluginEnabled: mocks.isPluginEnabled,
 }));
 
-vi.mock("../../plugins/manifest-registry-installed.js", () => ({
-  loadPluginManifestRegistryForInstalledIndex: mocks.loadPluginManifestRegistryForInstalledIndex,
+vi.mock("../../plugins/plugin-metadata-snapshot.js", () => ({
+  loadPluginMetadataSnapshot: mocks.loadPluginMetadataSnapshot,
+  resolvePluginMetadataSnapshot: mocks.loadPluginMetadataSnapshot,
+}));
+
+vi.mock("../../model-catalog/remote-overlay.js", () => ({
+  getRemoteModelCatalogProviderOverlay: mocks.getRemoteModelCatalogProviderOverlay,
 }));
 
 const moonshotPlugin = {
   id: "moonshot",
+  origin: "bundled",
   providers: ["moonshot"],
   modelCatalog: {
     providers: {
@@ -36,6 +45,7 @@ const moonshotPlugin = {
 
 const openrouterPlugin = {
   id: "openrouter",
+  origin: "bundled",
   providers: ["openrouter"],
   modelCatalog: {
     providers: {
@@ -49,14 +59,40 @@ const openrouterPlugin = {
   },
 };
 
+const openaiRuntimePlugin = {
+  id: "openai",
+  origin: "bundled",
+  providers: ["openai"],
+  modelCatalog: {
+    providers: {
+      openai: {
+        models: [{ id: "gpt-known", name: "Known GPT" }],
+      },
+    },
+    discovery: {
+      openai: "runtime",
+    },
+  },
+};
+
 describe("loadStaticManifestCatalogRowsForList", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getRemoteModelCatalogProviderOverlay.mockReturnValue(undefined);
+  });
+
   it("loads only static manifest catalog rows without a provider filter", async () => {
     const { loadStaticManifestCatalogRowsForList } = await import("./list.manifest-catalog.js");
     const index = { plugins: [], diagnostics: [] };
-    mocks.loadPluginRegistrySnapshot.mockReturnValueOnce(index);
-    mocks.loadPluginManifestRegistryForInstalledIndex.mockReturnValueOnce({
+    const manifestRegistry = {
       plugins: [openrouterPlugin, moonshotPlugin],
       diagnostics: [],
+    };
+    mocks.loadPluginMetadataSnapshot.mockReturnValueOnce({
+      index,
+      manifestRegistry,
+      plugins: manifestRegistry.plugins,
+      byPluginId: new Map(manifestRegistry.plugins.map((plugin) => [plugin.id, plugin])),
     });
 
     expect(
@@ -64,26 +100,82 @@ describe("loadStaticManifestCatalogRowsForList", () => {
         cfg: {},
       }).map((row) => row.ref),
     ).toEqual(["moonshot/kimi-k2.6"]);
-    expect(mocks.loadPluginManifestRegistryForInstalledIndex).toHaveBeenCalledWith({
-      index,
+    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledWith({
+      allowWorkspaceScopedCurrent: true,
       config: {},
-      env: undefined,
+      env: process.env,
     });
   });
 
-  it("loads refreshable manifest rows as registry-backed supplements", async () => {
-    const { loadSupplementalManifestCatalogRowsForList } =
-      await import("./list.manifest-catalog.js");
-    mocks.loadPluginRegistrySnapshot.mockReturnValueOnce({ plugins: [], diagnostics: [] });
-    mocks.loadPluginManifestRegistryForInstalledIndex.mockReturnValueOnce({
+  it("does not expose refreshable provider previews as prepared models", async () => {
+    const { loadStaticManifestCatalogRowsForList } = await import("./list.manifest-catalog.js");
+    const manifestRegistry = {
       plugins: [openrouterPlugin, moonshotPlugin],
       diagnostics: [],
+    };
+    mocks.loadPluginMetadataSnapshot.mockReturnValueOnce({
+      index: { plugins: [], diagnostics: [] },
+      manifestRegistry,
+      plugins: manifestRegistry.plugins,
+      byPluginId: new Map(manifestRegistry.plugins.map((plugin) => [plugin.id, plugin])),
     });
 
     expect(
-      loadSupplementalManifestCatalogRowsForList({
+      loadStaticManifestCatalogRowsForList({
         cfg: {},
       }).map((row) => row.ref),
-    ).toEqual(["moonshot/kimi-k2.6", "openrouter/auto"]);
+    ).toEqual(["moonshot/kimi-k2.6"]);
+  });
+
+  it("does not expose runtime overlay rows as static manifest models", async () => {
+    const { loadStaticManifestCatalogRowsForList } = await import("./list.manifest-catalog.js");
+    const manifestRegistry = {
+      plugins: [openaiRuntimePlugin],
+      diagnostics: [],
+    };
+    const metadataSnapshot = {
+      index: { plugins: [], diagnostics: [] },
+      manifestRegistry,
+      plugins: manifestRegistry.plugins,
+      byPluginId: new Map(manifestRegistry.plugins.map((plugin) => [plugin.id, plugin])),
+    };
+    mocks.getRemoteModelCatalogProviderOverlay.mockReturnValue({
+      models: [{ id: "gpt-refreshed", name: "Refreshed GPT" }],
+    });
+    mocks.getPluginRecord.mockReturnValue({ pluginId: "openai" });
+    mocks.isPluginEnabled.mockReturnValue(true);
+
+    const params = {
+      cfg: {},
+      providerFilter: "openai",
+      metadataSnapshot: metadataSnapshot as unknown as Parameters<
+        typeof loadStaticManifestCatalogRowsForList
+      >[0]["metadataSnapshot"],
+    };
+
+    expect(loadStaticManifestCatalogRowsForList(params)).toEqual([]);
+  });
+
+  it("uses an injected metadata snapshot instead of loading metadata again", async () => {
+    const { loadStaticManifestCatalogRowsForList } = await import("./list.manifest-catalog.js");
+    const metadataSnapshot = {
+      index: { plugins: [], diagnostics: [] },
+      manifestRegistry: {
+        plugins: [moonshotPlugin],
+        diagnostics: [],
+      },
+      plugins: [moonshotPlugin],
+      byPluginId: new Map([[moonshotPlugin.id, moonshotPlugin]]),
+    };
+
+    expect(
+      loadStaticManifestCatalogRowsForList({
+        cfg: {},
+        metadataSnapshot: metadataSnapshot as unknown as Parameters<
+          typeof loadStaticManifestCatalogRowsForList
+        >[0]["metadataSnapshot"],
+      }).map((row) => row.ref),
+    ).toEqual(["moonshot/kimi-k2.6"]);
+    expect(mocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
   });
 });

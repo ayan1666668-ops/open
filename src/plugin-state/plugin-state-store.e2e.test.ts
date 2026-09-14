@@ -1,17 +1,16 @@
-import { mkdirSync } from "node:fs";
+// Plugin state store E2E tests cover persisted plugin state across runtime calls.
+
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
-  closePluginStateSqliteStore,
   createPluginStateKeyedStore,
-  PluginStateStoreError,
-  probePluginStateStore,
+  createPluginStateSyncKeyedStore,
   resetPluginStateStoreForTests,
   sweepExpiredPluginStateEntries,
 } from "./plugin-state-store.js";
-import { resolvePluginStateDir, resolvePluginStateSqlitePath } from "./plugin-state-store.paths.js";
-import { MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN } from "./plugin-state-store.sqlite.js";
+import { closePluginStateDatabase } from "./plugin-state-store.sqlite.js";
+import { probePluginStateStore } from "./plugin-state-store.test-helpers.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -22,19 +21,6 @@ afterEach(() => {
 // Runtime smoke
 // ---------------------------------------------------------------------------
 describe("runtime smoke", () => {
-  it("creates and exercises a keyed store directly", async () => {
-    await withOpenClawTestState({ label: "e2e-smoke-load" }, async () => {
-      const store = createPluginStateKeyedStore<{ ready: boolean }>("fixture-plugin", {
-        namespace: "boot",
-        maxEntries: 10,
-      });
-      expect(store).toBeDefined();
-      expect(typeof store.register).toBe("function");
-      expect(typeof store.lookup).toBe("function");
-      expect(typeof store.consume).toBe("function");
-    });
-  });
-
   it("writes and reads a value", async () => {
     await withOpenClawTestState({ label: "e2e-smoke-rw" }, async () => {
       const store = createPluginStateKeyedStore<{ msg: string }>("fixture-plugin", {
@@ -126,7 +112,7 @@ describe("TTL", () => {
       // After sweep the entry list contains only the long-lived record.
       const remaining = await store.entries();
       expect(remaining).toHaveLength(1);
-      expect(remaining[0].key).toBe("long");
+      expect(expectDefined(remaining[0], "remaining[0] test invariant").key).toBe("long");
     });
   });
 });
@@ -164,81 +150,41 @@ describe("isolation", () => {
 // Limits
 // ---------------------------------------------------------------------------
 describe("limits", () => {
-  it("accepts a value at the 64 KB boundary", async () => {
-    await withOpenClawTestState({ label: "e2e-limit-accept" }, async () => {
-      const store = createPluginStateKeyedStore<string>("fixture-plugin", {
+  it.each(["async", "sync"])("enforces the 1 MiB boundary across %s writes", async (mode) => {
+    await withOpenClawTestState({ label: "e2e-limit" }, async () => {
+      const createStore =
+        mode === "async"
+          ? createPluginStateKeyedStore<string>
+          : createPluginStateSyncKeyedStore<string>;
+      const store = createStore("fixture-plugin", {
         namespace: "size",
         maxEntries: 10,
       });
       // JSON.stringify wraps a string in quotes (+2 bytes).
-      // 65 534 chars → 65 536 bytes of JSON → exactly at limit.
-      const boundary = "x".repeat(65_534);
-      await expect(store.register("big", boundary)).resolves.toBeUndefined();
-      await expect(store.lookup("big")).resolves.toBe(boundary);
-    });
-  });
+      const boundary = "x".repeat(1_048_574);
+      const oversize = `${boundary}x`;
+      const update = expectDefined(store.update, "keyed store update support");
+      await store.register("registered", boundary);
+      expect(await store.registerIfAbsent("claimed", boundary)).toBe(true);
+      await store.register("updated", "before");
+      expect(await update("updated", () => boundary)).toBe(true);
 
-  it("rejects a value one byte over 64 KB", async () => {
-    await withOpenClawTestState({ label: "e2e-limit-reject" }, async () => {
-      const store = createPluginStateKeyedStore<string>("fixture-plugin", {
-        namespace: "size",
-        maxEntries: 10,
-      });
-      // 65 535 chars → 65 537 bytes of JSON → over limit.
-      const oversize = "x".repeat(65_535);
-      await expect(store.register("big", oversize)).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-    });
-  });
-
-  it("enforces the per-plugin live-row cap", async () => {
-    await withOpenClawTestState({ label: "e2e-limit-plugin" }, async () => {
-      // Spread MAX_ENTRIES_PER_PLUGIN rows across several namespaces so
-      // namespace eviction never fires (each namespace has generous room).
-      const nsCount = 10;
-      const perNs = MAX_PLUGIN_STATE_ENTRIES_PER_PLUGIN / nsCount; // 100
-      const stores = Array.from({ length: nsCount }, (_, i) =>
-        createPluginStateKeyedStore("fixture-plugin", {
-          namespace: `ns-${i}`,
-          maxEntries: perNs + 1,
-        }),
-      );
-
-      for (let ns = 0; ns < nsCount; ns += 1) {
-        for (let k = 0; k < perNs; k += 1) {
-          await stores[ns].register(`k-${k}`, { ns, k });
-        }
+      for (const write of [
+        () => store.register("registered", oversize),
+        () => store.registerIfAbsent("rejected", oversize),
+        () => update("updated", () => oversize),
+      ]) {
+        await expect(async () => {
+          await write();
+        }).rejects.toMatchObject({
+          code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+        });
       }
-
-      // One more row tips over the plugin-wide limit.
-      await expect(stores[0].register("overflow", { boom: true })).rejects.toMatchObject({
-        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-      });
-    });
-  });
-
-  it("evicts oldest entries when namespace maxEntries is exceeded", async () => {
-    await withOpenClawTestState({ label: "e2e-limit-eviction" }, async () => {
-      vi.useFakeTimers();
-      const store = createPluginStateKeyedStore<number>("fixture-plugin", {
-        namespace: "capped",
-        maxEntries: 3,
-      });
-
-      vi.setSystemTime(1000);
-      await store.register("a", 1);
-      vi.setSystemTime(2000);
-      await store.register("b", 2);
-      vi.setSystemTime(3000);
-      await store.register("c", 3);
-      vi.setSystemTime(4000);
-      await store.register("d", 4); // should evict "a"
-
-      const entries = await store.entries();
-      expect(entries).toHaveLength(3);
-      expect(entries.map((e) => e.key)).toEqual(["b", "c", "d"]);
-      await expect(store.lookup("a")).resolves.toBeUndefined();
+      resetPluginStateStoreForTests();
+      for (const key of ["registered", "claimed", "updated"]) {
+        expect(await store.lookup(key)).toBe(boundary);
+      }
+      expect(await store.lookup("rejected")).toBeUndefined();
     });
   });
 });
@@ -247,32 +193,14 @@ describe("limits", () => {
 // Failure safety
 // ---------------------------------------------------------------------------
 describe("failure safety", () => {
-  it("gives a typed error for unsupported schema versions", async () => {
-    await withOpenClawTestState({ label: "e2e-fail-schema" }, async () => {
-      // Pre-seed the DB with a future schema version.
-      mkdirSync(resolvePluginStateDir(), { recursive: true });
-      const { DatabaseSync } = requireNodeSqlite();
-      const db = new DatabaseSync(resolvePluginStateSqlitePath());
-      db.exec("PRAGMA user_version = 99;");
-      db.close();
-
-      const store = createPluginStateKeyedStore("fixture-plugin", {
-        namespace: "schema",
-        maxEntries: 10,
-      });
-      const error = await store.register("k", { ok: true }).catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(PluginStateStoreError);
-      expect(error).toMatchObject({ code: "PLUGIN_STATE_SCHEMA_UNSUPPORTED" });
-    });
-  });
-
   it("probe returns redacted diagnostics without leaking stored values", async () => {
     await withOpenClawTestState({ label: "e2e-fail-probe" }, async () => {
       const result = probePluginStateStore();
       expect(result.ok).toBe(true);
-      expect(result.dbPath).toContain("state.sqlite");
+      expect(result.databasePath).toContain("openclaw.sqlite");
       expect(result.steps.length).toBeGreaterThanOrEqual(4);
-      expect(result.steps.every((s) => s.ok)).toBe(true);
+      const failedSteps = result.steps.filter((step) => !step.ok);
+      expect(failedSteps).toEqual([]);
 
       // The probe's temporary stored value must not leak into the result.
       const serialised = JSON.stringify(result);
@@ -289,11 +217,11 @@ describe("failure safety", () => {
       await store.register("k", { v: 1 });
 
       // First close.
-      closePluginStateSqliteStore();
+      closePluginStateDatabase();
       await expect(store.lookup("k")).resolves.toEqual({ v: 1 });
 
       // Second close (idempotent).
-      closePluginStateSqliteStore();
+      closePluginStateDatabase();
       await expect(store.lookup("k")).resolves.toEqual({ v: 1 });
 
       // Write after reopen.

@@ -1,6 +1,8 @@
+/** Channel presence and gateway startup plugin id helpers. */
 export {
   hasConfiguredChannelsForReadOnlyScope,
   hasExplicitChannelConfig,
+  listAmbientOnlyConfiguredChannelIds,
   listConfiguredAnnounceChannelIdsForConfig,
   listConfiguredChannelIdsForReadOnlyScope,
   listExplicitConfiguredChannelIdsForConfig,
@@ -13,10 +15,16 @@ export {
 } from "./channel-presence-policy.js";
 
 export {
+  collectConfiguredMemoryEmbeddingProviderIds,
+  collectConfiguredMemoryEmbeddingStartupProviderOwners,
+  collectRegisteredEmbeddingProviderIds,
+  collectUnregisteredConfiguredMemoryEmbeddingProviders,
   resolveChannelPluginIds,
   resolveChannelPluginIdsFromRegistry,
-  resolveConfiguredDeferredChannelPluginIds,
-  resolveConfiguredDeferredChannelPluginIdsFromRegistry,
-  resolveGatewayStartupPluginIds,
-  resolveGatewayStartupPluginIdsFromRegistry,
+  createGatewayStartupMetadataPluginIdScope,
+  resolveGatewayStartupMetadataPluginIds,
+  loadGatewayStartupPluginPlan,
+  loadGatewayStartupPluginPlanWithMetadata,
+  resolveGatewayStartupPluginPlanFromRegistry,
+  type GatewayStartupPluginPlan,
 } from "./gateway-startup-plugin-ids.js";

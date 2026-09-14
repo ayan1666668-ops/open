@@ -1,26 +1,16 @@
+// Telegram plugin module implements native quote behavior.
+import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { TelegramTextEntity } from "./body-helpers.js";
 
-export const TELEGRAM_NATIVE_QUOTE_MAX_LENGTH = 1024;
+const TELEGRAM_NATIVE_QUOTE_MAX_LENGTH = 1024;
 
-export type TelegramNativeQuoteCandidate = {
+type TelegramNativeQuoteCandidate = {
   text: string;
   position?: number;
   entities?: unknown[];
 };
 
 export type TelegramNativeQuoteCandidateByMessageId = Record<string, TelegramNativeQuoteCandidate>;
-
-function truncateUtf16Safe(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  let end = Math.max(0, Math.trunc(maxLength));
-  const lastCodeUnit = value.charCodeAt(end - 1);
-  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
-    end -= 1;
-  }
-  return value.slice(0, end);
-}
 
 function sliceTelegramEntitiesForQuote(
   entities: readonly TelegramTextEntity[] | undefined,

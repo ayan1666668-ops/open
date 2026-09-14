@@ -1,55 +1,75 @@
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
-import { resolveVisibleModelCatalog } from "../../agents/model-catalog-visibility.js";
-import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+// Models gateway methods expose prepared, cached, and explicitly refreshed catalog views.
 import {
   ErrorCodes,
   errorShape,
-  formatValidationErrors,
   validateModelsListParams,
-} from "../protocol/index.js";
+} from "../../../packages/gateway-protocol/src/index.js";
+import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
+import { PreparedModelRuntimePublicationSupersededError } from "../../agents/prepared-model-runtime.errors.js";
+import { ModelAccountConnectAuthorityError } from "../model-account-connect.js";
+import { resolveAgentIdOrRespondError } from "./agent-id-shared.js";
+import { resolveChatMetadataReadParams } from "./chat-metadata-handler.js";
+import { projectSessionModelCatalog } from "./chat-metadata-session-projection.js";
+import { buildModelsListResult } from "./models-list-result.js";
 import type { GatewayRequestHandlers } from "./types.js";
+import { resolveAuthenticatedProfileId } from "./users-profile-access.js";
+import { assertValidParams } from "./validation.js";
+export { buildModelsListResult };
 
-type ModelsListView = "default" | "configured" | "all";
-
-function resolveModelsListView(params: Record<string, unknown>): ModelsListView {
-  return typeof params.view === "string" ? (params.view as ModelsListView) : "default";
-}
-
+// Ordinary reads return saved rows while expired provider inventory refreshes in the background.
 export const modelsHandlers: GatewayRequestHandlers = {
-  "models.list": async ({ params, respond, context }) => {
-    if (!validateModelsListParams(params)) {
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid models.list params: ${formatValidationErrors(validateModelsListParams.errors)}`,
-        ),
-      );
+  "models.list": async (options) => {
+    const { params, respond, context, client } = options;
+    if (!assertValidParams(params, validateModelsListParams, "models.list", respond)) {
       return;
     }
     try {
-      const catalog = await context.loadGatewayModelCatalog();
-      const cfg = context.getRuntimeConfig();
-      const workspaceDir =
-        resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)) ??
-        resolveDefaultAgentWorkspaceDir();
-      const view = resolveModelsListView(params);
-      if (view === "all") {
-        respond(true, { models: catalog }, undefined);
+      const scoped = Boolean(params.sessionKey || params.authProfileId);
+      const scope = scoped ? resolveChatMetadataReadParams(options, params) : undefined;
+      if (scoped && !scope) {
         return;
       }
-      const models = resolveVisibleModelCatalog({
-        cfg,
-        catalog,
-        defaultProvider: DEFAULT_PROVIDER,
-        workspaceDir,
-        view,
+      const cfg = context.getRuntimeConfig();
+      const resolved =
+        scope ??
+        resolveAgentIdOrRespondError({
+          rawAgentId: params.agentId ?? tryResolveAmbientOwnerAgentId(cfg),
+          respond,
+          cfg,
+          normalize: normalizeOptionalString,
+        });
+      if (!resolved) {
+        return;
+      }
+      const result = await buildModelsListResult({
+        source: { kind: "gateway", context },
+        agentId: resolved.agentId,
+        params,
+        requesterProfileId: scope?.requesterProfileId ?? resolveAuthenticatedProfileId(client),
+        ...(scope ? { readScope: scope } : {}),
       });
-      respond(true, { models }, undefined);
-    } catch (err) {
-      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, String(err)));
+      scope?.draftAccountSelection?.assertCurrent();
+      if (scope?.isCurrent?.() === false) {
+        throw new PreparedModelRuntimePublicationSupersededError(
+          "Session changed while preparing its model catalog. Retry the request.",
+        );
+      }
+      respond(
+        true,
+        scope && params.view !== "provider-config"
+          ? {
+              ...result,
+              models: projectSessionModelCatalog(scope, result.models, context.getRuntimeConfig()),
+            }
+          : result,
+        undefined,
+      );
+    } catch (error) {
+      if (!(error instanceof ModelAccountConnectAuthorityError)) {
+        throw error;
+      }
+      respond(false, undefined, errorShape(ErrorCodes.FORBIDDEN, error.message));
     }
   },
 };

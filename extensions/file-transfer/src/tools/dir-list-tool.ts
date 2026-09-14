@@ -1,59 +1,82 @@
-import crypto from "node:crypto";
-import {
-  callGatewayTool,
-  listNodes,
-  resolveNodeIdFromList,
-  type AnyAgentTool,
-  type NodeListNode,
-} from "openclaw/plugin-sdk/agent-harness-runtime";
-import { Type } from "typebox";
+// File Transfer plugin module implements dir list tool behavior.
+import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { parseStrictNonNegativeInteger } from "openclaw/plugin-sdk/number-runtime";
+import { wrapExternalContent } from "openclaw/plugin-sdk/security-runtime";
 import { appendFileTransferAudit } from "../shared/audit.js";
-import { throwFromNodePayload } from "../shared/errors.js";
-import { readClampedInt, readGatewayCallOptions, readTrimmedString } from "../shared/params.js";
+import { readClampedInt } from "../shared/params.js";
+import {
+  DIR_LIST_DEFAULT_MAX_ENTRIES,
+  DIR_LIST_HARD_MAX_ENTRIES,
+  DIR_LIST_TOOL_DESCRIPTOR,
+} from "./descriptors.js";
+import { invokeNodeToolPayload, readRequiredNodePath } from "./node-tool-invoke.js";
 
-const DIR_LIST_DEFAULT_MAX_ENTRIES = 200;
-const DIR_LIST_HARD_MAX_ENTRIES = 5000;
+const DIRECTORY_TEXT_MAX_BYTES = 8192;
 
-const DirListToolSchema = Type.Object({
-  node: Type.String({
-    description: "Node id, name, or IP. Resolves the same way as the nodes tool.",
-  }),
-  path: Type.String({
-    description: "Absolute path to the directory on the node. Canonicalized server-side.",
-  }),
-  pageToken: Type.Optional(
-    Type.String({
-      description:
-        "Pagination token from a previous dir_list call. Omit to start from the beginning.",
-    }),
-  ),
-  maxEntries: Type.Optional(
-    Type.Number({
-      description: `Max entries per page. Default ${DIR_LIST_DEFAULT_MAX_ENTRIES}, hard ceiling ${DIR_LIST_HARD_MAX_ENTRIES}.`,
-    }),
-  ),
-  gatewayUrl: Type.Optional(Type.String()),
-  gatewayToken: Type.Optional(Type.String()),
-  timeoutMs: Type.Optional(Type.Number()),
-});
+function directoryListingText(
+  canonicalPath: string,
+  entries: Array<Record<string, unknown>>,
+  pageToken: string | undefined,
+  nextPageToken: string | undefined,
+  truncated: boolean,
+): string {
+  const offset = parseStrictNonNegativeInteger(pageToken) ?? 0;
+  const visible: Array<{ name: unknown; isDir: unknown; size: unknown }> = [];
+  const render = () => {
+    const limited = visible.length < entries.length;
+    const continuation = limited
+      ? visible.length > 0
+        ? String(offset + visible.length)
+        : undefined
+      : nextPageToken;
+    const listing = JSON.stringify({
+      path: canonicalPath,
+      returnedCount: entries.length,
+      displayedCount: visible.length,
+      entries: visible,
+      truncated: limited || truncated,
+      nextPageToken: continuation,
+    });
+    const note =
+      limited && visible.length === 0
+        ? "No entries displayed: the next complete entry or directory metadata exceeds the text budget or contains reserved markers. Pagination cannot advance; use available node-local directory capabilities."
+        : (limited || truncated) && !continuation
+          ? "More entries available; the node supplied no continuation token."
+          : "If present, pass nextPageToken as pageToken; keep node and path.";
+    const wrapped = wrapExternalContent(`${listing}\n${note}`, { source: "unknown" });
+    // Sanitization may rewrite marker-like filenames. Never offer those rewritten
+    // paths, and count the complete wrapper before accepting a whole-record prefix.
+    return wrapped.includes(listing) &&
+      Buffer.byteLength(wrapped, "utf8") <= DIRECTORY_TEXT_MAX_BYTES
+      ? wrapped
+      : undefined;
+  };
+  let text = render();
+  // Keep normal continuation guidance the same size on the last page so a
+  // longer intermediate footer cannot prevent a complete page from fitting.
+  for (const { name, isDir, size } of entries) {
+    visible.push({ name, isDir, size });
+    const candidate = render();
+    if (!candidate) {
+      break;
+    }
+    text = candidate;
+  }
+  return (
+    text ??
+    wrapExternalContent(
+      "Directory listing omitted: the canonical path or continuation metadata cannot be represented safely within the 8192-byte text limit. No usable paths or continuation token are shown; use available node-local directory capabilities.",
+      { source: "unknown" },
+    )
+  );
+}
 
 export function createDirListTool(): AnyAgentTool {
   return {
-    label: "Directory List",
-    name: "dir_list",
-    description:
-      "Retrieve a structured directory listing from a paired node. Returns file and subdirectory metadata (name, path, size, mimeType, isDir, mtime) without transferring file content. Use this to discover what files exist before fetching them with file_fetch. Pagination is offset-based; pass nextPageToken from the previous result. Requires operator opt-in: gateway.nodes.allowCommands must include 'dir.list' AND plugins.entries.file-transfer.config.nodes.<node>.allowReadPaths must match the directory path. Without policy configured, every call is denied.",
-    parameters: DirListToolSchema,
+    ...DIR_LIST_TOOL_DESCRIPTOR,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
-      const node = readTrimmedString(params, "node");
-      const dirPath = readTrimmedString(params, "path");
-      if (!node) {
-        throw new Error("node required");
-      }
-      if (!dirPath) {
-        throw new Error("path required");
-      }
+      const { node, requestedPath: dirPath } = readRequiredNodePath(params);
 
       const maxEntries = readClampedInt({
         input: params,
@@ -68,55 +91,17 @@ export function createDirListTool(): AnyAgentTool {
           ? params.pageToken.trim()
           : undefined;
 
-      const gatewayOpts = readGatewayCallOptions(params);
-      const nodes: NodeListNode[] = await listNodes(gatewayOpts);
-      const nodeId = resolveNodeIdFromList(nodes, node, false);
-      const nodeMeta = nodes.find((n) => n.nodeId === nodeId);
-      const nodeDisplayName = nodeMeta?.displayName ?? node;
-      const startedAt = Date.now();
-
-      const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
-        nodeId,
+      const { nodeId, nodeDisplayName, payload, startedAt } = await invokeNodeToolPayload({
+        node,
+        params,
         command: "dir.list",
-        params: {
+        commandParams: {
           path: dirPath,
           pageToken,
           maxEntries,
         },
-        idempotencyKey: crypto.randomUUID(),
+        requestedPath: dirPath,
       });
-
-      const payload =
-        raw?.payload && typeof raw.payload === "object" && !Array.isArray(raw.payload)
-          ? (raw.payload as Record<string, unknown>)
-          : null;
-      if (!payload) {
-        await appendFileTransferAudit({
-          op: "dir.list",
-          nodeId,
-          nodeDisplayName,
-          requestedPath: dirPath,
-          decision: "error",
-          errorMessage: "invalid payload",
-          durationMs: Date.now() - startedAt,
-        });
-        throw new Error("invalid dir.list payload");
-      }
-      if (payload.ok === false) {
-        await appendFileTransferAudit({
-          op: "dir.list",
-          nodeId,
-          nodeDisplayName,
-          requestedPath: dirPath,
-          canonicalPath:
-            typeof payload.canonicalPath === "string" ? payload.canonicalPath : undefined,
-          decision: "error",
-          errorCode: typeof payload.code === "string" ? payload.code : undefined,
-          errorMessage: typeof payload.message === "string" ? payload.message : undefined,
-          durationMs: Date.now() - startedAt,
-        });
-        throwFromNodePayload("dir.list", payload);
-      }
 
       const canonicalPath = typeof payload.path === "string" ? payload.path : dirPath;
 
@@ -126,11 +111,6 @@ export function createDirListTool(): AnyAgentTool {
       const truncated = payload.truncated === true;
       const nextPageToken =
         typeof payload.nextPageToken === "string" ? payload.nextPageToken : undefined;
-
-      const fileCount = entries.filter((e) => !e.isDir).length;
-      const dirCount = entries.filter((e) => e.isDir).length;
-      const truncatedNote = truncated ? " (more entries available — pass nextPageToken)" : "";
-      const summary = `Listed ${canonicalPath}: ${fileCount} file${fileCount !== 1 ? "s" : ""}, ${dirCount} subdir${dirCount !== 1 ? "s" : ""}${truncatedNote}`;
 
       await appendFileTransferAudit({
         op: "dir.list",
@@ -143,7 +123,12 @@ export function createDirListTool(): AnyAgentTool {
       });
 
       return {
-        content: [{ type: "text" as const, text: summary }],
+        content: [
+          {
+            type: "text" as const,
+            text: directoryListingText(canonicalPath, entries, pageToken, nextPageToken, truncated),
+          },
+        ],
         details: {
           path: canonicalPath,
           entries,

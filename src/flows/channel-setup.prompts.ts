@@ -1,24 +1,91 @@
+// Channel setup prompt helpers build interactive prompts for channel setup.
+import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
 import { getChannelSetupPlugin } from "../channels/plugins/setup-registry.js";
-import type { ChannelSetupPlugin } from "../channels/plugins/setup-wizard-types.js";
-import { formatCliCommand } from "../cli/command-format.js";
 import type {
+  ChannelSetupPlugin,
   ChannelSetupDmPolicy,
   ChannelSetupWizardAdapter,
-} from "../commands/channel-setup/types.js";
+} from "../channels/plugins/setup-wizard-types.js";
+import { formatCliCommand } from "../cli/command-format.js";
+import {
+  formatCommandOwnerFromChannelSender,
+  hasConfiguredCommandOwners,
+} from "../commands/doctor-command-owner.js";
 import type { ChannelChoice } from "../commands/onboard-types.js";
 import type { DmPolicy } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
-import { formatDocsLink } from "../terminal/links.js";
+import { t } from "../wizard/i18n/index.js";
 import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
 
-export type ConfiguredChannelAction = "update" | "disable" | "delete" | "skip";
+// Prompt helpers for channel setup flows; keeps wizard copy and config mutation centralized.
+type ConfiguredChannelAction = "update" | "disable" | "delete" | "skip";
 
+/** Formats account ids for channel setup prompts. */
 export function formatAccountLabel(accountId: string): string {
   return accountId === DEFAULT_ACCOUNT_ID ? "default (primary)" : accountId;
 }
 
+/** Separates the operator's administrative identity from channel chat access. */
+export async function maybeConfigureCommandOwner(params: {
+  cfg: OpenClawConfig;
+  channels: Array<{ id: ChannelChoice; label: string }>;
+  prompter: WizardPrompter;
+}): Promise<OpenClawConfig> {
+  const { cfg, channels, prompter } = params;
+  if (hasConfiguredCommandOwners(cfg) || channels.length === 0) {
+    return cfg;
+  }
+  await prompter.note(
+    t("wizard.channels.commandOwnerHelp"),
+    t("wizard.channels.commandOwnerTitle"),
+  );
+  const configure = await prompter.select<"setup" | "skip">({
+    message: t("wizard.channels.commandOwnerSetup"),
+    options: [
+      { value: "setup", label: t("wizard.channels.commandOwnerOwnAccount") },
+      { value: "skip", label: t("common.skipForNow") },
+    ],
+    initialValue: "skip",
+  });
+  if (configure !== "setup") {
+    return cfg;
+  }
+  const channelId =
+    channels.length === 1
+      ? channels[0]!.id
+      : await prompter.select({
+          message: t("wizard.channels.commandOwnerChannel"),
+          options: channels
+            .toSorted((a, b) => a.label.localeCompare(b.label))
+            .map(({ id, label }) => ({ value: id, label })),
+        });
+  const channel = channels.find(({ id }) => id === channelId)!;
+  const id = (
+    await prompter.text({
+      message: t("wizard.channels.commandOwnerUserId", { label: channel.label }),
+      validate: (value) =>
+        !value.trim() || /[\s*]/.test(value.trim())
+          ? t("wizard.channels.commandOwnerInvalidId")
+          : undefined,
+    })
+  ).trim();
+  const owner = formatCommandOwnerFromChannelSender({ channel: channel.id, id });
+  if (!owner) {
+    return cfg;
+  }
+  const confirmed = await prompter.confirm({
+    message: t("wizard.channels.commandOwnerConfirm", { owner }),
+    initialValue: false,
+  });
+  if (!confirmed) {
+    return cfg;
+  }
+  return { ...cfg, commands: { ...cfg.commands, ownerAllowFrom: [owner] } };
+}
+
+/** Asks what to do with an already-configured channel account. */
 export async function promptConfiguredAction(params: {
   prompter: WizardPrompter;
   label: string;
@@ -29,13 +96,13 @@ export async function promptConfiguredAction(params: {
   const options: Array<WizardSelectOption<ConfiguredChannelAction>> = [
     {
       value: "update",
-      label: "Modify settings",
+      label: t("wizard.channels.modifySettings"),
     },
     ...(supportsDisable
       ? [
           {
             value: "disable" as const,
-            label: "Disable (keeps config)",
+            label: t("wizard.channels.disableKeepConfig"),
           },
         ]
       : []),
@@ -43,22 +110,23 @@ export async function promptConfiguredAction(params: {
       ? [
           {
             value: "delete" as const,
-            label: "Delete config",
+            label: t("wizard.channels.deleteConfig"),
           },
         ]
       : []),
     {
       value: "skip",
-      label: "Skip (leave as-is)",
+      label: t("wizard.channels.skipLeaveAsIs"),
     },
   ];
   return await prompter.select({
-    message: `${label} already configured. What do you want to do?`,
+    message: t("wizard.channels.configuredAction", { label }),
     options,
     initialValue: "update",
   });
 }
 
+/** Selects the account to remove/update when a channel supports multiple accounts. */
 export async function promptRemovalAccountId(params: {
   cfg: OpenClawConfig;
   prompter: WizardPrompter;
@@ -77,7 +145,7 @@ export async function promptRemovalAccountId(params: {
     return defaultAccountId;
   }
   const selected = await prompter.select({
-    message: `${label} account`,
+    message: t("wizard.channels.account", { label }),
     options: accountIds.map((accountId) => ({
       value: accountId,
       label: formatAccountLabel(accountId),
@@ -87,6 +155,7 @@ export async function promptRemovalAccountId(params: {
   return normalizeAccountId(selected) ?? defaultAccountId;
 }
 
+/** Optionally configures DM access policies for selected channel setup adapters. */
 export async function maybeConfigureDmPolicies(params: {
   cfg: OpenClawConfig;
   selection: ChannelChoice[];
@@ -104,7 +173,7 @@ export async function maybeConfigureDmPolicies(params: {
   }
 
   const wants = await prompter.confirm({
-    message: "Configure DM access policies now? (default: pairing)",
+    message: t("wizard.channels.configureDmPolicies"),
     initialValue: false,
   });
   if (!wants) {
@@ -114,30 +183,35 @@ export async function maybeConfigureDmPolicies(params: {
   let cfg = params.cfg;
   for (const policy of dmPolicies) {
     const accountId = accountIdsByChannel?.get(policy.channel);
+    // Multi-account channels can remap the policy keys for the selected account.
     const { policyKey, allowFromKey } = policy.resolveConfigKeys?.(cfg, accountId) ?? {
       policyKey: policy.policyKey,
       allowFromKey: policy.allowFromKey,
     };
     await prompter.note(
       [
-        "Default: pairing (unknown DMs get a pairing code).",
-        `Approve: ${formatCliCommand(`openclaw pairing approve ${policy.channel} <code>`)}`,
-        `Allowlist DMs: ${policyKey}="allowlist" + ${allowFromKey} entries.`,
-        `Public DMs: ${policyKey}="open" + ${allowFromKey} includes "*".`,
-        "Multi-user DMs: run: " +
-          formatCliCommand('openclaw config set session.dmScope "per-channel-peer"') +
-          ' (or "per-account-channel-peer" for multi-account channels) to isolate sessions.',
-        `Docs: ${formatDocsLink("/channels/pairing", "channels/pairing")}`,
+        t("wizard.channels.dmPolicyDefault"),
+        t("wizard.channels.dmPolicyApprove", {
+          command: formatCliCommand(`openclaw pairing approve ${policy.channel} <code>`),
+        }),
+        t("wizard.channels.dmPolicyAllowlist", { allowFromKey, policyKey }),
+        t("wizard.channels.dmPolicyOpen", { allowFromKey, policyKey }),
+        t("wizard.channels.dmPolicyMultiUser", {
+          command: formatCliCommand('openclaw config set session.dmScope "per-channel-peer"'),
+        }),
+        t("wizard.channels.docs", {
+          link: formatDocsLink("/channels/pairing", "channels/pairing"),
+        }),
       ].join("\n"),
-      `${policy.label} DM access`,
+      t("wizard.channels.dmAccessTitle", { label: policy.label }),
     );
     const nextPolicy = (await prompter.select({
-      message: `${policy.label} DM policy`,
+      message: t("wizard.channels.dmPolicy", { label: policy.label }),
       options: [
-        { value: "pairing", label: "Pairing (recommended)" },
-        { value: "allowlist", label: "Allowlist (specific users only)" },
-        { value: "open", label: "Open (public inbound DMs)" },
-        { value: "disabled", label: "Disabled (ignore DMs)" },
+        { value: "pairing", label: t("wizard.channels.dmPolicyPairing") },
+        { value: "allowlist", label: t("wizard.channels.dmPolicyAllowlistOption") },
+        { value: "open", label: t("wizard.channels.dmPolicyOpenOption") },
+        { value: "disabled", label: t("wizard.channels.dmPolicyDisabledOption") },
       ],
     })) as DmPolicy;
     const current = policy.getCurrent(cfg, accountId);

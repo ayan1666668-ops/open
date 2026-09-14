@@ -1,12 +1,14 @@
-import { logError } from "openclaw/plugin-sdk/text-runtime";
+// Discord plugin module implements agent components.modal behavior.
+import { logError } from "openclaw/plugin-sdk/logging-core";
 import { parseDiscordModalCustomIdForInteraction } from "../component-custom-id.js";
-import { resolveDiscordModalEntry } from "../components-registry.js";
+import { resolveDiscordModalEntryWithPersistence } from "../components-registry.js";
 import { Modal, type ComponentData, type ModalInteraction } from "../internal/discord.js";
 import {
   type AgentComponentContext,
   ensureComponentUserAllowed,
   formatModalSubmissionText,
   parseDiscordModalId,
+  replyUnavailableComponentInteraction,
   resolveAuthorizedComponentInteraction,
   resolveInteractionCustomId,
   resolveModalFieldValues,
@@ -15,10 +17,10 @@ import { dispatchDiscordComponentEvent } from "./agent-components.dispatch.js";
 import { dispatchPluginDiscordInteractiveEvent } from "./agent-components.plugin-interactive.js";
 
 export class DiscordComponentModal extends Modal {
-  title = "OpenClaw form";
-  customId = "__openclaw_discord_component_modal_wildcard__";
-  components = [];
-  customIdParser = parseDiscordModalCustomIdForInteraction;
+  override title = "OpenClaw form";
+  override customId = "__openclaw_discord_component_modal_wildcard__";
+  override components = [];
+  override customIdParser = parseDiscordModalCustomIdForInteraction;
   private ctx: AgentComponentContext;
 
   constructor(ctx: AgentComponentContext) {
@@ -30,27 +32,16 @@ export class DiscordComponentModal extends Modal {
     const modalId = parseDiscordModalId(data, resolveInteractionCustomId(interaction));
     if (!modalId) {
       logError("discord component modal: missing modal id");
-      try {
-        await interaction.reply({
-          content: "This form is no longer valid.",
-          ephemeral: true,
-        });
-      } catch {
-        // Interaction may have expired
-      }
+      await replyUnavailableComponentInteraction(interaction, "This form is no longer valid.");
       return;
     }
 
-    const modalEntry = resolveDiscordModalEntry({ id: modalId, consume: false });
+    const modalEntry = await resolveDiscordModalEntryWithPersistence({
+      id: modalId,
+      consume: false,
+    });
     if (!modalEntry) {
-      try {
-        await interaction.reply({
-          content: "This form has expired.",
-          ephemeral: true,
-        });
-      } catch {
-        // Interaction may have expired
-      }
+      await replyUnavailableComponentInteraction(interaction, "This form has expired.");
       return;
     }
 
@@ -66,6 +57,7 @@ export class DiscordComponentModal extends Modal {
     if (!authorized) {
       return;
     }
+    const ctx = authorized.ctx;
     const {
       interactionCtx,
       channelCtx,
@@ -94,19 +86,12 @@ export class DiscordComponentModal extends Modal {
       return;
     }
 
-    const consumed = resolveDiscordModalEntry({
+    const consumed = await resolveDiscordModalEntryWithPersistence({
       id: modalId,
       consume: !modalEntry.reusable,
     });
     if (!consumed) {
-      try {
-        await interaction.reply({
-          content: "This form has expired.",
-          ephemeral: true,
-        });
-      } catch {
-        // Interaction may have expired
-      }
+      await replyUnavailableComponentInteraction(interaction, "This form has expired.");
       return;
     }
 
@@ -117,7 +102,7 @@ export class DiscordComponentModal extends Modal {
         values: resolveModalFieldValues(field, interaction),
       }));
       const pluginDispatch = await dispatchPluginDiscordInteractiveEvent({
-        ctx: this.ctx,
+        ctx,
         interaction,
         interactionCtx,
         channelCtx,
@@ -140,7 +125,7 @@ export class DiscordComponentModal extends Modal {
 
     const eventText = formatModalSubmissionText(consumed, interaction);
     await dispatchDiscordComponentEvent({
-      ctx: this.ctx,
+      ctx,
       interaction,
       interactionCtx,
       channelCtx,

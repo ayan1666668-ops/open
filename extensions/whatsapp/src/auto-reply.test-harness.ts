@@ -1,26 +1,28 @@
-import "./test-helpers.js";
-import { EventEmitter } from "node:events";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { resetInboundDedupe } from "openclaw/plugin-sdk/reply-dedupe";
-import { resetLogger, setLoggerOverride } from "openclaw/plugin-sdk/runtime-env";
-import { mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
-import { afterAll, afterEach, beforeAll, beforeEach, vi, type Mock } from "vitest";
-import type { WebChannelStatus } from "./auto-reply/types.js";
-import type { WebInboundMessage, WebListenerCloseReason } from "./inbound.js";
-import type { WhatsAppSendKind, WhatsAppSendResult } from "./inbound/send-result.js";
+// Preserve module setup before modules that consume it.
+// oxfmt-ignore
 import {
   resetBaileysMocks as _resetBaileysMocks,
   resetLoadConfigMock as _resetLoadConfigMock,
 } from "./test-helpers.js";
+import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { resetInboundDedupe } from "openclaw/plugin-sdk/reply-runtime";
+import { resetLogger, setLoggerOverride } from "openclaw/plugin-sdk/runtime-env";
+import { mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
+import { afterAll, afterEach, beforeAll, beforeEach, vi, type Mock } from "vitest";
+import { createRuntimeSpies } from "../../test-support/runtime-spies.js";
+import type { WebChannelStatus } from "./auto-reply/types.js";
+import type { WebInboundCallbackMessage, WebListenerCloseReason } from "./inbound.js";
+import type { WhatsAppSendResult } from "./inbound/send-result.js";
+import { createAcceptedWhatsAppSendResult as createAcceptedWhatsAppSendResultForHarness } from "./inbound/send-result.test-helper.js";
+import { createTestWebInboundMessage } from "./inbound/test-message.test-helper.js";
+import { setWhatsAppRuntime } from "./runtime.js";
+// Whatsapp plugin module implements auto reply harness behavior.
 
-export {
-  resetBaileysMocks,
-  resetLoadConfigMock,
-  setLoadConfigMock,
-  setRuntimeConfigSourceSnapshotMock,
-} from "./test-helpers.js";
+export { resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
 
 // Avoid exporting inferred vitest mock types (TS2742 under pnpm + d.ts emit).
 type AnyExport = any;
@@ -28,8 +30,12 @@ type MockWebListener = {
   close: () => Promise<void>;
   onClose: Promise<WebListenerCloseReason>;
   signalClose: () => void;
+  assertSendReady: () => Promise<void>;
   sendMessage: () => Promise<WhatsAppSendResult>;
   sendPoll: () => Promise<WhatsAppSendResult>;
+  sendContact: () => Promise<WhatsAppSendResult>;
+  sendLocation: () => Promise<WhatsAppSendResult>;
+  sendSticker: () => Promise<WhatsAppSendResult>;
   sendReaction: () => Promise<WhatsAppSendResult>;
   sendComposingTo: () => Promise<void>;
 };
@@ -46,17 +52,20 @@ type WebAutoReplyMonitorHarness = {
   run: Promise<unknown>;
 };
 type MockSessionSocket = {
+  end: ReturnType<typeof vi.fn>;
   ev: {
     on: ReturnType<typeof vi.fn>;
     off: ReturnType<typeof vi.fn>;
   };
   ws: EventEmitter & {
     close: ReturnType<typeof vi.fn>;
+    readonly isClosed: boolean;
+    readonly isClosing: boolean;
   };
   user: { id: string };
 };
 
-export const TEST_NET_IP = "93.184.216.34";
+const TEST_NET_IP = "93.184.216.34";
 const WEB_AUTO_REPLY_SOCKETS_KEY = Symbol.for("openclaw:webAutoReplySessionSockets");
 
 function getSessionSockets(): MockSessionSocket[] {
@@ -72,9 +81,21 @@ vi.mock("./session.js", async () => {
   return {
     ...actual,
     createWaSocket: vi.fn(async () => {
+      let closed = false;
       const ws = new EventEmitter() as MockSessionSocket["ws"];
-      ws.close = vi.fn();
+      Object.defineProperties(ws, {
+        isClosed: { get: () => closed },
+        isClosing: { get: () => false },
+      });
+      ws.close = vi.fn(() => {
+        closed = true;
+        ws.emit("close");
+      });
       const socket: MockSessionSocket = {
+        end: vi.fn(() => {
+          closed = true;
+          ws.emit("close");
+        }),
         ev: {
           on: vi.fn(),
           off: vi.fn(),
@@ -97,25 +118,29 @@ export function getLastWebAutoReplySessionSocket(): MockSessionSocket {
   return last;
 }
 
-export function resetWebAutoReplySessionSockets() {
+function resetWebAutoReplySessionSockets() {
   getSessionSockets().length = 0;
 }
 
 vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
-  abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
+  abortEmbeddedAgentRun: vi.fn().mockReturnValue(false),
   appendCronStyleCurrentTimeLine: (text: string) => text,
-  isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
-  isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
-  queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
+  isEmbeddedAgentRunActive: vi.fn().mockReturnValue(false),
+  isEmbeddedAgentRunStreaming: vi.fn().mockReturnValue(false),
   resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
+  resolveAgentIdentity: (
+    cfg: { agents?: { list?: Array<{ id: string; identity?: unknown }> } },
+    agentId: string,
+  ) =>
+    cfg.agents?.list?.find(
+      (entry) => entry.id.trim().toLowerCase() === agentId.trim().toLowerCase(),
+    )?.identity,
   resolveIdentityNamePrefix: (cfg: { messages?: { responsePrefix?: string } }, _agentId: string) =>
     cfg.messages?.responsePrefix,
-  resolveMessagePrefix: (cfg: { messages?: { messagePrefix?: string } }) =>
-    cfg.messages?.messagePrefix,
-  runEmbeddedPiAgent: vi.fn(),
+  runEmbeddedAgent: vi.fn(),
 }));
 
-export async function rmDirWithRetries(
+async function rmDirWithRetries(
   dir: string,
   opts?: { attempts?: number; delayMs?: number },
 ): Promise<void> {
@@ -130,7 +155,6 @@ export async function rmDirWithRetries(
       maxRetries: attempts,
       retryDelay: delayMs,
     });
-    return;
   } catch {
     // Fall back for older Node implementations (or unexpected retry behavior).
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -143,7 +167,9 @@ export async function rmDirWithRetries(
             ? String((retryErr as { code?: unknown }).code)
             : null;
         if (code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM") {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          await new Promise((resolve) => {
+            setTimeout(resolve, delayMs);
+          });
           continue;
         }
         throw retryErr;
@@ -209,6 +235,8 @@ export function installWebAutoReplyUnitTestHooks(opts?: { pinDns?: boolean }) {
     resetWebAutoReplySessionSockets();
     _resetBaileysMocks();
     _resetLoadConfigMock();
+    // Scoped test files must seed the plugin slot instead of inheriting another file's runtime.
+    setWhatsAppRuntime(createPluginRuntimeMock());
     if (opts?.pinDns) {
       resolvePinnedHostnameSpy = mockPinnedHostnameResolution([TEST_NET_IP]);
     }
@@ -224,17 +252,21 @@ export function installWebAutoReplyUnitTestHooks(opts?: { pinDns?: boolean }) {
 }
 
 export function createWebListenerFactoryCapture(): AnyExport {
-  let capturedOnMessage: ((msg: WebInboundMessage) => Promise<void>) | undefined;
+  let capturedOnMessage: ((msg: WebInboundCallbackMessage) => Promise<void>) | undefined;
   let capturedOptions:
     | {
-        onMessage: (msg: WebInboundMessage) => Promise<void>;
+        onMessage: (msg: WebInboundCallbackMessage) => Promise<void>;
+        shouldDebounce?: (msg: WebInboundCallbackMessage) => boolean;
         debounceMs?: number;
+        appendReplyWindow?: { afterMs: number; untilMs: number; maxAgeMs: number };
         selfChatMode?: boolean;
       }
     | undefined;
   const listenerFactory = async (opts: {
-    onMessage: (msg: WebInboundMessage) => Promise<void>;
+    onMessage: (msg: WebInboundCallbackMessage) => Promise<void>;
+    shouldDebounce?: (msg: WebInboundCallbackMessage) => boolean;
     debounceMs?: number;
+    appendReplyWindow?: { afterMs: number; untilMs: number; maxAgeMs: number };
     selfChatMode?: boolean;
   }) => {
     capturedOnMessage = opts.onMessage;
@@ -254,33 +286,32 @@ export function createMockWebListener(): MockWebListener {
     close: vi.fn(async () => undefined),
     onClose: new Promise<WebListenerCloseReason>(() => {}),
     signalClose: vi.fn(),
-    sendMessage: vi.fn(async () => createAcceptedWhatsAppSendResult("text", "msg-1")),
-    sendPoll: vi.fn(async () => createAcceptedWhatsAppSendResult("poll", "poll-1")),
-    sendReaction: vi.fn(async () => createAcceptedWhatsAppSendResult("reaction", "reaction-1")),
+    assertSendReady: vi.fn(async () => undefined),
+    sendMessage: vi.fn(async () => createAcceptedWhatsAppSendResultForHarness("text", "msg-1")),
+    sendPoll: vi.fn(async () => createAcceptedWhatsAppSendResultForHarness("poll", "poll-1")),
+    sendContact: vi.fn(async () =>
+      createAcceptedWhatsAppSendResultForHarness("contact", "contact-1"),
+    ),
+    sendLocation: vi.fn(async () =>
+      createAcceptedWhatsAppSendResultForHarness("location", "location-1"),
+    ),
+    sendSticker: vi.fn(async () =>
+      createAcceptedWhatsAppSendResultForHarness("sticker", "sticker-1"),
+    ),
+    sendReaction: vi.fn(async () =>
+      createAcceptedWhatsAppSendResultForHarness("reaction", "reaction-1"),
+    ),
     sendComposingTo: vi.fn(async () => undefined),
   };
 }
 
-export function createAcceptedWhatsAppSendResult(
-  kind: WhatsAppSendKind,
-  id: string,
-): WhatsAppSendResult {
-  return {
-    kind,
-    messageId: id,
-    messageIds: [id],
-    keys: [{ id }],
-    providerAccepted: true,
-  };
-}
-
 export function createScriptedWebListenerFactory(): AnyExport {
-  const onMessages: Array<(msg: WebInboundMessage) => Promise<void>> = [];
+  const onMessages: Array<(msg: WebInboundCallbackMessage) => Promise<void>> = [];
   const closeResolvers: Array<(reason: unknown) => void> = [];
   const listeners: MockWebListener[] = [];
 
   const listenerFactory = vi.fn(
-    async (opts: { onMessage: (msg: WebInboundMessage) => Promise<void> }) => {
+    async (opts: { onMessage: (msg: WebInboundCallbackMessage) => Promise<void> }) => {
       onMessages.push(opts.onMessage);
       let resolveClose: (reason: unknown) => void = () => {};
       const onClose = new Promise<WebListenerCloseReason>((res) => {
@@ -308,17 +339,9 @@ export function createScriptedWebListenerFactory(): AnyExport {
 
 export function createWebInboundDeliverySpies(): AnyExport {
   return {
-    sendMedia: vi.fn().mockResolvedValue(createAcceptedWhatsAppSendResult("media", "m1")),
-    reply: vi.fn().mockResolvedValue(createAcceptedWhatsAppSendResult("text", "r1")),
+    sendMedia: vi.fn().mockResolvedValue(createAcceptedWhatsAppSendResultForHarness("media", "m1")),
+    reply: vi.fn().mockResolvedValue(createAcceptedWhatsAppSendResultForHarness("text", "r1")),
     sendComposing: vi.fn(),
-  };
-}
-
-export function createWebAutoReplyRuntime(): WebAutoReplyRuntime {
-  return {
-    log: vi.fn(),
-    error: vi.fn(),
-    exit: vi.fn(),
   };
 }
 
@@ -335,7 +358,7 @@ export function startWebAutoReplyMonitor(params: {
   accountId?: string;
   statusSink?: (status: WebChannelStatus) => void;
 }): WebAutoReplyMonitorHarness {
-  const runtime = createWebAutoReplyRuntime();
+  const runtime: WebAutoReplyRuntime = createRuntimeSpies();
   const controller = new AbortController();
   const run = params.monitorWebChannelFn(
     false,
@@ -360,7 +383,7 @@ export function startWebAutoReplyMonitor(params: {
 }
 
 export async function sendWebGroupInboundMessage(params: {
-  onMessage: (msg: WebInboundMessage) => Promise<void>;
+  onMessage: (msg: WebInboundCallbackMessage) => Promise<void>;
   body: string;
   id: string;
   senderE164: string;
@@ -374,28 +397,47 @@ export async function sendWebGroupInboundMessage(params: {
 }) {
   const conversationId = params.conversationId ?? "123@g.us";
   const accountId = params.accountId ?? "default";
-  await params.onMessage({
-    body: params.body,
-    from: conversationId,
-    conversationId,
-    chatId: conversationId,
-    chatType: "group",
-    to: "+2",
-    accountId,
-    id: params.id,
-    senderE164: params.senderE164,
-    senderName: params.senderName,
-    mentionedJids: params.mentionedJids,
-    selfE164: params.selfE164,
-    selfJid: params.selfJid,
-    sendComposing: params.spies.sendComposing,
-    reply: params.spies.reply,
-    sendMedia: params.spies.sendMedia,
-  } as WebInboundMessage);
+  await params.onMessage(
+    createTestWebInboundMessage({
+      event: { id: params.id },
+      payload: { body: params.body },
+      platform: {
+        chatJid: conversationId,
+        recipientJid: "+2",
+        senderE164: params.senderE164,
+        senderName: params.senderName,
+        selfE164: params.selfE164,
+        selfJid: params.selfJid,
+        sendComposing: params.spies.sendComposing,
+        reply: params.spies.reply,
+        sendMedia: params.spies.sendMedia,
+      },
+      admission: {
+        accountId,
+        conversation: {
+          kind: "group",
+          id: conversationId,
+        },
+        sender: {
+          id: params.senderE164,
+        },
+        senderAccess: {
+          reasonCode: "group_policy_allowed",
+        },
+      },
+      group: params.mentionedJids?.length
+        ? {
+            mentions: {
+              jids: params.mentionedJids,
+            },
+          }
+        : undefined,
+    }),
+  );
 }
 
 export async function sendWebDirectInboundMessage(params: {
-  onMessage: (msg: WebInboundMessage) => Promise<void>;
+  onMessage: (msg: WebInboundCallbackMessage) => Promise<void>;
   body: string;
   id: string;
   from: string;
@@ -405,18 +447,32 @@ export async function sendWebDirectInboundMessage(params: {
   timestamp?: number;
 }) {
   const accountId = params.accountId ?? "default";
-  await params.onMessage({
-    accountId,
-    id: params.id,
-    from: params.from,
-    conversationId: params.from,
-    to: params.to,
-    body: params.body,
-    timestamp: params.timestamp ?? Date.now(),
-    chatType: "direct",
-    chatId: `direct:${params.from}`,
-    sendComposing: params.spies.sendComposing,
-    reply: params.spies.reply,
-    sendMedia: params.spies.sendMedia,
-  } as WebInboundMessage);
+  await params.onMessage(
+    createTestWebInboundMessage({
+      event: {
+        id: params.id,
+        timestamp: params.timestamp ?? Date.now(),
+      },
+      payload: {
+        body: params.body,
+      },
+      platform: {
+        chatJid: `direct:${params.from}`,
+        recipientJid: params.to,
+        sendComposing: params.spies.sendComposing,
+        reply: params.spies.reply,
+        sendMedia: params.spies.sendMedia,
+      },
+      admission: {
+        accountId,
+        conversation: {
+          kind: "direct",
+          id: params.from,
+        },
+        sender: {
+          id: params.from,
+        },
+      },
+    }),
+  );
 }

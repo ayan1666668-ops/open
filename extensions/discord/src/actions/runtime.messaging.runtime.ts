@@ -1,10 +1,18 @@
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+// Discord plugin module implements runtime.messaging behavior.
 import { readDiscordComponentSpec } from "../components.js";
-import type { OpenClawConfig } from "../runtime-api.js";
 import { sendDiscordComponentMessage } from "../send.components.js";
-import {
+import { resolveDiscordTargetChannelId } from "../send.shared.js";
+import { resolveDiscordChannelId } from "../targets.js";
+
+export { readDiscordComponentSpec, resolveDiscordChannelId, sendDiscordComponentMessage };
+export {
   createThreadDiscord,
   deleteMessageDiscord,
   editMessageDiscord,
+  editChannelDiscord,
+  fetchChannelInfoDiscord,
+  fetchGuildInfoDiscord,
   fetchChannelPermissionsDiscord,
   fetchMessageDiscord,
   fetchReactionsDiscord,
@@ -17,39 +25,10 @@ import {
   removeReactionDiscord,
   searchMessagesDiscord,
   sendMessageDiscord,
-  sendPollDiscord,
   sendStickerDiscord,
   sendVoiceMessageDiscord,
   unpinMessageDiscord,
 } from "../send.js";
-import { resolveDiscordTargetChannelId } from "../send.shared.js";
-import { resolveDiscordChannelId } from "../targets.js";
-
-export const discordMessagingActionRuntime = {
-  createThreadDiscord,
-  deleteMessageDiscord,
-  editMessageDiscord,
-  fetchChannelPermissionsDiscord,
-  fetchMessageDiscord,
-  fetchReactionsDiscord,
-  listPinsDiscord,
-  listThreadsDiscord,
-  pinMessageDiscord,
-  reactMessageDiscord,
-  readDiscordComponentSpec,
-  readMessagesDiscord,
-  removeOwnReactionsDiscord,
-  removeReactionDiscord,
-  resolveDiscordReactionTargetChannelId,
-  resolveDiscordChannelId,
-  searchMessagesDiscord,
-  sendDiscordComponentMessage,
-  sendMessageDiscord,
-  sendPollDiscord,
-  sendStickerDiscord,
-  sendVoiceMessageDiscord,
-  unpinMessageDiscord,
-};
 
 export async function resolveDiscordReactionTargetChannelId(params: {
   target: string;

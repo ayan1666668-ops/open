@@ -14,7 +14,6 @@ query-filters:
         - security
 
 paths:
-  - extensions/bluebubbles/src
   - extensions/discord/src
   - extensions/feishu/src
   - extensions/googlechat/src
@@ -27,7 +26,6 @@ paths:
   - extensions/nextcloud-talk/src
   - extensions/nostr/src
   - extensions/qa-channel/src
-  - extensions/qqbot/src
   - extensions/signal/src
   - extensions/slack/src
   - extensions/synology-chat/src

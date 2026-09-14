@@ -1,5 +1,7 @@
+// Unit test routing globs and boundary/bundled-plugin exclusions.
 import path from "node:path";
 import { BUNDLED_PLUGIN_ROOT_DIR } from "../../scripts/lib/bundled-plugin-paths.mjs";
+import { databaseWorkerCoreTestFiles } from "./vitest.database-worker-core-paths.mjs";
 
 export const unitTestIncludePatterns = [
   "src/**/*.test.ts",
@@ -19,7 +21,6 @@ export const boundaryTestFiles = [
   "test/extension-import-boundaries.test.ts",
   "test/extension-test-boundary.test.ts",
   "test/plugin-extension-import-boundary.test.ts",
-  "test/web-provider-boundary.test.ts",
 ];
 
 export const bundledPluginDependentUnitTestFiles = [
@@ -29,7 +30,10 @@ export const bundledPluginDependentUnitTestFiles = [
 ];
 
 export const unitTestAdditionalExcludePatterns = [
+  ...databaseWorkerCoreTestFiles,
   "src/gateway/**",
+  "packages/gateway-client/**",
+  "packages/gateway-protocol/**",
   "src/hooks/**",
   "src/infra/**",
   `${BUNDLED_PLUGIN_ROOT_DIR}/**`,

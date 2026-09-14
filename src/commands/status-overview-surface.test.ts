@@ -1,3 +1,4 @@
+// Status overview surface tests cover JSON and terminal rows derived from shared overview surfaces.
 import { describe, expect, it } from "vitest";
 import {
   buildStatusGatewayJsonPayloadFromSurface,
@@ -7,6 +8,7 @@ import {
 } from "./status-overview-surface.ts";
 import {
   baseStatusCfg,
+  baseStatusExpectedUpdateChannelLabel,
   baseStatusGatewaySnapshot,
   baseStatusOverviewScanFields,
   baseStatusOverviewSurface,
@@ -72,7 +74,6 @@ describe("status-overview-surface", () => {
         updateValue: "available · custom update",
         gatewayAuthWarningValue: "warn(warn-text)",
         gatewaySelfFallbackValue: "gateway-self",
-        includeBackendStateWhenOff: true,
         includeDnsNameWhenOff: true,
         decorateOk: (value) => `ok(${value})`,
         decorateWarn: (value) => `warn(${value})`,
@@ -82,7 +83,7 @@ describe("status-overview-surface", () => {
       { Item: "OS", Value: "macOS · node 22" },
       { Item: "Dashboard", Value: "http://127.0.0.1:18789/" },
       { Item: "Tailscale exposure", Value: "muted(off · box.tail.ts.net)" },
-      { Item: "Channel", Value: "stable (config)" },
+      { Item: "Channel", Value: baseStatusExpectedUpdateChannelLabel },
       { Item: "Git", Value: "main · tag v1.2.3" },
       { Item: "Update", Value: "available · custom update" },
       {
@@ -91,7 +92,7 @@ describe("status-overview-surface", () => {
           "remote · wss://gateway.example.com (config) · ok(reachable 42ms) · auth token · gateway app 1.2.3",
       },
       { Item: "Gateway auth warning", Value: "warn(warn-text)" },
-      { Item: "Gateway self", Value: "gateway-self" },
+      { Item: "Gateway self", Value: "gateway app 1.2.3" },
       { Item: "Gateway service", Value: "LaunchAgent installed · loaded · running" },
       { Item: "Node service", Value: "node loaded · running (pid 42)" },
       { Item: "Agents", Value: "2 total" },

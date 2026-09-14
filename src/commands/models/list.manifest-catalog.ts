@@ -1,54 +1,40 @@
+/** Static manifest rows for setup flows before a runtime owner exists. */
+import { normalizeModelCatalogProviderId } from "@openclaw/model-catalog-core/model-catalog-refs";
+import type { NormalizedModelCatalogRow } from "@openclaw/model-catalog-core/model-catalog-types";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import {
-  normalizeModelCatalogProviderId,
-  planManifestModelCatalogRows,
-} from "../../model-catalog/index.js";
-import type { NormalizedModelCatalogRow } from "../../model-catalog/index.js";
-import { loadPluginManifestRegistryForInstalledIndex } from "../../plugins/manifest-registry-installed.js";
+import { planEffectiveModelCatalogRows } from "../../model-catalog/index.js";
+import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
+import type { PluginManifestRegistry } from "../../plugins/manifest-registry.js";
+import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
+import { resolvePluginContributionOwners } from "../../plugins/plugin-registry-contributions.js";
 import {
   getPluginRecord,
   isPluginEnabled,
-  loadPluginRegistrySnapshot,
-  resolvePluginContributionOwners,
   type PluginRegistrySnapshot,
-} from "../../plugins/plugin-registry.js";
+} from "../../plugins/plugin-registry-snapshot.js";
 
-type ManifestCatalogRowsForListMode = "static-authoritative" | "supplemental";
-
-function loadManifestCatalogRowsForPluginIds(params: {
+function planManifestCatalogRowsForPluginIds(params: {
   cfg: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  index: PluginRegistrySnapshot;
-  mode: ManifestCatalogRowsForListMode;
+  registry: PluginManifestRegistry;
   pluginIds?: readonly string[];
   providerFilter?: string;
 }): readonly NormalizedModelCatalogRow[] {
   if (params.pluginIds && params.pluginIds.length === 0) {
     return [];
   }
-  const registry = loadPluginManifestRegistryForInstalledIndex({
-    index: params.index,
-    config: params.cfg,
-    env: params.env,
-    pluginIds: params.pluginIds,
-  });
-  const plan = planManifestModelCatalogRows({
+  const pluginIdSet = params.pluginIds ? new Set(params.pluginIds) : undefined;
+  const registry = pluginIdSet
+    ? {
+        ...params.registry,
+        plugins: params.registry.plugins.filter((plugin) => pluginIdSet.has(plugin.id)),
+      }
+    : params.registry;
+  return planEffectiveModelCatalogRows({
     registry,
+    config: params.cfg,
     ...(params.providerFilter ? { providerFilter: params.providerFilter } : {}),
-  });
-  const eligibleProviders = new Set(
-    plan.entries
-      .filter((entry) =>
-        params.mode === "static-authoritative"
-          ? entry.discovery === "static"
-          : entry.discovery !== "runtime",
-      )
-      .map((entry) => entry.provider),
-  );
-  if (eligibleProviders.size === 0) {
-    return [];
-  }
-  return plan.rows.filter((row) => eligibleProviders.has(row.provider));
+    selection: "static",
+  }).rows;
 }
 
 function resolveConventionModelCatalogPluginIds(params: {
@@ -75,47 +61,45 @@ function resolveConventionModelCatalogPluginIds(params: {
 
 function resolveDeclaredModelCatalogPluginIds(params: {
   cfg: OpenClawConfig;
-  index: PluginRegistrySnapshot;
+  snapshot: PluginMetadataSnapshot;
   providerFilter: string;
 }): readonly string[] {
   return resolvePluginContributionOwners({
-    index: params.index,
+    lookUpTable: params.snapshot,
     config: params.cfg,
     contribution: "modelCatalogProviders",
     matches: params.providerFilter,
   });
 }
 
-export function loadManifestCatalogRowsForList(params: {
+/** Loads authoritative static rows without importing provider runtimes. */
+export function loadStaticManifestCatalogRowsForList(params: {
   cfg: OpenClawConfig;
   providerFilter?: string;
   env?: NodeJS.ProcessEnv;
-  mode?: ManifestCatalogRowsForListMode;
+  metadataSnapshot?: PluginMetadataSnapshot;
 }): readonly NormalizedModelCatalogRow[] {
   const providerFilter = params.providerFilter
     ? normalizeModelCatalogProviderId(params.providerFilter)
     : undefined;
-  const mode = params.mode ?? "static-authoritative";
-  const index = loadPluginRegistrySnapshot({
-    config: params.cfg,
-    env: params.env,
-  });
+  const snapshot =
+    params.metadataSnapshot ??
+    loadManifestMetadataSnapshot({
+      config: params.cfg,
+      env: params.env ?? process.env,
+    });
   if (!providerFilter) {
-    return loadManifestCatalogRowsForPluginIds({
+    return planManifestCatalogRowsForPluginIds({
       cfg: params.cfg,
-      env: params.env,
-      index,
-      mode,
+      registry: snapshot.manifestRegistry,
     });
   }
-  const conventionRows = loadManifestCatalogRowsForPluginIds({
+  const conventionRows = planManifestCatalogRowsForPluginIds({
     cfg: params.cfg,
-    env: params.env,
-    index,
-    mode,
+    registry: snapshot.manifestRegistry,
     pluginIds: resolveConventionModelCatalogPluginIds({
       cfg: params.cfg,
-      index,
+      index: snapshot.index,
       providerFilter,
     }),
     providerFilter,
@@ -123,38 +107,14 @@ export function loadManifestCatalogRowsForList(params: {
   if (conventionRows.length > 0) {
     return conventionRows;
   }
-  return loadManifestCatalogRowsForPluginIds({
+  return planManifestCatalogRowsForPluginIds({
     cfg: params.cfg,
-    env: params.env,
-    index,
-    mode,
+    registry: snapshot.manifestRegistry,
     pluginIds: resolveDeclaredModelCatalogPluginIds({
       cfg: params.cfg,
-      index,
+      snapshot,
       providerFilter,
     }),
     providerFilter,
-  });
-}
-
-export function loadStaticManifestCatalogRowsForList(params: {
-  cfg: OpenClawConfig;
-  providerFilter?: string;
-  env?: NodeJS.ProcessEnv;
-}): readonly NormalizedModelCatalogRow[] {
-  return loadManifestCatalogRowsForList({
-    ...params,
-    mode: "static-authoritative",
-  });
-}
-
-export function loadSupplementalManifestCatalogRowsForList(params: {
-  cfg: OpenClawConfig;
-  providerFilter?: string;
-  env?: NodeJS.ProcessEnv;
-}): readonly NormalizedModelCatalogRow[] {
-  return loadManifestCatalogRowsForList({
-    ...params,
-    mode: "supplemental",
   });
 }

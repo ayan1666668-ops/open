@@ -1,3 +1,4 @@
+// Verifies plugin source display formatting.
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withPathResolutionEnv } from "../test-utils/env.js";
@@ -72,6 +73,34 @@ describe("formatPluginSourceForTable", () => {
     createFormattedSourceExpectation("global", "global", "demo-global", "index.js"),
   ])("shortens $origin sources under the $sourceKey root", expectFormattedSourceCase);
 
+  it("middle-truncates long out-of-root source paths for table rows", () => {
+    const longSource = path.join(
+      path.sep,
+      "Users",
+      "x",
+      "some",
+      "deeply",
+      "nested",
+      "project",
+      "checkout",
+      "extensions",
+      "very-long-plugin-directory-name",
+      "index.ts",
+    );
+    const out = formatPluginSourceForTable(
+      { origin: "config", source: longSource },
+      {
+        global: PLUGIN_SOURCE_ROOTS.global,
+      },
+    );
+    expect(out.rootKey).toBeUndefined();
+    expect(out.value.length).toBeLessThanOrEqual(48);
+    expect(out.value).toContain("...");
+    // Both path ends stay visible so rows remain identifiable.
+    expect(out.value.startsWith(path.join(path.sep, "Users", "x"))).toBe(true);
+    expect(out.value.endsWith("index.ts")).toBe(true);
+  });
+
   it("ignores untrusted explicit env override for the stock source root", () => {
     const homeDir = path.resolve(path.sep, "tmp", "openclaw-home");
     const rawEnv = {
@@ -79,13 +108,15 @@ describe("formatPluginSourceForTable", () => {
       OPENCLAW_STATE_DIR: "~/state",
     } as NodeJS.ProcessEnv;
     const stock = withPathResolutionEnv(homeDir, rawEnv, (env) => resolveBundledPluginsDir(env));
-    expect(stock).toBeDefined();
+    if (!stock) {
+      throw new Error("expected bundled plugin source root");
+    }
     expectResolvedSourceRoots({
       homeDir,
       env: rawEnv,
       workspaceDir: "~/ws",
       expected: {
-        stock: stock!,
+        stock,
         global: path.join(homeDir, "state", "extensions"),
         workspace: path.join(homeDir, "ws", ".openclaw", "extensions"),
       },

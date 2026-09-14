@@ -1,5 +1,17 @@
+// Tests shared ACP command helpers for formatting and identifiers.
 import { describe, expect, it } from "vitest";
-import { parseSpawnInput, parseSteerInput } from "./shared.js";
+import { formatRuntimeOptionsText, parseSpawnInput, parseSteerInput } from "./shared.js";
+
+describe("formatRuntimeOptionsText", () => {
+  it("shows accepted thinking next to the selected model", () => {
+    expect(formatRuntimeOptionsText({ model: "openai/gpt-5.6-luna", thinking: "medium" })).toBe(
+      "model=openai/gpt-5.6-luna, thinking=medium",
+    );
+    expect(formatRuntimeOptionsText({ model: "openai/gpt-5.6-luna" })).toBe(
+      "model=openai/gpt-5.6-luna",
+    );
+  });
+});
 
 describe("parseSteerInput", () => {
   it("preserves non-option instruction tokens while normalizing unicode-dash flags", () => {
@@ -17,6 +29,50 @@ describe("parseSteerInput", () => {
         sessionToken: "agent:codex:acp:s1",
         instruction: "\u2014briefly summarize this",
       },
+    });
+  });
+
+  it.each([
+    {
+      tokens: ["--session", " primary ", "one", "two"],
+      sessionToken: "primary",
+      instruction: "one two",
+    },
+    {
+      tokens: ["--session= primary ", "one", "two"],
+      sessionToken: "primary",
+      instruction: "one two",
+    },
+    { tokens: ["--session=--literal", "one"], sessionToken: "--literal", instruction: "one" },
+    { tokens: ["--session=—target", "one"], sessionToken: "—target", instruction: "one" },
+    {
+      tokens: ["one", "--session", "first", "two", "--session=second", "—literal"],
+      sessionToken: "second",
+      instruction: "one two —literal",
+    },
+  ])(
+    "consumes session values without changing instructions: $tokens",
+    ({ tokens, sessionToken, instruction }) => {
+      expect(parseSteerInput(tokens)).toEqual({
+        ok: true,
+        value: { sessionToken, instruction },
+      });
+    },
+  );
+
+  it.each([
+    { tokens: ["--session"] },
+    { tokens: ["--session", "", "one"] },
+    { tokens: ["--session", "  ", "one"] },
+    { tokens: ["--session", "--next", "one"] },
+    { tokens: ["--session", "—next", "one"] },
+    { tokens: ["--session=", "one"] },
+    { tokens: ["--session=  ", "one"] },
+  ])("rejects missing session values: $tokens", ({ tokens }) => {
+    expect(parseSteerInput(tokens)).toEqual({
+      ok: false,
+      error:
+        "--session requires a value. Usage: /acp steer [--session <session-key|session-id|session-label>] <instruction>",
     });
   });
 });

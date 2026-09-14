@@ -16,6 +16,8 @@ export type {
   SpeechProviderResolveTalkOverridesContext,
   SpeechProviderOverrides,
   SpeechSynthesisRequest,
+  SpeechSynthesisStreamRequest,
+  SpeechSynthesisStreamResult,
   SpeechSynthesisTarget,
   SpeechTelephonySynthesisRequest,
   SpeechVoiceOption,
@@ -30,21 +32,25 @@ export {
   normalizeLanguageCode,
   normalizeSeed,
   requireInRange,
+  resolveSpeechProviderApiKey,
 } from "../tts/tts-core.js";
 export { parseTtsDirectives } from "../tts/directives.js";
+export { parseSpeechDirectiveNumberOverride } from "../tts/directive-number.js";
 export {
   canonicalizeSpeechProviderId,
   getSpeechProvider,
+  listLoadedSpeechProviders,
   listSpeechProviders,
   normalizeSpeechProviderId,
 } from "../tts/provider-registry.js";
 export { resolveEffectiveTtsConfig } from "../tts/tts-config.js";
 export type { TtsConfigResolutionContext } from "../tts/tts-config.js";
 export { normalizeTtsAutoMode, TTS_AUTO_MODES } from "../tts/tts-auto-mode.js";
+// Public compatibility: preserve the established `asObject` export name.
+export { asOptionalRecord as asObject } from "@openclaw/normalization-core/record-coerce";
 export {
   asBoolean,
   asFiniteNumber,
-  asObject,
   assertOkOrThrowProviderError,
   createProviderHttpError,
   extractProviderErrorDetail,

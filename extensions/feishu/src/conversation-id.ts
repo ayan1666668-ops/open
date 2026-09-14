@@ -1,4 +1,9 @@
-import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
+// Feishu plugin module implements conversation id behavior.
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString as normalizeText,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { normalizeFeishuTarget, stripFeishuProviderPrefix } from "./targets.js";
 
 export type FeishuGroupSessionScope =
   | "group"
@@ -6,12 +11,23 @@ export type FeishuGroupSessionScope =
   | "group_topic"
   | "group_topic_sender";
 
-function normalizeText(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed || undefined;
+export function resolveConfiguredFeishuGroupSessionScope(params: {
+  groupConfig?: {
+    groupSessionScope?: FeishuGroupSessionScope;
+    topicSessionMode?: "enabled" | "disabled";
+  };
+  feishuCfg?: {
+    groupSessionScope?: FeishuGroupSessionScope;
+    topicSessionMode?: "enabled" | "disabled";
+  };
+}): FeishuGroupSessionScope {
+  const legacyTopicSessionMode =
+    params.groupConfig?.topicSessionMode ?? params.feishuCfg?.topicSessionMode ?? "disabled";
+  return (
+    params.groupConfig?.groupSessionScope ??
+    params.feishuCfg?.groupSessionScope ??
+    (legacyTopicSessionMode === "enabled" ? "group_topic" : "group")
+  );
 }
 
 export function buildFeishuConversationId(params: {
@@ -37,7 +53,6 @@ export function buildFeishuConversationId(params: {
         return `${chatId}:topic:${topicId}`;
       }
       return senderOpenId ? `${chatId}:sender:${senderOpenId}` : chatId;
-    case "group":
     default:
       return chatId;
   }
@@ -48,17 +63,7 @@ export function parseFeishuTargetId(raw: unknown): string | undefined {
   if (!target) {
     return undefined;
   }
-  const withoutProvider = target.replace(/^(feishu|lark):/i, "").trim();
-  if (!withoutProvider) {
-    return undefined;
-  }
-  const lowered = normalizeLowercaseStringOrEmpty(withoutProvider);
-  for (const prefix of ["chat:", "group:", "channel:", "user:", "dm:", "open_id:"]) {
-    if (lowered.startsWith(prefix)) {
-      return normalizeText(withoutProvider.slice(prefix.length));
-    }
-  }
-  return withoutProvider;
+  return normalizeFeishuTarget(target) || undefined;
 }
 
 export function parseFeishuDirectConversationId(raw: unknown): string | undefined {
@@ -66,7 +71,7 @@ export function parseFeishuDirectConversationId(raw: unknown): string | undefine
   if (!target) {
     return undefined;
   }
-  const withoutProvider = target.replace(/^(feishu|lark):/i, "").trim();
+  const withoutProvider = stripFeishuProviderPrefix(target);
   if (!withoutProvider) {
     return undefined;
   }
@@ -105,6 +110,9 @@ export function parseFeishuConversationId(params: {
   const topicSenderMatch = conversationId.match(/^(.+):topic:([^:]+):sender:([^:]+)$/i);
   if (topicSenderMatch) {
     const [, chatId, topicId, senderOpenId] = topicSenderMatch;
+    if (chatId === undefined || topicId === undefined || senderOpenId === undefined) {
+      return null;
+    }
     return {
       canonicalConversationId: buildFeishuConversationId({
         chatId,
@@ -122,6 +130,9 @@ export function parseFeishuConversationId(params: {
   const topicMatch = conversationId.match(/^(.+):topic:([^:]+)$/i);
   if (topicMatch) {
     const [, chatId, topicId] = topicMatch;
+    if (chatId === undefined || topicId === undefined) {
+      return null;
+    }
     return {
       canonicalConversationId: buildFeishuConversationId({
         chatId,
@@ -137,6 +148,9 @@ export function parseFeishuConversationId(params: {
   const senderMatch = conversationId.match(/^(.+):sender:([^:]+)$/i);
   if (senderMatch) {
     const [, chatId, senderOpenId] = senderMatch;
+    if (chatId === undefined || senderOpenId === undefined) {
+      return null;
+    }
     return {
       canonicalConversationId: buildFeishuConversationId({
         chatId,

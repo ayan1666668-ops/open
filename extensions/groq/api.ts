@@ -1,16 +1,17 @@
+// Groq API module exposes the plugin public contract.
 import type { ModelCompatConfig } from "openclaw/plugin-sdk/provider-model-shared";
 
-const GROQ_QWEN3_32B_ID = "qwen/qwen3-32b";
+const GROQ_QWEN3_6_27B_ID = "qwen/qwen3.6-27b";
 const GROQ_GPT_OSS_REASONING_IDS = new Set([
   "openai/gpt-oss-20b",
   "openai/gpt-oss-120b",
   "openai/gpt-oss-safeguard-20b",
 ]);
 
-export const GROQ_QWEN_REASONING_EFFORTS = ["none", "default"] as const;
-export const GROQ_GPT_OSS_REASONING_EFFORTS = ["low", "medium", "high"] as const;
+const GROQ_QWEN_REASONING_EFFORTS = ["none", "default"] as const;
+const GROQ_GPT_OSS_REASONING_EFFORTS = ["low", "medium", "high"] as const;
 
-export const GROQ_QWEN_REASONING_EFFORT_MAP: Record<string, string> = {
+const GROQ_QWEN_REASONING_EFFORT_MAP: Record<string, string> = {
   off: "none",
   none: "none",
   minimal: "default",
@@ -33,7 +34,7 @@ export function resolveGroqReasoningCompatPatch(
   "supportsReasoningEffort" | "supportedReasoningEfforts" | "reasoningEffortMap"
 > | null {
   const normalized = normalizeGroqModelId(modelId);
-  if (normalized === GROQ_QWEN3_32B_ID) {
+  if (normalized === GROQ_QWEN3_6_27B_ID) {
     return {
       supportsReasoningEffort: true,
       supportedReasoningEfforts: [...GROQ_QWEN_REASONING_EFFORTS],
@@ -47,14 +48,4 @@ export function resolveGroqReasoningCompatPatch(
     };
   }
   return null;
-}
-
-export function contributeGroqResolvedModelCompat(params: {
-  modelId: string;
-  model: { api?: unknown; provider?: unknown };
-}): Partial<ModelCompatConfig> | undefined {
-  if (params.model.api !== "openai-completions" || params.model.provider !== "groq") {
-    return undefined;
-  }
-  return resolveGroqReasoningCompatPatch(params.modelId) ?? undefined;
 }

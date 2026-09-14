@@ -1,61 +1,73 @@
+/** Reads and parses the installed plugin index in the state database. */
 import { z } from "zod";
-import { saveJsonFile } from "../infra/json-file.js";
-import { readJsonFile, readJsonFileSync, writeJsonAtomic } from "../infra/json-files.js";
-import { isBlockedObjectKey } from "../infra/prototype-keys.js";
+import {
+  parsePluginInstallRecordMap,
+  PluginInstallRecordSchema,
+} from "../config/plugin-install-record-map.js";
 import { safeParseWithSchema } from "../utils/zod-parse.js";
-import { clearCurrentPluginMetadataSnapshotState } from "./current-plugin-metadata-state.js";
+import { recordInstalledPluginIndexInstallOwner } from "./installed-plugin-index-install-owner.js";
+import { getPersistedInstalledPluginIndexCacheEntry } from "./installed-plugin-index-record-state.js";
+import type { InstalledPluginIndexStoreOptions } from "./installed-plugin-index-store-path.js";
 import {
-  resolveInstalledPluginIndexStorePath,
-  type InstalledPluginIndexStoreOptions,
-} from "./installed-plugin-index-store-path.js";
-import {
-  diffInstalledPluginIndexInvalidationReasons,
   extractPluginInstallRecordsFromInstalledPluginIndex,
-  INSTALLED_PLUGIN_INDEX_WARNING,
   INSTALLED_PLUGIN_INDEX_VERSION,
   INSTALLED_PLUGIN_INDEX_MIGRATION_VERSION,
-  loadInstalledPluginIndex,
-  refreshInstalledPluginIndex,
   type InstalledPluginIndex,
-  type InstalledPluginInstallRecordInfo,
-  type InstalledPluginIndexRefreshReason,
-  type LoadInstalledPluginIndexParams,
-  type RefreshInstalledPluginIndexParams,
 } from "./installed-plugin-index.js";
+
 export {
-  INSTALLED_PLUGIN_INDEX_STORE_PATH,
   resolveInstalledPluginIndexStorePath,
+  resolveLegacyInstalledPluginIndexStorePath,
   type InstalledPluginIndexStoreOptions,
 } from "./installed-plugin-index-store-path.js";
-
-export type InstalledPluginIndexStoreState = "missing" | "fresh" | "stale";
-
-export type InstalledPluginIndexStoreInspection = {
-  state: InstalledPluginIndexStoreState;
-  refreshReasons: readonly InstalledPluginIndexRefreshReason[];
-  persisted: InstalledPluginIndex | null;
-  current: InstalledPluginIndex;
-};
 
 const StringArraySchema = z.array(z.string());
 
 const InstalledPluginIndexStartupSchema = z.object({
   sidecar: z.boolean(),
   memory: z.boolean(),
-  deferConfiguredChannelFullLoadUntilAfterListen: z.boolean(),
   agentHarnesses: StringArraySchema,
+  configPaths: StringArraySchema.optional(),
+});
+
+const InstalledPluginIndexContributionSchema = z.object({
+  channels: StringArraySchema,
+  channelConfigs: StringArraySchema,
+  providers: StringArraySchema,
+  modelCatalogProviders: StringArraySchema,
+  modelSupportPrefixes: StringArraySchema,
+  modelSupportPatterns: StringArraySchema,
+  autoEnableProviderIds: StringArraySchema,
+  commandAliases: StringArraySchema,
+  contracts: z.record(z.string(), StringArraySchema),
+});
+
+const InstalledPluginFileSignatureSchema = z.object({
+  size: z.number(),
+  mtimeMs: z.number(),
+  ctimeMs: z.number().optional(),
 });
 
 const InstalledPluginIndexRecordSchema = z.object({
   pluginId: z.string(),
+  installOwner: z.string().optional(),
+  installOwnerAmbiguous: z.literal(true).optional(),
   packageName: z.string().optional(),
   packageVersion: z.string().optional(),
-  installRecord: z.record(z.string(), z.unknown()).optional(),
+  installRecord: PluginInstallRecordSchema.optional(),
   installRecordHash: z.string().optional(),
   packageInstall: z.unknown().optional(),
   packageChannel: z.unknown().optional(),
+  packageBuild: z
+    .object({
+      bundledDist: z.boolean().optional(),
+    })
+    .optional(),
   manifestPath: z.string(),
   manifestHash: z.string(),
+  doctorContractHash: z.string().optional(),
+  doctorContractFile: InstalledPluginFileSignatureSchema.optional(),
+  manifestFile: InstalledPluginFileSignatureSchema.optional(),
   format: z.string().optional(),
   bundleFormat: z.string().optional(),
   source: z.string().optional(),
@@ -64,24 +76,26 @@ const InstalledPluginIndexRecordSchema = z.object({
     .object({
       path: z.string(),
       hash: z.string(),
+      fileSignature: InstalledPluginFileSignatureSchema.optional(),
     })
     .optional(),
   rootDir: z.string(),
   origin: z.string(),
   enabled: z.boolean(),
   enabledByDefault: z.boolean().optional(),
+  enabledByDefaultOnPlatforms: StringArraySchema.optional(),
   syntheticAuthRefs: StringArraySchema.optional(),
   startup: InstalledPluginIndexStartupSchema,
+  contributions: InstalledPluginIndexContributionSchema.optional(),
   compat: z.array(z.string()),
 });
-
-const InstalledPluginInstallRecordSchema = z.record(z.string(), z.unknown());
 
 const PluginDiagnosticSchema = z.object({
   level: z.union([z.literal("warn"), z.literal("error")]),
   message: z.string(),
   pluginId: z.string().optional(),
   source: z.string().optional(),
+  code: z.string().optional(),
 });
 
 const InstalledPluginIndexSchema = z.object({
@@ -92,43 +106,34 @@ const InstalledPluginIndexSchema = z.object({
   migrationVersion: z.literal(INSTALLED_PLUGIN_INDEX_MIGRATION_VERSION),
   policyHash: z.string(),
   generatedAtMs: z.number(),
+  workspaceDir: z.string().optional(),
   refreshReason: z.string().optional(),
-  installRecords: z.record(z.string(), InstalledPluginInstallRecordSchema).optional(),
+  installRecords: z.unknown().optional(),
   plugins: z.array(InstalledPluginIndexRecordSchema),
   diagnostics: z.array(PluginDiagnosticSchema),
 });
 
-function copySafeInstallRecords(
-  records: Readonly<Record<string, InstalledPluginInstallRecordInfo>> | undefined,
-): Record<string, InstalledPluginInstallRecordInfo> | undefined {
-  if (!records) {
-    return undefined;
-  }
-  const safeRecords: Record<string, InstalledPluginInstallRecordInfo> = {};
-  for (const [pluginId, record] of Object.entries(records)) {
-    if (isBlockedObjectKey(pluginId)) {
-      continue;
-    }
-    safeRecords[pluginId] = record;
-  }
-  return safeRecords;
-}
-
-function parseInstalledPluginIndex(value: unknown): InstalledPluginIndex | null {
+export function parseInstalledPluginIndex(value: unknown): InstalledPluginIndex | null {
   const parsed = safeParseWithSchema(InstalledPluginIndexSchema, value) as
-    | (Omit<InstalledPluginIndex, "installRecords"> & {
-        installRecords?: InstalledPluginIndex["installRecords"];
+    | (Omit<InstalledPluginIndex, "installRecords" | "plugins"> & {
+        installRecords?: unknown;
+        plugins: Array<
+          InstalledPluginIndex["plugins"][number] & {
+            installOwner?: string;
+            installOwnerAmbiguous?: true;
+          }
+        >;
       })
     | null;
   if (!parsed) {
     return null;
   }
-  const installRecords =
-    copySafeInstallRecords(parsed.installRecords) ??
-    copySafeInstallRecords(
-      extractPluginInstallRecordsFromInstalledPluginIndex(parsed as InstalledPluginIndex),
-    ) ??
-    {};
+  const installRecords = Object.hasOwn(parsed, "installRecords")
+    ? parsePluginInstallRecordMap(parsed.installRecords)
+    : extractPluginInstallRecordsFromInstalledPluginIndex(parsed as InstalledPluginIndex);
+  if (!installRecords) {
+    return null;
+  }
   return {
     version: parsed.version,
     ...(parsed.warning ? { warning: parsed.warning } : {}),
@@ -137,9 +142,12 @@ function parseInstalledPluginIndex(value: unknown): InstalledPluginIndex | null 
     migrationVersion: parsed.migrationVersion,
     policyHash: parsed.policyHash,
     generatedAtMs: parsed.generatedAtMs,
+    ...(parsed.workspaceDir !== undefined ? { workspaceDir: parsed.workspaceDir } : {}),
     ...(parsed.refreshReason ? { refreshReason: parsed.refreshReason } : {}),
     installRecords,
-    plugins: parsed.plugins,
+    plugins: parsed.plugins.map(({ installOwner, installOwnerAmbiguous, ...plugin }) =>
+      recordInstalledPluginIndexInstallOwner(plugin, installOwner, installOwnerAmbiguous === true),
+    ),
     diagnostics: parsed.diagnostics,
   };
 }
@@ -147,94 +155,22 @@ function parseInstalledPluginIndex(value: unknown): InstalledPluginIndex | null 
 export async function readPersistedInstalledPluginIndex(
   options: InstalledPluginIndexStoreOptions = {},
 ): Promise<InstalledPluginIndex | null> {
-  const parsed = await readJsonFile<unknown>(resolveInstalledPluginIndexStorePath(options));
-  return parseInstalledPluginIndex(parsed);
+  return readPersistedInstalledPluginIndexSync(options);
 }
 
 export function readPersistedInstalledPluginIndexSync(
   options: InstalledPluginIndexStoreOptions = {},
 ): InstalledPluginIndex | null {
-  const parsed = readJsonFileSync(resolveInstalledPluginIndexStorePath(options));
-  return parseInstalledPluginIndex(parsed);
-}
-
-export async function writePersistedInstalledPluginIndex(
-  index: InstalledPluginIndex,
-  options: InstalledPluginIndexStoreOptions = {},
-): Promise<string> {
-  const filePath = resolveInstalledPluginIndexStorePath(options);
-  await writeJsonAtomic(
-    filePath,
-    { ...index, warning: INSTALLED_PLUGIN_INDEX_WARNING },
-    {
-      trailingNewline: true,
-      ensureDirMode: 0o700,
-      mode: 0o600,
-    },
-  );
-  clearCurrentPluginMetadataSnapshotState();
-  return filePath;
-}
-
-export function writePersistedInstalledPluginIndexSync(
-  index: InstalledPluginIndex,
-  options: InstalledPluginIndexStoreOptions = {},
-): string {
-  const filePath = resolveInstalledPluginIndexStorePath(options);
-  saveJsonFile(filePath, { ...index, warning: INSTALLED_PLUGIN_INDEX_WARNING });
-  clearCurrentPluginMetadataSnapshotState();
-  return filePath;
-}
-
-export async function inspectPersistedInstalledPluginIndex(
-  params: LoadInstalledPluginIndexParams & InstalledPluginIndexStoreOptions = {},
-): Promise<InstalledPluginIndexStoreInspection> {
-  const persisted = await readPersistedInstalledPluginIndex(params);
-  const current = loadInstalledPluginIndex({
-    ...params,
-    installRecords:
-      params.installRecords ?? extractPluginInstallRecordsFromInstalledPluginIndex(persisted),
-  });
-  if (!persisted) {
-    return {
-      state: "missing",
-      refreshReasons: ["missing"],
-      persisted: null,
-      current,
-    };
+  const entry = getPersistedInstalledPluginIndexCacheEntry(options);
+  if (entry.index === undefined) {
+    const value = entry.state.status === "present" ? entry.state.value : undefined;
+    entry.index =
+      value &&
+      typeof value === "object" &&
+      "revision" in value &&
+      typeof value.revision === "number"
+        ? parseInstalledPluginIndex("index" in value ? value.index : undefined)
+        : null;
   }
-
-  const refreshReasons = diffInstalledPluginIndexInvalidationReasons(persisted, current);
-  return {
-    state: refreshReasons.length > 0 ? "stale" : "fresh",
-    refreshReasons,
-    persisted,
-    current,
-  };
-}
-
-export async function refreshPersistedInstalledPluginIndex(
-  params: RefreshInstalledPluginIndexParams & InstalledPluginIndexStoreOptions,
-): Promise<InstalledPluginIndex> {
-  const persisted = params.installRecords ? null : await readPersistedInstalledPluginIndex(params);
-  const index = refreshInstalledPluginIndex({
-    ...params,
-    installRecords:
-      params.installRecords ?? extractPluginInstallRecordsFromInstalledPluginIndex(persisted),
-  });
-  await writePersistedInstalledPluginIndex(index, params);
-  return index;
-}
-
-export function refreshPersistedInstalledPluginIndexSync(
-  params: RefreshInstalledPluginIndexParams & InstalledPluginIndexStoreOptions,
-): InstalledPluginIndex {
-  const persisted = params.installRecords ? null : readPersistedInstalledPluginIndexSync(params);
-  const index = refreshInstalledPluginIndex({
-    ...params,
-    installRecords:
-      params.installRecords ?? extractPluginInstallRecordsFromInstalledPluginIndex(persisted),
-  });
-  writePersistedInstalledPluginIndexSync(index, params);
-  return index;
+  return entry.index;
 }

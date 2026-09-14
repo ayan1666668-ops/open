@@ -1,6 +1,13 @@
+// Register subCLI tests cover nested CLI command registration boundaries.
+import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { withEnvAsync } from "../../test-utils/env.js";
 import { registerSubCliByName, registerSubCliCommands } from "./register.subclis.js";
+import * as subCliDescriptors from "./subcli-descriptors.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 const { acpAction, registerAcpCli } = vi.hoisted(() => {
   const action = vi.fn();
@@ -31,11 +38,28 @@ const { loadPrivateQaCliModule } = vi.hoisted(() => ({
 
 const { inferAction, registerCapabilityCli } = vi.hoisted(() => {
   const action = vi.fn();
-  const register = vi.fn((program: Command) => {
+  const register = vi.fn((program: Command, _argv: string[]) => {
     program.command("infer").alias("capability").action(action);
   });
   return { inferAction: action, registerCapabilityCli: register };
 });
+
+const { approvalsAction, registerExecApprovalsCli } = vi.hoisted(() => {
+  const action = vi.fn();
+  const register = vi.fn((program: Command) => {
+    program.command("approvals").alias("exec-approvals").action(action);
+  });
+  return { approvalsAction: action, registerExecApprovalsCli: register };
+});
+
+const { registerTuiCli, registerCronCli } = vi.hoisted(() => ({
+  registerTuiCli: vi.fn((program: Command) => {
+    program.command("tui").aliases(["terminal", "chat"]);
+  }),
+  registerCronCli: vi.fn((program: Command) => {
+    program.command("cron").alias("automations");
+  }),
+}));
 
 const { registerPluginsCli, registerPluginCliCommandsFromValidatedConfig } = vi.hoisted(() => ({
   registerPluginsCli: vi.fn((program: Command) => {
@@ -47,6 +71,18 @@ const { registerPluginsCli, registerPluginCliCommandsFromValidatedConfig } = vi.
   }),
   registerPluginCliCommandsFromValidatedConfig: vi.fn(async () => null),
 }));
+const { registerChannelsCli } = vi.hoisted(() => ({
+  registerChannelsCli: vi.fn(async () => undefined),
+}));
+const { registerResumeCli, resumeAction } = vi.hoisted(() => {
+  const action = vi.fn();
+  return {
+    registerResumeCli: vi.fn((program: Command) => {
+      program.command("resume").action(action);
+    }),
+    resumeAction: action,
+  };
+});
 const { addGatewayRunCommand, gatewayRunAction, registerGatewayCli } = vi.hoisted(() => {
   const runAction = vi.fn();
   return {
@@ -65,10 +101,15 @@ const { addGatewayRunCommand, gatewayRunAction, registerGatewayCli } = vi.hoiste
 
 vi.mock("../acp-cli.js", () => ({ registerAcpCli }));
 vi.mock("../gateway-cli.js", () => ({ registerGatewayCli }));
-vi.mock("../gateway-cli/run.js", () => ({ addGatewayRunCommand }));
+vi.mock("../gateway-cli/run-command.js", () => ({ addGatewayRunCommand }));
 vi.mock("../nodes-cli.js", () => ({ registerNodesCli }));
 vi.mock("../capability-cli.js", () => ({ registerCapabilityCli }));
+vi.mock("../exec-approvals-cli.js", () => ({ registerExecApprovalsCli }));
+vi.mock("../tui-cli.js", () => ({ registerTuiCli }));
+vi.mock("../cron-cli.js", () => ({ registerCronCli }));
 vi.mock("../plugins-cli.js", () => ({ registerPluginsCli }));
+vi.mock("../channels-cli.js", () => ({ registerChannelsCli }));
+vi.mock("../resume-cli.js", () => ({ registerResumeCli }));
 vi.mock("../../plugins/cli.js", () => ({ registerPluginCliCommandsFromValidatedConfig }));
 vi.mock("./private-qa-cli.js", async () => {
   const actual = await vi.importActual<typeof import("./private-qa-cli.js")>("./private-qa-cli.js");
@@ -108,8 +149,15 @@ describe("registerSubCliCommands", () => {
     loadPrivateQaCliModule.mockClear();
     registerCapabilityCli.mockClear();
     inferAction.mockClear();
+    registerExecApprovalsCli.mockClear();
+    approvalsAction.mockClear();
+    registerTuiCli.mockClear();
+    registerCronCli.mockClear();
     registerPluginsCli.mockClear();
     registerPluginCliCommandsFromValidatedConfig.mockClear();
+    registerChannelsCli.mockClear();
+    registerResumeCli.mockClear();
+    resumeAction.mockClear();
     addGatewayRunCommand.mockClear();
     gatewayRunAction.mockClear();
     registerGatewayCli.mockClear();
@@ -151,6 +199,64 @@ describe("registerSubCliCommands", () => {
     expect(registerAcpCli).not.toHaveBeenCalled();
   });
 
+  it("coalesces adjacent completion aliases while preserving separated command visits", async () => {
+    const selectedNames = new Set([
+      "infer",
+      "capability",
+      "approvals",
+      "exec-approvals",
+      "tui",
+      "resume",
+      "terminal",
+      "chat",
+      "cron",
+      "automations",
+      "completion",
+    ]);
+    const descriptors = subCliDescriptors
+      .getSubCliEntriesCore()
+      .filter(({ name }) => selectedNames.has(name));
+    const descriptorSpy = vi
+      .spyOn(subCliDescriptors, "getSubCliEntriesCore")
+      .mockReturnValue(descriptors);
+    const root = tempDirs.make("openclaw-completion-groups-");
+    try {
+      await withEnvAsync(
+        {
+          HOME: root,
+          USERPROFILE: root,
+          OPENCLAW_HOME: root,
+          OPENCLAW_STATE_DIR: path.join(root, "state"),
+          OPENCLAW_CONFIG_PATH: path.join(root, "openclaw.json"),
+          OPENCLAW_DISABLE_LAZY_SUBCOMMANDS: undefined,
+          OPENCLAW_COMPLETION_SKIP_PLUGIN_COMMANDS: "1",
+        },
+        async () => {
+          const program = createRegisteredProgram(
+            ["node", "openclaw", "completion", "--write-state"],
+            "openclaw",
+          );
+          await program.parseAsync(["completion", "--write-state"], { from: "user" });
+
+          expect(registerCapabilityCli).toHaveBeenCalledTimes(1);
+          expect(registerExecApprovalsCli).toHaveBeenCalledTimes(1);
+          expect(registerCronCli).toHaveBeenCalledTimes(1);
+          expect(registerTuiCli).toHaveBeenCalledTimes(2);
+          expect(program.commands.map((command) => command.name())).toEqual([
+            "completion",
+            "infer",
+            "approvals",
+            "resume",
+            "tui",
+            "cron",
+          ]);
+        },
+      );
+    } finally {
+      descriptorSpy.mockRestore();
+    }
+  });
+
   it("omits the qa placeholder when the private qa cli is disabled", () => {
     delete process.env.OPENCLAW_ENABLE_PRIVATE_QA_CLI;
 
@@ -167,6 +273,12 @@ describe("registerSubCliCommands", () => {
     await program.parseAsync(["nodes", "list"], { from: "user" });
 
     expect(registerNodesCli).toHaveBeenCalledTimes(1);
+    expect(registerNodesCli).toHaveBeenCalledWith(expect.any(Command), [
+      "node",
+      "openclaw",
+      "nodes",
+      "list",
+    ]);
     expect(nodesAction).toHaveBeenCalledTimes(1);
   });
 
@@ -178,7 +290,34 @@ describe("registerSubCliCommands", () => {
     await program.parseAsync(["infer"], { from: "user" });
 
     expect(registerCapabilityCli).toHaveBeenCalledTimes(1);
+    expect(registerCapabilityCli).toHaveBeenCalledWith(expect.any(Command), [
+      "node",
+      "openclaw",
+      "infer",
+    ]);
     expect(inferAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers the resume placeholder and dispatches through its lazy registrar", async () => {
+    const program = createRegisteredProgram(["node", "openclaw", "resume"], "openclaw");
+
+    expect(program.commands.map((cmd) => cmd.name())).toEqual(["resume", "completion"]);
+
+    await program.parseAsync(["resume"], { from: "user" });
+
+    expect(registerResumeCli).toHaveBeenCalledTimes(1);
+    expect(resumeAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers the exec-approvals placeholder and dispatches through the approvals registrar", async () => {
+    const program = createRegisteredProgram(["node", "openclaw", "exec-approvals"], "openclaw");
+
+    expect(program.commands.map((cmd) => cmd.name())).toEqual(["exec-approvals", "completion"]);
+
+    await program.parseAsync(["exec-approvals"], { from: "user" });
+
+    expect(registerExecApprovalsCli).toHaveBeenCalledTimes(1);
+    expect(approvalsAction).toHaveBeenCalledTimes(1);
   });
 
   it("replaces placeholder when registering a subcommand by name", async () => {
@@ -187,7 +326,7 @@ describe("registerSubCliCommands", () => {
     await registerSubCliByName(program, "acp");
 
     const names = program.commands.map((cmd) => cmd.name());
-    expect(names.filter((name) => name === "acp")).toHaveLength(1);
+    expect(names.reduce((count, name) => count + (name === "acp" ? 1 : 0), 0)).toBe(1);
 
     await program.parseAsync(["acp"], { from: "user" });
     expect(registerAcpCli).toHaveBeenCalledTimes(1);
@@ -218,6 +357,17 @@ describe("registerSubCliCommands", () => {
     expect(registerGatewayCli).toHaveBeenCalledTimes(1);
   });
 
+  it("passes completion context to channel registration", async () => {
+    const argv = ["node", "openclaw", "completion", "--write-state"];
+    const program = new Command().name("openclaw");
+
+    await registerSubCliByName(program, "channels", argv, { purpose: "completion" });
+
+    expect(registerChannelsCli).toHaveBeenCalledWith(program, argv, {
+      includeSetupOptions: true,
+    });
+  });
+
   it.each([
     ["plugins update", ["plugins", "update", "lossless-claw"]],
     ["plugins update --all", ["plugins", "update", "--all"]],
@@ -237,13 +387,13 @@ describe("registerSubCliCommands", () => {
     expect(registerPluginCliCommandsFromValidatedConfig).not.toHaveBeenCalled();
   });
 
-  it("keeps plugin CLI registrations available for the plugins command root", async () => {
+  it("does not preload plugin CLI registrations for bare plugin parent help", async () => {
     process.argv = ["node", "openclaw", "plugins"];
     const program = new Command().name("openclaw");
 
     await registerSubCliByName(program, "plugins");
 
     expect(registerPluginsCli).toHaveBeenCalledTimes(1);
-    expect(registerPluginCliCommandsFromValidatedConfig).toHaveBeenCalledTimes(1);
+    expect(registerPluginCliCommandsFromValidatedConfig).not.toHaveBeenCalled();
   });
 });

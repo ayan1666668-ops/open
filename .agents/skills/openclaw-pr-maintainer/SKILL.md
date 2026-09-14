@@ -1,130 +1,113 @@
 ---
 name: openclaw-pr-maintainer
-description: Review, triage, close, label, comment on, or land OpenClaw PRs/issues with maintainer evidence checks.
+description: "Review, triage, repair, or land OpenClaw issues and pull requests with current-source evidence and the native maintainer workflow."
 ---
 
 # OpenClaw PR Maintainer
 
-Use this skill for maintainer-facing GitHub workflow, not for ordinary code changes.
+Use for the requested OpenClaw issue/PR operation. Root `AGENTS.md` owns repair,
+product, source-trust, and approval policy; this skill owns the GitHub workflow.
+A pasted ref is context, not permission to publish or expand the task.
 
-## Start issue and PR triage with gitcrawl
+## Select the scope
 
-- Use `$gitcrawl` first anytime you inspect OpenClaw issues or PRs.
-- Check local `gitcrawl` data first for related threads, duplicate attempts, and already-landed fixes.
-- Use `gitcrawl` for candidate discovery and clustering; use `gh`, `gh api`, and the current checkout to verify live state before commenting, labeling, closing, or landing.
-- If `gitcrawl` is missing, stale, lacks the target thread, or has no embeddings for neighbor/search commands, fall back to the GitHub search workflow below.
-- Do not run expensive/update commands such as `gitcrawl sync --include-comments`, future enrichment commands, or broad reclustering unless the user asked to update the local store or stale data is blocking the decision.
+- **Review, triage, or list:** read-only. Explain the change, actionable findings,
+  useful evidence, and material uncertainty. Do not edit, assign, label, comment,
+  or close unless separately authorized.
+- **Fix only:** investigate, repair locally, and validate. Publishing still
+  requires ship/land or equivalent scoped authority.
+- **Land/ship or autonomous repair:** finish the authorized scope through current
+  source proof, review, exact-head CI, native merge, and remote verification.
+  Preserve contributor credit and unrelated work. Routine steps need no repeated
+  permission; security, schema, product, release, and other root gates remain.
+- **Queue/discovery:** read [triage](references/triage.md). Batch live reads and
+  shared discovery; do not turn one named PR into an unsolicited queue sweep.
+- **Author or regression attribution question:** read
+  [author and provenance research](references/attribution.md). Account age and
+  contribution-history queries are conditional, not a prerequisite for every PR.
 
-Common read-only path:
+The lead remains hands-on. Use bounded independent workers where they add
+useful evidence; serialize shared checkout/ref mutations and GitHub writes.
+Do not create user-owned app tasks to hide internal subtasks. Preserve a stalled
+worker's patches, claims, and proof before taking over or reassigning its work.
 
-```bash
-gitcrawl threads openclaw/openclaw --numbers <issue-or-pr-number> --include-closed --json
-gitcrawl neighbors openclaw/openclaw --number <issue-or-pr-number> --limit 12 --json
-gitcrawl search openclaw/openclaw --query "<scope or title keywords>" --mode hybrid --json
-gitcrawl cluster-detail openclaw/openclaw --id <cluster-id> --member-limit 20 --body-chars 280 --json
-```
+## Inspect the actual item
 
-## Apply close and triage labels correctly
-
-- If an issue or PR matches an auto-close reason, apply the label and let `.github/workflows/auto-response.yml` handle the comment/close/lock flow.
-- Do not manually close plus manually comment for these reasons.
-- `r:*` labels can be used on both issues and PRs.
-- Current reasons:
-  - `r: skill`
-  - `r: support`
-  - `r: no-ci-pr`
-  - `r: too-many-prs`
-  - `r: testflight`
-  - `r: third-party-extension`
-  - `r: moltbook`
-  - `r: spam`
-  - `invalid`
-  - `dirty` for PRs only
-
-## Select small high-confidence triage candidates
-
-When asked for `X` issues or PRs to triage, `X` means qualified candidates, not sampled threads.
-
-Only list candidates that pass all gates:
-
-- small owner/surface, with a likely narrow fix and focused regression test
-- symptom is reproducible or provable with logs, failing test, live command, dependency contract, or current-main behavior
-- root cause is traceable to code with file/line and the proposed fix touches that path
-- no strong smell that a broader refactor, ownership rethink, migration, or product decision is the better fix
-- dependency-backed behavior checked against upstream docs/source/types; live or web proof used when local proof is insufficient
-
-Loop:
-
-1. Use `gitcrawl` / `gh` to gather candidate clusters.
-2. Read issue/PR body, comments, current code, adjacent tests, and dependency contracts.
-3. Try focused repro or proof.
-4. Reject unclear, stale, speculative, broad-refactor, or owner-ambiguous items.
-5. Continue until `X` qualified candidates or the bounded search is exhausted.
-
-Output only qualifying candidates, with: ref, surface, proof, cause, fix sketch, why small, expected test/gate. If none qualify, say so; do not pad.
-
-## Enforce the bug-fix evidence bar
-
-- Never merge a bug-fix PR based only on issue text, PR text, or AI rationale.
-- Before landing, require:
-  1. symptom evidence such as a repro, logs, or a failing test
-  2. a verified root cause in code with file/line
-  3. a fix that touches the implicated code path
-  4. a regression test when feasible, or explicit manual verification plus a reason no test was added
-- If the claim is unsubstantiated or likely wrong, request evidence or changes instead of merging.
-- If the linked issue appears outdated or incorrect, correct triage first. Do not merge a speculative fix.
-
-## Close low-signal manual PRs carefully
-
-- Do not close for red CI alone. Require a clear low-signal category plus stale or failed validation.
-- Good manual-close categories:
-  - blank or mostly untouched PR template with no concrete OpenClaw problem/fix
-  - random docs-only churn such as root README translations, generic wording tweaks, or community-plugin discoverability docs that should go through ClawHub
-  - test-only coverage without a linked bug, owner request, or behavior change
-  - refactor-only cleanup, variable renames, formatting, or generated/baseline churn without maintainer request
-  - third-party channel/provider/tool/skill/plugin work that belongs on ClawHub instead of core
-  - risky ops/infra drive-bys such as new external CI services, release workflows, host upgrade scripts, Docker base migrations, or apt retry/fix-missing tweaks without owner request and green validation
-  - dirty branches where a narrow stated change includes unrelated docs/generated/runtime/extension files
-  - repeated bot-review spam or copied bot output without author-owned fixes
-- Keep or escalate plausible focused bug fixes, green PRs, active maintainer discussions, assigned work, recent author follow-up, and unique reproduction details.
-- For third-party capabilities, prefer the `r: third-party-extension` auto-response label when it applies; it points contributors to publish on ClawHub.
-
-## Handle GitHub text safely
-
-- For issue comments and PR comments, use literal multiline strings or `-F - <<'EOF'` for real newlines. Never embed `\n`.
-- Do not use `gh issue/pr comment -b "..."` when the body contains backticks or shell characters. Prefer a single-quoted heredoc.
-- Do not wrap issue or PR refs like `#24643` in backticks when you want auto-linking.
-- PR landing comments should include clickable full commit links for landed and source SHAs when present.
-
-## Search broadly before deciding
-
-- Prefer `gitcrawl` first. Then use targeted GitHub keyword search to verify gaps, live status, comments, and candidates not present in the local store.
-- Use `--repo openclaw/openclaw` with `--match title,body` first when using `gh search`.
-- Add `--match comments` when triaging follow-up discussion or closed-as-duplicate chains.
-- Do not stop at the first 500 results when the task requires a full search.
-
-Examples:
+Start with `git status -sb`; preserve unrelated changes. Use available local
+`gitcrawl` data for related work when useful, then bare PATH `gh` with narrow
+JSON fields for live decisions. Stale/missing archives fall through to `gh`;
+do not broadly sync archives just to begin. PR source comes from `gh pr
+view/diff` and the checkout, not web search.
 
 ```bash
-gh search prs --repo openclaw/openclaw --match title,body --limit 50 -- "auto-update"
-gh search issues --repo openclaw/openclaw --match title,body --limit 50 -- "auto-update"
-gh search issues --repo openclaw/openclaw --match title,body --limit 50 \
-  --json number,title,state,url,updatedAt -- "auto update" \
-  --jq '.[] | "\(.number) | \(.state) | \(.title) | \(.url)"'
+gh pr view <pr> --repo openclaw/openclaw \
+  --json number,title,state,body,author,assignees,baseRefName,headRefName,headRefOid,files,comments,reviews
+gh issue view <issue> --repo openclaw/openclaw \
+  --json number,title,state,body,author,assignees,comments
 ```
 
-## Follow PR review and landing hygiene
+Check assignment before deep work. Mention another assignee and treat a fresh
+assignment as active ownership unless the user directs otherwise. Assignment
+alone is not a block when stale or explicitly overridden. Claim an unassigned
+named item only under assignment or landing/autonomous-resolution authority,
+using the verified authenticated login. Never remove others' assignments
+without direction. Account/activity research belongs to its conditional route.
 
-- If bot review conversations exist on your PR, address them and resolve them yourself once fixed.
-- Leave a review conversation unresolved only when reviewer or maintainer judgment is still needed.
-- When landing or merging any PR, follow the global `/landpr` process.
-- Use `scripts/committer "<msg>" <file...>` for scoped commits instead of manual `git add` and `git commit`.
-- Keep commit messages concise and action-oriented.
-- Group related changes; avoid bundling unrelated refactors.
-- Use `.github/pull_request_template.md` for PR submissions and `.github/ISSUE_TEMPLATE/` for issues.
-- Do not commit PR-only artifacts such as screenshots under `.github/pr-assets`; attach them to the PR/comment or use an external artifact store instead.
+## Establish the outcome
 
-## Extra safety
+Read the affected owner, entry points, callers, relevant siblings, tests, docs,
+history, and current main as needed to support a conclusion. Inspect dependency
+contracts directly when they determine behavior; apply the root's personal
+Codex-source inspection requirement when relevant. Investigate contrary evidence
+before defending a verdict. Do not fill an arbitrary evidence matrix or invent
+a rejected alternative merely to satisfy a form.
 
-- If a close or reopen action would affect more than 5 PRs, ask for explicit confirmation with the exact count and target query first.
-- `sync` means: if the tree is dirty, commit all changes with a sensible Conventional Commit message, then `git pull --rebase`, then `git push`. Stop if rebase conflicts cannot be resolved safely.
+- **Already fixed:** prove the original behavior is repaired on current main,
+  with the canonical commit/PR and matching source or runnable proof. Under
+  closure authority, comment that evidence and close; otherwise report it.
+- **Real defect:** reproduce it, repair its owning invariant, and prove the
+  repaired path and affected siblings. Prefer a coherent simplification over a
+  symptom guard. Size and LOC are context, not correctness gates.
+- **Existing useful PR:** improve the editable branch rather than replacing it
+  unnecessarily. If it cannot safely be updated, create an authorized credited
+  replacement before closing the source. Never squash a contributor-owned PR
+  after replacing its ancestry; use a maintainer-owned replacement.
+- **Uncertain or product decision:** state the concrete gap. Do not merge a
+  speculative repair or automatically close work as out of scope.
+
+Use `$openclaw-testing` to choose proportional proof and its source-trust/host
+route. Trusted development proof defaults local; remote proof needs an environment
+or isolation reason. Unavailable optional live proof may use meaningful boundary
+proof with the limitation stated. Explicit live requests, external API contracts,
+and changes whose risk requires authenticated execution keep their required proof.
+Never describe mocks, skipped checks, or an older head as live evidence.
+
+## Review and publish
+
+Before committing or landing nontrivial code, run `$autoreview` and resolve
+verified actionable findings. Use it for a review-only request when that request
+asks for independent autoreview; ordinary findings-only review does not need a
+second reviewer by default. Do not add another mandatory CLI review pass.
+Reopen review for substantive changes or unresolved concerns, not a patch-identical
+rebase or a mechanical head change. Address real human/bot findings and explain
+rejected ones; bot scores and Rank-up lists do not create separate obligations.
+
+Use the current PR template. Lead with the plain-language problem and concrete
+user impact; keep the explanation short and leave implementation inventories in
+the diff or optional details. Keep important risks, migrations, required actions,
+useful evidence, known gaps, and contributor credit visible and current. Do not
+invent a user benefit for internal-only work. Explain material tradeoffs when they
+matter; do not require universal LOC tables, provenance fields, or alternate-fix
+essays. `CHANGELOG.md` is release-owned; user-facing release-note context stays
+in the PR/commit. Omit agent transcripts unless explicitly requested.
+
+Before public mutation, verify author/committer and authenticated writer identity.
+Use body files for shell-sensitive text. Post findings only under the authorized
+write scope, and update an existing relevant comment/body instead of duplicating it.
+Publication, media, exact-head CI, and native landing mechanics are in
+[landing](references/landing.md); read that reference before publishing or merging.
+
+Verify the final merge/closure state and source rather than trusting a local
+summary. Report the problem, owner-level change, important proof and limitations,
+credit, and linked final state in concise prose. Record worthwhile follow-ups;
+do not manufacture another task after a bounded request is complete.

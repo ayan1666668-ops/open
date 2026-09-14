@@ -1,15 +1,31 @@
+// Hashes installed plugin index records for change detection.
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
 import type { PluginDiagnostic } from "./manifest-types.js";
 
-export function hashString(value: string): string {
+/** File metadata signature used to skip unchanged installed plugin files. */
+export type InstalledPluginFileSignature = {
+  size: number;
+  mtimeMs: number;
+  ctimeMs?: number;
+};
+
+function hashString(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+/** Hashes JSON-serializable data with SHA-256. */
 export function hashJson(value: unknown): string {
   return hashString(JSON.stringify(value));
 }
 
+/** Hashes JSON-like data independently of object property insertion order. */
+export function hashStableJson(value: unknown): string {
+  return hashString(stableStringify(value));
+}
+
+/** Safely hashes a file, optionally recording required-file diagnostics. */
 export function safeHashFile(params: {
   filePath: string;
   pluginId?: string;
@@ -29,6 +45,23 @@ export function safeHashFile(params: {
         }`,
       });
     }
+    return undefined;
+  }
+}
+
+/** Reads a safe file signature for installed plugin index freshness checks. */
+export function safeFileSignature(filePath: string): InstalledPluginFileSignature | undefined {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) {
+      return undefined;
+    }
+    return {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+    };
+  } catch {
     return undefined;
   }
 }

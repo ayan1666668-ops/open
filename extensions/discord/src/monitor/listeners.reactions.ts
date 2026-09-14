@@ -1,11 +1,8 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+// Discord plugin module implements listeners.reactions behavior.
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { danger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
-import {
-  readStoreAllowFromForDmPolicy,
-  resolveDmGroupAccessWithLists,
-} from "openclaw/plugin-sdk/security-runtime";
-import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
+import { enqueueRoutedSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import {
   ChannelType,
   type Client,
@@ -15,17 +12,17 @@ import {
 } from "../internal/discord.js";
 import {
   isDiscordGroupAllowedByPolicy,
-  normalizeDiscordAllowList,
   normalizeDiscordSlug,
-  resolveDiscordAllowListMatch,
   resolveDiscordChannelConfigWithFallback,
   resolveDiscordGuildEntry,
   resolveDiscordMemberAccessState,
   resolveGroupDmAllow,
   shouldEmitDiscordReactionNotification,
 } from "./allow-list.js";
+import { resolveDiscordDmCommandAccess } from "./dm-command-auth.js";
 import { formatDiscordReactionEmoji, formatDiscordUserTag } from "./format.js";
 import { runDiscordListenerWithSlowLog, type DiscordListenerLogger } from "./listeners.queue.js";
+import type { DiscordLivePolicyReader } from "./live-policy.js";
 import { resolveFetchedDiscordThreadLikeChannelContext } from "./thread-channel-context.js";
 
 type LoadedConfig = OpenClawConfig;
@@ -34,6 +31,7 @@ type RuntimeEnv = import("openclaw/plugin-sdk/runtime-env").RuntimeEnv;
 type DiscordReactionEvent = Parameters<MessageReactionAddListener["handle"]>[0];
 
 type DiscordReactionListenerParams = {
+  readPolicy?: DiscordLivePolicyReader;
   cfg: LoadedConfig;
   runtime: RuntimeEnv;
   logger: DiscordListenerLogger;
@@ -41,6 +39,7 @@ type DiscordReactionListenerParams = {
 } & DiscordReactionRoutingParams;
 
 type DiscordReactionRoutingParams = {
+  isPolicyCurrent?: () => boolean;
   accountId: string;
   botUserId?: string;
   dmEnabled: boolean;
@@ -94,7 +93,7 @@ export class DiscordReactionRemoveListener extends MessageReactionRemoveListener
   }
 }
 
-async function runDiscordReactionHandler(params: {
+async function runDiscordReactionHandler(initialParams: {
   data: DiscordReactionEvent;
   client: Client;
   action: "added" | "removed";
@@ -102,6 +101,17 @@ async function runDiscordReactionHandler(params: {
   listener: string;
   event: string;
 }): Promise<void> {
+  const policy = await initialParams.handlerParams.readPolicy?.();
+  const params = policy
+    ? {
+        ...initialParams,
+        handlerParams: {
+          ...initialParams.handlerParams,
+          ...policy,
+          isPolicyCurrent: policy.isCurrent,
+        },
+      }
+    : initialParams;
   await runDiscordListenerWithSlowLog({
     logger: params.handlerParams.logger,
     listener: params.listener,
@@ -112,6 +122,7 @@ async function runDiscordReactionHandler(params: {
         client: params.client,
         action: params.action,
         cfg: params.handlerParams.cfg,
+        isPolicyCurrent: params.handlerParams.isPolicyCurrent,
         accountId: params.handlerParams.accountId,
         botUserId: params.handlerParams.botUserId,
         dmEnabled: params.handlerParams.dmEnabled,
@@ -128,6 +139,8 @@ async function runDiscordReactionHandler(params: {
 }
 
 type DiscordReactionIngressAuthorizationParams = {
+  isPolicyCurrent?: () => boolean;
+  cfg: LoadedConfig;
   accountId: string;
   user: User;
   memberRoleIds: string[];
@@ -151,6 +164,9 @@ type DiscordReactionIngressAuthorizationParams = {
 async function authorizeDiscordReactionIngress(
   params: DiscordReactionIngressAuthorizationParams,
 ): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  if (params.isPolicyCurrent?.() === false) {
+    return { allowed: false, reason: "policy-changed" };
+  }
   if (params.isDirectMessage && !params.dmEnabled) {
     return { allowed: false, reason: "dm-disabled" };
   }
@@ -158,36 +174,24 @@ async function authorizeDiscordReactionIngress(
     return { allowed: false, reason: "group-dm-disabled" };
   }
   if (params.isDirectMessage) {
-    const storeAllowFrom = await readStoreAllowFromForDmPolicy({
-      provider: "discord",
+    const access = await resolveDiscordDmCommandAccess({
+      cfg: params.cfg,
       accountId: params.accountId,
       dmPolicy: params.dmPolicy,
-    });
-    const access = resolveDmGroupAccessWithLists({
-      isGroup: false,
-      dmPolicy: params.dmPolicy,
-      groupPolicy: params.groupPolicy,
-      allowFrom: params.allowFrom,
-      groupAllowFrom: [],
-      storeAllowFrom,
-      isSenderAllowed: (allowEntries) => {
-        const allowList = normalizeDiscordAllowList(allowEntries, ["discord:", "user:", "pk:"]);
-        const allowMatch = allowList
-          ? resolveDiscordAllowListMatch({
-              allowList,
-              candidate: {
-                id: params.user.id,
-                name: params.user.username,
-                tag: formatDiscordUserTag(params.user),
-              },
-              allowNameMatching: params.allowNameMatching,
-            })
-          : { allowed: false };
-        return allowMatch.allowed;
+      configuredAllowFrom: params.allowFrom,
+      sender: {
+        id: params.user.id,
+        name: params.user.username,
+        tag: formatDiscordUserTag(params.user),
       },
+      allowNameMatching: params.allowNameMatching,
+      eventKind: "reaction",
     });
-    if (access.decision !== "allow") {
-      return { allowed: false, reason: access.reason };
+    if (params.isPolicyCurrent?.() === false) {
+      return { allowed: false, reason: "policy-changed" };
+    }
+    if (access.senderAccess.decision !== "allow") {
+      return { allowed: false, reason: access.senderAccess.reasonCode };
     }
   }
   if (
@@ -452,6 +456,8 @@ async function handleDiscordReactionEvent(
     const isGroupDm = channelType === ChannelType.GroupDM;
     const isThreadChannel = channelContext.isThreadChannel;
     const reactionIngressBase: Omit<DiscordReactionIngressAuthorizationParams, "channelConfig"> = {
+      isPolicyCurrent: params.isPolicyCurrent,
+      cfg: params.cfg,
       accountId: params.accountId,
       user,
       memberRoleIds,
@@ -486,7 +492,8 @@ async function handleDiscordReactionEvent(
         return reactionBase;
       }
       const emojiLabel = formatDiscordReactionEmoji(data.emoji);
-      const actorLabel = formatDiscordUserTag(user);
+      // Reaction removals do not include member/user details in Discord's gateway payload.
+      const actorLabel = formatDiscordUserTag(user) || user.id;
       const guildSlug =
         guildInfo?.slug ||
         (data.guild?.name
@@ -497,8 +504,8 @@ async function handleDiscordReactionEvent(
         : channelName
           ? `#${normalizeDiscordSlug(channelName)}`
           : `#${data.channel_id}`;
-      const baseText = `Discord reaction ${action}: ${emojiLabel} by ${actorLabel} on ${guildSlug} ${channelLabel} msg ${data.message_id}`;
-      const contextKey = `discord:reaction:${action}:${data.message_id}:${user.id}:${emojiLabel}`;
+      const baseText = `Discord ${data.burst ? "super " : ""}reaction ${action}: ${emojiLabel} by ${actorLabel} on ${guildSlug} ${channelLabel} msg ${data.message_id}`;
+      const contextKey = `discord:reaction:${action}:${data.message_id}:${user.id}:${emojiLabel}${data.burst ? ":burst" : ""}`;
       reactionBase = { baseText, contextKey };
       return reactionBase;
     };
@@ -516,8 +523,7 @@ async function handleDiscordReactionEvent(
         },
         parentPeer: parentPeerId ? { kind: "channel", id: parentPeerId } : undefined,
       });
-      enqueueSystemEvent(text, {
-        sessionKey: route.sessionKey,
+      enqueueRoutedSystemEvent(text, route, {
         contextKey,
       });
     };
