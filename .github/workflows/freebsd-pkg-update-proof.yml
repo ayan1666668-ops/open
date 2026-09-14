@@ -143,7 +143,7 @@ jobs:
           prepare: |
             timeout -k 15s 300s sh -eu -c 'env ASSUME_ALWAYS_YES=yes pkg bootstrap -f; pkg install -y node24 npm-node24 python3 gmake'
           run: |
-            timeout -k 15s 1200s /usr/local/bin/node scripts/e2e/freebsd-pkg-update-proof.mjs published proof-payload '${{ matrix.arch }}'
+            timeout -k 15s 1200s /usr/local/bin/node scripts/e2e/freebsd-pkg-update-proof.mjs both proof-payload '${{ matrix.arch }}'
       - name: Shut down this disposable guest
         if: ${{ always() && steps.vm.outcome != 'skipped' }}
         run: node scripts/e2e/freebsd-pkg-update-proof.mjs shutdown "$RUNNER_TEMP/freebsd-pkg-vm"

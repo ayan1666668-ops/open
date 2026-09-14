@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -302,7 +301,9 @@ function native(directory, architecture, publishedOnly = false) {
   };
   const pkg = (args) => success("/usr/sbin/pkg", ["-N", ...args], { env: pkgEnv });
   assert.equal(pkg(["--version"]), PKG_VERSION, "native pkg source contract changed");
-  const task = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-pkg-proof-"));
+  const defaultRoot = "/usr/local/lib/node_modules/openclaw";
+  // /tmp can be a different mount; the default-prefix case needs a same-filesystem rename.
+  const task = fs.mkdtempSync(path.join(path.dirname(defaultRoot), "openclaw-pkg-proof-"));
   fs.chmodSync(task, 0o755);
   const user = `ocproof${process.pid}`;
   const home = path.join(task, "home");
@@ -647,7 +648,6 @@ function native(directory, architecture, publishedOnly = false) {
     );
 
     // Preserve the lexical invoking root, including the conventional pkg prefix.
-    const defaultRoot = "/usr/local/lib/node_modules/openclaw";
     assert(!fs.existsSync(defaultRoot), "disposable VM already contains OpenClaw");
     fs.renameSync(root, defaultRoot);
     restoreLayout = () => fs.renameSync(defaultRoot, root);
@@ -765,6 +765,9 @@ try {
   } else if (mode === "native") {
     native(directory, architecture);
   } else if (mode === "published") {
+    native(directory, architecture, true);
+  } else if (mode === "both") {
+    native(directory, architecture);
     native(directory, architecture, true);
   } else if (mode === "shutdown") {
     await shutdown(directory);
