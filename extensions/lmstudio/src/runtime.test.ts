@@ -334,7 +334,7 @@ describe("lmstudio-runtime", () => {
     };
 
     await expect(resolveLmstudioConfiguredApiKey(options)).rejects.toThrow(
-      /models\.providers\.lmstudio\.apiKey/i,
+      'models.providers["lmstudio"].apiKey',
     );
     await expect(
       resolveLmstudioConfiguredApiKey({ ...options, allowUnresolved: true }),
