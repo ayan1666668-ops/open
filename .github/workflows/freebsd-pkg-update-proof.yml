@@ -132,7 +132,7 @@ jobs:
           cache-after-prepare: false
           debug-on-error: false
           prepare: |
-            timeout -k 15s 300s sh -eu -c 'env ASSUME_ALWAYS_YES=yes pkg bootstrap -f; pkg install -y node24 npm-node24'
+            timeout -k 15s 300s sh -eu -c 'env ASSUME_ALWAYS_YES=yes pkg bootstrap -f; pkg install -y node24 npm-node24 python3 gmake'
           run: |
             timeout -k 15s 1200s /usr/local/bin/node scripts/e2e/freebsd-pkg-update-proof.mjs native proof-payload '${{ matrix.arch }}'
       - name: Shut down this disposable guest
