@@ -772,6 +772,63 @@ describe("cdp.helpers internal", () => {
         }),
       ).rejects.toThrow(/callback boom/);
     });
+
+    it("aborts an unanswered in-flight command issued after the handshake", async () => {
+      const controller = new AbortController();
+      const removedListeners: EventListener[] = [];
+      const boundRemove = controller.signal.removeEventListener.bind(controller.signal);
+      controller.signal.removeEventListener = ((type: string, listener: EventListener) => {
+        removedListeners.push(listener);
+        return boundRemove(type, listener);
+      }) as typeof controller.signal.removeEventListener;
+
+      const server = await startWsServer();
+      wss = server.wss;
+      let serverSocketClosed = false;
+      const commandReceived = new Promise<void>((resolve) => {
+        server.wss.on("connection", (socket) => {
+          socket.on("close", () => {
+            serverSocketClosed = true;
+          });
+          socket.on("message", (raw) => {
+            const msg = JSON.parse(rawDataToString(raw)) as { id?: number; method?: string };
+            if (msg.method === "Page.captureScreenshot") {
+              resolve();
+            }
+            // Deliberately unanswered: the command stays pending on the client.
+          });
+        });
+      });
+
+      const pending = withCdpSocket(
+        server.url,
+        async (send) => {
+          await send("Page.captureScreenshot");
+        },
+        { signal: controller.signal, handshakeRetries: 0 },
+      );
+
+      await commandReceived;
+      // Abort only after the handshake completed and the command is in flight:
+      // cancellation must still release the owned socket and reject promptly.
+      controller.abort(new Error("browser request cancelled"));
+
+      await expect(
+        Promise.race([
+          pending,
+          new Promise<never>((_resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error("post-handshake abort did not reject the in-flight command")),
+              300,
+            );
+            timeout.unref?.();
+          }),
+        ]),
+      ).rejects.toThrow(/browser request cancelled|CDP socket closed/);
+      await vi.waitFor(() => expect(serverSocketClosed).toBe(true));
+      // Once the operation settled, the abort listener must be gone again.
+      expect(removedListeners.length).toBeGreaterThan(0);
+    });
   });
 
   describe("createCdpSender error/close event forwarding", () => {
