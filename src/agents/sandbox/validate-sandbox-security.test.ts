@@ -1,6 +1,6 @@
 // Sandbox security validation tests cover bind, network, seccomp, and AppArmor
 // hardening rules before Docker runtimes are created.
-import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -312,6 +312,58 @@ describe("validateBindMounts", () => {
       }),
     ).toThrow(/blocked path/);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "validates the exact spaced source and target instead of a trimmed sibling",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "openclaw-spaced-bind-"));
+      try {
+        const plain = join(root, "allowed");
+        const spaced = join(root, "allowed ");
+        mkdirSync(plain);
+        mkdirSync(spaced);
+        expect(() =>
+          validateBindMounts([`${spaced}:/workspace `], { allowedSourceRoots: [spaced] }),
+        ).not.toThrow();
+        expect(() =>
+          validateBindMounts([`${spaced}:/data`], { allowedSourceRoots: [plain] }),
+        ).toThrow("outside allowed roots");
+        expect(() => validateBindMounts([`${plain}:/workspace`])).toThrow(
+          "reserved container path",
+        );
+        expect(() => validateBindMounts([` ${plain}:/data`])).toThrow("non-absolute");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "checks spaced source symlinks against blocked and allowed roots",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "openclaw-spaced-bind-"));
+      try {
+        const allowed = join(root, "allowed");
+        const outside = join(root, "outside");
+        mkdirSync(allowed);
+        mkdirSync(outside);
+        for (const [name, destination, error] of [
+          ["blocked", "/etc", "blocked path"],
+          ["external", outside, "outside allowed roots"],
+        ] as const) {
+          mkdirSync(join(allowed, name));
+          symlinkSync(destination, join(allowed, `${name} `));
+          expect(() =>
+            validateBindMounts([`${join(allowed, `${name} `)}:/data`], {
+              allowedSourceRoots: [allowed],
+            }),
+          ).toThrow(error);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects non-absolute source paths (relative or named volumes)", () => {
     const cases = ["../etc/passwd:/mnt/passwd", "etc/passwd:/mnt/passwd", "myvol:/mnt"] as const;

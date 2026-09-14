@@ -500,10 +500,15 @@ const APPLY_PATCH_PAYLOAD = `*** Begin Patch
 +owned-by-apply-patch
 *** End Patch`;
 
+function patchSandbox(sandbox: UnsafeMountedSandbox) {
+  const { workspaceDir: root, containerWorkdir: containerRoot, fsBridge } = sandbox;
+  return { root, bridge: fsBridge!, workspaceMounts: [{ hostRoot: root, containerRoot }] };
+}
+
 function resolveApplyPatchTool(params: { sandbox: UnsafeMountedSandbox; config: OpenClawConfig }) {
   return createApplyPatchTool({
     cwd: params.sandbox.workspaceDir,
-    sandbox: { root: params.sandbox.workspaceDir, bridge: params.sandbox.fsBridge! },
+    sandbox: patchSandbox(params.sandbox),
     workspaceOnly: params.config.tools?.exec?.applyPatch?.workspaceOnly !== false,
   });
 }
@@ -577,7 +582,7 @@ describe("tools.fs.workspaceOnly", () => {
       await fs.writeFile(filePath, original);
       const patchTool = createApplyPatchTool({
         cwd: sandbox.workspaceDir,
-        sandbox: { root: sandbox.workspaceDir, bridge: sandbox.fsBridge! },
+        sandbox: patchSandbox(sandbox),
       });
       await patchTool.execute("sandbox-patch-bom", {
         input: `*** Begin Patch
@@ -636,7 +641,7 @@ describe("tools.fs.workspaceOnly", () => {
 
       const patchTool = createApplyPatchTool({
         cwd: sandbox.workspaceDir,
-        sandbox: { root: sandbox.workspaceDir, bridge: sandbox.fsBridge! },
+        sandbox: patchSandbox(sandbox),
       });
       await expect(
         patchTool.execute("sandbox-patch-invalid-utf8", {

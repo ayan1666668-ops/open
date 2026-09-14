@@ -16,6 +16,14 @@ describe("normalizeSandboxHostPath", () => {
     expect(normalizeSandboxHostPath("/tmp/a/../b//")).toBe("/tmp/b");
   });
 
+  it("preserves meaningful whitespace in host path identity", () => {
+    expect(normalizeSandboxHostPath("/tmp/project ")).toBe("/tmp/project ");
+    expect(getSandboxHostPathPolicyKey("/tmp/project ")).not.toBe(
+      getSandboxHostPathPolicyKey("/tmp/project"),
+    );
+    expect(isSandboxHostPathAbsolute(" /tmp/project")).toBe(false);
+  });
+
   it("normalizes Windows drive-letter paths without losing the drive root", () => {
     expect(normalizeSandboxHostPath("c:\\Users\\Kai\\..\\Project\\")).toBe("C:/Users/Project");
     expect(normalizeSandboxHostPath("d:/")).toBe("D:/");

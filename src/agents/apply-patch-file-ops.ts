@@ -20,6 +20,8 @@ import { decodeUtf8File } from "./utf8-file.js";
 export type SandboxApplyPatchConfig = {
   root: string;
   bridge: SandboxFsBridge;
+  /** Prepared allowed workspace mounts; absent only for bridges without local host paths. */
+  workspaceMounts?: readonly { containerRoot: string; hostRoot: string }[];
 };
 
 export type ApplyPatchFileOptions = {

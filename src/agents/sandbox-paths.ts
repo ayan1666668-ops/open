@@ -28,7 +28,7 @@ function normalizeAtPrefix(filePath: string): string {
   return filePath.startsWith("@") ? filePath.slice(1) : filePath;
 }
 
-function expandPath(filePath: string): string {
+export function normalizeSandboxInputPath(filePath: string): string {
   const normalized = normalizeAtPrefix(filePath);
   if (normalized === "~") {
     return os.homedir();
@@ -45,7 +45,7 @@ function hostPathLooksAbsolute(expanded: string): boolean {
 }
 
 function resolveToCwd(filePath: string, cwd: string): string {
-  const expanded = expandPath(filePath);
+  const expanded = normalizeSandboxInputPath(filePath);
   // Drive-letter paths first: on Unix path.isAbsolute is false for C:/...; on Windows we still normalize.
   if (isWindowsDrivePath(expanded)) {
     return path.win32.normalize(expanded);
@@ -120,7 +120,7 @@ async function assertRawParentWithinRoot(params: {
       targetCanonical: resolveSandboxInputPath(params.filePath, params.cwd),
     };
   }
-  const expanded = expandPath(params.filePath);
+  const expanded = normalizeSandboxInputPath(params.filePath);
   if (isWindowsDrivePath(expanded)) {
     return {
       rootCanonical: path.resolve(params.root),
@@ -161,7 +161,7 @@ export async function assertSandboxPath(params: {
   let rootCanonical = root;
   let resolutionCwd = cwd;
   let filePath = params.filePath;
-  const expanded = expandPath(filePath);
+  const expanded = normalizeSandboxInputPath(filePath);
   if (process.platform !== "win32" && !isWindowsDrivePath(expanded)) {
     const rootPromise = resolveRawPathViaExistingAncestor(root);
     const [canonicalRoot, canonicalCwd] = await Promise.all([
@@ -236,7 +236,7 @@ export function assertMediaNotDataUrl(media: string): void {
 }
 
 export function resolveManagedMediaRoot(candidate: string): string | undefined {
-  const expanded = expandPath(candidate);
+  const expanded = normalizeSandboxInputPath(candidate);
   if (!hostPathLooksAbsolute(expanded)) {
     return undefined;
   }
@@ -259,7 +259,7 @@ export function resolveManagedMediaRoot(candidate: string): string | undefined {
 export async function resolveAllowedManagedMediaPath(
   candidate: string,
 ): Promise<string | undefined> {
-  const expanded = expandPath(candidate);
+  const expanded = normalizeSandboxInputPath(candidate);
   if (!resolveManagedMediaRoot(expanded)) {
     return undefined;
   }
@@ -406,7 +406,7 @@ async function resolveAllowedTmpMediaPath(params: {
   candidate: string;
   sandboxRoot: string;
 }): Promise<string | undefined> {
-  const candidateIsAbsolute = hostPathLooksAbsolute(expandPath(params.candidate));
+  const candidateIsAbsolute = hostPathLooksAbsolute(normalizeSandboxInputPath(params.candidate));
   if (!candidateIsAbsolute) {
     return undefined;
   }

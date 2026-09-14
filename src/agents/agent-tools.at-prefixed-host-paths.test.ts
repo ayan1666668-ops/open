@@ -7,7 +7,7 @@ import "./test-helpers/fast-openclaw-tools.js";
 import { createOpenClawCodingTools } from "./agent-tools.js";
 import { createApplyPatchTool } from "./apply-patch.js";
 import { expectReadWriteEditTools, getTextContent } from "./test-helpers/agent-tools-fs-helpers.js";
-import { createHostSandboxFsBridge } from "./test-helpers/host-sandbox-fs-bridge.js";
+import { createContainerWorkspaceSandboxFsBridge } from "./test-helpers/host-sandbox-fs-bridge.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -83,7 +83,13 @@ describe("leading-@ host and mounted sandbox paths", () => {
         cwd: workspaceDir,
         workspaceOnly: runtime.workspaceOnly,
         ...(runtime.mounted
-          ? { sandbox: { root: workspaceDir, bridge: createHostSandboxFsBridge(workspaceDir) } }
+          ? {
+              sandbox: {
+                root: workspaceDir,
+                bridge: createContainerWorkspaceSandboxFsBridge(workspaceDir),
+                workspaceMounts: [{ containerRoot: "/workspace", hostRoot: workspaceDir }],
+              },
+            }
           : {}),
       });
       const runPatch = (callId: string, lines: string[]) =>

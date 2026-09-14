@@ -8,7 +8,15 @@ import path from "node:path";
 import { FsSafeError } from "../../infra/fs-safe.js";
 import type { PathAliasPolicy } from "../../infra/path-alias-guards.js";
 import { openRootFile, type RootFileOpenResult } from "./fs-bridge-path-safety.runtime.js";
-import type { SandboxResolvedFsPath, SandboxFsMount } from "./fs-paths.js";
+import {
+  resolveSandboxFsMount,
+  type SandboxResolvedFsPath,
+  type SandboxFsMount,
+} from "./fs-paths.js";
+import {
+  getSandboxHostPathPolicyKey,
+  resolveSandboxHostPathViaExistingAncestor,
+} from "./host-paths.js";
 import {
   isPathInsideContainerRoot,
   normalizeContainerPathCore,
@@ -71,12 +79,24 @@ type RunCommand = (
 
 /** Validates sandbox fs bridge paths against mount, symlink, and writability boundaries. */
 export class SandboxFsPathGuard {
-  private readonly mountsByContainer: SandboxFsMount[];
+  private readonly mountsByContainer: Array<SandboxFsMount & { canonicalHostRoot: string }>;
   private readonly runCommand: RunCommand;
+  private readonly containerOnlyMounts: readonly string[];
 
-  constructor(params: { mountsByContainer: SandboxFsMount[]; runCommand: RunCommand }) {
-    this.mountsByContainer = params.mountsByContainer;
+  constructor(params: {
+    mountsByContainer: SandboxFsMount[];
+    containerOnlyMounts?: readonly string[];
+    runCommand: RunCommand;
+  }) {
+    this.mountsByContainer = params.mountsByContainer.map((mount) => ({
+      hostRoot: mount.hostRoot,
+      containerRoot: mount.containerRoot,
+      writable: mount.writable,
+      source: mount.source,
+      canonicalHostRoot: resolveSandboxHostPathViaExistingAncestor(mount.hostRoot),
+    }));
     this.runCommand = params.runCommand;
+    this.containerOnlyMounts = params.containerOnlyMounts ?? [];
   }
 
   async assertPathChecks(checks: PathSafetyCheck[]): Promise<void> {
@@ -108,10 +128,36 @@ export class SandboxFsPathGuard {
     if (!opened.ok) {
       throw sandboxBoundaryError("read files", target.containerPath, opened.error);
     }
+    try {
+      const lexicalMount = this.resolveRequiredMount(target.containerPath, "read files");
+      const relative = path.relative(opened.rootRealPath, opened.path);
+      const canonicalContainerPath = path.posix.join(
+        lexicalMount.containerRoot,
+        ...relative.split(path.sep),
+      );
+      const visibleMount = this.resolveRequiredMount(canonicalContainerPath, "read files");
+      const visibleHostPath = path.resolve(
+        visibleMount.canonicalHostRoot,
+        ...path.posix.relative(visibleMount.containerRoot, canonicalContainerPath).split("/"),
+      );
+      // The pinned host descriptor must represent the same bytes the container
+      // sees. In-root aliases can cross a tmpfs or a bind with another source;
+      // same-source protected skill overlays remain safe to read.
+      if (
+        getSandboxHostPathPolicyKey(visibleHostPath) !== getSandboxHostPathPolicyKey(opened.path)
+      ) {
+        throw new Error(
+          `Sandbox path is hidden by another mount: ${target.containerPath}. Use the mounted container path directly.`,
+        );
+      }
+    } catch (error) {
+      fs.closeSync(opened.fd);
+      throw error;
+    }
     return opened;
   }
 
-  private resolveRequiredMount(containerPath: string, action: string): SandboxFsMount {
+  private resolveRequiredMount(containerPath: string, action: string) {
     const lexicalMount = this.resolveMountByContainerPath(containerPath);
     if (!lexicalMount) {
       throw new Error(`Sandbox path escapes allowed mounts; cannot ${action}: ${containerPath}`);
@@ -164,6 +210,16 @@ export class SandboxFsPathGuard {
     });
     // Re-check the canonical path against mounts so symlinks cannot escape the sandbox root.
     const canonicalMount = this.resolveRequiredMount(canonicalContainerPath, options.action);
+    if (
+      options.requireWritable === "subtree" &&
+      this.containerOnlyMounts.some((mask) =>
+        isPathInsideContainerRoot(canonicalContainerPath, mask),
+      )
+    ) {
+      throw new Error(
+        `Sandbox subtree contains a container-only mount; cannot ${options.action}: ${target.containerPath}. Use exec to access this mount.`,
+      );
+    }
     // Removing or moving a parent must not bypass a narrower read-only mount.
     if (
       options.requireWritable &&
@@ -320,14 +376,9 @@ export class SandboxFsPathGuard {
     }
   }
 
-  private resolveMountByContainerPath(containerPath: string): SandboxFsMount | null {
+  private resolveMountByContainerPath(containerPath: string) {
     const normalized = normalizeContainerPathCore(containerPath);
-    for (const mount of this.mountsByContainer) {
-      if (isPathInsideContainerRoot(normalizeContainerPathCore(mount.containerRoot), normalized)) {
-        return mount;
-      }
-    }
-    return null;
+    return resolveSandboxFsMount(this.mountsByContainer, normalized, this.containerOnlyMounts);
   }
 
   private async resolveCanonicalContainerPath(params: {
@@ -356,7 +407,8 @@ export class SandboxFsPathGuard {
     const result = await this.runCommand(script, {
       args: [params.containerPath, params.allowFinalSymlinkForUnlink ? "1" : "0"],
     });
-    const canonical = result.stdout.toString("utf8").trim();
+    // Remove the record terminator, not significant whitespace in the path.
+    const canonical = result.stdout.toString("utf8").replace(/\n$/, "");
     if (!canonical.startsWith("/")) {
       throw new Error(`Failed to resolve canonical sandbox path: ${params.containerPath}`);
     }

@@ -48,6 +48,7 @@ import type { AgentTool, AgentToolResult } from "./runtime/index.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
+import { resolveSandboxFsMount } from "./sandbox/fs-paths.js";
 import {
   createEditTool,
   createReadTool,
@@ -642,7 +643,7 @@ function mapContainerPathToRoot(params: {
   root: string;
   containerRoot?: string;
 }): { filePath: string; matched: boolean } {
-  const containerRoot = params.containerRoot?.trim();
+  const containerRoot = params.containerRoot;
   if (!containerRoot) {
     return { filePath: params.filePath, matched: false };
   }
@@ -887,11 +888,10 @@ async function assertSandboxPathWithinAnyRoot(params: {
   let firstRootEscapeError: unknown;
   const seen = new Set<string>();
   for (const [index, candidateRoot] of params.roots.entries()) {
-    const trimmedRoot = candidateRoot.trim();
-    if (!trimmedRoot) {
+    if (!candidateRoot) {
       continue;
     }
-    const root = path.resolve(trimmedRoot);
+    const root = path.resolve(candidateRoot);
     if (seen.has(root)) {
       continue;
     }
@@ -956,26 +956,37 @@ export function wrapToolWorkspaceRootGuardWithOptions(
           normalizedRecord ??= { ...record };
           normalizedRecord[key] = filePath;
         }
+        // The bridge owns relative/host aliases and effective mount selection.
+        // Admission still uses this tool's allowed roots, then checks the
+        // selected host path's symlink boundary before the operation runs.
+        const guardPath = options?.bridge
+          ? options.bridge.resolvePath({
+              filePath: resolveContainerPathCandidate(filePath) ?? filePath,
+              cwd: options.resolutionCwd ?? root,
+            }).containerPath
+          : filePath;
         let guardedRoot = root;
         let workspaceMapping: ReturnType<typeof mapContainerPathToRoot> | undefined;
-        let sandboxPath = filePath;
-        for (const mount of [...(options?.additionalContainerMounts ?? [])].toSorted(
-          (a, b) => b.containerRoot.length - a.containerRoot.length,
-        )) {
+        let sandboxPath = guardPath;
+        const allowedMount = resolveSandboxFsMount(
+          options?.additionalContainerMounts ?? [],
+          path.posix.normalize(resolveContainerPathCandidate(guardPath) ?? guardPath),
+        );
+        if (allowedMount) {
           const mountMapping = mapContainerPathToRoot({
-            filePath,
-            root: mount.hostRoot,
-            containerRoot: mount.containerRoot,
+            filePath: guardPath,
+            root: allowedMount.hostRoot,
+            containerRoot: allowedMount.containerRoot,
           });
           if (mountMapping.matched) {
-            guardedRoot = path.resolve(mount.hostRoot);
+            guardedRoot = path.resolve(allowedMount.hostRoot);
+            workspaceMapping = mountMapping;
             sandboxPath = mountMapping.filePath;
-            break;
           }
         }
-        if (guardedRoot === root) {
+        if (!workspaceMapping?.matched) {
           workspaceMapping = mapContainerPathToRoot({
-            filePath,
+            filePath: guardPath,
             root,
             containerRoot: options?.containerWorkdir,
           });
@@ -987,6 +998,11 @@ export function wrapToolWorkspaceRootGuardWithOptions(
             : [];
         let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>>;
         try {
+          if (options?.bridge && !workspaceMapping?.matched) {
+            throw new Error(
+              `Path escapes sandbox root (${options.containerWorkdir ?? root}): ${guardPath}`,
+            );
+          }
           sandboxResult = await assertSandboxPathWithinAnyRoot({
             cwd:
               guardedRoot === root && !workspaceMapping?.matched

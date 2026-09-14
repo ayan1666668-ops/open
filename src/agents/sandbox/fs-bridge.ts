@@ -26,6 +26,7 @@ import {
   type SandboxResolvedFsPath,
 } from "./fs-paths.js";
 import { normalizeContainerPathCore } from "./path-utils.js";
+import { resolveSandboxTmpfsMounts } from "./workspace-mounts.js";
 
 type RunCommandOptions = {
   args?: string[];
@@ -49,18 +50,23 @@ const PINNED_MUTATION_ACTION_LABELS = {
 /** Create the filesystem bridge for local Docker-style mounted sandboxes. */
 export function createSandboxFsBridge(params: {
   sandbox: SandboxFsBridgeContext;
+  containerOnlyMounts?: readonly string[];
 }): SandboxFsBridge {
-  return new SandboxFsBridgeImpl(params.sandbox);
+  return new SandboxFsBridgeImpl(params.sandbox, params.containerOnlyMounts);
 }
 
 class SandboxFsBridgeImpl implements SandboxFsBridge {
   private readonly sandbox: SandboxFsBridgeContext;
   private readonly mounts: ReturnType<typeof buildSandboxFsMounts>;
   private readonly pathGuard: SandboxFsPathGuard;
+  private readonly containerOnlyMounts: readonly string[];
 
-  constructor(sandbox: SandboxFsBridgeContext) {
+  constructor(sandbox: SandboxFsBridgeContext, containerOnlyMounts?: readonly string[]) {
     this.sandbox = sandbox;
     this.mounts = buildSandboxFsMounts(sandbox);
+    this.containerOnlyMounts =
+      containerOnlyMounts ??
+      resolveSandboxTmpfsMounts(sandbox.docker.tmpfs).map((mount) => mount.containerPath);
     const mountsByContainer = [...this.mounts].toSorted(
       (a, b) => b.containerRoot.length - a.containerRoot.length,
     );
@@ -68,6 +74,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     // the broader workspace root during symlink and mutation safety checks.
     this.pathGuard = new SandboxFsPathGuard({
       mountsByContainer,
+      containerOnlyMounts: this.containerOnlyMounts,
       runCommand: (script, options) => this.runCommand(script, options),
     });
   }
@@ -422,6 +429,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       defaultWorkspaceRoot: this.sandbox.workspaceDir,
       defaultContainerRoot: this.sandbox.containerWorkdir,
       mounts: this.mounts,
+      containerOnlyMounts: this.containerOnlyMounts,
     });
   }
 

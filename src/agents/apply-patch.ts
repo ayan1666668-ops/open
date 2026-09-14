@@ -22,6 +22,7 @@ import { preserveAtPrefixedRelativePath, resolvePathFromInput } from "./path-pol
 import type { AgentTool } from "./runtime/index.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
+import { resolveSandboxFsMount } from "./sandbox/fs-paths.js";
 import {
   resolveFileMutationQueueKey,
   withFileMutationQueueKeyResolution,
@@ -439,16 +440,25 @@ async function resolvePatchPath(
       cwd: options.cwd,
     });
     if (options.workspaceOnly !== false && resolved.hostPath) {
+      const workspaceMount = resolveSandboxFsMount(
+        options.sandbox.workspaceMounts ?? [],
+        resolved.containerPath,
+      );
+      if (!workspaceMount) {
+        throw new Error(`Path escapes sandbox root (${options.sandbox.root}): ${filePath}`);
+      }
       await assertSandboxPath({
         filePath: resolved.hostPath,
-        cwd: options.cwd,
-        root: options.root ?? options.cwd,
+        cwd: workspaceMount.hostRoot,
+        root: workspaceMount.hostRoot,
         allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
         allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
       });
     }
     return {
-      resolved: resolved.hostPath ?? resolved.containerPath,
+      // Keep the admitted namespace: another bind can share this host source
+      // with a different destination or permission. Queue identity stays physical.
+      resolved: resolved.containerPath,
       queueKey: await resolveSandboxFileMutationQueueKey({
         bridge: options.sandbox.bridge,
         root: options.sandbox.root,

@@ -50,9 +50,12 @@ function createUnsafeMountedBridge(params: {
           ? path.join(skillsHostRoot, filePath.slice(skillsContainerRoot.length + 1))
           : skillsHostRoot && skillsRelativePath !== undefined
             ? path.join(skillsHostRoot, skillsRelativePath)
-            : path.isAbsolute(filePath)
-              ? filePath
-              : path.resolve(cwd ?? root, filePath);
+            : filePath === workspaceContainerRoot ||
+                filePath.startsWith(`${workspaceContainerRoot}/`)
+              ? path.join(root, filePath.slice(workspaceContainerRoot.length))
+              : path.isAbsolute(filePath)
+                ? filePath
+                : path.resolve(cwd ?? root, filePath);
 
     const relFromRoot = path.relative(root, hostPath);
     const relativePath =
