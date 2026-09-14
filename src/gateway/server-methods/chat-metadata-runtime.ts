@@ -1,3 +1,4 @@
+import { withAgentRosterFactsBatch } from "../../agents/agent-scope-config.js";
 import { listAgentIds, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import {
   getPreparedRuntimeAuthProfileStoreSnapshot,
@@ -48,6 +49,7 @@ import type { GatewayRequestContext } from "./types.js";
 
 type PreparedAgentFacts = ChatMetadataProjectionFacts & {
   authStoreRevision: string;
+  catalogStatusKey: string;
   skillsVersion: number;
 };
 
@@ -122,40 +124,45 @@ export class ChatMetadataSnapshotUnavailableError extends Error {
 
 function captureGenerationFacts(deps: ChatMetadataRuntimeDeps): PreparedGenerationFacts {
   const config = deps.getConfig();
-  const agents = listAgentIds(config)
-    .filter((agentId) => !readAgentDatabaseAdmissionRefusal(agentId))
-    .map((rawAgentId): PreparedAgentFacts => {
-      const agentId = normalizeAgentId(rawAgentId);
-      // Metadata follows the published lifecycle owner while its replacement gate owns turnover;
-      // display-only config publications must not make that still-current owner disappear.
-      const owner = deps.getPreparedOwner({ agentId, config });
-      if (!owner) {
-        throw new ChatMetadataSnapshotUnavailableError(
-          `prepared chat metadata owner is unavailable for agent "${agentId}"`,
-        );
-      }
-      const workspaceDir = owner.workspaceDir ?? resolveAgentWorkspaceDir(config, agentId);
-      const fullModelCatalog = owner.readFullModelCatalog?.();
-      const fullCatalogAuth = fullModelCatalog
-        ? getPreparedModelFullCatalogAuth(fullModelCatalog)
-        : undefined;
-      if (fullModelCatalog && !fullCatalogAuth) {
-        throw new Error("prepared full model catalog omitted its auth generation");
-      }
-      return {
-        agentId,
-        owner,
-        authStore: fullCatalogAuth?.authStore ??
-          deps.getPreparedAuthStore(owner.agentDir, owner.inheritedAuthDir) ?? {
-            version: 1,
-            profiles: {},
-          },
-        authModes: fullCatalogAuth?.authModes ?? owner.authModes,
-        authStoreRevision: `${deps.getAuthStoreRevision(owner.agentDir)}:${deps.getAuthStoreRevision(owner.inheritedAuthDir)}`,
-        modelCatalog: fullModelCatalog ?? owner.modelCatalog,
-        skillsVersion: deps.getSkillsVersion(workspaceDir),
-      };
-    });
+  const agents = withAgentRosterFactsBatch(config, () =>
+    listAgentIds(config)
+      .filter((agentId) => !readAgentDatabaseAdmissionRefusal(agentId))
+      .map((rawAgentId): PreparedAgentFacts => {
+        const agentId = normalizeAgentId(rawAgentId);
+        // Metadata follows the published lifecycle owner while its replacement gate owns turnover;
+        // display-only config publications must not make that still-current owner disappear.
+        const owner = deps.getPreparedOwner({ agentId, config });
+        if (!owner) {
+          throw new ChatMetadataSnapshotUnavailableError(
+            `prepared chat metadata owner is unavailable for agent "${agentId}"`,
+          );
+        }
+        const workspaceDir = owner.workspaceDir ?? resolveAgentWorkspaceDir(config, agentId);
+        const fullModelCatalog = owner.readFullModelCatalog?.();
+        const fullCatalogAuth = fullModelCatalog
+          ? getPreparedModelFullCatalogAuth(fullModelCatalog)
+          : undefined;
+        if (fullModelCatalog && !fullCatalogAuth) {
+          throw new Error("prepared full model catalog omitted its auth generation");
+        }
+        const catalog = fullModelCatalog ?? owner.modelCatalog;
+        return {
+          agentId,
+          owner,
+          authStore: fullCatalogAuth?.authStore ??
+            deps.getPreparedAuthStore(owner.agentDir, owner.inheritedAuthDir) ?? {
+              version: 1,
+              profiles: {},
+            },
+          authModes: fullCatalogAuth?.authModes ?? owner.authModes,
+          authStoreRevision: `${deps.getAuthStoreRevision(owner.agentDir)}:${deps.getAuthStoreRevision(owner.inheritedAuthDir)}`,
+          modelCatalog: catalog,
+          // Catalog inventory is immutable; attempt progress and failure are live getters.
+          catalogStatusKey: JSON.stringify([catalog.pendingProviders, catalog.refreshFailed]),
+          skillsVersion: deps.getSkillsVersion(workspaceDir),
+        };
+      }),
+  );
   return {
     config,
     configKey: resolveRuntimeConfigCacheKey(config),
@@ -182,21 +189,9 @@ function generationFactsMatch(
       candidate.owner === agent.owner &&
       candidate.authStoreRevision === agent.authStoreRevision &&
       candidate.modelCatalog === agent.modelCatalog &&
+      candidate.catalogStatusKey === agent.catalogStatusKey &&
       candidate.skillsVersion === agent.skillsVersion
     );
-  });
-}
-
-async function defaultBuildCommands(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-}): Promise<{ commands?: unknown[] }> {
-  const { buildCommandsListResult } = await import("./commands-list-result.js");
-  return buildCommandsListResult({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    includeArgs: true,
-    scope: "text",
   });
 }
 
@@ -228,7 +223,10 @@ export function createGatewayChatMetadataRuntime(params: {
     getAuthStoreRevision: getRuntimeAuthProfileStoreSnapshotRevision,
     getSkillsVersion: getSkillsSnapshotVersion,
     getPluginRegistryVersion: getActivePluginRegistryVersion,
-    buildCommands: defaultBuildCommands,
+    buildCommands: async ({ cfg, agentId }) => {
+      const { buildCommandsListResult } = await import("./commands-list-result.js");
+      return buildCommandsListResult({ cfg, agentId, includeArgs: true, scope: "text" });
+    },
     buildProjection: prepareChatMetadataModelProjection,
     ...params.deps,
   };
@@ -496,6 +494,11 @@ export function createGatewayChatMetadataRuntime(params: {
     }
     if (pending?.facts && generationFactsMatch(pending.facts, facts)) {
       return pending.promise;
+    }
+    if (current || pending) {
+      // Fence reads synchronously only after proving the published facts changed. A suspended
+      // session projection must not return its old success or failure while replacement builds.
+      invalidate();
     }
     const version = ++refreshVersion;
     const promise = refreshTail.catch(() => {}).then(() => runRefresh(version));
