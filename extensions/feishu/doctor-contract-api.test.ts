@@ -38,6 +38,34 @@ describe("feishu doctor contract artifact", () => {
     expect(result.config.plugins?.entries?.feishu).toEqual({ enabled: true });
   });
 
+  it("sanitizes retired markdown keys parked in the plugin entry before moving it", () => {
+    const cfg = {
+      plugins: {
+        entries: {
+          feishu: {
+            enabled: true,
+            config: { appId: "cli_a1", appSecret: "s3cret", markdown: { mode: "escape" } },
+          },
+        },
+      },
+    } as never;
+
+    const result = normalizeCompatibilityConfig({ cfg });
+
+    expect(result.changes).toEqual([
+      "Removed plugins.entries.feishu.config.markdown.{mode} (legacy Feishu fields were never read by runtime).",
+      "Moved plugins.entries.feishu.config.appId to channels.feishu.appId.",
+      "Moved plugins.entries.feishu.config.appSecret to channels.feishu.appSecret.",
+      "Moved plugins.entries.feishu.config.markdown to channels.feishu.markdown.",
+    ]);
+    expect(result.config.channels?.feishu).toEqual({
+      appId: "cli_a1",
+      appSecret: "s3cret",
+      markdown: {},
+    });
+    expect(result.config.plugins?.entries?.feishu).toEqual({ enabled: true });
+  });
+
   it("leaves unmergeable stray plugin-entry config in place", () => {
     const cfg = {
       plugins: { entries: { feishu: { config: { appId: 42 } } } },

@@ -278,6 +278,55 @@ describe.each([
   });
 });
 
+describe("feishu parked plugin-entry markdown migration", () => {
+  function parkedConfig(
+    markdown: Record<string, unknown>,
+    channel?: Record<string, unknown>,
+  ): OpenClawConfig {
+    return {
+      ...(channel ? { channels: { feishu: channel } } : {}),
+      plugins: { entries: { feishu: { enabled: true, config: { markdown } } } },
+    } as never;
+  }
+
+  it.each([
+    [{ mode: "escape" }, "{mode}", {}],
+    [{ tableMode: "ascii", tables: "bullets" }, "{tableMode}", { tables: "bullets" }],
+  ])("sanitizes parked %j before the plugin-entry move validates", (markdown, removed, moved) => {
+    // The move only commits when the merged channel record validates, so the
+    // retired fields must be stripped at the parked path first.
+    const cfg = parkedConfig(markdown);
+    const authored = structuredClone(cfg);
+    const result = normalizeCompatibilityConfig({ cfg });
+    expect(result.changes).toEqual([
+      `Removed plugins.entries.feishu.config.markdown.${removed} (legacy Feishu fields were never read by runtime).`,
+      "Moved plugins.entries.feishu.config.markdown to channels.feishu.markdown.",
+    ]);
+    expect(result.config.channels?.feishu).toEqual({ markdown: moved });
+    expect(result.config.plugins?.entries?.feishu).toEqual({ enabled: true });
+    expect(FeishuConfigSchema.safeParse(result.config.channels?.feishu).success).toBe(true);
+    expect(cfg).toEqual(authored);
+    const second = normalizeCompatibilityConfig({ cfg: result.config });
+    expect(second.changes).toEqual([]);
+    expect(second.config).toBe(result.config);
+  });
+
+  it("keeps the channel markdown authoritative over the parked legacy object", () => {
+    const result = normalizeCompatibilityConfig({
+      cfg: parkedConfig({ mode: "escape" }, { markdown: { tables: "off" } }),
+    });
+    expect(result.changes).toEqual([
+      "Removed plugins.entries.feishu.config.markdown.{mode} (legacy Feishu fields were never read by runtime).",
+      "Removed plugins.entries.feishu.config.markdown; channels.feishu.markdown is authoritative.",
+    ]);
+    expect(result.config.channels?.feishu).toEqual({ markdown: { tables: "off" } });
+    expect(result.config.plugins?.entries?.feishu).toEqual({ enabled: true });
+    const second = normalizeCompatibilityConfig({ cfg: result.config });
+    expect(second.changes).toEqual([]);
+    expect(second.config).toBe(result.config);
+  });
+});
+
 describe("feishu webhook route doctor migration", () => {
   const webhookRule = legacyConfigRules.find((rule) => rule.message.includes("webhookPath"));
 

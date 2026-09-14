@@ -145,6 +145,23 @@ function normalizeLegacyWebhookPath(params: {
   return { entry: { ...params.entry, webhookPath: canonical }, changed: true };
 }
 
+function normalizeFeishuLegacyEntry(params: {
+  entry: Record<string, unknown>;
+  pathPrefix: string;
+  changes: string[];
+}): { entry: Record<string, unknown>; changed: boolean } {
+  const tools = toolsBaseMigration.normalize(params);
+  const coalesce = sanitizeLegacyCoalesceFields({ ...params, entry: tools.entry });
+  const markdown = sanitizeLegacyMarkdownFields({ ...params, entry: coalesce.entry });
+  const heartbeat = sanitizeLegacyHeartbeatFields({ ...params, entry: markdown.entry });
+  const webhook = normalizeLegacyWebhookPath({ ...params, entry: heartbeat.entry });
+  return {
+    entry: webhook.entry,
+    changed:
+      tools.changed || coalesce.changed || markdown.changed || heartbeat.changed || webhook.changed,
+  };
+}
+
 function normalizeFeishuLegacyConfigEntries(
   cfg: OpenClawConfig,
   changes: string[],
@@ -153,23 +170,39 @@ function normalizeFeishuLegacyConfigEntries(
     cfg,
     channelId: "feishu",
     changes,
-    normalizeEntry: (params) => {
-      const tools = toolsBaseMigration.normalize(params);
-      const coalesce = sanitizeLegacyCoalesceFields({ ...params, entry: tools.entry });
-      const markdown = sanitizeLegacyMarkdownFields({ ...params, entry: coalesce.entry });
-      const heartbeat = sanitizeLegacyHeartbeatFields({ ...params, entry: markdown.entry });
-      const webhook = normalizeLegacyWebhookPath({ ...params, entry: heartbeat.entry });
-      return {
-        entry: webhook.entry,
-        changed:
-          tools.changed ||
-          coalesce.changed ||
-          markdown.changed ||
-          heartbeat.changed ||
-          webhook.changed,
-      };
-    },
+    normalizeEntry: normalizeFeishuLegacyEntry,
   }).config;
+}
+
+// The plugin-entry move below validates the merged channel record against the
+// strict schema before it commits, so legacy fields parked under
+// plugins.entries.feishu.config are sanitized first. Otherwise the move never
+// happens and the parked entry stays behind the doctor hint on every run.
+function normalizeParkedFeishuEntryConfig(cfg: OpenClawConfig, changes: string[]): OpenClawConfig {
+  const entries = asObjectRecord(asObjectRecord(cfg.plugins)?.entries);
+  const entry = asObjectRecord(entries?.feishu);
+  const config = asObjectRecord(entry?.config);
+  if (!config) {
+    return cfg;
+  }
+  const normalized = normalizeFeishuLegacyEntry({
+    entry: config,
+    pathPrefix: "plugins.entries.feishu.config",
+    changes,
+  });
+  if (!normalized.changed) {
+    return cfg;
+  }
+  const next = {
+    ...cfg,
+    plugins: {
+      ...cfg.plugins,
+      entries: { ...entries, feishu: { ...entry, config: normalized.entry } },
+    },
+  };
+  // SAFETY: only the feishu plugin entry's config object was replaced; every
+  // other key is the parsed config spread through unchanged.
+  return next as OpenClawConfig;
 }
 
 // The retired rich plugin-entry schema let config UIs park Feishu settings
@@ -234,7 +267,8 @@ export function normalizeCompatibilityConfig({
 }): ChannelDoctorConfigMutation {
   const aliases = streamingAliasMigration.normalizeChannelConfig({ cfg });
   const entries = normalizeFeishuLegacyConfigEntries(aliases.config, aliases.changes);
-  const stray = feishuStrayEntryConfigMigration.normalizeConfig({ cfg: entries });
+  const parked = normalizeParkedFeishuEntryConfig(entries, aliases.changes);
+  const stray = feishuStrayEntryConfigMigration.normalizeConfig({ cfg: parked });
   return {
     config: stray.config,
     changes: [...aliases.changes, ...stray.changes],
