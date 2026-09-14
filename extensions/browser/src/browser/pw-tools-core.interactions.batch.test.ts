@@ -163,7 +163,7 @@ describe("batchViaPlaywright", () => {
 
   it("does not expose pasted text when native insertion fails", async () => {
     const text = "synthetic-password-paste";
-    page!.keyboard.insertText.mockRejectedValueOnce(new Error(`Insert \"${text}\" failed`));
+    page!.keyboard.insertText.mockRejectedValueOnce(new Error(`Insert "${text}" failed`));
     const result = await batchViaPlaywright({
       cdpUrl: "http://127.0.0.1:9222",
       targetId: "tab-1",
