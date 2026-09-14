@@ -21,6 +21,7 @@ import {
   isBrowserCopilotClient,
   isEphemeralGatewayClient,
 } from "../../../utils/message-channel.js";
+import { sleep } from "../../../utils/sleep.js";
 import { resolveRuntimeServiceBuildId, resolveRuntimeServiceVersion } from "../../../version.js";
 import { verifyAgentRuntimeIdentityToken } from "../../agent-runtime-identity-token.js";
 import { buildAuthenticatedPresenceUser } from "../../authenticated-presence-user.js";
@@ -67,6 +68,12 @@ import { prepareGatewayReceiverHandoff } from "./request-start.js";
 
 /** Match production release versions (YYYY.M.PATCH or YYYY.M.PATCH-beta.N). */
 const RELEASED_VERSION_RE = /^\d{4}\.\d+\.\d+/;
+
+/**
+ * Backoff between detached GitHub identity sync retries after the first
+ * connect-time attempt fails; bounded so a wedged identity never loops (#141615).
+ */
+const IDENTITY_SYNC_RETRY_DELAYS_MS = [2_000, 8_000, 30_000] as const;
 
 type AuthenticatedNodePairingAdmission = NonNullable<
   Awaited<ReturnType<typeof captureAuthenticatedNodePairingState>>
@@ -691,7 +698,25 @@ export async function attachAuthenticatedGatewayConnect(
   if (nextClient.authenticatedGitHubIdentitySync) {
     runDetachedConnectWork(
       async () => {
-        const result = await nextClient.authenticatedGitHubIdentitySync!();
+        // One detached attempt is the only chance the connection ever gives
+        // itself: a transient quota or network failure would leave the client
+        // profile-pending for its whole life, wedging every profile-gated RPC
+        // behind UNAVAILABLE (#141615). A bounded backoff rides the same
+        // detached work so short blinks self-heal without client action.
+        let result: Awaited<
+          ReturnType<NonNullable<GatewayWsClient["authenticatedGitHubIdentitySync"]>>
+        >;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            result = await nextClient.authenticatedGitHubIdentitySync!();
+            break;
+          } catch (error) {
+            if (attempt >= IDENTITY_SYNC_RETRY_DELAYS_MS.length) {
+              throw error;
+            }
+            await sleep(IDENTITY_SYNC_RETRY_DELAYS_MS[attempt]);
+          }
+        }
         const profile = nextClient.authenticatedUserProfile;
         const profilePic = authResult.tailscaleIdentity?.profilePic;
         if (!profile?.hasAvatar && profilePic) {

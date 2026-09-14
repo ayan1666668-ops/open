@@ -15,6 +15,29 @@ export function isGatewayClientProfilePending(client: GatewayClient | null): boo
   return Boolean(client?.authenticatedGitHubIdentitySync && !client.authenticatedUserProfile);
 }
 
+/**
+ * Gives a pending connection one bounded identity re-sync before its gated RPC
+ * fails. Connect runs the sync exactly once in detached work, so a single
+ * transient failure (quota, network) would otherwise wedge every
+ * profile-gated method behind UNAVAILABLE for the connection's whole life
+ * (#141615). The sync itself dedupes concurrent callers and drops rejected
+ * attempts, so failed runs stay retryable. Returns whether the client is
+ * still pending.
+ */
+export async function refreshPendingGatewayClientProfile(
+  client: GatewayClient | null,
+): Promise<boolean> {
+  if (!isGatewayClientProfilePending(client)) {
+    return false;
+  }
+  try {
+    await client?.authenticatedGitHubIdentitySync?.();
+  } catch {
+    // Stays pending; the caller answers with the retryable unavailable shape.
+  }
+  return isGatewayClientProfilePending(client);
+}
+
 export function authenticatedProfileUnavailableError(
   message = "Authenticated profile verification is unavailable. Retry shortly; if this continues, contact a gateway administrator.",
   retryAfterMs = 1_000,

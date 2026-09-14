@@ -35,7 +35,7 @@ import { WizardSession } from "../../wizard/session.js";
 import { listVisiblePendingApprovalRequests } from "./approval-shared.js";
 import {
   authenticatedProfileUnavailableError,
-  isGatewayClientProfilePending,
+  refreshPendingGatewayClientProfile,
 } from "./gateway-client-identity.js";
 import {
   createAdmittedWizardSession,
@@ -388,7 +388,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
         client,
       });
       if (!ownerKey) {
-        if (isGatewayClientProfilePending(client)) {
+        if (await refreshPendingGatewayClientProfile(client)) {
           respond(false, undefined, authenticatedProfileUnavailableError());
           return undefined;
         }
