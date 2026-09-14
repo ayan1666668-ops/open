@@ -13,7 +13,6 @@ import {
   settleModelCatalogRequests,
   subscribeModelCatalogCache,
 } from "../model-catalog-store.ts";
-import { readSessionChangedEvent } from "../sessions/reconcile.ts";
 import { uiConversationMatches, type UiSessionDefaultsHost } from "../sessions/session-key.ts";
 import {
   chatMetadataCache,
@@ -57,10 +56,11 @@ function metadataEntryFor(
         (entry) =>
           (sessionDefaults && scope?.sessionKey
             ? uiConversationMatches(
-                { ...sessionDefaults, assistantAgentId: entry.scope.agentId },
+                sessionDefaults,
                 entry.scope.sessionKey,
                 scope.sessionKey,
                 scope.agentId,
+                entry.scope.agentId,
               )
             : (!scope?.agentId || entry.scope.agentId === scope.agentId) &&
               (!scope?.sessionKey || entry.scope.sessionKey === scope.sessionKey)) &&
@@ -84,25 +84,6 @@ function metadataEntryFor(
     cache = {
       entries,
       invalidate,
-      invalidateSession: (source, sessionDefaults) => {
-        if (
-          source?.reason === "reset" ||
-          source?.phase === "reset" ||
-          source?.reason === "command-metadata" ||
-          source?.reason === "patch"
-        ) {
-          const changed = readSessionChangedEvent(source);
-          if (changed) {
-            invalidate(
-              {
-                agentId: typeof source?.agentId === "string" ? source.agentId : undefined,
-                sessionKey: changed.key,
-              },
-              sessionDefaults,
-            );
-          }
-        }
-      },
     };
     chatMetadataCache.set(client, cache);
   }
