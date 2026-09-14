@@ -30,6 +30,16 @@ it("restores segmented controls after fieldset busy state while preserving disab
     await expect.poll(disabledStates).toEqual(["false", "false", "true"]);
     draw(true);
     await expect.poll(disabledStates).toEqual(["true", "true", "true"]);
+    draw(true);
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+    expect(disabledStates()).toEqual(["true", "true", "true"]);
+    container.querySelector<HTMLElement>('wa-radio[value="second"]')?.click();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+    expect(onChange).not.toHaveBeenCalled();
     draw(false);
     await expect.poll(disabledStates).toEqual(["false", "false", "true"]);
     container.querySelector<HTMLElement>('wa-radio[value="second"]')?.click();
