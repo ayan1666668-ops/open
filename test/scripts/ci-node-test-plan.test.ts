@@ -2109,6 +2109,11 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         .toSorted((a, b) => a.localeCompare(b));
       const expected = stripeConfigs
         .flatMap((config) => listMatchedTestFiles(config))
+        .filter(
+          (file) =>
+            prefix !== "agentic-gateway-core" ||
+            file !== "src/gateway/return-covenant-fixture.gateway.test.ts",
+        )
         .toSorted((a, b) => a.localeCompare(b));
 
       expect(stripes.map((stripe) => stripe.shardName)).toEqual([
@@ -3481,8 +3486,22 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     expect(shardNames).toContain("agentic-gateway-core-1");
     expect(shardNames).toContain("agentic-gateway-core-2");
     expect(shardNames).toContain("agentic-gateway-core-3");
+    expect(shardNames).toContain("agentic-gateway-return-covenant");
     expect(shardNames).toContain("agentic-gateway-methods");
     expect(shardNames).toContain("agentic-plugin-sdk");
+  });
+
+  it("keeps the return-covenant Gateway fixture in a dedicated shard", () => {
+    const target = "src/gateway/return-covenant-fixture.gateway.test.ts";
+    const shards = createNodeTestShards({ includeReleaseOnlyPluginShards: false });
+    const owner = shards.find((shard) => shard.shardName === "agentic-gateway-return-covenant");
+
+    expect(owner?.includePatterns).toEqual([target]);
+    expect(
+      shards
+        .filter((shard) => shard.shardName.startsWith("agentic-gateway-core-"))
+        .flatMap((shard) => shard.includePatterns ?? []),
+    ).not.toContain(target);
   });
 
   it("keeps changed native browser tests in UI jobs and out of extension fallback", () => {
