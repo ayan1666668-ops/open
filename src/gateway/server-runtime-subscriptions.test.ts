@@ -187,6 +187,7 @@ type LifecycleTransition = { state: string; lifecycle?: ReturnType<typeof readLi
 function createParams(): SubscriptionParams {
   const chatRunState = createChatRunState();
   return {
+    signal: new AbortController().signal,
     log: mockLog,
     broadcast: vi.fn(),
     broadcastToConnIds: vi.fn(),

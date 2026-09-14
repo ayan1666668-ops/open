@@ -281,6 +281,7 @@ it.each(["success", "failed-write"])(
       const sessionEventSubscribers = createSessionEventSubscriberRegistry();
       sessionEventSubscribers.subscribe("session-observer");
       subscriptions = startGatewayEventSubscriptions({
+        signal: new AbortController().signal,
         log: silentLog,
         broadcast,
         broadcastToConnIds,
@@ -484,6 +485,7 @@ it.each([
       const markFinal = vi.spyOn(chatRunState.toolEventRecipients, "markFinal");
       const agentRunSeq = new Map<string, number>();
       subscriptions = startGatewayEventSubscriptions({
+        signal: new AbortController().signal,
         log: silentLog,
         broadcast: vi.fn(),
         broadcastToConnIds: vi.fn(),

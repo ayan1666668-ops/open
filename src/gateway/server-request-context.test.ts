@@ -261,6 +261,7 @@ describe("createGatewayRequestContext", () => {
       const chatRunState = createChatRunState();
       const subscriptions = startGatewayEventSubscriptions({
         ...broadcaster,
+        signal: new AbortController().signal,
         log: params.log,
         nodeHasSessionSubscribers: () => false,
         nodeSendToSession: vi.fn(),
