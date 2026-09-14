@@ -43,6 +43,7 @@ type TaskFlowReadQuery = {
 /** Commands share one physical shared-state actor; bindings belong to commands, not open input. */
 export type OpenClawStateWorkerOperations = UserPreferenceWorkerOperations &
   SessionDeliveryWorkerOperations & {
+    "projects.findRoot": { input: { repoRoot: string }; output: string | undefined };
     "plugins.metadata.read": {
       input: { selector: PluginMetadataStateSelector; artifactPreservingReadOnly?: boolean };
       output: { value_json: string } | undefined;
