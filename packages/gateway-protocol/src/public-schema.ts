@@ -684,6 +684,12 @@ export {
 } from "./schema-modules.js";
 
 export {
+  SessionActivitySummarySchema,
+  SessionsActivitySummaryEnsureParamsSchema,
+  SessionsActivitySummaryEnsureResultSchema,
+} from "./schema/sessions-activity-summary.js";
+
+export {
   SupervisionControlParamsSchema,
   SupervisionGetParamsSchema,
   SupervisionListParamsSchema,

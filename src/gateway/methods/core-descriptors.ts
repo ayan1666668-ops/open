@@ -678,6 +678,9 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["plugins.reload", "plugins-mutations", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["claws.packages.remove", "claws-packages", "operator.admin", "2026.9", CONTROL_PLANE_WRITE],
   ["canvas.document.preview", "canvas", "operator.read", "2026.9"],
+  ["computer.status", "computer", "operator.read", "2026.9"],
+  ["computer.invoke", "computer", "operator.write", "2026.9"],
+  ["sessions.activitySummary.ensure", "session-activity-summary", "operator.write", "2026.9"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 
 export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS)[number][1], null>;
@@ -685,7 +688,7 @@ export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS
 // Rows are `as const`, so a present policy flag is already the exact literal the spec allows.
 const CORE_GATEWAY_METHOD_SPEC_LIST: readonly CoreGatewayMethodSpec[] =
   CORE_GATEWAY_METHOD_SPECS.map(([name, family, scope, since, policy]) =>
-    Object.assign({ name, scope, since }, family ? { family } : {}, policy),
+    Object.assign({ name, scope, since, ...(family ? { family } : {}) }, policy),
   );
 
 const CORE_GATEWAY_METHOD_SPEC_BY_NAME: ReadonlyMap<string, CoreGatewayMethodSpec> = new Map(

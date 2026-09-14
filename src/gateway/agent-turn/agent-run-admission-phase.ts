@@ -62,7 +62,8 @@ import type { RestoredCronContinuation } from "./agent-handler-helpers.js";
 import { maybeAdmitSupervisedGatewayRoot } from "./agent-run-supervised-root.js";
 import {
   prepareAgentRunUserTurn,
-  recordAcceptedAgentRunParticipant,
+  recordAgentRunUserTurnParticipant,
+  reconcileAgentRunUserTurnCompletion,
   releasePreparedAgentRunUserTurn,
   type PreparedAgentRunUserTurn,
 } from "./agent-run-user-turn.js";
@@ -130,6 +131,7 @@ export async function prepareAgentRunDispatch(params: {
   offloadedRefs: OffloadedRef[];
   onUserTurnMediaPersisted: () => void;
   requestedPromptPersistenceSuppression: boolean;
+  privateCompletion?: true;
   runId: string;
   agentDedupeKeys: readonly string[];
   context: AgentTurnContext;
@@ -570,22 +572,29 @@ export async function prepareAgentRunDispatch(params: {
   }
   let assertInputAdmissionCurrent = params.assertAdmissionCurrent;
   let userTurn: PreparedAgentRunUserTurn;
+  const assertInputOwnerCurrent = (terminal = false) => {
+    assertInputAdmissionCurrent?.();
+    assertAgentRunLifecycleGenerationCurrent(params.lifecycleGeneration);
+    const entry = params.context.chatAbortControllers.get(params.runId);
+    if (
+      !entry ||
+      entry !== activeRunAbort.entry ||
+      entry.operationalRunInstance !== operationalRunInstance ||
+      (!terminal && entry.registrationCleanupRequested)
+    ) {
+      throw new Error("agent input admission no longer owns this run");
+    }
+  };
   try {
     userTurn = await prepareAgentRunUserTurn({
       assertCurrent: () => {
-        assertInputAdmissionCurrent?.();
-        assertAgentRunLifecycleGenerationCurrent(params.lifecycleGeneration);
+        assertInputOwnerCurrent();
         activeRunAbort.controller.signal.throwIfAborted();
-        const entry = params.context.chatAbortControllers.get(params.runId);
-        if (
-          !entry ||
-          entry !== activeRunAbort.entry ||
-          entry.operationalRunInstance !== operationalRunInstance ||
-          entry.registrationCleanupRequested
-        ) {
-          throw new Error("agent input admission no longer owns this run");
-        }
       },
+      assertCompletionCurrent: () => assertInputOwnerCurrent(true),
+      abortSignal: activeRunAbort.controller.signal,
+      getAbortStopReason: () => activeRunAbort.entry?.abortStopReason ?? "rpc",
+      privateCompletion: params.privateCompletion,
       request: params.request,
       cfg: params.cfg,
       cfgForAgent: params.cfgForAgent,
@@ -647,6 +656,16 @@ export async function prepareAgentRunDispatch(params: {
     acceptedAt: Date.now(),
     ...(taskTrackingMode === "plugin_subagent" ? { runtime: resolvedRuntime } : {}),
   };
+  const completedInput = reconcileAgentRunUserTurnCompletion(
+    userTurn,
+    accepted,
+    cleanupPreaccept,
+    params.io,
+  );
+  if (completedInput) {
+    await completedInput;
+    return undefined;
+  }
   params.markAgentRunAccepted(true);
   setGatewayDedupeEntries({
     dedupe: params.context.dedupe,
@@ -667,10 +686,11 @@ export async function prepareAgentRunDispatch(params: {
   // may reject its execution after this synchronous ownership transfer.
   assertInputAdmissionCurrent = undefined;
   params.io.emitAcceptance([true, accepted, undefined], { runId: params.runId });
-  recordAcceptedAgentRunParticipant(params, userTurn, lifecycleStorePath);
+  recordAgentRunUserTurnParticipant(params, userTurn, lifecycleStorePath);
   const cronCreatorAuthority = resolveGatewayCronCreatorAuthorityAdmission({
     runId: params.runId,
     resolvedSessionKey: params.resolvedSessionKey,
+    sessionId: params.getAdmittedSessionId(),
     spawnedBy: params.sessionEntry?.spawnedBy,
     client: params.client,
     request: params.request,
