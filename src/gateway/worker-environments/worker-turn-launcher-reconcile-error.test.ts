@@ -88,6 +88,7 @@ describe("worker turn recovery after environment reconciliation errors", () => {
         runLocalBarrier: async ({ startDispatch }) => startDispatch(),
 
         runActivationBarrier: async ({ activate }) => activate(),
+        runRecoveryBarrier: async ({ run }) => await run({ kind: "local", path: root }),
         runMoveBarrier: async ({ begin }) => begin(),
         resolveMoveDestination: async () => undefined,
         runReclaimPreparation: async ({ run, authorize }) => await run(authorize),

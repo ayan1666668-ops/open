@@ -43,6 +43,8 @@ function createDispatch(
       runLocalBarrier: async ({ startDispatch }) => startDispatch(),
 
       runActivationBarrier: async ({ activate }) => activate(),
+      runRecoveryBarrier: async ({ run }) =>
+        await run({ kind: "local", path: support.testState.root }),
       runMoveBarrier: async ({ begin }) => begin(),
       resolveMoveDestination: async () => undefined,
       runReclaimPreparation: async ({ run, authorize }) => await run(authorize),
