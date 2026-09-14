@@ -24,6 +24,7 @@ import {
   releaseAgentRunDelegatedAuthority,
   validateAgentRunDelegatedAuthority,
 } from "../src/infra/agent-run-registry.js";
+import { getPluginInstance } from "../src/plugins/plugin-instance-scope.js";
 import { createPluginRegistry } from "../src/plugins/registry.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../src/plugins/runtime.js";
 import type { PluginRuntime } from "../src/plugins/runtime/types.js";
@@ -235,6 +236,8 @@ async function createFixture(
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
+    const disposal = await getPluginInstance(record)?.dispose();
+    expect(disposal?.errors).toEqual([]);
   });
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);
