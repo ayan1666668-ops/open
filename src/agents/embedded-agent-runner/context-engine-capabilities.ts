@@ -44,6 +44,12 @@ export function resolveContextEngineCapabilities(
           authority: {
             caller: { kind: "context-engine", id: params.purpose },
             requiresBoundAgent: true,
+            // The runtime re-asserts this after acquisition and at the final
+            // provider boundary, so revocation during awaited preparation still
+            // stops the retained completion before dispatch.
+            ...(params.assertRunAuthorityActive
+              ? { assertCurrent: params.assertRunAuthorityActive }
+              : {}),
             ...(sessionKey ? { sessionKey } : {}),
             ...(agentId ? { agentId } : {}),
             ...(params.authProfileId ? { preferredProfile: params.authProfileId } : {}),

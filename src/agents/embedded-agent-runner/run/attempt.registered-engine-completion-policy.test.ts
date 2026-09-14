@@ -49,6 +49,29 @@ type RecallObservation = {
   completions: CompletionObservation[];
 };
 
+function createPreparedCompletionModel() {
+  return {
+    async [Symbol.asyncDispose]() {},
+    selection: {
+      provider: "openai",
+      modelId: "allowed-model",
+      agentDir: "/tmp/openclaw-agent",
+    },
+    model: {
+      provider: "openai",
+      id: "allowed-model",
+      name: "allowed-model",
+      api: "openai",
+      baseUrl: "https://fixture.invalid/v1",
+      input: ["text"],
+      reasoning: false,
+      contextWindow: 128_000,
+      maxTokens: 4096,
+      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2 },
+    },
+  };
+}
+
 function makePolicyProbingContextEngine(recall: RecallObservation): ContextEngine {
   const probe = async (
     runtimeContext: ContextEngineRuntimeContext | undefined,
@@ -223,5 +246,90 @@ describe("registered context engine completion policy", () => {
       agentId: "main",
       modelRef: allowedModel,
     });
+  });
+
+  it("revokes a suspended recall completion when the run aborts during preparation", async () => {
+    // The capability assertion passes at entry, but the run can abort while
+    // the retained completion is suspended on model acquisition. The minted
+    // capability must not dispatch to the provider with revoked authority.
+    let releaseAcquisition: ((value: unknown) => void) | undefined;
+    completionRuntimeHoisted.acquireSimpleCompletionModelForAgent.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseAcquisition = resolve;
+        }),
+    );
+    const abortController = new AbortController();
+    const recall: RecallObservation = { senderIds: [], completions: [] };
+    const registration = registerContextEngineForOwner(
+      engineId,
+      async () => {
+        const engine = makePolicyProbingContextEngine(recall);
+        return {
+          ...engine,
+          assemble: async (rawParams: Parameters<AttemptContextEngine["assemble"]>[0]) => {
+            const params = rawParams as {
+              messages: Parameters<AttemptContextEngine["assemble"]>[0]["messages"];
+              runtimeContext?: ContextEngineRuntimeContext;
+            };
+            recall.senderIds.push(params.runtimeContext?.senderId);
+            const complete = params.runtimeContext?.llm?.complete;
+            if (!complete) {
+              throw new Error("runtimeContext exposed no llm completion capability");
+            }
+            const pending = complete({
+              model: allowedModel,
+              messages: [{ role: "user", content: "suspension probe" }],
+            } as never);
+            await vi.waitFor(
+              () => {
+                expect(releaseAcquisition).toBeDefined();
+              },
+              { timeout: 15_000 },
+            );
+            // Abort while the completion is suspended on acquisition, then
+            // let the acquisition settle as it would after a real selection.
+            abortController.abort();
+            releaseAcquisition?.(createPreparedCompletionModel());
+            try {
+              await pending;
+              recall.completions.push({ model: allowedModel, denied: false });
+            } catch (error) {
+              recall.completions.push({
+                model: allowedModel,
+                denied: true,
+                message: (error as Error).message,
+              });
+            }
+            return { messages: params.messages, estimatedTokens: 1 };
+          },
+        };
+      },
+      `plugin:${ownerPluginId}`,
+      { allowSameOwnerRefresh: true },
+    );
+    expect(registration.ok).toBe(true);
+
+    const resolved = await resolveContextEngine(configPatch as never);
+    const result = await createContextEngineAttemptRunner({
+      contextEngine: resolved as unknown as AttemptContextEngine,
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        abortSignal: abortController.signal,
+        contextEngine: resolved as unknown as AttemptContextEngine,
+      },
+      configPatch,
+    });
+
+    // The abort aborts the attempt itself; the suspended capability must not
+    // have reached the provider.
+    expect(projectAgentRunAttemptTerminal(result.terminal).promptError).toBeDefined();
+    const suspended = recall.completions.find((entry) => entry.model === allowedModel);
+    expect(suspended?.denied).toBe(true);
+    expect(suspended?.message).toContain("no longer active");
+    expect(
+      completionRuntimeHoisted.completeWithPreparedSimpleCompletionModel,
+    ).not.toHaveBeenCalled();
   });
 });
