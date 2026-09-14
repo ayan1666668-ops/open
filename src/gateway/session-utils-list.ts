@@ -685,8 +685,7 @@ export async function listSessionsFromStoreAsync(
         await preparationPause;
       }
       let transcriptFieldIndex = 0;
-      let nextRowIndex = 0;
-      while (nextRowIndex < list.entries.length) {
+      for (let nextRowIndex = 0; nextRowIndex < list.entries.length;) {
         // Release roster facts before a pause so resumed rows observe current entries.
         const pause = withAgentRosterFactsBatch(cfg, () => {
           while (nextRowIndex < list.entries.length) {
