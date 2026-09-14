@@ -11,10 +11,12 @@
 // documents the opt-in environment.
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { setTestEnvValue } from "../../test-utils/env.js";
 import type { GatewayClient } from "../client.js";
 import {
   assertCodexHookOverlay,
@@ -181,11 +183,15 @@ async function installIndependentUserLayerHook(params: {
   agentDir: string;
   proofDir: string;
 }): Promise<IndependentUserLayerHook> {
-  // Mirrors `resolveCodexAppServerHomeDir` in the codex extension: with no
-  // explicit CODEX_HOME and a non-user home scope, the app-server runs against
-  // `<agentDir>/codex-home`, whose `config.toml` is the User config layer.
+  // Keep native authentication in a disposable home. Copy only the login,
+  // never operator configuration or sessions, before selecting the new home.
+  const sourceHome = process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
   const codexHome = path.join(params.agentDir, "codex-home");
-  await fs.mkdir(codexHome, { recursive: true });
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const authPath = path.join(codexHome, "auth.json");
+  await fs.copyFile(path.join(sourceHome, "auth.json"), authPath);
+  await fs.chmod(authPath, 0o600);
+  setTestEnvValue("CODEX_HOME", codexHome);
   const configPath = path.join(codexHome, "config.toml");
   const markerPath = path.join(params.proofDir, INDEPENDENT_HOOK_MARKER_FILENAME);
   await fs.writeFile(markerPath, "");

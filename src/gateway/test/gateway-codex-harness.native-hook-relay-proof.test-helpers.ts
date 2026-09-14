@@ -176,7 +176,7 @@ const RELAY_PROOF_APP_SERVER_CONFIGS = {
   // the `disabled-never` policy shape on purpose: the mid-session flip must be
   // able to reach the *full* opt-out, which needs an effective `"never"` policy
   // and no OpenClaw before-tool policy.
-  transition: { mode: "yolo", approvalPolicy: "never" },
+  transition: { mode: "yolo", approvalPolicy: "never", homeScope: "user" },
 } as const satisfies Record<RelayProofMode, Record<string, unknown>>;
 
 function buildModeAppServerConfig(
@@ -598,61 +598,64 @@ export async function runCodexRelayProofLane(params: {
   const { resolveAgentDir } = await import("../../agents/agent-scope.js");
   const { startGatewayServer } = await import("../server.js");
 
-  const previousEnv: LiveEnvSnapshot = snapshotLiveEnv(["OPENCLAW_ALLOW_SLOW_REPLY_TESTS"]);
+  const previousEnv: LiveEnvSnapshot = snapshotLiveEnv([
+    "OPENCLAW_ALLOW_SLOW_REPLY_TESTS",
+    "CODEX_HOME",
+  ]);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-relay-proof-"));
-  const stateDir = path.join(tempDir, "state");
-  const workspace = await createLiveWorkspace(tempDir);
-  const configPath = path.join(tempDir, "openclaw.json");
-  const token = `test-${randomUUID()}`;
-  const port = await getFreeGatewayPort();
-
-  clearRuntimeConfigSnapshot();
-  process.env.OPENCLAW_AGENT_RUNTIME = "codex";
-  // Codex-auth (ChatGPT) lane: never let stray OpenAI overrides hijack it.
-  delete process.env.OPENAI_BASE_URL;
-  delete process.env.OPENAI_API_KEY;
-  setTestEnvValue("OPENCLAW_CONFIG_PATH", configPath);
-  setTestEnvValue("OPENCLAW_ALLOW_SLOW_REPLY_TESTS", "1");
-  process.env.OPENCLAW_GATEWAY_TOKEN = token;
-  process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
-  process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
-  process.env.OPENCLAW_SKIP_CHANNELS = "1";
-  process.env.OPENCLAW_SKIP_CRON = "1";
-  process.env.OPENCLAW_SKIP_GMAIL_WATCHER = "1";
-  setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
-
-  await fs.mkdir(stateDir, { recursive: true });
-  const writeOperatorRelayConfig = (relay: RelayProofTransitionRelayConfig) =>
-    writeProofGatewayConfig({
-      codexCommand,
-      configPath,
-      mode,
-      port,
-      ...(relay ? { relayOverride: relay } : {}),
-      token,
-      workspace,
-    });
-  const appServerConfig = await writeOperatorRelayConfig(undefined);
-  if (params.prepare) {
-    await params.prepare({
-      agentDir: resolveAgentDir(loadConfig({ pin: false }), RELAY_PROOF_AGENT_ID),
-      proofDir,
-    });
-  }
-  const deviceIdentity = await ensurePairedTestGatewayClientIdentity({
-    displayName: "vitest-codex-relay-proof",
-  });
   let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
   let client: Awaited<ReturnType<typeof connectTestGatewayClient>> | undefined;
   const gatewayEvents: EventFrame[] = [];
   const receipt: Record<string, unknown> = {
     mode,
     modelKey: MODEL_KEY,
-    pluginAppServerConfig: appServerConfig,
     startedAt: new Date().toISOString(),
   };
 
   try {
+    const stateDir = path.join(tempDir, "state");
+    const workspace = await createLiveWorkspace(tempDir);
+    const configPath = path.join(tempDir, "openclaw.json");
+    const token = `test-${randomUUID()}`;
+    const port = await getFreeGatewayPort();
+
+    clearRuntimeConfigSnapshot();
+    process.env.OPENCLAW_AGENT_RUNTIME = "codex";
+    // Codex-auth (ChatGPT) lane: never let stray OpenAI overrides hijack it.
+    delete process.env.OPENAI_BASE_URL;
+    delete process.env.OPENAI_API_KEY;
+    setTestEnvValue("OPENCLAW_CONFIG_PATH", configPath);
+    setTestEnvValue("OPENCLAW_ALLOW_SLOW_REPLY_TESTS", "1");
+    process.env.OPENCLAW_GATEWAY_TOKEN = token;
+    process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
+    process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
+    process.env.OPENCLAW_SKIP_CHANNELS = "1";
+    process.env.OPENCLAW_SKIP_CRON = "1";
+    process.env.OPENCLAW_SKIP_GMAIL_WATCHER = "1";
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+
+    await fs.mkdir(stateDir, { recursive: true });
+    const writeOperatorRelayConfig = (relay: RelayProofTransitionRelayConfig) =>
+      writeProofGatewayConfig({
+        codexCommand,
+        configPath,
+        mode,
+        port,
+        ...(relay ? { relayOverride: relay } : {}),
+        token,
+        workspace,
+      });
+    const appServerConfig = await writeOperatorRelayConfig(undefined);
+    receipt.pluginAppServerConfig = appServerConfig;
+    if (params.prepare) {
+      await params.prepare({
+        agentDir: resolveAgentDir(loadConfig({ pin: false }), RELAY_PROOF_AGENT_ID),
+        proofDir,
+      });
+    }
+    const deviceIdentity = await ensurePairedTestGatewayClientIdentity({
+      displayName: "vitest-codex-relay-proof",
+    });
     server = await startGatewayServer(port, {
       bind: "loopback",
       auth: { mode: "token", token },
@@ -693,6 +696,9 @@ export async function runCodexRelayProofLane(params: {
       writeOperatorRelayConfig,
     });
     receipt.finishedAt = new Date().toISOString();
+  } catch (error) {
+    receipt.failure = error instanceof Error ? error.message : String(error);
+    throw error;
   } finally {
     try {
       await fs.writeFile(
