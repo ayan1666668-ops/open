@@ -543,7 +543,9 @@ export async function prepareReplyAgentPayloads(state: {
     }
     const emptyFallbackPayload = retryBlockedSourceReply
       ? undefined
-      : (emptyInteractiveReplyPayload ?? buildTerminalEmptyInteractiveReplyPayload(isHeartbeat));
+      : (buildStrandedRetryMissingDeliveryDiagnostic() ??
+        emptyInteractiveReplyPayload ??
+        buildTerminalEmptyInteractiveReplyPayload(isHeartbeat));
     if (emptyFallbackPayload && !effectiveContinuationSignal && !hasQueuedDelegateWork) {
       const emptyPayloadResult = await buildFinalPayloads([emptyFallbackPayload]);
       if (emptyPayloadResult.replyPayloads.length > 0) {

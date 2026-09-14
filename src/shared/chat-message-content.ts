@@ -130,7 +130,7 @@ export function resolveAssistantEventPhase(data: unknown): AssistantPhase | unde
 }
 
 /** Extracts assistant text parts for a requested phase without mixing legacy and phased text. */
-export function extractAssistantTextPartsForPhase(
+function extractAssistantTextPartsForPhase(
   message: unknown,
   options?: {
     phase?: AssistantPhase;

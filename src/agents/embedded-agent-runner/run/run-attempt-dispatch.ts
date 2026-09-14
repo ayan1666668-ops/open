@@ -1,7 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveSessionStorePathCore } from "../../../config/sessions.js";
-import { resolveSessionTranscriptRuntimeTarget } from "../../../config/sessions/session-accessor.js";
 import type { resolveContextEngine } from "../../../context-engine/registry.js";
 import { attachModelProviderRuntimePluginHandle } from "../../../plugins/provider-hook-runtime.js";
 import { getGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
@@ -42,7 +40,10 @@ import type { EmbeddedRunAttemptInternalParams } from "./internal-params.js";
 import { prepareEmbeddedAttemptPromptExecution } from "./prompt-image-preparation.js";
 import type { prepareEmbeddedRunRuntime } from "./runtime-preparation.js";
 import { CODEX_HARNESS_ID, resolveAttemptTrajectoryAttribution } from "./runtime-resolution.js";
-import type { createEmbeddedRunSessionPromptState } from "./session-prompt-state.js";
+import {
+  type createEmbeddedRunSessionPromptState,
+  resolveEmbeddedAttemptSessionTarget,
+} from "./session-prompt-state.js";
 import { resolveSkillWorkshopAttemptParams } from "./skill-workshop-attempt-params.js";
 import type { createEmbeddedRunTerminalRetryState } from "./terminal-retry-state.js";
 import { MAX_BEFORE_AGENT_FINALIZE_REVISIONS } from "./terminal-retry-state.js";
@@ -132,37 +133,14 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
     sessionPromptState.activePrompt.override ??
     resolveEmbeddedAttemptBasePrompt({ provider, prompt: params.prompt });
   const attemptFastMode = resolveAttemptFastModeParam();
-  const existingSessionTarget = sessionPromptState.sessionTarget;
-  const reusableSessionTarget =
-    existingSessionTarget?.sessionKey === resolvedSessionKey ||
-    sessionPromptState.sessionTargetAdopted
-      ? existingSessionTarget
-      : undefined;
-  const resolvedTranscriptTarget =
-    reusableSessionTarget ??
-    (resolvedSessionKey
-      ? await resolveSessionTranscriptRuntimeTarget({
-          agentId: workspaceResolution.agentId,
-          sessionId: sessionPromptState.sessionId,
-          sessionKey: resolvedSessionKey,
-          storePath: resolveSessionStorePathCore(params.config?.session?.store, {
-            agentId: workspaceResolution.agentId,
-          }),
-        })
-      : undefined);
-  const resolvedSessionTarget =
-    resolvedTranscriptTarget || sessionPromptState.sessionTarget
-      ? {
-          ...sessionPromptState.sessionTarget,
-          ...resolvedTranscriptTarget,
-          ...sessionPromptState.sessionWriterFence,
-        }
-      : undefined;
-  await sessionPromptState.settleOwnedTranscriptProjection(
-    resolvedSessionTarget,
-    params.abortSignal,
-  );
-  const trajectorySessionFile = resolvedSessionTarget?.sessionKey ?? sessionPromptState.sessionFile;
+  const { resolvedSessionTarget, trajectorySessionFile } =
+    await resolveEmbeddedAttemptSessionTarget({
+      sessionPromptState,
+      resolvedSessionKey,
+      agentId: workspaceResolution.agentId,
+      sessionStore: params.config?.session?.store,
+      abortSignal: params.abortSignal,
+    });
   if (!input.startupStagesEmitted) {
     startupStages.mark(EMBEDDED_RUN_ATTEMPT_DISPATCH_STAGE.prompt);
   }

@@ -14,12 +14,10 @@ import {
   deriveContinuationDelegateChildRunId,
   deriveContinuationDelegateChildSessionKey,
 } from "../../subagent-continuation-ids.js";
-import { consumeSubagentTraceparentHandoff } from "../../subagent-traceparent-handoff.js";
 import { installAcceptedSubagentGatewayMock } from "../../test-helpers/subagent-gateway.js";
 import { testing as swarmSchedulerTesting } from "../swarm/swarm-scheduler.test-support.js";
 import {
   SpawnSubagentAdmissionCancelledError,
-  type SpawnSubagentAdmissionBoundary,
   type SpawnSubagentAdmissionAuthority,
 } from "./subagent-spawn-contract.js";
 import {
@@ -27,7 +25,12 @@ import {
   expectPersistedRuntimeModel,
   installSessionStoreCaptureMock,
   loadSubagentSpawnModuleForTest,
+  setupCommittedSubagentRegistrationMock,
 } from "./subagent-spawn.test-helpers.js";
+
+type SpawnSubagentAdmissionBoundary = Parameters<
+  SpawnSubagentAdmissionAuthority["assertCurrent"]
+>[0];
 
 const hoisted = vi.hoisted(() => ({
   callGatewayMock: vi.fn(),
@@ -281,6 +284,7 @@ describe("spawnSubagentDirect seam flow", () => {
     });
     hoisted.updateSessionStoreMock.mockReset();
     hoisted.registerSubagentRunMock.mockReset();
+    setupCommittedSubagentRegistrationMock(hoisted.registerSubagentRunMock);
     hoisted.recordAcceptedSubagentSpawnRollbackMock
       .mockReset()
       .mockReturnValue({ status: "persisted" });
@@ -2723,6 +2727,8 @@ describe("spawnSubagentDirect seam flow", () => {
   });
 
   it("forwards inherited traceparent to the child agent run", async () => {
+    const { consumeSubagentTraceparentHandoff } =
+      await import("../../subagent-traceparent-handoff.js");
     const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const calls: Array<{ method?: string; params?: unknown }> = [];
     hoisted.callGatewayMock.mockImplementation(

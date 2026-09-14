@@ -1,14 +1,8 @@
 // Connection-bound task-flow row codecs and SQLite operations.
 import type { DatabaseSync } from "node:sqlite";
 import type { Insertable, Selectable } from "kysely";
-import type { ExecutionOwnerBindingResult } from "../audit/execution-owner-binding.js";
-import {
-  bindExecutionOwnerLifecycleMetadata,
-  deleteExecutionOwnerLifecycleMetadata,
-} from "../audit/execution-owner-lifecycle-binding-store.js";
 import {
   executeSqliteQuerySync,
-  executeSqliteQueryTakeFirstSync,
   getNodeSqliteKysely,
   prepareSqliteQuerySync,
 } from "../infra/kysely-sync.js";
@@ -16,7 +10,6 @@ import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import { applyFlowPatch, normalizeRestoredFlowRecord } from "./task-flow-registry.records.js";
 import type {
-  TaskFlowRegistryStoreSnapshot,
   TaskFlowRegistryUpdate,
   TaskFlowRegistryUpdateResult,
 } from "./task-flow-registry.store.types.js";
@@ -57,25 +50,6 @@ function resolveFlowSyncMode(row: {
 
 function rowToSyncMode(row: FlowRegistryRow): TaskFlowSyncMode {
   return resolveFlowSyncMode(row);
-}
-
-function isFlowExecutionOwnerActive(row: {
-  sync_mode: string | null;
-  shape: string | null;
-  status: string;
-  cancel_requested_at: number | null;
-  ended_at: number | null;
-}): boolean {
-  const syncMode = resolveFlowSyncMode(row);
-  const status = parseTaskFlowStatus(row.status);
-  if (row.cancel_requested_at !== null || row.ended_at !== null) {
-    return false;
-  }
-  // Mirrored `blocked` is derived from a terminal task; managed `blocked`
-  // remains live while its controller waits for the blocking task.
-  return syncMode === "task_mirrored"
-    ? status === "queued" || status === "running"
-    : status === "queued" || status === "running" || status === "waiting" || status === "blocked";
 }
 
 function rowToFlowRecord(row: FlowRegistryRow): TaskFlowRecord {
@@ -198,20 +172,6 @@ export function listTaskFlowRecordsForOwnerReadInDatabase(
   return read(ownerKey).rows.map(rowToFlowRecord);
 }
 
-export function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistryStoreSnapshot {
-  const query = getFlowRegistryKysely(db)
-    .selectFrom("flow_runs")
-    .select(FLOW_RUN_SELECT_COLUMNS)
-    .orderBy("created_at", "asc")
-    .orderBy("flow_id", "asc");
-  const flows = new Map<string, TaskFlowRecord>();
-  // Finish native reads before decoding so SQLite errors retain precedence.
-  for (const row of executeSqliteQuerySync(db, query).rows) {
-    flows.set(row.flow_id, rowToFlowRecord(row));
-  }
-  return { flows };
-}
-
 const FLOW_VIEW_SELECT_COLUMNS = FLOW_RUN_SELECT_COLUMNS.filter(
   (column) => column !== "state_json" && column !== "wait_json",
 );
@@ -332,38 +292,4 @@ export function updateTaskFlowRecordInDatabase(
   }
   upsertTaskFlowRowInDatabase(db, bindTaskFlowRecord(flow));
   return { applied: true, previous: current, flow };
-}
-
-/** Revalidate the native flow lifecycle before recording its exact execution binding. */
-export function bindTaskFlowExecutionInDatabase(
-  db: DatabaseSync,
-  flowId: string,
-  binding: Parameters<typeof bindExecutionOwnerLifecycleMetadata>[0]["binding"],
-): Exclude<ExecutionOwnerBindingResult, "disabled"> {
-  const kysely = getFlowRegistryKysely(db);
-  const current = executeSqliteQueryTakeFirstSync(
-    db,
-    kysely
-      .selectFrom("flow_runs")
-      .select(["flow_id", "sync_mode", "shape", "status", "cancel_requested_at", "ended_at"])
-      .where("flow_id", "=", flowId),
-  );
-  if (!current || !isFlowExecutionOwnerActive(current)) {
-    return "missing";
-  }
-  return bindExecutionOwnerLifecycleMetadata({
-    db,
-    ownerKind: "flow",
-    ownerId: current.flow_id,
-    binding,
-  });
-}
-
-/** The caller keeps the flow deletion and native metadata cleanup in one transaction. */
-export function deleteTaskFlowRowInDatabase(db: DatabaseSync, flowId: string): void {
-  executeSqliteQuerySync(
-    db,
-    getFlowRegistryKysely(db).deleteFrom("flow_runs").where("flow_id", "=", flowId),
-  );
-  deleteExecutionOwnerLifecycleMetadata({ db, ownerKind: "flow", ownerIds: [flowId] });
 }

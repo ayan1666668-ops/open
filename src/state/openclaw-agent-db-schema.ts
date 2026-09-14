@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { safeParseJsonRecord } from "@openclaw/normalization-core";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
-import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeNullableString as migratedText } from "@openclaw/normalization-core/string-coerce";
 import type { SessionRunStatus } from "../../packages/gateway-protocol/src/schema/sessions-row.js";
 import {
@@ -49,6 +48,9 @@ import {
   hasPendingMemoryChunkMetadataMigration,
   migrateRetiredAgentStateLeaseSchema,
   migratedSessionColumn,
+  migratedEntryAccountId,
+  migratedEntryChannel,
+  migratedEntryDisplayName,
   ensureSessionKeyContractSchemaInTransaction,
   readExistingAgentSchemaMeta,
   repairAndAssertOpenClawAgentV14SchemaForMigration,
@@ -363,40 +365,6 @@ function migratedSessionScope(
     return chatType;
   }
   return "conversation";
-}
-
-function migratedEntryChannel(entry: MigratedSessionEntry): string | null {
-  const delivery = asNullableRecord(entry.delivery);
-  const deliveryContext =
-    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
-  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
-  return (
-    migratedText(entry.channel) ??
-    migratedText(deliveryContext?.channel) ??
-    migratedText(entry.lastChannel) ??
-    migratedText(origin?.provider)
-  );
-}
-
-function migratedEntryAccountId(entry: MigratedSessionEntry): string | null {
-  const delivery = asNullableRecord(entry.delivery);
-  const deliveryContext =
-    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
-  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
-  return (
-    migratedText(deliveryContext?.accountId) ??
-    migratedText(entry.lastAccountId) ??
-    migratedText(origin?.accountId)
-  );
-}
-
-function migratedEntryDisplayName(entry: MigratedSessionEntry): string | null {
-  return (
-    migratedText(entry.displayName) ??
-    migratedText(entry.label) ??
-    migratedText(entry.subject) ??
-    migratedText(entry.groupId)
-  );
 }
 
 function backfillOpenClawAgentSchema(db: DatabaseSync, previousVersion: number): void {

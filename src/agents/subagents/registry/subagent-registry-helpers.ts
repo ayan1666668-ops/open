@@ -36,7 +36,6 @@ import {
 } from "./subagent-session-metrics.js";
 import {
   resolveCompletionFromSessionEntry,
-  resolveSubagentRunOrphanReason,
   type SubagentRunOrphanReason,
 } from "./subagent-session-reconciliation.js";
 
@@ -321,57 +320,6 @@ export function reconcileOrphanedRun(params: {
     `[warn] Subagent orphan run pruned source=${params.source} run=${params.runId} child=${params.entry.childSessionKey} reason=${params.reason}`,
   );
   return true;
-}
-
-/** Reconciles orphaned runs found when restoring persisted subagent registry state. */
-export function reconcileOrphanedRestoredRuns(params: {
-  runs: Map<string, SubagentRunRecord>;
-  resumedRuns: Set<string>;
-}) {
-  const now = Date.now();
-  let changed = false;
-  for (const [runId, entry] of params.runs.entries()) {
-    if (entry.collect && entry.collectorCompletion) {
-      // Waitable collector tombstones intentionally outlive delete-mode sessions.
-      continue;
-    }
-    if (entry.requesterSettleWake) {
-      // Requester-settle outbox rows can intentionally outlive delete-mode
-      // child sessions. Restore replays the obligation before retiring them.
-      continue;
-    }
-    if (
-      entry.killReconciliation ||
-      entry.killIntent ||
-      entry.execution.restartRecovery ||
-      entry.terminalOwner === "interrupted-recovery"
-    ) {
-      // Provider completion or interrupted recovery still owns these rows.
-      // Their bounded reconciliation runs even when the session vanished.
-      continue;
-    }
-    const orphanReason = resolveSubagentRunOrphanReason({
-      entry,
-      includeStaleUnended: true,
-      now,
-    });
-    if (!orphanReason) {
-      continue;
-    }
-    if (
-      reconcileOrphanedRun({
-        runId,
-        entry,
-        reason: orphanReason,
-        source: "restore",
-        runs: params.runs,
-        resumedRuns: params.resumedRuns,
-      })
-    ) {
-      changed = true;
-    }
-  }
-  return changed;
 }
 
 /** Resolves the completed subagent archive delay from config. */

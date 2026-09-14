@@ -308,15 +308,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       path.join(tempDir, "workspace"),
     );
     params.disableTools = false;
-    params.model = {
-      ...params.model,
-      compat: {
-        ...(params.model.compat && typeof params.model.compat === "object"
-          ? params.model.compat
-          : {}),
-        supportsTools: true,
-      },
-    } as EmbeddedRunAttemptParams["model"] & { compat: { supportsTools: boolean } };
+    setCodexTestModelSupportsTools(params, true);
     params.runtimePlan = createCodexRuntimePlanFixture();
     params.onAgentToolResult = onAgentToolResult;
 

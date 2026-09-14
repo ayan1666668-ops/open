@@ -97,11 +97,7 @@ import {
   type SpanAttributes,
 } from "../infra/continuation-tracer.js";
 import { parseDiagnosticTraceparent } from "../infra/diagnostic-trace-context-pure.js";
-import {
-  resetDiagnosticTraceContextForTest,
-  runWithDiagnosticTraceContext,
-  type DiagnosticTraceContext,
-} from "../infra/diagnostic-trace-context.js";
+import { resetDiagnosticTraceContextForTest } from "../infra/diagnostic-trace-context.js";
 import { peekSystemEventEntries, resetSystemEventsForTest } from "../infra/system-events.js";
 import { defaultRuntime } from "../runtime.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
@@ -130,12 +126,7 @@ import { spawnSubagentDirect } from "./subagents/spawn/subagent-spawn.js";
 const rootSessionKey = "agent:main:root";
 const originTraceId = "11111111111111111111111111111111";
 const originSpanId = "2222222222222222";
-const originTraceContext: DiagnosticTraceContext = {
-  traceId: originTraceId,
-  spanId: originSpanId,
-  parentSpanId: "3333333333333333",
-  traceFlags: "01",
-};
+const originTraceparent = `00-${originTraceId}-${originSpanId}-01`;
 let stateDir: string;
 
 function makeConfig(): OpenClawConfig {
@@ -586,6 +577,7 @@ describe("continuation chain production composition proof (tree hop-1 + hop-2)",
         task: "emit one raw-final delegate token",
         label: "raw-token-origin",
         cleanup: "delete",
+        traceparent: originTraceparent,
       },
       {
         agentSessionKey: rootSessionKey,
@@ -612,20 +604,19 @@ describe("continuation chain production composition proof (tree hop-1 + hop-2)",
       },
     ]);
 
-    const emitOriginCompletion = () =>
-      runWithDiagnosticTraceContext(originTraceContext, () => {
-        emitAgentEvent({
-          runId: originChildRunId,
-          stream: "lifecycle",
-          sessionKey: originChildSessionKey,
-          data: {
-            phase: "end",
-            startedAt: 10,
-            endedAt: 20,
-            terminalReply: { disposition: "visible", text: originFinalText },
-          },
-        });
+    const emitOriginCompletion = () => {
+      emitAgentEvent({
+        runId: originChildRunId,
+        stream: "lifecycle",
+        sessionKey: originChildSessionKey,
+        data: {
+          phase: "end",
+          startedAt: 10,
+          endedAt: 20,
+          terminalReply: { disposition: "visible", text: originFinalText },
+        },
       });
+    };
     emitOriginCompletion();
 
     const listDelegateRuns = () =>

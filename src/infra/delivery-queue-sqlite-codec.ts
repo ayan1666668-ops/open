@@ -53,9 +53,7 @@ export type DeliveryQueueEntryLoadResult =
   | { status: "loaded"; entry: DeliveryQueueEntryState; entryKind?: string; entryJson: string }
   | { status: "corrupt"; entry: CorruptDeliveryQueueEntry; entryJson: string };
 
-export function inflateDeliveryQueueEntry(
-  row: DeliveryQueueSqliteRow,
-): DeliveryQueueEntryState | null {
+function inflateDeliveryQueueEntry(row: DeliveryQueueSqliteRow): DeliveryQueueEntryState | null {
   let parsed: DeliveryQueueEntryState;
   try {
     // SAFETY: entry_json is only ever produced by this codec's own encoder.

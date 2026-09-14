@@ -18,6 +18,7 @@ type CallGateway = (options: {
 type SubagentSessionCleanupOutcome = "deleted" | "changed" | "failed";
 
 const DEFERRED_SESSION_CLEANUP_RETRY_MS = 5_000;
+const DEFAULT_SESSION_CLEANUP_DELETE_FAILURE_RETRIES = 3;
 const cleanupRetryTimers = new Map<string, NodeJS.Timeout>();
 const log = createSubsystemLogger("agents/subagent-session-cleanup");
 
@@ -160,7 +161,18 @@ export async function deleteSubagentSessionForCleanup(
     if (isSessionLifecycleChangedGatewayError(error)) {
       return "changed";
     }
+    const deleteFailureRetries =
+      params.deleteFailureRetries ?? DEFAULT_SESSION_CLEANUP_DELETE_FAILURE_RETRIES;
+    log.warn(
+      `[subagent-session-cleanup-delete-failed] child=${params.childSessionKey} retriesRemaining=${deleteFailureRetries} error=${error instanceof Error ? error.message : String(error)}`,
+    );
     params.onError?.(error);
+    if (deleteFailureRetries > 0) {
+      scheduleDeferredCleanupRetry({
+        ...params,
+        deleteFailureRetries: deleteFailureRetries - 1,
+      });
+    }
     return "failed";
   }
 }

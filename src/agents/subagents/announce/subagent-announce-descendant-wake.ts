@@ -42,7 +42,7 @@ type WakeAgentResponse = {
   status?: string;
 };
 
-export function hasUsableSessionEntry(entry: unknown): entry is Record<string, unknown> {
+function hasUsableSessionEntry(entry: unknown): entry is Record<string, unknown> {
   if (!isRecord(entry)) {
     return false;
   }

@@ -505,12 +505,7 @@ export class NoOpRearmGuard {
   }
 }
 
-let defaultGuard = new NoOpRearmGuard();
-
-/** Replace the process singleton (lifecycle reset / tests). */
-export function resetNoOpRearmGuard(options?: NoOpRearmGuardOptions): void {
-  defaultGuard = new NoOpRearmGuard(options);
-}
+const defaultGuard = new NoOpRearmGuard();
 
 /** Pre-provider admission against the process singleton. */
 export function evaluateNoOpRearmAdmission(input: NoOpRearmWakeInput): NoOpRearmDecision {

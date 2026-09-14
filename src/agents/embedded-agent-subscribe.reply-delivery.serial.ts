@@ -19,3 +19,19 @@ export function emitInSettlementOrder<T>(params: {
   };
   return emitAt(0);
 }
+
+export async function waitForPendingReplyEvents(
+  readPendingEventChain: () => Promise<void> | null,
+  pendingPartialReplyTasks: ReadonlySet<Promise<void>>,
+  options?: { includePartialReplies?: boolean },
+): Promise<void> {
+  const includePartialReplies = options?.includePartialReplies !== false;
+  while (true) {
+    const eventChain = readPendingEventChain();
+    const partialReplyTasks = includePartialReplies ? [...pendingPartialReplyTasks] : [];
+    if (!eventChain && partialReplyTasks.length === 0) {
+      return;
+    }
+    await Promise.allSettled([...(eventChain ? [eventChain] : []), ...partialReplyTasks]);
+  }
+}

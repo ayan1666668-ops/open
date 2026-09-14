@@ -6,6 +6,7 @@ import {
   installSessionStoreCaptureMock,
   loadSubagentSpawnModuleForTest,
   setupAcceptedSubagentGatewayMock,
+  setupCommittedSubagentRegistrationMock,
 } from "./subagent-spawn.test-helpers.js";
 
 const hoisted = vi.hoisted(() => ({
@@ -91,6 +92,7 @@ describe("subagent spawn depth + child limits", () => {
     hoisted.depthBySession.clear();
     hoisted.callGatewayMock.mockClear();
     hoisted.registerSubagentRunMock.mockClear();
+    setupCommittedSubagentRegistrationMock(hoisted.registerSubagentRunMock);
     hoisted.updateSessionStoreMock.mockReset();
     persistedStore = undefined;
     installSessionStoreCaptureMock(hoisted.updateSessionStoreMock, {

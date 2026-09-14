@@ -205,10 +205,7 @@ function applyContextKeyPolicy(entry: SessionQueue, incomingContextKey: string |
   }
 }
 
-export function enqueueSystemEventEntry(
-  text: string,
-  options: SystemEventOptions,
-): SystemEvent | null {
+function enqueueSystemEventEntry(text: string, options: SystemEventOptions): SystemEvent | null {
   const event = enqueueOwnedSystemEventEntry(text, options);
   return event ? cloneSystemEvent(event) : null;
 }

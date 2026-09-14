@@ -98,7 +98,17 @@ describe("spawn context-engine resource custody", () => {
     resolveEngine.mockReset();
     completeLaunchCleanup.mockReset();
     settleLaunchFailure.mockReset();
-    registerRun.mockReset();
+    registerRun
+      .mockReset()
+      .mockImplementation((record: { runId: string; childSessionKey: string }) => ({
+        status: "new-row-committed",
+        attempted: {
+          runId: record.runId,
+          childSessionKey: record.childSessionKey,
+          generation: 1,
+          createdAt: Date.now(),
+        },
+      }));
     resetScheduler();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
   });
@@ -249,8 +259,10 @@ describe("spawn context-engine resource custody", () => {
       return { rollback };
     });
     resolveEngine.mockImplementation(() => fixture.resolve());
-    registerRun.mockImplementation(({ runId }: { runId: string }) => {
-      expect(scheduler.removeQueuedSwarmRun(runId)).toBe(true);
+    const register = registerRun.getMockImplementation()!;
+    registerRun.mockImplementation((record: { runId: string; childSessionKey: string }) => {
+      expect(scheduler.removeQueuedSwarmRun(record.runId)).toBe(true);
+      return register(record);
     });
     try {
       await expect(
@@ -258,7 +270,12 @@ describe("spawn context-engine resource custody", () => {
           { task: "withdrawn child", collect: true, groupId: "withdrawn-group" },
           { agentSessionKey: "main" },
         ),
-      ).rejects.toThrow("swarm scheduler reservation missing");
+      ).resolves.toMatchObject({
+        status: "error",
+        error: expect.stringContaining(
+          "Failed to register subagent run: swarm scheduler reservation missing",
+        ),
+      });
       expect(childPrepared).toBe(false);
       expect(rollback).toHaveBeenCalledTimes(1);
       expect(fixture.engineDisposal).toHaveBeenCalledTimes(1);

@@ -3,11 +3,8 @@
  *
  * Validates spawn requests, prepares child sessions, stages attachments, binds delivery context, and registers runs.
  */
-import { promises as fs } from "node:fs";
-import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js";
 import { isExecutionIdentityCollectionEnabled } from "../../../audit/audit-config.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions/paths.js";
-import { listRegisteredPluginAgentPromptGuidance } from "../../../plugins/command-registry-state.js";
 import { recordSessionParticipantBestEffort } from "../../../sessions/session-participant-recording.js";
 import {
   recordSessionCreated,
@@ -41,7 +38,6 @@ import { resolveSubagentChildPlan } from "./subagent-spawn-child-plan.js";
 import {
   cleanupFailedSpawnBeforeAgentStart,
   cleanupProvisionalSession,
-  terminateAcceptedCollectorRun,
 } from "./subagent-spawn-cleanup.js";
 import { activateCollectorSubagentRun } from "./subagent-spawn-collector.js";
 import {
@@ -57,6 +53,7 @@ import type {
 } from "./subagent-spawn-contract.js";
 import { isSpawnSubagentAdmissionCancelledError } from "./subagent-spawn-contract.js";
 import { setSubagentSpawnDepsForTest } from "./subagent-spawn-deps.js";
+import { prepareSubagentSpawnEnvelope } from "./subagent-spawn-envelope.js";
 import {
   buildSubagentExecutionSessionSpawnContext,
   withSubagentGatewayExecutionIdentity,
@@ -65,10 +62,10 @@ import { callNativeSubagentGateway, readGatewayRunId } from "./subagent-spawn-ga
 import { buildSubagentLaunchRequest } from "./subagent-spawn-launch-request.js";
 import { createSubagentSpawnLifecycleEmitter } from "./subagent-spawn-lifecycle.js";
 import { resolveSubagentSpawnRequest } from "./subagent-spawn-request.js";
+import { cleanupAcceptedSubagentSpawnFailure } from "./subagent-spawn-rollback.js";
 import { createInitialSubagentSession } from "./subagent-spawn-session-patch.js";
 import { bindThreadForSubagentSpawn } from "./subagent-spawn-thread-binding.js";
 import { emitSessionLifecycleEvent, mergeDeliveryContext } from "./subagent-spawn.runtime.js";
-import { buildSubagentSpawnEnvelope } from "./subagent-system-prompt.js";
 
 export { SUBAGENT_SPAWN_CONTEXT_MODES, SUBAGENT_SPAWN_MODES } from "./subagent-spawn.types.js";
 
@@ -272,47 +269,27 @@ export async function spawnSubagentDirect(
     const mountPathHint =
       parsedMountPath.status === "valid" ? parsedMountPath.mountPath : undefined;
 
-    // Binding owns direct delivery. Resolve once afterward so the launch, child
-    // instructions, and requester receipt cannot disagree about completion.
-    const completionMode = params.collect
-      ? "collector"
-      : requestThreadBinding && spawnMode === "session" && hasBoundThreadDeliveryOrigin
-        ? "thread-direct"
-        : expectsCompletionMessage
-          ? "announce"
-          : "quiet";
-    const envelope = buildSubagentSpawnEnvelope({
-      completionMode,
-      soleCollectorChild: soleImplicitMember,
+    const preparedEnvelope = prepareSubagentSpawnEnvelope({
+      cfg,
+      collect: params.collect === true,
+      requestThreadBinding,
       spawnMode,
+      hasBoundThreadDeliveryOrigin,
+      expectsCompletionMessage,
+      soleCollectorChild: soleImplicitMember,
       task,
       requesterSessionKey,
       requesterOrigin: childSessionOrigin,
       childSessionKey,
       label: label || undefined,
-      acpEnabled: isAcpRuntimeSpawnAvailable({
-        config: cfg,
-        sandboxed: childRuntimeSandboxed,
-      }),
-      nativeCommandGuidanceLines: listRegisteredPluginAgentPromptGuidance({
-        surface: "subagent",
-      }),
+      childRuntimeSandboxed,
       childDepth,
       maxSpawnDepth,
-      toolNames: [
-        ...(cfg.agents?.defaults?.continuation?.enabled === true ? ["continue_work"] : []),
-        ...(params.drainsContinuationDelegateQueue === true &&
-        childDepth < maxSpawnDepth &&
-        !cfg.tools?.subagents?.tools?.deny?.includes("continue_delegate")
-          ? ["continue_delegate"]
-          : []),
-      ],
-      continuationEnabled: cfg.agents?.defaults?.continuation?.enabled === true,
+      drainsContinuationDelegateQueue: params.drainsContinuationDelegateQueue === true,
+      outputSchema: params.outputSchema,
     });
-    let childSystemPrompt = envelope.systemPrompt;
-    if (params.outputSchema) {
-      childSystemPrompt = `${childSystemPrompt}\n\nCall structured_output with {"result": <your final result>} until one payload is accepted, with at most one retry after a rejected attempt. The result value must match the requested JSON Schema. Do not call structured_output again after acceptance.`;
-    }
+    const { completionMode, envelope } = preparedEnvelope;
+    let { childSystemPrompt } = preparedEnvelope;
 
     let retainOnSessionKeep = false;
     let attachmentsReceipt: SpawnSubagentResult["attachments"];
@@ -477,29 +454,10 @@ export async function spawnSubagentDirect(
         });
         return { runId: acceptedChildRunId };
       },
-      async cleanupOnFailure({ phase, state }) {
+      async cleanupOnFailure({ phase, state, error }) {
         if (phase === "initialize") {
           await cleanupFailedSpawn();
           return;
-        }
-        // The gateway skips its fallback CLI task row because this launch claims
-        // the run's row, and registration is what delivers it. A register failure
-        // means no owner ever recorded the run, so abort the run the gateway
-        // already accepted instead of leaving it executing unrecorded.
-        if (phase === "register" && acceptedChildRunId && taskRowOwnership === "required") {
-          await terminateAcceptedCollectorRun({
-            childSessionKey,
-            gatewayRunId: acceptedChildRunId,
-            ...provisionalSessionIdentity,
-          });
-        }
-        await rollbackPreparedContextEngine(state?.contextEnginePreparation);
-        if (attachmentAbsDir) {
-          try {
-            await fs.rm(attachmentAbsDir, { recursive: true, force: true });
-          } catch {
-            // Best-effort cleanup only.
-          }
         }
         let emitLifecycleHooks = threadBindingReady;
         if (phase === "dispatch" && threadBindingReady) {
@@ -530,7 +488,19 @@ export async function spawnSubagentDirect(
           }
           emitLifecycleHooks = !endedHookEmitted;
         }
-        await cleanupCreatedSession(emitLifecycleHooks);
+        await cleanupAcceptedSubagentSpawnFailure({
+          phase,
+          error,
+          runId: childIdem,
+          childSessionKey,
+          acceptedChildRunId,
+          taskRowOwnership,
+          contextEnginePreparation: state?.contextEnginePreparation,
+          attachmentAbsDir,
+          ...provisionalSessionIdentity,
+          emitLifecycleHooks,
+          cleanupCreatedSession,
+        });
       },
     };
     const pipelineResult = await runSpawnPipeline({
@@ -637,11 +607,11 @@ export async function spawnSubagentDirect(
             provisionalSessionIdentity,
             launchChildRun,
             emitSpawnLifecycleHooks,
-            rollbackPreparedContext: () =>
-              rollbackPreparedContextEngine(state.contextEnginePreparation),
+            contextEnginePreparation: state.contextEnginePreparation,
             cleanupFailedSpawn,
             gatewayContextResolver,
           });
+          contextEnginePreparation = undefined;
         } else {
           await emitSpawnLifecycleHooks(runId);
         }

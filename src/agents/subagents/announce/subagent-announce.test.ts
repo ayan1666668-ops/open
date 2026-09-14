@@ -61,6 +61,7 @@ const { subagentRegistryRuntimeMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("./subagent-announce.runtime.js", () => ({
+  callGateway: (request: unknown) => callGatewayMock(request),
   callSubagentLifecycleGateway: (request: unknown) => callGatewayMock(request),
   dispatchGatewayMethodInProcess: (
     method: string,

@@ -27,8 +27,8 @@ const CONTINUATION_RUNTIME_LAZY_IMPORT =
 describe("subagent-announce continuation runtime entry", () => {
   it("registers the continuation runtime as a tsdown bundler entry", () => {
     const source = readFileSync(resolve(process.cwd(), TSDOWN_CONFIG_PATH), "utf8");
-    expect(source).toContain(
-      `"subagent-announce.continuation.runtime": "${CONTINUATION_RUNTIME_PATH}"`,
+    expect(source).toMatch(
+      /"subagent-announce\.continuation\.runtime":\s*"src\/agents\/subagent-announce\.continuation\.runtime\.ts"/u,
     );
   });
 

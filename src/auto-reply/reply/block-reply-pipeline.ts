@@ -16,7 +16,10 @@ import type { ReplyPayload } from "../types.js";
 import { createBlockReplyCoalescer } from "./block-reply-coalescer.js";
 import { deliverBlockReply, hasBlockReplyDeliveryCustody } from "./block-reply-delivery.js";
 import type { BlockStreamingCoalescing } from "./block-streaming.js";
-import { resolveReplyDispatchErrorOutcome } from "./reply-dispatch-outcome.js";
+import {
+  resolveReplyDispatchErrorOutcome,
+  type ReplyDispatchDeliveryOutcome,
+} from "./reply-dispatch-outcome.js";
 
 /** Streaming block reply pipeline that tracks sent content and media. */
 export type BlockReplyPipeline = {
@@ -438,6 +441,16 @@ export function createBlockReplyPipeline(params: {
       ),
   };
 }
+
+export type RoutedBlockReplyDelivery = {
+  outcome: ReplyDispatchDeliveryOutcome;
+  pending?: boolean;
+};
+export type RoutedBlockReplyDeliveryAttempt = {
+  contentKey: string;
+  source: string;
+  delivery: Promise<RoutedBlockReplyDelivery>;
+};
 
 export function getBlockReplyAttemptGroups<T>(
   attemptsByMessage: ReadonlyMap<number | undefined, readonly T[]>,

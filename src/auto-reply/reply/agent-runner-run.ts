@@ -1,13 +1,11 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveDefaultAgentId } from "../../agents/agent-scope-config.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
-import { settleProgressVisibilityCallbackResult } from "../../channels/progress-visibility.js";
 import { isRestartRecoveryTerminalDeliveryFailClosed } from "../../config/sessions/restart-recovery-receipt.js";
 import { hasRestartRecoverySourceClaim } from "../../config/sessions/restart-recovery-state.js";
 import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
-import { hasOutboundReplyContent } from "../../plugin-sdk/reply-payload.js";
 import {
   getGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
@@ -31,6 +29,7 @@ import {
   executePreparedReplyAgentRun,
 } from "./agent-runner-execute.js";
 import {
+  bindVisiblePartialReplyObserver,
   createShouldEmitToolOutput,
   createShouldEmitToolResult,
   isAudioPayload,
@@ -120,20 +119,8 @@ export async function runReplyAgent(
   const activeRunQueueMode = effectiveResetTriggered ? "interrupt" : resolvedQueue.mode;
 
   const isHeartbeat = opts?.isHeartbeat === true;
-  let didDeliverVisiblePartialReply = false;
-  const onPartialReply = opts?.onPartialReply;
-  const runOpts = onPartialReply
-    ? {
-        ...opts,
-        onPartialReply: async (payload: Parameters<NonNullable<typeof opts.onPartialReply>>[0]) => {
-          const observed = await settleProgressVisibilityCallbackResult(onPartialReply(payload));
-          if (observed.visible && hasOutboundReplyContent(payload, { trimText: true })) {
-            didDeliverVisiblePartialReply = true;
-          }
-          return observed.result;
-        },
-      }
-    : opts;
+  const visiblePartialReply = bindVisiblePartialReplyObserver(opts);
+  const runOpts = visiblePartialReply.runOpts;
   const replyOperationRunState = replyRunState.resolveReplyOperationRunState(opts);
   followupRun.replyOperationRunStates = replyOperationRunState
     ? [replyOperationRunState]
@@ -497,7 +484,7 @@ export async function runReplyAgent(
       );
     }
     return (
-      didDeliverVisiblePartialReply ||
+      visiblePartialReply.hasDeliveredVisiblePartialReply() ||
       hasSuccessfulTerminalSourceReplyDelivery({ blockReplyPipeline })
     );
   };

@@ -1,5 +1,4 @@
 /** Coordinates subagent registration, lifecycle, delivery, steering, recovery, and persistence. */
-import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { AgentWaitParams } from "../../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { callGateway } from "../../../gateway/call.js";
@@ -18,7 +17,6 @@ import { purgeExpiredDelegateArtifacts } from "../../delegate-artifacts.js";
 import { reconcileRetiredSubagentCancellation } from "../completion/subagent-completion-admission.store.js";
 import { terminateAcceptedCollectorRun } from "../spawn/subagent-spawn-cleanup.js";
 import { isDeliverySuspended } from "./subagent-delivery-state.js";
-import { SUBAGENT_ENDED_REASON_ERROR } from "./subagent-lifecycle-events.js";
 import { createSubagentRegistryCompletionRuntime } from "./subagent-registry-completion-runtime.js";
 import { emitSubagentProgressEndedHook } from "./subagent-registry-completion.js";
 import { createSubagentRegistryContextCleanup } from "./subagent-registry-context-cleanup.js";
@@ -43,13 +41,14 @@ import {
   getLatestLiveSubagentRunByChildSessionKey,
 } from "./subagent-registry-read.js";
 import { createSubagentRegistryRestorer } from "./subagent-registry-restore.js";
+import { handleOrphanedSubagentResume } from "./subagent-registry-resume-orphan.js";
 import type {
   RegisterSubagentRunParams,
   SubagentRegistrationOwnership,
 } from "./subagent-registry-run-launch.js";
 import { createSubagentRunManager } from "./subagent-registry-run-manager.js";
 import { clearSubagentRunsReadCacheForTest } from "./subagent-registry-state.js";
-import { SUBAGENT_SUSPENDED_DELIVERY_HARD_CAP } from "./subagent-registry-suspended-delivery.js";
+import { callGatewayForSweep } from "./subagent-registry-sweep-gateway.js";
 import { hasContinuationWorkForSweepEntry } from "./subagent-registry-sweep-guards.js";
 import { resolveSubagentTaskForRun } from "./subagent-registry-sweep-kill.js";
 import {
@@ -61,7 +60,6 @@ import type {
   SubagentRunRecord,
 } from "./subagent-registry.types.js";
 import {
-  resolveSubagentRunOrphanReason,
   resolveSubagentSessionCompletion,
   resolveSubagentSessionStartedAt,
 } from "./subagent-session-reconciliation.js";
@@ -79,19 +77,7 @@ const resumeRetryTimers = new Set<ReturnType<typeof setTimeout>>();
 let activeGatewayContextResolver: GatewayContextResolver | undefined;
 const SUBAGENT_ANNOUNCE_TIMEOUT_MS = 120_000;
 const GATEWAY_ADMISSION_RETRY_DELAY_MS = 1_000;
-/** Admission pressure for recoverable completion deliveries; rows are never pruned for capacity. */
-export function getSubagentDeliveryBacklogPressure(): {
-  suspended: number;
-  blocked: boolean;
-} {
-  let suspended = 0;
-  for (const entry of subagentRuns.values()) {
-    if (isDeliverySuspended(entry)) {
-      suspended += 1;
-    }
-  }
-  return { suspended, blocked: suspended >= SUBAGENT_SUSPENDED_DELIVERY_HARD_CAP };
-}
+export { getSubagentDeliveryBacklogPressure } from "./subagent-registry-sweep-guards.js";
 
 // Hot lifecycle callers name every changed or removed row. Zero ids is reserved
 // for explicit full-registry replacement at restore/reset boundaries.
@@ -123,21 +109,6 @@ export function prepareSubagentSessionCleanupRevocation(sessionKey: string): () 
 
 function findSubagentTaskForRun(entry: SubagentRunRecord) {
   return resolveSubagentTaskForRun(getSubagentRunsForChildSession(entry.childSessionKey), entry);
-}
-
-async function callGatewayForSweep<T>(request: Parameters<typeof callGateway>[0]): Promise<T> {
-  if (request.method === "sessions.delete") {
-    const key = asOptionalRecord(request.params)?.key;
-    if (typeof key === "string") {
-      const entry = [...subagentRuns.values()].find(
-        (candidate) => candidate.childSessionKey === key,
-      );
-      if (entry && hasContinuationWorkForSweepEntry(entry)) {
-        throw new Error("subagent session still owns live continuation work");
-      }
-    }
-  }
-  return await subagentRegistryDeps.callGateway<T>(request);
 }
 
 export function scheduleSubagentRegistrySweep(params?: { delayMs?: number }) {
@@ -309,28 +280,18 @@ export function resumeSubagentRun(runId: string, source: "live" | "restore" = "l
     resumedRuns.add(runId);
     return;
   }
-  const orphanReason = resolveSubagentRunOrphanReason({
-    entry,
-    includeStaleUnended: source === "restore",
-  });
-  if (orphanReason) {
-    // An orphan still owns its task and requester obligation. Settle through
-    // the same completion path before cleanup can remove that ownership.
-    void completionRuntime
-      .completeSubagentRunWithRecovery(
-        {
-          runId,
-          expectedEntry: entry,
-          endedAt: entry.execution.endedAt ?? Date.now(),
-          outcome: { status: "error", error: `subagent run orphaned: ${orphanReason}` },
-          reason: SUBAGENT_ENDED_REASON_ERROR,
-          triggerCleanup: true,
-        },
-        "orphan-resume",
-      )
-      .catch((error: unknown) => {
-        log.warn("failed to settle orphaned subagent run", { runId, error });
-      });
+  if (
+    handleOrphanedSubagentResume({
+      runId,
+      entry,
+      source,
+      runs: subagentRuns,
+      resumedRuns,
+      persist: persistSubagentRuns,
+      complete: completionRuntime.completeSubagentRunWithRecovery,
+      warn: (message, meta) => log.warn(message, meta),
+    })
+  ) {
     return;
   }
   try {

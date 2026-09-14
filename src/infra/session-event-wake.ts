@@ -6,7 +6,12 @@ import { runWithGatewayDetachedWorkAdmission } from "../process/gateway-work-adm
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { normalizeHeartbeatWakeReason } from "./heartbeat-reason.js";
-import type { HeartbeatRunResult, HeartbeatWakeRequest } from "./heartbeat-wake-contracts.js";
+import {
+  hasTrustedContinuationHeartbeatWake,
+  markTrustedContinuationHeartbeatWake,
+  type HeartbeatRunResult,
+  type HeartbeatWakeRequest,
+} from "./heartbeat-wake-contracts.js";
 
 type SessionEventWakeResult = HeartbeatRunResult;
 type SessionEventWakeRequest = HeartbeatWakeRequest;
@@ -28,6 +33,7 @@ type Settlement = {
   stopWaitingOnRetry?: SessionEventWakeWaitOptions["stopWaitingOnRetry"];
 };
 type PendingWake = SessionEventWakeRequest & {
+  trustedContinuationRouting: boolean;
   sequence: number;
   barrierSequence?: number;
   requestedAt: number;
@@ -39,12 +45,20 @@ type WakeGroup = {
   task?: PendingWake;
   scheduled?: PendingWake;
   event?: PendingWake;
+  trustedTask?: PendingWake;
+  trustedScheduled?: PendingWake;
+  trustedEvent?: PendingWake;
   blockedUntil: number;
 };
 type ActiveWake = { generation: number; controller: AbortController };
 type RequestOptions = Omit<SessionEventWakeRequest, "retainedWork"> & { coalesceMs?: number };
 
-const SLOTS = ["task", "scheduled", "event"] as const;
+const SLOT_GROUPS = [
+  ["task", "scheduled", "event"],
+  ["trustedTask", "trustedScheduled", "trustedEvent"],
+] as const;
+const SLOTS = SLOT_GROUPS.flat();
+const EVENT_SLOTS = ["event", "trustedEvent"] as const;
 const COALESCE_MS = 250;
 const RETRY_MS = 1_000;
 export const SESSION_EVENT_IDLE_RETRY_MS = 60_000;
@@ -155,8 +169,8 @@ function createSessionEventWakeRuntime() {
   function enqueue(wake: PendingWake, blockedUntil = 0): string {
     const key = targetKey(wake);
     const group = pending.get(key) ?? { blockedUntil: 0 };
-    const slot =
-      wake.intent === "task" ? "task" : wake.intent === "scheduled" ? "scheduled" : "event";
+    const [task, scheduled, event] = SLOT_GROUPS[wake.trustedContinuationRouting ? 1 : 0];
+    const slot = wake.intent === "task" ? task : wake.intent === "scheduled" ? scheduled : event;
     group[slot] = group[slot] ? merge(group[slot], wake) : wake;
     group.blockedUntil = Math.max(group.blockedUntil, blockedUntil);
     pending.set(key, group);
@@ -175,9 +189,17 @@ function createSessionEventWakeRuntime() {
   }
 
   function afterBarrier(key: string, wake: PendingWake, global: WakeGroup | undefined): boolean {
-    const barrier =
-      global?.event?.intent === "immediate" ? global.event.barrierSequence : undefined;
-    return key !== GLOBAL_TARGET && barrier !== undefined && wake.sequence >= barrier;
+    return (
+      key !== GLOBAL_TARGET &&
+      EVENT_SLOTS.some((slot) => {
+        const event = global?.[slot];
+        return (
+          event?.intent === "immediate" &&
+          event.barrierSequence !== undefined &&
+          wake.sequence >= event.barrierSequence
+        );
+      })
+    );
   }
 
   function takeReady(): Array<{ key: string; wakes: PendingWake[] }> {
@@ -190,11 +212,12 @@ function createSessionEventWakeRuntime() {
     if (globalReady && active.size) {
       return [];
     }
-    const event = global?.event;
     const flush =
       globalReady &&
-      event?.intent === "immediate" &&
-      Math.max(event.readyAt, event.notBefore) <= now;
+      EVENT_SLOTS.some((slot) => {
+        const event = global?.[slot];
+        return event?.intent === "immediate" && Math.max(event.readyAt, event.notBefore) <= now;
+      });
     const candidates =
       globalReady && global
         ? flush
@@ -229,24 +252,32 @@ function createSessionEventWakeRuntime() {
       if (!SLOTS.some((slot) => group[slot])) {
         pending.delete(key);
       }
-      let wakes: PendingWake[];
-      if (picked.task) {
-        // A task turn includes monitor scratch, so it consumes a coincident base tick.
-        const task = picked.scheduled ? merge(picked.scheduled, picked.task) : picked.task;
-        wakes = picked.event
-          ? [task, picked.event].toSorted(
-              (left, right) =>
-                Number(Boolean(right.retainedWork)) - Number(Boolean(left.retainedWork)) ||
-                left.requestedAt - right.requestedAt,
-            )
-          : [task];
-      } else if (picked.event) {
-        wakes = [picked.scheduled ? merge(picked.scheduled, picked.event) : picked.event];
-      } else {
-        wakes = picked.scheduled ? [picked.scheduled] : [];
+      const wakes: PendingWake[] = [];
+      for (const [taskSlot, scheduledSlot, eventSlot] of SLOT_GROUPS) {
+        const task = picked[taskSlot];
+        const scheduled = picked[scheduledSlot];
+        const event = picked[eventSlot];
+        if (task) {
+          const taskWake = scheduled ? merge(scheduled, task) : task;
+          wakes.push(taskWake);
+          if (event) {
+            wakes.push(event);
+          }
+        } else if (event) {
+          wakes.push(scheduled ? merge(scheduled, event) : event);
+        } else if (scheduled) {
+          wakes.push(scheduled);
+        }
       }
       if (wakes.length) {
-        ready.push({ key, wakes });
+        ready.push({
+          key,
+          wakes: wakes.toSorted(
+            (left, right) =>
+              Number(Boolean(right.retainedWork)) - Number(Boolean(left.retainedWork)) ||
+              left.requestedAt - right.requestedAt,
+          ),
+        });
       }
     }
     return ready;
@@ -337,6 +368,7 @@ function createSessionEventWakeRuntime() {
               reason: wake.reason,
               ...(wake.agentId ? { agentId: wake.agentId } : {}),
               ...(wake.sessionKey ? { sessionKey: wake.sessionKey } : {}),
+              ...(wake.parentRunId ? { parentRunId: wake.parentRunId } : {}),
               ...(wake.heartbeat ? { heartbeat: wake.heartbeat } : {}),
               ...(wake.scheduledEveryMs !== undefined
                 ? { scheduledEveryMs: wake.scheduledEveryMs }
@@ -344,6 +376,9 @@ function createSessionEventWakeRuntime() {
               ...(wake.tasks ? { tasks: wake.tasks } : {}),
               ...(wake.retainedWork ? { retainedWork: true } : {}),
             };
+            if (wake.trustedContinuationRouting) {
+              markTrustedContinuationHeartbeatWake(request);
+            }
             // A synchronous handler throw must not leave the abort promise unobserved.
             const running = abortSignals.run(signal, async () => run(request, signal));
             return Promise.race([running, aborted]);
@@ -479,17 +514,20 @@ function createSessionEventWakeRuntime() {
 
   function enqueueRequest(options: RequestOptions, settlement?: Settlement): void {
     const now = performance.now();
+    const trustedContinuationRouting = hasTrustedContinuationHeartbeatWake(options);
     const { coalesceMs, ...wake } = options;
     const normalized = {
       ...wake,
       agentId: normalizeOptionalString(wake.agentId),
       sessionKey: normalizeOptionalString(wake.sessionKey),
+      parentRunId: normalizeOptionalString(wake.parentRunId),
       reason: normalizeHeartbeatWakeReason(wake.reason),
     };
     const nextSequence = ++sequence;
     runWithoutOwnedSessionTranscriptWrites(() => {
       const pendingWake: PendingWake = {
         ...normalized,
+        trustedContinuationRouting,
         sequence: nextSequence,
         barrierSequence:
           targetKey(normalized) === GLOBAL_TARGET && wake.intent === "immediate"

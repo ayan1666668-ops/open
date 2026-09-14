@@ -1,6 +1,7 @@
 import { resolveSessionStorePathCore } from "../../../config/sessions/paths.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { GatewayContextResolver } from "../../../gateway/server-methods/types.js";
+import { getCanonicalGatewayContextResolver } from "../../../plugins/runtime/gateway-request-scope.js";
 import {
   GatewayDrainingError,
   runWithGatewayIndependentRootWorkContinuation,
@@ -16,6 +17,10 @@ import {
 } from "../registry/subagent-registry.js";
 import { activateSwarmRun } from "../swarm/swarm-scheduler.js";
 import { retrySubagentCleanup, terminateAcceptedCollectorRun } from "./subagent-spawn-cleanup.js";
+import {
+  type PreparedContextEngineSubagentSpawn,
+  rollbackPreparedContextEngine,
+} from "./subagent-spawn-context.js";
 import { readGatewayRunId } from "./subagent-spawn-gateway.js";
 import { emitSessionLifecycleEvent } from "./subagent-spawn.runtime.js";
 
@@ -35,7 +40,7 @@ export function activateCollectorSubagentRun(params: {
   gatewayContextResolver?: GatewayContextResolver;
   launchChildRun: () => Promise<{ response: unknown }>;
   emitSpawnLifecycleHooks: (runId: string) => Promise<void>;
-  rollbackPreparedContext: () => Promise<boolean>;
+  contextEnginePreparation?: PreparedContextEngineSubagentSpawn;
   cleanupFailedSpawn: (
     waitForSessionDeletion?: boolean,
   ) => Promise<{ attachmentsRemoved: boolean; sessionDeleted: boolean }>;
@@ -47,6 +52,9 @@ export function activateCollectorSubagentRun(params: {
   activateSwarmRun({
     groupId: params.swarmSchedulerGroupKey,
     runId: params.childRunId,
+    lifecycleOwner: params.gatewayContextResolver
+      ? getCanonicalGatewayContextResolver(params.gatewayContextResolver)
+      : undefined,
     start: async () => {
       // Acceptance is sticky for this deterministic launch identity. A lost
       // response on a retry cannot prove the previously accepted run stopped.
@@ -138,6 +146,7 @@ export function activateCollectorSubagentRun(params: {
         }
         await params.emitSpawnLifecycleHooks(gatewayRunId);
       }, "subagents:spawn");
+      await params.contextEnginePreparation?.dispose().catch(() => {});
     },
     onStartFailure: async (error) => {
       if (error instanceof GatewayDrainingError) {
@@ -151,7 +160,7 @@ export function activateCollectorSubagentRun(params: {
       }
       const launchError = summarizeSpawnError(error);
       const [contextRollback, sessionCleanup] = await Promise.allSettled([
-        params.rollbackPreparedContext(),
+        rollbackPreparedContextEngine(params.contextEnginePreparation),
         params.cleanupFailedSpawn(
           // A launch RPC can fail after acceptance. Keep the FIFO slot until
           // deleting the child session proves no accepted run remains active.
@@ -177,6 +186,13 @@ export function activateCollectorSubagentRun(params: {
         completeCollectorLaunchCleanup(params.childRunId);
       }
       return true;
+    },
+    onRemoved: async (reason) => {
+      if (reason === "shutdown") {
+        await params.contextEnginePreparation?.dispose();
+      } else {
+        await params.contextEnginePreparation?.rollback();
+      }
     },
   });
 }

@@ -48,6 +48,7 @@ import {
   adjustedParamsByToolCallId,
   buildAdjustedParamsKey,
   clearTrackedToolExecution,
+  cloneParamsForAdjustedReplay,
   preExecutionBlockedToolCallIds,
   recordStructuredReplaySafeToolCall,
   recordToolExecutionStarted,
@@ -225,16 +226,6 @@ export function recordAdjustedParamsForToolCall(
   }
   adjustedParamsByToolCallId.set(buildAdjustedParamsKey({ runId, toolCallId }), cloneResult.value);
   pruneMapToMaxSize(adjustedParamsByToolCallId, MAX_TRACKED_ADJUSTED_PARAMS);
-}
-
-function cloneParamsForAdjustedReplay(
-  params: unknown,
-): { ok: true; value: unknown } | { ok: false } {
-  try {
-    return { ok: true, value: structuredClone(params) };
-  } catch {
-    return { ok: false };
-  }
 }
 
 /** Record that one concrete core-owned tool call may use structured replay classification. */

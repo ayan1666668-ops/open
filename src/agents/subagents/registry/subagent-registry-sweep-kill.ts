@@ -6,7 +6,10 @@ import {
 import type { callGateway } from "../../../gateway/call.js";
 import { isAgentEventLifecycleGenerationCurrent } from "../../../infra/agent-events.js";
 import { getAgentRunContext } from "../../../infra/agent-run-registry.js";
-import { runExclusiveSessionLifecycleMutation } from "../../../sessions/session-lifecycle-admission.js";
+import {
+  isSessionLifecycleMutationActive,
+  runExclusiveSessionLifecycleMutation,
+} from "../../../sessions/session-lifecycle-admission.js";
 import { SUBAGENT_KILL_TASK_ERROR } from "../../../tasks/detached-task-runtime-contract.js";
 import {
   finalizeTaskRunByRunId,
@@ -207,9 +210,13 @@ export async function reconcileDurableSubagentKillIntent(params: {
   ) {
     return await completeRetiredKill();
   }
+  const identities = [params.entry.childSessionKey, killIntent.sessionId];
+  if (isSessionLifecycleMutationActive(storePath, identities)) {
+    return false;
+  }
   try {
     const runtime = await params.loadKillRuntime();
-    if (!ownsCurrentGeneration()) {
+    if (!ownsCurrentGeneration() || isSessionLifecycleMutationActive(storePath, identities)) {
       return false;
     }
     if (!ownsSessionIncarnation()) {
@@ -217,7 +224,7 @@ export async function reconcileDurableSubagentKillIntent(params: {
     }
     return await runExclusiveSessionLifecycleMutation({
       scope: storePath,
-      identities: [params.entry.childSessionKey, killIntent.sessionId],
+      identities,
       run: async () => {
         if (!ownsCurrentGeneration()) {
           return false;

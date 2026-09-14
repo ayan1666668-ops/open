@@ -206,6 +206,9 @@ export function handleAgentEnd(
   }
 
   const emitLifecycleTerminal = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return;
+    }
     const terminalStopReason =
       ctx.params.resolveTerminalStopReason?.() ??
       ctx.state.terminalStopReason ??
@@ -259,6 +262,9 @@ export function handleAgentEnd(
   };
 
   const finalizeAgentEnd = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return;
+    }
     ctx.state.blockState.thinking = false;
     ctx.state.blockState.final = false;
     ctx.state.blockState.inlineCode = createInlineCodeState();
@@ -329,8 +335,10 @@ export function handleAgentEnd(
     return result;
   };
 
-  const deliverTerminal = () => {
-    ctx.releaseDeferredReplies();
+  const finishTerminalDelivery = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return;
+    }
     const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer({ final: true });
     finalizeAgentEnd();
     const flushPendingMediaAndChannelResult = isPromiseLike<void>(flushBlockReplyBufferResult)
@@ -338,37 +346,44 @@ export function handleAgentEnd(
       : flushPendingMediaAndChannel();
 
     if (isPromiseLike<void>(flushPendingMediaAndChannelResult)) {
-      return Promise.resolve(flushPendingMediaAndChannelResult).then(
-        () => emitLifecycleTerminalOnce(),
-        (error: unknown) => {
-          const emitted = emitLifecycleTerminalOnce();
-          if (isPromiseLike<void>(emitted)) {
-            return Promise.resolve(emitted).then(() => {
-              throw error;
-            });
-          }
-          throw error;
-        },
+      return Promise.resolve(flushPendingMediaAndChannelResult).then(() =>
+        emitLifecycleTerminalOnce(),
       );
     }
     return emitLifecycleTerminalOnce();
   };
 
+  const rethrowAfterLifecycleTerminal = (error: unknown): never | Promise<never> => {
+    const emitted = emitLifecycleTerminalOnce();
+    if (isPromiseLike<void>(emitted)) {
+      return Promise.resolve(emitted).then(() => {
+        throw error;
+      });
+    }
+    throw error;
+  };
+
   const deliverTerminalWithLifecycleErrorFallback = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return;
+    }
     try {
-      return deliverTerminal();
+      const released = ctx.releaseDeferredReplies();
+      const result = isPromiseLike<void>(released)
+        ? Promise.resolve(released).then(() => finishTerminalDelivery())
+        : finishTerminalDelivery();
+      return isPromiseLike<void>(result)
+        ? Promise.resolve(result).catch(rethrowAfterLifecycleTerminal)
+        : result;
     } catch (error) {
-      const emitted = emitLifecycleTerminalOnce();
-      if (isPromiseLike<void>(emitted)) {
-        return Promise.resolve(emitted).then(() => {
-          throw error;
-        });
-      }
-      throw error;
+      return rethrowAfterLifecycleTerminal(error);
     }
   };
 
   const suppressTerminalDelivery = () => {
+    if (!isCurrentDeliveryGeneration()) {
+      return;
+    }
     ctx.clearAssistantStream();
     ctx.clearDeferredBlockReplies();
     finalizeAgentEnd();
@@ -376,7 +391,7 @@ export function handleAgentEnd(
 
   let lifecycleTerminalEmitted = false;
   const emitLifecycleTerminalOnce = (): void | Promise<void> => {
-    if (lifecycleTerminalEmitted) {
+    if (lifecycleTerminalEmitted || !isCurrentDeliveryGeneration()) {
       return;
     }
     lifecycleTerminalEmitted = true;

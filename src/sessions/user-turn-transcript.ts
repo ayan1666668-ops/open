@@ -5,14 +5,13 @@ import {
   persistSessionTranscriptTurn,
   stageSessionPendingInput,
   withSessionPendingInputPersistence,
-  publishTranscriptUpdate,
   readActiveTranscriptEntryAnchor,
-  rewriteTranscriptMessageAtAnchor,
   type TranscriptEntryAnchor,
   type SessionTranscriptTurnPersistOptions,
 } from "../config/sessions/session-accessor.js";
 import { waitForSessionTranscriptProjection } from "../config/sessions/session-transcript-reconcile.js";
 import {
+  confirmPersistedSteerTargetRunId,
   registerUserTurnTranscriptAdmissionOwner,
   resolveUserTurnTranscriptAdmission,
 } from "./user-turn-transcript-admission.js";
@@ -170,39 +169,6 @@ async function resolveUserTurnTranscriptTarget(
   target: UserTurnTranscriptTargetResolver,
 ): Promise<UserTurnTranscriptTarget | undefined> {
   return typeof target === "function" ? await target() : target;
-}
-
-async function confirmPersistedSteerTargetRunId(params: {
-  admission: UserTurnTranscriptAdmissionReceipt;
-  targetRunId: string;
-}): Promise<
-  | {
-      admission: UserTurnTranscriptAdmissionReceipt;
-      message: PersistedUserTurnMessage;
-    }
-  | undefined
-> {
-  const rewritten = await rewriteTranscriptMessageAtAnchor(params.admission, (message) => {
-    if (!isUserMessage(message)) {
-      return undefined;
-    }
-    const currentTarget = normalizePersistedSteerTargetRunId(
-      message["__openclaw"]?.steerTargetRunId,
-    );
-    return currentTarget === params.targetRunId
-      ? undefined
-      : rewritePersistedSteerTargetRunId(message, params.targetRunId);
-  });
-  if (!rewritten) {
-    return undefined;
-  }
-  const admission = { ...params.admission, generation: rewritten.generation };
-  await publishTranscriptUpdate(admission, {
-    message: rewritten.message,
-    messageId: admission.entryId,
-    messageSeq: admission.activeMessagePosition + 1,
-  });
-  return { admission, message: rewritten.message };
 }
 
 export function createUserTurnTranscriptRecorder(

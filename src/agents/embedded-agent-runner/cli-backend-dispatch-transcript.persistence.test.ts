@@ -41,6 +41,7 @@ describe("CLI dispatch transcript attachment persistence", () => {
       sessionId: target.sessionId,
       sessionKey: target.sessionKey,
       agentId: target.agentId,
+      storePath: target.storePath,
       sessionFile,
       runId: "cli-dispatch-redaction-run",
       prompt: "persist this tool call",

@@ -24,7 +24,10 @@ import type {
   AssistantStreamData,
   EmbeddedAgentSubscribeContext,
 } from "./embedded-agent-subscribe.handlers.types.js";
-import { emitInSettlementOrder } from "./embedded-agent-subscribe.reply-delivery.serial.js";
+import {
+  emitInSettlementOrder,
+  waitForPendingReplyEvents,
+} from "./embedded-agent-subscribe.reply-delivery.serial.js";
 import { createAssistantTextAccumulator } from "./embedded-agent-subscribe.reply-text.js";
 import type { SubscribeEmbeddedAgentSessionParams } from "./embedded-agent-subscribe.types.js";
 import type { AgentMessage } from "./runtime/index.js";
@@ -540,6 +543,7 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     );
   };
   const releaseDeferredReplies = (): void | Promise<void> => {
+    const deliveryGeneration = blockReplyDeliveryGeneration;
     // Later answers supersede deferred tool-turn text, not media or reasoning.
     const messageStartIndex = state.assistantMessageStartIndex;
     const isSuperseded = (index: number | undefined) =>
@@ -572,8 +576,14 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     flushAssistantStream();
     const released = emitInSettlementOrder({
       items: replies.filter((payload) => hasAssistantVisibleReply(payload)),
-      settle: () => settleBlockReplyDeliveries(),
+      settle: () =>
+        deliveryGeneration === blockReplyDeliveryGeneration
+          ? settleBlockReplyDeliveries()
+          : undefined,
       emit: (payload) => {
+        if (deliveryGeneration !== blockReplyDeliveryGeneration) {
+          return;
+        }
         const onDelivered = deferredBlockReplyCallbacks.get(payload);
         const toolMedia = deferredToolMediaReplies.get(payload);
         if (toolMedia?.pendingToolMedia) {
@@ -590,8 +600,10 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
         emitBlockReply(payload, { onDelivered, retryable: false });
       },
     });
-    state.deferredAssistantReplyDirectives = undefined;
-    state.deferredBlockReplyTexts = [];
+    if (deliveryGeneration === blockReplyDeliveryGeneration) {
+      state.deferredAssistantReplyDirectives = undefined;
+      state.deferredBlockReplyTexts = [];
+    }
     return released;
   };
   const clearDeferredBlockReplies = () => {
@@ -634,7 +646,12 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     retryFailures?: boolean;
   }): void | Promise<void> => {
     if (currentPendingBlockReplyTasks().length > 0) {
-      return waitForPendingBlockReplies().then(() => settleBlockReplyDeliveries(options));
+      const deliveryGeneration = blockReplyDeliveryGeneration;
+      return waitForPendingBlockReplies().then(() => {
+        if (deliveryGeneration === blockReplyDeliveryGeneration) {
+          return settleBlockReplyDeliveries(options);
+        }
+      });
     }
     if (!options?.retryFailures || failedBlockReplies.length === 0) {
       return;
@@ -673,18 +690,8 @@ export function createReplyDelivery({ params, state, log }: ReplyDeliveryParams)
     failedBlockReplies.length = 0;
     exhaustedBlockReplyKeys.clear();
   };
-  const waitForPendingEvents = async (options?: { includePartialReplies?: boolean }) => {
-    // Terminal settlement must observe callbacks launched while events drain.
-    const includePartialReplies = options?.includePartialReplies !== false;
-    while (true) {
-      const eventChain = state.pendingEventChain;
-      const partialReplyTasks = includePartialReplies ? [...pendingPartialReplyTasks] : [];
-      if (!eventChain && partialReplyTasks.length === 0) {
-        return;
-      }
-      await Promise.allSettled([...(eventChain ? [eventChain] : []), ...partialReplyTasks]);
-    }
-  };
+  const waitForPendingEvents = (options?: { includePartialReplies?: boolean }) =>
+    waitForPendingReplyEvents(() => state.pendingEventChain, pendingPartialReplyTasks, options);
   return {
     assistantTexts,
     clearAssistantStream,

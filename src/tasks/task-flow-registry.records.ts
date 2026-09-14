@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  hasStoredDelegateAttachmentState,
+  isContinuationDelegateFlow,
+  scrubStoredDelegateAttachmentState,
+} from "./task-flow-continuation-state.js";
 import type {
   JsonValue,
   TaskFlowRecord,
@@ -292,12 +297,19 @@ export function resolveTaskMirroredFlowTiming(
   return { updatedAt: endedAt, endedAt };
 }
 
+function scrubContinuationFlowState(record: TaskFlowRecord): TaskFlowRecord {
+  if (isContinuationDelegateFlow(record) && hasStoredDelegateAttachmentState(record.stateJson)) {
+    return { ...record, stateJson: scrubStoredDelegateAttachmentState(record.stateJson) };
+  }
+  return record;
+}
+
 export function buildFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord {
   const now = params.createdAt ?? Date.now();
   const syncMode = params.syncMode ?? "managed";
   const controllerId = syncMode === "managed" ? assertControllerId(params.controllerId) : undefined;
   const chainId = normalizeOptionalString(params.chainId);
-  return {
+  return scrubContinuationFlowState({
     flowId: crypto.randomUUID(),
     syncMode,
     ownerKey: assertFlowOwnerKey(params.ownerKey),
@@ -323,7 +335,7 @@ export function buildFlowRecord(params: CreateFlowRecordParams): TaskFlowRecord 
     createdAt: now,
     updatedAt: params.updatedAt ?? now,
     ...(params.endedAt != null ? { endedAt: params.endedAt } : {}),
-  };
+  });
 }
 
 export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch): TaskFlowRecord {
@@ -334,7 +346,7 @@ export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch):
   if (current.syncMode === "managed") {
     assertControllerId(controllerId);
   }
-  return {
+  return scrubContinuationFlowState({
     ...current,
     ...(patch.status ? { status: patch.status } : {}),
     ...(patch.notifyPolicy ? { notifyPolicy: patch.notifyPolicy } : {}),
@@ -362,7 +374,7 @@ export function applyFlowPatch(current: TaskFlowRecord, patch: FlowRecordPatch):
     revision: current.revision + 1,
     updatedAt: patch.updatedAt ?? Date.now(),
     endedAt: patch.endedAt === undefined ? current.endedAt : (patch.endedAt ?? undefined),
-  };
+  });
 }
 
 export function prepareTaskMirroredFlowSyncFromCurrent(

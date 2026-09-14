@@ -14,12 +14,6 @@ export const TEST_RUNTIME_CONFIG = {
   session: {},
 } satisfies OpenClawConfig;
 
-export const BASE_SESSION_USAGE_RANGE = {
-  startDate: "2026-02-01",
-  endDate: "2026-02-02",
-  limit: 10,
-} as const;
-
 function requireUsageMockCall(
   mockFn: ReturnType<typeof vi.fn>,
   callIndex = 0,

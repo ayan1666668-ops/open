@@ -26,6 +26,7 @@ import {
   configureTaskFlowRegistryRuntime,
   resetTaskFlowRegistryForTests,
 } from "../tasks/task-runtime.test-helpers.js";
+import { createInMemoryTaskFlowRegistryStore } from "../test-utils/task-registry-store.js";
 import { abortEmbeddedAgentRun, isEmbeddedAgentRunActive } from "./embedded-agent-runner/runs.js";
 import { testing as embeddedRunTesting } from "./embedded-agent-runner/runs.test-support.js";
 
@@ -296,14 +297,7 @@ async function runDelegateTurn(run: ReturnType<typeof createContinuationRun>): P
 
 beforeEach(() => {
   resetTaskFlowRegistryForTests({ persist: false });
-  configureTaskFlowRegistryRuntime({
-    store: {
-      loadSnapshot: () => ({ flows: new Map() }),
-      upsertFlow: () => {},
-      updateFlow: () => ({ applied: false, reason: "not_found" }),
-      deleteFlow: () => {},
-    },
-  });
+  configureTaskFlowRegistryRuntime({ store: createInMemoryTaskFlowRegistryStore() });
   resetDelegateStoreForTests();
   embeddedRunTesting.resetActiveEmbeddedRuns();
   replyRunRegistryTesting.resetReplyRunRegistry();

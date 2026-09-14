@@ -604,6 +604,7 @@ describe("runReplyAgent auto-compaction token update", () => {
 
   async function runBaseReplyWithAgentMeta(params: {
     agentMeta: Record<string, unknown>;
+    lastTurnCompactions?: number;
     collectDiagnostics?: boolean;
     config?: OpenClawConfig;
     tmpPrefix: string;
@@ -624,6 +625,9 @@ describe("runReplyAgent auto-compaction token update", () => {
       payloads: [{ text: "ok" }],
       meta: {
         agentMeta: params.agentMeta,
+        ...(params.lastTurnCompactions !== undefined
+          ? { contextManagement: { lastTurnCompactions: params.lastTurnCompactions } }
+          : {}),
       },
     });
 
@@ -1461,6 +1465,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       const { sessionKey, stored } = await runBaseReplyWithAgentMeta({
         tmpPrefix: "openclaw-post-compaction-workspace-root-",
         workspaceDir,
+        lastTurnCompactions: compactionCount,
         config: {
           agents: {
             defaults: {
@@ -1487,11 +1492,13 @@ describe("runReplyAgent auto-compaction token update", () => {
         },
       });
       const events = peekSystemEvents(sessionKey);
-      expect(events).toHaveLength(compactionCount);
+      expect(events).toHaveLength(compactionCount > 0 ? 2 : 0);
       if (compactionCount > 0) {
         expect(events[0]).toContain("Post-compaction context refresh");
         expect(events[0]).toContain("Read the queued workspace startup file.");
         expect(events[0]).toContain("Never use the process cwd for this refresh.");
+        expect(events[1]).toContain("[system:post-compaction] Session compacted");
+        expect(events[1]).toContain("Queued 0 post-compaction delegate(s)");
       }
       // Result metadata can report presentation-only compaction, not durable writer custody.
       expect(stored).toHaveProperty([sessionKey, "sessionId"], "session");

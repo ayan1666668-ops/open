@@ -1,8 +1,6 @@
 import { computeBackoff } from "../../packages/retry/src/index.js";
 // Persists queued session deliveries for retry and recovery.
 import type { SessionPostCompactionDelegate } from "../config/sessions/types.js";
-import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
-import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { sha256Hex } from "./crypto-digest.js";
 import type { DeliveryQueueEntryLoadResult } from "./delivery-queue-sqlite-codec.js";
 import {
@@ -11,13 +9,11 @@ import {
   loadDeliveryQueueEntryResult,
   loadDeliveryQueueEntryResults,
   moveDeliveryQueueEntryToFailed,
-  pruneExpiredDeliveryQueueTombstones,
   terminalizePendingDeliveryQueueEntry,
   updateDeliveryQueueEntry,
   upsertDeliveryQueueEntry,
   type DeliveryQueueEntryState,
 } from "./delivery-queue-sqlite.js";
-import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "./kysely-sync.js";
 import { generateSecureUuid } from "./secure-random.js";
 import {
   hasOnlyGenericAttachmentRefs,
@@ -57,39 +53,6 @@ export type QueuedSessionDelivery =
 // Session delivery queue persists session-scoped messages until channel
 // delivery acknowledges them or recovery exhausts retry policy.
 export const SESSION_DELIVERY_QUEUE_NAME = "session";
-
-type DeliveryQueueDatabase = Pick<OpenClawStateKyselyDatabase, "delivery_queue_entries">;
-
-function openStateDatabaseForSession(stateDir?: string) {
-  return openOpenClawStateDatabase({
-    env: stateDir ? { ...process.env, OPENCLAW_STATE_DIR: stateDir } : process.env,
-  });
-}
-
-/** Run shared delivery-row retention maintenance and report session failures removed. */
-export async function pruneFailedOlderThan(
-  _maxAgeMs: number,
-  now: number = Date.now(),
-  stateDir?: string,
-): Promise<{ scanned: number; removed: number }> {
-  const database = openStateDatabaseForSession(stateDir);
-  const queueDb = getNodeSqliteKysely<DeliveryQueueDatabase>(database.db);
-  const countFailed = () => {
-    const row = executeSqliteQueryTakeFirstSync(
-      database.db,
-      queueDb
-        .selectFrom("delivery_queue_entries")
-        .select((eb) => eb.fn.countAll<number>().as("count"))
-        .where("queue_name", "=", SESSION_DELIVERY_QUEUE_NAME)
-        .where("status", "=", "failed"),
-    );
-    return row?.count ?? 0;
-  };
-  const scanned = countFailed();
-  pruneExpiredDeliveryQueueTombstones(stateDir, now);
-  const removed = Math.max(0, scanned - countFailed());
-  return { scanned, removed };
-}
 
 function failInvalidSessionDelivery(params: {
   entry: { id: string; enqueuedAt: number; retryCount: number };

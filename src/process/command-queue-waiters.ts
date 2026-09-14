@@ -95,12 +95,3 @@ export function waitForCommandLaneIdleState(params: {
     notifyCommandLaneIdleWaitersForState(params.lane, params.isLaneIdle);
   });
 }
-
-export function resetCommandQueueWaiters(): void {
-  const state = getWaiterState();
-  for (const laneWaiters of Array.from(state.laneIdleWaiters.values())) {
-    for (const waiter of Array.from(laneWaiters)) {
-      resolveCommandLaneIdleWaiter(waiter, { idle: true });
-    }
-  }
-}

@@ -2,7 +2,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
-  assignSessionOwner,
   loadExactSessionEntryReadOnly,
   loadTranscriptEvents,
 } from "../config/sessions/session-accessor.js";

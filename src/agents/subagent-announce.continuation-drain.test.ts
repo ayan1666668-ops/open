@@ -183,6 +183,7 @@ const { continuationTargetingMock, subagentRegistryRuntimeMock, deliverSubagentA
 
 vi.mock("./subagents/announce/subagent-announce.runtime.js", () => ({
   callGateway: (request: unknown) => callGatewayMock(request),
+  callSubagentLifecycleGateway: (request: unknown) => callGatewayMock(request),
   dispatchGatewayMethodInProcess: vi.fn(),
   getRuntimeConfig: () => mockConfig,
   isEmbeddedAgentRunActive: (sessionId: string) => isEmbeddedAgentRunActiveMock(sessionId),

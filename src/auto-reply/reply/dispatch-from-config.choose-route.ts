@@ -27,6 +27,8 @@ import {
   blockReplyAttemptSourcesCoverPayload,
   createBlockReplyContentKey,
   getBlockReplyAttemptGroups,
+  type RoutedBlockReplyDelivery as BlockDelivery,
+  type RoutedBlockReplyDeliveryAttempt as BlockDeliveryAttempt,
 } from "./block-reply-pipeline.js";
 import {
   DispatchReplyOperationAbortedError,
@@ -203,12 +205,6 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
   };
   const deferFinalTtsText = shouldDeferFinalTtsText(captionedFinalTtsContext);
   const cleanDeferredFinalDirectives = shouldCleanTtsDirectiveText(captionedFinalTtsContext);
-  type BlockDelivery = { outcome: ReplyDispatchDeliveryOutcome; pending?: boolean };
-  type BlockDeliveryAttempt = {
-    contentKey: string;
-    source: string;
-    delivery: Promise<BlockDelivery>;
-  };
   const blockDeliveryAttemptsByMessage = new Map<number | undefined, BlockDeliveryAttempt[]>();
   const recordBlockOutcome = (payload: ReplyPayload, outcome: Promise<BlockDelivery>) => {
     setBlockReplyDelivery(outcome);

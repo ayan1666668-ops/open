@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { ServiceInspectionError } from "../../daemon/service-inspection-error.js";
 import * as gatewayService from "../../daemon/service.js";
 import * as systemdExec from "../../daemon/systemd-exec.js";
 import {
   readSystemdServiceExecStart,
   resolveSystemdUnitPath,
 } from "../../daemon/systemd-service-files.js";
+import * as systemdUserTransport from "../../daemon/systemd-user-transport.js";
 import { resolvePathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { UPDATE_RUN_ID_ENV } from "../../infra/update-control-plane-sentinel.js";
 import { createRetainedUpdateRecovery } from "../../infra/update-retained-recovery.test-support.js";
@@ -702,6 +704,11 @@ it.each([
     stderr: "",
     stdout: values.map((value) => JSON.stringify(value)).join("\n"),
   });
+  vi.spyOn(systemdUserTransport, "resolveSystemdUserTransport").mockResolvedValue({
+    kind: "session-bus",
+    address: "unix:path=/run/user/1000/bus",
+    runtimeDir: "/run/user/1000",
+  });
   const bus = vi.spyOn(systemdExec, "execBusctlUser").mockImplementation(async (_env, args) => {
     if (scenario === "denied" || scenario === "timeout") {
       return {
@@ -810,4 +817,43 @@ it.each([
   }
   expect(bus).toHaveBeenCalled();
   expect(bus.mock.calls.every(([, args]) => !args.includes("LoadUnit"))).toBe(true);
+});
+
+it("refuses loaded service admission when the systemd user bus is unavailable", async () => {
+  const home = dirs.make("update-user-bus-unavailable-");
+  const callerState = path.join(home, ".openclaw-caller");
+  const root = path.join(home, "package");
+  fs.mkdirSync(path.join(root, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "openclaw" }));
+  fs.writeFileSync(path.join(root, "dist", "entry.js"), "// fixture");
+  vi.spyOn(os, "userInfo").mockReturnValue({ ...os.userInfo(), homedir: home });
+  for (const key of [
+    "OPENCLAW_HOME",
+    "OPENCLAW_SYSTEMD_UNIT",
+    "OPENCLAW_LAUNCHD_LABEL",
+    "OPENCLAW_WINDOWS_TASK_NAME",
+    "OPENCLAW_SUPERVISOR_MODE",
+    UPDATE_RUN_ID_ENV,
+  ]) {
+    vi.stubEnv(key, undefined);
+  }
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("OPENCLAW_PROFILE", "caller");
+  vi.stubEnv("OPENCLAW_STATE_DIR", callerState);
+  vi.stubEnv("OPENCLAW_CONFIG_PATH", path.join(callerState, "openclaw.json"));
+  vi.spyOn(systemdUserTransport, "resolveSystemdUserTransport").mockRejectedValue(
+    new ServiceInspectionError("systemd-user-bus-unavailable"),
+  );
+  const bus = vi.spyOn(systemdExec, "execBusctlUser");
+  const service = gatewayService.resolveGatewayService();
+  vi.spyOn(gatewayService, "resolveGatewayService").mockReturnValue({
+    ...service,
+    readCommand: async (...args) => readSystemdServiceExecStart(...args),
+  });
+  const failure: unknown = await admitUpdateCommandRun({ opts: {}, root }).then(
+    () => "admitted",
+    (error: unknown) => error,
+  );
+  expect(failure).toBeInstanceOf(servicePlan.GatewayServiceUpdateOwnershipError);
+  expect(bus).not.toHaveBeenCalled();
 });

@@ -113,12 +113,6 @@ type ResolvedSqliteSessionEntry = {
   normalizedKey: string;
 };
 
-function assertCanonicalSessionWriteScope(
-  scope: Pick<ResolvedSqliteScope, "agentId" | "sessionKey">,
-): void {
-  assertCanonicalSessionKeyWrite(scope.sessionKey, scope.agentId);
-}
-
 /** Resolves one exact canonical entry without materializing the store. */
 export function resolveSessionEntry(
   scope: SessionAccessScope,
@@ -452,7 +446,7 @@ export async function replaceSessionEntry(
 /** Replaces one entry synchronously for sync session runtimes. */
 export function replaceSessionEntrySync(scope: SessionAccessScope, entry: SessionEntry): void {
   const resolved = resolveSqliteScope(scope);
-  assertCanonicalSessionWriteScope(resolved);
+  assertCanonicalSessionKeyWrite(resolved.sessionKey, resolved.agentId);
   const publish = runOpenClawAgentWriteTransaction((database) => {
     const identityKeys = collectSessionEntryLookupKeys(database, resolved.sessionKey);
     const previous = readSessionIdentitySnapshot(database, identityKeys);
@@ -485,7 +479,7 @@ async function patchSessionEntryInScope(
   if (databaseAgentId) {
     resolved.databaseAgentId = databaseAgentId;
   }
-  assertCanonicalSessionWriteScope(resolved);
+  assertCanonicalSessionKeyWrite(resolved.sessionKey, resolved.agentId);
   return await patchSqliteSessionEntrySnapshot({
     operationLabel: "session-entry.patch",
     validateCanonicalKeys: options.replaceEntry !== true,

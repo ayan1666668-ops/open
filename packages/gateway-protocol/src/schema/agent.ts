@@ -51,6 +51,7 @@ const AgentInternalEventSchema = closedObject({
   status: Type.String({ enum: [...AGENT_INTERNAL_EVENT_STATUSES] }),
   statusLabel: Type.String(),
   result: Type.String(),
+  noVisibleResult: Type.Optional(Type.Boolean()),
   modelRouteChange: Type.Optional(Type.String()),
   attachments: Type.Optional(Type.Array(AgentGeneratedAttachmentSchema)),
   mediaUrls: Type.Optional(Type.Array(Type.String())),

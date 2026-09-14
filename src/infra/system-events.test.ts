@@ -25,7 +25,7 @@ import {
   consumeSystemEventEntries,
   drainSystemEventEntries,
   enqueueSystemEvent,
-  enqueueSystemEventEntry,
+  enqueueSystemEventEntryRaw as enqueueSystemEventEntry,
   enqueueSystemEventWithReceipt,
   hasSystemEvents,
   isSystemEventContextChanged,

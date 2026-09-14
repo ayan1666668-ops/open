@@ -136,15 +136,17 @@ vi.mock("../../config/sessions/session-accessor.sqlite-entry.js", async (importO
   const actual =
     await importOriginal<typeof import("../../config/sessions/session-accessor.sqlite-entry.js")>();
   const { createCurrentTestDatabaseEntry } = await import("./agent-runner-entry.test-support.js");
+  const loadCurrentEntry = (...args: unknown[]) => {
+    const implementation = loadSessionEntryMock.getMockImplementation();
+    const entry = implementation
+      ? loadSessionEntryMock(...args)
+      : { sessionId: "session", updatedAt: Date.now() };
+    return createCurrentTestDatabaseEntry(entry);
+  };
   return {
     ...actual,
-    loadSessionEntryWithDatabase: (...args: unknown[]) => {
-      const implementation = loadSessionEntryMock.getMockImplementation();
-      const entry = implementation
-        ? loadSessionEntryMock(...args)
-        : { sessionId: "session", updatedAt: Date.now() };
-      return createCurrentTestDatabaseEntry(entry);
-    },
+    loadSessionEntryWithDatabase: loadCurrentEntry,
+    loadSessionEntryForAdmission: loadCurrentEntry,
   };
 });
 

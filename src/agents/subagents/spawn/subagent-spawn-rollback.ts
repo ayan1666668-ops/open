@@ -43,7 +43,10 @@ export async function cleanupAcceptedSubagentSpawnFailure(params: {
     }
   }
   try {
-    if (!(await rollbackPreparedContextEngine(params.contextEnginePreparation))) {
+    if (
+      !(await rollbackPreparedContextEngine(params.contextEnginePreparation)) &&
+      params.phase === "register"
+    ) {
       throw new Error("Prepared context rollback was not confirmed", { cause: params.error });
     }
   } catch (error) {

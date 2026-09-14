@@ -134,7 +134,7 @@ function rowToFlowRecord(row: FlowRegistryRow): TaskFlowRecord {
 
 export type BoundTaskFlowRecord = Insertable<FlowRunsTable>;
 
-export function bindTaskFlowRecord(record: TaskFlowRecord): BoundTaskFlowRecord {
+function bindTaskFlowRecord(record: TaskFlowRecord): BoundTaskFlowRecord {
   return {
     flow_id: record.flowId,
     sync_mode: record.syncMode,
@@ -198,7 +198,7 @@ function readTaskFlowRegistrySnapshot(db: DatabaseSync): TaskFlowRegistryStoreSn
   return { flows };
 }
 
-export function upsertTaskFlowRowInDatabase(db: DatabaseSync, row: BoundTaskFlowRecord): void {
+function upsertTaskFlowRowInDatabase(db: DatabaseSync, row: BoundTaskFlowRecord): void {
   executeSqliteQuerySync(
     db,
     getFlowRegistryKysely(db)
@@ -228,7 +228,7 @@ export function upsertTaskFlowRowInDatabase(db: DatabaseSync, row: BoundTaskFlow
   );
 }
 
-export function readTaskFlowRecord(db: DatabaseSync, flowId: string): TaskFlowRecord | undefined {
+function readTaskFlowRecord(db: DatabaseSync, flowId: string): TaskFlowRecord | undefined {
   const row = executeSqliteQueryTakeFirstSync(
     db,
     getFlowRegistryKysely(db).selectFrom("flow_runs").selectAll().where("flow_id", "=", flowId),

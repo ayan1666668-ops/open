@@ -323,11 +323,13 @@ describe("pending spawn invocation authority", () => {
         });
       }
       const rollback = vi.fn(async () => {});
+      const dispose = vi.fn(async () => {});
       const dispatch = vi.fn();
       spawnTesting.setDepsForTest({
         resolveContextEngine: async () =>
           Object.assign(new LegacyContextEngine(), {
             prepareSubagentSpawn: async () => ({ rollback }),
+            dispose,
           }),
         dispatchGatewayMethodInProcess: async <T>(
           method: string,
@@ -412,9 +414,13 @@ describe("pending spawn invocation authority", () => {
           expect(sourceResult).toMatchObject({ details: { status: "accepted", runId } });
           expect(subagentRuns.get(runId)?.execution.status).toBe("queued");
           expect(findTaskByRunId(runId)?.status).toBe("queued");
+          expect(rollback).not.toHaveBeenCalled();
+          expect(dispose).not.toHaveBeenCalled();
           admission.close();
           parent.cleanup();
           expect(parent.controller.signal.aborted).toBe(false);
+          expect(rollback).not.toHaveBeenCalled();
+          expect(dispose).not.toHaveBeenCalled();
         }
         expect(getAdmittedRunDelegatedAuthority(admitted)).toBeUndefined();
         // Capacity is released by Gateway-owned work, outside the completed parent's caller.
@@ -431,6 +437,7 @@ describe("pending spawn invocation authority", () => {
         } else {
           expect(sourceResult).toMatchObject({ details: { status: "accepted", runId } });
           await vi.waitFor(() => expect(dispatch).toHaveBeenCalledWith(runId));
+          await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
           expect(rollback).not.toHaveBeenCalled();
           expect(subagentRuns.get(runId)).toMatchObject({ execution: { status: "running" } });
         }

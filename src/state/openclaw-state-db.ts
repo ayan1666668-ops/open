@@ -214,7 +214,7 @@ function repairStateSchema(
           ensureAdditiveStateColumns(db);
         }
         assertCanonicalStateSchemaShape(db, pathname);
-        if (hasAuditEvents) {
+        if (preAuditSchema || hasAuditEvents) {
           for (const migration of versionedStateMigrations) {
             if (migration.migrate(db, previousVersion)) {
               applied.push(migration.applied);

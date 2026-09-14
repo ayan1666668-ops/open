@@ -99,9 +99,8 @@ export function activatePersistenceResumeRegistry(mod: RegistryModule, callGatew
       callGateway({ method: "agent.wait", params, timeoutMs }),
     sendRecoveryNotice: vi.fn(),
   };
-  mod.activateSubagentRegistry(
-    () => ({ resolveGatewayContext: () => ({ recoveryRuntime }) }) as never,
-  );
+  const gateway = { recoveryRuntime, resolveGatewayContext: () => gateway as never };
+  mod.activateSubagentRegistry(() => gateway as never);
 }
 
 export function createHydratedRegistryRuns(endedAt: number) {

@@ -9,7 +9,7 @@ import {
 import { selectAgentSystemEvents } from "../infra/system-event-ownership.js";
 import {
   consumeSelectedSystemEventEntries,
-  enqueueSystemEventEntry,
+  enqueueSystemEventEntryRaw as enqueueSystemEventEntry,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../infra/system-events.js";

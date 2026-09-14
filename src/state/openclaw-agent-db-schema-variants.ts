@@ -13,14 +13,12 @@ import {
   readExistingAgentSchemaMeta,
 } from "./openclaw-agent-db-schema-helpers.js";
 import {
-  hasSessionRecipientAuthoritySchema,
+  readSqliteTableColumns,
   withoutSessionRecipientAuthoritySchema,
 } from "./openclaw-agent-db-session-migrations.js";
-import {
-  hasLegacySessionParticipantsSchema,
-  withLegacySessionParticipantsSchema,
-} from "./openclaw-agent-participants-migration.js";
+import { withLegacySessionParticipantsSchema } from "./openclaw-agent-participants-migration.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
+import { tableExists, tableHasColumn } from "./openclaw-state-db-schema-helpers.js";
 
 export function resolveOpenClawAgentTargetSchema(targetVersion: number): string {
   let schemaSql = OPENCLAW_AGENT_SCHEMA_SQL;
@@ -31,6 +29,18 @@ export function resolveOpenClawAgentTargetSchema(targetVersion: number): string 
     schemaSql = withoutSessionRecipientAuthoritySchema(schemaSql);
   }
   return schemaSql;
+}
+
+function hasSessionRecipientAuthoritySchema(database: DatabaseSync): boolean {
+  return readSqliteTableColumns(database, "session_recipient_authority") !== null;
+}
+
+function hasLegacySessionParticipantsSchema(database: DatabaseSync): boolean {
+  return (
+    tableExists(database, "session_participants") &&
+    tableHasColumn(database, "session_participants", "actor_type") &&
+    !tableHasColumn(database, "session_participants", "identity_namespace")
+  );
 }
 
 function resolveExistingAgentSchemaVariant(

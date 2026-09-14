@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeNullableString as migratedText } from "@openclaw/normalization-core/string-coerce";
 import { MEMORY_INDEX_CHUNK_PROVENANCE_TABLE } from "../../packages/memory-host-sdk/src/host/memory-schema-provenance.js";
 import { MEMORY_INDEX_CHUNK_RECALL_METADATA_TABLE } from "../../packages/memory-host-sdk/src/host/memory-schema-recall.js";
 import {
@@ -315,4 +317,38 @@ function hasLegacyMemoryChunkProvenanceTrigger(db: DatabaseSync): boolean {
 
 export function hasPendingMemoryChunkMetadataMigration(db: DatabaseSync): boolean {
   return hasLegacyMemoryRecallMetadataColumns(db) || hasLegacyMemoryChunkProvenanceTrigger(db);
+}
+
+export function migratedEntryChannel(entry: Record<string, unknown>): string | null {
+  const delivery = asNullableRecord(entry.delivery);
+  const deliveryContext =
+    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
+  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
+  return (
+    migratedText(entry.channel) ??
+    migratedText(deliveryContext?.channel) ??
+    migratedText(entry.lastChannel) ??
+    migratedText(origin?.provider)
+  );
+}
+
+export function migratedEntryAccountId(entry: Record<string, unknown>): string | null {
+  const delivery = asNullableRecord(entry.delivery);
+  const deliveryContext =
+    asNullableRecord(delivery?.context) ?? asNullableRecord(entry.deliveryContext);
+  const origin = asNullableRecord(delivery?.origin) ?? asNullableRecord(entry.origin);
+  return (
+    migratedText(deliveryContext?.accountId) ??
+    migratedText(entry.lastAccountId) ??
+    migratedText(origin?.accountId)
+  );
+}
+
+export function migratedEntryDisplayName(entry: Record<string, unknown>): string | null {
+  return (
+    migratedText(entry.displayName) ??
+    migratedText(entry.label) ??
+    migratedText(entry.subject) ??
+    migratedText(entry.groupId)
+  );
 }

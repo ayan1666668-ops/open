@@ -341,7 +341,7 @@ export function withoutSessionRecipientAuthoritySchema(sql: string): string {
   return `${sql.slice(0, start)}${sql.slice(end)}`;
 }
 
-export function hasSessionRecipientAuthoritySchema(db: DatabaseSync): boolean {
+function hasSessionRecipientAuthoritySchema(db: DatabaseSync): boolean {
   return readSqliteTableColumns(db, "session_recipient_authority") !== null;
 }
 

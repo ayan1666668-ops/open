@@ -24,11 +24,15 @@ import { registerSubagentOrphanTaskCases } from "./subagent-registry.persistence
 import {
   canonicalSubagentRunFixtures,
   cleanupSubagentRegistryPersistenceTest,
-  expectDeferredSubagentAnnouncement,
-  gateSubagentRequesterSettlement,
-  settleSubagentRegistryPersistenceWork,
+  createPersistedEndedRun,
   createSubagentRegistryTestDeps,
+  expectDeferredSubagentAnnouncement,
+  expectFields,
+  flushQueuedRegistryWork,
+  gateSubagentRequesterSettlement,
   removeSubagentSessionEntry,
+  settleSubagentRegistryPersistenceWork,
+  waitForRegistryWork,
   writeSubagentSessionEntry,
 } from "./subagent-registry.persistence.test-support.js";
 import type { SubagentRunFixture } from "./subagent-registry.persistence.test-support.js";
@@ -55,16 +59,6 @@ const { announceSpy } = vi.hoisted(() => ({
 vi.mock("../announce/subagent-announce.js", () => ({
   runSubagentAnnounceFlow: announceSpy,
 }));
-
-function expectFields(value: unknown, expected: Record<string, unknown>): void {
-  if (!value || typeof value !== "object") {
-    throw new Error("expected fields object");
-  }
-  const record = value as Record<string, unknown>;
-  for (const [key, expectedValue] of Object.entries(expected)) {
-    expect(record[key], key).toEqual(expectedValue);
-  }
-}
 
 describe("subagent registry persistence", () => {
   const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
@@ -146,43 +140,6 @@ describe("subagent registry persistence", () => {
   const readPersistedRegistry = () => ({
     runs: Object.fromEntries(loadSubagentRegistryFromSqlite()),
   });
-
-  const createPersistedEndedRun = (params: {
-    runId: string;
-    childSessionKey: string;
-    task: string;
-    cleanup: "keep" | "delete";
-  }) => {
-    const now = Date.now();
-    return {
-      version: 2,
-      runs: {
-        [params.runId]: {
-          runId: params.runId,
-          childSessionKey: params.childSessionKey,
-          requesterSessionKey: "agent:main:main",
-          requesterDisplayKey: "main",
-          task: params.task,
-          cleanup: params.cleanup,
-          createdAt: now - 2,
-          startedAt: now - 1,
-          endedAt: now,
-        },
-      },
-    };
-  };
-
-  const flushQueuedRegistryWork = async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  };
-
-  const waitForRegistryWork = async (predicate: () => boolean | Promise<boolean>) => {
-    await vi.waitFor(async () => expect(await predicate()).toBe(true), {
-      interval: 1,
-      timeout: 5_000,
-    });
-  };
 
   const restartRegistry = () => {
     resetSubagentRegistryForTests({ persist: false });

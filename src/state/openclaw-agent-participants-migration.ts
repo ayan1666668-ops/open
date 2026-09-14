@@ -25,14 +25,6 @@ export function withLegacySessionParticipantsSchema(sql: string): string {
   return sql.replace(sessionParticipantsSchemaSql().trim(), LEGACY_PARTICIPANTS_SCHEMA);
 }
 
-export function hasLegacySessionParticipantsSchema(database: DatabaseSync): boolean {
-  return (
-    tableExists(database, "session_participants") &&
-    tableHasColumn(database, "session_participants", "actor_type") &&
-    !tableHasColumn(database, "session_participants", "identity_namespace")
-  );
-}
-
 export function migrateSessionParticipantsSchema(database: DatabaseSync, pathname: string): void {
   if (
     !tableExists(database, "session_participants") ||

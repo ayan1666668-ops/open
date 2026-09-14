@@ -6,7 +6,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { withSystemEventOwner } from "../../infra/system-event-ownership.js";
 import {
   enqueueSystemEvent,
-  enqueueSystemEventEntry,
+  enqueueSystemEventEntryRaw as enqueueSystemEventEntry,
   peekSystemEventEntries,
   resetSystemEventsForTest,
 } from "../../infra/system-events.js";

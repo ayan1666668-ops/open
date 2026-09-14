@@ -68,6 +68,23 @@ export function setupAcceptedSubagentGatewayMock(callGatewayMock: MockImplementa
   });
 }
 
+/** Mock the common successful run-registration result. */
+export function setupCommittedSubagentRegistrationMock(registerMock: {
+  mockImplementation: (
+    implementation: (record: { runId: string; childSessionKey: string }) => unknown,
+  ) => unknown;
+}) {
+  registerMock.mockImplementation((record) => ({
+    status: "new-row-committed",
+    attempted: {
+      runId: record.runId,
+      childSessionKey: record.childSessionKey,
+      generation: 1,
+      createdAt: Date.now(),
+    },
+  }));
+}
+
 function identityDeliveryContext(value: unknown) {
   return value;
 }

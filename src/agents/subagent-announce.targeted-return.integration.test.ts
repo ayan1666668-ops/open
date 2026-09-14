@@ -61,6 +61,7 @@ vi.mock("../config/sessions/targets.js", () => ({
 
 vi.mock("./subagents/announce/subagent-announce.runtime.js", () => ({
   callGateway: vi.fn(async () => ({})),
+  callSubagentLifecycleGateway: vi.fn(async () => ({})),
   dispatchGatewayMethodInProcess: vi.fn(async () => ({})),
   getRuntimeConfig: () => mockConfig,
   isEmbeddedAgentRunActive: () => false,
