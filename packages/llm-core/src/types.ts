@@ -541,6 +541,8 @@ export interface OpenAICompletionsCompat {
   requiresThinkingAsText?: boolean;
   /** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
   requiresReasoningContentOnAssistantMessages?: boolean;
+  /** How to treat reasoning replay fields (reasoning_content and friends) on replayed assistant messages. "strip" always removes them before sending, for endpoints that treat these fields as output-only (e.g. vLLM) where replaying them grows the prompt without benefit. Default: auto (preserved for reasoning models on non-OpenAI endpoints). */
+  reasoningContentReplay?: "preserve" | "strip";
   /** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
   thinkingFormat?: ModelDataThinkingFormat;
   /** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */

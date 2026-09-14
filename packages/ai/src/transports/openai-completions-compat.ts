@@ -48,10 +48,16 @@ type DetectedOpenAICompletionsCompat = {
 
 export type ResolvedOpenAICompletionsCompat = Omit<
   Required<OpenAICompletionsCompat>,
-  "cacheControlFormat" | "openRouterRouting" | "sendSessionAffinityHeaders" | "reasoningEffortMap"
+  | "cacheControlFormat"
+  | "openRouterRouting"
+  | "sendSessionAffinityHeaders"
+  | "reasoningEffortMap"
+  | "reasoningContentReplay"
 > & {
   cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
   openRouterRouting?: OpenAICompletionsCompat["openRouterRouting"];
+  /** Explicit per-model override; undefined keeps auto-detection. */
+  reasoningContentReplay?: OpenAICompletionsCompat["reasoningContentReplay"];
   sessionAffinity: OpenAICompletionsSessionAffinity;
   visibleReasoningDetailTypes: string[];
   requiresNonEmptyUserOrAssistantMessage: boolean;
@@ -342,6 +348,7 @@ export function resolveOpenAICompletionsCompat(
     requiresReasoningContentOnAssistantMessages:
       configured?.requiresReasoningContentOnAssistantMessages ??
       defaults.requiresReasoningContentOnAssistantMessages,
+    reasoningContentReplay: configured?.reasoningContentReplay,
     thinkingFormat: configured?.thinkingFormat ?? defaults.thinkingFormat,
     openRouterRouting: configured?.openRouterRouting,
     vercelGatewayRouting: configured?.vercelGatewayRouting ?? {},

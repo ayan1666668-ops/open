@@ -312,3 +312,46 @@ describe("buildOpenAICompletionsParams sanitizes reasoning replay fields", () =>
     expect(resolved.requiresReasoningContentOnAssistantMessages).toBe(false);
   });
 });
+
+describe("buildOpenAICompletionsParams compat.reasoningContentReplay override", () => {
+  it("strips reasoning replay fields from a non-OpenAI reasoning model when set to strip", () => {
+    const model = {
+      ...customReasoningProxyModel,
+      compat: { reasoningContentReplay: "strip" },
+    } as never;
+
+    for (const thinkingSignature of [
+      "reasoning_details",
+      "reasoning_content",
+      "reasoning",
+      "reasoning_text",
+    ]) {
+      const assistant = getAssistantMessage(buildReplayParams(model, thinkingSignature));
+
+      expect(assistant).not.toHaveProperty("reasoning_details");
+      expect(assistant).not.toHaveProperty("reasoning_content");
+      expect(assistant).not.toHaveProperty("reasoning");
+      expect(assistant).not.toHaveProperty("reasoning_text");
+    }
+  });
+
+  it("still strips for stock OpenAI when set to preserve (default behavior is unchanged)", () => {
+    const assistant = getAssistantMessage(buildReplayParams(openAIModel, "reasoning_content"));
+
+    expect(assistant).not.toHaveProperty("reasoning_content");
+  });
+
+  it("still preserves replay for a deepseek-format model when set to strip alongside the requires flag", () => {
+    const model = {
+      ...nativeDeepSeekModel,
+      compat: {
+        reasoningContentReplay: "strip",
+        requiresReasoningContentOnAssistantMessages: true,
+      },
+    } as never;
+
+    const assistant = getAssistantMessage(buildReplayParams(model, "reasoning_content"));
+
+    expect(assistant.reasoning_content).toBe("Need to answer politely.");
+  });
+});

@@ -309,6 +309,8 @@ const ModelCompatSchema = z
      * reasoning is enabled. Default: auto-detected from URL.
      */
     requiresReasoningContentOnAssistantMessages: z.boolean().optional(),
+    /** How to treat reasoning replay fields on replayed assistant messages. "strip" always removes them before sending, for endpoints that treat these fields as output-only (e.g. vLLM) where replaying them grows the prompt without benefit. Default: auto. */
+    reasoningContentReplay: z.enum(["preserve", "strip"]).optional(),
     /** Named tool-schema profile used by provider adapters. */
     toolSchemaProfile: z.string().optional(),
     /** JSON Schema keywords rejected by this provider's tool schema validator. */
