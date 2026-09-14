@@ -280,6 +280,7 @@ export function resumeSubagentRun(runId: string, source: "live" | "restore" = "l
     resumedRuns.add(runId);
     return;
   }
+  const taskResolution = resolveSubagentTaskForRun(subagentRuns.values(), entry);
   if (
     handleOrphanedSubagentResume({
       runId,
@@ -287,6 +288,10 @@ export function resumeSubagentRun(runId: string, source: "live" | "restore" = "l
       source,
       runs: subagentRuns,
       resumedRuns,
+      hasUnsettledTask:
+        entry.taskRunId !== undefined ||
+        taskResolution.lookup === "unavailable" ||
+        ["queued", "running"].includes(taskResolution.task?.status ?? ""),
       persist: persistSubagentRuns,
       complete: completionRuntime.completeSubagentRunWithRecovery,
       warn: (message, meta) => log.warn(message, meta),

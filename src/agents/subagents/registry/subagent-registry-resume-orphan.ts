@@ -9,6 +9,7 @@ export function handleOrphanedSubagentResume(params: {
   source: "live" | "restore";
   runs: Map<string, SubagentRunRecord>;
   resumedRuns: Set<string>;
+  hasUnsettledTask: boolean;
   persist: (...runIds: string[]) => void;
   complete: (completion: SubagentCompletionRequest, source: string) => Promise<void>;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -20,7 +21,15 @@ export function handleOrphanedSubagentResume(params: {
   if (!orphanReason) {
     return false;
   }
+  const isTerminal = typeof params.entry.execution.endedAt === "number";
+  const hasUnsettledCollector =
+    params.entry.collect === true &&
+    (params.entry.collectorCompletion === undefined ||
+      params.entry.collectorLaunchCleanupPending === true);
   if (
+    isTerminal &&
+    !params.hasUnsettledTask &&
+    !hasUnsettledCollector &&
     params.entry.requesterSettleWake === undefined &&
     params.entry.completion?.required !== true &&
     reconcileOrphanedRun({
@@ -35,7 +44,7 @@ export function handleOrphanedSubagentResume(params: {
     params.persist(params.runId);
     return true;
   }
-  if (typeof params.entry.execution.endedAt === "number") {
+  if (isTerminal) {
     return false;
   }
   void params
