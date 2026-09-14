@@ -92,10 +92,15 @@ describe("acknowledged ephemeral native tool catalogs", () => {
             });
             original.inputSchema.type = "array";
           }
-          if (mismatch === "client") binding.clientId = "other-client";
-          if (mismatch === "runtime") binding.appServerRuntimeFingerprint = "other-runtime";
-          if (mismatch === "fingerprint")
+          if (mismatch === "client") {
+            binding.clientId = "other-client";
+          }
+          if (mismatch === "runtime") {
+            binding.appServerRuntimeFingerprint = "other-runtime";
+          }
+          if (mismatch === "fingerprint") {
             binding.dynamicToolsFingerprint = codexDynamicToolsFingerprint([]);
+          }
           if (mismatch === "home") {
             vi.spyOn(client, "getRuntimeIdentity").mockReturnValue({
               ...client.getRuntimeIdentity()!,
@@ -130,8 +135,9 @@ describe("acknowledged ephemeral native tool catalogs", () => {
             );
           }
           expect(request).toHaveBeenCalledTimes(mismatch === "missing" ? 1 : 0);
-          if (mismatch === "missing")
+          if (mismatch === "missing") {
             expect(request).toHaveBeenCalledWith("thread/read", { threadId, includeTurns: false });
+          }
         },
       });
     },

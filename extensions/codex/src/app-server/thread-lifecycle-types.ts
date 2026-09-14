@@ -10,6 +10,7 @@ import type {
   CodexAppServerBindingIdentity,
   CodexAppServerBindingStore,
   CodexAppServerContextEngineBinding,
+  CodexAppServerPendingSupervisionBranch,
   CodexAppServerThreadBinding,
 } from "./session-binding.js";
 import type { CodexContextEngineThreadBootstrapProjection } from "./thread-context-engine.js";
@@ -45,6 +46,41 @@ export type CodexThreadFinalConfigPatchResult = {
   activate?: () => Promise<void>;
   configPatch?: JsonObject;
   nativeHookRelayGeneration?: string;
+};
+
+export type PendingSupervisionMaterializationParams = {
+  client: CodexAppServerClient;
+  abandonClient: () => Promise<void>;
+  bindingStore: CodexAppServerBindingStore;
+  bindingIdentity: CodexAppServerBindingIdentity;
+  binding: CodexAppServerThreadBinding & {
+    pendingSupervisionBranch: CodexAppServerPendingSupervisionBranch;
+  };
+  attempt: EmbeddedRunAttemptParams;
+  cwd: string;
+  dynamicTools: CodexDynamicToolSpec[];
+  appServer: CodexAppServerRuntimeOptions;
+  developerInstructions?: string;
+  config?: JsonObject;
+  shellEnvironment?: Readonly<Record<string, string>>;
+  disableLoginShell?: boolean;
+  nativeCodeModeEnabled?: boolean;
+  nativeProviderWebSearchSupport?: CodexNativeWebSearchSupport;
+  nativeCodeModeOnlyEnabled?: boolean;
+  webSearchAllowed?: boolean;
+  hostSystemAgentActive: boolean;
+  restrictedToolSurface: boolean;
+  restrictedToolSurfaceInheritedMcpServerNames: string[];
+  environmentSelection?: CodexTurnEnvironmentParams[];
+  signal?: AbortSignal;
+  provisionalAppIds?: readonly string[];
+  throwIfAborted: () => void;
+  lifecycleTiming: Pick<CodexThreadLifecycleTimingTracker, "measure" | "mark" | "logSummary">;
+  normalizeBindingModelProvider: (
+    authProfileId: string | undefined,
+    modelProvider: string | undefined,
+  ) => string | undefined;
+  bindingPatch: Partial<Omit<CodexAppServerThreadBinding, "threadId" | "pendingSupervisionBranch">>;
 };
 
 export type CodexPluginThreadConfigProvider = {

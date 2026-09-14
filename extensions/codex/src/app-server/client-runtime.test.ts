@@ -72,8 +72,9 @@ describe("Codex app-server client runtime", () => {
     const a = createClientHarness();
     const b = createClientHarness();
     clients.push(a.client, b.client);
-    for (const client of [a.client, b.client])
+    for (const client of [a.client, b.client]) {
       ensureCodexAppServerClientRuntime(client, { agentDir: "/tmp/agent" });
+    }
     recordCodexEphemeralThreadCreation(a.client, "thread", {
       hookInstallation: "installed",
       dynamicTools: [],

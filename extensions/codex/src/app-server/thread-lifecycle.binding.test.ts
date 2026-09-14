@@ -2956,10 +2956,18 @@ describe("Codex app-server thread lifecycle bindings", () => {
       let selected = initial;
       let starts = 0;
       const request = vi.fn(async (method: string) => {
-        if (method === "config/read") return { layers: [], config: { mcp_servers: {} } };
-        if (method === "configRequirements/read") return { requirements: null };
-        if (method === "thread/start") return threadStartResult(`thread-hooks-${++starts}`);
-        if (method === "thread/unsubscribe") return { status: "unsubscribed" };
+        if (method === "config/read") {
+          return { layers: [], config: { mcp_servers: {} } };
+        }
+        if (method === "configRequirements/read") {
+          return { requirements: null };
+        }
+        if (method === "thread/start") {
+          return threadStartResult(`thread-hooks-${++starts}`);
+        }
+        if (method === "thread/unsubscribe") {
+          return { status: "unsubscribed" };
+        }
         throw new Error(`unexpected method: ${method}`);
       });
       const close = vi.fn();

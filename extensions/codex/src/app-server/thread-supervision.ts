@@ -1,9 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import {
-  embeddedAgentLog,
-  formatErrorMessage,
-  type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
-} from "openclaw/plugin-sdk/agent-harness-runtime";
+import { embeddedAgentLog, formatErrorMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
@@ -16,7 +12,6 @@ import {
   unsubscribeCodexAppServerLiveThread,
 } from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
-import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
 import {
   checkCodexThreadAppAvailability,
@@ -26,16 +21,8 @@ import {
   assertCodexThreadForkResponse,
   assertCodexThreadStartResponse,
 } from "./protocol-validators.js";
+import type { CodexThread, CodexThreadForkParams } from "./protocol.js";
 import type {
-  CodexDynamicToolSpec,
-  CodexThread,
-  CodexThreadForkParams,
-  CodexTurnEnvironmentParams,
-  JsonObject,
-} from "./protocol.js";
-import type {
-  CodexAppServerBindingIdentity,
-  CodexAppServerBindingStore,
   CodexAppServerPendingSupervisionBranch,
   CodexAppServerThreadBinding,
 } from "./session-binding.js";
@@ -44,8 +31,10 @@ import {
   CodexThreadBindingConflictError,
   CodexThreadStartRequestError,
 } from "./thread-lifecycle-errors.js";
-import type { CodexThreadLifecycleTimingTracker } from "./thread-lifecycle-timing.js";
-import type { CodexAppServerThreadLifecycleBinding } from "./thread-lifecycle-types.js";
+import type {
+  CodexAppServerThreadLifecycleBinding,
+  PendingSupervisionMaterializationParams,
+} from "./thread-lifecycle-types.js";
 import { buildDeveloperInstructions } from "./thread-prompt.js";
 import {
   attestCodexRestrictedToolSurfaceMcpServersDisabled,
@@ -55,42 +44,6 @@ import {
   resolveCodexThreadApprovalsReviewer,
 } from "./thread-requests.js";
 import { projectBoundedCodexThreadHistory } from "./transcript-mirror.js";
-import type { CodexNativeWebSearchSupport } from "./web-search.js";
-
-type PendingSupervisionMaterializationParams = {
-  client: CodexAppServerClient;
-  abandonClient: () => Promise<void>;
-  bindingStore: CodexAppServerBindingStore;
-  bindingIdentity: CodexAppServerBindingIdentity;
-  binding: CodexAppServerThreadBinding & {
-    pendingSupervisionBranch: CodexAppServerPendingSupervisionBranch;
-  };
-  attempt: EmbeddedRunAttemptParams;
-  cwd: string;
-  dynamicTools: CodexDynamicToolSpec[];
-  appServer: CodexAppServerRuntimeOptions;
-  developerInstructions?: string;
-  config?: JsonObject;
-  shellEnvironment?: Readonly<Record<string, string>>;
-  disableLoginShell?: boolean;
-  nativeCodeModeEnabled?: boolean;
-  nativeProviderWebSearchSupport?: CodexNativeWebSearchSupport;
-  nativeCodeModeOnlyEnabled?: boolean;
-  webSearchAllowed?: boolean;
-  hostSystemAgentActive: boolean;
-  restrictedToolSurface: boolean;
-  restrictedToolSurfaceInheritedMcpServerNames: string[];
-  environmentSelection?: CodexTurnEnvironmentParams[];
-  signal?: AbortSignal;
-  provisionalAppIds?: readonly string[];
-  throwIfAborted: () => void;
-  lifecycleTiming: Pick<CodexThreadLifecycleTimingTracker, "measure" | "mark" | "logSummary">;
-  normalizeBindingModelProvider: (
-    authProfileId: string | undefined,
-    modelProvider: string | undefined,
-  ) => string | undefined;
-  bindingPatch: Partial<Omit<CodexAppServerThreadBinding, "threadId" | "pendingSupervisionBranch">>;
-};
 
 export async function materializePendingSupervisionBranch(
   params: PendingSupervisionMaterializationParams,

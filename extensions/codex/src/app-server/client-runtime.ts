@@ -6,7 +6,12 @@ import { defineCodexBuildState } from "../build-state.js";
 import { readCodexSessionMeta } from "../session-catalog-provenance.js";
 import { refreshCodexAppServerAuthTokens, type CodexAppServerAuthHandoff } from "./auth-bridge.js";
 import { fingerprintTokenAuthProfileCacheKey } from "./auth-cache-key.js";
-import type { CodexAppServerAuthProfileLookup } from "./auth-profile.js";
+import type {
+  ClientRuntime,
+  ClientRuntimeContext,
+  RetainedLiveThread,
+  ThreadReleaseTransition,
+} from "./client-runtime-types.js";
 import type { CodexAppServerClient } from "./client.js";
 import {
   isJsonObject,
@@ -16,42 +21,6 @@ import {
 } from "./protocol.js";
 import { mergeCodexRateLimitsUpdate } from "./rate-limit-cache.js";
 import { withTimeout } from "./timeout.js";
-
-type ClientRuntimeContext = CodexAppServerAuthProfileLookup & {
-  authMode?: "prepared-api-key" | "profile";
-  onAuthRefreshFailure?: () => void;
-};
-
-type ClientRuntime = {
-  context: ClientRuntimeContext;
-  authHandoff?: CodexAppServerAuthHandoff;
-  closed: boolean;
-  retainedThreads: Map<string, RetainedLiveThread>;
-  claimedThreads: Map<string, symbol>;
-  releasingThreads: Map<string, ThreadReleaseTransition>;
-  protectedThreads: Map<string, number>;
-  sessionMetadata: Map<string, { sessionsRoot: string; rolloutPath: string; metadata: JsonObject }>;
-  workspaceReferences: Map<string, { digest?: string; needsReintroduction: boolean }>;
-  ephemeralCreations: Map<
-    string,
-    { hookInstallation: string; dynamicTools: CodexDynamicToolSpec[] }
-  >;
-  evictionTimer?: ReturnType<typeof setTimeout>;
-};
-
-type RetainedLiveThread = {
-  configFingerprint?: string;
-  ephemeralPolicy?: string;
-  serviceTier?: CodexServiceTier | null;
-  expiresAt: number;
-  release: (threadId: string, assertCurrent?: () => void) => Promise<void>;
-};
-
-type ThreadReleaseTransition = {
-  completion: Promise<void>;
-  physicalRelease?: Promise<void>;
-  invalidated?: boolean;
-};
 
 export type CodexAppServerLiveThreadOwnership = {
   assertCurrent: () => void;

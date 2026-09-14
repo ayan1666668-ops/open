@@ -5,8 +5,7 @@ import {
   isCodexAppServerPrewriteRequestCancellationError,
   type CodexAppServerClient,
 } from "./client.js";
-import type { JsonObject } from "./protocol.js";
-import type { CodexThread } from "./protocol.js";
+import type { CodexThread, JsonObject } from "./protocol.js";
 import {
   CodexAppServerScopedRequestRejectedError,
   requestCodexAppServerClientJson,
