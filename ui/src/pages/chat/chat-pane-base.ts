@@ -10,6 +10,7 @@ import type {
 import type {
   ControlUiSessionBranch,
   ControlUiSessionPullRequest,
+  ControlUiSessionPullRequestSnapshot,
 } from "../../../../src/gateway/control-ui-contract.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
@@ -80,6 +81,7 @@ import {
   openSlot,
   promoteSidebarPanel,
   setSidebarOpen,
+  sidebarMainPanel,
 } from "./sidebar-layout.ts";
 
 export abstract class ChatPaneBase extends OpenClawLightDomElement {
@@ -317,7 +319,8 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   );
   protected readonly transcript = new ChatTranscriptController(this, {
     onViewportResize: () => this.chatState.handleTranscriptResize(),
-    onReaderScroll: () => this.state && handleChatScrollTakeover(this.state),
+    canFollowEnd: () => this.state !== undefined && !this.state.chatFollowLocked,
+    onReaderScroll: (towardEnd) => this.state && handleChatScrollTakeover(this.state, towardEnd),
   });
   protected readonly progressCard = new SessionProgressCardController(this, {
     gateway: () => this.context?.gateway,
@@ -397,6 +400,8 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   @litState() protected resetConfirmationOpen = false;
   protected deferredSessionHydrationRequestVersion = 0;
   protected sessionCompanionHydrationKey = "";
+  protected sessionCompanionFocusGeneration = 0;
+  @litState() protected sessionCompanionFocusRequest?: () => boolean;
   protected readonly sessionCompanionThreads = new ChatSessionCompanionThreads(() => {
     this.requestUpdate();
   });
@@ -436,7 +441,12 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     if (renderedLayout.columns[0]?.panels.some((panel) => panel.slot === "companion")) {
       this.setSessionObserverVisibility(isSidebarSlotVisible(nextLayout, "companion"));
     }
-    this.commitSidebarLayout(nextLayout);
+    this.commitSidebarLayout(
+      nextLayout,
+      sidebarMainPanel(renderedLayout)?.slot === "dashboard"
+        ? { dashboardPresentation: "personal" }
+        : undefined,
+    );
   }
 
   protected requestSessionRail(intent: "open" | "toggle"): void {
@@ -454,6 +464,43 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     this.setSessionObserverVisibility(true);
   }
 
+  protected async openSessionCompanion(pageState: ChatPageHost, question: string): Promise<void> {
+    const sessionKey = pageState.sessionKey;
+    const agentId = resolveChatAgentId(pageState);
+    const generation = this.connectionGeneration;
+    const focusGeneration = this.sessionCompanionFocusGeneration;
+    const composer = getChatComposerState(this.presentationId);
+    const editRevision = composer.editRevision;
+    const draft = pageState.chatMessage;
+    const ownsFocus = () =>
+      this.state === pageState &&
+      pageState.sessionKey === sessionKey &&
+      resolveChatAgentId(pageState) === agentId &&
+      this.connectionGeneration === generation &&
+      this.sessionCompanionFocusGeneration === focusGeneration &&
+      composer.editRevision === editRevision &&
+      pageState.chatMessage === draft &&
+      isSidebarSlotVisible(pageState.sidebarLayout, "companion") &&
+      (this.ownerDocument.activeElement === this.ownerDocument.body ||
+        this.contains(this.ownerDocument.activeElement)) &&
+      this.isConnected &&
+      this.active &&
+      this.presented;
+    // Consume even an invalidated request so a lazy mount cannot fall back to autofocus.
+    const requestFocus = () => {
+      if (this.sessionCompanionFocusRequest === requestFocus) {
+        this.sessionCompanionFocusRequest = undefined;
+      }
+      return ownsFocus();
+    };
+    // The first lazy mount and the completed answer share the same input intent.
+    this.sessionCompanionFocusRequest = requestFocus;
+    await this.submitSessionCompanionQuestion(question);
+    if (ownsFocus()) {
+      this.sessionCompanionFocusRequest = requestFocus;
+    }
+  }
+
   protected readonly submitSessionCompanionQuestion = async (question: string) => {
     const state = this.state;
     if (!state || !state.sessionKey) {
@@ -462,6 +509,9 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     const sessionKey = state.sessionKey;
     const agentId = resolveChatAgentId(state);
     this.requestSessionRail("open");
+    if (!question.trim()) {
+      return;
+    }
     if (!state.connected || !state.client) {
       this.sessionCompanionThreads.setDraft(sessionKey, question, agentId);
       return;
@@ -511,7 +561,12 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
       }
     | undefined;
   protected readonly observedBoardPresence = new Map<string, boolean>();
-  protected dashboardExpandedRouteKey = "";
+  protected dashboardPresentationActivation?: {
+    client: ChatPageHost["client"];
+    key: string;
+    expanded: boolean;
+    pendingRoute?: boolean;
+  };
   protected swarmHydrator: SwarmRosterHydrator | null = null;
   protected readonly sessionDiscussionStates = new Map<string, SessionDiscussionState>();
   protected readonly sessionDiscussionOpenUrls = new Map<string, string | null>();
@@ -567,7 +622,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   protected sessionPullRequests: ControlUiSessionPullRequest[] = [];
   protected sessionPullRequestsBranch: ControlUiSessionBranch | undefined;
   protected githubRepo: MarkdownRenderOptions["githubRepo"] = null;
-  protected sessionPullRequestsRateLimited = false;
+  protected sessionPullRequestsStatus: ControlUiSessionPullRequestSnapshot["status"] = "ready";
   protected sessionPullRequestsExpanded = false;
   protected githubPublication: GitHubPublicationBinding | null = null;
   protected dismissedSessionPullRequestIds: ReadonlySet<string> = new Set();
@@ -649,7 +704,10 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   }
 
   protected abstract refreshSessionPullRequests(options?: { refresh?: boolean }): boolean;
-  protected abstract commitSidebarLayout(layout: SidebarLayout): void;
+  protected abstract commitSidebarLayout(
+    layout: SidebarLayout,
+    options?: Parameters<ChatPageHost["updateSidebarLayout"]>[1],
+  ): void;
   protected abstract refreshSwarmRoster(): void;
   protected abstract resolveBoardProvider(): BoardProvider;
   protected abstract handleBoardCommand(event: BoardCommandEvent): void;

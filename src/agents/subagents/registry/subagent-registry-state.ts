@@ -12,6 +12,7 @@ import { subagentRuns } from "./subagent-registry-memory.js";
 import {
   loadSubagentRunsForChildSessionFromSqlite,
   loadSubagentRunsForControllerFromSqlite,
+  loadSubagentRunsForSessionFromSqlite,
   loadSubagentRunsByRunIdsFromSqlite,
   loadSubagentRegistryFromSqlite,
   loadSubagentSessionListRunsFromSqlite,
@@ -132,6 +133,7 @@ export function onSubagentRegistryPersisted(listener: SubagentRegistryPersistLis
 function projectSubagentRunForSessionList(entry: SubagentRunRecord): SubagentRunReadRecord {
   return {
     runId: entry.runId,
+    ...(entry.pauseReason ? { pauseReason: entry.pauseReason } : {}),
     ...(entry.swarmRunId ? { swarmRunId: entry.swarmRunId } : {}),
     childSessionKey: entry.childSessionKey,
     ...(entry.controllerSessionKey ? { controllerSessionKey: entry.controllerSessionKey } : {}),
@@ -342,6 +344,7 @@ function getSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
   cache: SubagentRunsCache<T>,
   scope?: {
     load?: () => Iterable<T>;
+    fresh?: boolean;
     matches: (entry: T) => boolean;
   },
 ): Map<string, T> {
@@ -350,7 +353,10 @@ function getSubagentRunsSnapshot<T extends SubagentRunReadRecord>(
     try {
       // Persisted state lets other worker processes observe active runs.
       // Scoped reads use indexed SQL unless a fresh local write owns the result.
-      const cached = scope?.load ? getFreshPersistedSubagentRunsSnapshot(cache, Date.now()) : null;
+      const cached =
+        scope?.load && !scope.fresh
+          ? getFreshPersistedSubagentRunsSnapshot(cache, Date.now())
+          : null;
       const persisted = scope?.load
         ? (cached?.values() ?? scope.load())
         : loadPersistedSubagentRunsForRead(cache).values();
@@ -417,7 +423,18 @@ export function getSubagentRunsSnapshotForRunIds(
 
 export function getSubagentSessionListRunsSnapshotForRead(
   inMemoryRuns: Map<string, SubagentRunRecord>,
+  controllerSessionKeys?: readonly string[],
 ): Map<string, SubagentRunReadRecord> {
+  if (controllerSessionKeys) {
+    const keys = new Set(controllerSessionKeys.map((key) => key.trim()).filter(Boolean));
+    if (keys.size === 0) {
+      return new Map();
+    }
+    return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentSessionListRunsReadCache, {
+      load: () => loadSubagentSessionListRunsFromSqlite([...keys]).values(),
+      matches: (entry) => keys.has(entry.controllerSessionKey?.trim() || entry.requesterSessionKey),
+    });
+  }
   return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentSessionListRunsReadCache);
 }
 
@@ -432,6 +449,23 @@ export function getSubagentRunsSnapshotForController(
   return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentRunsReadCache, {
     load: () => loadSubagentRunsForControllerFromSqlite(key),
     matches: (entry) => (entry.controllerSessionKey?.trim() || entry.requesterSessionKey) === key,
+  });
+}
+
+/** Current-turn results bypass the hot-list cache without loading unrelated payloads. */
+export function getSubagentRunsSnapshotForSession(
+  inMemoryRuns: Map<string, SubagentRunRecord>,
+  sessionKey: string,
+): Map<string, SubagentRunRecord> {
+  const key = sessionKey.trim();
+  if (!key) {
+    return new Map();
+  }
+  return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentRunsReadCache, {
+    load: () => loadSubagentRunsForSessionFromSqlite(key),
+    fresh: true,
+    matches: (entry) =>
+      entry.controllerSessionKey?.trim() === key || entry.requesterSessionKey.trim() === key,
   });
 }
 
