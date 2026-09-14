@@ -46,7 +46,7 @@ export type StagedWorkerArtifactInventory = {
 
 export type WorkspaceArtifactReadOperations = {
   "workspace.artifacts": {
-    input: { root: string; ref: string; previewPath?: string };
+    input: { root: string; ref: string; previewPath?: string; maxPreviewBytes?: number };
     output: StagedWorkerArtifactInventory;
   };
 };
