@@ -192,6 +192,7 @@ struct ChatCompletedWorkTests {
         // delivers the parent's final answer on a requester-settle run.
         let text = try Self.decode(#"""
         {"role":"assistant","timestamp":2000,"__openclaw":{"id":"shared","runId":"parent"},
+         "openclawStreamFallback":{"source":"segment","itemId":"checking-layout"},
          "content":[{"type":"text","text":"Checking the mobile layout"}]}
         """#)
         let tool = try Self.decode(#"""
@@ -233,6 +234,47 @@ struct ChatCompletedWorkTests {
             #expect(decoded.steerTargetRunID == "active")
             #expect(decoded.content.first?.textSignature == message.content.first?.textSignature)
         }
+    }
+
+    @Test @MainActor func `keyed commentary segments stay distinct and cannot complete failed work`() throws {
+        let first = try Self.decode(#"""
+        {"role":"assistant","timestamp":3000,
+         "__openclaw":{"id":"shared-commentary","idempotencyKey":"same-parent","runId":"active"},
+         "openclawStreamFallback":{"source":"segment","itemId":"first","runId":"active"},
+         "content":[{"type":"text","text":"Checking the first file"}]}
+        """#)
+        let second = try Self.decode(#"""
+        {"role":"assistant","timestamp":4000,
+         "__openclaw":{"id":"shared-commentary","idempotencyKey":"same-parent","runId":"active"},
+         "openclawStreamFallback":{"itemId":"second"},
+         "content":[{"type":"text","text":"Checking the next file"}]}
+        """#)
+        let failed = Self.message("toolResult", #"{"status":"failed"}"#, at: 2000)
+        let source = [Self.toolCall(at: 1000), failed, first, second]
+        let decoded = OpenClawChatViewModel.dedupeMessages(source)
+        #expect(decoded.count == 4)
+        #expect(Self.work(in: Self.collapse(decoded)).isEmpty)
+        let user = Self.message("user", "Check the files", at: 0)
+        #expect(OpenClawChatViewModel.hasUnansweredLatestUser(in: [user] + decoded))
+
+        let copies = [first, OpenClawChatViewModel.adoptingCanonicalMessage(first, over: first)] +
+            OpenClawChatSQLiteTranscriptCache.cacheableMessages([first])
+        for copy in copies {
+            let encoded = try JSONDecoder().decode(AnyCodable.self, from: JSONEncoder().encode(copy))
+            let marker = encoded.dictionaryValue?["openclawStreamFallback"]?.dictionaryValue
+            #expect(marker?["itemId"]?.stringValue == "first")
+            #expect(marker?["runId"]?.stringValue == "active")
+            let roundTrip = try ChatPayloadDecoding.decode(encoded, as: OpenClawChatMessage.self)
+            #expect(Self.work(in: Self.collapse([failed, roundTrip])).isEmpty)
+        }
+        let final = Self.message("assistant", "The first read failed; the next file is ready.", at: 5000)
+        #expect(Self.visibleIDs(Self.collapse(decoded + [final])) == [final.id])
+
+        let unkeyed = try Self.decode(#"""
+        {"role":"assistant","timestamp":5000,"openclawStreamFallback":{"source":"current","itemId":"  "},
+         "content":[{"type":"text","text":"A complete unkeyed reply"}]}
+        """#)
+        #expect(Self.visibleIDs(Self.collapse([failed, unkeyed])) == [unkeyed.id])
     }
 
     private static func decode(_ json: String) throws -> OpenClawChatMessage {

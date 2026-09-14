@@ -51,7 +51,8 @@ extension OpenClawChatSQLiteTranscriptCache {
                 historyMarker: message.historyMarker,
                 phase: message.phase,
                 turnBoundary: message.turnBoundary,
-                steerTargetRunID: message.steerTargetRunID)
+                steerTargetRunID: message.steerTargetRunID,
+                streamFallback: message.streamFallback)
         }
     }
 

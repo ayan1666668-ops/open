@@ -414,6 +414,25 @@ public struct OpenClawChatHistoryMarker: Codable, Hashable, Sendable {
     }
 }
 
+public struct OpenClawChatStreamFallback: Codable, Hashable, Sendable {
+    public let source: String?
+    public let itemId: String?
+    public let runId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case source
+        case itemId
+        case runId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.source = try? container.decode(String.self, forKey: .source)
+        self.itemId = try? container.decode(String.self, forKey: .itemId)
+        self.runId = try? container.decode(String.self, forKey: .runId)
+    }
+}
+
 public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
     private struct OpenClawMetadata: Codable {
         let kind: String?
@@ -435,6 +454,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
     public let phase: String?
     public let turnBoundary: Bool?
     public let steerTargetRunID: String?
+    public let streamFallback: OpenClawChatStreamFallback?
     public let content: [OpenClawChatMessageContent]
     public let timestamp: Double?
     public let idempotencyKey: String?
@@ -448,9 +468,16 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
     public let provenance: OpenClawChatInputProvenance?
     public let historyMarker: OpenClawChatHistoryMarker?
 
+    var streamSegmentID: String? {
+        guard self.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "assistant" else { return nil }
+        let itemID = self.streamFallback?.itemId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return itemID?.isEmpty == false ? itemID : nil
+    }
+
     enum CodingKeys: String, CodingKey {
         case role
         case phase
+        case streamFallback = "openclawStreamFallback"
         case content
         case timestamp
         case idempotencyKey
@@ -492,7 +519,8 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
         historyMarker: OpenClawChatHistoryMarker? = nil,
         phase: String? = nil,
         turnBoundary: Bool? = nil,
-        steerTargetRunID: String? = nil)
+        steerTargetRunID: String? = nil,
+        streamFallback: OpenClawChatStreamFallback? = nil)
     {
         self.id = id
         self.transcriptMessageID = transcriptMessageID
@@ -502,6 +530,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
         self.phase = phase
         self.turnBoundary = turnBoundary
         self.steerTargetRunID = steerTargetRunID
+        self.streamFallback = streamFallback
         self.content = content
         self.timestamp = timestamp
         self.idempotencyKey = idempotencyKey
@@ -543,6 +572,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
         self.phase = try container.decodeIfPresent(String.self, forKey: .phase)
         self.turnBoundary = decodedOpenClaw?.turnBoundary
         self.steerTargetRunID = decodedOpenClaw?.steerTargetRunId
+        self.streamFallback = try? container.decode(OpenClawChatStreamFallback.self, forKey: .streamFallback)
         self.transcriptMessageID = decodedOpenClaw?.id
         self.transcriptRunID = decodedOpenClaw?.runId
         self.timestamp = decodedTimestamp
@@ -657,6 +687,7 @@ public struct OpenClawChatMessage: Codable, Hashable, Identifiable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(self.role, forKey: .role)
         try container.encodeIfPresent(self.phase, forKey: .phase)
+        try container.encodeIfPresent(self.streamFallback, forKey: .streamFallback)
         try container.encodeIfPresent(self.timestamp, forKey: .timestamp)
         if self.transcriptMessageID != nil || self.transcriptRunID != nil || self.isTruncated || self
             .historyMarker != nil || self.turnBoundary != nil || self.steerTargetRunID != nil

@@ -1246,7 +1246,8 @@ extension OpenClawChatView {
                 historyMarker: last.historyMarker,
                 phase: last.phase,
                 turnBoundary: last.turnBoundary,
-                steerTargetRunID: last.steerTargetRunID)
+                steerTargetRunID: last.steerTargetRunID,
+                streamFallback: last.streamFallback)
             result[result.count - 1] = merged
         }
 

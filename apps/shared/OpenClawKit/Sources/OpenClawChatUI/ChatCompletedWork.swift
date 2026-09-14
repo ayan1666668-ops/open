@@ -160,8 +160,9 @@ extension OpenClawChatMessage {
 
     fileprivate var workRunID: String? {
         if let transcriptRunID, !transcriptRunID.isEmpty { return transcriptRunID }
-        guard let key = self.idempotencyKey, key.hasSuffix(":user") else { return nil }
-        return String(key.dropLast(5))
+        if let key = self.idempotencyKey, key.hasSuffix(":user") { return String(key.dropLast(5)) }
+        let fallbackRunID = self.streamFallback?.runId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallbackRunID?.isEmpty == false ? fallbackRunID : nil
     }
 
     private var hasWorkMedia: Bool {
@@ -173,6 +174,7 @@ extension OpenClawChatMessage {
     }
 
     private var workPhase: String? {
+        if self.streamSegmentID != nil { return "commentary" }
         struct Signature: Decodable {
             let v: Int?
             let phase: String?
@@ -217,18 +219,5 @@ extension OpenClawChatMessage {
             block.isToolCall &&
                 !results.contains { $0.id != nil && $0.id == block.id }
         }
-    }
-
-    var transcriptProjection: String {
-        guard self.role.lowercased() == "assistant" else { return "" }
-        // Gateway history can split a single canonical message into text and
-        // work rows. They share its ID, but must retain separate display IDs.
-        let hasText = self.content.contains {
-            $0.text != nil && ChatMessageVisibleText.isVisibleContentType($0.type, role: "assistant")
-        }
-        let hasWork = self.content.contains {
-            $0.type?.lowercased() == "thinking" || $0.isToolCall
-        }
-        return "\(hasText ? self.workPhase ?? "text" : ""):\(hasWork ? "work" : "")"
     }
 }

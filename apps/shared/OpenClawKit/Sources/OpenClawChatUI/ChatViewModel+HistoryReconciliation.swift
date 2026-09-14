@@ -63,7 +63,8 @@ extension OpenClawChatViewModel {
             historyMarker: message.historyMarker,
             phase: message.phase,
             turnBoundary: message.turnBoundary,
-            steerTargetRunID: message.steerTargetRunID)
+            steerTargetRunID: message.steerTargetRunID,
+            streamFallback: message.streamFallback)
     }
 
     static func messageContentFingerprint(for message: OpenClawChatMessage) -> String {
@@ -99,12 +100,7 @@ extension OpenClawChatViewModel {
 
         // The gateway persists this key with the canonical user row. Prefer it
         // so a server timestamp change cannot replace the optimistic row's ID.
-        if let idempotencyKey = Self.normalizedIdempotencyKey(message.idempotencyKey) {
-            return [role, "idempotency", idempotencyKey].joined(separator: "|")
-        }
-        if let transcriptMessageID = Self.normalizedTranscriptMessageID(message.transcriptMessageID) {
-            return [role, "transcript", transcriptMessageID, message.transcriptProjection].joined(separator: "|")
-        }
+        if let key = Self.correlatedMessageIdentityKey(for: message, role: role) { return key }
 
         let timestamp: String = {
             guard let value = message.timestamp, value.isFinite else { return "" }
@@ -137,6 +133,7 @@ extension OpenClawChatViewModel {
         // Like src/sessions/transcript-events.ts, exclude intermediate tool rows:
         // they carry the same run ID but cannot settle the final reply.
         self.isAssistantMessage(message) &&
+            message.streamSegmentID == nil &&
             !["tooluse", "tool_use", "tool_calls"].contains(message.stopReason?.lowercased() ?? "") &&
             !message.content.contains {
                 ["toolcall", "tool_call", "tooluse", "tool_use", "functioncall"]
@@ -181,6 +178,19 @@ extension OpenClawChatViewModel {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private static func correlatedMessageIdentityKey(for message: OpenClawChatMessage, role: String) -> String? {
+        if let segmentID = message.streamSegmentID {
+            let runID = Self.normalizedRunID(message.transcriptRunID) ??
+                Self.normalizedRunID(message.streamFallback?.runId) ?? ""
+            return [role, "segment", runID, segmentID].joined(separator: "|")
+        }
+        if let idempotencyKey = Self.normalizedIdempotencyKey(message.idempotencyKey) {
+            return [role, "idempotency", idempotencyKey].joined(separator: "|")
+        }
+        guard let id = Self.normalizedTranscriptMessageID(message.transcriptMessageID) else { return nil }
+        return [role, "transcript", id].joined(separator: "|")
+    }
+
     static func adoptingCanonicalMessage(
         _ incoming: OpenClawChatMessage,
         over existing: OpenClawChatMessage) -> OpenClawChatMessage
@@ -207,7 +217,8 @@ extension OpenClawChatViewModel {
             historyMarker: incoming.historyMarker ?? existing.historyMarker,
             phase: incoming.phase,
             turnBoundary: incoming.turnBoundary,
-            steerTargetRunID: incoming.steerTargetRunID)
+            steerTargetRunID: incoming.steerTargetRunID,
+            streamFallback: incoming.streamFallback)
     }
 
     private static func preservingLocalAudioDurations(
@@ -530,7 +541,8 @@ extension OpenClawChatViewModel {
                 historyMarker: existing.historyMarker,
                 phase: existing.phase,
                 turnBoundary: existing.turnBoundary,
-                steerTargetRunID: existing.steerTargetRunID)
+                steerTargetRunID: existing.steerTargetRunID,
+                streamFallback: existing.streamFallback)
         }
         self.replaceMessages(Self.dedupeMessages(updated))
         guard let survivingIndex = self.messages.firstIndex(where: { message in
@@ -752,12 +764,7 @@ extension OpenClawChatViewModel {
     }
 
     static func dedupeKey(for message: OpenClawChatMessage) -> String? {
-        if let idempotencyKey = normalizedIdempotencyKey(message.idempotencyKey) {
-            return "\(message.role)|idempotency|\(idempotencyKey)"
-        }
-        if let transcriptMessageID = normalizedTranscriptMessageID(message.transcriptMessageID) {
-            return "\(message.role)|transcript|\(transcriptMessageID)|\(message.transcriptProjection)"
-        }
+        if let key = correlatedMessageIdentityKey(for: message, role: message.role) { return key }
         guard let timestamp = message.timestamp else { return nil }
         let text = message.content.compactMap(\.text).joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
