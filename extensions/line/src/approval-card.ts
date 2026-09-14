@@ -24,9 +24,10 @@ export type LinePendingApprovalCard = {
   allowedDecisions: readonly ExecApprovalDecision[];
 };
 
-// Native delivery suppresses the local `/approve` prompt, so this card is the only
-// prompt the approver gets and it has to fit. Losing the whole prompt is a silent
-// failure; a shortened body that says it was shortened is a visible one.
+// Native delivery suppresses the local `/approve` prompt, and an approver reached only as an
+// approver gets no forwarded text, so this card can be the only prompt they get and it has
+// to fit. Losing the whole prompt is a silent failure; a shortened body that says it was
+// shortened is a visible one.
 const BODY_SHORTENED_MARKER = "[shortened to fit LINE's card limit]";
 
 /**
