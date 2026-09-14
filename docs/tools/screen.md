@@ -50,6 +50,11 @@ it with queued turns and worker execution. If that browser disconnects or the
 turn has no Control UI target, the command fails with `UNAVAILABLE`. Ask again
 from the open Control UI; the command never falls back to a broadcast.
 
+Turns from different browsers stay separate while `screen` is available, so
+each keeps its own UI destination. When tools are disabled or policy excludes
+`screen`, otherwise-compatible cross-browser steering and collect batching
+remain available.
+
 Standalone RPC and MCP callers that previously used `ui.command` to broadcast
 must invoke it from a requesting Control UI connection or an agent turn started
 there. Without that browser target, they now receive `UNAVAILABLE`, even if

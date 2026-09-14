@@ -1,8 +1,17 @@
 import { createHash } from "node:crypto";
 import { stableStringify } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
+import {
+  GATEWAY_CLIENT_CAPS,
+  hasGatewayClientCap,
+} from "../../../packages/gateway-protocol/src/client-info.js";
+import {
+  resolveConversationCapabilityProfile,
+  type ResolvedConversationCapabilityProfile,
+} from "../../agents/conversation-capability-profile.js";
+import { resolveConversationToolPolicies } from "../../agents/conversation-tool-policy-pipeline.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
+import { isRuntimeToolAllowed, isToolAllowedByPolicies } from "../../agents/tool-policy-match.js";
 import {
   attachToolAllowlistIntersection,
   readToolAllowlistIntersection,
@@ -11,9 +20,10 @@ import { normalizeChatType } from "../../channels/chat-type.js";
 import { cloneConfigWithResolutionFacts } from "../../config/resolution-facts.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../../security/dangerous-tools.js";
 import type { RuntimeMsgContext } from "../templating.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
-import type { FollowupRun } from "./queue.js";
+import type { FollowupRun } from "./queue/types.js";
 import type {
   ReplyToolAuthorityOverlay,
   ReplyToolAuthorityRoute,
@@ -193,10 +203,10 @@ function applyReplyToolAuthorityOverlay(
   };
 }
 
-function resolveReplyToolAuthorityInputFingerprint(
+function resolveReplyToolAuthorityContext(
   snapshot: ReplyToolAuthorityInput,
   route?: ReplyToolAuthorityRoute,
-): string {
+) {
   const execution = snapshot.run;
   const provider = route?.provider ?? execution.provider;
   const model = route?.model ?? execution.model;
@@ -240,7 +250,40 @@ function resolveReplyToolAuthorityInputFingerprint(
     scheduledToolPolicy: execution.scheduledToolPolicy,
     runtimePluginToolGrant: execution.runtimePluginToolGrant,
   });
-  // Steering keeps approval routing, but UI commands must retain their requesting browser.
+  return { provider, model, capabilityProfile };
+}
+
+/** Browser identity matters to admission only while this turn can control the UI. */
+export function resolveReplyScreenToolTarget(
+  input: ReplyToolAuthorityInput,
+  preparedProfile?: ResolvedConversationCapabilityProfile,
+) {
+  if (
+    !input.run.gatewayUiCommandTarget ||
+    input.disableTools === true ||
+    !hasGatewayClientCap(input.run.clientCaps, GATEWAY_CLIENT_CAPS.UI_COMMANDS) ||
+    !isRuntimeToolAllowed("screen", input.toolsAllow)
+  ) {
+    return undefined;
+  }
+  const policies = resolveConversationToolPolicies({
+    capabilityProfile: preparedProfile ?? resolveReplyToolAuthorityContext(input).capabilityProfile,
+  });
+  return isToolAllowedByPolicies("screen", [
+    ...Object.values(policies),
+    input.run.senderIsOwner === false ? { deny: [...GATEWAY_OWNER_ONLY_CORE_TOOLS] } : undefined,
+  ])
+    ? input.run.gatewayUiCommandTarget
+    : undefined;
+}
+
+function resolveReplyToolAuthorityInputFingerprint(
+  snapshot: ReplyToolAuthorityInput,
+  route?: ReplyToolAuthorityRoute,
+): string {
+  const execution = snapshot.run;
+  const { provider, model, capabilityProfile } = resolveReplyToolAuthorityContext(snapshot, route);
+  // Runs without screen control retain ordinary cross-browser steering.
   return createHash("sha256")
     .update(
       stableStringify({
@@ -264,7 +307,7 @@ function resolveReplyToolAuthorityInputFingerprint(
         traceAuthorized: execution.traceAuthorized === true,
         authProfileId: execution.authProfileId,
         clientCaps: [...new Set(execution.clientCaps ?? [])].toSorted(),
-        gatewayUiCommandTarget: execution.gatewayUiCommandTarget,
+        gatewayUiCommandTarget: resolveReplyScreenToolTarget(snapshot, capabilityProfile),
         toolBindings: execution.toolBindings,
       }),
     )
