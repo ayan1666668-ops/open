@@ -381,8 +381,8 @@ describe("browser cli snapshot defaults", () => {
 
   // runtime.error also receives the exit exception, so the guard message is not
   // necessarily the last call. Search everything it was handed.
-  const allErrorText = () => runtime.error.mock.calls.map((call) => String(call[0])).join("
-");
+  const allErrorText = () =>
+    runtime.error.mock.calls.map((call) => String(call[0])).join("\n");
 
   const emptyAiSnapshot = (snapshot: string): SnapshotResult => ({
     ok: true,
