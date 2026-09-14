@@ -326,9 +326,10 @@ function createRepeatedToolErrorAssistantMessage(
   config: AgentLoopConfig,
   diagnostic: RepeatedToolErrorDiagnostic,
 ): AssistantMessage {
+  const publicError = diagnostic.error.replace(/\s+Received arguments:.*$/iu, "").trim();
   const text =
     `Stopped after ${diagnostic.repeatCount} identical failed ${diagnostic.toolName} tool calls. ` +
-    diagnostic.error;
+    (publicError || "Tool call failed.");
   const errorMessage = "Repeated tool-call failure loop.";
   return {
     role: "assistant",

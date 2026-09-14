@@ -961,6 +961,68 @@ describe("runAgentLoop deferred tool hydration", () => {
     expect(terminalJson).not.toContain("credential_value_to_redact");
   });
 
+  it("omits echoed tool arguments from repeated-error assistant content", async () => {
+    const execute = vi.fn(async () => {
+      throw new Error(
+        "Validation failed for tool edit: path must be string. Received arguments: {}",
+      );
+    });
+    let streamCalls = 0;
+    const streamFn: StreamFn = () => {
+      streamCalls += 1;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message: AssistantMessage = {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: `invalid-edit-${streamCalls}`,
+              name: "edit",
+              arguments: {},
+            },
+          ],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: TEST_USAGE,
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        };
+        stream.push({ type: "done", reason: "toolUse", message });
+        stream.end();
+      });
+      return stream;
+    };
+
+    const messages = await runAgentLoop(
+      [{ role: "user", content: "edit the file", timestamp: Date.now() }],
+      {
+        systemPrompt: "",
+        messages: [],
+        tools: [
+          {
+            name: "edit",
+            label: "edit",
+            description: "Edit",
+            parameters: Type.Object({}, { additionalProperties: true }),
+            execute,
+          },
+        ],
+      },
+      config,
+      () => {},
+      undefined,
+      streamFn,
+    );
+
+    const terminal = messages.at(-1) as AssistantMessage;
+    const content = JSON.stringify(terminal.content);
+    expect(content).toContain("Stopped after 2 identical failed edit tool calls.");
+    expect(content).toContain("Validation failed for tool edit: path must be string.");
+    expect(content).not.toContain("Received arguments");
+  });
+
   it("counts repeated empty error payloads as deterministic failures", async () => {
     const execute = vi.fn(async () => ({
       content: [{ type: "text" as const, text: "will be replaced by afterToolCall" }],
