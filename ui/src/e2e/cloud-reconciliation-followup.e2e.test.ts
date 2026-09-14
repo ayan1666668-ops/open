@@ -13,13 +13,18 @@ import {
 const suite = createChatFlowE2eSuite();
 const sessionKey = "agent:main:cloud-reconciliation";
 const now = Date.now();
+let phaseUpdatedAt = now;
 
-function placement(state: "active" | "failed", workspaceResultReconciling = false) {
+function placement(
+  state: "active" | "failed",
+  workspaceResultReconciling: boolean,
+  updatedAt: number,
+) {
   const timing = {
     createdAtMs: now - 180_000,
     generation: state === "failed" ? 3 : 2,
     stateChangedAtMs: now - 138_000,
-    updatedAtMs: now,
+    updatedAtMs: updatedAt,
   };
   if (state === "failed") {
     return {
@@ -49,16 +54,18 @@ function session(
   workspaceResultReconciling = false,
   runId = "follow-up-run",
 ) {
+  // Phase snapshots must not predate the mock Gateway's run-lifecycle writes.
+  phaseUpdatedAt = Math.max(Date.now(), phaseUpdatedAt + 1);
   return {
     activeRunIds: queuedFollowUp ? [runId] : [],
     hasActiveRun: queuedFollowUp,
     key: sessionKey,
     kind: "direct",
     label: "Cloud reconciliation proof",
-    placement: placement(state, workspaceResultReconciling),
+    placement: placement(state, workspaceResultReconciling, phaseUpdatedAt),
     sessionId: "cloud-reconciliation-session",
     status: queuedFollowUp ? "running" : "done",
-    updatedAt: now,
+    updatedAt: phaseUpdatedAt,
   };
 }
 
