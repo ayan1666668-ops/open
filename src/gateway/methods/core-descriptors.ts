@@ -162,10 +162,6 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["users.authConnect.cancel", "users", "operator.write", "2026.8"],
   ["users.authConnect.catalog", "users", "operator.write", "2026.8"],
   ["tasks.list", "tasks", "operator.read", "<=2026.7"],
-  ["tasks.supervision.list", "tasks", "operator.read", "2026.9"],
-  ["tasks.supervision.artifact", "tasks", "operator.read", "2026.9"],
-  ["tasks.supervision.get", "tasks", "operator.read", "2026.9"],
-  ["tasks.supervision.control", "tasks", "operator.write", "2026.9"],
   ["tasks.get", "tasks", "operator.read", "<=2026.7"],
   ["tasks.cancel", "tasks", "operator.write", "<=2026.7"],
   ["taskSuggestions.list", "task-suggestions", "operator.read", "<=2026.7"],
@@ -681,6 +677,10 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["computer.status", "computer", "operator.read", "2026.9"],
   ["computer.invoke", "computer", "operator.write", "2026.9"],
   ["sessions.activitySummary.ensure", "session-activity-summary", "operator.write", "2026.9"],
+  ["tasks.supervision.list", "tasks", "operator.read", "2026.9"],
+  ["tasks.supervision.artifact", "tasks", "operator.read", "2026.9"],
+  ["tasks.supervision.get", "tasks", "operator.read", "2026.9"],
+  ["tasks.supervision.control", "tasks", "operator.write", "2026.9"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 
 export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS)[number][1], null>;
