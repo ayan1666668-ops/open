@@ -81,18 +81,6 @@ export async function startTuiFixture(
       }
     };
   }
-  const dispose = run.dispose;
-  run.dispose = async () => {
-    try {
-      await dispose();
-    } finally {
-      const index = activeRuns.indexOf(run);
-      if (index >= 0) {
-        activeRuns.splice(index, 1);
-      }
-    }
-  };
-
   return {
     run,
     logPath,
