@@ -142,6 +142,8 @@ export function renderNode(params: ConfigNodeRenderParams): TemplateResult | typ
     );
 
     if (
+      params.maskSensitive === true &&
+      Array.isArray(schema.type) &&
       normalizedTypes.size === 2 &&
       normalizedTypes.has("string") &&
       normalizedTypes.has("object") &&

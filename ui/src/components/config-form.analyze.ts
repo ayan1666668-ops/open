@@ -253,7 +253,8 @@ function normalizeSchemaNode(
 ): ConfigSchemaAnalysis {
   // Plugins and Zod emit unions as type arrays; keep their branch editor and
   // sibling constraints on the same normalization path as anyOf schemas.
-  const schema =
+  let schema = input;
+  if (
     !compositionBranch &&
     !input.anyOf &&
     !input.oneOf &&
@@ -262,8 +263,17 @@ function normalizeSchemaNode(
     new Set(input.type.filter((type) => type !== "null")).size > 1 &&
     (input.type.every((type) => type === "null" || SCALAR_UNION_TYPES.has(type)) ||
       input.type.every((type) => ["string", "object", "null"].includes(type)))
-      ? { ...input, type: undefined, anyOf: input.type.map((type) => ({ type })) }
-      : input;
+  ) {
+    // Retain the declared array for plugin input selection. String-first avoids object drafts.
+    const types = input.type.includes("object")
+      ? ["string", ...input.type.filter((type) => type !== "string")]
+      : input.type;
+    schema = {
+      ...input,
+      type: types.includes("object") ? types : undefined,
+      anyOf: types.map((type) => ({ type })),
+    };
+  }
   const unsupported = new Set<string>();
   const normalized: JsonSchema = { ...schema };
   const pathLabel = pathKey(path) || "<root>";

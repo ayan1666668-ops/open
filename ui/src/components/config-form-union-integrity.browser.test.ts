@@ -15,15 +15,53 @@ function expectElement<T extends Element>(element: T | null | undefined, label: 
 }
 
 describe("config form primitive union integrity", () => {
-  it.each(["anyOf", "type-array"])(
+  it.each(
+    [false, true].flatMap((maskSensitive) => [
+      { maskSensitive, initial: undefined },
+      { maskSensitive, initial: "~/.openclaw/usage-footer.json" },
+    ]),
+  )(
+    "renderNode preserves inline objects in ordinary unions (maskSensitive=$maskSensitive, initial=$initial)",
+    ({ maskSensitive, initial }) => {
+      const container = document.createElement("div");
+      const onPatch = vi.fn();
+      const analysis = analyzeConfigSchema({
+        anyOf: [{ type: "string" }, { type: "object", additionalProperties: {} }],
+      });
+      render(
+        renderNode({
+          schema: analysis.schema!,
+          value: initial,
+          path: ["messages", "usageTemplate"],
+          hints: {},
+          unsupported: new Set(analysis.unsupportedPaths),
+          disabled: false,
+          maskSensitive,
+          onPatch,
+        }),
+        container,
+      );
+      const editor = expectElement(
+        container.querySelector<HTMLTextAreaElement>("textarea"),
+        "typed inline-object editor",
+      );
+      const template = { output: { default: [{ text: "usage" }] } };
+      editor.value = JSON.stringify(template);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(onPatch).toHaveBeenLastCalledWith(["messages", "usageTemplate"], template);
+    },
+  );
+
+  it.each(["string-first", "object-first"])(
     "edits string/object credentials without converting reference or object values (%s)",
     (syntax) => {
       const container = document.createElement("div");
       const onPatch = vi.fn();
-      const credential =
-        syntax === "anyOf"
-          ? { anyOf: [{ type: "string" }, { type: "object" }] }
-          : { type: ["string", "object"] };
+      const credential = {
+        type: syntax === "string-first" ? ["string", "object"] : ["object", "string"],
+        minLength: 3,
+      };
       const analysis = analyzeConfigSchema({
         type: "object",
         properties: { credentials: { type: "object", properties: { token: credential } } },
@@ -50,6 +88,9 @@ describe("config form primitive union integrity", () => {
         "credential input",
       );
       expect(input.type).toBe("password");
+      input.value = "x";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(onPatch).not.toHaveBeenCalled();
       input.value = "synthetic-key";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       expect(onPatch).toHaveBeenLastCalledWith(["credentials", "token"], "synthetic-key");
