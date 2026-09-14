@@ -704,10 +704,10 @@ export function registerComputerUseProvider(
     handle: async (paramsJSON, _io, context) => {
       const envelope = executionEnvelopeFromParams(paramsJSON);
       if (envelope.executionId) {
-        return await idleReclaim.run(async () => {
-          const opened = await getExecution(paramsJSON, context);
-          return await opened.snapshot(paramsJSON, context?.signal);
-        });
+        return await idleReclaim.run(
+          async () => await getExecution(paramsJSON, context),
+          async (opened) => await opened.snapshot(paramsJSON, context?.signal),
+        );
       }
       const executionId = randomUUID();
       const opened = await provider.openExecution(
@@ -744,10 +744,10 @@ export function registerComputerUseProvider(
         );
         return JSON.stringify({ ok: true });
       }
-      return await idleReclaim.run(async () => {
-        const opened = await getExecution(paramsJSON, context);
-        return await opened.act(paramsJSON, context?.signal);
-      });
+      return await idleReclaim.run(
+        async () => await getExecution(paramsJSON, context),
+        async (opened) => await opened.act(paramsJSON, context?.signal),
+      );
     },
   });
   // The provider plugin must also register its dangerous `computer.act` invoke

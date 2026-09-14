@@ -605,4 +605,65 @@ describe("Computer Use provider registration", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not let a refused peer postpone reclaiming the execution blocking it", async () => {
+    vi.useFakeTimers();
+    try {
+      const ownerId = "523e4567-e89b-42d3-a456-426614174000";
+      const peerId = "623e4567-e89b-42d3-a456-426614174000";
+      const commands: OpenClawPluginNodeHostCommand[] = [];
+      const closes: string[] = [];
+      const openExecution = vi.fn(async () => ({
+        snapshot: vi.fn(async () => "snapshot"),
+        act: vi.fn(async () => "act"),
+        close: vi.fn(async (reason: string) => {
+          closes.push(reason);
+        }),
+      }));
+      const provider: ComputerUseProvider = {
+        id: "fixture",
+        label: "Fixture",
+        capabilities: () => ({
+          contractVersion: 2,
+          provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
+          actions: ["start_recording", "stop_recording"],
+          targets: ["screen"],
+          deliveryModes: ["foreground"],
+          observations: ["image"],
+          features: { recording: true, agentCursor: false, multiDisplay: false },
+        }),
+        isAvailable: () => true,
+        openExecution,
+      };
+      registerComputerUseProvider(
+        { registerNodeHostCommand: (command) => commands.push(command) },
+        provider,
+      );
+      const computer = commands.find((command) => command.command === "computer.act")!;
+
+      await expect(
+        computer.handle(JSON.stringify({ action: "start_recording", executionId: ownerId })),
+      ).resolves.toBe("act");
+
+      // The owner is gone. A peer polls faster than the reclaim window; a refused
+      // attempt did no work, so it must not push the deadline out.
+      for (const minutes of [2, 4]) {
+        void minutes;
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        await expect(
+          computer.handle(JSON.stringify({ action: "start_recording", executionId: peerId })),
+        ).rejects.toThrow("COMPUTER_HOST_BUSY");
+      }
+      expect(closes).toEqual([]);
+
+      // Crossing the window reclaims the abandoned execution on schedule.
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(closes).toContain("idle-timeout");
+      await expect(
+        computer.handle(JSON.stringify({ action: "start_recording", executionId: peerId })),
+      ).resolves.toBe("act");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

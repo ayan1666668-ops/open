@@ -14,8 +14,18 @@ export const COMPUTER_EXECUTION_IDLE_TIMEOUT_MS = 5 * 60_000;
 export type ExecutionIdleReclaim = {
   /** Cancels a pending reclaim; used when a close already owns the execution. */
   clear: () => void;
-  /** Runs one dispatch, suspending the window for its duration. */
-  run: <T>(task: () => Promise<T>) => Promise<T>;
+  /**
+   * Acquires the host, then runs one dispatch with the window suspended.
+   *
+   * A failed acquisition leaves the window untouched on purpose: a caller that is
+   * refused the host did no work, so it must not postpone reclaiming the execution
+   * that refused it. Otherwise a peer retrying faster than the window would keep an
+   * abandoned execution alive forever.
+   */
+  run: <T, TAcquired>(
+    acquire: () => Promise<TAcquired>,
+    task: (acquired: TAcquired) => Promise<T>,
+  ) => Promise<T>;
 };
 
 export function createExecutionIdleReclaim(
@@ -45,11 +55,15 @@ export function createExecutionIdleReclaim(
     }, timeoutMs);
     timer.unref?.();
   };
-  const run = async <T>(task: () => Promise<T>): Promise<T> => {
+  const run = async <T, TAcquired>(
+    acquire: () => Promise<TAcquired>,
+    task: (acquired: TAcquired) => Promise<T>,
+  ): Promise<T> => {
+    const acquired = await acquire();
     inFlight += 1;
     clear();
     try {
-      return await task();
+      return await task(acquired);
     } finally {
       inFlight -= 1;
       arm();
