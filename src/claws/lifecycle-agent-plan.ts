@@ -119,6 +119,8 @@ export function planClawAgent(params: {
     });
   }
   const effect = {
+    ...(settings.model ? { model: settings.model } : {}),
+    ...(settings.subagents ? { subagents: settings.subagents } : {}),
     ...(settings.sandbox ? { sandbox: settings.sandbox } : {}),
     ...(settings.tools ? { tools: settings.tools } : {}),
     ...(settings.memory ? { memory: settings.memory } : {}),
@@ -155,7 +157,9 @@ export function planClawAgent(params: {
               path: "agent",
               action: "create",
               reason:
-                "The new agent declares sandbox, tool, memory-search, or recurring heartbeat capabilities.",
+                settings.model || settings.subagents
+                  ? "The new agent declares model, delegation, sandbox, tool, memory-search, or recurring heartbeat configuration."
+                  : "The new agent declares sandbox, tool, memory-search, or recurring heartbeat capabilities.",
               effect,
             },
           }

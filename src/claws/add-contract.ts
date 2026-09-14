@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { PluginInstallBatchReload } from "../plugins/install-runtime-batch.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import type { seedClawPackageBootstrap } from "./bootstrap.js";
@@ -26,6 +27,7 @@ export const CLAW_ADD_RESULT_SCHEMA_VERSION = "openclaw.clawAddResult.v1" as con
 type ConfigCommit = (transform: (config: OpenClawConfig) => OpenClawConfig) => Promise<void>;
 
 export type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
+  reloadPlugins?: PluginInstallBatchReload;
   consentPlanIntegrity?: string;
   resumeRecord?: PersistedClawInstall;
   resumePlan?: ClawAddPlan;

@@ -3,13 +3,18 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { relative, resolve } from "node:path";
-import { stableStringify } from "@openclaw/normalization-core";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { assertNoSymlinkParents } from "../infra/fs-safe-advanced.js";
 import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js";
 import { resolveUserPath } from "../utils.js";
 import { digestClawAddPlanIntegrity } from "./add-plan-integrity.js";
-import { findClawExtensionPackageCollisions, planClawExtensions } from "./application-plan.js";
+import {
+  clawAddCapabilityChange,
+  clawAgentConfigurationNotices,
+  findClawExtensionPackageCollisions,
+  planClawExtensions,
+} from "./application-plan.js";
 import {
   planWorkspaceAdoption,
   planWorkspaceAdoptionTargets,
@@ -38,18 +43,8 @@ import {
   type ClawWorkspaceSourceSnapshot,
 } from "./types.js";
 
-function capabilityChange(
-  change: Omit<ClawAddCapabilityChange, "classification" | "requiresDistinctConsent" | "digest">,
-): ClawAddCapabilityChange {
-  return {
-    ...change,
-    classification: "escalation",
-    requiresDistinctConsent: true,
-    digest: `sha256:${createHash("sha256").update(stableStringify(change.effect)).digest("hex")}`,
-  };
-}
-
 export type ClawAddPlanContext = {
+  config?: OpenClawConfig;
   agentId?: string;
   workspace?: string;
   resumableWorkspace?: string;
@@ -248,11 +243,12 @@ export async function buildClawAddPlan(params: {
     managedAgentIds: context.managedAgentIds,
     adoptExistingAgent: context.adoptExistingAgent,
   });
+  const openClawAgentSettings = params.openClawProfile?.agent ?? {};
   const agentConfig = agentPlan.config;
   blockers.push(...agentPlan.blockers);
   actions.push(agentPlan.action);
   if (agentPlan.capabilityChange) {
-    capabilityChanges.push(capabilityChange(agentPlan.capabilityChange));
+    capabilityChanges.push(clawAddCapabilityChange(agentPlan.capabilityChange));
   }
 
   const { configuredWorkspaceConflict } = inspectAgentWorkspaceOwnership({
@@ -280,7 +276,9 @@ export async function buildClawAddPlan(params: {
   blockers.push(...workspacePlan.blockers);
   actions.push(workspacePlan.action);
   if (workspaceAdoption) {
-    capabilityChanges.push(capabilityChange(workspaceAdoptionCapabilityChange(finalId, workspace)));
+    capabilityChanges.push(
+      clawAddCapabilityChange(workspaceAdoptionCapabilityChange(finalId, workspace)),
+    );
   }
 
   if (params.packageBootstrap && params.includePackageBootstrap !== false) {
@@ -510,7 +508,7 @@ export async function buildClawAddPlan(params: {
       ...(diagnostic ? { reason: diagnostic.message } : {}),
     });
     capabilityChanges.push(
-      capabilityChange({
+      clawAddCapabilityChange({
         kind: "package",
         id: `${pkg.kind}:${pkg.ref}`,
         path: `packages.${pkg.kind}.${pkg.ref}`,
@@ -598,7 +596,7 @@ export async function buildClawAddPlan(params: {
       blocked,
     });
     capabilityChanges.push(
-      capabilityChange({
+      clawAddCapabilityChange({
         kind: "mcpServer",
         id: name,
         path: `mcpServers.${name}`,
@@ -630,7 +628,7 @@ export async function buildClawAddPlan(params: {
       blocked: false,
     });
     capabilityChanges.push(
-      capabilityChange({
+      clawAddCapabilityChange({
         kind: "cronJob",
         id: job.id,
         path: `cronJobs.${job.id}`,
@@ -645,6 +643,11 @@ export async function buildClawAddPlan(params: {
     `${left.kind}:${left.id}:${left.path}`.localeCompare(`${right.kind}:${right.id}:${right.path}`),
   );
 
+  const notices = clawAgentConfigurationNotices(
+    openClawAgentSettings,
+    context.config ?? {},
+    new Set([...(context.existingAgentIds ?? []), finalId]),
+  );
   const planIntegrity = digestClawAddPlanIntegrity({
     manifestSchemaVersion: params.manifest.schemaVersion,
     claw: planSource,
@@ -658,6 +661,7 @@ export async function buildClawAddPlan(params: {
     capabilityChanges,
     blockers,
     extensions,
+    notices,
   });
 
   return {
@@ -697,6 +701,6 @@ export async function buildClawAddPlan(params: {
     },
     extensions,
     blockers,
-    diagnostics: params.diagnostics ?? [],
+    diagnostics: [...(params.diagnostics ?? []), ...notices],
   };
 }

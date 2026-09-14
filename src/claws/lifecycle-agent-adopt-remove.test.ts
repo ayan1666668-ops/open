@@ -204,6 +204,7 @@ describe("Claw remove after configured-agent adoption", () => {
       bindings: [{ agentId: "worker", match: { channel: "telegram" } }],
       tools: { agentToAgent: { allow: ["worker"] } },
       hooks: { mappings: [{ id: "h", agentId: "worker", action: "agent" }] },
+      broadcast: { "telegram:-100": { agents: ["worker"] } },
     };
     await current.setConfig(referencedConfig);
 
@@ -213,6 +214,8 @@ describe("Claw remove after configured-agent adoption", () => {
     });
     const blocker = plan.blockers.find((entry) => entry.code === "adopted_agent_referenced");
     expect(blocker?.message).toContain("bindings[0]");
+    // Object-form broadcast references block adopted-agent removal like every other reference kind.
+    expect(blocker?.message).toContain("broadcast.telegram:-100.agents[0]");
     expect(plan.actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "agent", blocked: true }),

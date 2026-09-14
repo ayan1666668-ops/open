@@ -20,9 +20,15 @@ import { listRouteBindings } from "../config/bindings.js";
 import type { IdentityConfig } from "../config/types.base.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, normalizeAgentIdStrict } from "../routing/session-key.js";
+import {
+  readAgentDatabaseAdmissionRefusal,
+  type AgentDatabaseAdmissionRefusal,
+} from "../state/agent-database-admission.js";
 
 export type AgentSummary = {
   id: string;
+  status?: "degraded";
+  admissionRefusal?: AgentDatabaseAdmissionRefusal;
   name?: string;
   identityName?: string;
   identityEmoji?: string;
@@ -97,6 +103,11 @@ export function buildAgentSummaries(cfg: OpenClawConfig): AgentSummary[] {
     };
     if (identityAvatarUrl) {
       summary.identityAvatarUrl = identityAvatarUrl;
+    }
+    const admissionRefusal = readAgentDatabaseAdmissionRefusal(id);
+    if (admissionRefusal) {
+      summary.status = "degraded";
+      summary.admissionRefusal = admissionRefusal;
     }
     return summary;
   });
@@ -286,7 +297,19 @@ export function pruneAgentConfig(
           peerId,
           Array.isArray(value)
             ? pruneReferences(value, `broadcast.${peerId}`, targetsDeletedAgent)
-            : value,
+            : value && typeof value === "object"
+              ? {
+                  ...value,
+                  // Object-form broadcast references are pruned like the array form and recorded, so
+                  // adopted-agent removal blocks on them and the removal-surface digest covers them.
+                  agents:
+                    pruneReferences(
+                      value.agents,
+                      `broadcast.${peerId}.agents`,
+                      targetsDeletedAgent,
+                    ) ?? value.agents,
+                }
+              : value,
         ]),
       )
     : undefined;

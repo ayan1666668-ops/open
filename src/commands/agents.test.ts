@@ -455,6 +455,8 @@ describe("agents helpers", () => {
         strategy: "parallel",
         "peer-1": ["work", "home"],
         "peer-2": ["WORK"],
+        "telegram:-100123": { agents: ["WORK", "home"], maxRounds: 2, maxTurns: 4 },
+        "slack:C0123": { agents: ["work"], mentionGating: false },
       },
       hooks: {
         allowedAgentIds: ["*", "work", "home"],
@@ -480,6 +482,8 @@ describe("agents helpers", () => {
       strategy: "parallel",
       "peer-1": ["home"],
       "peer-2": [],
+      "telegram:-100123": { agents: ["home"], maxRounds: 2, maxTurns: 4 },
+      "slack:C0123": { agents: [], mentionGating: false },
     });
     expect(result.config.hooks?.allowedAgentIds).toEqual(["*", "home"]);
     expect(result.config.hooks?.mappings).toEqual([
@@ -509,6 +513,8 @@ describe("agents helpers", () => {
       "bindings[0]",
       "broadcast.peer-1[0]",
       "broadcast.peer-2[0]",
+      "broadcast.slack:C0123.agents[0]",
+      "broadcast.telegram:-100123.agents[0]",
       "hooks.allowedAgentIds[1]",
       "hooks.mappings[0]",
       "talk.agentId",

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { stableStringify } from "@openclaw/normalization-core";
-import type { ClawAddPlan } from "./types.js";
+import type { ClawAddPlan, ClawDiagnostic } from "./types.js";
 
 type ClawAddPlanIntegrityInput = Pick<
   ClawAddPlan,
@@ -11,9 +11,14 @@ type ClawAddPlanIntegrityInput = Pick<
   | "capabilityChanges"
   | "blockers"
   | "extensions"
->;
+> & {
+  // Nonblocking agent-configuration notices bind into the digest so a resume re-derives them;
+  // optional so callers that never produce notices keep their prior digest unchanged.
+  notices?: ClawDiagnostic[];
+};
 
 export function digestClawAddPlanIntegrity(plan: ClawAddPlanIntegrityInput): string {
+  const notices = plan.notices ?? [];
   return `sha256:${createHash("sha256")
     .update(
       stableStringify({
@@ -25,6 +30,7 @@ export function digestClawAddPlanIntegrity(plan: ClawAddPlanIntegrityInput): str
         capabilityChanges: plan.capabilityChanges,
         blockers: plan.blockers,
         extensions: plan.extensions,
+        ...(notices.length > 0 ? { notices } : {}),
       }),
     )
     .digest("hex")}`;

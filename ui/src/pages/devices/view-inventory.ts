@@ -12,14 +12,10 @@ import {
 } from "../../components/settings-ui.ts";
 import { workerCapacityPresentation } from "../../components/worker-capacity.ts";
 import { t } from "../../i18n/index.ts";
-import {
-  formatDurationCompact,
-  formatList,
-  formatRelativeTimestamp,
-  formatTimeAgo,
-} from "../../lib/format.ts";
+import { formatDurationCompact } from "../../lib/format-duration.ts";
+import { formatList, formatRelativeTimestamp, formatTimeAgo } from "../../lib/format.ts";
 import { macFamilyLabel } from "../../lib/mac-form-factor.ts";
-import type { DeviceTokenSummary, InventoryRemovalRequest } from "../../lib/nodes/index.ts";
+import type { DeviceTokenSummary } from "../../lib/nodes/index.ts";
 import {
   buildDeviceInventory,
   findGatewayPresence,
@@ -29,6 +25,7 @@ import {
   type DeviceInventoryEntry,
   type DeviceInventoryGroup,
 } from "../../lib/nodes/inventory.ts";
+import type { InventoryRemovalRequest } from "../../lib/nodes/page-operations.ts";
 import { prettifyPlatform } from "../../lib/platform-label.ts";
 import { renderCapabilityChips } from "./capability-chips.ts";
 import { deviceDesktopEnvironment, renderDeviceEntryMenu } from "./entry-menu.ts";

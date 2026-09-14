@@ -1,8 +1,5 @@
-import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
-import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { ClawAddPlan, ClawDiagnostic } from "../claws/types.js";
 import type { ClawUpdatePlan } from "../claws/update-plan.js";
-import { redactSensitiveArgv } from "../config/redact-argv.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { writeRuntimeJson, type RuntimeEnv } from "../runtime.js";
 
@@ -33,49 +30,23 @@ export function logClawExperimentalWarning(runtime: RuntimeEnv): void {
   runtime.log("Experimental: Claws contracts may change while RFC 0016 is under review.");
 }
 
-export function logClawAddPlanSummary(plan: ClawAddPlan, runtime: RuntimeEnv): void {
-  runtime.log(`Agent: ${plan.agent.finalId}`);
-  runtime.log(`Workspace: ${plan.agent.workspace}`);
-  runtime.log(`Actions: ${plan.summary.totalActions}`);
-  runtime.log(`Packages: ${plan.summary.packageActions}`);
-  for (const action of plan.actions.filter((candidate) => candidate.kind === "package")) {
-    const requirementState =
-      typeof action.details?.requirementState === "string"
-        ? action.details.requirementState
-        : "unresolved";
-    runtime.log(
-      `  Requirement ${action.target}: ${requirementState}${action.action === "install" ? " (installation requires this exact plan consent)" : ""}`,
-    );
+function logClawPlanNotices(diagnostics: ClawDiagnostic[], runtime: RuntimeEnv): void {
+  for (const diagnostic of diagnostics.filter((entry) => entry.level === "warning")) {
+    runtime.log(redactSensitiveText(`Notice: ${diagnostic.message}`));
   }
-  runtime.log(`MCP servers: ${plan.summary.mcpServerActions}`);
-  for (const action of plan.actions.filter((candidate) => candidate.kind === "mcpServer")) {
-    const server = asOptionalRecord(action.details);
-    const target =
-      typeof server?.url === "string"
-        ? redactSensitiveUrlLikeString(server.url)
-        : typeof server?.command === "string"
-          ? redactSensitiveArgv([
-              server.command,
-              ...(Array.isArray(server.args)
-                ? server.args.filter((arg): arg is string => typeof arg === "string")
-                : []),
-            ]).join(" ")
-          : "invalid declaration";
-    runtime.log(`  MCP ${action.id}: ${target}`);
+}
+
+export function logClawAgentConfiguration(plan: ClawAddPlan, runtime: RuntimeEnv): void {
+  const { model, subagents } = plan.agent.config;
+  if (model !== undefined) {
+    runtime.log(`Model: ${JSON.stringify(model)}`);
   }
-  runtime.log(`Cron jobs: ${plan.summary.cronJobActions}`);
-  if (plan.capabilityChanges.length > 0) {
-    runtime.log(`Capability escalations (${plan.capabilityChanges.length}):`);
-    for (const change of plan.capabilityChanges) {
-      runtime.log(
-        redactSensitiveText(`  ! ${change.kind}:${change.id} ${JSON.stringify(change.effect)}`),
-      );
-    }
-    runtime.log("The plan integrity binds every capability line above.");
+  if (subagents) {
+    const targets =
+      subagents.allowAgents?.join(", ") || (subagents.allowAgents ? "none" : "inherited");
+    runtime.log(`Delegation: ${targets}; mode: ${subagents.delegationMode ?? "inherited"}`);
   }
-  if (plan.summary.blockedActions > 0) {
-    runtime.log(`Blocked actions: ${plan.summary.blockedActions}`);
-  }
+  logClawPlanNotices(plan.diagnostics, runtime);
 }
 
 export function logClawUpdatePlanSummary(plan: ClawUpdatePlan, runtime: RuntimeEnv): void {
@@ -88,6 +59,7 @@ export function logClawUpdatePlanSummary(plan: ClawUpdatePlan, runtime: RuntimeE
     `Capability changes: ${plan.summary.capabilityChanges}; escalations requiring explicit review: ${plan.summary.capabilityEscalations}`,
   );
   runtime.log(`Plan integrity: ${plan.planIntegrity}`);
+  logClawPlanNotices(plan.diagnostics, runtime);
   if (plan.summary.capabilityEscalations > 0) {
     runtime.log(
       "Capability consent: the exact plan-integrity token binds every ! change disclosed below.",

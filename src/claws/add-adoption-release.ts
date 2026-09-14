@@ -103,7 +103,7 @@ export async function releaseUnclaimedClawAdoption(params: {
     // A referenced package another Claw still owns stays installed; only a failed uninstall
     // leaves state this attempt cannot account for.
     retained.push(
-      ...results
+      ...results.packages
         .filter((result) => result.action === "error")
         .map((result) => `${result.kind}:${result.ref}`),
     );
