@@ -22,7 +22,7 @@ import {
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const accounts = ["alpha", "beta"] as const;
 
-it("joins two native Feishu accounts through the real Gateway with raw rendering, typing off and native post replies", async ({
+it("joins two native Feishu accounts through the real Gateway with raw rendering, typing off and native DM post responses", async ({
   signal,
   onTestFinished,
 }) => {
@@ -220,6 +220,7 @@ it("joins two native Feishu accounts through the real Gateway with raw rendering
     };
     expect(outbound.message.msg_type).toBe("post");
     expect(outbound.message.chat_id).toBe("oc_shared_chat");
+    expect(outbound.message.parent_id).toBeUndefined();
     expect(outbound.message.body.content).toContain(replies[index]);
     expect(outbound.message.body.content).not.toContain(replies[1 - index]);
   }
