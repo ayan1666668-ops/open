@@ -301,6 +301,7 @@ vi.mock("../../infra/agent-events.js", () => ({
   claimAgentRunContext: mocks.registerAgentRunContext,
   clearAgentRunContext: mocks.clearAgentRunContext,
   emitAgentEvent: mocks.emitAgentEvent,
+  getAgentEventListenerResetEpoch: () => 0,
   getAgentEventLifecycleGeneration: () => mocks.lifecycleGeneration,
   getAgentRunContext: vi.fn(() => undefined),
   resolveProjectedAgentRunProgressState: vi.fn(() => undefined),

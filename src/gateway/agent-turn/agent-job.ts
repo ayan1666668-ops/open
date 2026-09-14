@@ -10,6 +10,7 @@ import {
 } from "../../agents/agent-run-terminal-outcome.js";
 import { normalizeAgentRunTerminalReceipt } from "../../agents/agent-run-terminal-receipt.js";
 import { normalizeAgentRunTerminalReplySnapshot } from "../../agents/agent-run-terminal-reply.js";
+import { renderSanitizedUserFacingText } from "../../agents/failover/user-copy.js";
 import { getAgentEventListenerResetEpoch, onAgentEvent } from "../../infra/agent-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
@@ -310,7 +311,10 @@ function createSnapshotFromLifecycleEvent(params: {
     status: legacyBareAbort ? "timeout" : terminalOutcome.status,
     startedAt,
     endedAt,
-    error: legacyBareAbort ? undefined : terminalOutcome.error,
+    error:
+      legacyBareAbort || !terminalOutcome.error
+        ? undefined
+        : renderSanitizedUserFacingText(terminalOutcome.error, { errorContext: true }),
     stopReason: legacyBareAbort ? undefined : terminalOutcome.stopReason,
     livenessState: terminalOutcome.livenessState,
     ...(data?.yielded === true ? { yielded: true } : {}),

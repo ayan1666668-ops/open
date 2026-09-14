@@ -663,6 +663,7 @@ vi.mock("../../infra/agent-events.js", () => ({
   emitAgentAuditEvent: (params: unknown) => agentEventMocks.emitAgentAuditEvent(params),
   emitAgentEvent: (params: unknown) => agentEventMocks.emitAgentEvent(params),
   getAgentEventLifecycleGeneration: () => "test-generation",
+  getAgentEventListenerResetEpoch: () => 0,
   isAgentEventLifecycleGenerationCurrent: (generation: string) => generation === "test-generation",
   onAgentEvent: (listener: unknown) => agentEventMocks.onAgentEvent(listener),
   // Plain stub, not a spy like onAgentEvent above: no test asserts per-run subscription,

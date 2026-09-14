@@ -22,6 +22,7 @@ function waitThroughGateway(
       params,
       respond,
       context: {
+        getRuntimeConfig: () => ({}),
         chatAbortControllers: activeKind
           ? new Map([[params.runId, { kind: activeKind }]])
           : new Map(),
