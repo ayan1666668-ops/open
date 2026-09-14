@@ -211,8 +211,15 @@ export function createOpenClawDatabaseMaintenanceScope(
                 const errors = results.flatMap((result) =>
                   result.status === "rejected" ? [result.reason] : [],
                 );
-                if (errors.length) {
-                  throw new AggregateError(errors, "Maintenance resource cleanup failed");
+                if (errors.length === 1) {
+                  throw errors[0];
+                }
+                if (errors.length > 1) {
+                  throw createSqliteLifecycleAggregateError(
+                    errors,
+                    "Maintenance resource cleanup failed",
+                    errors[0],
+                  );
                 }
               }
             }
