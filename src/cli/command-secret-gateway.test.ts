@@ -375,6 +375,37 @@ describe("resolveCommandSecretRefsViaGateway", () => {
     },
   );
 
+  it("drops provenance for a quoted record key the gateway resolved", async () => {
+    const quotedPath = 'talk.providers["acme.speech"].apiKey';
+    const read = resolveConfigForRead(
+      {
+        talk: { providers: { "acme.speech": { apiKey: "${ACME_SPEECH_KEY}" } } },
+      } as OpenClawConfig,
+      {},
+    );
+    const config = read.resolvedConfigRaw as OpenClawConfig;
+    setConfigResolutionFacts(config, read.resolutionFacts);
+    callGateway.mockResolvedValueOnce({
+      assignments: [
+        {
+          path: quotedPath,
+          pathSegments: ["talk", "providers", "acme.speech", "apiKey"],
+          value: "resolved-key",
+        },
+      ],
+    });
+
+    const result = await resolveCommandSecretRefsViaGateway({
+      config,
+      commandName: "memory status",
+      targetIds: new Set(["talk.providers.*.apiKey"]),
+    });
+
+    // A surviving fact would report the target the gateway just resolved as unresolved.
+    expect(getAuthoredConfigSecretRef(result.resolvedConfig, quotedPath)).toBeNull();
+    expect(result.hadUnresolvedTargets).toBe(false);
+  });
+
   it("uses the explicit agent owner during channels resolve secret preflight", async () => {
     const channelPath = "channels.telegram.botToken";
     const channelPathSegments = ["channels", "telegram", "botToken"];

@@ -5,9 +5,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { resolveConfigForRead } from "../config/io.read-helpers.js";
+import { setConfigResolutionFacts } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { withMockedWindowsAclVerificationUnavailable } from "../test-utils/vitest-spies.js";
 import {
+  resolveConfiguredSecretInputString,
   resolveConfiguredSecretInputWithFallback,
   resolveRequiredConfiguredSecretRefInputString,
 } from "./resolve-configured-secret-input-string.js";
@@ -250,5 +253,52 @@ describe("resolveRequiredConfiguredSecretRefInputString", () => {
         path: "gateway.auth.token",
       }),
     ).rejects.toThrow(/MISSING_GATEWAY_TOKEN/i);
+  });
+});
+
+describe("resolveConfiguredSecretInputString record-key spellings", () => {
+  // Callers of this SDK entry point supply one `path` string, and extensions
+  // build record-key segments by hand. The canonical spelling and the
+  // hand-built one name the same segment sequence and must match the same fact.
+  async function resolveAccountToken(configPath: string) {
+    const read = resolveConfigForRead(
+      {
+        channels: {
+          matrix: { accounts: { "prod.guild": { accessToken: "${MISSING_GUILD_TOKEN}" } } },
+        },
+      } as OpenClawConfig,
+      {},
+    );
+    const config = read.resolvedConfigRaw as OpenClawConfig;
+    setConfigResolutionFacts(config, read.resolutionFacts);
+    return await resolveConfiguredSecretInputString({
+      config,
+      env: {} as NodeJS.ProcessEnv,
+      value: config.channels?.matrix?.accounts?.["prod.guild"]?.accessToken,
+      path: configPath,
+    });
+  }
+
+  it("matches a record key the caller spelled without quoting", async () => {
+    const resolved = await resolveAccountToken("channels.matrix.accounts.prod.guild.accessToken");
+
+    expect(resolved.value).toBeUndefined();
+    expect(resolved.unresolvedRefReason).toContain("env:default:MISSING_GUILD_TOKEN");
+  });
+
+  it("matches the same record key in its canonical spelling", async () => {
+    const resolved = await resolveAccountToken(
+      'channels.matrix.accounts["prod.guild"].accessToken',
+    );
+
+    expect(resolved.value).toBeUndefined();
+    expect(resolved.unresolvedRefReason).toContain("env:default:MISSING_GUILD_TOKEN");
+  });
+
+  it("still reports nothing for an unrelated path", async () => {
+    const resolved = await resolveAccountToken("channels.matrix.accounts.other.accessToken");
+
+    expect(resolved.unresolvedRefReason).toBeUndefined();
+    expect(resolved.value).toBe("${MISSING_GUILD_TOKEN}");
   });
 });

@@ -1020,7 +1020,9 @@ export async function resolveCommandSecretRefsViaGateway(params: {
     if (pathSegments.length === 0) {
       continue;
     }
-    const path = pathSegments.join(".");
+    // Facts are keyed by the registry's canonical path; a hand-joined spelling would
+    // not match a quoted record key, and the prune below would silently skip it.
+    const path = assignment.path ?? pathSegments.join(".");
     try {
       setPathExistingStrict(resolvedConfig, pathSegments, assignment.value);
       resolvedAssignmentPaths.push(path);

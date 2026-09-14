@@ -1,3 +1,4 @@
+import { parseConcreteConfigPath, toDotPath } from "../shared/dot-path.js";
 import type { EnvSubstitutionWarning } from "./env-substitution.js";
 import {
   coerceSecretRef,
@@ -136,21 +137,99 @@ export function restoreConfigResolutionFacts(
   setConfigResolutionFacts(target, facts);
 }
 
+/**
+ * Recorded keys are canonical config paths, while the plugin SDK entry points take a
+ * single `path` string and callers that build one by hand spell record keys without
+ * quoting. The reference lookups below retry such a miss by segment identity, so a
+ * caller that can only supply a string still reaches the fact it named.
+ *
+ * The retry is deliberately confined to the reference lookups. The unresolved-path
+ * predicates stay exact: internal callers hold registry paths, and quoting is the
+ * only thing that separates the two spellings, so a retry there would buy nothing.
+ *
+ * A recorded key is indexed by its flattened spelling only when that spelling is
+ * unambiguous. Flattening drops the quotes, so `a["b.c"].d` and a real `a.b.c.d`
+ * both spell the same string; the same query can therefore name a neighbouring
+ * target. Dropping a spelling that two recorded keys claim removes the collisions
+ * the facts can see, and the exact match is always tried first.
+ */
+const pathSpellingIndexByOwner = new WeakMap<object, ReadonlyMap<string, string>>();
+
+function pathSpelling(path: string): string | null {
+  try {
+    return toDotPath(parseConcreteConfigPath(path));
+  } catch {
+    return null;
+  }
+}
+
+/** Maps each non-canonical spelling of a recorded key back to that key. */
+function pathSpellingIndex(owner: object, recorded: Iterable<string>): ReadonlyMap<string, string> {
+  const cached = pathSpellingIndexByOwner.get(owner);
+  if (cached) {
+    return cached;
+  }
+  const index = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const path of recorded) {
+    const spelling = pathSpelling(path);
+    // A key that is already its own spelling is reachable exactly, and skipping it
+    // keeps the index empty for the common config, so a miss costs nothing there.
+    if (spelling === null || spelling === path) {
+      continue;
+    }
+    // Two recorded keys can spell the same string only through a quoted segment;
+    // dropping it keeps the retry from answering with a neighbouring reference.
+    if (index.has(spelling)) {
+      ambiguous.add(spelling);
+      continue;
+    }
+    index.set(spelling, path);
+  }
+  ambiguous.forEach((spelling) => index.delete(spelling));
+  pathSpellingIndexByOwner.set(owner, index);
+  return index;
+}
+
+/** Returns the recorded reference key that names the same segments as `path`. */
+function matchRecordedSecretRefPath(
+  envSecretRefs: ReadonlyMap<string, ConfigEnvSecretRefFact>,
+  path: string,
+): string | undefined {
+  if (envSecretRefs.has(path)) {
+    return path;
+  }
+  const index = pathSpellingIndex(envSecretRefs, envSecretRefs.keys());
+  if (index.size === 0) {
+    return undefined;
+  }
+  const spelling = pathSpelling(path);
+  return spelling === null ? undefined : index.get(spelling);
+}
+
 export function hasUnresolvedConfigPath(target: unknown, path: string): boolean {
   return getConfigResolutionFacts(target)?.has(path) === true;
 }
 
+function getEnvSecretRefFact(target: unknown, path: string): ConfigEnvSecretRefFact | undefined {
+  const facts = getConfigResolutionFacts(target);
+  const envSecretRefs = facts === null ? undefined : envSecretRefsByFacts.get(facts);
+  if (!envSecretRefs) {
+    return undefined;
+  }
+  const recordedPath = matchRecordedSecretRefPath(envSecretRefs, path);
+  return recordedPath === undefined ? undefined : envSecretRefs.get(recordedPath);
+}
+
 /** Returns only a still-pending reference recorded from the authored config source. */
 export function getAuthoredConfigSecretRef(target: unknown, path: string): SecretRef | null {
-  const facts = getConfigResolutionFacts(target);
-  const fact = facts ? envSecretRefsByFacts.get(facts)?.get(path) : undefined;
+  const fact = getEnvSecretRefFact(target, path);
   return fact?.state === "pending" ? fact.ref : null;
 }
 
 /** Returns the env source of a value that config substitution already materialized. */
 export function getResolvedConfigEnvSecretRef(target: unknown, path: string): SecretRef | null {
-  const facts = getConfigResolutionFacts(target);
-  const fact = facts ? envSecretRefsByFacts.get(facts)?.get(path) : undefined;
+  const fact = getEnvSecretRefFact(target, path);
   return fact?.state === "resolved" ? fact.ref : null;
 }
 

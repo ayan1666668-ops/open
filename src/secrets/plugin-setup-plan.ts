@@ -1,7 +1,11 @@
 /** Shared plan construction for plugin-owned SecretRef setup commands. */
 import { isValidAgentId } from "@openclaw/normalization-core/agent-id";
 import type { PluginIntegrationSecretProviderConfig, SecretRef } from "../config/types.secrets.js";
-import { formatConcreteConfigPath, parseConcreteConfigPathTokens } from "../shared/dot-path.js";
+import {
+  appendConfigPathSegment,
+  formatConcreteConfigPath,
+  parseConcreteConfigPathTokens,
+} from "../shared/dot-path.js";
 import type { SecretsApplyPlan, SecretsPlanTarget } from "./plan.js";
 import { resolveSecretPlanTargetByPathCore } from "./target-registry-query.js";
 
@@ -60,7 +64,7 @@ function createPluginModelApiKeyTarget(params: {
   assertValidPluginModelProviderId("target", params.providerId);
   return {
     type: "models.providers.apiKey",
-    path: `models.providers.${params.providerId}.apiKey`,
+    path: `${appendConfigPathSegment("models.providers", params.providerId)}.apiKey`,
     pathSegments: ["models", "providers", params.providerId, "apiKey"],
     providerId: params.providerId,
     ref: {
