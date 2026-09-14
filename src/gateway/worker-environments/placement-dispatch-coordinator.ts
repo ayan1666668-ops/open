@@ -572,7 +572,7 @@ export function coordinateWorkerPlacementDispatch(
       const requester = explicitAuthority ? undefined : recoveryRequest(placement);
       const authorize = explicitAuthority ?? requester?.authorize;
       if (!authorize) {
-        return Promise.resolve(undefined);
+        return undefined;
       }
       try {
         authorize();
