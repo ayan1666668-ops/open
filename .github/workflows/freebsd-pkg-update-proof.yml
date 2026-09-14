@@ -51,15 +51,16 @@ jobs:
           set -euo pipefail
           payload="$RUNNER_TEMP/freebsd-pkg-payload"
           mkdir "$payload"
-          curl --fail --silent --show-error --max-time 180 \
-            https://registry.npmjs.org/openclaw/-/openclaw-2026.9.4.tgz \
-            --output "$payload/openclaw-published.tgz"
           node scripts/package-openclaw-for-docker.mjs \
             --allow-unreleased-changelog --output-dir "$payload" \
             --output-name openclaw-candidate.tgz --pack-json "$payload/pack.json"
           node scripts/e2e/lib/update-first-hop-package-fixtures.mjs first-hop-tarball \
             "$payload/openclaw-candidate.tgz" "$payload/openclaw-first-hop.tgz" 0 \
             > "$payload/first-hop-fixture.json"
+          # The canonical packer removes existing openclaw-*.tgz files in its output directory.
+          curl --fail --silent --show-error --max-time 180 \
+            https://registry.npmjs.org/openclaw/-/openclaw-2026.9.4.tgz \
+            --output "$payload/openclaw-published.tgz"
       - name: Bind exact source and package bytes
         id: source
         env:
