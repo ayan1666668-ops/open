@@ -53,8 +53,16 @@ enum DeviceIdentitySQLiteStore {
         let snapshot: LegacyFileSnapshot
     }
 
-    private struct LegacyAuthCandidate {
+    private struct LegacyAuthCandidate: Equatable {
+        let url: URL
+        let data: Data
+        let snapshot: LegacyFileSnapshot
         let store: DeviceAuthStoreFile
+    }
+
+    private enum LegacyAuthMigrationPlan {
+        case inspectAfterCommit
+        case resumeAfterPreflight([LegacyAuthCandidate])
     }
 
     private final class IdentityCoordinator {
@@ -166,6 +174,7 @@ enum DeviceIdentitySQLiteStore {
         afterLegacyCommit: (() throws -> Void)?) throws -> DeviceIdentity
     {
         var claims: [LegacyClaim] = []
+        var legacyAuthPlan = LegacyAuthMigrationPlan.inspectAfterCommit
         do {
             // SQLite owns an existing profile. Leave any downgrade-recreated legacy source for
             // Doctor, but finish a native import that already claimed its source before committing.
@@ -184,6 +193,16 @@ enum DeviceIdentitySQLiteStore {
                     }
                 }
                 if claims.isEmpty { return existing }
+                do {
+                    legacyAuthPlan = try .resumeAfterPreflight(self.inspectLegacyAuth(
+                        claims: claims,
+                        destinationStateDirURL: destinationStateDirURL,
+                        deviceId: existing.deviceId))
+                } catch {
+                    // A released build already trusts SQLite here. Unverified legacy auth must
+                    // not turn optional interrupted-import recovery into a persistent launch error.
+                    return existing
+                }
             } else {
                 for source in legacySources {
                     if let claim = try self.claimLegacyIdentity(source, beforeClaim: beforeLegacyClaim) {
@@ -196,6 +215,7 @@ enum DeviceIdentitySQLiteStore {
                 destinationStateDirURL: destinationStateDirURL,
                 profile: profile,
                 claims: claims,
+                legacyAuthPlan: legacyAuthPlan,
                 afterLegacyCommit: afterLegacyCommit)
         } catch {
             do {
@@ -214,6 +234,7 @@ enum DeviceIdentitySQLiteStore {
         destinationStateDirURL: URL,
         profile: GatewayDeviceIdentityProfile,
         claims: [LegacyClaim],
+        legacyAuthPlan: LegacyAuthMigrationPlan,
         afterLegacyCommit: (() throws -> Void)?) throws -> DeviceIdentity
     {
         try self.requireConsistentClaims(claims)
@@ -276,11 +297,34 @@ enum DeviceIdentitySQLiteStore {
                 throw DeviceIdentityStore.storageError(
                     "Committed SQLite identity changed before legacy cleanup; native claim preserved")
             }
-            try self.relocateLegacyAuthIfNeeded(
-                claims: claims,
-                destinationStateDirURL: destinationStateDirURL,
-                profile: profile,
-                deviceId: authoritative.identity.deviceId)
+            switch legacyAuthPlan {
+            case .inspectAfterCommit:
+                try self.relocateLegacyAuthIfNeeded(
+                    claims: claims,
+                    destinationStateDirURL: destinationStateDirURL,
+                    profile: profile,
+                    deviceId: authoritative.identity.deviceId)
+            case let .resumeAfterPreflight(expectedAuth):
+                // Revalidate the complete read-only preflight after the identity receipt and any
+                // test/integration hook. If legacy auth changed or became unverifiable, preserve
+                // canonical startup and leave every recovery artifact for a later retry/Doctor.
+                guard let currentAuth = try? self.inspectLegacyAuth(
+                    claims: claims,
+                    destinationStateDirURL: destinationStateDirURL,
+                    deviceId: authoritative.identity.deviceId),
+                    currentAuth == expectedAuth
+                else {
+                    return authoritative.identity
+                }
+                do {
+                    try self.importLegacyAuthIfNeeded(
+                        currentAuth,
+                        destinationStateDirURL: destinationStateDirURL,
+                        profile: profile)
+                } catch {
+                    return authoritative.identity
+                }
+            }
             try self.removeClaimedLegacyIdentities(claims)
         }
         return authoritative.identity
@@ -832,6 +876,21 @@ enum DeviceIdentitySQLiteStore {
         profile: GatewayDeviceIdentityProfile,
         deviceId: String) throws
     {
+        let sourceAuth = try self.inspectLegacyAuth(
+            claims: claims,
+            destinationStateDirURL: destinationStateDirURL,
+            deviceId: deviceId)
+        try self.importLegacyAuthIfNeeded(
+            sourceAuth,
+            destinationStateDirURL: destinationStateDirURL,
+            profile: profile)
+    }
+
+    private static func inspectLegacyAuth(
+        claims: [LegacyClaim],
+        destinationStateDirURL: URL,
+        deviceId: String) throws -> [LegacyAuthCandidate]
+    {
         let sourceAuth = try claims.compactMap { claim -> LegacyAuthCandidate? in
             let source = claim.source
             guard source.stateDirURL.standardizedFileURL != destinationStateDirURL.standardizedFileURL else {
@@ -848,6 +907,14 @@ enum DeviceIdentitySQLiteStore {
             throw DeviceIdentityStore.storageError(
                 "Legacy device auth sources conflict; all identity sources preserved")
         }
+        return sourceAuth
+    }
+
+    private static func importLegacyAuthIfNeeded(
+        _ sourceAuth: [LegacyAuthCandidate],
+        destinationStateDirURL: URL,
+        profile: GatewayDeviceIdentityProfile) throws
+    {
         guard let selectedAuth = sourceAuth.first else { return }
         // Cross-container auth remains at its source; only canonical SQLite rows move.
         try DeviceAuthStore.importLegacyStore(
@@ -891,7 +958,11 @@ enum DeviceIdentitySQLiteStore {
                 throw DeviceIdentityStore.storageError(
                     "Device auth does not belong to the migrated device identity; source preserved")
             }
-            return LegacyAuthCandidate(store: normalized)
+            return LegacyAuthCandidate(
+                url: url.standardizedFileURL,
+                data: data,
+                snapshot: before,
+                store: normalized)
         } catch where DeviceAuthStore.isMissingFileError(error) {
             throw DeviceIdentityStore.storageError("Device auth changed during identity migration")
         }
