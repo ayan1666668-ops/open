@@ -86,7 +86,7 @@ export function createGatewayAuxHandlers(
     /** Abort-wins guard: a tombstoned run must not mint standing authority. */
     hasRunAbortMarker?: (runId: string) => boolean;
     /** Native approval handlers of this Gateway's channel accounts register here. */
-    getNativeApprovalRouteCoordinator?: () => ApprovalNativeRouteCoordinator | undefined;
+    getNativeApprovalRouteCoordinator: () => ApprovalNativeRouteCoordinator | undefined;
     /** Config-driven default expiry stamp for freshly minted standing grants. */
     resolveGrantDefaultExpiresAtMs?: (nowMs: number) => number | null;
     chatAbortControllers?: Map<string, ChatAbortControllerEntry>;

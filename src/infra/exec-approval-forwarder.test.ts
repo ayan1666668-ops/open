@@ -49,9 +49,10 @@ function startNativeApprovalRoute(params: {
   coordinator: ApprovalNativeRouteCoordinator;
   channel: string;
   accountId?: string;
+  handledKinds?: Array<"exec" | "plugin" | "system-agent">;
 }) {
   const reporter = params.coordinator.createReporter({
-    handledKinds: new Set(["exec", "plugin", "system-agent"]),
+    handledKinds: new Set(params.handledKinds ?? ["exec", "plugin", "system-agent"]),
     channel: params.channel,
     accountId: params.accountId,
     requestGateway: async () => {
@@ -286,7 +287,11 @@ function createForwarder(params: {
     NonNullable<Parameters<typeof createExecApprovalForwarder>[0]>["resolveSessionTarget"]
   >;
   /** Native approval handlers running in the owning Gateway when the request arrives. */
-  nativeRoutes?: Array<{ channel: string; accountId?: string }>;
+  nativeRoutes?: Array<{
+    channel: string;
+    accountId?: string;
+    handledKinds?: Array<"exec" | "plugin" | "system-agent">;
+  }>;
 }) {
   const deliver = params.deliver ?? vi.fn().mockResolvedValue([]);
   const coordinator = createApprovalNativeRouteCoordinator();
@@ -758,6 +763,10 @@ describe("exec approval forwarder", () => {
     it.each([
       { nativeRoutes: [], forwarded: true },
       { nativeRoutes: [{ channel: "telegram", accountId: "default" }], forwarded: false },
+      {
+        nativeRoutes: [{ channel: "telegram", accountId: "default", handledKinds: ["exec"] }],
+        forwarded: true,
+      },
     ])(
       "gates plugin approval forwarding on the running native handler %j",
       async ({ nativeRoutes, forwarded }) => {
