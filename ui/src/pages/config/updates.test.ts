@@ -136,6 +136,24 @@ describe("renderUpdates", () => {
       title: "",
     },
     {
+      name: "failed check with a previously confirmed diverged checkout update",
+      props: {
+        configObject: { update: { channel: "dev", checkOnStart: false } },
+        schedule: {
+          channel: "dev",
+          autoEnabled: false,
+          install: { kind: "git", git: { status: "diverged", commitsAhead: 1, commitsBehind: 3 } },
+        },
+        updateAvailable: null,
+        statusCheckBanner: { tone: "warn", text: "Could not check for updates: timeout" },
+      },
+      status: "Could not check for updates: timeout",
+      tone: "warn",
+      label: "Update now",
+      disabled: false,
+      title: "",
+    },
+    {
       name: "failed check without a known update",
       props: {
         schedule: null,

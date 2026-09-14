@@ -507,7 +507,8 @@ export function renderUpdates(props: UpdatesViewProps): TemplateResult {
     props.statusCheckBanner &&
     !isUpdateActionable(props.updateAvailable, props.schedule, props.updateBusy) &&
     props.schedule?.target?.kind !== "package" &&
-    props.schedule?.install?.git?.status !== "behind",
+    props.schedule?.install?.git?.status !== "behind" &&
+    props.schedule?.install?.git?.status !== "diverged",
   );
   const updateButtonTitle =
     props.statusChecking && !props.updateBusy
