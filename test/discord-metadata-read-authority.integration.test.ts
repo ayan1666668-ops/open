@@ -11,6 +11,7 @@ import {
 import type { ChannelMessageActionContext } from "../src/channels/plugins/types.js";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../src/config/config.js";
 import type { DiscordActionConfig, DiscordConfig, OpenClawConfig } from "../src/config/types.js";
+import { runMessageAction } from "../src/infra/outbound/message-action-runner.js";
 import { createPluginRegistry } from "../src/plugins/registry.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../src/plugins/runtime.js";
 import type { PluginRuntime } from "../src/plugins/runtime/types.js";
@@ -212,6 +213,16 @@ async function createFixture() {
     routes,
     requests,
     transport,
+    runPermissions: (target: string) =>
+      runMessageAction({
+        cfg,
+        action: "permissions",
+        params: { channel: "discord", target },
+        defaultAccountId: "default",
+        requesterAccountId: "default",
+        conversationReadOrigin: "delegated",
+        toolContext: context.toolContext,
+      }),
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -297,6 +308,31 @@ describe("registered Discord metadata reads", () => {
       }),
     ).rejects.toThrow("not allowed");
     expect(fixture.requests).toEqual([{ method: "GET", path: `/channels/${sibling}` }]);
+  });
+
+  it("resolves a permissions channel through the shared message runner using only reads", async () => {
+    expect(await fixture.runPermissions(`channel:${sibling}`)).toMatchObject({
+      kind: "action",
+      payload: { ok: true, permissions: { channelId: sibling } },
+    });
+    expect(fixture.requests).toContainEqual({ method: "GET", path: "/users/%40me" });
+    expect(fixture.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it.each([
+    userId,
+    `user:${userId}`,
+    `discord:${userId}`,
+    `discord:user:${userId}`,
+    `<@${userId}>`,
+    `<@!${userId}>`,
+    `@${userId}`,
+  ])("rejects a permissions user target without creating a DM (%s)", async (target) => {
+    fixture.discord.allowFrom = [userId];
+    await expect(fixture.runPermissions(target)).rejects.toThrow(
+      /channel id is required|resolved to a user target/i,
+    );
+    expect(fixture.requests).toEqual([]);
   });
 
   it("keeps filtered channel-list relaxation exclusive to direct operators", async () => {
