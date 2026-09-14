@@ -24,6 +24,25 @@ and publishes the result. Avoid exposing a generic SQL callback to application
 code or adding an asynchronous wrapper around an existing asynchronous facade.
 The plugin KV API already has asynchronous methods over its SQLite owner.
 
+Asynchronous mutable cron-store loads run in the shared-state worker, including
+the existing retired-job deletion and runtime-authority repairs. The connection-bound
+load kernel preserves their separate transactions, partition keys, and fingerprints.
+Completed repair facts invalidate host scheduler snapshots before the load settles,
+including when a later load stage fails. A snapshot retains the host revision captured
+before loading; intervening writes leave it stale for the next load. An unavailable
+worker result or a failed load without a reported repair also invalidates the cached
+revision without replaying the operation. Error causes used by Doctor diagnostics
+cross the same closed-field error graph, without changing ordinary broker errors.
+Cron saves, their transaction hooks, synchronous diagnostic reads, and read-only
+inspection retain their current owners and execution paths.
+
+iMessage outbound receipt recovery reads the external Messages SQLite database
+through the shared worker broker. Its plugin owns the read-only GUID queries;
+each recovery operation retains its read-only connection through polling and
+joins worker cleanup before the send publishes its receipt. Numeric message IDs and the latest matching sent message keep their existing recovery
+rules, including the five-second polling deadline. This does not migrate
+iMessage's startup watermark or conversation-binding queries.
+
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
 on the supplied `node:sqlite` connection. Calling Kysely's asynchronous

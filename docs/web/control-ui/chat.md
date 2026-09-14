@@ -15,7 +15,7 @@ How the chat pane behaves: the session rail, the composer, and how the transcrip
 
 While you watch a running session, the Gateway shows the model's latest safe preamble immediately as the session headline. When a utility model is available, it can replace that headline with a richer compact status digest after enough activity accumulates. Chat carries the result in a **session rail**: its compact pill shows the live digest, while the expanded rail shows the assessment, plan progress, pull requests, elapsed time, and a read-only Side chat thread. The rail can expand once when a run becomes stuck or needs input, and done or failed runs keep a frozen “finished” time based on the final digest. On wide chat panes the expanded rail docks as a 400 px right column; on narrower and mobile layouts it remains an overlay.
 
-Side chat answers questions about the selected session and its project without entering or interrupting the main agent run. On the first question, the Gateway lazily loads a bounded visible snapshot of the selected session before starting the utility model. If history is temporarily unavailable, the question stays visible with **Retry** instead of being treated as an empty session. Side chat uses read-only access to the target session's history/search and agent workspace. Its bounded thread is held in Gateway memory, is restored when you switch sessions in the Control UI, and is cleared by the rail's trash button, a session reset or deletion, Gateway restart, or idle expiry. It never enters `chat.history`, and private reference context is not stored as operator dialogue. Open it with Shift-Command-S on Apple platforms or Ctrl-Shift-S elsewhere, or type `/btw <question>` or `/side <question>` in the main Control UI composer to open the rail and ask there; other clients keep their existing BTW behavior.
+Side chat answers questions about the selected session and its project without entering or interrupting the main agent run. On the first question, the Gateway lazily loads a bounded visible snapshot of the selected session before starting the utility model. If history is temporarily unavailable, the question stays visible with **Retry** instead of being treated as an empty session. Side chat uses read-only access to the target session's history/search and agent workspace. Its bounded thread is held in Gateway memory, is restored when you switch sessions in the Control UI, and is cleared by the rail's trash button, a session reset or deletion, Gateway restart, or idle expiry. It never enters `chat.history`, and private reference context is not stored as operator dialogue. Open it with Shift-Command-S on Apple platforms or Ctrl-Shift-S elsewhere, or type `/btw` or `/side` in the main Control UI composer and press Enter to open the rail and focus its question box. Selecting `/btw` from the slash menu does the same. Add a question after either command to send it to Side chat; focus moves to its question box when the request finishes. Other clients keep their existing BTW behavior.
 
 The question box wraps and grows like the main composer; Enter (or your configured send shortcut) asks the question, and Shift+Enter adds a line. Highlighting text in a chat message offers **Ask in side chat**, which opens the rail with a quoted draft ready to edit.
 
@@ -31,7 +31,8 @@ when its applied configuration is loaded. Hovering a link shows the session card
 when the session is known locally. Unknown or ambiguous session references remain
 navigable without a card; links to other origins keep normal browser behavior.
 Document-relative hrefs are never session links; file references such as
-`src/utils/foo.ts` retain workspace file handling.
+`src/utils/foo.ts` and `qa-café/index.md` retain workspace file handling, including
+Unicode names and percent-encoded Markdown link destinations.
 
 When authentication status is available, each provider heading in the chat model picker says how that provider is signed in: **API** for an API key (or an explicitly selected API-key account), the plan name for a provider with one subscription, and **Subscription** for a provider with several. With several subscriptions, the heading adds the email of an explicitly selected account when the Gateway supplies it, and the **Account** rows show each account's email; automatic selection shows no account identity. Hover a truncated heading to read the full text.
 
@@ -95,8 +96,10 @@ original conversation. If history fails to load, the queued message stays
 available while you resolve the history error. Goals and other slash commands
 wait for history; `/stop` and `/approve` remain available.
 
-Background refreshes for saved sidebar filters and automation status wait until
-the conversation appears. A filter change you make refreshes immediately.
+Background refreshes for saved sidebar filters, groups, automation status, and the
+Inbox wait until the conversation appears. Task lists, task suggestions, and the
+progress card then refresh after the transcript paints. Opening a task panel,
+changing a filter, or opening a group-targeted New Session remains immediate.
 
 Panes share outbox recovery for the same conversation. Activity in another
 conversation does not restart that recovery; reconnecting checks every saved outbox.
@@ -276,7 +279,8 @@ same conflict detection and **Reload**/**Overwrite** actions as **Source**.
 A preview transport failure shows **Retry** without retrying in a loop, and
 **Source** remains available, including when the optional preview cannot load.
 
-**View Raw Text** keeps Markdown notation literal, including nested code fences.
+**View Raw Text** opens a **Source** view that keeps Markdown notation literal,
+including nested code fences. The raw-text action disappears while that view is open.
 Decoded text artifacts use the same literal preview. **Copy code** preserves the
 code's leading whitespace and final newline when present. Indented Markdown code
 blocks also work at the start of a message and remain literal while streaming,
@@ -409,8 +413,8 @@ Codex harness. Select a task to read its messages, thinking, and tool calls;
 select **Show earlier** to load older history. Task activity refreshes the view
 while the subagent runs. The generic fallback label is **Subagent**.
 
-For tasks with a child session, capped assistant replies load their complete text
-automatically. The preview stays visible while loading. If recovery fails three
+In the Chat task panel, tasks with a readable current child session load the
+complete text of capped assistant replies automatically. The preview stays visible while loading. If recovery fails three
 times, the panel keeps the preview and offers **Retry**. Task transcripts without
 a session address keep the text supplied by their runtime.
 
@@ -420,6 +424,18 @@ native thread. Changing the parent session or account can make that history
 unavailable. If the runtime or its parent binding is unavailable, the panel shows
 an error with a retry action.
 Tasks without readable history retain their prompt and output inspector.
+
+Automation task transcripts stay tied to the recorded run, including after its
+temporary continuation session is removed or the automation runs again. If that
+recorded transcript is unavailable, the viewer reports an error instead of
+showing a newer run. Select **View transcript** on a row in the full Tasks page
+or under **Automations → Run history** to read that exact run without opening its
+temporary session. **Open session** remains a separate action on the Tasks page.
+
+The full Tasks page displays the supplied transcript. Core session transcripts
+are currently capped at 8,000 characters per text block. The Chat panel's full-text recovery may be unavailable
+after a temporary session is removed; loading earlier messages does not recover
+a capped reply's missing text.
 
 ## Chat message width
 
