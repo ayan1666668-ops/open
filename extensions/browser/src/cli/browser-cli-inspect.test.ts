@@ -391,24 +391,50 @@ describe("browser cli snapshot defaults", () => {
     snapshot,
   });
 
+  it("prints a captured blank page instead of failing", async () => {
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ...emptyAiSnapshot(""),
+      captured: true,
+    });
+
+    await runSnapshot([]);
+
+    expect(runtime.error).not.toHaveBeenCalled();
+    expect(runtime.exit).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith("");
+  });
+
+  it("writes a captured blank page to --out", async () => {
+    const outputPath = path.join(tempDirs.make("openclaw-blank-capture-"), "snapshot.txt");
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ...emptyAiSnapshot(""),
+      captured: true,
+    });
+
+    await runSnapshot(["--out", outputPath]);
+
+    expect(await fs.readFile(outputPath, "utf8")).toBe("");
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
+
   it.each([
     { label: "empty", snapshot: "" },
     { label: "whitespace-only", snapshot: " \n\t " },
-  ])("fails instead of reporting success on an $label AI snapshot", async ({ snapshot }) => {
+  ])("fails on an $label AI snapshot that carried no capture", async ({ snapshot }) => {
     sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(snapshot));
 
     await expect(runSnapshot([])).rejects.toThrow("__exit__:1");
 
-    expect(allErrorText()).toContain("came back empty");
+    expect(allErrorText()).toContain("no capture");
     expect(runtime.log).not.toHaveBeenCalled();
   });
 
-  it("fails on an empty AI snapshot in JSON mode too", async () => {
+  it("fails on an uncaptured empty AI snapshot in JSON mode too", async () => {
     sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
 
     await expect(runBrowserInspect(["snapshot"], true)).rejects.toThrow("__exit__:1");
 
-    expect(allErrorText()).toContain("came back empty");
+    expect(allErrorText()).toContain("no capture");
     expect(runtime.writeJson).not.toHaveBeenCalled();
   });
 

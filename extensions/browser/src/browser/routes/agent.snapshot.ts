@@ -781,6 +781,7 @@ export function registerBrowserAgentSnapshotRoutes(
                 deltaState.record(finalized.refs);
                 return res.json({
                   ok: true,
+                  captured: true,
                   format: "ai",
                   targetId: tab.targetId,
                   url: tab.url,
@@ -798,6 +799,7 @@ export function registerBrowserAgentSnapshotRoutes(
             deltaState.record(finalized.refs);
             return res.json({
               ok: true,
+              captured: true,
               format: "ai",
               targetId: tab.targetId,
               url: tab.url,
@@ -977,6 +979,7 @@ export function registerBrowserAgentSnapshotRoutes(
               deltaState.record(snap.refs ?? {});
               return res.json({
                 ok: true,
+                captured: true,
                 format: plan.format,
                 targetId: tab.targetId,
                 url: tab.url,
@@ -997,6 +1000,7 @@ export function registerBrowserAgentSnapshotRoutes(
             deltaState.record(snap.refs ?? {});
             return res.json({
               ok: true,
+              captured: true,
               format: plan.format,
               targetId: tab.targetId,
               url: tab.url,
@@ -1046,6 +1050,7 @@ export function registerBrowserAgentSnapshotRoutes(
           }
           return res.json({
             ok: true,
+            captured: true,
             format: plan.format,
             targetId: tab.targetId,
             url: tab.url,

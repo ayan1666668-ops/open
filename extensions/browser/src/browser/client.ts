@@ -140,6 +140,8 @@ export type SnapshotResult =
       url: string;
       nodes: SnapshotAriaNode[];
       truncated?: boolean;
+      /** True when a capture actually ran. See the "ai" variant for why it matters. */
+      captured?: boolean;
       blockedByDialog?: boolean;
       browserState?: unknown;
     }
@@ -168,6 +170,14 @@ export type SnapshotResult =
       annotations?: AnnotationItem[];
       imagePath?: string;
       imageType?: "png" | "jpeg";
+      /**
+       * True when a capture actually ran, whatever it produced. `snapshot` alone
+       * cannot carry that: Playwright serializes a genuinely blank page as an empty
+       * string, so empty text is ambiguous between "captured an empty page" and
+       * "no capture happened". Callers that need to tell those apart must read this
+       * flag rather than measure the text.
+       */
+      captured?: boolean;
       blockedByDialog?: boolean;
       browserState?: unknown;
     };

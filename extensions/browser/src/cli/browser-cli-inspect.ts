@@ -196,19 +196,25 @@ export function registerBrowserInspectCommands(
           query,
         });
 
-        // An AI snapshot of a live page is never empty: the root element alone produces
-        // output. Empty means the capture did not happen - the page has not painted yet,
-        // or the connection to the browser is wedged. Printing that as success is
-        // indistinguishable from "this page has no content", so fail loudly instead.
+        // Empty output means nothing on its own, so do not measure the text. The route
+        // marks every response that came from a capture with `captured`, whatever that
+        // capture produced - a genuinely blank page serializes to an empty string and is
+        // a perfectly good result. What must not pass silently is an empty payload from a
+        // response that never carried a capture at all: printing that as success is
+        // indistinguishable from reading an empty page, and callers act on it.
         //
-        // One empty response is deliberate: a pending dialog blocks the capture, and the
-        // route answers with blockedByDialog and the dialog details in browserState so
-        // the caller can dismiss it. That is a recovery contract, not a failed capture -
-        // let it through untouched.
-        if (result.format === "ai" && !result.snapshot.trim() && !result.blockedByDialog) {
+        // A pending dialog is the one empty response that is deliberately not a capture:
+        // the route answers with blockedByDialog and the dialog details in browserState
+        // so the caller can dismiss it. That is a recovery contract - let it through.
+        if (
+          result.format === "ai" &&
+          !result.snapshot.trim() &&
+          !result.captured &&
+          !result.blockedByDialog
+        ) {
           defaultRuntime.error(
             danger(
-              "Browser snapshot came back empty. The page may not have finished loading, or the browser connection is wedged. Retry, or restart the browser with `openclaw browser start`.",
+              "Browser snapshot returned no capture. The browser connection may be wedged. Retry, or restart the browser with `openclaw browser start`.",
             ),
           );
           defaultRuntime.exit(1);
