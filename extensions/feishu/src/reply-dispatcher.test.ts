@@ -5,6 +5,7 @@ import {
   createChannelPartialDeliveryError,
   isChannelPartialDeliveryError,
 } from "openclaw/plugin-sdk/channel-inbound";
+import type { MarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import {
   createEmptyPluginRegistry,
   createTestRegistry,
@@ -13,7 +14,7 @@ import {
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { afterAll, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ClawdbotConfig } from "../runtime-api.js";
 
 type StreamingSessionStub = {
@@ -224,7 +225,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         text: {
           resolveTextChunkLimit: vi.fn(() => 4000),
           resolveChunkMode: vi.fn(() => "line"),
-          resolveMarkdownTableMode: vi.fn(() => "preserve"),
+          resolveMarkdownTableMode: vi.fn(() => "block"),
           convertMarkdownTables: vi.fn((text) => text),
           chunkTextWithMode: vi.fn((text) => [text]),
           chunkMarkdownTextWithMode: vi.fn((text) => [text]),
@@ -4510,6 +4511,125 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMessageFeishuMock).toHaveBeenCalled();
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
     });
+  });
+
+  describe("markdown table modes", () => {
+    const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+    const bulletsCard = "**Ada**\n• Role: Lead";
+    const bulletsPost = "**Ada**  \n• Role: Lead";
+    let codeText = "";
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<
+        typeof import("openclaw/plugin-sdk/markdown-table-runtime")
+      >("openclaw/plugin-sdk/markdown-table-runtime");
+      codeText = actual.convertMarkdownTables(tableMarkdown, "code");
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveMarkdownTableMode: actual.resolveMarkdownTableMode,
+            convertMarkdownTables: actual.convertMarkdownTables,
+          },
+        },
+      });
+      // Feishu declares block as its plugin default; the harness registers the
+      // same meta because it does not load the runtime setup.
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "feishu",
+            source: "test",
+            plugin: {
+              id: "feishu",
+              meta: { id: "feishu" },
+              messaging: { defaultMarkdownTableMode: "block" },
+            },
+          },
+        ]),
+      );
+    });
+
+    afterEach(() => {
+      resetPluginRuntimeStateForTest();
+      setActivePluginRegistry(createEmptyPluginRegistry());
+    });
+
+    function tableCfg(tables?: MarkdownTableMode): ClawdbotConfig {
+      return tables ? { channels: { feishu: { markdown: { tables } } } } : {};
+    }
+
+    async function deliverFinal(
+      tables: MarkdownTableMode | undefined,
+      streaming: "off" | "partial",
+    ) {
+      resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", streaming, "feishu"));
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg(tables) });
+      const delivery = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      await options.onIdle?.();
+      await delivery?.finalization;
+    }
+
+    it("off keeps the raw table on the post path", async () => {
+      await deliverFinal("off", "off");
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: tableMarkdown }),
+      );
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("bullets converts on the post path", async () => {
+      await deliverFinal("bullets", "off");
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: bulletsPost }),
+      );
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("code rides a static card as a fenced block", async () => {
+      await deliverFinal("code", "off");
+
+      expect(codeText.startsWith("```")).toBe(true);
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: codeText }),
+      );
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["block", undefined] as const)(
+      "%s keeps the native table on a static card",
+      async (tables) => {
+        await deliverFinal(tables, "off");
+
+        expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: tableMarkdown }),
+        );
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("commits converted text through the streaming card", async () => {
+      await deliverFinal("bullets", "partial");
+
+      expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(bulletsCard);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["block", "off"] as const)(
+      "commits the raw table through the streaming card in %s mode",
+      async (tables) => {
+        // A streaming card is markdown, so off cannot stop the card renderer from
+        // parsing the pipes; off takes effect on post delivery.
+        await deliverFinal(tables, "partial");
+
+        expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(tableMarkdown);
+      },
+    );
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

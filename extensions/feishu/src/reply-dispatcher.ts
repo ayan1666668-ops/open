@@ -61,9 +61,9 @@ import {
 import { resolveReceiveIdType } from "./targets.js";
 import { addTypingIndicator, removeTypingIndicator, type TypingIndicatorState } from "./typing.js";
 
-/** Detect if text contains markdown elements that benefit from card rendering */
-function shouldUseCard(text: string): boolean {
-  return /```[\s\S]*?```/.test(text) || /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text);
+/** Fenced code promotes a message to a card; a table does so only when it renders natively. */
+function shouldUseCard(text: string, nativeTables: boolean): boolean {
+  return /```[\s\S]*?```/.test(text) || (nativeTables && /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text));
 }
 
 function mergeStreamingFinalText(
@@ -283,7 +283,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     cfg,
     channel: "feishu",
     accountId,
+    supportsBlockTables: true,
   });
+  // Post rendering has no native tables, so block falls back to code there. An
+  // explicit off, bullets or code converts before any card decision, so the mode
+  // applies in auto mode and to the text a streaming card commits.
+  const nativeTables = tableMode === "block";
+  const postTableMode = nativeTables ? "code" : tableMode;
+  const renderTables = (value: string): string =>
+    nativeTables ? value : core.channel.text.convertMarkdownTables(value, tableMode);
   const renderMode = account.config?.renderMode ?? "auto";
   // Streaming cards cannot attach native mention recipients. Bot-authored ingress
   // therefore uses normal cards/posts so every emitted unit reaches the peer bot.
@@ -570,7 +578,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       let finalizationError: unknown;
       if (streamingToClose?.isActive()) {
         statusLine = "";
-        const text = buildCombinedStreamText(finalizedReasoningText, finalizedAnswerText);
+        const answerText = renderTables(finalizedAnswerText);
+        const text = buildCombinedStreamText(finalizedReasoningText, answerText);
         let closed;
         try {
           if (disposition === "discarded") {
@@ -603,7 +612,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           finalizedAnswerText &&
           (finalizationError === undefined || result.content === text)
         ) {
-          deliveredFinalTexts.add(finalizedAnswerText);
+          deliveredFinalTexts.add(answerText);
         }
         if (
           finalizationError instanceof FeishuStreamingFinalizationError &&
@@ -760,7 +769,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     const chunkSource = paramsLocal.useCard
       ? paramsLocal.text
       : materializeFeishuPostMarkdownSoftBreaks(
-          core.channel.text.convertMarkdownTables(paramsLocal.text, tableMode),
+          core.channel.text.convertMarkdownTables(paramsLocal.text, postTableMode),
         );
     const initialChunks = core.channel.text.chunkMarkdownTextWithMode(
       chunkSource,
@@ -1376,14 +1385,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const payloadText =
         payload.isReasoning && resolvedText ? formatReasoningMessage(resolvedText) : resolvedText;
       const reply = resolveSendableOutboundReplyParts({ ...payload, text: payloadText });
-      const text =
+      const text = renderTables(
         info?.kind === "final" && !hasIndependentPresentation
           ? mergeStreamingFinalText(
               streamText,
               reply.text,
               payload.isError === true && hasStreamingFinalText,
             )
-          : reply.text;
+          : reply.text,
+      );
       const hasText = reply.hasText;
       const hasMedia = reply.hasMedia;
       const ttsSupplement = getReplyPayloadTtsSupplement(payload);
@@ -1404,7 +1414,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const cardRenderingRequested =
         renderMode === "card" ||
         (info?.kind === "block" && coreBlockStreamingEnabled && renderMode !== "raw") ||
-        (renderMode === "auto" && shouldUseCard(text));
+        (renderMode === "auto" && shouldUseCard(text, nativeTables));
       const useStaticCard = hasText && cardRenderingRequested && withinCardTableLimit(text);
       const useStreamingCard =
         hasText &&

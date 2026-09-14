@@ -14,12 +14,16 @@ import {
   type MessagePresentationAction,
 } from "openclaw/plugin-sdk/interactive-runtime";
 import {
+  convertMarkdownTables,
+  type MarkdownTableMode,
+} from "openclaw/plugin-sdk/markdown-table-runtime";
+import {
   createEmptyPluginRegistry,
   createTestRegistry,
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig, ReplyPayload } from "../runtime-api.js";
 import {
   FEISHU_SELECTED_SECRET_ENV,
@@ -191,9 +195,13 @@ const cardRenderConfig: ClawdbotConfig = {
 };
 
 const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+// Root credentials make the implicit default account configured, so a send
+// without an account id resolves to it and reads the channel value.
 const tableModeConfig: ClawdbotConfig = {
   channels: {
     feishu: {
+      appId: "cli_a1",
+      appSecret: "local-test-placeholder", // pragma: allowlist secret
       renderMode: "raw",
       markdown: { tables: "bullets" },
       accounts: { work: { markdown: { tables: "off" } } },
@@ -246,6 +254,20 @@ afterAll(() => {
   vi.doUnmock("./comment-reaction.js");
   vi.doUnmock("openclaw/plugin-sdk/ssrf-runtime");
   vi.resetModules();
+});
+
+// The shared table-mode resolver reads config only for a registered channel id
+// and takes the plugin default from its meta. The harness does not load the
+// runtime setup, so register the real plugin for every test.
+beforeEach(() => {
+  setActivePluginRegistry(
+    createTestRegistry([{ pluginId: "feishu", source: "test", plugin: feishuPlugin }]),
+  );
+});
+
+afterEach(() => {
+  resetPluginRuntimeStateForTest();
+  setActivePluginRegistry(createEmptyPluginRegistry());
 });
 
 function resetOutboundMocks() {
@@ -647,25 +669,13 @@ describe("feishuOutbound.sendText local-image auto-convert", () => {
   });
 
   it("resolves the markdown table mode for the named account on the post path", async () => {
-    // The shared resolver reads config only for a registered channel id, and this
-    // harness does not load the runtime setup, so register a minimal feishu plugin.
-    setActivePluginRegistry(
-      createTestRegistry([
-        { pluginId: "feishu", source: "test", plugin: { id: "feishu", meta: { id: "feishu" } } },
-      ]),
-    );
-    try {
-      await sendText({
-        cfg: tableModeConfig,
-        to: "chat_1",
-        text: tableMarkdown,
-        accountId: "work",
-      });
-      await sendText({ cfg: tableModeConfig, to: "chat_1", text: tableMarkdown });
-    } finally {
-      resetPluginRuntimeStateForTest();
-      setActivePluginRegistry(createEmptyPluginRegistry());
-    }
+    await sendText({
+      cfg: tableModeConfig,
+      to: "chat_1",
+      text: tableMarkdown,
+      accountId: "work",
+    });
+    await sendText({ cfg: tableModeConfig, to: "chat_1", text: tableMarkdown });
 
     expect(sendMessageCall(0)?.text).toBe(tableMarkdown);
     expect(sendMessageCall(1)?.text).toBe("**Ada**  \n• Role: Lead");
@@ -3822,6 +3832,112 @@ describe("feishuOutbound presentation card table-limit", () => {
 
     expect(sendCardFeishuMock).not.toHaveBeenCalled();
     expect(sendMessageFeishuMock).toHaveBeenCalled();
+  });
+});
+
+describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
+  const bulletsPost = "**Ada**  \n• Role: Lead";
+  const codeCard = convertMarkdownTables(tableMarkdown, "code");
+
+  function tableCfg(scope: "channel" | "account", tables?: MarkdownTableMode): ClawdbotConfig {
+    const markdown = tables ? { markdown: { tables } } : {};
+    return scope === "channel"
+      ? { channels: { feishu: { ...markdown } } }
+      : { channels: { feishu: { accounts: { work: { ...markdown } } } } };
+  }
+
+  beforeEach(() => {
+    resetOutboundMocks();
+  });
+
+  it("follows defaultAccount when the account id is omitted", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          defaultAccount: "work",
+          markdown: { tables: "off" },
+          accounts: { work: { markdown: { tables: "bullets" } } },
+        },
+      },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: tableMarkdown });
+
+    expect(sendMessageCall()?.text).toBe(bulletsPost);
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
+  it("follows the only configured account when the account id is omitted", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          markdown: { tables: "off" },
+          accounts: {
+            work: {
+              appId: "cli_a1",
+              appSecret: "local-test-placeholder", // pragma: allowlist secret
+              markdown: { tables: "bullets" },
+            },
+          },
+        },
+      },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: tableMarkdown });
+
+    expect(sendMessageCall()?.text).toBe(bulletsPost);
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
+  describe.each(["channel", "account"] as const)("configured at %s scope", (scope) => {
+    const accountId = scope === "account" ? "work" : undefined;
+
+    it("off keeps the raw table on the post path", async () => {
+      await sendText({ cfg: tableCfg(scope, "off"), to: "chat_1", text: tableMarkdown, accountId });
+
+      expect(sendMessageCall()?.text).toBe(tableMarkdown);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("bullets converts on the post path", async () => {
+      await sendText({
+        cfg: tableCfg(scope, "bullets"),
+        to: "chat_1",
+        text: tableMarkdown,
+        accountId,
+      });
+
+      expect(sendMessageCall()?.text).toBe(bulletsPost);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("code rides a card as a fenced block", async () => {
+      await sendText({
+        cfg: tableCfg(scope, "code"),
+        to: "chat_1",
+        text: tableMarkdown,
+        accountId,
+      });
+
+      expect(codeCard.startsWith("```")).toBe(true);
+      expect(sendStructuredCardCall()?.text).toBe(codeCard);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["block", undefined] as const)(
+      "%s keeps the native table on a card",
+      async (tables) => {
+        await sendText({
+          cfg: tableCfg(scope, tables),
+          to: "chat_1",
+          text: tableMarkdown,
+          accountId,
+        });
+
+        expect(sendStructuredCardCall()?.text).toBe(tableMarkdown);
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

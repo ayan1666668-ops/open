@@ -1883,6 +1883,7 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
       setupContract: feishuSetupContract,
       setupWizard: feishuSetupWizard,
       messaging: {
+        defaultMarkdownTableMode: "block",
         targetPrefixes: ["feishu", "lark"],
         normalizeTarget: (raw) => normalizeFeishuTarget(raw) ?? undefined,
         inferTargetChatType: ({ to }) =>

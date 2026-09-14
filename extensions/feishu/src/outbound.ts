@@ -130,8 +130,9 @@ function normalizePossibleLocalImagePath(text: string | undefined): string | nul
   return raw;
 }
 
-function shouldUseCard(text: string): boolean {
-  return /```[\s\S]*?```/.test(text) || /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text);
+/** Fenced code promotes a message to a card; a table does so only when it renders natively. */
+function shouldUseCard(text: string, nativeTables: boolean): boolean {
+  return /```[\s\S]*?```/.test(text) || (nativeTables && /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text));
 }
 
 type FeishuOutboundPayload = Parameters<
@@ -300,19 +301,31 @@ async function sendOutboundText(params: {
   const account = resolveFeishuAccount({ cfg, accountId });
   const renderMode = account.config?.renderMode ?? "auto";
 
-  // Decide card routing on the original text so card content is never
-  // modified by post-md newline normalization. Only the post path below
-  // materializes CommonMark soft breaks for Feishu rendering.
+  // Resolve with block support so a configured or default block keeps native
+  // tables on cards. An explicit off, bullets or code converts before routing,
+  // so the mode applies in auto mode too, and a raw table promotes the message
+  // to a card only when it renders natively. Card content is never touched by
+  // the post-md newline normalization below.
+  const tableMode = resolveMarkdownTableMode({
+    cfg,
+    channel: "feishu",
+    accountId: account.accountId,
+    supportsBlockTables: true,
+  });
+  const nativeTables = tableMode === "block";
+  const tableText = nativeTables ? text : convertMarkdownTables(text, tableMode);
   const useCard =
-    (renderMode === "card" || (renderMode === "auto" && shouldUseCard(text))) &&
-    withinCardTableLimit(text);
+    (renderMode === "card" || (renderMode === "auto" && shouldUseCard(tableText, nativeTables))) &&
+    withinCardTableLimit(tableText);
 
+  // Post rendering has no native tables, so block falls back to code there.
   // Tables need contiguous source rows, so convert them before the parser
   // materializes prose soft breaks for Feishu post rendering.
-  const tableMode = resolveMarkdownTableMode({ cfg, channel: "feishu", accountId });
   const normalizedText = useCard
-    ? text
-    : materializeFeishuPostMarkdownSoftBreaks(convertMarkdownTables(text, tableMode));
+    ? tableText
+    : materializeFeishuPostMarkdownSoftBreaks(
+        nativeTables ? convertMarkdownTables(text, "code") : tableText,
+      );
 
   // Core chunks raw text before channel rendering. Re-chunk after expansion
   // and keep each fenced-code chunk independently valid Markdown.

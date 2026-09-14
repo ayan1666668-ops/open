@@ -9,11 +9,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { ClawdbotConfig } from "../runtime-api.js";
 
 const createFeishuClientMock = vi.hoisted(() => vi.fn());
-const resolveFeishuAccountMock = vi.hoisted(() => vi.fn());
-vi.mock("./accounts.js", () => ({
-  resolveFeishuAccount: resolveFeishuAccountMock,
-  resolveFeishuRuntimeAccount: resolveFeishuAccountMock,
-}));
 
 vi.mock("./client.js", () => ({
   createFeishuClient: createFeishuClientMock,
@@ -24,11 +19,26 @@ let sendMessageFeishu: typeof import("./send.js").sendMessageFeishu;
 
 const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
 const tableBullets = "**Ada**  \n• Role: Lead";
+// Root credentials make the implicit default account configured, so the real
+// account resolver runs and defaultAccount selection is exercised as shipped.
 const cfg: ClawdbotConfig = {
   channels: {
     feishu: {
+      appId: "cli_a1",
+      appSecret: "local-test-placeholder", // pragma: allowlist secret
       markdown: { tables: "bullets" },
       accounts: { work: { markdown: { tables: "off" } } },
+    },
+  },
+};
+const defaultAccountCfg: ClawdbotConfig = {
+  channels: {
+    feishu: {
+      appId: "cli_a1",
+      appSecret: "local-test-placeholder", // pragma: allowlist secret
+      defaultAccount: "work",
+      markdown: { tables: "off" },
+      accounts: { work: { markdown: { tables: "bullets" } } },
     },
   },
 };
@@ -56,7 +66,6 @@ describe("feishu markdown table mode per account", () => {
   afterAll(() => {
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(createEmptyPluginRegistry());
-    vi.doUnmock("./accounts.js");
     vi.doUnmock("./client.js");
     vi.resetModules();
   });
@@ -65,7 +74,6 @@ describe("feishu markdown table mode per account", () => {
     vi.clearAllMocks();
     create.mockResolvedValue({ code: 0, data: { message_id: "om_table" } });
     update.mockResolvedValue({ code: 0 });
-    resolveFeishuAccountMock.mockReturnValue({ accountId: "default", configured: true });
     createFeishuClientMock.mockReturnValue({ im: { message: { create, reply: vi.fn(), update } } });
   });
 
@@ -83,5 +91,13 @@ describe("feishu markdown table mode per account", () => {
 
     expect(postText(update.mock.calls[0]?.[0])).toBe(tableMarkdown);
     expect(postText(update.mock.calls[1]?.[0])).toBe(tableBullets);
+  });
+
+  it("follows defaultAccount when the account id is omitted", async () => {
+    await sendMessageFeishu({ cfg: defaultAccountCfg, to: "oc_send", text: tableMarkdown });
+    await editMessageFeishu({ cfg: defaultAccountCfg, messageId: "om_edit", text: tableMarkdown });
+
+    expect(postText(create.mock.calls[0]?.[0])).toBe(tableBullets);
+    expect(postText(update.mock.calls[0]?.[0])).toBe(tableBullets);
   });
 });
