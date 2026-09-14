@@ -1068,6 +1068,54 @@ describe("createModelSelectionState parent inheritance", () => {
     });
   }
 
+  it.each([
+    { source: "auto", origin: true, retained: true },
+    { source: undefined, origin: true, retained: true },
+    { source: "user", origin: true, retained: false },
+    { source: "auto", origin: false, retained: false },
+  ] as const)(
+    "keeps direct automatic provenance source=$source origin=$origin",
+    async ({ source, origin, retained }) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: "openai/gpt-4o-mini",
+            subagents: { model: "openai/gpt-4o" },
+            modelPolicy: { allow: ["openai/gpt-4o-mini"] },
+            models: { "openai/gpt-4o-mini": {}, "openai/gpt-4o": {} },
+          },
+        },
+      };
+      const sessionKey = "agent:main:subagent:automatic";
+      const sessionEntry = makeEntry({
+        providerOverride: "openai",
+        modelOverride: "gpt-4o",
+        modelOverrideSource: source,
+        ...(origin
+          ? {
+              modelOverrideFallbackOriginProvider: "openai",
+              modelOverrideFallbackOriginModel: "gpt-4o",
+            }
+          : {}),
+      });
+      const state = await resolveState({
+        cfg,
+        sessionEntry,
+        sessionStore: { [sessionKey]: sessionEntry },
+        sessionKey,
+      });
+      expect(state.modelPolicy.allows({ provider: "openai", model: "gpt-4o" })).toBe(false);
+      expect(state.provider).toBe("openai");
+      expect(state.model).toBe(retained ? "gpt-4o" : "gpt-4o-mini");
+      expect(sessionEntry.modelOverride).toBe(retained ? "gpt-4o" : undefined);
+      if (retained) {
+        expect(sessionEntry.modelOverrideSource).toBe(source);
+        expect(sessionEntry.modelOverrideFallbackOriginProvider).toBe("openai");
+        expect(sessionEntry.modelOverrideFallbackOriginModel).toBe("gpt-4o");
+      }
+    },
+  );
+
   it("inherits parent override from explicit parentSessionKey", async () => {
     const cfg = {} as OpenClawConfig;
     const parentKey = "agent:main:discord:channel:c1";
@@ -1556,74 +1604,95 @@ describe("createModelSelectionState respects session model override", () => {
     expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).not.toHaveBeenCalled();
   });
 
-  it("adopts a concurrent valid model while repairing a stale override", async () => {
-    const storePath = "sessions.json";
-    const cfg = {
-      agents: {
-        defaults: {
-          model: { primary: "openai/gpt-4o" },
-          models: {
-            "openai/gpt-4o": {},
-            "openai/gpt-5.5": {},
+  it.each([undefined, "gpt-4o", "stale-again"])(
+    "adopts a concurrent model while repairing a stale override (automatic origin: %s)",
+    async (automaticOrigin) => {
+      const automatic = automaticOrigin !== undefined;
+      const storePath = "sessions.json";
+      const cfg = {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-4o" },
+            modelPolicy: automatic ? { allow: ["openai/gpt-4o"] } : undefined,
+            models: {
+              "openai/gpt-4o": {},
+              "openai/gpt-5.5": {},
+            },
           },
         },
-      },
-    } as OpenClawConfig;
-    const sessionKey = "agent:main:telegram:direct:1";
-    const sessionEntry = makeEntry({
-      providerOverride: "openai",
-      modelOverride: "gpt-4o-mini",
-    });
-    const concurrentEntry = makeEntry({
-      updatedAt: sessionEntry.updatedAt + 1,
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
-    });
-    sessionPersistenceMocks.persistReplySessionEntry.mockResolvedValueOnce({
-      status: "current",
-      entry: concurrentEntry,
-    });
-    const sessionStore = { [sessionKey]: sessionEntry };
-
-    const state = await createModelSelectionState({
-      cfg,
-      agentCfg: cfg.agents?.defaults,
-      sessionEntry,
-      sessionStore,
-      sessionKey,
-      storePath,
-      defaultProvider: "openai",
-      defaultModel: "gpt-4o",
-      provider: "openai",
-      model: "gpt-4o-mini",
-      hasModelDirective: false,
-    });
-
-    expect(state).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.5",
-      resetModelOverride: false,
-    });
-    expect(sessionPersistenceMocks.persistReplySessionEntry).toHaveBeenCalledOnce();
-    const persistenceRequest = sessionPersistenceMocks.persistReplySessionEntry.mock.calls[0]?.[0];
-    expect(persistenceRequest).toMatchObject({
-      storePath,
-      sessionKey,
-      initialEntry: expect.objectContaining({
+      } as OpenClawConfig;
+      const sessionKey = "agent:main:telegram:direct:1";
+      const sessionEntry = makeEntry({
         providerOverride: "openai",
         modelOverride: "gpt-4o-mini",
-      }),
-    });
-    expect(persistenceRequest?.entry.providerOverride).toBeUndefined();
-    expect(persistenceRequest?.entry.modelOverride).toBeUndefined();
-    expect(sessionEntry).toMatchObject({
-      providerOverride: "openai",
-      modelOverride: "gpt-5.5",
-      modelOverrideSource: "user",
-    });
-    expect(sessionStore[sessionKey]).toEqual(sessionEntry);
-  });
+        ...(automatic
+          ? {
+              modelOverrideSource: "auto" as const,
+              modelOverrideFallbackOriginProvider: "openai",
+              modelOverrideFallbackOriginModel: "stale-primary",
+            }
+          : {}),
+      });
+      const concurrentEntry = makeEntry({
+        updatedAt: sessionEntry.updatedAt + 1,
+        providerOverride: "openai",
+        modelOverride: "gpt-5.5",
+        modelOverrideSource: automatic ? "auto" : "user",
+        ...(automatic
+          ? {
+              modelOverrideFallbackOriginProvider: "openai",
+              modelOverrideFallbackOriginModel: automaticOrigin,
+            }
+          : {}),
+      });
+      sessionPersistenceMocks.persistReplySessionEntry.mockResolvedValueOnce({
+        status: "current",
+        entry: concurrentEntry,
+      });
+      const sessionStore = { [sessionKey]: sessionEntry };
+
+      const state = await createModelSelectionState({
+        cfg,
+        agentCfg: cfg.agents?.defaults,
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        storePath,
+        defaultProvider: "openai",
+        defaultModel: "gpt-4o",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        hasModelDirective: false,
+        isHeartbeat: automatic,
+      });
+
+      expect(state.modelPolicy.allows({ provider: "openai", model: "gpt-5.5" })).toBe(!automatic);
+      expect(state).toMatchObject({
+        provider: "openai",
+        model: automaticOrigin === "stale-again" ? "gpt-4o" : "gpt-5.5",
+        resetModelOverride: false,
+      });
+      expect(sessionPersistenceMocks.persistReplySessionEntry).toHaveBeenCalledOnce();
+      const persistenceRequest =
+        sessionPersistenceMocks.persistReplySessionEntry.mock.calls[0]?.[0];
+      expect(persistenceRequest).toMatchObject({
+        storePath,
+        sessionKey,
+        initialEntry: expect.objectContaining({
+          providerOverride: "openai",
+          modelOverride: "gpt-4o-mini",
+        }),
+      });
+      expect(persistenceRequest?.entry.providerOverride).toBeUndefined();
+      expect(persistenceRequest?.entry.modelOverride).toBeUndefined();
+      expect(sessionEntry).toMatchObject({
+        providerOverride: "openai",
+        modelOverride: "gpt-5.5",
+        modelOverrideSource: automatic ? "auto" : "user",
+      });
+      expect(sessionStore[sessionKey]).toEqual(sessionEntry);
+    },
+  );
 
   it("rejects stale-model repair when the session rotates during persistence", async () => {
     const storePath = "sessions.json";
