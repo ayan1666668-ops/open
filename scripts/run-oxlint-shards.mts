@@ -288,17 +288,15 @@ function listPackageTargetGroups({ cwd, readDir }: DirectoryLookup) {
     .map((entry) => {
       const packageRoot = path.join(PACKAGES_DIR, entry.name);
       const packageEntries = readDirectoryEntries(readDir, path.join(cwd, packageRoot));
-      const sourceDirs = packageEntries
-        .filter((packageEntry) => packageEntry.isDirectory() && packageEntry.name === "src")
-        .map((packageEntry) => `${packageRoot}/${packageEntry.name}`);
-      const rootFiles = packageEntries
+      const targets = packageEntries
         .filter(
           (packageEntry) =>
-            packageEntry.isFile() && OXLINT_SOURCE_FILE_PATTERN.test(packageEntry.name),
+            (packageEntry.isDirectory() && packageEntry.name === "src") ||
+            (packageEntry.isFile() && OXLINT_SOURCE_FILE_PATTERN.test(packageEntry.name)),
         )
         .map((packageEntry) => `${packageRoot}/${packageEntry.name}`)
         .toSorted((left, right) => left.localeCompare(right));
-      return [...sourceDirs, ...rootFiles];
+      return targets;
     })
     .filter((targets) => targets.length > 0);
 
