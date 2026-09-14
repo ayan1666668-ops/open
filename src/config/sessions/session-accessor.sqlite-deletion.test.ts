@@ -258,7 +258,7 @@ describe("session deletion and native owner state", () => {
               }),
             );
         if (rejectSuggestions) {
-          const error = await deletion.catch((error: unknown) => error);
+          const error = await deletion.catch((caughtError: unknown) => caughtError);
           expect(error).toBeInstanceOf(Error);
           expect(error).toMatchObject({
             code: "ERR_SQLITE_ERROR",
