@@ -758,6 +758,7 @@ describe("subscribeEmbeddedAgentSession", () => {
     const toolHarness = createSubscribedSessionHarness({
       runId: "run-exec-full-meta",
       verboseLevel: "full",
+      toolProgressDetail: "raw",
       onToolResult,
     });
 
