@@ -55,6 +55,11 @@ const INDIRECT_RUNTIME_DEPENDENCIES = new Map<string, Set<string>>([
     new Set(["undici"]),
   ],
   [
+    "extensions/telegram",
+    // Grammy exposes abort-controller through its throttler/runtime compatibility path.
+    new Set(["abort-controller"]),
+  ],
+  [
     "extensions/tlon",
     // The Tlon plugin manifest exposes the bundled skill from this package path.
     new Set(["@tloncorp/tlon-skill"]),
