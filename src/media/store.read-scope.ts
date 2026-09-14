@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { buildRandomTempFilePath } from "@openclaw/fs-safe/advanced";
+import { buildRandomTempFilePath } from "../infra/fs-safe-advanced.js";
 import { FsSafeError, root } from "../infra/fs-safe.js";
 import { redactToolPayloadText } from "../logging/redact.js";
 import {
