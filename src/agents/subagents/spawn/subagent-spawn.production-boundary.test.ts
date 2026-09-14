@@ -392,8 +392,11 @@ async function createBoundGateway(bound: Awaited<ReturnType<typeof createBoundPa
 
 describe("recursive spawn production boundary", () => {
   it("authorizes and admits an upgraded descendant before model execution", async () => {
-    const customProvider = expectDefined(runtimeConfig.models?.providers?.custom);
-    const primaryModel = expectDefined(customProvider.models[0]);
+    const customProvider = expectDefined(
+      runtimeConfig.models?.providers?.custom,
+      "custom provider fixture",
+    );
+    const primaryModel = expectDefined(customProvider.models[0], "primary model fixture");
     const childModel = { ...primaryModel, id: "child-model", name: "Child model" };
     runtimeConfig = {
       ...runtimeConfig,
