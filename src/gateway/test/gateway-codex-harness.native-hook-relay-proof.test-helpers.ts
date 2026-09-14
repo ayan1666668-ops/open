@@ -439,27 +439,15 @@ export function readLifecycleIdentity(events: CapturedAgentEvent[]): {
   };
 }
 
-/**
- * The overlay vocabulary both lanes assert in. Two asymmetries are baked in:
- *  - `thread/start` is built with `clearOmittedEvents` off, so an event the
- *    resolver did not select emits **no key at all** ("absent"). `thread/fork`
- *    and `thread/resume` are built with it on, so every key is present and
- *    omitted ones are `[]`.
- *  - "selected" is not "installed": `shouldRelayEvent` writes `[]` for a
- *    selected event with no OpenClaw-side work. The proof gateway registers no
- *    before-tool policy and no after_tool_call/before_agent_finalize hooks, so
- *    `post_tool_use`/`before_agent_finalize` are selected-but-empty, while
- *    `pre_tool_use` installs via the loop detector that `writeProofGatewayConfig`
- *    turns on explicitly (`tools.loopDetection.enabled`).
- */
+/** Selected events with no local work are empty; unselected events are omitted. */
 type CodexHookOverlayState = "installed" | "empty" | "absent";
 type CodexHookKey = (typeof RELAY_PROOF_HOOK_KEYS)[number];
 export type CodexHookOverlay = {
   /** `"absent"` pins that the overlay does not carry the key at all. */
   featuresHooks: boolean | "absent";
   hooks: Record<CodexHookKey, CodexHookOverlayState>;
-  /** `hooks.state` keys that must be present and disabled. */
-  hookStateDisabled?: readonly string[];
+  /** Full opt-out must leave CLI trust state untouched. */
+  hookStateAbsent?: true;
 };
 
 const RELAY_PROOF_HOOK_KEYS = [
@@ -469,31 +457,10 @@ const RELAY_PROOF_HOOK_KEYS = [
   "hooks.Stop",
 ] as const;
 
-/**
- * The only source paths OpenClaw may address in `hooks.state`. Codex keys hook
- * state by the source path of the layer that declared the hook, so restricting
- * every key to these two spellings of its own session-flags layer is what makes
- * the opt-out unable to reach a hook it did not install.
- */
+/** Native source-key spellings used by the relay's emitted trust entries. */
 export const RELAY_PROOF_SESSION_FLAGS_STATE_KEY_PREFIXES = [
   "/<session-flags>/config.toml:",
   "<session-flags>/config.toml:",
-] as const;
-
-/**
- * The exact OpenClaw session-layer hook command keys. The relay opt-out pins
- * these disabled so lower-precedence copies of the injected commands cannot be
- * layered back in during Codex hook discovery.
- */
-export const RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS = [
-  "/<session-flags>/config.toml:pre_tool_use:0:0",
-  "<session-flags>/config.toml:pre_tool_use:0:0",
-  "/<session-flags>/config.toml:post_tool_use:0:0",
-  "<session-flags>/config.toml:post_tool_use:0:0",
-  "/<session-flags>/config.toml:permission_request:0:0",
-  "<session-flags>/config.toml:permission_request:0:0",
-  "/<session-flags>/config.toml:stop:0:0",
-  "<session-flags>/config.toml:stop:0:0",
 ] as const;
 
 /**
@@ -546,18 +513,11 @@ function assertCodexHookOverlay(params: {
       `${params.label}: ${key} on ${params.method} (captured ${JSON.stringify(raw)})`,
     ).toBe(params.expected.hooks[key]);
   }
-  const rawHookState = config["hooks.state"];
-  const hookState =
-    rawHookState && typeof rawHookState === "object"
-      ? (rawHookState as Record<string, unknown>)
-      : undefined;
-  for (const stateKey of params.expected.hookStateDisabled ?? []) {
+  if (params.expected.hookStateAbsent) {
     expect(
-      hookState?.[stateKey],
-      `${params.label}: hooks.state[${JSON.stringify(stateKey)}] on ${params.method} (captured ${JSON.stringify(
-        rawHookState,
-      )})`,
-    ).toEqual({ enabled: false });
+      Object.hasOwn(config, "hooks.state"),
+      `${params.label}: opt-out must not overwrite native trust state`,
+    ).toBe(false);
   }
 }
 

@@ -70,7 +70,7 @@
     "codex": {
       "capabilities": ["image"],
       "defaultModels": {
-        "image": "gpt-5.6-sol"
+        "image": "gpt-6-astra"
       }
     }
   },
@@ -353,16 +353,16 @@
             "default": true
           },
           "nativeHookRelay": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "default": true
-              }
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
             }
-          },
-          "requestTimeoutMs": {
+          }
+        },
+        "requestTimeoutMs": {
             "type": "number",
             "minimum": 1,
             "default": 60000
@@ -694,12 +694,12 @@
     },
     "appServer.nativeHookRelay": {
       "label": "Native Hook Relay",
-      "help": "Control the OpenClaw native hook relay installed into Codex app-server threads. Omit for the historical always-on default. Approvals ride the app-server approval bridge and are not disabled by this key.",
+      "help": "Control OpenClaw callbacks in Codex threads. Enabled by default. Native approval routing stays active.",
       "advanced": true
     },
     "appServer.nativeHookRelay.enabled": {
       "label": "Native Hook Relay Enabled",
-      "help": "Set to false to remove the OpenClaw native hook relay from Codex attempts and side questions (relay hook arrays cleared and the OpenClaw session-layer hooks.state entries disabled). features.hooks is left untouched, so independent user, project, plugin, and managed Codex hooks keep running. This applies only when the effective approval policy for the thread is \"never\" and no OpenClaw before-tool policy is active (no before_tool_call hook and no trusted-tool policy). If either condition fails - a prompting or forced-prompting policy, or a live before-tool policy - the opt-out narrows to the required before-tool policy relay with a logged warning naming the reason.",
+      "help": "Disable optional OpenClaw native hook callbacks to reduce relay subprocesses. If before-tool policy or prompting approvals are active, OpenClaw keeps the required PreToolUse relay and logs a warning. An honored opt-out removes OpenClaw native loop checks, post-tool middleware, and finalization checks, including checks that can stop or revise a reply. Full opt-out leaves native hook layers unchanged. Required relay events still take precedence over CLI hooks for the same events. Live incognito conversations cannot change the installed relay configuration: restore the previous setting or start a new incognito conversation.",
       "advanced": true
     },
     "appServer.requestTimeoutMs": {

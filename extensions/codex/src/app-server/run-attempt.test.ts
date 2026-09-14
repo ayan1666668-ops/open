@@ -29,8 +29,8 @@ import {
   appendSessionTranscriptMessageByIdentity,
   readSessionTranscriptEvents,
 } from "openclaw/plugin-sdk/session-transcript-runtime";
+import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import WebSocket from "ws";
 import { defaultCodexAppInventoryCache } from "./app-inventory-cache.js";
 import { codexAppInventoryResponse } from "./app-inventory.test-helpers.js";
 import {
@@ -47,6 +47,7 @@ import { prepareCodexAppServerAuthBinding } from "./auth-binding.js";
 import { resolveCodexAppServerFallbackApiKeyCacheKey } from "./auth-cache-key.js";
 import {
   consumeCodexAppServerLiveThread,
+  recordCodexEphemeralThreadCreation,
   releaseCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
@@ -2943,6 +2944,34 @@ describe("runCodexAppServerAttempt", () => {
       ],
     });
 
+    const noteResponse = await harness.handleServerRequest({
+      id: "request-plan-note",
+      method: "item/tool/call",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-plan-note",
+        namespace: null,
+        tool: "progress_card",
+        arguments: {
+          markdown:
+            '<progress aria-label="private" value="1" max="2"></progress>\n\n**Working** [results](https://example.com "<script>").',
+        },
+      },
+    });
+    expect(noteResponse).toMatchObject({ success: true });
+    expect(onAgentEvent).toHaveBeenCalledWith({
+      stream: "plan",
+      data: {
+        phase: "update",
+        title: "Plan updated",
+        source: "openclaw",
+        explanation: "Working results.",
+        explanationFormat: "plain",
+        steps: [],
+      },
+    });
+
     const clearResponse = await harness.handleServerRequest({
       id: "request-plan-clear",
       method: "item/tool/call",
@@ -2956,7 +2985,7 @@ describe("runCodexAppServerAttempt", () => {
       },
     });
     expect(clearResponse).toMatchObject({ success: true });
-    expect(executeProgressCard).toHaveBeenCalledTimes(3);
+    expect(executeProgressCard).toHaveBeenCalledTimes(4);
     expect(onAgentEvent).toHaveBeenCalledWith({
       stream: "plan",
       data: {
@@ -3198,47 +3227,6 @@ describe("runCodexAppServerAttempt", () => {
     await run;
     expect(retireSpy).not.toHaveBeenCalled();
     expect(closeAndWait).not.toHaveBeenCalled();
-  });
-
-  it("projects dynamic progress cards through the shared safe status contract", async () => {
-    const params = createRunParams();
-    const onAgentEvent = vi.fn();
-    params.onAgentEvent = onAgentEvent;
-    const projector = new CodexAppServerEventProjector(params, "thread-1", "turn-1");
-
-    await projector.recordDynamicProgressCardUpdate({
-      markdown: '<progress aria-label="private" value="1" max="2"></progress>',
-      plan: [{ step: "Ship", status: "completed" }],
-    });
-    await projector.recordDynamicProgressCardUpdate({ markdown: "Working" });
-    await projector.recordDynamicProgressCardUpdate({});
-
-    expect(onAgentEvent).toHaveBeenNthCalledWith(1, {
-      stream: "plan",
-      data: {
-        phase: "update",
-        title: "Plan updated",
-        source: "openclaw",
-        explanation: "1/1 complete",
-        steps: [{ step: "Ship", status: "completed" }],
-      },
-    });
-    expect(onAgentEvent).toHaveBeenNthCalledWith(2, {
-      stream: "plan",
-      data: {
-        phase: "update",
-        title: "Plan updated",
-        source: "openclaw",
-        explanation: "Progress updated",
-        steps: [],
-      },
-    });
-    expect(onAgentEvent).toHaveBeenNthCalledWith(3, {
-      stream: "plan",
-      data: { phase: "update", title: "Plan updated", source: "openclaw", steps: [] },
-    });
-    expect(JSON.stringify(onAgentEvent.mock.calls)).not.toContain("<progress");
-    expect(JSON.stringify(onAgentEvent.mock.calls)).not.toContain("private");
   });
 
   it("keeps searchable Codex dynamic tools canonical in mirrored transcript snapshots", async () => {
@@ -5430,6 +5418,7 @@ describe("runCodexAppServerAttempt", () => {
         { onStart, ...(preserveNativeModel ? { persistedThreads: ["thread-1"] } : {}) },
       );
       const params = createParams(sessionFile, workspaceDir);
+      params.registerPluginRuntimeRefreshConsumer = vi.fn();
       params.modelId = "synthetic-outer-model";
       params.authProfileStore = {
         version: 1,
@@ -5502,6 +5491,7 @@ describe("runCodexAppServerAttempt", () => {
       const selectedProfile = preserveNativeModel ? "openai:binding" : "openai:ordered";
       expect(onStart).toHaveBeenCalledWith(selectedProfile, expect.anything(), expect.anything());
       if (preserveNativeModel) {
+        expect(params.registerPluginRuntimeRefreshConsumer).not.toHaveBeenCalled();
         expectResumeRequest(harness.requests, { threadId: "thread-1" });
         const resume = harness.requests.find((request) => request.method === "thread/resume");
         expect(resume?.params).not.toHaveProperty("model");
@@ -7918,15 +7908,16 @@ describe("runCodexAppServerAttempt", () => {
   });
 
   it.each([
-    { transport: "stdio", hasAnswer: true },
-    { transport: "stdio", hasAnswer: false },
-    { transport: "proxy", hasAnswer: true },
-    { transport: "proxy", hasAnswer: false },
-    { transport: "websocket", hasAnswer: false },
-    { transport: "unix", hasAnswer: false },
+    { transport: "stdio", hasAnswer: true, creationCatalog: false },
+    { transport: "stdio", hasAnswer: false, creationCatalog: false },
+    { transport: "proxy", hasAnswer: true, creationCatalog: false },
+    { transport: "proxy", hasAnswer: false, creationCatalog: false },
+    { transport: "websocket", hasAnswer: false, creationCatalog: false },
+    { transport: "unix", hasAnswer: false, creationCatalog: false },
+    { transport: "stdio", hasAnswer: true, creationCatalog: true },
   ] as const)(
-    "preserves supervised native model and transport/home guards over $transport (answer: $hasAnswer)",
-    async ({ transport, hasAnswer }) => {
+    "preserves supervised native model and transport/home guards over $transport (answer: $hasAnswer, creation catalog: $creationCatalog)",
+    async ({ transport, hasAnswer, creationCatalog }) => {
       const { sessionFile, workspaceDir, agentDir } = createRunPaths();
       const beforePromptBuild = vi.fn(() => undefined);
       initializeGlobalHookRunner(
@@ -7935,14 +7926,16 @@ describe("runCodexAppServerAttempt", () => {
       const codexHome = path.join(tempDir, "review-codex-home");
       vi.stubEnv("CODEX_HOME", codexHome);
       const rolloutPath = path.join(codexHome, "sessions", "thread-existing.jsonl");
-      await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
-      await fs.writeFile(
-        rolloutPath,
-        JSON.stringify({
-          type: "session_meta",
-          payload: { id: "thread-existing", model_provider: "openai" },
-        }) + "\n",
-      );
+      if (!creationCatalog) {
+        await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+        await fs.writeFile(
+          rolloutPath,
+          JSON.stringify({
+            type: "session_meta",
+            payload: { id: "thread-existing", model_provider: "openai" },
+          }) + "\n",
+        );
+      }
       const pluginConfig = {
         appServer: {
           mode: "guardian",
@@ -7962,7 +7955,7 @@ describe("runCodexAppServerAttempt", () => {
         preserveNativeModel: true,
         conversationSourceTransferComplete: true,
         dynamicToolsFingerprint: codexDynamicToolsFingerprint([]),
-        rolloutPath,
+        rolloutPath: creationCatalog ? undefined : rolloutPath,
         appServerRuntimeFingerprint: buildCodexAppServerConnectionFingerprint(
           resolveCodexSupervisionAppServerRuntimeOptions({ pluginConfig }),
           agentDir,
@@ -7999,7 +7992,9 @@ describe("runCodexAppServerAttempt", () => {
           } else if (message.method === "config/read") {
             result = { config: { model_provider: "openai" }, origins: {} };
           } else if (message.method === "thread/read") {
-            result = { thread: { ...nativeResponse.thread, path: rolloutPath } };
+            result = {
+              thread: { ...nativeResponse.thread, path: creationCatalog ? null : rolloutPath },
+            };
           } else if (message.method === "thread/resume") {
             // Native resume tears down an idle, unsubscribed thread before applying overrides.
             // A successful response alone cannot prove that its configuration changed.
@@ -8018,12 +8013,30 @@ describe("runCodexAppServerAttempt", () => {
         },
       });
       const start = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-      const clientFactory = vi.fn(sharedClientModule.getLeasedSharedCodexAppServerClient);
+      const clientFactory = vi.fn(async (options?: CodexAppServerClientOptions) => {
+        const client = await sharedClientModule.getLeasedSharedCodexAppServerClient(options);
+        if (creationCatalog) {
+          recordCodexEphemeralThreadCreation(client, "thread-existing", {
+            hookInstallation: "created",
+            dynamicTools: [],
+          });
+        }
+        return client;
+      });
+      if (creationCatalog) {
+        const binding = await readCodexAppServerBinding(sessionFile);
+        assert(binding);
+        await writeCodexAppServerBinding(sessionFile, {
+          ...binding,
+          clientId: harness.client.getInstanceId(),
+        });
+      }
       testing.setOpenClawCodingToolsFactoryForTests(() => []);
       // This test owns review-policy projection, not requester-scoped MCP discovery.
       agentHarnessRuntimeMocks.forceModelToolsUnsupported = true;
       agentHarnessRuntimeMocks.skipRequesterScopedMcpMaterialization = true;
       const params = createParams(sessionFile, workspaceDir);
+      params.registerPluginRuntimeRefreshConsumer = vi.fn();
       params.agentDir = agentDir;
       params.provider = "anthropic";
       params.modelId = "claude-opus-4-6";
@@ -8097,6 +8110,7 @@ describe("runCodexAppServerAttempt", () => {
         });
         const result = await run;
         expect(result.terminal).toEqual({ kind: "ok" });
+        expect(params.registerPluginRuntimeRefreshConsumer).not.toHaveBeenCalled();
         expect(beforePromptBuild).toHaveBeenCalled();
         for (let index = 0; index < beforePromptBuild.mock.calls.length; index += 1) {
           const context = mockCall(beforePromptBuild, "before_prompt_build", index)[1];

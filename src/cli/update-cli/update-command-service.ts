@@ -9,6 +9,7 @@ import {
 } from "../../commands/doctor-completion.js";
 import { readGatewayServiceState, resolveGatewayService } from "../../daemon/service.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { readGatewayOwnerLease } from "../../infra/gateway-owner-lease.js";
 import {
   getUpdateRun,
   recordUpdateRunPhase,
@@ -25,8 +26,9 @@ import {
   type GatewayRestartSnapshot,
 } from "../daemon-cli/restart-health.js";
 import { runRestartScript } from "./restart-helper.js";
-import type { UpdateCommandOptions } from "./shared.js";
+import { tryWriteCompletionCache, type UpdateCommandOptions } from "./shared.js";
 import { createUpdateConfigSnapshot } from "./update-command-config-snapshot.js";
+import type { PluginUpdateWarning } from "./update-command-plugins-internals.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
 import {
   DEFINITION_DENIAL,
@@ -96,9 +98,22 @@ export function resolvePostUpdateServiceStateReadEnv(params: {
 }
 
 export async function tryInstallShellCompletion(opts: {
+  root: string;
   jsonMode: boolean;
   skipPrompt: boolean;
 }): Promise<void> {
+  try {
+    await tryWriteCompletionCache(opts.root, opts.jsonMode);
+  } catch (err) {
+    if (!opts.jsonMode) {
+      const completionCacheRefreshCommand = formatCliCommand("openclaw completion --write-state");
+      defaultRuntime.log(
+        theme.warn(
+          `Completion cache update failed: ${formatErrorMessage(err)}. Update will continue; retry with: ${completionCacheRefreshCommand}`,
+        ),
+      );
+    }
+  }
   if (opts.jsonMode || !process.stdin.isTTY) {
     return;
   }
@@ -218,6 +233,7 @@ export async function maybeRestartService(params: {
   serviceMutationSkipMessage?: string;
   timeoutMs: number;
   onVerificationFailure?: (reason: string) => void;
+  onPluginWarnings?: (warnings: readonly PluginUpdateWarning[]) => void;
   onVerified?: (verifiedAtMs: number) => void;
 }): Promise<"ok" | "failed" | "restart-health-failed"> {
   const run = params.opts.run;
@@ -284,7 +300,11 @@ export async function maybeRestartService(params: {
   const verifyRestartedGateway = async (
     expectedGatewayVersion: string | undefined,
     expectedGatewayBuildId: string | undefined,
-    opts: { requireRunningService?: boolean; health?: GatewayRestartSnapshot } = {},
+    opts: {
+      requireRunningService?: boolean;
+      health?: GatewayRestartSnapshot;
+      recoverHealth?: boolean;
+    } = {},
   ) => {
     recordPhase("verifying");
     const verification = await verifyUpdatedGateway({
@@ -302,7 +322,7 @@ export async function maybeRestartService(params: {
       assertCurrent,
       recoverHealth: async (initialHealth, reinspect) => {
         assertCurrent();
-        if (childReadinessPending) {
+        if (childReadinessPending || opts.recoverHealth === false) {
           return { health: initialHealth, launchAgentRecovery: null };
         }
         let health = initialHealth;
@@ -314,9 +334,17 @@ export async function maybeRestartService(params: {
               ),
             );
           }
-          await terminateStaleGatewayPids(health.staleGatewayPids);
+          const terminated = await terminateStaleGatewayPids(health.staleGatewayPids, {
+            env: activation.serviceEnv,
+            assertCurrent,
+          });
           assertCurrent();
-          if (canRestartUpdatedInstall() || !isPackageUpdate) {
+          const currentOwner = readGatewayOwnerLease({ env: activation.serviceEnv });
+          if (
+            terminated.length > 0 &&
+            (!currentOwner || currentOwner.state === "dead") &&
+            (canRestartUpdatedInstall() || !isPackageUpdate)
+          ) {
             activationAccepted =
               (await runUpdatedInstallGatewayCommand(activation, "restart", preserveDefinition)) ===
               "accepted";
@@ -333,6 +361,7 @@ export async function maybeRestartService(params: {
           timeoutMs: activation.timeoutMs,
           expectedVersion: expectedGatewayVersion,
           ...(expectedGatewayBuildId ? { expectedBuildId: expectedGatewayBuildId } : {}),
+          requirePluginHealth: false,
           env: activation.serviceEnv,
         });
         assertCurrent();
@@ -345,6 +374,8 @@ export async function maybeRestartService(params: {
     assertCurrent();
     if (!verification.ok) {
       params.onVerificationFailure?.(verification.summary);
+    } else if (verification.pluginWarnings?.length) {
+      params.onPluginWarnings?.(verification.pluginWarnings);
     }
     return verification.ok;
   };
@@ -400,6 +431,7 @@ export async function maybeRestartService(params: {
               timeoutMs: activation.timeoutMs,
               expectedVersion: expectedGatewayVersion,
               ...(expectedGatewayBuildId ? { expectedBuildId: expectedGatewayBuildId } : {}),
+              requirePluginHealth: false,
               env: activation.serviceEnv,
               requireRunningService: true,
               settle: { probes: 12 },
@@ -582,13 +614,20 @@ export async function maybeRestartService(params: {
       if (err instanceof UpdateServiceLoadBoundaryError) {
         throw err;
       }
+      if (err instanceof GatewayRestartHealthError && !updatedInstallRestartNeedsServiceRootProof) {
+        // The installed CLI owns restart retries; observe its final health result
+        // without another native mutation.
+        const healthy = await verifyRestartedGateway(
+          normalizeOptionalString(activation.result.after?.version),
+          normalizeOptionalString(activation.result.after?.buildId),
+          { requireRunningService: true, recoverHealth: false },
+        );
+        return healthy ? "ok" : await failed("restart-health-failed");
+      }
       defaultRuntime.error(
         `Gateway: restart failed: ${String(err)}. Code update remains installed; a service stopped for update may still be stopped. ` +
           "Run `openclaw gateway status --deep` and ask its service owner to restart it manually.",
       );
-      if (err instanceof GatewayRestartHealthError && !updatedInstallRestartNeedsServiceRootProof) {
-        return await failed("restart-health-failed");
-      }
       return await failed();
     }
     return "ok";

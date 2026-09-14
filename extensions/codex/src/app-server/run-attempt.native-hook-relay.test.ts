@@ -20,6 +20,7 @@ import * as approvalBridge from "./approval-bridge.js";
 import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
 import { CodexAppServerRpcError } from "./client.js";
 import { nativeHookRelayUnregisterQueue } from "./native-hook-relay-state.js";
+import * as nativeHookRelay from "./native-hook-relay.js";
 import {
   bindProductionHarnessHostCapabilitiesForTest,
   createParams,
@@ -147,6 +148,7 @@ describe("runCodexAppServerAttempt native hook relay", () => {
   });
 
   it("registers native hook relay config for an enabled Codex turn and cleans it up", async () => {
+    const createRelay = vi.spyOn(nativeHookRelay, "createCodexNativeHookRelay");
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
     const harness = createStartedThreadHarness();
@@ -174,6 +176,13 @@ describe("runCodexAppServerAttempt native hook relay", () => {
     expect(preToolUseCommand?.type).toBe("command");
     expect(preToolUseCommand?.timeout).toBe(9);
     expect(preToolUseCommand?.command).toContain("--event pre_tool_use --timeout 4321");
+    expect(createRelay).toHaveBeenCalledOnce();
+    expect(preToolUseCommand?.command).toBe(
+      createRelay.mock.results[0]?.value?.commandForEvent("pre_tool_use"),
+    );
+    if (process.platform !== "win32") {
+      expect(preToolUseCommand?.command).toMatch(/^exec nice -n 10 /);
+    }
     const hookState = startConfig?.["hooks.state"] as Record<
       string,
       { enabled?: unknown; trusted_hash?: unknown }
@@ -926,26 +935,13 @@ describe("runCodexAppServerAttempt native hook relay", () => {
     const startRequest = harness.requests.find((request) => request.method === "thread/start");
     const startConfig = (startRequest?.params as { config?: Record<string, unknown> } | undefined)
       ?.config;
-    // The opt-out clears the relay's own hooks only. Disabling `features.hooks`
-    // would also suppress independent user, project, plugin, and managed Codex
-    // hooks, so the key stays untouched.
-    expect(Object.hasOwn(startConfig ?? {}, "features.hooks")).toBe(false);
-    expect(startConfig?.["hooks.PreToolUse"]).toEqual([]);
-    expect(startConfig?.["hooks.PostToolUse"]).toEqual([]);
-    expect(startConfig?.["hooks.PermissionRequest"]).toEqual([]);
-    expect(startConfig?.["hooks.Stop"]).toEqual([]);
-    // Disabled state markers keep lower-precedence copies of the injected
-    // session-layer commands from being layered back in during discovery.
-    expect(startConfig?.["hooks.state"]).toEqual({
-      "/<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "/<session-flags>/config.toml:stop:0:0": { enabled: false },
-      "<session-flags>/config.toml:stop:0:0": { enabled: false },
-    });
+    // A new native request reconstructs CLI + request config. No relay overlay
+    // may overwrite independent event arrays or their CLI trust state.
+    expect(
+      Object.keys(startConfig ?? {}).filter(
+        (key) => key.startsWith("hooks.") || key === "features.hooks",
+      ),
+    ).toEqual([]);
   });
 
   it("cleans up native hook relay state when turn/start fails", async () => {

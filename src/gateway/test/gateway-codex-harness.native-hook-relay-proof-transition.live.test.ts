@@ -25,7 +25,6 @@ import {
   isRelayProofLaneEnabled,
   readCapturedJsonRpcRecords,
   readLifecycleIdentity,
-  RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS,
   RELAY_PROOF_SESSION_FLAGS_STATE_KEY_PREFIXES,
   type RelayProofLane,
   type RelayProofTransitionRelayConfig,
@@ -167,9 +166,8 @@ type IndependentUserLayerHook = {
  * Placement is deliberate on three counts:
  *  - **Layer.** Codex discovers hooks per config layer
  *    (`discovery.rs: layers_low_to_high` → `load_toml_hooks_from_layer`), keying
- *    each handler by its own source path. The relay's opt-out clears the
- *    `<session-flags>` layer's arrays and disables only `<session-flags>` state
- *    keys, so a user-layer hook is a different key entirely and must survive.
+ *    each handler by its source path. Full opt-out omits the relay overlay,
+ *    including trust state, so a user-layer hook must remain active.
  *  - **User layer specifically.** `hook_states_from_stack` (`config_rules.rs`)
  *    reads `hooks.state` from the User and SessionFlags layers only, so a project
  *    layer could not carry its own trust marker.
@@ -409,12 +407,12 @@ const RELAY_PROOF_TRANSITION_RELAY_INSTALLED_OVERLAY: CodexHookOverlay = {
 const RELAY_PROOF_TRANSITION_OPT_OUT_OVERLAY: CodexHookOverlay = {
   featuresHooks: "absent",
   hooks: {
-    "hooks.PreToolUse": "empty",
-    "hooks.PostToolUse": "empty",
-    "hooks.PermissionRequest": "empty",
-    "hooks.Stop": "empty",
+    "hooks.PreToolUse": "absent",
+    "hooks.PostToolUse": "absent",
+    "hooks.PermissionRequest": "absent",
+    "hooks.Stop": "absent",
   },
-  hookStateDisabled: RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS,
+  hookStateAbsent: true,
 };
 
 /**
@@ -550,11 +548,8 @@ async function runTransitionProofTurns(params: {
         label: `transition ${phase.id}`,
         method: frame.method,
       });
-      // The blast radius, asserted rather than argued: every `hooks.state` key
-      // OpenClaw writes must name its own `<session-flags>` layer. Codex keys hook
-      // state by source path (`hooks/src/lib.rs: hook_key`), so a config that
-      // names no other source path cannot enable, disable, or re-trust a hook from
-      // any other layer — user, project, plugin, or managed — at any index.
+      // SessionFlags is shared with operator CLI hooks. These entries may trust
+      // emitted relay commands, but must never address another native source.
       const hookState = frame.config["hooks.state"];
       const stateKeys =
         hookState && typeof hookState === "object" && !Array.isArray(hookState)
@@ -566,7 +561,7 @@ async function runTransitionProofTurns(params: {
       );
       expect(
         foreignStateKeys,
-        `${phase.id}: OpenClaw addressed hook state outside its own session-flags layer`,
+        `${phase.id}: OpenClaw addressed hook state outside the native SessionFlags source`,
       ).toEqual([]);
       expect(
         frame.config["features.hooks"],
@@ -587,33 +582,27 @@ async function runTransitionProofTurns(params: {
         `${phase.id}: the session rotated to a new native thread; this lane must stay on one thread`,
       ).toBe(boundThreadId);
     }
-    // Execution evidence is only claimable when the app-server ran against the
-    // home this lane owns. When auth routing puts it on the operator's native
-    // `~/.codex` (which this lane must not write to), the independence claim
-    // rests on the wire assertions above instead — and says so, rather than
-    // asserting something the run could not observe.
+    // Configuration alone cannot prove another hook survived. This lane must
+    // use its isolated Codex home and observe the independent hook each phase.
     const codexHome = await usesInstalledHookCodexHome({
       codexHome: params.independentHook.codexHome,
       proofDir: params.proofDir,
     });
     phaseReceipt.codexHomes = codexHome.homes;
     phaseReceipt.independentHookLayerActive = codexHome.matches;
-    if (codexHome.matches) {
-      const hookRunsAfter = await waitForIndependentHookRun({
-        from: hookRunsBefore,
-        markerPath: params.independentHook.markerPath,
-        timeoutMs: INDEPENDENT_HOOK_MARKER_TIMEOUT_MS,
-      });
-      phaseReceipt.independentHookRuns = { before: hookRunsBefore, after: hookRunsAfter };
-      expect(
-        hookRunsAfter,
-        `${phase.id}: the independent user-layer Stop hook did not run during this phase`,
-      ).toBeGreaterThan(hookRunsBefore);
-    } else {
-      phaseReceipt.independentHookRuns = { before: hookRunsBefore, after: hookRunsBefore };
-      phaseReceipt.independentHookNote =
-        "the app-server ran against the operator's native Codex home, which this lane does not write to; the independent hook was installed but not loaded";
-    }
+    expect(codexHome.matches, `${phase.id}: native Codex did not use the isolated hook home`).toBe(
+      true,
+    );
+    const hookRunsAfter = await waitForIndependentHookRun({
+      from: hookRunsBefore,
+      markerPath: params.independentHook.markerPath,
+      timeoutMs: INDEPENDENT_HOOK_MARKER_TIMEOUT_MS,
+    });
+    phaseReceipt.independentHookRuns = { before: hookRunsBefore, after: hookRunsAfter };
+    expect(
+      hookRunsAfter,
+      `${phase.id}: the independent user-layer Stop hook did not run during this phase`,
+    ).toBeGreaterThan(hookRunsBefore);
   }
   (params.receipt.transition as Record<string, unknown>).threadId = boundThreadId;
 }

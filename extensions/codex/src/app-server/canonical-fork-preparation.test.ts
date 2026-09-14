@@ -151,24 +151,11 @@ describe("prepareCanonicalCodexFork native hook relay kill-switch", () => {
     const prepared = await prepareCanonicalCodexFork(forkParams(optOutPluginConfig()));
 
     const config = threadConfigOf(prepared);
-    // No relay hook entries survive: the opt-out overlay clears all four arrays.
-    expect(config["hooks.PreToolUse"]).toEqual([]);
-    expect(config["hooks.PostToolUse"]).toEqual([]);
-    expect(config["hooks.PermissionRequest"]).toEqual([]);
-    expect(config["hooks.Stop"]).toEqual([]);
-    // The overlay leaves the whole Codex hook engine alone; only the relay's own
-    // session-layer commands are pinned disabled.
-    expect(Object.hasOwn(config, "features.hooks")).toBe(false);
-    expect(config["hooks.state"]).toEqual({
-      "/<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "/<session-flags>/config.toml:stop:0:0": { enabled: false },
-      "<session-flags>/config.toml:stop:0:0": { enabled: false },
-    });
+    // Public fork reconstructs CLI + request config; omit both arrays and state
+    // so an operator's native CLI hook configuration is not overwritten.
+    expect(
+      Object.keys(config).filter((key) => key.startsWith("hooks.") || key === "features.hooks"),
+    ).toEqual([]);
     // Nothing is relayed, so managed-only hook attestation has nothing to attest.
     expect(assertCodexNativeHookRelayAllowedMock).not.toHaveBeenCalled();
   });
@@ -184,10 +171,10 @@ describe("prepareCanonicalCodexFork native hook relay kill-switch", () => {
       | Array<{ hooks?: Array<{ command?: string }> }>
       | undefined;
     expect(preToolUse?.[0]?.hooks?.[0]?.command).toContain("--event pre_tool_use");
-    // The floor is exactly `pre_tool_use`; the remaining events stay cleared.
-    expect(config["hooks.PostToolUse"]).toEqual([]);
-    expect(config["hooks.PermissionRequest"]).toEqual([]);
-    expect(config["hooks.Stop"]).toEqual([]);
+    // The floor is exactly `pre_tool_use`; omitted CLI events remain native-owned.
+    expect(config["hooks.PostToolUse"]).toBeUndefined();
+    expect(config["hooks.PermissionRequest"]).toBeUndefined();
+    expect(config["hooks.Stop"]).toBeUndefined();
     // The narrowing installs an enforcing relay, so attestation must stay armed.
     expect(assertCodexNativeHookRelayAllowedMock).toHaveBeenCalledTimes(1);
   });

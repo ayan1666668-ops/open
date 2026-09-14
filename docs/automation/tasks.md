@@ -243,7 +243,7 @@ openclaw tasks cancel <lookup>
 
 For ACP and subagent tasks, this kills the child session; ACP and automation cancellations route through the running Gateway (`tasks.cancel`). Ordinary Gateway-owned CLI tasks also require the owning Gateway to be running. Cancellation aborts only the selected live run and its pending approvals, and reports success only after that run settles as `cancelled`. Background `exec` tasks keep their process-control cancellation path. Delivery notifications are sent when applicable.
 
-Missing, already-terminal, ownerless, or unconfirmed runs do not report a new cancellation success. If a crash or restart removed the live owner, keep the Gateway running so its existing maintenance can reconcile the task as `lost`. Use `openclaw tasks audit` and `openclaw tasks maintenance` to inspect the record; offline maintenance cannot establish Gateway liveness. See [task maintenance](/cli/tasks#maintenance).
+Missing, already-terminal, ownerless, or unconfirmed runs do not report a new cancellation success. On restore, a running task with a recorded local execution process that has exited is marked `cancelled`, with the interruption reason retained. It no longer delays the next Gateway drain. Settling an older task preserves the result of a newer task linked to the same flow. A live matching process remains running. Tasks without a recorded process identity retain normal maintenance grace, including 30 minutes for childless native subagents. Use `openclaw tasks audit` and `openclaw tasks maintenance` to inspect the record; offline maintenance cannot infer Gateway liveness from an empty local run registry. See [task maintenance](/cli/tasks#maintenance).
 
 <a id="tasks-retry-dismiss" />
 
@@ -308,7 +308,7 @@ Use this to preview or apply reconciliation, cleanup stamping, and pruning for t
 
 Reconciliation is runtime-aware:
 
-- ACP tasks require a live in-process turn in the Gateway; subagent tasks check their backing child session.
+- ACP tasks require a live in-process turn in the Gateway. Registry-backed subagent tasks require an owning subagent run, not merely a retained child session. Gateway maintenance marks previously stranded tasks lost when neither a live run nor a current or durable subagent owner remains; standalone CLI checks and failed ownership reads do not establish that absence. Yielded, queued, recovering, and replacement runs retain ownership.
 - Subagent tasks whose child session has a restart-recovery tombstone are marked lost instead of being treated as recoverable backing sessions.
 - Automation tasks check whether the automations runtime still owns the job, then recover terminal status from persisted run logs/job state before falling back to `lost`. Only the Gateway process is authoritative for the in-memory active-job set; offline CLI audit uses durable history but does not mark an automation task lost solely because that local set is empty.
 - CLI tasks with run identity check the owning live run context, not just child-session or chat-session rows. Only Gateway maintenance owns that liveness check; standalone CLI audit and maintenance retain active CLI tasks because their local run registry cannot prove that the Gateway run has ended.

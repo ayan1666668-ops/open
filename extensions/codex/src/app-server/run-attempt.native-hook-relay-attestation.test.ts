@@ -92,8 +92,16 @@ describe("runCodexAppServerAttempt native hook relay attestation", () => {
         | { config?: Record<string, unknown> }
         | undefined
     )?.config;
-    expect(startConfig?.["hooks.PreToolUse"]).toEqual([]);
-    expect(startConfig?.["hooks.PostToolUse"]).toEqual([]);
+    for (const key of [
+      "hooks.PreToolUse",
+      "hooks.PostToolUse",
+      "hooks.PermissionRequest",
+      "hooks.Stop",
+      "hooks.state",
+      "features.hooks",
+    ]) {
+      expect(startConfig ?? {}).not.toHaveProperty([key]);
+    }
   });
 
   it("allows observational hooks under managed-only hook policy", async () => {

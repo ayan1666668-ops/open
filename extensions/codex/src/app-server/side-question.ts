@@ -90,7 +90,6 @@ import { CodexEphemeralTurn } from "./ephemeral-turn.js";
 import { CodexNativeToolLifecycleProjector } from "./event-projector-native-tool-lifecycle.js";
 import {
   buildCodexNativeHookRelayConfig,
-  buildCodexNativeHookRelayOptOutConfig,
   CODEX_NATIVE_HOOK_RELAY_EVENTS,
   emitCodexNativePreToolUseFailureDiagnostic,
   resolveCodexNativeHookRelayForApprovalPolicy,
@@ -735,11 +734,8 @@ export async function runCodexAppServerSideQuestion(
           relay: nativeHookRelay,
           events: nativeHookRelayEvents,
           hookTimeoutSec: guardedNativeHookRelay?.hookTimeoutSec,
-          clearOmittedEvents: true,
         })
-      : guardedNativeHookRelay?.enabled === false
-        ? buildCodexNativeHookRelayOptOutConfig()
-        : undefined;
+      : undefined;
     const runtimeThreadConfig = buildCodexRuntimeThreadConfig(webSearchPlan.threadConfig, {
       nativeCodeModeEnabled: nativeToolSurfaceEnabled,
       nativeCodeModeOnlyEnabled: appServer.codeModeOnly,

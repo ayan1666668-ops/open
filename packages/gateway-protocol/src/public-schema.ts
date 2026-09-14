@@ -187,6 +187,8 @@ export {
   SessionsSearchParamsSchema,
   SessionsSearchResultSchema,
   SessionsCleanupParamsSchema,
+  SessionsStorageParamsSchema,
+  SessionsStorageStatusResultSchema,
   SessionsPreviewParamsSchema,
   SessionsDescribeParamsSchema,
   SessionsResolveCandidateSchema,
@@ -680,3 +682,9 @@ export {
   FsListDirParamsSchema,
   FsListDirResultSchema,
 } from "./schema-modules.js";
+
+export {
+  SessionActivitySummarySchema,
+  SessionsActivitySummaryEnsureParamsSchema,
+  SessionsActivitySummaryEnsureResultSchema,
+} from "./schema/sessions-activity-summary.js";

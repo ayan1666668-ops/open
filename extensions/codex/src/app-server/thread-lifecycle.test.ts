@@ -12,7 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codexCatalogHomeId } from "../session-catalog-home-id.js";
 import { resolveCodexAppServerHomeDir } from "./auth-start-options.js";
 import {
+  claimCodexAppServerLiveThread,
   ensureCodexAppServerClientRuntime,
+  readCodexEphemeralThreadCatalog,
+  readCodexNativeHookInstallation,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
 import { CodexAppServerRpcError } from "./client.js";
@@ -23,6 +26,7 @@ import { buildCodexProjectDocThreadConfig } from "./project-doc-thread-config.js
 import {
   CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
   type CodexDynamicToolFunctionSpec,
+  type CodexDynamicToolSpec,
   type JsonObject,
   isJsonObject,
 } from "./protocol.js";
@@ -64,6 +68,43 @@ type CodexThreadLifecycleTimingLogger = NonNullable<
 
 const PROGRESS_CARD_SYSTEM_PROMPT =
   "During multi-step work, keep your progress card current with the progress_card tool; the user follows it instead of reading the transcript.";
+
+describe("Codex usage attribution", () => {
+  it("labels new OpenClaw threads without rewriting resumed thread attribution", () => {
+    const params = createAttemptParams({ provider: "openai" });
+    const appServer = createAppServerOptions() as never;
+    const start = buildThreadStartParams(params, { appServer, cwd: "/repo", dynamicTools: [] });
+    const resume = buildThreadResumeParams(params, { appServer, threadId: "thread-1" });
+
+    expect(start.threadSource).toBe("openclaw");
+    expect(resume).not.toHaveProperty("threadSource");
+  });
+
+  it.each(["user", "cron", "heartbeat", "manual", "memory", "overflow"] as const)(
+    "preserves the %s run trigger on each new turn",
+    (trigger) => {
+      const params = { ...createAttemptParams({ provider: "openai" }), trigger };
+      const request = buildTurnStartParams(params, {
+        appServer: createAppServerOptions() as never,
+        threadId: "existing-thread",
+        cwd: "/repo",
+      });
+
+      expect(request.turnTrigger).toBe(trigger);
+    },
+  );
+
+  it("does not guess a human trigger when the caller supplied none", () => {
+    const params = { ...createAttemptParams({ provider: "openai" }), trigger: undefined };
+    const request = buildTurnStartParams(params, {
+      appServer: createAppServerOptions() as never,
+      threadId: "existing-thread",
+      cwd: "/repo",
+    });
+
+    expect(request).not.toHaveProperty("turnTrigger");
+  });
+});
 
 describe("Codex incognito thread persistence", () => {
   it("marks only incognito-shaped harness sessions ephemeral", () => {
@@ -3589,7 +3630,7 @@ describe("Codex thread-effective app attestation", () => {
     const params = createThreadLifecycleParams(path.join(tempDir, "session.jsonl"), workspaceDir);
     params.sessionKey = "agent:main:internal-session-effects:incognito-plugin-attestation";
     const abandonClient = vi.fn(async () => undefined);
-    const request = vi.fn(async (method: string, requestParams?: unknown) => {
+    const respond = vi.fn(async (method: string, requestParams?: unknown) => {
       if (method === "config/read") {
         return { config: {}, origins: {}, layers: [] };
       }
@@ -3603,15 +3644,18 @@ describe("Codex thread-effective app attestation", () => {
       if (method === "app/installed") {
         throw new Error("app inventory offline");
       }
-      if (method === "thread/unsubscribe") {
-        return {};
-      }
       throw new Error(`unexpected method: ${method}`);
+    });
+
+    const { client, request } = await createLeasedCodexLifecycleHarness({
+      agentDir: path.join(tempDir, "agent"),
+      respond,
     });
 
     await expect(
       startOrResumeThread({
-        client: { request } as never,
+        client,
+        signal: new AbortController().signal,
         abandonClient,
         params,
         cwd: workspaceDir,
@@ -3636,7 +3680,7 @@ describe("Codex thread-effective app attestation", () => {
     const params = createThreadLifecycleParams(path.join(tempDir, "session.jsonl"), workspaceDir);
     params.sessionKey = "agent:main:internal-session-effects:incognito-plugin-attestation";
     const abandonClient = vi.fn(async () => undefined);
-    const request = vi.fn(async (method: string) => {
+    const respond = vi.fn(async (method: string) => {
       if (method === "config/read") {
         return { config: {}, origins: {}, layers: [] };
       }
@@ -3649,15 +3693,21 @@ describe("Codex thread-effective app attestation", () => {
       if (method === "app/installed") {
         throw new Error("app inventory offline");
       }
-      if (method === "thread/unsubscribe") {
-        throw new Error("unsubscribe unavailable");
-      }
       throw new Error(`unexpected method: ${method}`);
+    });
+
+    const { client, request } = await createLeasedCodexLifecycleHarness({
+      agentDir: path.join(tempDir, "agent"),
+      respond,
+      unsubscribe: () => {
+        throw new Error("unsubscribe unavailable");
+      },
     });
 
     await expect(
       startOrResumeThread({
-        client: { request } as never,
+        client,
+        signal: new AbortController().signal,
         abandonClient,
         params,
         cwd: workspaceDir,
@@ -3979,6 +4029,152 @@ describe("Codex app-server supervised branch lifecycle", () => {
     vi.restoreAllMocks();
   });
 
+  it.for(["off", "on", "narrow", "matcher", "inherit", "clear", "unchanged"])(
+    "preserves the created incognito supervision hook installation on %s",
+    async (change, { signal }) => {
+      const sourceThreadId = "thread-source";
+      const probeThreadId = "thread-probe";
+      const finalThreadId = "thread-final";
+      const workspaceDir = path.join(tempDir, "workspace");
+      const attempt = createThreadLifecycleParams(
+        path.join(tempDir, "session.jsonl"),
+        workspaceDir,
+      );
+      attempt.agentDir = path.join(tempDir, "agent");
+      attempt.sessionKey = "agent:main:dashboard:incognito-supervision-hooks";
+      const identity = await seedPendingSupervisionBinding({
+        attempt,
+        cwd: workspaceDir,
+        pending: { sourceThreadId },
+      });
+      const request = createSupervisedCommitRequest({
+        sourceThreadId,
+        probeThreadId,
+        finalThreadId,
+      });
+      const initial =
+        change === "on"
+          ? "off"
+          : change === "inherit"
+            ? "clear"
+            : change === "clear"
+              ? "inherit"
+              : "all";
+      let selected = initial;
+      let generation = 0;
+      const activate = vi.fn(async () => undefined);
+      const dynamicTools: CodexDynamicToolSpec[] = [
+        {
+          type: "namespace",
+          name: "creation_probe",
+          description: "Creation-owned test declarations",
+          tools: [{ type: "function", name: "probe", description: "Probe", inputSchema: {} }],
+        },
+      ];
+      const buildFinalConfigPatch = vi.fn(() => {
+        const nativeHookRelayGeneration = `creation-${++generation}`;
+        const hook = [
+          {
+            matcher: selected === "matcher" ? "Write" : "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: `relay --generation ${nativeHookRelayGeneration}`,
+                timeout: 10,
+                async: false,
+              },
+            ],
+          },
+        ];
+        return {
+          nativeHookRelayGeneration,
+          activate,
+          configPatch:
+            selected === "off"
+              ? {}
+              : {
+                  "features.hooks": true,
+                  "hooks.PreToolUse": hook,
+                  ...(selected === "all"
+                    ? { "hooks.Stop": hook }
+                    : selected === "clear"
+                      ? { "hooks.Stop": [] }
+                      : {}),
+                },
+        };
+      });
+      await withLeasedCodexTestClient({
+        agentDir: attempt.agentDir,
+        request,
+        run: async (client) => {
+          const common = {
+            client,
+            signal,
+            params: attempt,
+            cwd: workspaceDir,
+            dynamicTools,
+            appServer: createThreadLifecycleAppServerOptions(),
+            userMcpServersEnabled: false,
+            buildFinalConfigPatch,
+          };
+          const first = await startOrResumeThread(common);
+          expect(first.threadId).toBe(finalThreadId);
+          expect(request.mock.calls.map(([method]) => method)).toEqual([
+            "config/read",
+            "configRequirements/read",
+            "thread/read",
+            "thread/fork",
+            "thread/unsubscribe",
+            "thread/start",
+          ]);
+          expect(
+            request.mock.calls.find(([method]) => method === "thread/start")?.[1],
+          ).toMatchObject({ ephemeral: true });
+          expect(readCodexNativeHookInstallation(client, sourceThreadId)).toBeUndefined();
+          expect(readCodexNativeHookInstallation(client, probeThreadId)).toBeUndefined();
+          expect(readCodexEphemeralThreadCatalog(client, sourceThreadId)).toBeUndefined();
+          expect(readCodexEphemeralThreadCatalog(client, probeThreadId)).toBeUndefined();
+          expect(readCodexEphemeralThreadCatalog(client, finalThreadId)).toEqual(dynamicTools);
+          const installed = readCodexNativeHookInstallation(client, finalThreadId);
+          expect(installed).toBeDefined();
+          const before = testCodexAppServerBindingStore.read(identity);
+          const child = await claimCodexAppServerLiveThread(client, "retained-child");
+          expect(child).toBeDefined();
+          const close = vi.spyOn(client, "close");
+          request.mockClear();
+          selected = change === "on" ? "all" : change === "unchanged" ? initial : change;
+          if (change !== "unchanged") {
+            await expect(startOrResumeThread(common)).rejects.toThrow(
+              "Restore the previous relay configuration",
+            );
+            expect(activate).toHaveBeenCalledTimes(1);
+            expect(request.mock.calls.map(([method]) => method)).toEqual([
+              "config/read",
+              "configRequirements/read",
+            ]);
+            expect(close).not.toHaveBeenCalled();
+            expect(testCodexAppServerBindingStore.read(identity)).toEqual(before);
+            expect(readCodexNativeHookInstallation(client, finalThreadId)).toBe(installed);
+            expect(() => child!.assertCurrent()).not.toThrow();
+          }
+          request.mockClear();
+          selected = initial;
+          const restored = await startOrResumeThread(common);
+          expect(restored.threadId).toBe(finalThreadId);
+          expect(activate).toHaveBeenCalledTimes(2);
+          expect(request.mock.calls.map(([method]) => method)).toEqual([
+            "config/read",
+            "configRequirements/read",
+          ]);
+          expect(close).not.toHaveBeenCalled();
+          expect(readCodexNativeHookInstallation(client, finalThreadId)).toBe(installed);
+          expect(() => child!.assertCurrent()).not.toThrow();
+          await child!.release("retained-child");
+        },
+      });
+    },
+  );
+
   it.each([
     { incognito: false, fault: "none" },
     { incognito: true, fault: "none" },
@@ -4011,6 +4207,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
       const before = structuredClone(source);
       const subscriptions = new Set([sourceThreadId]);
       const harness = createClientHarness();
+      ensureCodexAppServerClientRuntime(harness.client, { agentDir: attempt.agentDir });
       const controller = new AbortController();
       const abandonClient = vi.fn(async () => {
         harness.client.close();

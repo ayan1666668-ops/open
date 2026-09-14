@@ -9,10 +9,8 @@ import type {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolvePluginConfigObject } from "openclaw/plugin-sdk/plugin-config-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
-// Static import of the parse leaf is safe for plugin discovery: the plugin entry
-// (index.ts) already imports ./src/app-server/config-parsing.js eagerly, while the
-// ./src/app-server/config.js barrel would pull the app-server runtime graph into
-// registration (registration-imports.test.ts pins that boundary).
+import { CODEX_NATIVE_TOOL_REQUIREMENTS } from "./native-tool-policy.js";
+// The parse leaf is already loaded by plugin discovery; the config barrel loads runtime code.
 import { resolveCodexAppServerNativeHookRelay } from "./src/app-server/config-parsing.js";
 import { readCodexRuntimeModelId } from "./src/app-server/model-runtime.js";
 import { sessionBindingIdentity } from "./src/app-server/session-binding-record.js";
@@ -121,6 +119,7 @@ export function createCodexAppServerAgentHarness(
     contextEngineHostCapabilities: CODEX_APP_SERVER_CONTEXT_ENGINE_HOST_CAPABILITIES,
     conversationToolPolicySupport: "exact",
     conversationToolPolicySafeDenyTools: CODEX_TOOL_POLICY_SAFE_DENY_NAMES,
+    conversationToolPolicyNativeTools: CODEX_NATIVE_TOOL_REQUIREMENTS,
     deliveryDefaults: {
       visibleReplies: "message_tool",
     },

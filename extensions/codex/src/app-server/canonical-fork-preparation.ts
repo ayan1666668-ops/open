@@ -27,7 +27,6 @@ import {
   assertCodexNativeHookRelayAllowed,
   buildCodexNativeHookRelayConfig,
   buildCodexNativeHookRelayId,
-  buildCodexNativeHookRelayOptOutConfig,
   resolveCodexNativeHookRelayEvents,
   resolveCodexNativeHookRelayForApprovalPolicy,
 } from "./native-hook-relay.js";
@@ -281,9 +280,7 @@ export async function prepareCanonicalCodexFork(params: {
       userMcp,
       apps?.configPatch,
       appServer.networkProxy?.configPatch,
-      nativeHookRelayOptedOut
-        ? buildCodexNativeHookRelayOptOutConfig()
-        : buildCodexNativeHookRelayConfig({ relay, events, clearOmittedEvents: true }),
+      nativeHookRelayOptedOut ? undefined : buildCodexNativeHookRelayConfig({ relay, events }),
     ),
     nativeSkillIsolation,
   );

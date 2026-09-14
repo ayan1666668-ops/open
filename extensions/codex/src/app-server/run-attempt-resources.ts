@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   embeddedAgentLog,
   runAgentCleanupStep,
@@ -12,9 +13,9 @@ import { resolveCodexToolAbortTerminalReason } from "./dynamic-tool-execution.js
 import { CodexAppServerEventProjector } from "./event-projector.js";
 import { buildCodexHookRequester } from "./hook-requester.js";
 import {
+  buildCodexNativeHookRelayCommandPlan,
   buildCodexNativeHookRelayDisabledConfig,
   buildCodexNativeHookRelayConfig,
-  buildCodexNativeHookRelayOptOutConfig,
   CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS,
   createCodexNativeHookRelay,
   emitCodexNativePreToolUseFailureDiagnostic,
@@ -35,6 +36,7 @@ import {
   createIsolatedCodexAppServerClient,
   retainSharedCodexAppServerClientIfCurrent,
 } from "./shared-client.js";
+import type { CodexThreadFinalConfigPatchResult } from "./thread-lifecycle-types.js";
 import type { CodexAppServerThreadLifecycleBinding } from "./thread-lifecycle.js";
 import { createCodexTrajectoryRecorder } from "./trajectory.js";
 import type { CodexAppServerTurnRouter, CodexThreadRouteReservation } from "./turn-router.js";
@@ -273,22 +275,14 @@ export function prepareCodexAttemptResources(prompt: CodexAttemptPrompt) {
   const requester = buildCodexHookRequester(params);
   const buildNativeHookRelayFinalConfigPatch = async (
     decision: { action: "resume"; binding: CodexAppServerThreadBinding } | { action: "start" },
-  ) => {
-    const previousRelay = state.nativeHookRelay;
-    previousRelay?.unregister();
-    await previousRelay?.drain();
+  ): Promise<CodexThreadFinalConfigPatchResult> => {
     connection.assertCurrent();
-    if (params.pluginHarnessToolPolicyRestricted === true) {
-      state.nativeHookRelay = undefined;
-      return {
-        configPatch: buildCodexNativeHookRelayDisabledConfig(),
-        nativeHookRelayGeneration: undefined,
-      };
-    }
-    state.nativeHookRelay = createCodexNativeHookRelay({
+    const generation =
+      (decision.action === "resume" ? decision.binding.nativeHookRelayGeneration : undefined) ??
+      randomUUID();
+    const relayParams: Parameters<typeof createCodexNativeHookRelay>[0] = {
       options: guardedNativeHookRelay,
-      generation:
-        decision.action === "resume" ? decision.binding.nativeHookRelayGeneration : undefined,
+      generation,
       generationMismatchGraceMs:
         decision.action === "resume" && !decision.binding.nativeHookRelayGeneration
           ? CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS
@@ -328,20 +322,34 @@ export function prepareCodexAttemptResources(prompt: CodexAttemptPrompt) {
           pendingNativePreToolUseFailures.push(failure);
         }
       },
-    });
-    await state.nativeHookRelay?.prepareInvocation();
-    connection.assertCurrent();
-    return {
-      configPatch: state.nativeHookRelay
+    };
+    const restricted = params.pluginHarnessToolPolicyRestricted === true;
+    const enabled = !restricted && guardedNativeHookRelay?.enabled !== false;
+    // Native start/cold resume rebuild CLI + request config, so opt-out omits our
+    // overlay without clearing operator hooks. Live incognito must reject changes
+    // before the previous relay or its retained children are touched.
+    const configPatch = restricted
+      ? buildCodexNativeHookRelayDisabledConfig()
+      : enabled
         ? buildCodexNativeHookRelayConfig({
-            relay: state.nativeHookRelay,
+            relay: buildCodexNativeHookRelayCommandPlan({ ...relayParams, generation }),
             events: nativeHookRelayEvents,
             hookTimeoutSec: guardedNativeHookRelay?.hookTimeoutSec,
           })
-        : guardedNativeHookRelay?.enabled === false
-          ? buildCodexNativeHookRelayOptOutConfig()
-          : undefined,
-      nativeHookRelayGeneration: state.nativeHookRelay?.generation,
+        : {};
+    return {
+      configPatch,
+      nativeHookRelayGeneration: enabled ? generation : undefined,
+      activate: async () => {
+        connection.assertCurrent();
+        const previousRelay = state.nativeHookRelay;
+        previousRelay?.unregister();
+        await previousRelay?.drain();
+        connection.assertCurrent();
+        state.nativeHookRelay = restricted ? undefined : createCodexNativeHookRelay(relayParams);
+        await state.nativeHookRelay?.prepareInvocation();
+        connection.assertCurrent();
+      },
     };
   };
   return {

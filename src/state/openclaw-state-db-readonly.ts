@@ -3,22 +3,20 @@ import { statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
-import { clearNodeSqliteKyselyCacheForDatabase } from "../infra/kysely-sync-cache-state.js";
-import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import { SqliteCoordinatorError } from "../infra/sqlite-coordinator.js";
+import type { PreparedSqliteReadOnlyLocation } from "../infra/sqlite-readonly-location.types.js";
 import {
   prepareSqliteReadOnlyLocation,
   prepareSqliteReadOnlyLocationSync,
 } from "../infra/sqlite-snapshot-source.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { openClawStateDatabaseCache } from "./openclaw-state-db-cache.js";
-import {
-  OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
-  type OpenClawStateDatabaseOptions,
-  type OpenClawStateDatabase,
+import type {
+  OpenClawStateDatabaseOptions,
+  OpenClawStateDatabase,
 } from "./openclaw-state-db-contract.js";
 import { openDanglingWorkshopIndexReadAdmission } from "./openclaw-state-db-dangling-workshop-index.js";
-import { openTrackedStateDatabase } from "./openclaw-state-db-handle.js";
+import { openOpenClawStateReadConnection } from "./openclaw-state-db-read-connection.js";
 import { assertSupportedStateSchemaVersion } from "./openclaw-state-db-schema-version.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
 
@@ -26,6 +24,82 @@ const artifactPreservingReads = resolveGlobalSingleton(
   Symbol.for("openclaw.artifactPreservingStateReads"),
   () => new AsyncLocalStorage<boolean>(),
 );
+
+const disposableStateReads = resolveGlobalSingleton(
+  Symbol.for("openclaw.disposableStateReads"),
+  () => new AsyncLocalStorage<{ path: string; active: boolean }[]>(),
+);
+
+const stateSnapshotReads = resolveGlobalSingleton(
+  Symbol.for("openclaw.stateSnapshotReads"),
+  () =>
+    new AsyncLocalStorage<{
+      path: string;
+      location: string;
+      env: NodeJS.ProcessEnv;
+      active: boolean;
+    }>(),
+);
+
+/** Resolve a composite read from one online snapshot without redirecting live writers. */
+export async function withOpenClawStateDatabaseReadSnapshot<T>(
+  operation: () => Promise<T>,
+  options: OpenClawStateDatabaseOptions = {},
+): Promise<T> {
+  const pathname = resolveReadOnlyPath(options);
+  const current = stateSnapshotReads.getStore();
+  if ((current?.active && current.path === pathname) || !existingPathOrUndefined(pathname)) {
+    return await operation();
+  }
+  const env = options.env ?? process.env;
+  openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
+  let prepared: PreparedSqliteReadOnlyLocation;
+  try {
+    prepared = await prepareSqliteReadOnlyLocation(pathname, {
+      preserveSourceArtifacts: isArtifactPreservingStateRead(),
+    });
+  } catch (error) {
+    throw new Error(
+      `Cannot read shared state for discovery: ${pathname}. Retry after the current state operation completes. ${String(error)}`,
+      { cause: error },
+    );
+  }
+  const scope = { path: pathname, location: prepared.location, env, active: true };
+  await using _ = {
+    async [Symbol.asyncDispose]() {
+      scope.active = false;
+      if (!(await prepared.cleanupAsync())) {
+        throw new Error(`Shared-state discovery snapshot cleanup failed: ${pathname}`);
+      }
+    },
+  };
+  openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
+  return await stateSnapshotReads.run(scope, operation);
+}
+
+/** The caller owns this private database and removes its files after the scope closes. */
+export async function withDisposableOpenClawStateReads<T>(
+  pathname: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const scope = { path: path.resolve(pathname), active: true };
+  try {
+    return await disposableStateReads.run(
+      [...(disposableStateReads.getStore() ?? []), scope],
+      operation,
+    );
+  } finally {
+    // Async descendants can retain the context after its owner starts cleanup.
+    scope.active = false;
+  }
+}
+
+function requiresArtifactPreservingSnapshot(pathname: string): boolean {
+  return (
+    isArtifactPreservingStateRead() &&
+    !disposableStateReads.getStore()?.some((scope) => scope.active && scope.path === pathname)
+  );
+}
 
 /** Admission scopes every nested reader without changing normal live-read semantics. */
 export function withArtifactPreservingStateReads<T>(operation: () => T): T {
@@ -74,6 +148,17 @@ function withOpenClawStateDatabaseReadOnlyIfOpen<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   pathname: string,
 ): ReusedOpenClawStateReadOnlyDatabase<T> {
+  const snapshot = stateSnapshotReads.getStore();
+  if (snapshot?.active && snapshot.path === pathname) {
+    openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(
+      pathname,
+      snapshot.env,
+    );
+    return {
+      reused: true,
+      value: withOpenClawStateReadOnlyLocation(operation, pathname, snapshot.location),
+    };
+  }
   const opened = openClawStateDatabaseCache.getOpenClawStateDatabaseIfOpenAtPath(pathname);
   if (!opened || opened.db.isTransaction) {
     return { reused: false };
@@ -105,23 +190,18 @@ function withFreshOpenClawStateDatabaseReadOnly<T>(
   openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
   // Even read-only SQLite opens can create a missing WAL. The existing worker
   // snapshots committed WAL pages without touching source sidecars or caller-held locks.
-  const prepared = isArtifactPreservingStateRead()
+  const prepared = requiresArtifactPreservingSnapshot(pathname)
     ? prepareSqliteReadOnlyLocationSync(pathname)
     : undefined;
-  try {
-    return withOpenClawStateReadOnlyLocation(operation, pathname, prepared?.location ?? pathname);
-  } finally {
-    prepared?.cleanup();
-  }
+  return withOpenClawStateReadOnlyLocation(operation, pathname, prepared ?? pathname);
 }
 
-function openOpenClawStateReadOnlyLocation(pathname: string, location: string) {
-  // Install the busy handler before legacy catalog admission reads sqlite_schema.
-  const options = { readOnly: true, timeout: OPENCLAW_SQLITE_BUSY_TIMEOUT_MS };
-  const liveSource = location === pathname;
-  const db = liveSource
-    ? openTrackedStateDatabase(pathname, options)
-    : openNodeSqliteDatabase(location, options);
+function openOpenClawStateReadOnlyLocation(
+  pathname: string,
+  source: string | PreparedSqliteReadOnlyLocation,
+) {
+  const connection = openOpenClawStateReadConnection(pathname, source);
+  const { db } = connection.database;
   let closeSchemaReadAdmission: (() => void) | undefined;
   const close = () => {
     const errors: unknown[] = [];
@@ -130,17 +210,10 @@ function openOpenClawStateReadOnlyLocation(pathname: string, location: string) {
     } catch (error) {
       errors.push(error);
     }
-    if (liveSource) {
-      errors.push(
-        ...openClawStateDatabaseCache.closeOpenClawStateDatabaseHandle({ db, path: pathname }),
-      );
-    } else {
-      try {
-        clearNodeSqliteKyselyCacheForDatabase(db);
-        db.close();
-      } catch (error) {
-        errors.push(error);
-      }
+    try {
+      connection.close();
+    } catch (error) {
+      errors.push(error);
     }
     if (errors.length === 1) {
       throw errors[0];
@@ -156,17 +229,18 @@ function openOpenClawStateReadOnlyLocation(pathname: string, location: string) {
     close();
     throw error;
   }
-  return { database: { db, path: pathname }, close };
+  return { database: connection.database, close };
 }
 
 function withOpenClawStateReadOnlyLocation<T>(
   operation: (database: OpenClawStateReadOnlyDatabase) => T,
   pathname: string,
-  location: string,
+  source: string | PreparedSqliteReadOnlyLocation,
 ): T {
-  const opened = openOpenClawStateReadOnlyLocation(pathname, location);
+  const opened = openOpenClawStateReadOnlyLocation(pathname, source);
   try {
     const result = operation(opened.database);
+    const location = typeof source === "string" ? source : source.location;
     if (location === pathname && isPromiseLike(result)) {
       throw new SqliteCoordinatorError("SQLite source read must remain synchronous");
     }
@@ -266,15 +340,19 @@ export function withExistingOpenClawStateDatabaseArtifactPreservingReadOnlyAsync
     }
     const env = options.env ?? process.env;
     openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
+    if (!requiresArtifactPreservingSnapshot(pathname)) {
+      return withOpenClawStateReadOnlyLocation(operation, pathname, pathname);
+    }
     const prepared = await prepareSqliteReadOnlyLocation(pathname, {
       preserveSourceArtifacts: true,
     });
     try {
       // Verification can quarantine the live path while the snapshot child is running.
       openClawStateDatabaseCache.assertOpenClawStateDatabaseFreshOpenAllowedAtPath(pathname, env);
-      return withOpenClawStateReadOnlyLocation(operation, pathname, prepared.location);
-    } finally {
+    } catch (error) {
       prepared.cleanup();
+      throw error;
     }
+    return withOpenClawStateReadOnlyLocation(operation, pathname, prepared);
   });
 }

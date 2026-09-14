@@ -1,15 +1,18 @@
 import { AgentHarnessPreflightError } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { readCodexNativeHookInstallation } from "./client-runtime.js";
 import {
   isCodexAppServerOverloadError,
   isCodexAppServerPrewriteRequestCancellationError,
   type CodexAppServerClient,
 } from "./client.js";
+import type { JsonObject } from "./protocol.js";
 import type { CodexThread } from "./protocol.js";
 import {
   CodexAppServerScopedRequestRejectedError,
   requestCodexAppServerClientJson,
 } from "./request.js";
 import type { CodexAppServerThreadBinding } from "./session-binding.js";
+import { fingerprintCodexNativeHookInstallation } from "./thread-fingerprints.js";
 
 /** A refusal, not a failed native write: the ephemeral conversation must stay alive. */
 export class CodexIncognitoPolicyChangeError extends AgentHarnessPreflightError {
@@ -18,6 +21,24 @@ export class CodexIncognitoPolicyChangeError extends AgentHarnessPreflightError 
       "Codex cannot change generic instructions in a live incognito conversation. No turn was sent and the conversation is preserved. Restore the previous instructions to continue it, or start a new incognito conversation for the changed policy.",
     );
     this.name = "CodexIncognitoPolicyChangeError";
+  }
+}
+
+/** A loaded incognito thread cannot replace native hooks through turn/start or resume. */
+export function assertCodexIncognitoHookInstallation(
+  client: CodexAppServerClient,
+  threadId: string,
+  config: JsonObject | undefined,
+  generation?: string,
+): void {
+  const installed = readCodexNativeHookInstallation(client, threadId);
+  if (
+    installed === undefined ||
+    installed !== fingerprintCodexNativeHookInstallation(config, generation)
+  ) {
+    throw new AgentHarnessPreflightError(
+      "Codex cannot change native hook relay configuration in a live incognito conversation. No turn was sent and the conversation is preserved. Restore the previous relay configuration to continue it, or start a new incognito conversation for the changed configuration.",
+    );
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
@@ -181,9 +181,9 @@ describe("AppSidebar session ownership", () => {
     expect(carolChip?.textContent?.trim()).toBe("C");
   });
 
-  it("derives owner initials from agent labels and whole grapheme clusters", async () => {
+  it("uses agent faces while preserving human owner grapheme initials", async () => {
     for (const { type, label, expected } of [
-      { type: "agent" as const, label: "Roboclaw", expected: "R" },
+      { type: "agent" as const, label: "Roboclaw", expected: null },
       { type: "human" as const, label: "🦞小明", expected: "🦞" },
       { type: "human" as const, label: "👨‍👩‍👧‍👦Family", expected: "👨‍👩‍👧‍👦" },
     ]) {
@@ -210,7 +210,13 @@ describe("AppSidebar session ownership", () => {
       const chip = sidebar.querySelector(
         '[data-session-key="agent:main:lobster"] .session-owner-chip',
       );
-      expect(chip?.textContent?.trim()).toBe(expected);
+      if (type === "agent") {
+        await vi.waitFor(() =>
+          expect(chip?.querySelector(".identity-avatar__agent-face")).not.toBeNull(),
+        );
+      } else {
+        expect(chip?.textContent?.trim()).toBe(expected);
+      }
     }
   });
 
@@ -436,7 +442,7 @@ describe("AppSidebar session ownership", () => {
     },
   );
 
-  it("renders no ownership chrome when the listed sessions have fewer than two owners", async () => {
+  it("renders no ownership chrome when owners and participants resolve to one identity", async () => {
     const gateway = createGatewayHarness({} as GatewayBrowserClient);
     gateway.publish({
       selfUser: {
@@ -456,6 +462,8 @@ describe("AppSidebar session ownership", () => {
     }
     for (const row of result.sessions) {
       setEffectiveOwner(row, { type: "human", id: "profile-ada", label: "Ada" });
+      row.participants = [{ identity: { type: "profile", id: "profile-ada" }, label: "Ada" }];
+      row.participantCount = 1;
     }
     const { sidebar } = await mountSidebar(gateway.gateway, harness.sessions);
     harness.publishList({ result, agentId: "main" });
@@ -609,7 +617,16 @@ describe("AppSidebar session ownership", () => {
         ?.querySelector(".sidebar-recent-sessions__head")
         ?.getAttribute("draggable"),
     ).toBe("false");
-    expect(ownerSections()[0]?.querySelector(".sidebar-session-group-actions")).toBeNull();
+    // Derived person sections carry no stored-group menu; the only header action
+    // is the owner filter, which reuses the group-actions reveal styling.
+    expect(
+      ownerSections()[0]?.querySelector('.sidebar-session-group-actions[aria-haspopup="menu"]'),
+    ).toBeNull();
+    expect(
+      ownerSections()[0]
+        ?.querySelector(".sidebar-session-person-filter")
+        ?.getAttribute("aria-label"),
+    ).toBe("Show only Zoe");
 
     gateway.publish({ hello: null });
     await sidebar.updateComplete;

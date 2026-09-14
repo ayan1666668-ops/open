@@ -2339,7 +2339,7 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(config?.["features.hooks"]).toBe(true);
     expect(config?.["features.code_mode"]).toBe(true);
     expect(config?.["features.code_mode_only"]).toBe(false);
-    expect(config?.["hooks.PermissionRequest"]).toEqual([]);
+    expect(config?.["hooks.PermissionRequest"]).toBeUndefined();
     const preToolUseHooks = config?.["hooks.PreToolUse"] as
       | Array<{ hooks?: Array<{ command?: string; timeout?: number; type?: string }> }>
       | undefined;
@@ -2354,7 +2354,7 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(preToolUseState?.enabled).toBe(true);
     expect(preToolUseState?.trusted_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
     const permissionRequestState = codexHookStateForEvent(hookState, "permission_request");
-    expect(permissionRequestState).toEqual({ enabled: false });
+    expect(permissionRequestState).toBeUndefined();
     const turnStartCall = client.request.mock.calls.find(([method]) => method === "turn/start");
     expect(turnStartCall?.[1]).not.toHaveProperty("config");
     expect(relayIdDuringFork).toBeDefined();
@@ -2393,7 +2393,7 @@ describe("runCodexAppServerSideQuestion", () => {
     const hookState = config?.["hooks.state"] as
       | Record<string, { enabled?: unknown; trusted_hash?: unknown }>
       | undefined;
-    expect(codexHookStateForEvent(hookState, "pre_tool_use")).toEqual({ enabled: false });
+    expect(codexHookStateForEvent(hookState, "pre_tool_use")).toBeUndefined();
   });
 
   it("forwards side-thread command approvals through the active native hook relay", async () => {
@@ -2566,19 +2566,19 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(codexHookCommand(config, "hooks.PermissionRequest")?.command).toContain(
       "--event permission_request",
     );
-    expect(config?.["hooks.PreToolUse"]).toEqual([]);
-    expect(config?.["hooks.PostToolUse"]).toEqual([]);
-    expect(config?.["hooks.Stop"]).toEqual([]);
+    expect(config?.["hooks.PreToolUse"]).toBeUndefined();
+    expect(config?.["hooks.PostToolUse"]).toBeUndefined();
+    expect(config?.["hooks.Stop"]).toBeUndefined();
     const hookState = config?.["hooks.state"] as
       | Record<string, { enabled?: unknown; trusted_hash?: unknown }>
       | undefined;
     expect(codexHookStateForEvent(hookState, "permission_request")?.enabled).toBe(true);
-    expect(codexHookStateForEvent(hookState, "pre_tool_use")).toEqual({ enabled: false });
-    expect(codexHookStateForEvent(hookState, "post_tool_use")).toEqual({ enabled: false });
-    expect(codexHookStateForEvent(hookState, "stop")).toEqual({ enabled: false });
+    expect(codexHookStateForEvent(hookState, "pre_tool_use")).toBeUndefined();
+    expect(codexHookStateForEvent(hookState, "post_tool_use")).toBeUndefined();
+    expect(codexHookStateForEvent(hookState, "stop")).toBeUndefined();
   });
 
-  it("sends clearing native hook config when side-thread relay is disabled", async () => {
+  it("omits native hook overlays when side-thread relay is disabled", async () => {
     // The full kill-switch needs an effective approval policy of "never". The fork
     // policy is resolved from the app-server runtime options, not from the bound
     // thread's recorded policy, so pin it in plugin config.
@@ -2600,27 +2600,14 @@ describe("runCodexAppServerSideQuestion", () => {
       "features.code_mode_only": false,
       "features.shell_tool": true,
       "features.apply_patch_streaming_events": true,
-      "hooks.PreToolUse": [],
-      "hooks.PostToolUse": [],
-      "hooks.PermissionRequest": [],
-      "hooks.Stop": [],
     });
-    // The opt-out clears the relay's own hooks only. Disabling `features.hooks`
-    // would also suppress independent user, project, plugin, and managed Codex
-    // hooks, so the key stays untouched.
-    expect(Object.hasOwn(config ?? {}, "features.hooks")).toBe(false);
-    // Disabled state markers keep lower-precedence copies of the injected
-    // session-layer commands from being layered back in during discovery.
-    expect(config?.["hooks.state"]).toEqual({
-      "/<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:pre_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "<session-flags>/config.toml:post_tool_use:0:0": { enabled: false },
-      "/<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "<session-flags>/config.toml:permission_request:0:0": { enabled: false },
-      "/<session-flags>/config.toml:stop:0:0": { enabled: false },
-      "<session-flags>/config.toml:stop:0:0": { enabled: false },
-    });
+    // Public fork rebuilds native configuration without the parent's per-thread
+    // overlay. Leave operator hook arrays and trust state untouched.
+    expect(
+      Object.keys(config ?? {}).filter(
+        (key) => key.startsWith("hooks.") || key === "features.hooks",
+      ),
+    ).toEqual([]);
   });
 
   it("retains the before-tool policy relay for a side thread under an explicit never", async () => {
@@ -2670,16 +2657,16 @@ describe("runCodexAppServerSideQuestion", () => {
       expect(codexHookCommand(config, "hooks.PreToolUse")?.command).toContain(
         "--event pre_tool_use",
       );
-      expect(config?.["hooks.PostToolUse"]).toEqual([]);
-      expect(config?.["hooks.PermissionRequest"]).toEqual([]);
-      expect(config?.["hooks.Stop"]).toEqual([]);
+      expect(config?.["hooks.PostToolUse"]).toBeUndefined();
+      expect(config?.["hooks.PermissionRequest"]).toBeUndefined();
+      expect(config?.["hooks.Stop"]).toBeUndefined();
       const hookState = config?.["hooks.state"] as
         | Record<string, { enabled?: unknown }>
         | undefined;
       expect(codexHookStateForEvent(hookState, "pre_tool_use")?.enabled).toBe(true);
-      expect(codexHookStateForEvent(hookState, "post_tool_use")).toEqual({ enabled: false });
-      expect(codexHookStateForEvent(hookState, "permission_request")).toEqual({ enabled: false });
-      expect(codexHookStateForEvent(hookState, "stop")).toEqual({ enabled: false });
+      expect(codexHookStateForEvent(hookState, "post_tool_use")).toBeUndefined();
+      expect(codexHookStateForEvent(hookState, "permission_request")).toBeUndefined();
+      expect(codexHookStateForEvent(hookState, "stop")).toBeUndefined();
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("narrowed to events [pre_tool_use]"),
         expect.objectContaining({ approvalPolicy: "on-request" }),

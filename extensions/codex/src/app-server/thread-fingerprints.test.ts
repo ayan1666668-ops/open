@@ -3,6 +3,7 @@ import type { CodexDynamicToolFunctionSpec, JsonObject } from "./protocol.js";
 import {
   codexDynamicToolsFingerprint,
   fingerprintCodexThreadConfig,
+  fingerprintCodexNativeHookInstallation,
   fingerprintUserMcpServersConfigPatch,
   readActiveCodexTurnIdsFromResume,
 } from "./thread-fingerprints.js";
@@ -210,5 +211,66 @@ describe("readActiveCodexTurnIdsFromResume", () => {
         thread: { turns: [{ id: "legacy", status: "inProgress" }] },
       }),
     ).toEqual(["legacy"]);
+  });
+});
+
+describe("native hook installation identity", () => {
+  const config = (generation: string, matcher = "Bash", timeout = 10): JsonObject => ({
+    "features.hooks": true,
+    "hooks.PreToolUse": [
+      {
+        matcher,
+        hooks: [
+          { type: "command", command: `relay --generation ${generation}`, timeout, async: false },
+        ],
+      },
+    ],
+    "hooks.state": { source: { enabled: true, trusted_hash: generation } },
+  });
+
+  it("renews authority without changing the creation-owned installation", () => {
+    expect(fingerprintCodexNativeHookInstallation(config("first"), "first")).toBe(
+      fingerprintCodexNativeHookInstallation(config("second"), "second"),
+    );
+  });
+
+  it.each(["PreToolUse", "PostToolUse", "PermissionRequest", "Stop"])(
+    "distinguishes inherited CLI %s hooks from an explicitly cleared event",
+    (event) => {
+      const inherited = { "features.hooks": true };
+      const cleared = { ...inherited, [`hooks.${event}`]: [] };
+      expect(fingerprintCodexNativeHookInstallation(cleared)).not.toBe(
+        fingerprintCodexNativeHookInstallation(inherited),
+      );
+      expect(fingerprintCodexNativeHookInstallation(cleared)).toBe(
+        fingerprintCodexNativeHookInstallation({ ...inherited, hooks: { [event]: [] } }),
+      );
+    },
+  );
+
+  it("distinguishes event, matcher, timeout and command owner changes", () => {
+    const original = config("generation");
+    const fingerprint = fingerprintCodexNativeHookInstallation(original, "generation");
+    for (const changed of [
+      { ...original, "hooks.PreToolUse": [] },
+      { ...original, "hooks.Stop": original["hooks.PreToolUse"]! },
+      config("generation", "Write"),
+      config("generation", "Bash", 11),
+      {
+        ...original,
+        "hooks.PreToolUse": [{ hooks: [{ type: "command", command: "other-owner" }] }],
+      },
+    ]) {
+      expect(fingerprintCodexNativeHookInstallation(changed, "generation")).not.toBe(fingerprint);
+    }
+  });
+
+  it("treats the restricted final hook feature as inactive despite residual overlays", () => {
+    expect(
+      fingerprintCodexNativeHookInstallation(
+        { ...config("first"), "features.hooks": false, hooks: { PreToolUse: [] } },
+        "first",
+      ),
+    ).toBe(fingerprintCodexNativeHookInstallation({ "features.hooks": false }));
   });
 });

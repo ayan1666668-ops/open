@@ -11,7 +11,10 @@ import {
   isCodexAppServerUnsafeSubscriptionError,
   unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
-import { unsubscribeCodexAppServerLiveThread } from "./client-runtime.js";
+import {
+  recordCodexEphemeralThreadCreation,
+  unsubscribeCodexAppServerLiveThread,
+} from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
 import type { CodexAppServerRuntimeOptions } from "./config.js";
 import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
@@ -36,6 +39,7 @@ import type {
   CodexAppServerPendingSupervisionBranch,
   CodexAppServerThreadBinding,
 } from "./session-binding.js";
+import { fingerprintCodexNativeHookInstallation } from "./thread-fingerprints.js";
 import {
   CodexThreadBindingConflictError,
   CodexThreadStartRequestError,
@@ -278,6 +282,15 @@ export async function materializePendingSupervisionBranch(
     await trackPendingSupervisionArtifacts([finalThreadId]);
     params.throwIfAborted();
     const startResponse = assertCodexThreadStartResponse(rawStartResponse);
+    if (startParams.ephemeral === true) {
+      recordCodexEphemeralThreadCreation(params.client, startResponse.thread.id, {
+        hookInstallation: fingerprintCodexNativeHookInstallation(
+          startParams.config,
+          params.bindingPatch.nativeHookRelayGeneration,
+        ),
+        dynamicTools: startParams.dynamicTools ?? [],
+      });
+    }
     assertExactSupervisionModelSelection(startResponse, {
       model: nativeModel,
       modelProvider: nativeModelProvider,

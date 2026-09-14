@@ -30,7 +30,6 @@ import {
   isRelayProofLaneEnabled,
   readCapturedJsonRpcRecords,
   readLifecycleIdentity,
-  RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS,
   type RelayProofMode,
   REQUEST_TIMEOUT_MS,
   requestAgentTextWithEvents,
@@ -381,10 +380,7 @@ async function assertCapturedCodexHookOverlay(params: {
 }
 
 /**
- * The overlay each mode must produce on the wire. Kept in lockstep with
- * `expectAttempt` in `proof/extract-evidence.mjs` (the evidence pack's verdict
- * table) — that file lives outside the repo, so the table is duplicated here on
- * purpose; change both together.
+ * The overlay each mode must produce on the wire.
  *
  * `disabled-never` is the one that has to stay meaningful: loop detection gives
  * `pre_tool_use` local work without making `hasBeforeToolCallPolicy()` true, so
@@ -410,34 +406,32 @@ const RELAY_PROOF_EXPECTED_OVERLAYS: Record<
       hooks: {
         "hooks.PreToolUse": "installed",
         "hooks.PostToolUse": "empty",
-        "hooks.PermissionRequest": "empty",
+        "hooks.PermissionRequest": "absent",
         "hooks.Stop": "empty",
       },
     },
   },
-  // The opt-out clears the relay's own hooks and leaves `features.hooks` alone:
-  // disabling that flag would also suppress independent user, project, plugin,
-  // and managed Codex hooks the relay never installed.
+  // Full opt-out leaves native event arrays, trust state and hook features untouched.
   "disabled-never": {
     attempt: {
       featuresHooks: "absent",
       hooks: {
-        "hooks.PreToolUse": "empty",
-        "hooks.PostToolUse": "empty",
-        "hooks.PermissionRequest": "empty",
-        "hooks.Stop": "empty",
+        "hooks.PreToolUse": "absent",
+        "hooks.PostToolUse": "absent",
+        "hooks.PermissionRequest": "absent",
+        "hooks.Stop": "absent",
       },
-      hookStateDisabled: RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS,
+      hookStateAbsent: true,
     },
     fork: {
       featuresHooks: "absent",
       hooks: {
-        "hooks.PreToolUse": "empty",
-        "hooks.PostToolUse": "empty",
-        "hooks.PermissionRequest": "empty",
-        "hooks.Stop": "empty",
+        "hooks.PreToolUse": "absent",
+        "hooks.PostToolUse": "absent",
+        "hooks.PermissionRequest": "absent",
+        "hooks.Stop": "absent",
       },
-      hookStateDisabled: RELAY_PROOF_OPT_OUT_HOOK_STATE_KEYS,
+      hookStateAbsent: true,
     },
   },
   "disabled-active": {
@@ -454,9 +448,9 @@ const RELAY_PROOF_EXPECTED_OVERLAYS: Record<
       featuresHooks: true,
       hooks: {
         "hooks.PreToolUse": "installed",
-        "hooks.PostToolUse": "empty",
-        "hooks.PermissionRequest": "empty",
-        "hooks.Stop": "empty",
+        "hooks.PostToolUse": "absent",
+        "hooks.PermissionRequest": "absent",
+        "hooks.Stop": "absent",
       },
     },
   },
