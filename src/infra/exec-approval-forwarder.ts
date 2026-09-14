@@ -1,5 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ReplyPayload } from "../auto-reply/types.js";
+import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
 import {
   getLoadedChannelPlugin,
   resolveChannelApprovalAdapter,
@@ -163,7 +164,8 @@ function shouldSkipForwardingFallback(params: {
   }
   // Channel adapters can suppress generic fallback delivery when they already
   // own native approval UX for the same target.
-  const adapter = resolveChannelApprovalAdapter(getLoadedChannelPlugin(channel));
+  const plugin = getLoadedChannelPlugin(channel);
+  const adapter = resolveChannelApprovalAdapter(plugin);
   const suppress =
     adapter?.delivery?.shouldSuppressForwardingFallback?.({
       cfg: params.cfg,
@@ -171,15 +173,18 @@ function shouldSkipForwardingFallback(params: {
       target: params.target,
       request: buildSyntheticApprovalRequest(params.routeRequest),
     }) ?? false;
-  // Suppression hands the chat to the native handler, so it holds only while one is running.
-  return (
-    suppress &&
-    hasActiveNativeApprovalRoute(params.nativeRouteCoordinator, {
-      channel,
-      accountId: params.target.accountId ?? params.routeRequest.turnSourceAccountId,
-      approvalKind: params.approvalKind,
-    })
-  );
+  if (!suppress || !plugin) {
+    return false;
+  }
+  // Suppression hands the chat to the native handler, so it holds only while the handler
+  // for the destination account runs; a target without one is delivered by the default.
+  return hasActiveNativeApprovalRoute(params.nativeRouteCoordinator, {
+    channel,
+    accountId:
+      normalizeOptionalString(params.target.accountId) ??
+      resolveChannelDefaultAccountId({ plugin, cfg: params.cfg }),
+    approvalKind: params.approvalKind,
+  });
 }
 
 function normalizeTurnSourceChannel(value?: string | null): string | undefined {

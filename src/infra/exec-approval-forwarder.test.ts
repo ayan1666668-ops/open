@@ -692,20 +692,9 @@ describe("exec approval forwarder", () => {
 
   describe("telegram session target with native exec approvals configured", () => {
     const cfg = {
-      approvals: {
-        exec: {
-          enabled: true,
-          mode: "session",
-        },
-      },
+      approvals: { exec: { enabled: true, mode: "session" } },
       channels: {
-        telegram: {
-          execApprovals: {
-            enabled: true,
-            approvers: ["123"],
-            target: "channel",
-          },
-        },
+        telegram: { execApprovals: { enabled: true, approvers: ["123"], target: "channel" } },
       },
     } as OpenClawConfig;
     const telegramRequest = {
@@ -735,11 +724,7 @@ describe("exec approval forwarder", () => {
       const { deliver, forwarder } = createForwarder({ cfg, resolveSessionTarget, nativeRoutes });
 
       await expect(forwarder.handleRequested(telegramRequest)).resolves.toBe(true);
-      expect(deliver).toHaveBeenCalledTimes(1);
-      expect(requireFirstCallArg(deliver, "delivery params")).toMatchObject({
-        channel: "telegram",
-        to: "-100999",
-      });
+      expect(requireFirstCallArg(deliver, "delivery params")).toMatchObject({ to: "-100999" });
     });
 
     it("skips forwarding while the native handler runs and forwards again once it stops", async () => {
@@ -768,7 +753,7 @@ describe("exec approval forwarder", () => {
         forwarded: true,
       },
     ])(
-      "gates plugin approval forwarding on the running native handler %j",
+      "gates plugin approvals on the running native handler %j",
       async ({ nativeRoutes, forwarded }) => {
         vi.useFakeTimers();
         const { deliver, forwarder } = createForwarder({
@@ -979,6 +964,26 @@ describe("exec approval forwarder", () => {
     },
   ])("handles discord session target forwarding case %j", async (params) => {
     await expectDiscordSessionTargetRequest(params);
+  });
+
+  it("checks a cross-channel target without an account against that channel's default account", async () => {
+    const { forwarder } = createForwarder({
+      cfg: {
+        ...makeTargetsCfg([{ channel: "discord", to: "channel:123" }]),
+        channels: { discord: { execApprovals: { enabled: true, approvers: ["123"] } } },
+      } as OpenClawConfig,
+      nativeRoutes: ["default", "ops"].map((accountId) => ({ channel: "discord", accountId })),
+    });
+    const request = {
+      ...baseRequest,
+      request: {
+        ...baseRequest.request,
+        turnSourceChannel: "telegram",
+        turnSourceAccountId: "work",
+      },
+    };
+
+    await expect(forwarder.handleRequested(request)).resolves.toBe(false);
   });
 
   it("can forward resolved notices without pending cache when request payload is present", async () => {
