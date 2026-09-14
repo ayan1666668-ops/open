@@ -304,6 +304,7 @@ enum DeviceIdentitySQLiteStore {
                     destinationStateDirURL: destinationStateDirURL,
                     profile: profile,
                     deviceId: authoritative.identity.deviceId)
+                try self.removeClaimedLegacyIdentities(claims)
             case let .resumeAfterPreflight(expectedAuth):
                 // Revalidate the complete read-only preflight after the identity receipt and any
                 // test/integration hook. If legacy auth changed or became unverifiable, preserve
@@ -321,11 +322,13 @@ enum DeviceIdentitySQLiteStore {
                         currentAuth,
                         destinationStateDirURL: destinationStateDirURL,
                         profile: profile)
+                    try self.removeClaimedLegacyIdentities(claims)
                 } catch {
+                    // Cleanup is optional once SQLite was already authoritative. Keep whatever
+                    // evidence remains without regressing a previously working native startup.
                     return authoritative.identity
                 }
             }
-            try self.removeClaimedLegacyIdentities(claims)
         }
         return authoritative.identity
     }

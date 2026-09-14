@@ -876,6 +876,31 @@ struct DeviceIdentityStoreTests {
     }
 
     @Test
+    func `canonical SQLite identity preserves startup when claim cleanup fails`() throws {
+        let fixture = DeviceIdentityMigrationFixture(databasePath: "state/openclaw.sqlite")
+        try Self.seedCanonicalIdentity(fixture.databaseURL)
+        let source = try fixture.source()
+        let claimURL = fixture.claimURL(for: source)
+        let identityDirectory = source.identityURL.deletingLastPathComponent()
+        try FileManager.default.moveItem(at: source.identityURL, to: claimURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: identityDirectory.path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: identityDirectory.path)
+        }
+
+        for _ in 0..<2 {
+            let identity = try fixture.load(sources: [source])
+
+            #expect(identity.deviceId == Self.fixtureDeviceID)
+            #expect(FileManager.default.fileExists(atPath: claimURL.path))
+        }
+    }
+
+    @Test
     func `canonical SQLite identity ignores a conflicting interrupted native claim`() throws {
         let fixture = DeviceIdentityMigrationFixture()
         try Self.seedCanonicalIdentity(fixture.databaseURL)
@@ -1001,13 +1026,12 @@ struct DeviceIdentityStoreTests {
         let replacement = try String(
             decoding: JSONEncoder().encode(DeviceIdentityStore.generateMaterial().identity),
             as: UTF8.self)
-        #expect(throws: NSError.self) {
-            try fixture.load(
-                sources: [source],
-                afterLegacyCommit: {
-                    try replacement.write(to: source.identityURL, atomically: true, encoding: .utf8)
-                })
-        }
+        let preserved = try fixture.load(
+            sources: [source],
+            afterLegacyCommit: {
+                try replacement.write(to: source.identityURL, atomically: true, encoding: .utf8)
+            })
+        #expect(preserved.deviceId == Self.fixtureDeviceID)
         #expect(FileManager.default.fileExists(atPath: source.identityURL.path))
         #expect(FileManager.default.fileExists(atPath: claimURL.path))
 
