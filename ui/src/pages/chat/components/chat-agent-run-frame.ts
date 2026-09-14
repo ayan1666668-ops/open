@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import type { MessageGroup } from "../../../lib/chat/chat-types.ts";
+import { extractChatSourcePreviews } from "../../../lib/chat/source-previews.ts";
 import {
   agentRunFrameActiveStatusParts,
   agentRunFrameGroups,
@@ -15,6 +16,7 @@ import {
   renderWorkGroupSummary,
   type StreamGroupOptions,
 } from "./chat-message.ts";
+import { renderChatSourcePreviews } from "./chat-source-previews.ts";
 import { renderBrowserTabPreviews } from "./chat-tool-cards.ts";
 
 type MessageGroupRenderOptions = Parameters<typeof renderMessageGroup>[1];
@@ -79,6 +81,17 @@ export function renderAgentRunFrame(frame: AgentRunFrameRenderItem, opts: AgentR
     }
     return renderFrameGroup(part);
   });
+  if (actionOwner) {
+    frameContent.push(
+      renderChatSourcePreviews(
+        extractChatSourcePreviews({
+          groups,
+          answer: actionOwner.message,
+          runId: frame.runId,
+        }),
+      ),
+    );
+  }
   return renderMessageGroup(shell, {
     ...opts.renderGroupOptions(shell),
     frameContent,
