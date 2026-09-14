@@ -178,7 +178,7 @@ describe("ui package vitest config", () => {
     const timing = projects.find((project) => project.name === "unit-timing");
     expect(timing).toBeDefined();
     expect(timing?.isolate).toBe(true);
-    for (const project of projects.filter((project) => project !== timing)) {
+    for (const project of projects.filter((candidate) => candidate !== timing)) {
       expect(timing?.sequence?.groupOrder).toBeGreaterThan(project.sequence?.groupOrder ?? 0);
     }
     const selected = projects.flatMap((project) =>
