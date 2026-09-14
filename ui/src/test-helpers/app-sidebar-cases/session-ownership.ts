@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
@@ -14,15 +14,11 @@ import "../../components/app-sidebar.ts";
 
 async function openOwnerMenu(sidebar: SidebarLifecycleState): Promise<HTMLElement> {
   const trigger = sidebar.querySelector<HTMLButtonElement>(".sidebar-session-sort");
-  if (!trigger) {
-    throw new Error("expected session sort trigger");
-  }
+  assert(trigger, "expected session sort trigger");
   trigger.click();
   await sidebar.updateComplete;
   const menu = sidebar.querySelector<HTMLElement>(".sidebar-session-sort-menu");
-  if (!menu) {
-    throw new Error("expected session sort menu");
-  }
+  assert(menu, "expected session sort menu");
   return menu;
 }
 
