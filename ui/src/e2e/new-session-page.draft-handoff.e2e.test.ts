@@ -40,7 +40,7 @@ suite.define(() => {
       await waitForCommittedNewSessionDraft(page, message, ["favicon-32.png"]);
       await composer.press("Enter");
       const create = await gateway.waitForRequest("sessions.create");
-      expect(create.params.message).toBe(message);
+      expect(create.params).toMatchObject({ message });
       await page.locator(".sidebar-recent-session").filter({ hasText: "Created session" }).click();
       await waitForCommittedChatRoute(page);
       if (!returnEarly) {

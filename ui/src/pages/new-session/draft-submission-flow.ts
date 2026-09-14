@@ -57,6 +57,7 @@ import {
 import { navigateToStartedTerminal, startNewSessionInTerminal } from "./terminal-start.ts";
 
 registerNewSessionSetupEnglish();
+type SubmittedDraft = ReturnType<NewSessionDraftPersistence["captureSubmission"]>;
 
 export class DraftSubmissionFlow {
   private visibilityValue: NewSessionVisibility = "normal";
@@ -193,15 +194,12 @@ export class DraftSubmissionFlow {
     this.callbacks.requestUpdate();
   }
 
-  clearError() {
+  clearError(expected?: string) {
+    if (expected !== undefined && this.error !== expected) {
+      return;
+    }
     this.error = null;
     this.callbacks.requestUpdate();
-  }
-
-  clearErrorIf(error: string) {
-    if (this.error === error) {
-      this.clearError();
-    }
   }
 
   markPendingPlacementUnavailable(outcome: SubmissionOutcomeReason) {
@@ -224,8 +222,8 @@ export class DraftSubmissionFlow {
       : undefined;
   }
 
-  private buildDraftSessionCreateParams(options: DraftSessionCreateOverrides = {}) {
-    return buildSelectedSessionCreateParams(this.place, {
+  private buildDraftSessionCreateParams = (options: DraftSessionCreateOverrides = {}) =>
+    buildSelectedSessionCreateParams(this.place, {
       ...options,
       message: options.message ?? "",
       toolOverrides: this.capabilities.toolOverrides,
@@ -234,24 +232,20 @@ export class DraftSubmissionFlow {
       catalogId: this.read().data?.catalogId,
       category: this.gateway.resolvedGroupCategory(),
     });
-  }
 
-  submissionAccess(
+  submissionAccess = (
     createParams: Record<string, unknown> = this.pendingPlacement.createParams ??
       this.buildDraftSessionCreateParams(),
-  ): SessionMethodAccess {
-    return readNewSessionSubmissionAccess({
+  ): SessionMethodAccess =>
+    readNewSessionSubmissionAccess({
       gateway: this.read().context?.gateway.snapshot,
       place: this.place,
       pendingPlacement: this.pendingPlacement,
       hasInitialTurn: Boolean(this.messageValue.trim() || this.attachmentDraft.attachments.length),
       createParams,
     });
-  }
 
-  submitDisabledReason(): string | undefined {
-    return this.submitBlock()?.reason;
-  }
+  submitDisabledReason = (): string | undefined => this.submitBlock()?.reason;
 
   incognitoDisabledReason(): string | undefined {
     const access = readSessionMethodAccess(this.read().context?.gateway.snapshot, {
@@ -261,9 +255,7 @@ export class DraftSubmissionFlow {
     return access.allowed ? undefined : access.reason;
   }
 
-  canSubmit(): boolean {
-    return this.submitBlock() === undefined;
-  }
+  canSubmit = (): boolean => this.submitBlock() === undefined;
 
   /** Single owner for submit state, tooltips, and blocked-Enter notices. */
   submitBlock(): NewSessionSubmitBlock | undefined {
@@ -297,14 +289,13 @@ export class DraftSubmissionFlow {
     });
   }
 
-  requiresModelSetup(): boolean {
-    return requiresNewSessionModelSetup({
+  requiresModelSetup = (): boolean =>
+    requiresNewSessionModelSetup({
       snapshot: this.read(),
       gateway: this.gateway,
       place: this.place,
       pendingPlacement: this.pendingPlacement,
     });
-  }
 
   invalidate(outcomeUnknown: SubmissionOutcomeReason | null = null) {
     this.submitRequestToken += 1;
@@ -533,7 +524,7 @@ export class DraftSubmissionFlow {
         // Leaving the view cancels navigation, not a confirmed send. Retire only
         // the captured source draft; the current route may already hold new input.
         if (result && result.initialRun.status !== "rejected") {
-          await this.draftPersistence.clearSubmittedDraft(submittedDraft);
+          await this.clearSubmittedDraft(true, submittedDraft, false);
         }
         return;
       }
@@ -713,22 +704,20 @@ export class DraftSubmissionFlow {
     }
   }
 
-  private clearSubmittedDraft(
-    releaseAttachments: boolean,
-    submitted: ReturnType<NewSessionDraftPersistence["captureSubmission"]>,
-  ): Promise<void> {
-    // Record acceptance before any await so reconnects cannot mark it unknown.
-    // Its persistence snapshot was captured before creation and page teardown.
-    if (this.activeSubmission) {
-      this.activeSubmission.phase = "accepted";
-    }
-    const persistence = this.draftPersistence.clearSubmittedDraft(submitted);
-    this.messageValue = "";
-    this.mentionsValue = [];
-    this.draftPersistence.noteDraftReplaced();
-    this.attachmentDraft.clearAfterSubmit(releaseAttachments);
-    this.sessionStartup.clear();
-    return persistence;
+  private clearSubmittedDraft(releasePayloads: boolean, draft: SubmittedDraft, keepPending = true) {
+    return this.draftPersistence.clearSubmittedDraft(draft, () => {
+      // Acceptance consumes only the captured mutation, not a newer route's input.
+      if (!keepPending) {
+        this.activeSubmission = null;
+      } else if (this.activeSubmission) {
+        this.activeSubmission.phase = "accepted";
+      }
+      this.messageValue = "";
+      this.mentionsValue = [];
+      this.draftPersistence.noteDraftReplaced();
+      this.attachmentDraft.clearAfterSubmit(releasePayloads);
+      this.sessionStartup.clear();
+    });
   }
 
   disconnect() {
