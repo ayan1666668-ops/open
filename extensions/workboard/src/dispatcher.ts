@@ -64,9 +64,16 @@ type WorkboardStartFailure = {
   error: string;
 };
 
+type WorkboardStartSkip = {
+  cardId: string;
+  title: string;
+  reason: string;
+};
+
 type WorkboardDispatchAndStartResult = WorkboardDispatchResult & {
   started: WorkboardStartedRun[];
   startFailures: WorkboardStartFailure[];
+  skipped: WorkboardStartSkip[];
 };
 
 type WorkboardPreparedLaunch = Extract<WorkboardLaunchState, { phase: "prepared" }>;
@@ -231,9 +238,9 @@ function selectStartableCards(
   ownerOverride: string | undefined,
   now: number,
   mode: "scheduled" | "exact",
-): { cards: WorkboardCard[]; rejection?: WorkboardStartFailure } {
+): { cards: WorkboardCard[]; rejection?: WorkboardStartFailure; skipped: WorkboardStartSkip[] } {
   if (limit <= 0) {
-    return { cards: [] };
+    return { cards: [], skipped: [] };
   }
   const runningByOwner = new Map<string, number>();
   for (const card of cards) {
@@ -246,29 +253,50 @@ function selectStartableCards(
   const selected: WorkboardCard[] = [];
   const fallback: WorkboardCard[] = [];
   const selectedOwners = new Set<string>();
+  const skippedByOwner = new Map<string, WorkboardStartSkip>();
   const ordered = mode === "scheduled" ? candidates.toSorted(sortReadyCards) : candidates;
   for (const card of ordered) {
     const owner = ownerOverride || workboardCardSlotOwner(card, now);
-    const rejection = cardIsArchived(card)
-      ? "Card is archived; restore it before starting."
-      : cardHasActiveClaim(card, now)
-        ? `Card is already claimed by ${card.metadata?.claim?.ownerId ?? "another worker"}.`
-        : mode === "scheduled" && card.status !== "ready"
-          ? ""
-          : mode === "exact" &&
-              card.status !== "backlog" &&
-              card.status !== "todo" &&
-              card.status !== "ready"
-            ? `Card cannot start from ${card.status}; move it to backlog, todo, or ready first.`
-            : (runningByOwner.get(owner) ?? 0) > 0
-              ? `Owner ${owner} already has active Workboard work; complete or stop it before starting another card.`
-              : undefined;
+    let skippedForCapacity = false;
+    let rejection: string | undefined;
+    if (cardIsArchived(card)) {
+      rejection = "Card is archived; restore it before starting.";
+    } else if (cardHasActiveClaim(card, now)) {
+      if (mode === "scheduled" && workboardCardConsumesOwnerSlot(card, now)) {
+        rejection = "";
+        if (!skippedByOwner.has(owner)) {
+          skippedByOwner.set(owner, {
+            cardId: card.id,
+            title: card.title,
+            reason: `Owner ${owner} already has active Workboard work; complete or stop it before starting another card.`,
+          });
+        }
+      } else {
+        rejection = `Card is already claimed by ${card.metadata?.claim?.ownerId ?? "another worker"}.`;
+      }
+    } else if (mode === "scheduled" && card.status !== "ready") {
+      rejection = "";
+    } else if (
+      mode === "exact" &&
+      card.status !== "backlog" &&
+      card.status !== "todo" &&
+      card.status !== "ready"
+    ) {
+      rejection = `Card cannot start from ${card.status}; move it to backlog, todo, or ready first.`;
+    } else if ((runningByOwner.get(owner) ?? 0) > 0) {
+      rejection = `Owner ${owner} already has active Workboard work; complete or stop it before starting another card.`;
+      skippedForCapacity = true;
+    }
     if (rejection !== undefined) {
       if (mode === "exact") {
         return {
           cards: [],
           rejection: { cardId: card.id, title: card.title, error: rejection },
+          skipped: [],
         };
+      }
+      if (skippedForCapacity) {
+        skippedByOwner.set(owner, { cardId: card.id, title: card.title, reason: rejection });
       }
       continue;
     }
@@ -280,7 +308,7 @@ function selectStartableCards(
     selected.push(card);
   }
   // Try each owner before a failed owner's extra cards consume the outage budget.
-  return { cards: [...selected, ...fallback] };
+  return { cards: [...selected, ...fallback], skipped: [...skippedByOwner.values()] };
 }
 
 export async function dispatchAndStartWorkboardCards(
@@ -322,6 +350,7 @@ async function runWorkboardDispatch(
   );
   const started: WorkboardStartedRun[] = [];
   const startFailures: WorkboardStartFailure[] = [];
+  const skipped: WorkboardStartSkip[] = [];
   const cards = await params.store.list();
   const candidates = directCard ? [directCard] : await params.store.list({ boardId });
   const ownerOverride = params.options?.ownerId?.trim() || undefined;
@@ -342,6 +371,7 @@ async function runWorkboardDispatch(
   if (selection.rejection) {
     startFailures.push(selection.rejection);
   }
+  skipped.push(...selection.skipped);
   for (const card of selection.cards) {
     const ownerId = ownerOverride || workboardCardSlotOwner(card, now);
     if (acceptedStarts >= maxStarts || attemptedStarts >= maxAttempts) {
@@ -609,6 +639,7 @@ async function runWorkboardDispatch(
     ...dispatch,
     started,
     startFailures,
-    count: dispatch.count + started.length + startFailures.length,
+    skipped,
+    count: dispatch.count + started.length + startFailures.length + skipped.length,
   };
 }

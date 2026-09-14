@@ -94,6 +94,13 @@ describe("Workboard dispatcher ownership", () => {
     });
 
     expect(result.started).toEqual([]);
+    expect(result.skipped).toEqual([
+      expect.objectContaining({
+        cardId: queued.id,
+        reason:
+          "Owner workboard-dispatcher already has active Workboard work; complete or stop it before starting another card.",
+      }),
+    ]);
     expect(run).not.toHaveBeenCalled();
     await expect(store.get(queued.id)).resolves.toMatchObject({ status: "ready" });
   });
@@ -690,6 +697,13 @@ describe("Workboard dispatcher ownership", () => {
 
       expect(retry.started).toEqual([]);
       expect(retry.startFailures).toEqual([]);
+      expect(retry.skipped).toEqual([
+        expect.objectContaining({
+          cardId: card.id,
+          reason:
+            "Owner workboard-dispatcher already has active Workboard work; complete or stop it before starting another card.",
+        }),
+      ]);
       expect(run).toHaveBeenCalledOnce();
     },
   );

@@ -204,6 +204,22 @@ describe("registerWorkboardCli", () => {
     );
   });
 
+  it("includes skipped workers in text dispatch output", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const program = createProgram(store);
+    gatewayRuntime.callGatewayFromCli.mockResolvedValueOnce({
+      started: [],
+      startFailures: [],
+      skipped: [{ cardId: "card-id", title: "Queued", reason: "Owner main already active." }],
+    });
+
+    const output = await captureStdout(async () => {
+      await program.parseAsync(["workboard", "dispatch"], { from: "user" });
+    });
+
+    expect(output).toBe("dispatch complete: started=0 failures=0 skipped=1\n");
+  });
+
   it("requests minimum scopes unless full-host access is explicit", async () => {
     const store = createWorkboardSqliteTestStore();
     const program = createProgram(store);

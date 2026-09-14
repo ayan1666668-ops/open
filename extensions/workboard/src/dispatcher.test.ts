@@ -880,6 +880,13 @@ describe("dispatchAndStartWorkboardCards", () => {
     });
 
     expect(result.started).toEqual([]);
+    expect(result.skipped).toEqual([
+      expect.objectContaining({
+        cardId: ready.id,
+        reason:
+          "Owner shared-worker already has active Workboard work; complete or stop it before starting another card.",
+      }),
+    ]);
     expect(run).not.toHaveBeenCalled();
     await expect(store.get(ready.id)).resolves.toMatchObject({ status: "ready" });
   });
