@@ -118,8 +118,7 @@ type OpenClawStateReadOnlyDatabase = {
 type ScopedRead = ReturnType<typeof openOpenClawStateReadOnlyLocation>;
 const synchronousReadSnapshots = resolveGlobalSingleton(
   Symbol.for("openclaw.synchronousStateReadSnapshots"),
-  // SAFETY: The scope starts unset; its owner only assigns a Map of readers or undefined.
-  () => ({ current: undefined as Map<string, ScopedRead> | undefined }),
+  (): { current: Map<string, ScopedRead> | undefined } => ({ current: undefined }),
 );
 
 /** One synchronous metadata operation shares private bytes, never later admission reads. */
