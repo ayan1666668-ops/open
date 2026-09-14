@@ -6,6 +6,7 @@ import {
   evaluateSessionFreshness,
   hasTerminalMainSessionTranscriptNewerThanRegistrySync,
   resolveSessionLifecycleTimestamps,
+  type AutomaticSessionResetReason,
   type SessionFreshness,
 } from "../../config/sessions.js";
 import { hasProviderOwnedSession } from "../../config/sessions/entry-freshness.js";
@@ -46,6 +47,7 @@ export type AgentSessionPatchBuild = {
   rotatedSessionId: boolean;
   usableRequestedSessionId: string | undefined;
   freshness: SessionFreshness | undefined;
+  automaticResetNoticeReason?: AutomaticSessionResetReason;
 };
 
 type AgentSessionReuseInput = {
@@ -240,6 +242,14 @@ export function buildAgentSessionPatch(
     ? params.freshEntry?.sessionId
     : freshSessionId;
   const shouldClearRotatedState = freshRotatedSessionId && !freshSessionRotatedSinceLoad;
+  const automaticResetNoticeReason =
+    !freshSessionRotatedSinceLoad &&
+    params.visibleRequest &&
+    reuse.isNewSession &&
+    params.resetPolicy.notifyUser &&
+    (reuse.freshness?.staleReason === "idle" || reuse.freshness?.staleReason === "daily")
+      ? reuse.freshness.staleReason
+      : undefined;
   const shouldClearTerminalState =
     reuse.canReuseSession &&
     reuse.recoverableTerminalSession &&
@@ -302,5 +312,6 @@ export function buildAgentSessionPatch(
     rotatedSessionId: freshRotatedSessionId,
     usableRequestedSessionId: reuse.usableRequestedSessionId,
     freshness: reuse.freshness,
+    automaticResetNoticeReason,
   };
 }

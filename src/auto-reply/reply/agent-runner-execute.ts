@@ -39,6 +39,7 @@ import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 import type { TypingSignaler } from "./typing-mode.js";
 type ExecutePreparedReplyAgentRunInput = Pick<
   RunReplyAgentParams,
+  | "automaticResetNoticeReason"
   | "blockReplyChunking"
   | "blockStreamingEnabled"
   | "commandBody"
@@ -114,6 +115,7 @@ export async function executePreparedReplyAgentRun(
 ): Promise<ReplyPayload | ReplyPayload[] | undefined> {
   const {
     activeSessionStore,
+    automaticResetNoticeReason,
     admitUserTurn: admitUserTurnWithRecovery,
     applyReplyToMode,
     beginBeforeAgentReply: beginBeforeAgentReplyWithRecovery,
@@ -403,6 +405,7 @@ export async function executePreparedReplyAgentRun(
     activeIsNewSession,
     activeSessionEntry,
     activeSessionStore,
+    automaticResetNoticeReason,
     blockReplyPipeline,
     blockStreamingEnabled,
     cfg,

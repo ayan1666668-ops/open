@@ -624,6 +624,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       resolvedVerboseLevel: resolvedVerboseLevel ?? "off",
       toolProgressDetail: resolveAgentConfig(cfg, agentId)?.toolProgressDetail,
       isNewSession: params.isNewSession,
+      automaticResetNoticeReason: params.automaticResetNoticeReason,
       blockStreamingEnabled,
       blockReplyChunking,
       resolvedBlockStreamingBreak,

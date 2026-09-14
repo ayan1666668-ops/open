@@ -15,7 +15,10 @@ import { errorShapeFromError } from "../error-shape.js";
 import { authorizeGatewaySessionCreation } from "../operator-role-policy.js";
 import { createCronContinuationController } from "../server-methods/agent-cron-continuation.js";
 import { runAgentResetPhase } from "../server-methods/agent-reset-phase.js";
-import { buildAgentSessionPatch } from "../server-methods/agent-session-patch.js";
+import {
+  buildAgentSessionPatch,
+  type AgentSessionPatchBuild,
+} from "../server-methods/agent-session-patch.js";
 import { prepareAgentSession } from "../server-methods/agent-session-prepare.js";
 import { resolveAgentRunSessionCreation } from "../server-methods/session-creation-provenance.js";
 import type { GatewayRequestHandlerOptions, RespondFn } from "../server-methods/shared-types.js";
@@ -206,6 +209,7 @@ export function createAgentTurnService(
       let resolvedSessionKey = requestedSessionKey;
       let resolvedSessionAgentId: string | undefined;
       let isNewSession = false;
+      let automaticResetNoticeReason: AgentSessionPatchBuild["automaticResetNoticeReason"];
       let supersededSessionId: string | undefined;
       let skipAgentInitialSessionTouch = false;
       let pendingChatRun: { sessionKey: string; agentId?: string } | undefined;
@@ -450,6 +454,7 @@ export function createAgentTurnService(
         admittedSessionId = persistedSession.admittedSessionId;
         skipAgentInitialSessionTouch = persistedSession.skipAgentInitialSessionTouch;
         isNewSession = persistedSession.isNewSession;
+        automaticResetNoticeReason = persistedSession.automaticResetNoticeReason;
         spawnedByValue = persistedSession.spawnedBy;
         resolvedGroupId = persistedSession.groupId;
         resolvedGroupChannel = persistedSession.groupChannel;
@@ -566,6 +571,7 @@ export function createAgentTurnService(
             activeSessionAgentId,
             delivery,
             isNewSession,
+            automaticResetNoticeReason,
             isRawModelRun,
             isOneShotModelRun,
             isRestartRecoveryResumeRun,

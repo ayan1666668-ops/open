@@ -73,6 +73,7 @@ type AgentSessionPersistResult = {
   rotatedSessionId: boolean;
   usableRequestedSessionId?: string;
   freshness: SessionFreshness | undefined;
+  automaticResetNoticeReason?: AgentSessionPatchBuild["automaticResetNoticeReason"];
   spawnedBy?: string;
   groupId?: string;
   groupChannel?: string;
@@ -601,6 +602,7 @@ export async function persistAgentSessionPhase(params: {
     rotatedSessionId,
     usableRequestedSessionId,
     freshness,
+    automaticResetNoticeReason: patchBuild.automaticResetNoticeReason,
     spawnedBy: patchBuild.spawnedBy,
     groupId: patchBuild.groupId,
     groupChannel: patchBuild.groupChannel,

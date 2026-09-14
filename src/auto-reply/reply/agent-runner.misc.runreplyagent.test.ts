@@ -1454,6 +1454,32 @@ describe("runReplyAgent auto-compaction token update", () => {
   );
 });
 
+describe("runReplyAgent automatic reset notices", () => {
+  it.each([
+    ["idle", "🧭 Started a new session after the configured idle timeout."],
+    ["daily", "🧭 Started a new session at the configured daily reset boundary."],
+  ] as const)(
+    "prepends one %s reset notice through normal reply finalization",
+    async (reason, notice) => {
+      runEmbeddedAgentMock.mockResolvedValue({
+        payloads: [{ text: "Reply after rollover." }],
+        meta: { agentMeta: { provider: "anthropic", model: "claude" } },
+      });
+
+      const result = await createBaseRun({
+        reply: {
+          automaticResetNoticeReason: reason,
+          isNewSession: true,
+          resolvedVerboseLevel: "on",
+        },
+      }).run();
+      const payloads = Array.isArray(result) ? result : [result];
+
+      expect(payloads.map((payload) => payload?.text)).toEqual([notice, "Reply after rollover."]);
+    },
+  );
+});
+
 describe("runReplyAgent block streaming", () => {
   it("coalesces duplicate text_end block replies", async () => {
     const onBlockReply = vi.fn();

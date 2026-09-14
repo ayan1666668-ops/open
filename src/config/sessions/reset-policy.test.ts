@@ -195,6 +195,19 @@ describe("session reset policy", () => {
     ).toMatchObject({ mode: "idle", idleMinutes: 30 });
   });
 
+  it("inherits reset notices into type overrides and keeps them disabled by default", () => {
+    expect(resolveSessionResetPolicy({ resetType: "direct" }).notifyUser).toBe(false);
+    expect(
+      resolveSessionResetPolicy({
+        sessionCfg: {
+          reset: { mode: "idle", idleMinutes: 60, notifyUser: true },
+          resetByType: { group: { idleMinutes: 30 } },
+        },
+        resetType: "group",
+      }),
+    ).toMatchObject({ mode: "idle", idleMinutes: 30, notifyUser: true });
+  });
+
   it("expires an explicit idle policy after inactivity", () => {
     const now = 10 * HOUR_MS;
     const lastInteractionAt = now - 31 * 60_000;

@@ -2,13 +2,14 @@
 import type { SessionConfig, SessionResetConfig } from "../types.base.js";
 
 export type SessionResetMode = "none" | "daily" | "idle";
-type SessionStaleReason = Exclude<SessionResetMode, "none">;
+export type AutomaticSessionResetReason = Exclude<SessionResetMode, "none">;
 export type SessionResetType = "direct" | "group" | "thread";
 
 export type SessionResetPolicy = {
   mode: SessionResetMode;
   atHour: number;
   idleMinutes?: number;
+  notifyUser?: boolean;
   configured?: boolean;
 };
 
@@ -16,7 +17,7 @@ export type SessionFreshness = {
   fresh: boolean;
   dailyResetAt?: number;
   idleExpiresAt?: number;
-  staleReason?: SessionStaleReason;
+  staleReason?: AutomaticSessionResetReason;
 };
 
 const DEFAULT_RESET_MODE: SessionResetMode = "none";
@@ -53,6 +54,7 @@ export function resolveSessionResetPolicy(params: {
     typeReset?.atHour ?? baseReset?.atHour ?? DEFAULT_RESET_AT_HOUR,
   );
   const idleMinutesRaw = typeReset?.idleMinutes ?? baseReset?.idleMinutes;
+  const notifyUser = typeReset?.notifyUser ?? baseReset?.notifyUser ?? false;
 
   let idleMinutes: number | undefined;
   if (idleMinutesRaw != null) {
@@ -64,7 +66,7 @@ export function resolveSessionResetPolicy(params: {
     idleMinutes = DEFAULT_IDLE_MINUTES;
   }
 
-  return { mode, atHour, idleMinutes, configured };
+  return { mode, atHour, idleMinutes, notifyUser, configured };
 }
 
 /** Evaluates whether a persisted session is still fresh under the resolved reset policy. */

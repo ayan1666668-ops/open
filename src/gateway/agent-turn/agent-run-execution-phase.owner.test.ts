@@ -13,7 +13,13 @@ vi.mock("./agent-run-dispatch.js", () => ({
   resolveAbortedAgentStopReason: () => "rpc",
 }));
 
-function createExecution(options: { aborted?: boolean; assertContextCurrent?: () => void } = {}) {
+function createExecution(
+  options: {
+    aborted?: boolean;
+    assertContextCurrent?: () => void;
+    automaticResetNoticeReason?: "idle" | "daily";
+  } = {},
+) {
   const abortCleanup = vi.fn();
   const gatewayRelease = vi.fn();
   const { promise: runtimeReleased, resolve: resolveRuntimeReleased } = createDeferred();
@@ -62,6 +68,7 @@ function createExecution(options: { aborted?: boolean; assertContextCurrent?: ()
       activeSessionAgentId: "main",
       delivery: {},
       isNewSession: false,
+      automaticResetNoticeReason: options.automaticResetNoticeReason,
       isRawModelRun: true,
       isOneShotModelRun: true,
       isRestartRecoveryResumeRun: false,
@@ -95,7 +102,7 @@ describe("startAgentRunExecution Gateway ownership", () => {
   beforeEach(() => dispatchAgentRunFromGateway.mockReset());
 
   it("dispatches with the runtime generation frozen at admission", async () => {
-    const execution = createExecution();
+    const execution = createExecution({ automaticResetNoticeReason: "idle" });
     const { promise: dispatched, resolve: resolveDispatched } = createDeferred();
     const { promise: cleanupObserved, resolve: resolveCleanupObserved } = createDeferred();
     let borrowedAfterCleanup: Promise<unknown> | undefined;
@@ -126,6 +133,7 @@ describe("startAgentRunExecution Gateway ownership", () => {
       pluginGeneration: "generation-A",
     });
     expect(dispatch?.ingressOpts.workspaceDir).toBe("/workspace/A");
+    expect(dispatch?.ingressOpts.automaticResetNoticeReason).toBe("idle");
     expect(execution.runtimeRelease).not.toHaveBeenCalled();
 
     dispatch?.cleanupAbortController();
