@@ -697,16 +697,18 @@ export async function attachAuthenticatedGatewayConnect(
 
   if (nextClient.authenticatedGitHubIdentitySync) {
     runDetachedConnectWork(
-      async () => {
+      async (signal) => {
         // One detached attempt is the only chance the connection ever gives
         // itself: a transient quota or network failure would leave the client
         // profile-pending for its whole life, wedging every profile-gated RPC
         // behind UNAVAILABLE (#141615). A bounded backoff rides the same
-        // detached work so short blinks self-heal without client action.
+        // detached work so short blinks self-heal without client action;
+        // connection-work cancellation ends the loop without another retry.
         let result: Awaited<
           ReturnType<NonNullable<GatewayWsClient["authenticatedGitHubIdentitySync"]>>
         >;
         for (let attempt = 0; ; attempt++) {
+          signal.throwIfAborted();
           try {
             result = await nextClient.authenticatedGitHubIdentitySync!();
             break;
@@ -714,7 +716,7 @@ export async function attachAuthenticatedGatewayConnect(
             if (attempt >= IDENTITY_SYNC_RETRY_DELAYS_MS.length) {
               throw error;
             }
-            await sleep(IDENTITY_SYNC_RETRY_DELAYS_MS[attempt]);
+            await sleep(IDENTITY_SYNC_RETRY_DELAYS_MS[attempt], signal);
           }
         }
         const profile = nextClient.authenticatedUserProfile;
