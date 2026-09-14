@@ -15,7 +15,6 @@ export const databaseWorkerCoreTestFiles = [
   "src/plugin-sdk/provider-auth-copilot-cache.test.ts",
   "src/plugins/doctor-contract-registry.load-paths.test.ts",
   "src/tasks/task-registry.test.ts",
-  "src/wizard/setup.inference-recovery.integration.test.ts",
   "test/plugins/beam-http-identity.test.ts",
   "src/plugin-sdk/runtime-doctor-migrations.test.ts",
   "src/plugin-state/plugin-state-store.test.ts",
