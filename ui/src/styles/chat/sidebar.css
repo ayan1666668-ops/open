@@ -814,6 +814,40 @@ openclaw-chat-sidebar-region,
   }
 }
 
+/* Bounded, read-only artifact surface shared by message and workspace previews. */
+.artifact-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+}
+.artifact-viewer__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.artifact-viewer__header strong { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.artifact-viewer__header small { white-space: nowrap; }
+.artifact-viewer__header a { margin-left: auto; color: var(--muted); }
+.artifact-viewer__body { min-height: 0; overflow: auto; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-1); }
+.artifact-viewer__source { margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.artifact-viewer__document { max-width: 75ch; margin: 0 auto; overflow-wrap: anywhere; }
+.artifact-viewer__html img { max-width: 100%; }
+.artifact-viewer__pdf { display: block; width: 100%; min-height: 60vh; border: 0; }
+.artifact-viewer__office-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 12px; }
+.artifact-viewer__spreadsheet { overflow: auto; max-height: 60vh; }
+.artifact-viewer__spreadsheet table { border-collapse: collapse; font-size: 12px; }
+.artifact-viewer__spreadsheet th, .artifact-viewer__spreadsheet td { padding: 5px 8px; border: 1px solid var(--border-subtle); text-align: left; white-space: pre-wrap; }
+.artifact-viewer__spreadsheet th { color: var(--muted); background: var(--surface-2); }
+.artifact-viewer__sheet-tabs { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; }
+.artifact-viewer__sheet-tabs button { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 5px 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.artifact-viewer__sheet-tabs button[aria-selected="true"] { color: var(--text); background: var(--surface-2); }
+.artifact-viewer__slide { max-width: 70ch; margin: 20px auto; padding: clamp(20px, 6vw, 56px); border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-2); }
+.artifact-viewer__slide h2 { margin-top: 0; }
+
 .chat-tasks-rail__task-stop {
   display: inline-grid;
   flex: 0 0 auto;

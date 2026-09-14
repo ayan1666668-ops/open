@@ -42,11 +42,13 @@ import {
 } from "./chat-attachment-href.ts";
 import { openInlineChatImage } from "./chat-image-lightbox.ts";
 import "./chat-audio-player.ts";
+import "./chat-artifact-viewer.ts";
 import "./chat-video-player.ts";
 import { openResolvedImage } from "./chat-message-image-open.ts";
 import type { AttachmentSidebarRuntime, SidebarContent } from "./chat-sidebar-content-types.ts";
 import { renderSidebarFile, type FileViewControls } from "./chat-sidebar-file-view.ts";
 import { isTextAttachment } from "./chat-text-attachment.ts";
+import { classifyArtifact } from "./chat-artifact.ts";
 import "./session-diff-panel.ts";
 
 type ChatDetailPanelContent = Exclude<SidebarContent, { kind: "task" }>;
@@ -82,6 +84,22 @@ function renderSidebarAttachment(
           isSvgImageMediaPath(content.title, undefined)))) &&
     isCrossOriginHttpSource(src ?? "");
   const imagePreview = (src || pending) && !blockedExternalSvg && kind === "image";
+  const artifactKind = classifyArtifact(content.title, content.mimeType);
+  const artifactPreview =
+    kind === "document" &&
+    ["code", "text", "markdown", "html", "pdf", "docx", "spreadsheet", "presentation"].includes(
+      artifactKind,
+    );
+  if ((src || pending) && artifactPreview) {
+    return html`<openclaw-chat-artifact-viewer
+      .src=${src ?? ""}
+      .sourceIdentity=${[runtime.connectionEpoch ?? "", runtime.agentId ?? "", runtime.sessionKey ?? "", content.sourceIdentity ?? src ?? ""].join("\u0000")}
+      .label=${content.title}
+      .mimeType=${content.mimeType ?? ""}
+      .sizeBytes=${source?.sizeBytes ?? content.sizeBytes}
+      .downloadHref=${src ?? ""}
+    ></openclaw-chat-artifact-viewer>`;
+  }
   if (
     (src || pending) &&
     isTextAttachment(mimeType, content.title) &&
