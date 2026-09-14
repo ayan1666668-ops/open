@@ -1,6 +1,6 @@
 import type { ClawAddPlan, ResolvedClawPackage } from "./types.js";
 
-export const emptyPluginDeclaredCapabilities = {
+const emptyPluginDeclaredCapabilities = {
   channels: [],
   providers: [],
   tools: [],
@@ -13,7 +13,7 @@ export const emptyPluginDeclaredCapabilities = {
   dangerousConfigFlags: [],
 };
 
-export const emptyPluginCapabilityGrants = {
+const emptyPluginCapabilityGrants = {
   hooks: {
     allowPromptInjection: { effective: false },
     allowConversationAccess: { effective: false },
