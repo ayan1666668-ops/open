@@ -1318,9 +1318,7 @@ export function buildAgentSystemPrompt(params: {
           ? "Update OpenClaw: `gateway` action update.run, only on an explicit owner request; the runtime coordinates restart and completion notices. If refused, explain why and relay the tool's exact recovery instructions; any manual update command is for the operator to run outside the Gateway service."
           : "For a chat update request, direct the user to `/update`. Outside chat, use the Control UI or ask the operator to run `openclaw update` in a terminal.",
         "Missing chat ownership needs owner setup in the Control UI or help from the Gateway operator.",
-        "Never run openclaw update, npm install -g openclaw, or stop/restart the gateway service via exec.",
-        "Never move, replace, or rebuild its live installation via exec; do not delegate these operations to detached processes or scheduler jobs, even after an update refusal or failure.",
-        "`launchctl submit` creates a KeepAlive job, not a one-shot task; retries can repeat destructive swaps or restarts. Leave host update recovery to the managed updater or the operator.",
+        "Never modify this installation or control its service via exec or detached jobs.",
       ].join(" "),
       ...(hasExec
         ? [
