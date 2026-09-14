@@ -3480,6 +3480,7 @@ describe("WorkboardStore", () => {
       position: 10,
     });
     const running = await store.create({ title: "Loose run", status: "running", sessionKey: "s1" });
+    const bareRunning = await store.create({ title: "Bare manual running", status: "running" });
     const failed = await store.create({
       title: "Failed twice",
       status: "blocked",
@@ -3497,7 +3498,7 @@ describe("WorkboardStore", () => {
     const now = Date.now() + 2 * 24 * 60 * 60 * 1000;
     const diagnostics = await store.refreshDiagnostics(now);
 
-    expect(diagnostics.count).toBeGreaterThanOrEqual(4);
+    expect(diagnostics.count).toBeGreaterThanOrEqual(5);
     const diagnosedReady = await store.get(ready.id);
     expect(diagnosedReady?.updatedAt).toBeGreaterThan(ready.updatedAt);
     expect(diagnosedReady).toMatchObject({
@@ -3508,6 +3509,13 @@ describe("WorkboardStore", () => {
         diagnostics: expect.arrayContaining([
           expect.objectContaining({ kind: "running_without_heartbeat" }),
           expect.objectContaining({ kind: "orphaned_session" }),
+        ]),
+      },
+    });
+    await expect(store.get(bareRunning.id)).resolves.toMatchObject({
+      metadata: {
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ kind: "running_without_execution" }),
         ]),
       },
     });

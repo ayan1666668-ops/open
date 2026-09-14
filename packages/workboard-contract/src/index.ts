@@ -66,6 +66,7 @@ export const WORKBOARD_PROOF_STATUSES = ["passed", "failed", "skipped", "unknown
 export const WORKBOARD_TEMPLATE_IDS = ["bugfix", "docs", "release", "pr_review", "plugin"] as const;
 export const WORKBOARD_DIAGNOSTIC_KINDS = [
   "stranded_ready",
+  "running_without_execution",
   "running_without_heartbeat",
   "blocked_too_long",
   "repeated_failures",

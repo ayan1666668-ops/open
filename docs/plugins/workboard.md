@@ -431,6 +431,7 @@ Diagnostics are computed from local card metadata. Built-in checks flag:
 | Kind                        | Condition                                                                      |
 | --------------------------- | ------------------------------------------------------------------------------ |
 | `stranded_ready`            | Assigned `todo`/`backlog`/`ready` card not updated in over 1 hour.             |
+| `running_without_execution` | `running` card with no claim heartbeat, execution, session, run, or attempt.   |
 | `running_without_heartbeat` | `running` card with no claim heartbeat or execution update in over 20 minutes. |
 | `blocked_too_long`          | `blocked` card not updated in over 24 hours.                                   |
 | `repeated_failures`         | Card's tracked failure count reaches 2 or more.                                |

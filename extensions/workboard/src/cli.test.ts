@@ -138,6 +138,19 @@ describe("registerWorkboardCli", () => {
     expect(output).toContain("Archived card (archived)");
   });
 
+  it("shows active diagnostic counts in compact text output", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    await store.create({ title: "Bare manual running", status: "running" });
+    const program = createProgram(store);
+
+    const output = await captureStdout(async () => {
+      await program.parseAsync(["workboard", "list"], { from: "user" });
+    });
+
+    expect(output).toContain("Bare manual running");
+    expect(output).toContain("diag=1 error=1");
+  });
+
   it("preserves archived cards in JSON list output by default", async () => {
     const store = createWorkboardSqliteTestStore();
     const archived = await store.create({ title: "Archived card" });

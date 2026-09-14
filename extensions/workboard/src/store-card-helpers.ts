@@ -413,6 +413,23 @@ export function computeCardDiagnostics(card: WorkboardCard, now: number): Workbo
       actions: [{ kind: "claim", label: "Claim card" }],
     });
   }
+  if (
+    card.status === "running" &&
+    !claim &&
+    !cardSessionKey(card) &&
+    !cardRunId(card) &&
+    !card.execution &&
+    !latestRunningAttempt(card)
+  ) {
+    addDiagnostic({
+      kind: "running_without_execution",
+      severity: "error",
+      title: "Running card has no linked execution",
+      detail:
+        "The card is marked running but has no claim heartbeat, execution record, session key, run id, or running attempt. Link it to a live worker, claim and heartbeat it, or move it out of running.",
+      actions: [{ kind: "reassign", label: "Reassign card" }],
+    });
+  }
   if (card.status === "running" && now - lastHeartbeatAt > RUNNING_HEARTBEAT_STALE_MS) {
     addDiagnostic({
       kind: "running_without_heartbeat",

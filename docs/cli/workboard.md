@@ -42,9 +42,10 @@ Text output is compact:
 
 ```text
 7f4a2c10  ready     high    default agent-a  Fix stale worker heartbeat
+8b2d1a44  running   normal  default  Manual worker check  diag=1 error=1
 ```
 
-Columns are id prefix, status, priority, board id, optional agent id, and title.
+Columns are id prefix, status, priority, board id, optional agent id, and title. Text output appends `diag=<count>` and, when present, `error=<count>` for active diagnostics computed at read time.
 
 | Flag                 | Purpose                                       |
 | -------------------- | --------------------------------------------- |
@@ -95,6 +96,8 @@ openclaw workboard move 7f4a2c10 --status done --json
 ```
 
 `move` changes the card's status using the same manual-operator path as dragging a card in the dashboard. It accepts a full card id or an unambiguous prefix. Active dependency and schedule holds still apply. Operators may move a claimed card without its agent claim token. Claim tokens remain scoped to agent-tool mutations, and JSON output redacts them.
+
+Operational rule: a card in `running` must have a live claim heartbeat or linked execution/session/run metadata. Manual `running` moves without that backing state are allowed for operator recovery, but Workboard reports them as diagnostics immediately so the card is either linked, claimed with heartbeats, reassigned, or moved out of `running`.
 
 ## `dispatch`
 

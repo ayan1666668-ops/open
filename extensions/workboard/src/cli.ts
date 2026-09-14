@@ -12,6 +12,7 @@ import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveWorkboardCardByIdOrPrefix } from "./card-lookup.js";
 import { redactClaimToken } from "./card-redaction.js";
+import { computeCardDiagnostics } from "./store-card-helpers.js";
 import type { WorkboardDispatchResult, WorkboardStore } from "./store.js";
 
 type JsonOptions = {
@@ -70,7 +71,12 @@ function formatCardLine(card: WorkboardCard): string {
   const boardId = card.metadata?.automation?.boardId ?? "default";
   const agent = card.agentId ? ` ${card.agentId}` : "";
   const archived = card.metadata?.archivedAt ? " (archived)" : "";
-  return `${card.id.slice(0, 8)}  ${card.status.padEnd(8)}  ${card.priority.padEnd(6)}  ${boardId}${agent}  ${card.title}${archived}`;
+  const diagnostics = computeCardDiagnostics(card, Date.now());
+  const errors = diagnostics.filter((entry) => entry.severity === "error").length;
+  const diagnosticSummary = diagnostics.length
+    ? `  diag=${diagnostics.length}${errors ? ` error=${errors}` : ""}`
+    : "";
+  return `${card.id.slice(0, 8)}  ${card.status.padEnd(8)}  ${card.priority.padEnd(6)}  ${boardId}${agent}  ${card.title}${archived}${diagnosticSummary}`;
 }
 
 function redactDispatchResult(result: WorkboardDispatchResult): WorkboardDispatchResult {
