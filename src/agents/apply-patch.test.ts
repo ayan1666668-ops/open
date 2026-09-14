@@ -383,24 +383,36 @@ describe("applyPatch", () => {
     expect(result.summary.modified).toEqual(["dest.txt"]);
   });
 
-  it("updates in place when move target resolves to the source file", async () => {
-    const memory = createMemoryPatchSandbox({
-      "source.txt": "foo\nbar\n",
-    });
-    const patch = `*** Begin Patch
+  it.each(["./source.txt", "/sandbox/./source.txt", "/sandbox//source.txt"])(
+    "updates in place when legacy bridge move target %s names the source file",
+    async (movePath) => {
+      const memory = createMemoryPatchSandbox({
+        "source.txt": "foo\nbar\n",
+      });
+      // The public bridge contract permits resolved container paths with dot
+      // segments. Its filesystem still treats these spellings as one file.
+      memory.bridge.resolvePath = ({ filePath }) => ({
+        relativePath: filePath,
+        containerPath: path.posix.isAbsolute(filePath) ? filePath : `/sandbox/${filePath}`,
+      });
+      const patch = `*** Begin Patch
 *** Update File: source.txt
-*** Move to: ./source.txt
+*** Move to: ${movePath}
 @@
  foo
 -bar
 +baz
 *** End Patch`;
 
-    const result = await applyPatch(patch, memory.options);
+      const result = await applyPatch(patch, memory.options);
 
-    expect(memory.files.get("/sandbox/source.txt")).toBe("foo\nbaz\n");
-    expect(result.summary.modified).toEqual(["source.txt"]);
-  });
+      expect(memory.files.get("/sandbox/source.txt")).toBe("foo\nbaz\n");
+      expect(memory.files.size).toBe(1);
+      expect(memory.createFileExclusive).not.toHaveBeenCalled();
+      expect(memory.remove).not.toHaveBeenCalled();
+      expect(result.summary.modified).toEqual(["source.txt"]);
+    },
+  );
 
   it("returns a non-terminal no-op without rewriting unchanged update hunks", async () => {
     const memory = createMemoryPatchSandbox({
