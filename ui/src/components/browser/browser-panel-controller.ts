@@ -95,7 +95,7 @@ export class BrowserPanelController implements ReactiveController {
   suspendView(): void {
     this.native.cancelCapture();
     this.native.presentation.hide();
-    this.input.cancelOverlayPointerGesture();
+    this.input.resetCaptureState();
     this.invalidateViewOperations();
     if (this.view?.dataUrl.startsWith("blob:")) {
       this.setState("view", null);
@@ -723,6 +723,12 @@ export class BrowserPanelController implements ReactiveController {
   handleViewportKeydown(event: KeyboardEvent): void {
     if (!this.native.activeTab) {
       this.input.handleViewportKeydown(event);
+    }
+  }
+
+  handleViewportPaste(event: ClipboardEvent): void {
+    if (!this.native.activeTab) {
+      this.input.handleViewportPaste(event);
     }
   }
 
