@@ -136,7 +136,7 @@ function createSqliteLedgerQueries(db: DatabaseSync) {
         .select((eb) =>
           eb
             .selectFrom("acp_replay_events as e")
-            .select((eb) => eb.fn.count<number>("e.seq").as("event_count"))
+            .select((count) => count.fn.count<number>("e.seq").as("event_count"))
             .whereRef("e.session_id", "=", "s.session_id")
             .as("event_count"),
         )
@@ -146,9 +146,9 @@ function createSqliteLedgerQueries(db: DatabaseSync) {
             .whereRef("e.session_id", "=", "s.session_id");
           return eb(
             eb(
-              events.select((eb) => eb.fn.max<number>("e.seq").as("seq")),
+              events.select((endpoint) => endpoint.fn.max<number>("e.seq").as("seq")),
               "-",
-              events.select((eb) => eb.fn.min<number>("e.seq").as("seq")),
+              events.select((endpoint) => endpoint.fn.min<number>("e.seq").as("seq")),
             ),
             ">=",
             parameter((limit) => limit),
