@@ -11,7 +11,11 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--repo") {
-      repo = argv[index + 1] ?? null;
+      const explicitRepo = argv[index + 1];
+      if (!explicitRepo || explicitRepo.startsWith("--")) {
+        throw new Error("--repo requires an OWNER/REPO value");
+      }
+      repo = explicitRepo;
       index += 1;
       continue;
     }

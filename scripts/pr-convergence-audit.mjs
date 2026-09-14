@@ -369,6 +369,28 @@ function bodyLooksLikeReviewEvidence(body = "") {
   return FINDING_KIND_PATTERNS.some((pattern) => pattern.regex.test(body));
 }
 
+function findingMatchIsNegated(line, match) {
+  const before = line.slice(0, match.index);
+  const after = line.slice((match.index ?? 0) + match[0].length);
+  const negatedPrefix = /(?:^|\W)(?:no|not|without|zero|0)(?:\s+[\w-]+){0,4}\s*$/iu;
+  const resolvedSuffix =
+    /^\s*(?::|=|-)?\s*(?:none|false|zero|0|resolved|fixed|addressed|cleared)(?:\W|$)/iu;
+  return negatedPrefix.test(before) || resolvedSuffix.test(after);
+}
+
+function bodyHasActiveFinding(body, pattern) {
+  const flags = pattern.regex.flags.includes("g") ? pattern.regex.flags : `${pattern.regex.flags}g`;
+  const matcher = new RegExp(pattern.regex.source, flags);
+  for (const line of body.split(/\r?\n/u)) {
+    for (const match of line.matchAll(matcher)) {
+      if (!findingMatchIsNegated(line, match)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function extractFindingsFromEvidenceItem(item, headSha) {
   /** @type {NormalizedFinding[]} */
   const findings = [];
@@ -407,6 +429,9 @@ export function extractFindingsFromEvidenceItem(item, headSha) {
     return findings;
   }
   if (trustedClawSweeper && isClawSweeperCommandReceipt(body)) {
+    return findings;
+  }
+  if (item.surface === EVIDENCE_SURFACES.FORMAL_REVIEW && item.reviewState === "DISMISSED") {
     return findings;
   }
   const markerKinds = trustedClawSweeper ? extractClawSweeperMarkerKinds(body) : [];
@@ -452,7 +477,7 @@ export function extractFindingsFromEvidenceItem(item, headSha) {
   }
 
   for (const pattern of FINDING_KIND_PATTERNS) {
-    if (!pattern.regex.test(body)) {
+    if (!bodyHasActiveFinding(body, pattern)) {
       continue;
     }
     if (

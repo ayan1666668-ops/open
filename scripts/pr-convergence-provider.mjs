@@ -70,7 +70,7 @@ function normalizeRequiredCheck(check, headSha, index) {
 }
 
 /**
- * Create the live, read-only GitHub evidence provider used by the landing gate.
+ * Create the live, read-only GitHub evidence provider used by the advisory audit CLI.
  * @param {{ readGh?: (args: string[]) => string }} [options]
  */
 export function createGhPrConvergenceProvider({ readGh = defaultReadGh } = {}) {

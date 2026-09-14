@@ -242,6 +242,76 @@ describe("pr-convergence-audit", () => {
     expect(result.reason).toContain("No trusted exact-head ClawSweeper pass");
   });
 
+  it.each([
+    "No actionable findings.",
+    "No P1 findings remain.",
+    "Actionable findings: 0",
+    "The exact-head review is not BLOCKED.",
+  ])("does not create blockers from negated review prose: %s", (body) => {
+    const findings = extractFindingsFromEvidenceItem(
+      {
+        id: "negated",
+        surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+        url: `${prUrl}#pullrequestreview-negated`,
+        author: "maintainer",
+        createdAt: "2026-07-26T09:00:00Z",
+        effectiveAt: "2026-07-26T09:00:00Z",
+        body,
+        reviewState: "COMMENTED",
+        reviewedSha: headSha,
+        commitId: headSha,
+      },
+      headSha,
+    );
+
+    expect(findings).toEqual([]);
+  });
+
+  it("keeps dismissed formal review findings as evidence without treating them as active", () => {
+    const findings = extractFindingsFromEvidenceItem(
+      {
+        id: "dismissed",
+        surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+        url: `${prUrl}#pullrequestreview-dismissed`,
+        author: "maintainer",
+        createdAt: "2026-07-26T09:00:00Z",
+        effectiveAt: "2026-07-26T09:00:00Z",
+        body: "P1: Historical blocker retained for context.",
+        reviewState: "DISMISSED",
+        reviewedSha: headSha,
+        commitId: headSha,
+      },
+      headSha,
+    );
+
+    expect(findings).toEqual([]);
+  });
+
+  it.each([
+    "P1: Active regression.",
+    "Actionable findings: 1",
+    "BLOCKED before merge.",
+    "No P1 findings from the previous review; P1: New regression.",
+  ])("retains active review findings: %s", (body) => {
+    const findings = extractFindingsFromEvidenceItem(
+      {
+        id: "active",
+        surface: EVIDENCE_SURFACES.FORMAL_REVIEW,
+        url: `${prUrl}#pullrequestreview-active`,
+        author: "maintainer",
+        createdAt: "2026-07-26T09:00:00Z",
+        effectiveAt: "2026-07-26T09:00:00Z",
+        body,
+        reviewState: "COMMENTED",
+        reviewedSha: headSha,
+        commitId: headSha,
+      },
+      headSha,
+    );
+
+    expect(findings.some((finding) => finding.currentHead)).toBe(true);
+  });
+
   it("does not let a forged marker pin contributor review prose to the current head", async () => {
     const { provider } = createProvider({
       formalReviews: [],

@@ -49,6 +49,30 @@ function createProvider({ withPass }: { withPass: boolean }) {
 }
 
 describe("PR convergence audit CLI", () => {
+  it.each([
+    ["42", "--repo"],
+    ["42", "--repo", "--unknown"],
+  ])("rejects a missing or option-shaped explicit repository (%j)", async (...argv) => {
+    let providerRead = false;
+    const provider = createProvider({ withPass: true });
+    const fetchPullRequest = provider.fetchPullRequest.bind(provider);
+    provider.fetchPullRequest = async (...args) => {
+      providerRead = true;
+      return fetchPullRequest(...args);
+    };
+
+    await expect(
+      runPrConvergenceAuditCli({
+        argv,
+        provider,
+        resolveRepo: () => {
+          throw new Error("repository discovery must not run");
+        },
+      }),
+    ).rejects.toThrow("--repo requires an OWNER/REPO value");
+    expect(providerRead).toBe(false);
+  });
+
   it("returns success and structured JSON only for READY", async () => {
     let output = "";
     const status = await runPrConvergenceAuditCli({
