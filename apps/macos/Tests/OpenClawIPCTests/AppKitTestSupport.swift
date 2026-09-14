@@ -78,49 +78,54 @@ enum AppKitTestSupport {
         inspect: @escaping (NSMenu) throws -> Void) async throws
     {
         let role: NSAccessibility.Role? = button.accessibilityRole?()
-        let identifier: String? = button.accessibilityIdentifier?()
-        let label: String? = button.accessibilityLabel?()
-        let title: String? = button.accessibilityTitle?()
-        guard let role else { throw InteractionFailure(message: "The menu control has no accessibility role") }
-        let identity = AppKitTestAXMenu.Identity(
-            role: role.rawValue,
-            identifier: identifier.flatMap { $0.isEmpty ? nil : $0 },
-            label: label.flatMap { $0.isEmpty ? nil : $0 },
-            title: title.flatMap { $0.isEmpty ? nil : $0 })
-        guard identity.identifier != nil || identity.label != nil || identity.title != nil else {
-            throw InteractionFailure(message: "The menu control has no identifying accessibility attributes")
-        }
-        let previousIdentifier = window.accessibilityIdentifier()
-        let windowIdentifier = "openclaw-menu-test-\(UUID().uuidString)"
-        window.setAccessibilityIdentifier(windowIdentifier)
-        defer { window.setAccessibilityIdentifier(previousIdentifier) }
-        guard window.accessibilityIdentifier() == windowIdentifier else {
-            throw InteractionFailure(message: "The fixture window did not retain its accessibility identifier")
-        }
+        let controlType = String(reflecting: type(of: button))
         let tracking = AppKitTestMenuTracking(inspect: inspect)
         tracking.start()
         defer { tracking.stop() }
-        let request = AppKitTestAXMenu.Request(
-            processID: ProcessInfo.processInfo.processIdentifier,
-            windowIdentifier: windowIdentifier,
-            control: identity,
-            deadline: tracking.expiresAt)
-        let result = AppKitTestAXMenu.perform(request)
-        if result.action != nil { await tracking.waitForCompletion() }
+        try Task.checkCancellation()
+        guard ContinuousClock.now < tracking.expiresAt else {
+            throw InteractionFailure(message: "The menu interaction deadline expired before dispatch")
+        }
+        let action: String
+        var ownerType: String?
+        var pressed: Bool?
+        if let cell = button as? NSPopUpButtonCell {
+            guard let owner = cell.controlView as? NSPopUpButton,
+                  owner.cell === cell,
+                  owner.window === window,
+                  owner.isEnabled
+            else {
+                throw InteractionFailure(message:
+                    "The popup cell must belong to its enabled fixture control and window: \(controlType), owner=\(String(describing: cell.controlView))")
+            }
+            action = "popup-cell"
+            ownerType = String(reflecting: type(of: owner))
+            cell.performClick(withFrame: owner.bounds, in: owner)
+        } else {
+            guard role == .button,
+                  (button.accessibilityWindow?() as? NSWindow) === window
+            else {
+                throw InteractionFailure(message: "Unsupported menu element or fixture window: \(controlType)")
+            }
+            action = "accessibility-press"
+            pressed = button.accessibilityPerformPress?()
+            guard pressed != nil else {
+                throw InteractionFailure(message: "The fixture button has no direct accessibility Press action")
+            }
+        }
+        await tracking.waitForCompletion()
         let completed = tracking.observed && tracking.inspectionCompleted && !tracking.timedOut
         print("""
         Menu interaction at \(file):\(line)
-        actions=\(result.advertisedActions) action=\(String(describing: result.action)) AXError=\(String(describing: result.status)) resolutionError=\(String(describing: result.error))
+        action=\(action) pressed=\(String(describing: pressed))
         observed=\(tracking.observed) inspected=\(tracking.inspectionCompleted) timedOut=\(tracking.timedOut) error=\(String(describing: tracking.error))
-        control=\(identity) windowIdentifier=\(windowIdentifier) appActive=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow)
+        control=\(controlType) owner=\(String(describing: ownerType)) role=\(String(describing: role)) appActive=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow)
         """)
         if let error = tracking.error { throw error }
         try Task.checkCancellation()
-        // AX can report cannotComplete after modal processing; inspection still owns completion.
-        let accepted = result.status == AXError.success.rawValue || result.status == AXError.cannotComplete.rawValue
-        guard accepted, completed else {
-            throw InteractionFailure(message: result.error ??
-                "The native menu inspection must complete before its tracking deadline")
+        // The inspection cancels tracking; its completion matters, not popup selection.
+        guard completed else {
+            throw InteractionFailure(message: "The native menu inspection must complete before its tracking deadline")
         }
     }
 
@@ -129,151 +134,6 @@ enum AppKitTestSupport {
         var errorDescription: String? {
             self.message
         }
-    }
-}
-
-// Same-process AX actions may invoke SwiftUI handlers synchronously.
-@MainActor
-private enum AppKitTestAXMenu {
-    struct Identity {
-        let role: String
-        let identifier: String?
-        let label: String?
-        let title: String?
-    }
-
-    struct Request {
-        let processID: Int32
-        let windowIdentifier: String
-        let control: Identity
-        let deadline: ContinuousClock.Instant
-    }
-
-    struct Result {
-        var advertisedActions: [String] = []
-        var action: String?
-        var status: Int32?
-        var error: String?
-    }
-
-    private struct Failure: Error {
-        let message: String
-    }
-
-    static func perform(_ request: Request) -> Result {
-        var result = Result()
-        do {
-            try self.checkCurrent(request)
-            let application = AXUIElementCreateApplication(request.processID)
-            let windows = try self.elements(application, attribute: kAXWindowsAttribute)
-            let matches = try windows.filter {
-                try self.text($0, attribute: kAXIdentifierAttribute) == request.windowIdentifier
-            }
-            guard matches.count == 1, let window = matches.first else {
-                throw Failure(message: "Expected one fixture AX window, found \(matches.count)")
-            }
-            var pending = [window]
-            var visited: [AXUIElement] = []
-            var controls: [AXUIElement] = []
-            while let element = pending.popLast() {
-                try self.checkCurrent(request)
-                guard !visited.contains(where: { CFEqual($0, element) }) else { continue }
-                visited.append(element)
-                if try self.matches(element, identity: request.control) { controls.append(element) }
-                try pending.append(contentsOf: self.elements(element, attribute: kAXChildrenAttribute, optional: true))
-            }
-            guard controls.count == 1, let control = controls.first else {
-                throw Failure(message: "Expected one matching AX control, found \(controls.count)")
-            }
-            var actions: CFArray?
-            let actionStatus = AXUIElementCopyActionNames(control, &actions)
-            guard actionStatus == .success, let actions else {
-                throw Failure(message: "Copy AX actions failed: \(actionStatus.rawValue)")
-            }
-            result.advertisedActions = try self.values(actions).map { try self.string($0) }
-            let menuActions: [String] = [kAXPressAction, kAXShowMenuAction]
-            guard let action = menuActions.first(where: { result.advertisedActions.contains($0) }) else {
-                throw Failure(message: "The control advertises no Press or Show Menu action")
-            }
-            let controlWindow = try self.element(self.attribute(control, name: kAXWindowAttribute))
-            guard CFEqual(controlWindow, window),
-                  try self.text(window, attribute: kAXIdentifierAttribute) == request.windowIdentifier,
-                  try self.matches(control, identity: request.control)
-            else { throw Failure(message: "The AX control no longer belongs to the fixture window") }
-            try self.checkCurrent(request)
-            result.action = action
-            result.status = AXUIElementPerformAction(control, action as CFString).rawValue
-        } catch let failure as Failure {
-            result.error = failure.message
-        } catch {
-            result.error = String(describing: error)
-        }
-        return result
-    }
-
-    private static func checkCurrent(_ request: Request) throws {
-        try Task.checkCancellation()
-        guard ContinuousClock.now < request.deadline else {
-            throw Failure(message: "The menu interaction deadline expired before AX dispatch")
-        }
-    }
-
-    private static func matches(_ element: AXUIElement, identity: Identity) throws -> Bool {
-        guard try self.text(element, attribute: kAXRoleAttribute) == identity.role else { return false }
-        for (attribute, expected) in [
-            (kAXIdentifierAttribute, identity.identifier),
-            (kAXDescriptionAttribute, identity.label),
-            (kAXTitleAttribute, identity.title),
-        ] {
-            if let expected, try self.text(element, attribute: attribute) != expected { return false }
-        }
-        return true
-    }
-
-    private static func attribute(_ element: AXUIElement, name: String, optional: Bool = false) throws -> CFTypeRef? {
-        var value: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
-        if optional, status == .attributeUnsupported || status == .noValue { return nil }
-        guard status == .success, let value else {
-            throw Failure(message: "Read \(name) failed: \(status.rawValue)")
-        }
-        return value
-    }
-
-    private static func text(_ element: AXUIElement, attribute: String) throws -> String? {
-        guard let value = try self.attribute(element, name: attribute, optional: true) else { return nil }
-        return try self.string(value)
-    }
-
-    private static func string(_ value: CFTypeRef) throws -> String {
-        guard CFGetTypeID(value) == CFStringGetTypeID(), let string = value as? String else {
-            throw Failure(message: "Expected an AX string")
-        }
-        return string
-    }
-
-    private static func values(_ value: CFTypeRef) throws -> [CFTypeRef] {
-        guard CFGetTypeID(value) == CFArrayGetTypeID(), let values = value as? [CFTypeRef] else {
-            throw Failure(message: "Expected an AX array")
-        }
-        return values
-    }
-
-    private static func element(_ value: CFTypeRef?) throws -> AXUIElement {
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            throw Failure(message: "Expected an AX element")
-        }
-        // This is an AX API result validated by CF type, never an in-process AppKit object.
-        return unsafeDowncast(value, to: AXUIElement.self)
-    }
-
-    private static func elements(
-        _ element: AXUIElement,
-        attribute: String,
-        optional: Bool = false) throws -> [AXUIElement]
-    {
-        guard let value = try self.attribute(element, name: attribute, optional: optional) else { return [] }
-        return try self.values(value).map { try self.element($0) }
     }
 }
 
