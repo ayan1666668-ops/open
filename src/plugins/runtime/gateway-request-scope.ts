@@ -22,6 +22,8 @@ import type { OpenClawPluginNodeWorkspace } from "../types.node-host.js";
 import { getPluginRuntimeLoadContextState } from "./load-context-state.js";
 
 type PluginRuntimeGatewayRequestScope = {
+  /** Revalidates the exact plugin's manifest declaration and operator consent. */
+  assertSubagentRunAuthorized?: () => void;
   /** Recheck the admitted HTTP device grant before effects; rejection sends HTTP 401 and throws. */
   revalidate?: () => Promise<void>;
   /** Exact placement owner captured before the local harness begins. */
@@ -69,6 +71,7 @@ type PluginRuntimeGatewayRequestScope = {
 
 type PluginRuntimePluginScope = {
   pluginId: string;
+  assertSubagentRunAuthorized?: () => void;
   pluginSource?: string;
   pluginOrigin?: PluginOrigin;
   pluginTrustedOfficialInstall?: boolean;
@@ -291,6 +294,11 @@ function applyPluginScope(
   scope: PluginRuntimePluginScope,
 ): void {
   scoped.pluginId = scope.pluginId;
+  if (scope.assertSubagentRunAuthorized !== undefined) {
+    scoped.assertSubagentRunAuthorized = scope.assertSubagentRunAuthorized;
+  } else {
+    delete scoped.assertSubagentRunAuthorized;
+  }
   if (scope.pluginSource !== undefined) {
     scoped.pluginSource = scope.pluginSource;
   } else {

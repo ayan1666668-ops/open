@@ -314,6 +314,8 @@ export function createGatewaySubagentRuntime(
         params.completionDelivery,
       );
       const scope = getPluginRuntimeGatewayRequestScope();
+      const assertSubagentRunAuthorized = scope?.assertSubagentRunAuthorized;
+      assertSubagentRunAuthorized?.();
       const pluginId =
         typeof scope?.pluginId === "string" && scope.pluginId.trim()
           ? scope.pluginId.trim()
@@ -395,8 +397,17 @@ export function createGatewaySubagentRuntime(
         },
         {
           allowSyntheticModelOverride,
-          sessionMutationCommitGuard,
+          sessionMutationCommitGuard:
+            assertSubagentRunAuthorized || sessionMutationCommitGuard
+              ? () => {
+                  assertSubagentRunAuthorized?.();
+                  sessionMutationCommitGuard?.();
+                }
+              : undefined,
           agentRunTracking: "plugin_subagent",
+          ...(assertSubagentRunAuthorized
+            ? { forceSyntheticClient: true, syntheticScopes: [ADMIN_SCOPE] }
+            : {}),
           ...(!scope?.client ? { operatorRoleActor: { kind: "system" as const } } : {}),
           ...(pluginId ? { pluginRuntimeOwnerId: pluginId } : {}),
           ...(pluginSubagentRequester ? { pluginSubagentRequester } : {}),

@@ -96,6 +96,35 @@ function run(override: { provider?: string; model?: string }) {
 }
 
 describe("plugin subagent initial override policy", () => {
+  it("uses a synthetic admin client only for an entitled plugin-owned run", async () => {
+    const assertAuthorized = vi.fn();
+    const context = { getRuntimeConfig: () => config } as GatewayRequestContext;
+    const runtime = createGatewaySubagentRuntime(
+      () => context,
+      resolvePluginSubagentOverridePolicies(config),
+    );
+
+    await expect(
+      withPluginRuntimePluginScope(
+        { pluginId: "override-fixture", assertSubagentRunAuthorized: assertAuthorized },
+        () =>
+          runtime.run({
+            sessionKey: "agent:worker:subagent:entitled",
+            message: "Use the default model",
+          }),
+      ),
+    ).resolves.toMatchObject({ runId: "override-run" });
+
+    expect(assertAuthorized).toHaveBeenCalledOnce();
+    const options = dispatch.mock.calls[0]?.[2];
+    expect(options).toMatchObject({
+      forceSyntheticClient: true,
+      syntheticScopes: ["operator.admin"],
+    });
+    options?.sessionMutationCommitGuard?.();
+    expect(assertAuthorized).toHaveBeenCalledTimes(2);
+  });
+
   it.each([{ provider: "fixture", model: "literal" }, { model: "fixture/literal" }])(
     "checks the exact configured execution target for %j",
     async (override) => {

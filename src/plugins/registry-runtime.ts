@@ -13,6 +13,7 @@ import {
   type OpenKeyedStoreOptions,
 } from "../plugin-state/plugin-state-store.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
+import { normalizePluginsConfig } from "./config-state.js";
 import { formatPluginTrustRefusal } from "./plugin-trust.js";
 import {
   capturePluginLifecycleAuthority,
@@ -195,6 +196,20 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
     };
     const runtime = new Proxy(registryParams.runtime, {
       get(target, prop, receiver) {
+        const assertSubagentRunAuthorized = () => {
+          assertRuntimeCurrent();
+          const declared = record.contracts?.runtimeCapabilities?.includes("subagent.run") === true;
+          const consented =
+            normalizePluginsConfig(registryParams.runtime.config.current().plugins).entries[
+              pluginId
+            ]?.subagent?.allowRun === true;
+          if (!declared || !consented) {
+            throw new Error(
+              `plugin "${pluginId}" requires manifest runtimeCapabilities ["subagent.run"] and ` +
+                "plugins.entries.<id>.subagent.allowRun: true to call api.runtime.subagent.run.",
+            );
+          }
+        };
         const runWithPluginScope = <T>(run: () => T, requireActive = true): T => {
           if (requireActive) {
             assertRuntimeCurrent();
@@ -203,6 +218,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             withPluginRuntimePluginScope(
               {
                 pluginId,
+                assertSubagentRunAuthorized,
                 pluginSource: record.source,
                 pluginOrigin: record.origin,
                 pluginTrustedOfficialInstall: record.trustedOfficialInstall,
@@ -595,6 +611,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           run: async (params) => {
             const { assertSessionIdentitiesOwned } = await loadSessionOwnership();
             return await runWithPluginScope(async () => {
+              assertSubagentRunAuthorized();
               assertSessionIdentitiesOwned({
                 action: "run",
                 sessionKeys: [params.sessionKey],

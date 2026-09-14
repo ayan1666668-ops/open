@@ -13,8 +13,13 @@ Enable the plugin before using the command:
 
 ```bash
 openclaw plugins enable workboard
+openclaw config set plugins.entries.workboard.subagent.allowRun true
 openclaw gateway restart
 ```
+
+The explicit `allowRun` consent is required because Workboard dispatch starts
+plugin-owned subagent workers. It does not grant Workboard general Gateway or
+operator access.
 
 ## Usage
 
