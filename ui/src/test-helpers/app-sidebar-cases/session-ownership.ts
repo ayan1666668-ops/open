@@ -40,12 +40,8 @@ export async function selectSessionMenuValue(sidebar: SidebarLifecycleState, val
   await sidebar.updateComplete;
 }
 
-async function selectSort(sidebar: SidebarLifecycleState, mode: string) {
-  await selectSessionMenuValue(sidebar, `sort:${mode}`);
-}
-
 async function expectSort(sidebar: SidebarLifecycleState, mode: string, keys: string[]) {
-  await selectSort(sidebar, mode);
+  await selectSessionMenuValue(sidebar, `sort:${mode}`);
   expect(visibleSessionKeys(sidebar)).toEqual(keys);
 }
 
@@ -713,12 +709,9 @@ describe("AppSidebar session ownership", () => {
       "agent:main:collaborator",
     ]);
     const result = harness.sessions.state.result;
-    if (!result) {
-      throw new Error("expected session list");
-    }
-    const archived = result.sessions.find((row) => row.key.endsWith(":archived"));
-    const collaborator = result.sessions.find((row) => row.key.endsWith(":collaborator"));
-    if (!archived || !collaborator) {
+    const archived = result?.sessions.find((row) => row.key.endsWith(":archived"));
+    const collaborator = result?.sessions.find((row) => row.key.endsWith(":collaborator"));
+    if (!result || !archived || !collaborator) {
       throw new Error("expected archive attribution rows");
     }
     archived.archived = true;
