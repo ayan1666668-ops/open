@@ -5,6 +5,7 @@
 import path from "node:path";
 import { MAX_IMAGE_BYTES } from "@openclaw/media-core/constants";
 import { OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST } from "../../../context-engine/host-compat.js";
+import { resolveContextEngineOwnerPluginId } from "../../../context-engine/registry.js";
 import { buildContextEngineRuntimeSettings } from "../../../context-engine/runtime-settings.js";
 import type { ContextEngine } from "../../../context-engine/types.js";
 import {
@@ -328,6 +329,10 @@ export function installEmbeddedAttemptContextGuards(input: {
           workspaceDir: input.effectiveWorkspace,
           cwd: input.effectiveCwd,
           agentDir: input.agentDir,
+          // Exposed llm capabilities must carry the owning plugin id so
+          // allowedCompletionModels keeps applying to engine-initiated
+          // completions; an unbound context-engine caller would skip it.
+          contextEnginePluginId: resolveContextEngineOwnerPluginId(activeContextEngine),
           tokenBudget: attempt.contextTokenBudget,
           promptCache:
             input.getPromptCache() ??

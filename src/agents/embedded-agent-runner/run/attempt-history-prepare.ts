@@ -217,12 +217,14 @@ export async function prepareEmbeddedAttemptHistory(
         modelId: attempt.modelId,
         // Recall sees the same runtime identity the capture path gets; engines
         // routing by runtimeContext.senderId would otherwise lose per-user
-        // namespacing on every pre-turn assembly.
+        // namespacing on every pre-turn assembly. The owner id keeps the
+        // exposed llm capability under the engine plugin's completion policy.
         runtimeContext: buildAfterTurnRuntimeContext({
           attempt,
           workspaceDir: effectiveWorkspace,
           cwd: effectiveCwd,
           agentDir: input.agentDir,
+          contextEnginePluginId: input.resolveActiveContextEnginePluginId(),
         }),
         maxOutputTokens: reserveTokens,
         contextEngineHostSupport: OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST,

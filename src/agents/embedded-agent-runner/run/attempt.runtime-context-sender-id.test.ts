@@ -76,6 +76,11 @@ describe("runEmbeddedAttempt runtime context sender identity", () => {
     expect(projectAgentRunAttemptTerminal(result.terminal).promptError).toBeNull();
     expect(captured.assemble.length).toBeGreaterThan(0);
     expect(captured.assemble[0]?.senderId).toBe("user-42");
+    // Recall receives the same executable capability face as capture; the
+    // runtime-llm suite owns the proof that its completion policy binding holds.
+    expect((captured.assemble[0]?.llm as { complete?: unknown } | undefined)?.complete).toBeTypeOf(
+      "function",
+    );
     expect(captured.afterTurn.length).toBeGreaterThan(0);
     expect(captured.afterTurn[0]?.senderId).toBe("user-42");
   });
