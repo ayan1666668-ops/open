@@ -14,9 +14,9 @@ import {
   renderSettingsValue,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
-import { registerDreamingEnglish } from "../../i18n/locales/en-dreaming.ts";
 import { registerMemoryImportEnglish } from "../../i18n/locales/en-memory-import.ts";
 import { registerPluginManagementEnglish } from "../../i18n/locales/en-plugin-management.ts";
+import { registerSettingsEnglish } from "../../i18n/locales/en-settings.ts";
 import type { PluginCatalogItem } from "../../lib/plugins/index.ts";
 import {
   selectedEngineId,
@@ -25,8 +25,9 @@ import {
   type MemoryTab,
 } from "./memory-schema.ts";
 
+registerSettingsEnglish();
+
 registerPluginManagementEnglish();
-registerDreamingEnglish();
 
 registerMemoryImportEnglish();
 

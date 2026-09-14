@@ -10,10 +10,12 @@ import { toSanitizedMarkdownHtml } from "../../../components/markdown.ts";
 import "../../../components/modal-dialog.ts";
 import { i18n, t } from "../../../i18n/index.ts";
 import { registerDreamingEnglish } from "../../../i18n/locales/en-dreaming.ts";
-import "../../../styles/dreams.css";
+import { registerSettingsEnglish } from "../../../i18n/locales/en-settings.ts";
 import { formatUiError } from "../../../lib/format-error.ts";
+import "../../../styles/dreams.css";
 import type { DreamingEntry, WikiImportInsights, WikiOverview } from "./dreaming.ts";
 
+registerSettingsEnglish();
 registerDreamingEnglish();
 
 // ── Diary entry parser ─────────────────────────────────────────────────

@@ -134,18 +134,16 @@
 }
 
 /* Chat Group Layout - default (assistant/other on left). Groups without a
-   footer keep the shared turn gap directly. Footer-bearing groups split
-   message content and footer into separate rows so each row keeps the avatar
-   gutter while only the message row controls avatar alignment. */
+   footer keep the shared turn gap directly. Footer-bearing groups reserve that
+   gap in the footer row, which grows for wrapped metadata and touch controls
+   without subtracting an assumed footer height. */
 .chat-group {
   --chat-avatar-column: 36px;
   --chat-avatar-gap: 10px;
   --chat-avatar-gutter: calc(var(--chat-avatar-column) + var(--chat-avatar-gap));
-  --chat-footer-row-offset: 26px;
   --chat-message-column-max: var(--chat-message-max-width, min(900px, 68%));
-  --chat-run-block-gap: 12px;
-  --chat-touch-row-margin: 14px;
-  --chat-turn-gap: 50px;
+  --chat-run-block-gap: 8px;
+  --chat-turn-gap: 28px;
   display: flex;
   gap: var(--chat-avatar-gap);
   align-items: flex-start;
@@ -239,15 +237,6 @@
   --chat-avatar-column: 0px;
   --chat-avatar-gap: 0px;
   margin-inline: 0;
-}
-
-@media (hover: none),
-  (max-width: 768px),
-  (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
-  .chat-group {
-    padding-bottom: calc(var(--chat-turn-gap) - var(--chat-touch-row-margin));
-    margin-bottom: var(--chat-touch-row-margin);
-  }
 }
 
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {

@@ -44,6 +44,7 @@ import {
   renderSettingsToggleRow,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
+import { registerCronEnglish } from "../../i18n/locales/en-cron.ts";
 import {
   isCronJobActiveFailure,
   isCronJobRunning,
@@ -63,6 +64,8 @@ import { resolveScrollBehavior } from "../../lib/scroll-behavior.ts";
 import { renderSegmented } from "./segmented-control.ts";
 import { CRON_SUGGESTIONS, suggestionFormPatch } from "./suggestions.ts";
 import { renderRunsSection, runStatusLabel } from "./view-runs.ts";
+
+registerCronEnglish();
 
 type CronPanelMode = "overview" | "create" | "job";
 

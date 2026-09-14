@@ -5,6 +5,7 @@ import * as agentEn from "./en-agents.ts";
 
 export const en: TranslationMap & {
   board: TranslationMap & { widget: TranslationMap };
+  chat: TranslationMap & { backgroundTasks: TranslationMap };
   browser: TranslationMap & { errors: TranslationMap };
   configPage: TranslationMap;
   connection: TranslationMap;
@@ -33,6 +34,7 @@ export const en: TranslationMap & {
     Record<"title" | "openWindow" | "unavailable" | "toggle" | "reconnect" | "connecting", string>;
   updates: TranslationMap;
   login: TranslationMap;
+  newSession: TranslationMap;
   skillWorkshop: TranslationMap;
 } = {
   pluginUi: {
@@ -1038,10 +1040,6 @@ export const en: TranslationMap & {
     browserLoadFailed: "Couldn't list that folder.",
     hiddenFolder: "Hidden folder",
     worktree: "Worktree",
-    newWorkspace: "New workspace",
-    newWorkspaceDescription: "Start in an empty folder for this session.",
-    remoteSourceUnavailable:
-      "This folder cannot provide a Git checkout. Select New workspace to start empty, or choose a repository.",
     checkingGit: "Checking Git availability…",
     gitCheckUnavailable: "Couldn't verify Git for this folder. Choose it again to retry.",
     worktreeUnavailable: "Selected folder is not a Git checkout",
@@ -4221,6 +4219,8 @@ export const en: TranslationMap & {
       showMore: "Show {count} more",
       rateLimited:
         "GitHub API rate limit reached. Pull request status may be out of date until the limit resets.",
+      unavailable:
+        "GitHub status could not be refreshed. Showing the last known state; check GitHub for the latest.",
     },
     usageRemaining: "Usage Remaining",
     view: {
@@ -4942,7 +4942,7 @@ export const en: TranslationMap & {
         open: "Open context usage details",
         summary: "Session context usage: {used} of {limit} ({pct}%)",
         contextWindow: "Context window",
-        promptBudget: "Prompt budget (last run)",
+        promptBudget: "Prompt budget",
         latestRunTokens: "Latest run tokens",
         estimatedCost: "Est. cost",
         planUsage: "Plan usage",
@@ -5161,49 +5161,7 @@ export const en: TranslationMap & {
       workedFor: "Worked for {duration}",
       worked: "Worked",
     },
-    backgroundTasks: {
-      label: "Background tasks",
-      title: "Background tasks",
-      show: "Show background tasks",
-      collapse: "Collapse background tasks",
-      refresh: "Refresh background tasks",
-      loading: "Loading background tasks…",
-      running: "Running ({count})",
-      finished: "Finished ({count})",
-      statusRunningOne: "1 running task",
-      statusRunningMany: "{count} running tasks",
-      statusPreviewMore: "+{count} more",
-      stopTask: "Stop {title}",
-      now: "Now",
-      toolCallsOne: "1 tool call",
-      toolCallsMany: "{count} tool calls",
-      toolUseOne: "1 tool use",
-      toolUseMany: "{count} tool uses",
-      detailLoading: "Loading task details…",
-      detailFailed: "Could not load task details.",
-      detailRetry: "Try again",
-      transcriptLoading: "Loading task transcript…",
-      transcriptEmpty: "No transcript messages yet.",
-      transcriptFailed: "Could not load task transcript.",
-      taskDetailTitle: "Task details",
-      taskUnavailable: "This task is no longer available.",
-      prompt: "Prompt",
-      output: "Output",
-      promptUnavailable: "Prompt unavailable.",
-      outputPending: "No output yet.",
-      subagentActivity: {
-        label: "Subagent activity",
-        untitled: "Subagent",
-        queuedDescription: "Queued — waiting to start.",
-        runningDescription: "Running — working on this task.",
-        completedDescription: "Completed — finished successfully.",
-        failedDescription: "Failed — the task ended with an error.",
-        cancelledDescription: "Cancelled — stopped before completion.",
-        timedOutDescription: "Timed out — reached its time limit.",
-        openDetails: "Open subagent details for {title}",
-        moreWorking: "+{count} more working",
-      },
-    },
+    backgroundTasks: {},
     sessionDiff: {
       title: "Changes",
       show: "Show session changes",
@@ -5374,26 +5332,7 @@ export const en: TranslationMap & {
       active: "Active",
       paused: "Paused",
     },
-    list: {
-      viewLabel: "Automation views",
-      searchPlaceholder: "Search automations",
-      newTask: "New automation",
-      filters: "Filters",
-      shownOf: "{shown} of {total}",
-      emptyTitle: "No automations yet",
-      emptyHint: "Describe what OpenClaw should do and when — it runs on schedule.",
-      noMatching: "No automations match the current filters.",
-      loadMore: "Load more",
-      loading: "Loading...",
-      schedulerOff: "Scheduler disabled",
-      refresh: "Refresh",
-      refreshing: "Refreshing...",
-      paused: "Paused",
-      autoDisabledRunFailures: "Auto-disabled · {count} run failures",
-      autoDisabledScheduleErrors: "Auto-disabled · {count} schedule errors",
-      tasksTab: "Automations",
-      activityTab: "Run history",
-    },
+    list: {},
     suggestions: {
       title: "Starter automations",
       schedules: {

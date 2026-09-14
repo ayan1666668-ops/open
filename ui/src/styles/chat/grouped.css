@@ -33,10 +33,10 @@
   --chat-group-content-column: 2;
   display: grid;
   grid-template-columns: var(--chat-avatar-column) minmax(0, var(--chat-message-column-max));
-  grid-template-rows: auto auto;
+  grid-template-rows: auto minmax(calc(var(--chat-turn-gap) - 2px), auto);
   gap: 2px var(--chat-avatar-gap);
   justify-content: start;
-  padding-bottom: calc(var(--chat-turn-gap) - var(--chat-footer-row-offset));
+  padding-bottom: 0;
 }
 
 .chat-group.user.chat-group--with-footer {
@@ -99,8 +99,10 @@
   padding-inline-start: var(--chat-avatar-gutter);
 }
 
+/* Tool groups have no footer; attach their activity to the following reply. */
 .chat-group.tool.chat-group--with-footer {
   display: block;
+  padding-bottom: var(--chat-run-block-gap);
 }
 
 .chat-group.tool.chat-group--with-footer > .chat-group-messages {
@@ -738,22 +740,11 @@ img.chat-avatar {
   /* Shared message renderers stay touch-readable by default. Transcript rows
      opt into one-at-a-time disclosure through their owning thread. */
   .chat-group {
-    --chat-footer-row-offset: 44px;
     --chat-footer-disclosure-opacity: 1;
     --chat-footer-disclosure-pointer-events: auto;
     --chat-footer-detail-position: static;
     --chat-message-action-opacity: var(--chat-footer-disclosure-opacity, 0);
     --chat-message-action-pointer-events: var(--chat-footer-disclosure-pointer-events, none);
-  }
-
-  .chat-group.chat-group--with-footer:has(
-      .chat-group-footer:not(.chat-group-footer--persistent-identity) .chat-group-footer-actions
-    ),
-  .chat-group.chat-group--with-footer:is(.chat-group--meta-revealed, :focus-within):has(
-      .chat-group-footer--persistent-identity .chat-group-footer-actions
-    ) {
-    padding-bottom: 0;
-    margin-bottom: 0;
   }
 
   .chat-group-footer {

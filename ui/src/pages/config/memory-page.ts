@@ -16,7 +16,7 @@ import { readGatewayOperatorAccess } from "../../app/operator-access.ts";
 import type { AgentSelectOption } from "../../components/agent-select.ts";
 import { renderLearnMoreLink } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
-import { registerDreamingEnglish } from "../../i18n/locales/en-dreaming.ts";
+import { registerSettingsEnglish } from "../../i18n/locales/en-settings.ts";
 import { listSelectableAgents, normalizeAgentLabel } from "../../lib/agents/display.ts";
 import { currentConfigObject } from "../../lib/config/config-state-model.ts";
 import { formatUiError } from "../../lib/format-error.ts";
@@ -29,13 +29,13 @@ import {
 import { normalizeAgentId } from "../../lib/sessions/session-key.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
-import "./memory-dreaming-page.ts";
-import "./memory-memories.ts";
 import {
   resolveConfiguredDreaming,
   resolveDreamingConfigPathSupport,
   type DreamingConfigPathSupport,
 } from "../agents/memory/dreaming.ts";
+import "./memory-dreaming-page.ts";
+import "./memory-memories.ts";
 import { dreamingConfigPath, resolveDreamingTimezoneDefault } from "./memory-defaults.ts";
 import { renderDreamingSettings, renderDreamingUnsupported } from "./memory-dreaming.ts";
 import { renderMemoryOverview, type MemoryOverviewStatus } from "./memory-overview.ts";
@@ -60,7 +60,7 @@ import {
 } from "./memory.ts";
 import type { ConfigRouteData } from "./route-data.ts";
 
-registerDreamingEnglish();
+registerSettingsEnglish();
 
 /** Explicit-off sentinel; resolveSlotSelection maps it to an `off` selection. */
 const MEMORY_SLOT_OFF = "none";
