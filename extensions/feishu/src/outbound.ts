@@ -309,7 +309,7 @@ async function sendOutboundText(params: {
   const tableMode = resolveMarkdownTableMode({
     cfg,
     channel: "feishu",
-    accountId,
+    accountId: account.accountId,
     supportsBlockTables: true,
   });
   const nativeTables = tableMode === "block";

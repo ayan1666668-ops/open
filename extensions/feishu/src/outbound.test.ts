@@ -195,9 +195,13 @@ const cardRenderConfig: ClawdbotConfig = {
 };
 
 const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+// Root credentials make the implicit default account configured, so a send
+// without an account id resolves to it and reads the channel value.
 const tableModeConfig: ClawdbotConfig = {
   channels: {
     feishu: {
+      appId: "cli_a1",
+      appSecret: "local-test-placeholder", // pragma: allowlist secret
       renderMode: "raw",
       markdown: { tables: "bullets" },
       accounts: { work: { markdown: { tables: "off" } } },
@@ -3844,6 +3848,45 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
 
   beforeEach(() => {
     resetOutboundMocks();
+  });
+
+  it("follows defaultAccount when the account id is omitted", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          defaultAccount: "work",
+          markdown: { tables: "off" },
+          accounts: { work: { markdown: { tables: "bullets" } } },
+        },
+      },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: tableMarkdown });
+
+    expect(sendMessageCall()?.text).toBe(bulletsPost);
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
+  it("follows the only configured account when the account id is omitted", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          markdown: { tables: "off" },
+          accounts: {
+            work: {
+              appId: "cli_a1",
+              appSecret: "local-test-placeholder", // pragma: allowlist secret
+              markdown: { tables: "bullets" },
+            },
+          },
+        },
+      },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: tableMarkdown });
+
+    expect(sendMessageCall()?.text).toBe(bulletsPost);
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
   });
 
   describe.each(["channel", "account"] as const)("configured at %s scope", (scope) => {
