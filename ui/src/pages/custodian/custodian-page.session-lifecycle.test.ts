@@ -287,15 +287,15 @@ describe("custodian page session lifecycle", () => {
       });
     const { context } = createContext(request);
     const { page } = await mountPage(context);
-    await waitForFast(() =>
-      expect(page.querySelectorAll('.custodian__wizard-step input[type="radio"]')).toHaveLength(2),
-    );
+    const twitch = await waitForFast(() => {
+      const choice = [
+        ...page.querySelectorAll<HTMLButtonElement>(".custodian__wizard-step button"),
+      ].find((button) => button.textContent?.trim() === "Twitch");
+      expect(choice).toBeDefined();
+      return choice!;
+    });
 
-    page
-      .querySelectorAll<HTMLInputElement>('.custodian__wizard-step input[type="radio"]')[1]!
-      .click();
-    await page.updateComplete;
-    page.querySelector<HTMLButtonElement>(".custodian__wizard-step .btn.primary")!.click();
+    twitch.click();
 
     await waitForFast(() => expect(request).toHaveBeenCalledTimes(3));
     expect(request.mock.calls[1]?.[1]).toMatchObject({
