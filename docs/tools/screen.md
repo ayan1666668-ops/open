@@ -5,7 +5,7 @@ sidebarTitle: "Screen"
 read_when:
   - You want an agent to split, focus, close, or navigate Control UI panes
   - You want an agent to show or hide the sidebar, terminal, or browser panels
-  - You need the ui.command capability and fan-out contract
+  - You need the ui.command capability and requester routing contract
 ---
 
 The `screen` tool lets an agent arrange the browser-based Control UI. It is a
@@ -13,7 +13,7 @@ typed layout and navigation surface, not screenshot capture or browser
 automation.
 
 The tool is exposed only when the originating client advertises the
-`ui-commands` capability. At least one capable Control UI must still be
+`ui-commands` capability. The Control UI that requested the turn must still be
 connected when the tool runs; otherwise the Gateway returns `UNAVAILABLE`.
 
 A client advertises `ui-commands` in the `caps` array it sends during the
@@ -36,14 +36,19 @@ absent rather than failing at call time.
 | `terminal_show` / `terminal_hide` | Show or hide the operator terminal panel   | `dock` (`bottom` or `right`) when showing      |
 | `browser_show` / `browser_hide`   | Show or hide the browser panel             | `dock` (`bottom` or `right`) when showing      |
 
-A successful command returns `{ "ok": true }` after the Gateway broadcasts
-the typed `ui.command` event.
+A successful command returns `{ "ok": true }` after the Gateway sends
+the typed `ui.command` event to the requesting browser.
 
 ## Routing and security
 
-Protocol v1 intentionally sends the command to every connected Control UI that
-advertises `ui-commands`; it does not target one browser tab. This matters when
-the same operator has several dashboards open.
+Commands change only the Control UI connection that requested the turn. Other
+people's dashboards and your other tabs keep their current view. `sessionKey`
+chooses which session to open; it does not choose the recipient.
+
+The Gateway captures the browser target when it accepts the message and keeps
+it with queued turns and worker execution. If that browser disconnects or the
+turn has no Control UI target, the command fails with `UNAVAILABLE`. Ask again
+from the open Control UI; the command never falls back to a broadcast.
 
 The Gateway RPC requires `operator.write`. The tool can change presentation
 state only: it cannot read pixels, take screenshots, click arbitrary page

@@ -65,6 +65,7 @@ export type ReplyToolAuthorityInput = {
       | "approvalReviewerDeviceId"
       | "authProfileId"
       | "clientCaps"
+      | "gatewayUiCommandTarget"
       | "toolBindings"
     >
   > &
@@ -116,6 +117,7 @@ export function resolveInboundReplyToolAuthorityOverlay(params: {
       params.senderIsOwner || (ctx.GatewayClientScopes ?? []).includes("operator.admin"),
     approvalReviewerDeviceId: normalizeOptionalString(ctx.ApprovalReviewerDeviceId),
     clientCaps: ctx.GatewayClientCaps,
+    gatewayUiCommandTarget: ctx.GatewayUiCommandTarget,
     toolBindings: ctx.GatewayRunToolBindings,
   };
 }
@@ -145,6 +147,7 @@ function snapshotFollowupRunToolAuthority(run: ReplyToolAuthorityInput): ReplyTo
       bashElevated: structuredClone(run.run.bashElevated),
       toolBindings: structuredClone(run.run.toolBindings),
       clientCaps: run.run.clientCaps ? [...run.run.clientCaps] : undefined,
+      gatewayUiCommandTarget: structuredClone(run.run.gatewayUiCommandTarget),
       memberRoleIds: run.run.memberRoleIds ? [...run.run.memberRoleIds] : undefined,
     },
   };
@@ -184,6 +187,7 @@ function applyReplyToolAuthorityOverlay(
       traceAuthorized: overlay.traceAuthorized,
       approvalReviewerDeviceId: overlay.approvalReviewerDeviceId,
       clientCaps: overlay.clientCaps,
+      gatewayUiCommandTarget: overlay.gatewayUiCommandTarget,
       toolBindings: overlay.toolBindings,
     },
   };
@@ -236,7 +240,7 @@ function resolveReplyToolAuthorityInputFingerprint(
     scheduledToolPolicy: execution.scheduledToolPolicy,
     runtimePluginToolGrant: execution.runtimePluginToolGrant,
   });
-  // Steering keeps the active run's approval destination; browser identity is not a tool grant.
+  // Steering keeps approval routing, but UI commands must retain their requesting browser.
   return createHash("sha256")
     .update(
       stableStringify({
@@ -260,6 +264,7 @@ function resolveReplyToolAuthorityInputFingerprint(
         traceAuthorized: execution.traceAuthorized === true,
         authProfileId: execution.authProfileId,
         clientCaps: [...new Set(execution.clientCaps ?? [])].toSorted(),
+        gatewayUiCommandTarget: execution.gatewayUiCommandTarget,
         toolBindings: execution.toolBindings,
       }),
     )

@@ -2298,6 +2298,35 @@ describe("followup queue collect routing", () => {
     ]);
   });
 
+  it("keeps queued selections bound to their requesting browser while collecting compatible turns", async () => {
+    const key = `test-collect-ui-requester-${Date.now()}`;
+    const { calls, runFollowup } = createDrainRecorder();
+    const settings = createQueueSettings();
+    const targets = [
+      { connId: "browser-a", profileId: "profile-a" },
+      { connId: "browser-b", profileId: "profile-a" },
+      { connId: "browser-b", profileId: "profile-a" },
+    ];
+    for (const [index, gatewayUiCommandTarget] of targets.entries()) {
+      enqueueTestRun(
+        key,
+        { prompt: `selection ${index + 1}`, originatingChannel: "webchat" },
+        settings,
+        { gatewayUiCommandTarget, approvalReviewerDeviceId: "shared-device" },
+      );
+    }
+
+    scheduleFollowupDrain(key, runFollowup);
+    await vi.waitFor(() => expect(getExistingFollowupQueue(key)).toBeUndefined());
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.prompt).toContain("selection 1");
+    expect(calls[0]?.prompt).not.toContain("selection 2");
+    expect(calls[1]?.prompt).toContain("selection 2");
+    expect(calls[1]?.prompt).toContain("selection 3");
+    expect(calls.map((call) => call.run.gatewayUiCommandTarget)).toEqual([targets[0], targets[1]]);
+  });
+
   it("keys collect batches by turn allowlists, intersections, disablement, and roles", () => {
     const createAuthorityRun = () =>
       createRun({

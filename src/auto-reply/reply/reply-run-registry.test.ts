@@ -102,6 +102,7 @@ function toolAuthorityOverlay(
     traceAuthorized: run.run.traceAuthorized === true,
     approvalReviewerDeviceId: run.run.approvalReviewerDeviceId,
     clientCaps: run.run.clientCaps,
+    gatewayUiCommandTarget: run.run.gatewayUiCommandTarget,
     toolBindings: run.run.toolBindings,
   };
 }
@@ -2182,6 +2183,7 @@ describe("reply run registry", () => {
     async (approvalReviewerDeviceId) => {
       const run = createQueueTestRun({ prompt: "projected inbound" });
       run.run.approvalReviewerDeviceId = "device-a";
+      run.run.gatewayUiCommandTarget = { connId: "browser-a", profileId: "profile-a" };
       run.run.permissionMode = "full";
       const route = { provider: "openai", model: "gpt-primary" };
       const overlay = { ...toolAuthorityOverlay(run), approvalReviewerDeviceId };
@@ -2217,6 +2219,9 @@ describe("reply run registry", () => {
 
       for (const restricted of [
         { clientCaps: ["changed-capability"] },
+        { gatewayUiCommandTarget: { connId: "browser-b", profileId: "profile-a" } },
+        { gatewayUiCommandTarget: { connId: "browser-a", profileId: "profile-b" } },
+        { gatewayUiCommandTarget: undefined },
         { toolBindings: { browser: { clientId: "different-browser" } } },
         { permissionMode: "guarded" },
       ] satisfies Partial<ReplyToolAuthorityOverlay>[]) {

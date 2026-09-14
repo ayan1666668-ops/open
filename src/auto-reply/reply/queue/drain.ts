@@ -368,6 +368,7 @@ export function resolveFollowupDeliveryContextKey(run: FollowupRun): string {
     execution.model,
     execution.messageProvider ?? "",
     JSON.stringify([...new Set(execution.clientCaps ?? [])].toSorted()),
+    stableStringify(execution.gatewayUiCommandTarget ?? null),
     stableStringify(execution.toolBindings ?? null),
     execution.chatType ?? "",
     execution.agentAccountId ?? "",
