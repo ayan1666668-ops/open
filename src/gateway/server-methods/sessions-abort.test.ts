@@ -6,6 +6,11 @@ import {
   replaceSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
+import { emitAgentEvent } from "../../infra/agent-events.js";
+import {
+  registerAgentRunContext,
+  resetAgentRunRegistryForTest,
+} from "../../infra/agent-run-registry.js";
 import { writeAgentRunTerminalReceipt } from "../../state/agent-run-terminal-receipts.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -46,6 +51,7 @@ afterEach(() => {
   testState.sessionStorePath = undefined;
   testState.sessionConfig = undefined;
   resetAgentJobStateForTest();
+  resetAgentRunRegistryForTest();
   closeOpenClawAgentDatabasesForTest();
   closeOpenClawStateDatabaseForTest();
 });
@@ -451,6 +457,92 @@ test("agent.wait rejects a replacement session before exposing a recovered resul
     },
   );
 
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: "INVALID_REQUEST", message: "agent run was not found" },
+  });
+  expect(result.payload).toBeUndefined();
+});
+
+test.each([
+  {
+    label: "its profile ownership is revoked",
+    replace: async (params: {
+      ownerId: string;
+      sessionId: string;
+      sessionKey: string;
+      storePath: string;
+    }) => {
+      const replacementOwner = ensureProfileForEmail("wait-pending-new-owner@example.test");
+      await deleteSessionEntryLifecycle({
+        storePath: params.storePath,
+        target: { canonicalKey: params.sessionKey, storeKeys: [params.sessionKey] },
+        archiveTranscript: false,
+      });
+      await replaceSessionEntry(
+        { agentId: "main", sessionKey: params.sessionKey, storePath: params.storePath },
+        {
+          sessionId: params.sessionId,
+          updatedAt: 43,
+          createdActor: { type: "human", source: "profile", id: replacementOwner.id },
+        },
+      );
+    },
+  },
+  {
+    label: "its session key is reassigned",
+    replace: async (params: {
+      ownerId: string;
+      sessionId: string;
+      sessionKey: string;
+      storePath: string;
+    }) => {
+      await replaceSessionEntry(
+        { agentId: "main", sessionKey: params.sessionKey, storePath: params.storePath },
+        {
+          sessionId: `${params.sessionId}-replacement`,
+          updatedAt: 43,
+          createdActor: { type: "human", source: "profile", id: params.ownerId },
+        },
+      );
+    },
+  },
+])("agent.wait denies a real pending terminal response after $label", async ({ replace }) => {
+  const owner = ensureProfileForEmail("wait-pending-owner@example.test");
+  const runId = `run-wait-pending-${Math.random().toString(36).slice(2)}`;
+  const sessionKey = `agent:main:${runId}`;
+  const sessionId = `session-${runId}`;
+  const storePath = path.join(requireStateDir(), "agents", "main", "sessions", "sessions.json");
+  await replaceSessionEntry(
+    { agentId: "main", sessionKey, storePath },
+    {
+      sessionId,
+      updatedAt: 42,
+      createdActor: { type: "human", source: "profile", id: owner.id },
+    },
+  );
+  registerAgentRunContext(runId, { agentId: "main", sessionKey, sessionId });
+  emitAgentEvent({ runId, stream: "lifecycle", data: { phase: "start", startedAt: 10 } });
+
+  const pending = directSessionReq(
+    "agent.wait",
+    { runId, timeoutMs: 5_000 },
+    {
+      client: profileClient(owner.id),
+      context: { getRuntimeConfig: () => restrictedProfileConfig() },
+    },
+  );
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+  await replace({ ownerId: owner.id, sessionId, sessionKey, storePath });
+  emitAgentEvent({
+    runId,
+    stream: "lifecycle",
+    data: { phase: "end", status: "ok", executionSettled: true, startedAt: 10, endedAt: 20 },
+  });
+
+  const result = await pending;
   expect(result).toMatchObject({
     ok: false,
     error: { code: "INVALID_REQUEST", message: "agent run was not found" },

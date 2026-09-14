@@ -53,10 +53,11 @@ export const agentWaitHandler: GatewayRequestHandlers["agent.wait"] = async ({
             agentId: owner.agentId,
           })
         : null;
+      // A live run is not authority to reuse a session key after that key has
+      // been reassigned while this request was waiting. Bind both hot and
+      // recovered owners to the exact retained session when one was recorded.
       const retainedSessionMatches =
-        run !== undefined ||
-        (typeof recoveredOwner?.sessionId === "string" &&
-          target?.entry.sessionId === recoveredOwner.sessionId);
+        typeof owner?.sessionId === "string" && target?.entry.sessionId === owner.sessionId;
       const visibilityFilter = createSessionListEntryFilter({ client: gatewayClient, cfg });
       if (
         !target ||

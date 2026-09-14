@@ -856,7 +856,7 @@ describe("sendMessageTelegram", () => {
     expect(botApi.sendChatAction).toHaveBeenCalledTimes(2);
   });
 
-  it("forwards owner cancellation through a native AbortSignal while sending typing", async () => {
+  it("forwards owner cancellation through grammY's AbortSignal while sending typing", async () => {
     loadConfig.mockReturnValue({
       channels: {
         telegram: {
@@ -865,15 +865,11 @@ describe("sendMessageTelegram", () => {
       },
     });
     const owner = new AbortController();
-    let forwarded: AbortSignal | undefined;
+    let forwarded: Parameters<typeof botApi.sendChatAction>[3];
     botApi.sendChatAction.mockImplementation((_chatId, _action, _params, signal) => {
-      forwarded = signal as AbortSignal;
+      forwarded = signal;
       return new Promise((_resolve, reject) => {
-        forwarded?.addEventListener(
-          "abort",
-          () => reject(new DOMException("cancelled", "AbortError")),
-          { once: true },
-        );
+        forwarded?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
       });
     });
 
@@ -884,10 +880,11 @@ describe("sendMessageTelegram", () => {
       signal: owner.signal,
       retry: { attempts: 1, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
     });
-    await vi.waitFor(() => expect(forwarded).toBeInstanceOf(AbortSignal));
+    await vi.waitFor(() => expect(forwarded).toBeDefined());
+    expect(forwarded?.aborted).toBe(false);
     owner.abort();
 
-    await expect(sending).rejects.toThrow();
+    await expect(sending).rejects.toThrow("cancelled");
     expect(forwarded?.aborted).toBe(true);
   });
 

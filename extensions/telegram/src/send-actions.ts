@@ -1,3 +1,4 @@
+import { AbortController as TelegramAbortController } from "abort-controller";
 import type { ReactionType, ReactionTypeEmoji } from "grammy/types";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
@@ -52,8 +53,9 @@ export async function sendTypingTelegram(
   if (target.directMessagesTopicId != null) {
     throw new Error("Telegram typing is not supported in channel Direct Messages chats.");
   }
+  // grammY's Node API uses the abort-controller signal, not Node's native type.
   // Bridge the event so queues recognize owner cancellation instead of cooling down the account.
-  const apiAbort = opts.signal ? new AbortController() : undefined;
+  const apiAbort = opts.signal ? new TelegramAbortController() : undefined;
   const abort = () => apiAbort?.abort();
   if (opts.signal?.aborted) {
     abort();
@@ -79,10 +81,7 @@ export async function sendTypingTelegram(
       });
       const threadParams = buildTypingThreadParams(target.messageThreadId ?? opts.messageThreadId);
       const signalArgs: [Parameters<TelegramApi["sendChatAction"]>[3]?] = apiAbort
-        ? [
-            // SAFETY: grammy's transitive AbortSignal type is narrower than the platform signal it forwards to fetch.
-            apiAbort.signal as Parameters<TelegramApi["sendChatAction"]>[3],
-          ]
+        ? [apiAbort.signal]
         : [];
       await requestWithDiag(
         () =>

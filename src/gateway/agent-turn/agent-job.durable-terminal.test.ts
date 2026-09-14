@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
@@ -11,6 +12,7 @@ import {
   readAgentRunTerminalReceipt,
   writeAgentRunTerminalReceipt,
 } from "../../state/agent-run-terminal-receipts.js";
+import { resolveDatabasePath } from "../../state/openclaw-state-db-maintenance.js";
 import {
   closeOpenClawStateDatabaseForTest,
   runOpenClawStateWriteTransaction,
@@ -667,6 +669,30 @@ describe("durable agent job terminal receipts", () => {
     await vi.advanceTimersByTimeAsync(250);
     await expect(recovered).resolves.toMatchObject({ status: "ok", endedAt: 20 });
     expect(readAgentJobDurabilityStateForTest()).toMatchObject({ pendingTerminals: 0 });
+  });
+
+  it("withholds completion through a real SQLite write lock and publishes after recovery", async () => {
+    const runId = `run-real-write-lock-${runSequence++}`;
+    const lock = new DatabaseSync(resolveDatabasePath());
+    lock.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE;");
+    try {
+      startRun(runId);
+      finishRun(runId);
+
+      await expect(waitForAgentJob({ runId, timeoutMs: 0 })).resolves.toBeNull();
+      expect(readAgentJobDurabilityStateForTest()).toMatchObject({ pendingTerminals: 1 });
+      expect(readAgentRunTerminalReceipt({ runId, owner })).toBeUndefined();
+    } finally {
+      lock.exec("ROLLBACK;");
+      lock.close();
+    }
+
+    await expect(waitForAgentJob({ runId, timeoutMs: 5_000 })).resolves.toMatchObject({
+      status: "ok",
+      endedAt: 20,
+    });
+    expect(readAgentJobDurabilityStateForTest()).toMatchObject({ pendingTerminals: 0 });
+    expect(readAgentRunTerminalReceipt({ runId, owner })).toBeDefined();
   });
 
   it("omits terminal reply content while retaining bounded delivery metadata", async () => {
