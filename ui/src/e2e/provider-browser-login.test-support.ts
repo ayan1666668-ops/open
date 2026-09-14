@@ -9,39 +9,50 @@ import {
   PROXY_FIXTURE_KEY,
 } from "../../../src/test-helpers/proxy-tls-fixture.ts";
 import { getFreePort } from "../../../src/test-utils/ports.ts";
-import { createOpenClawTestInstance } from "../../../test/helpers/openclaw-test-instance.ts";
+import {
+  createOpenClawTestInstance,
+  type OpenClawTestInstance,
+} from "../../../test/helpers/openclaw-test-instance.ts";
 import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.ts";
 
 export const loginProvider = "browser-login-fixture";
 const loginCredential = "synthetic-browser-login-key";
 export const loginOrigin = "https://files.proxy.test";
 
-export async function startProviderBrowserLoginFixture() {
+export const loginSessionKey = "agent:main:browser-login";
+export const loginHistoryMarker = "Existing fixture history.";
+
+type ProviderBrowserLoginBootstrap = (context: {
+  instance: OpenClawTestInstance;
+  startCandidate: () => Promise<void>;
+  seedConversation: () => Promise<void>;
+}) => Promise<void>;
+
+export type ProviderBrowserLoginOptions = {
+  cwd?: string;
+  entrypoint?: string[];
+  bootstrap?: ProviderBrowserLoginBootstrap;
+};
+
+const bootstrapSource: ProviderBrowserLoginBootstrap = async ({
+  startCandidate,
+  seedConversation,
+}) => {
+  await startCandidate();
+  await seedConversation();
+};
+
+export async function startProviderBrowserLoginFixture(options: ProviderBrowserLoginOptions = {}) {
   const instance = await createOpenClawTestInstance({
     name: "provider-browser-login",
+    cwd: options.cwd,
+    entrypoint: options.entrypoint,
     env: {
       VITEST: "1",
       OPENCLAW_DISABLE_BONJOUR: "1",
       OPENCLAW_TAILNET_DNS: "files.proxy.test",
       OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
       OPENCLAW_SKIP_PROVIDERS: undefined,
-    },
-    config: {
-      gateway: {
-        tailscale: { mode: "serve" },
-        auth: { allowTailscale: false },
-        controlUi: { enabled: true, allowedOrigins: [loginOrigin] },
-      },
-      agents: {
-        ownership: "explicit",
-        entries: { main: {} },
-        defaults: {
-          model: `${loginProvider}/ready`,
-          modelPolicy: { allow: [`${loginProvider}/*`] },
-        },
-      },
-      models: { catalogRefresh: { enabled: false } },
-      cron: { enabled: false },
     },
   });
   const root = instance.state.path("browser-login-fixture");
@@ -207,24 +218,67 @@ export async function startProviderBrowserLoginFixture() {
       pluginDir,
       { recursive: true },
     );
-    Object.assign(instance.env, {
-      OPENCLAW_TEST_TAILSCALE_BINARY: shim,
-      OPENCLAW_TEST_TAILSCALE_FIXTURE_MARKER: edgeConfig,
-      NODE_EXTRA_CA_CERTS: certPath,
-    });
-    const config: OpenClawConfig = JSON.parse(await fs.readFile(instance.configPath, "utf8"));
-    await instance.state.writeConfig({
-      ...config,
-      logging: { file: path.join(root, "gateway-file.log") },
-      plugins: {
-        allow: [loginProvider],
-        load: { paths: [pluginDir] },
-        entries: { [loginProvider]: { enabled: true, config: { origin: providerOrigin } } },
-        slots: { memory: "none" },
+    const startCandidate = async () => {
+      Object.assign(instance.env, {
+        OPENCLAW_TEST_TAILSCALE_BINARY: shim,
+        OPENCLAW_TEST_TAILSCALE_FIXTURE_MARKER: edgeConfig,
+        NODE_EXTRA_CA_CERTS: certPath,
+      });
+      const config: OpenClawConfig = JSON.parse(await fs.readFile(instance.configPath, "utf8"));
+      await instance.state.writeConfig({
+        ...config,
+        gateway: {
+          ...config.gateway,
+          tailscale: { mode: "serve" },
+          auth: { ...config.gateway?.auth, allowTailscale: false },
+          controlUi: { enabled: true, allowedOrigins: [loginOrigin] },
+        },
+        agents: {
+          ownership: "explicit",
+          entries: { main: {} },
+          defaults: {
+            model: `${loginProvider}/ready`,
+            modelPolicy: { allow: [`${loginProvider}/*`] },
+          },
+        },
+        models: { catalogRefresh: { enabled: false } },
+        cron: { enabled: false },
+        logging: { file: path.join(root, "gateway-file.log") },
+        plugins: {
+          allow: [loginProvider],
+          load: { paths: [pluginDir] },
+          entries: { [loginProvider]: { enabled: true, config: { origin: providerOrigin } } },
+          slots: { memory: "none" },
+        },
+      });
+      await instance.startGateway();
+      await fs.access(edgeReceipt);
+    };
+    await (options.bootstrap ?? bootstrapSource)({
+      instance,
+      startCandidate,
+      seedConversation: async () => {
+        for (const [method, params] of [
+          [
+            "sessions.create",
+            { key: loginSessionKey, agentId: "main", label: "Existing fixture conversation" },
+          ],
+          ["chat.inject", { sessionKey: loginSessionKey, message: loginHistoryMarker }],
+        ] as const) {
+          const result = await instance.cli([
+            "gateway",
+            "call",
+            method,
+            "--json",
+            "--params",
+            JSON.stringify(params),
+          ]);
+          if (result.code !== 0) {
+            throw new Error(`${method} failed: ${result.stderr}`);
+          }
+        }
       },
     });
-    await instance.startGateway();
-    await fs.access(edgeReceipt);
     return {
       instance,
       baseUrl: `${loginOrigin}/`,

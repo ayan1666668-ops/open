@@ -1,12 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { expectDefined } from "@openclaw/normalization-core";
 import { expect, it } from "vitest";
 import type { ModelAuthStatusResult } from "../api/types.ts";
 import { waitForControlUiGatewayReady } from "../test-helpers/control-ui-e2e-readiness.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import {
+  loginHistoryMarker,
   loginOrigin,
+  loginSessionKey,
+  type ProviderBrowserLoginOptions,
   loginProvider,
   startProviderBrowserLoginFixture,
 } from "./provider-browser-login.test-support.ts";
@@ -18,7 +22,11 @@ const suite = createControlUiE2eSuite({
   startServerBeforeBrowser: true,
   browserLaunchOptions: { args: browserArgs },
   async startServer() {
-    fixture = await startProviderBrowserLoginFixture();
+    const optionsPath = process.env.OPENCLAW_UI_E2E_PROVIDER_LOGIN_OPTIONS;
+    const options: ProviderBrowserLoginOptions = optionsPath
+      ? (await import(pathToFileURL(optionsPath).href)).default
+      : {};
+    fixture = await startProviderBrowserLoginFixture(options);
     browserArgs.push(
       `--host-resolver-rules=MAP files.proxy.test:443 127.0.0.1:${fixture.edgePort}`,
       "--no-proxy-server",
@@ -58,13 +66,10 @@ suite.define(() => {
     };
     const callbacks: Array<{ url: string; status: number }> = [];
     let finalHistory: unknown;
-    const sessionKey = "agent:main:browser-login";
-    await call("sessions.create", {
-      key: sessionKey,
-      agentId: "main",
-      label: "Existing fixture conversation",
-    });
-    await call("chat.inject", { sessionKey, message: "Existing fixture history." });
+    const sessionKey = loginSessionKey;
+    expect(JSON.stringify(await call("chat.history", { sessionKey }))).toContain(
+      loginHistoryMarker,
+    );
     const url = new URL("settings/model-providers", `${loginOrigin}/`);
     await suite.withPage(
       {
@@ -158,7 +163,7 @@ suite.define(() => {
           profileId: `${loginProvider}:default`,
         });
         expect(JSON.stringify(await call("chat.history", { sessionKey }))).toContain(
-          "Existing fixture history.",
+          loginHistoryMarker,
         );
         const catalog = await call("models.list", {
           agentId: "main",
