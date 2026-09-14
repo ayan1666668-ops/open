@@ -16,7 +16,7 @@ export class FakeChild extends EventEmitter {
   }
 }
 
-export function createCanarySnapshotResult(input: string, databasePath?: string) {
+function createCanarySnapshotResult(input: string, databasePath?: string) {
   const request: unknown = JSON.parse(input);
   return {
     code: 0,
@@ -44,7 +44,7 @@ type CanaryCommandFixture = {
   lintReport: { ok: boolean; checksRun: number; findings: unknown[]; warnings: unknown[] };
 };
 
-export function completeCanaryCommand(
+function completeCanaryCommand(
   child: FakeChild,
   args: string[],
   readFixture: () => CanaryCommandFixture,
