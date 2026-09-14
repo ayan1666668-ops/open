@@ -4,6 +4,10 @@ import { en } from "./en.ts";
 // Session setup messages load with their consumers instead of every UI startup.
 const enNewSessionSetup = {
   newSession: {
+    newWorkspace: "New workspace",
+    newWorkspaceDescription: "Start in an empty folder for this session.",
+    remoteSourceUnavailable:
+      "This folder cannot provide a Git checkout. Select New workspace to start empty, or choose a repository.",
     environmentSearchPlaceholder: "Search environments",
     environmentSearchEmpty: "No matching environments",
     gatewayHost: "Gateway host",
@@ -22,7 +26,6 @@ const enNewSessionSetup = {
     autoDeviceHintEligible: "Chooses the first eligible connected device",
     autoDeviceInfo: "About automatic device selection",
     autoDeviceScope: "Connected devices only",
-    cloudRequiresWorktree: "Cloud needs a Git checkout",
     restoringPreferences: "Restoring your last session setup…",
     checkingPlace: "Checking the selected place…",
     agentsUnavailable: "No agents are available on this Gateway yet.",
@@ -56,8 +59,7 @@ const enNewSessionSetup = {
 
 export const registerNewSessionSetupEnglish = Object.assign(
   () => {
-    // SAFETY: The canonical catalog defines newSession as an object; this only extends it.
-    Object.assign(en.newSession as TranslationMap, enNewSessionSetup.newSession);
+    Object.assign(en.newSession, enNewSessionSetup.newSession);
   },
   { catalog: enNewSessionSetup },
 );
