@@ -907,13 +907,21 @@ struct ChatGatewayPayloadCodecTests {
         #expect(identity.contract == "per-sender|main|unowned")
     }
 
-    @Test func `routing identity reconstructs legacy gateway contract`() throws {
+    @Test func `routing identity uses the shared placeholder for an unconfirmed contract regardless of selection state`() throws {
         let identity = try OpenClawChatGatewayPayloadCodec.decodeSessionRoutingIdentity(
             Data(#"{"defaultId":"Work","mainKey":"Primary","scope":"global","agents":[]}"#.utf8))
 
         #expect(identity.defaultAgentID == "work")
         #expect(!identity.selectionRequired)
-        #expect(identity.contract == "global|primary|work")
+        // Reconstructing scope|mainKey|defaultAgentID assumes agents.list's
+        // served default agrees with what resolveSessionRoutingContract
+        // actually validates. A gateway with agents.defaults.systemAgent.
+        // agentId set can report selectionRequired: false while still
+        // validating against that systemAgent id rather than the served
+        // defaultId (github.com/openclaw/openclaw/issues/126315#issuecomment-5656412601,
+        // chasechou), so a reconstructed guess is unsafe here too — not just
+        // when selection is required.
+        #expect(identity.contract == OpenClawChatSessionRoutingContract.unconfirmed)
     }
 
     @Test func `routing identity uses the shared placeholder for an unconfirmed contract when selection is required`() throws {
