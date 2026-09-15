@@ -83,7 +83,6 @@ export function createLiveTransportQaAdapterFactory(params: {
 }
 
 export function createStandardLiveTransportQaCliRegistration(params: {
-  channelDriverHelp?: string;
   channelId: string;
   channelLabel: string;
   createAdapter: NonNullable<LiveTransportQaCliRegistrationOptions["adapterFactory"]>["create"];
@@ -104,7 +103,6 @@ export function createStandardLiveTransportQaCliRegistration(params: {
         "Credential role for convex auth: maintainer or ci (default: ci in CI, maintainer otherwise)",
     },
     description: params.description,
-    channelDriverHelp: params.channelDriverHelp,
     listScenariosHelp: params.listScenariosHelp,
     normalizeInactiveSelectionOptions: true,
     outputDirHelp: `${params.channelLabel} QA artifact directory`,

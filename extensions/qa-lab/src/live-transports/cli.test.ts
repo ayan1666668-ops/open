@@ -215,8 +215,7 @@ describe("live transport QA contributions", () => {
           ? [
               {
                 defaultValue: undefined,
-                description:
-                  "Discord transport boundary: live (default) or Crabline local provider server",
+                description: "Channel driver: live (default) or Crabline local provider server",
                 flags: "--channel-driver <live|crabline>",
               },
             ]
@@ -226,24 +225,29 @@ describe("live transport QA contributions", () => {
     },
   );
 
-  it("maps the dedicated Discord Crabline driver and listing options", async () => {
+  it("maps the Discord Crabline driver", async () => {
     const qa = new Command();
     requireRegistration("discord").register(qa);
 
-    await qa.parseAsync([
-      "node",
-      "openclaw",
-      "discord",
-      "--channel-driver",
-      "crabline",
-      "--list-scenarios",
-    ]);
+    await qa.parseAsync(["node", "openclaw", "discord", "--channel-driver", "crabline"]);
 
     expect(runLiveTransportQaSuiteCommand).toHaveBeenCalledWith({
       channelId: "discord",
-      options: expect.objectContaining({ channelDriver: "crabline", listScenarios: true }),
+      options: expect.objectContaining({ channelDriver: "crabline" }),
     });
   });
+
+  it.each(["slack", "whatsapp"] as const)(
+    "does not expose an unsupported Crabline driver on the %s command",
+    async (commandName) => {
+      const { qa } = registerCommand(commandName);
+
+      await expect(
+        qa.parseAsync(["node", "openclaw", commandName, "--channel-driver", "crabline"]),
+      ).rejects.toMatchObject({ code: "commander.unknownOption" });
+      expect(runLiveTransportQaSuiteCommand).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(STANDARD_LANES)(
     "preserves $commandName defaults, optional fields, duplicate scenarios, and dispatch errors",

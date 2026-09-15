@@ -274,8 +274,6 @@ export type LiveTransportQaCredentialCliOptions = {
 
 /** Declarative command metadata and runner used to install a live-transport QA CLI. */
 export type LiveTransportQaCliRegistrationOptions = {
-  /** When set, registers `--channel-driver <live|crabline>` with this help text. */
-  channelDriverHelp?: string;
   commandName: string;
   concurrency?: {
     help: string;
@@ -414,10 +412,6 @@ function registerLiveTransportQaCli(
     if (params.credentialOptions.roleDescription) {
       command.option("--credential-role <role>", params.credentialOptions.roleDescription);
     }
-  }
-
-  if (params.channelDriverHelp) {
-    command.option("--channel-driver <live|crabline>", params.channelDriverHelp);
   }
 
   command.action(async (opts: LiveTransportQaCommanderOptions) => {

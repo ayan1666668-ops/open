@@ -242,48 +242,6 @@ describe("plugin-sdk qa-runtime", () => {
     });
   });
 
-  it("forwards an explicit channel driver without normalizing legacy option presence", async () => {
-    const module = await import("./qa-runtime.js");
-    const run = vi.fn(async () => {});
-    const qa = new Command();
-
-    module
-      .createLiveTransportQaCliRegistration({
-        commandName: "legacy-transport",
-        channelDriverHelp: "Channel driver",
-        defaultProviderMode: "mock-openai",
-        description: "Run legacy transport QA",
-        providerModeHelp: "Provider mode",
-        outputDirHelp: "Artifact directory",
-        scenarioHelp: "Run only the named scenario",
-        sutAccountHelp: "Temporary SUT account",
-        run,
-      })
-      .register(qa);
-
-    await qa.parseAsync(["node", "openclaw", "legacy-transport", "--channel-driver", "crabline"]);
-
-    expect(run).toHaveBeenCalledWith({
-      channelDriver: "crabline",
-      concurrency: undefined,
-      repoRoot: undefined,
-      outputDir: undefined,
-      providerMode: "mock-openai",
-      primaryModel: undefined,
-      alternateModel: undefined,
-      fastMode: undefined,
-      allowFailures: undefined,
-      failFast: undefined,
-      profile: undefined,
-      scenarioIds: [],
-      listScenarios: undefined,
-      sutAccountId: "sut",
-      credentialFile: undefined,
-      credentialSource: undefined,
-      credentialRole: undefined,
-    });
-  });
-
   const rejectedScenarioSelection = {
     kind: "rejected",
     error: expect.objectContaining({ message: expect.stringContaining("--scenario") }),
