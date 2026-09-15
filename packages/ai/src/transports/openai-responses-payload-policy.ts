@@ -311,18 +311,9 @@ export function resolveOpenAIResponsesPayloadPolicy(
     model,
     options.extraParams,
   );
-  // Defaults on only for the two routes actually confirmed to honor
-  // `instructions` (see usesVerifiedInstructionsEndpoint above: native
-  // OpenAI, and xAI's main route by direct test). Every other route --
-  // including bundled-but-unverified named classes and arbitrary
-  // custom/local proxies -- defaults off: HTTP continuation is unreachable
-  // there anyway (openai-responses-websocket.ts requires the exact native
-  // OpenAI base URL), so there is nothing to gain from `instructions` and
-  // real risk of an unconfirmed route silently dropping the field along
-  // with the system prompt. `compat.supportsInstructions` always overrides
-  // the default in either direction -- explicit `false` opts a verified
-  // route out (confirmed necessary for xAI's compact endpoint specifically);
-  // explicit `true` opts any other route in once confirmed.
+  // Verified native OpenAI/xAI routes default instructions on; compat overrides.
+  // Other endpoints could silently drop this field and the system prompt.
+  // Stored-continuation support does not prove instructions support.
   const instructionsCompat = readCompatPayloadBoolean(model.compat, "supportsInstructions");
   const usesInstructionsField = instructionsCompat ?? capabilities.usesVerifiedInstructionsEndpoint;
 
