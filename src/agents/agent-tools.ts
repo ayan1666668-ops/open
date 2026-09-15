@@ -92,6 +92,7 @@ import type { ModelAuthMode } from "./model-auth.js";
 import { resolveOpenClawPluginToolsForOptions } from "./openclaw-plugin-tools.js";
 import { createOpenClawTools, filterToolsByClientCaps } from "./openclaw-tools.js";
 import { filterRequesterYieldTools } from "./openclaw-tools.requester-yield.js";
+import { applySwarmCollectorToolContract } from "./openclaw-tools.swarm.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.js";
 import type { SandboxContext } from "./sandbox.js";
 import { resolveSandboxFileIdentity } from "./sandbox/file-mutation-identity.js";
@@ -200,6 +201,7 @@ type OpenClawCodingToolsOptions = {
   questionPrompt?: QuestionPromptDelivery;
   /** Capabilities declared by the gateway client that originated this run. */
   clientCaps?: string[];
+  gatewayUiCommandTarget?: import("../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
   /** Host-admitted dashboard authoring without an originating inline renderer. */
   pinnedWidgetAuthoring?: boolean;
   /** Out-of-band plugin bindings attached by the run initiator. */
@@ -237,6 +239,10 @@ type OpenClawCodingToolsOptions = {
   requesterThinkingLevel?: ThinkLevel;
   /** Exact admitted run instance for lifecycle-bound subprocess capabilities. */
   operationalRunInstance?: OperationalRunInstanceRef;
+  /** Session-owned desktop resolved before optional paired-node discovery. */
+  computerTransport?: import("./tools/computer-tool.js").ComputerToolTransport | null;
+  /** Host-prepared effective paired-node Computer Use surface. */
+  pairedNodeComputerUse?: import("./computer-use-node-capabilities.js").PreparedPairedComputerUse;
   /** Device-scoped operator session allowed to review approvals initiated by this run. */
   approvalReviewerDeviceId?: string;
   /** Diagnostic trace context for hook/log correlation during this run. */
@@ -921,9 +927,11 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             webSearchEnabled: options?.webSearchEnabled,
             clientCaps: options?.clientCaps,
             pinnedWidgetAuthoring: options?.pinnedWidgetAuthoring,
+            gatewayUiCommandTarget: options?.gatewayUiCommandTarget,
             toolBindings: options?.toolBindings,
             pluginToolAllowlist,
             pluginToolDenylist,
+            gatewayConfigReadAllowed: capabilityProfile.policy.gatewayConfigReadAllowed,
             runtimeToolAllowlist: options?.runtimeToolAllowlist,
             githubPublicationAvailable: options?.githubPublicationAvailable,
             cronCreatorToolAllowlist,
@@ -945,7 +953,12 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             hasRepliedRef: options?.hasRepliedRef,
             modelHasVision: options?.modelHasVision,
             computerContextEpoch: options?.computerContextEpoch,
-            computerTransport: resolveSessionPlacementComputer(options?.operationalRunInstance),
+            computerTransport:
+              options?.computerTransport === null
+                ? null
+                : (options?.computerTransport ??
+                  resolveSessionPlacementComputer(options?.operationalRunInstance)),
+            pairedNodeComputerUse: options?.pairedNodeComputerUse,
             registerRunCleanup: options?.registerRunCleanup,
             requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
             sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode,
@@ -970,6 +983,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             inheritedToolDenylist,
             onYield: options?.onYield,
             claimYieldCompletion: options?.claimYieldCompletion,
+            processScopeKey: scopeKey,
             allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
             recordToolPrepStage: options?.recordToolPrepStage,
           }),
@@ -1057,21 +1071,16 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   });
   // Host-bound ring-zero tools carry their own authority checks. Agent policy
   // must not deadlock setup, but the tools still receive schema/hook wrappers.
-  const authorizedTools = applyDelegationCapability(
-    mergeAgentRingZeroTools(ringZeroTools, subagentFiltered),
-    options?.delegationCapability,
-  ).filter(
-    (tool) =>
-      !options?.swarmCollector ||
-      (tool.name !== "ask_user" && tool.name !== "sessions_send" && tool.name !== "sessions_yield"),
+  const authorizedTools = applySwarmCollectorToolContract(
+    applyDelegationCapability(
+      mergeAgentRingZeroTools(ringZeroTools, subagentFiltered),
+      options?.delegationCapability,
+    ),
+    {
+      swarmCollector: options?.swarmCollector,
+      structuredOutputTool: swarmStructuredOutputTool,
+    },
   );
-  if (
-    swarmStructuredOutputTool &&
-    !authorizedTools.some((tool) => tool.name === swarmStructuredOutputTool.name)
-  ) {
-    // Collector output is a run contract, not an operator-configurable capability.
-    authorizedTools.push(swarmStructuredOutputTool);
-  }
   authorizedTools.forEach(bindAssembledAgentToolActionDescriptor);
   processToolAvailabilityRef.value = authorizedTools.some((tool) => tool.name === "process");
   if (shouldInheritEffectiveToolAllowlist) {
