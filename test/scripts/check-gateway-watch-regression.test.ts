@@ -57,11 +57,11 @@ function createWatchChildFixture(outputDir: string) {
     signal: null,
   };
   const child = Object.assign(new ChildProcess(), {
-    pid: 1234,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
   });
   Object.defineProperties(child, {
+    pid: { configurable: true, value: 1234 },
     exitCode: { get: () => exitState.code },
     signalCode: { get: () => exitState.signal },
   });
