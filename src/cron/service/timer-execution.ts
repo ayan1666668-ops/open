@@ -188,7 +188,7 @@ export async function executeJobCore(
           scheduledEveryMs:
             effectiveJob.schedule.kind === "every" ? effectiveJob.schedule.everyMs : undefined,
         };
-    options?.onHeartbeatExecutionStarted?.(heartbeatWake);
+    const heartbeatWaitLifecycle = options?.onHeartbeatExecutionStarted?.(heartbeatWake);
     const releaseHeartbeatWait = markCronJobWaitingForHeartbeat(
       options?.activeJobMarker,
       options?.owningCronLaneTaskMarker,
@@ -197,10 +197,7 @@ export async function executeJobCore(
     try {
       heartbeatResult = await (state.deps.requestHeartbeatAndWait?.(heartbeatWake, {
         ...(abortSignal ? { abortSignal } : {}),
-        // The wake queue owns retrying a deferred heartbeat. Settle this cron
-        // attempt as skipped instead of letting its execution watchdog turn
-        // queue contention into a timeout error.
-        stopWaitingOnRetry: () => true,
+        ...heartbeatWaitLifecycle,
       }) ?? { status: "failed", reason: "heartbeat wake settlement unavailable" });
     } finally {
       releaseHeartbeatWait();
@@ -284,7 +281,7 @@ async function executeMainSessionCronJob(
   const removeQueuedSystemEvent = () =>
     removeQueuedSystemEventHandle(state, job, queuedSystemEvent);
   if (job.wakeMode === "now" && state.deps.requestHeartbeatAndWait) {
-    onHeartbeatExecutionStarted?.(heartbeatWake);
+    const heartbeatWaitLifecycle = onHeartbeatExecutionStarted?.(heartbeatWake);
     const waitStartedAt = state.deps.nowMs();
     const releaseHeartbeatWait = markCronJobWaitingForHeartbeat(
       activeJobMarker,
@@ -295,6 +292,7 @@ async function executeMainSessionCronJob(
     try {
       heartbeatResult = await state.deps.requestHeartbeatAndWait(heartbeatWake, {
         abortSignal,
+        ...heartbeatWaitLifecycle,
         stopWaitingOnRetry: (result, retryAtMs) => {
           // Only busy/guard deferrals spend this budget; an executing turn still
           // owns completion. Detaching leaves the queue's original retry intact.

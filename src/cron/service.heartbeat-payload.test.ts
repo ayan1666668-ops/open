@@ -156,25 +156,34 @@ describe("heartbeat payload execution", () => {
     }
   });
 
-  it("passes retry detachment policy and records queue contention as skipped", async () => {
+  it("pauses the execution timeout during retry wait and records the eventual failure", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T05:25:39Z"));
     const { storePath, cleanup } = await makeStorePath();
     const deferredResult = {
       status: "skipped" as const,
       reason: "requests-in-flight",
     };
+    const child = createDeferred<HeartbeatRunResult>();
+    let lifecycle:
+      | Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[1]
+      | undefined;
     const requestHeartbeatAndWait = vi.fn(
       async (
         _request: Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[0],
-        lifecycle: Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[1],
+        receivedLifecycle: Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[1],
       ): Promise<HeartbeatRunResult> => {
-        expect(lifecycle.stopWaitingOnRetry?.(deferredResult, Date.now() + 60_000)).toBe(true);
-        return deferredResult;
+        lifecycle = receivedLifecycle;
+        return await child.promise;
       },
     );
+    const events: CronEvent[] = [];
     const { cron } = createStartedCronServiceWithFinishedBarrier({
       storePath,
       logger: noopLogger,
       requestHeartbeatAndWait,
+      resolveHeartbeatTimeoutMs: () => 1_000,
+      onEvent: (event) => events.push(structuredClone(event)),
     });
     try {
       await cron.start();
@@ -193,15 +202,27 @@ describe("heartbeat payload execution", () => {
       );
       const job = "job" in added ? added.job : added;
 
-      await expect(cron.run(job.id, "force")).resolves.toMatchObject({ ok: true, ran: true });
-      expect(requestHeartbeatAndWait).toHaveBeenCalledOnce();
+      const runPromise = cron.run(job.id, "force");
+      await vi.waitFor(() => expect(requestHeartbeatAndWait).toHaveBeenCalledOnce());
+      expect(lifecycle?.stopWaitingOnRetry).toBeUndefined();
+
+      lifecycle?.onAttemptStarted?.();
+      lifecycle?.onRetryScheduled?.(deferredResult, Date.now() + 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(events.some((event) => event.action === "finished")).toBe(false);
+
+      lifecycle?.onAttemptStarted?.();
+      child.resolve({ status: "failed", reason: "runner failed after retry" });
+      await expect(runPromise).resolves.toMatchObject({ ok: true, ran: true });
       expect(cron.getJob(job.id)?.state).toMatchObject({
-        lastRunStatus: "skipped",
-        consecutiveErrors: 0,
+        lastRunStatus: "error",
+        lastError: "heartbeat failed: runner failed after retry",
+        consecutiveErrors: 1,
       });
     } finally {
       cron.stop();
       await cleanup();
+      vi.useRealTimers();
     }
   });
 

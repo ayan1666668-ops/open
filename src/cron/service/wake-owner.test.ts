@@ -16,6 +16,7 @@ import {
 } from "../../infra/system-events.js";
 import type { CronJob } from "../types.js";
 import { createCronServiceState } from "./state.js";
+import type { ExecuteJobCoreOptions } from "./timer-execution-timeout.js";
 import { executeJobCore } from "./timer-execution.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -68,7 +69,7 @@ function createHarness(handler: HeartbeatWakeHandler) {
     };
     return executeJobCore(state, job, signal);
   };
-  const runHeartbeat = () => {
+  const runHeartbeat = (options?: ExecuteJobCoreOptions) => {
     const job: CronJob = {
       id: "heartbeat",
       name: "heartbeat",
@@ -81,7 +82,7 @@ function createHarness(handler: HeartbeatWakeHandler) {
       wakeMode: "next-heartbeat",
       state: {},
     };
-    return executeJobCore(state, job);
+    return executeJobCore(state, job, undefined, options);
   };
   return { state, run, runHeartbeat };
 }
@@ -175,8 +176,10 @@ it.each([
   },
 );
 
-it("settles a deferred heartbeat cron attempt while preserving the queued retry", async () => {
+it("keeps a deferred heartbeat attached through a failed queued retry", async () => {
   const retryDelayMs = 60_000;
+  const onAttemptStarted = vi.fn();
+  const onRetryScheduled = vi.fn();
   const handler = vi
     .fn<HeartbeatWakeHandler>()
     .mockResolvedValueOnce({
@@ -184,26 +187,31 @@ it("settles a deferred heartbeat cron attempt while preserving the queued retry"
       reason: "requests-in-flight",
       retryAtMs: Date.now() + retryDelayMs,
     })
-    .mockResolvedValue(ran);
+    .mockResolvedValue({ status: "failed", reason: "runner failed" });
   const { runHeartbeat } = createHarness(handler);
   let finished = false;
-  const pending = runHeartbeat().then((result) => {
+  const pending = runHeartbeat({
+    onHeartbeatExecutionStarted: () => ({ onAttemptStarted, onRetryScheduled }),
+  }).then((result) => {
     finished = true;
     return result;
   });
 
   await vi.advanceTimersByTimeAsync(0);
-  expect(finished).toBe(true);
-  await expect(pending).resolves.toEqual({
-    status: "skipped",
-    error: "heartbeat skipped: requests-in-flight",
-  });
+  expect(finished).toBe(false);
   expect(handler).toHaveBeenCalledTimes(1);
+  expect(onAttemptStarted).toHaveBeenCalledTimes(1);
+  expect(onRetryScheduled).toHaveBeenCalledTimes(1);
 
   await vi.advanceTimersByTimeAsync(retryDelayMs - 1);
   expect(handler).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(1);
   expect(handler).toHaveBeenCalledTimes(2);
+  expect(onAttemptStarted).toHaveBeenCalledTimes(2);
+  await expect(pending).resolves.toEqual({
+    status: "error",
+    error: "heartbeat failed: runner failed",
+  });
 });
 
 it("does not spend the busy budget while the model is executing", async () => {
