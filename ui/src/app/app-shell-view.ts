@@ -624,6 +624,7 @@ export function renderApplicationShell(host: ShellViewHost) {
                 .available=${browserPanelAvailable}
                 .remoteAvailable=${isBrowserPanelAvailable(gatewaySnapshot)}
                 .suppressed=${settingsTakeover || nativeEmbed}
+                .agentId=${selectedAgentId}
                 .resourceBasePath=${context.resourceBasePath}
                 .authToken=${resolveControlUiAuthToken({
                   hello: gatewaySnapshot.hello,

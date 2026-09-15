@@ -305,7 +305,7 @@ function renderInspectTooltip(controller: BrowserPanelController) {
   `;
 }
 
-function renderViewportContent(controller: BrowserPanelController) {
+function renderViewportContent(controller: BrowserPanelController, agentName: string) {
   if (controller.native.activeTab && controller.mode === "interact") {
     return html`<div
       class="bp-stage bp-stage--native"
@@ -337,7 +337,9 @@ function renderViewportContent(controller: BrowserPanelController) {
       : renderPanelEmptyState({
           icon: icons.globe,
           heading: t("chat.sidePanel.browser"),
-          description: t("chat.sidePanel.browserEmpty"),
+          description: t("chat.sidePanel.browserEmpty", {
+            agent: agentName.trim() || t("browser.emptyAgentFallback"),
+          }),
         });
   }
   const overlayMode =
@@ -386,7 +388,11 @@ function renderViewportContent(controller: BrowserPanelController) {
   `;
 }
 
-function renderViewport(controller: BrowserPanelController, rendersTabStrip: boolean) {
+function renderViewport(
+  controller: BrowserPanelController,
+  rendersTabStrip: boolean,
+  agentName: string,
+) {
   return html`
     <wa-tab-panel
       id="browser-tab-panel"
@@ -404,7 +410,7 @@ function renderViewport(controller: BrowserPanelController, rendersTabStrip: boo
       @paste=${(event: ClipboardEvent) => controller.handleViewportPaste(event)}
       aria-busy=${controller.loading ? "true" : "false"}
     >
-      ${renderViewportContent(controller)}
+      ${renderViewportContent(controller, agentName)}
       ${
         !controller.native.activeTab && controller.loading && controller.view
           ? renderPanelLoadingSkeleton("browser", t("browser.loading"), false, true)
@@ -424,6 +430,7 @@ export function renderBrowserPanelChrome(
   resizer: TemplateResult | typeof nothing,
   embedded = false,
   tabsInHeader = false,
+  agentName = "",
 ) {
   const style = embedded ? nothing : dock === "bottom" ? `height:${height}px` : `width:${width}px`;
   const rendersTabStrip =
@@ -451,7 +458,7 @@ export function renderBrowserPanelChrome(
             ? html`<div class="bp-note" role="status">${controller.noticeText}</div>`
             : nothing
       }
-      ${renderViewport(controller, rendersTabStrip)}
+      ${renderViewport(controller, rendersTabStrip, agentName)}
     </section>
   `;
 }
