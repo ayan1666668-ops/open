@@ -3890,7 +3890,7 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
             markdown: { tables: selection === "channel" ? tables : "off" },
             ...(selection === "defaultAccount" ? { defaultAccount: "work" } : {}),
             accounts: {
-              work: { ...(selection !== "channel" ? { markdown: { tables } } : {}) },
+              work: selection !== "channel" ? { markdown: { tables } } : {},
               other: {},
             },
           },
