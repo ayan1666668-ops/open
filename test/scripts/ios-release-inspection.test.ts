@@ -245,6 +245,82 @@ describe("protected iOS read-only inspection", () => {
     }
   });
 
+  it("resolves the installed inspection bundle through the wrapper in a fresh shell", () => {
+    const workflow = parse(fs.readFileSync(".github/workflows/ios-beta-release.yml", "utf8"));
+    const job = workflow.jobs.inspect;
+    const install = job.steps.find(
+      (step: { name: string }) => step.name === "Install locked inspection Fastlane bundle",
+    );
+    const inspectStep = job.steps.find(
+      (step: { name: string }) => step.name === "Inspect iOS plan and exact build relationships",
+    );
+    const root = roots.make("ios-inspection-bundle-");
+    for (const directory of ["apps/ios", "scripts/lib", "bin", "home", "tmp"]) {
+      fs.mkdirSync(path.join(root, directory), { recursive: true });
+    }
+    fs.copyFileSync("scripts/lib/ios-fastlane.sh", path.join(root, "scripts/lib/ios-fastlane.sh"));
+    fs.copyFileSync("apps/ios/Gemfile", path.join(root, "apps/ios/Gemfile"));
+    // Exercise the actual workflow shells and wrapper without installing gems or
+    // accessing the store. The shim checks the deployment contract at each call.
+    fs.writeFileSync(
+      path.join(root, "bin/bundle"),
+      String.raw`#!/bin/bash
+set -euo pipefail
+[[ "$1" == "_2.6.9_" ]]
+shift
+printf '%s:%s\n' "$1" "${"$"}{BUNDLE_DEPLOYMENT:-unset}" >> "$GITHUB_WORKSPACE/bundle-trace"
+[[ "${"$"}{BUNDLE_DEPLOYMENT:-}" == "true" ]]
+case "$1" in
+  install) touch "$GITHUB_WORKSPACE/installed" ;;
+  check) test -f "$GITHUB_WORKSPACE/installed" ;;
+  exec)
+    test -f "$GITHUB_WORKSPACE/installed"
+    if [[ "$2" == ruby ]]; then
+      printf '2.238.0'
+    else
+      [[ "$BUNDLE_GEMFILE" == "$GITHUB_WORKSPACE/apps/ios/Gemfile" ]]
+      [[ "$2 $3 $4" == "fastlane ios release_inspect" ]]
+      printf 'inspection fixture reached\n'
+    fi
+    ;;
+  *) exit 99 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const runStep = (step: {
+      run: string;
+      env?: Record<string, string>;
+      "working-directory"?: string;
+    }) =>
+      spawnSync("/bin/bash", ["--noprofile", "--norc", "-c", step.run], {
+        cwd: path.join(root, step["working-directory"] ?? "."),
+        encoding: "utf8",
+        env: {
+          HOME: path.join(root, "home"),
+          PATH: `${path.join(root, "bin")}:/usr/bin:/bin`,
+          GITHUB_WORKSPACE: root,
+          RUNNER_TEMP: path.join(root, "tmp"),
+          ...workflow.env,
+          ...job.env,
+          ...step.env,
+        },
+      });
+    const installed = runStep(install);
+    expect(installed.status, installed.stderr).toBe(0);
+    const inspected = runStep(inspectStep);
+    expect(inspected.status, inspected.stderr).toBe(0);
+    expect(inspected.stdout).toBe("inspection fixture reached\n");
+    expect(fs.readFileSync(path.join(root, "bundle-trace"), "utf8")).toBe(
+      "install:true\ncheck:true\nexec:true\ncheck:true\nexec:true\n",
+    );
+    expect(job.env.BUNDLE_DEPLOYMENT).toBe("true");
+    expect(workflow.env.BUNDLE_DEPLOYMENT).toBeUndefined();
+    for (const name of ["authorize", "release", "recover-record"]) {
+      expect(workflow.jobs[name].env?.BUNDLE_DEPLOYMENT).toBeUndefined();
+    }
+  });
+
   it("keeps inspection in a fresh protected job with trusted execution and no publication credentials", () => {
     const workflow = parse(fs.readFileSync(".github/workflows/ios-beta-release.yml", "utf8"));
     const job = workflow.jobs.inspect;
