@@ -11,6 +11,7 @@ import { resolveUserPath } from "../utils.js";
 import { digestClawAddPlanIntegrity } from "./add-plan-integrity.js";
 import {
   clawAddCapabilityChange,
+  clawAgentCapabilityChange,
   clawAgentConfigurationNotices,
   findClawExtensionPackageCollisions,
   planClawExtensions,
@@ -249,6 +250,12 @@ export async function buildClawAddPlan(params: {
   actions.push(agentPlan.action);
   if (agentPlan.capabilityChange) {
     capabilityChanges.push(clawAddCapabilityChange(agentPlan.capabilityChange));
+  }
+  if (!context.adoptExistingAgent) {
+    const agentCapability = clawAgentCapabilityChange(finalId, openClawAgentSettings);
+    if (agentCapability) {
+      capabilityChanges.push(agentCapability);
+    }
   }
 
   const { configuredWorkspaceConflict } = inspectAgentWorkspaceOwnership({

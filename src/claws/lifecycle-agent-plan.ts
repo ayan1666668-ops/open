@@ -149,20 +149,6 @@ export function planClawAgent(params: {
             effect: { ...effect, adoptExistingAgent: true },
           },
         }
-      : Object.keys(effect).length > 0
-        ? {
-            capabilityChange: {
-              kind: "agent",
-              id: params.finalId,
-              path: "agent",
-              action: "create",
-              reason:
-                settings.model || settings.subagents
-                  ? "The new agent declares model, delegation, sandbox, tool, memory-search, or recurring heartbeat configuration."
-                  : "The new agent declares sandbox, tool, memory-search, or recurring heartbeat capabilities.",
-              effect,
-            },
-          }
-        : {}),
+      : {}),
   };
 }
