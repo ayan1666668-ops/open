@@ -429,7 +429,9 @@ function renderArrayContent(
       ></openclaw-config-form-collection-draft>
       ${
         arrayValue.length === 0
-          ? renderSettingsEmpty(t("configForm.noItems"))
+          ? params.compact
+            ? nothing
+            : renderSettingsEmpty(t("configForm.noItems"))
           : html`
               <div class="settings-subrows">
                 ${repeat(
