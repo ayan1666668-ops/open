@@ -2359,7 +2359,7 @@ describe("cron service ops persist rollback", () => {
     const previousRevision = cronStoreModule.getCronJobsStoreRevision(storePath);
     const originalTimer = state.timer;
     onEvent.mockClear();
-    const persist = vi.spyOn(cronStoreModule, "saveCronJobsStore");
+    const persist = vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision");
     persist.mockClear();
 
     await expect(remove(state, "missing-job")).resolves.toEqual({ ok: true, removed: false });
@@ -2386,7 +2386,9 @@ describe("cron service ops persist rollback", () => {
     const now = Date.parse("2026-06-09T00:00:00.000Z");
     const state = createOkIsolatedCronState({ storePath, now });
 
-    vi.spyOn(cronStoreModule, "saveCronJobsStore").mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision").mockRejectedValueOnce(
+      new Error("disk full"),
+    );
 
     await expect(add(state, makeCreateInput("daily cleanup"))).rejects.toThrow("disk full");
 
@@ -2411,7 +2413,9 @@ describe("cron service ops persist rollback", () => {
       clearTimeout(state.timer);
     }
 
-    vi.spyOn(cronStoreModule, "saveCronJobsStore").mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision").mockRejectedValueOnce(
+      new Error("disk full"),
+    );
 
     await expect(update(state, job.id, { name: "renamed cleanup" })).rejects.toThrow("disk full");
 
@@ -2452,7 +2456,9 @@ describe("cron service ops persist rollback", () => {
       clearTimeout(state.timer);
     }
 
-    vi.spyOn(cronStoreModule, "saveCronJobsStore").mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision").mockRejectedValueOnce(
+      new Error("disk full"),
+    );
 
     await expect(remove(state, job.id)).rejects.toThrow("disk full");
 
@@ -2472,7 +2478,9 @@ describe("cron service ops persist rollback", () => {
     }
     job.state.startupCatchupAtMs = now + 5_000;
 
-    vi.spyOn(cronStoreModule, "saveCronJobsStore").mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision").mockRejectedValueOnce(
+      new Error("disk full"),
+    );
 
     await expect(remove(state, job.id)).rejects.toThrow("disk full");
 
@@ -2485,7 +2493,9 @@ describe("cron service ops persist rollback", () => {
     const now = Date.parse("2026-06-09T00:00:00.000Z");
     const state = createOkIsolatedCronState({ storePath, now });
 
-    vi.spyOn(cronStoreModule, "saveCronJobsStore").mockRejectedValueOnce(new Error("disk full"));
+    vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision").mockRejectedValueOnce(
+      new Error("disk full"),
+    );
     await expect(add(state, makeCreateInput("daily cleanup"))).rejects.toThrow("disk full");
 
     const job = await add(state, makeCreateInput("daily cleanup"));
@@ -2537,14 +2547,15 @@ describe("cron service ops persist rollback", () => {
         return computeNextRunAtMs(schedule, nowMs);
       });
 
-      const saveCronJobsStore = cronStoreModule.saveCronJobsStore;
-      vi.spyOn(cronStoreModule, "saveCronJobsStore")
+      const saveCronJobsStoreWithRevision = cronStoreModule.saveCronJobsStoreWithRevision;
+      vi.spyOn(cronStoreModule, "saveCronJobsStoreWithRevision")
         .mockRejectedValueOnce(new Error("disk full"))
         .mockImplementationOnce(async (...args) => {
           expect(enqueueSystemEvent).not.toHaveBeenCalled();
           expect(requestHeartbeat).not.toHaveBeenCalled();
-          await saveCronJobsStore(...args);
+          const committed = await saveCronJobsStoreWithRevision(...args);
           order.push("persist");
+          return committed;
         });
       const trigger = () => add(state, makeCreateInput(`trigger ${triggerPath}`));
       await expect(trigger()).rejects.toThrow("disk full");
