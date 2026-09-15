@@ -51,24 +51,64 @@ describe("readSessionMethodAccess", () => {
     });
   });
 
-  it("keeps model and effort patch access independent", () => {
-    const writeOnly = snapshot({ methods: ["sessions.patch"], scopes: ["operator.write"] });
+  it.each([
+    ["sessions.dispatch", { key: "agent:main:device", deviceId: "runner" }],
+    ["sessions.dispatch", { key: "agent:main:auto", autoDevice: true }],
+    ["sessions.move", { key: "agent:main:device", target: { kind: "device", deviceId: "runner" } }],
+  ])("allows write-scoped device placement through %s", (method, params) => {
     expect(
-      readSessionMethodAccess(writeOnly, {
-        method: "sessions.patch",
-        params: { key: "agent:main:main", model: null },
+      readSessionMethodAccess(snapshot({ methods: [method], scopes: ["operator.write"] }), {
+        method,
+        params,
+        requiredScope: "operator.write",
       }),
     ).toEqual({ allowed: true, requiredScope: "operator.write" });
+  });
+
+  it.each([
+    ["sessions.dispatch", { key: "agent:main:cloud", profileId: "aws" }],
+    ["sessions.move", { key: "agent:main:cloud", target: { kind: "profile", profileId: "aws" } }],
+  ])("keeps profile placement admin-only through %s", (method, params) => {
     expect(
-      readSessionMethodAccess(writeOnly, {
-        method: "sessions.patch",
-        params: { key: "agent:main:main", thinkingLevel: null },
+      readSessionMethodAccess(snapshot({ methods: [method], scopes: ["operator.write"] }), {
+        method,
+        params,
+        requiredScope: "operator.admin",
       }),
-    ).toMatchObject({
-      allowed: false,
-      cause: "missing-scope",
-      requiredScope: "operator.admin",
-    });
+    ).toMatchObject({ allowed: false, requiredScope: "operator.admin" });
+    expect(
+      readSessionMethodAccess(snapshot({ methods: [method], scopes: ["operator.admin"] }), {
+        method,
+        params,
+        requiredScope: "operator.admin",
+      }),
+    ).toEqual({ allowed: true, requiredScope: "operator.admin" });
+  });
+
+  it.each(["model", "thinkingLevel", "fastMode"])(
+    "allows write-scoped %s changes while keeping read-only clients read-only",
+    (field) => {
+      for (const scope of ["operator.read", "operator.write", "operator.admin"]) {
+        expect(
+          readSessionMethodAccess(snapshot({ methods: ["sessions.patch"], scopes: [scope] }), {
+            method: "sessions.patch",
+            params: { key: "agent:main:main", [field]: null },
+          }),
+        ).toMatchObject({ allowed: scope !== "operator.read", requiredScope: "operator.write" });
+      }
+    },
+  );
+
+  it("keeps context-window changes separate from write-scoped effort access", () => {
+    expect(
+      readSessionMethodAccess(
+        snapshot({ methods: ["sessions.patch"], scopes: ["operator.write"] }),
+        {
+          method: "sessions.patch",
+          params: { key: "agent:main:main", contextWindow: null },
+        },
+      ),
+    ).toMatchObject({ allowed: false, cause: "missing-scope", requiredScope: "operator.admin" });
   });
 
   it("allows admin to satisfy write-scoped actions", () => {
@@ -81,21 +121,23 @@ describe("readSessionMethodAccess", () => {
   });
 
   it("allows read, write, and admin scopes to satisfy read-scoped actions", () => {
-    for (const scope of ["operator.read", "operator.write", "operator.admin"]) {
-      expect(
-        readSessionMethodAccess(snapshot({ methods: ["session.members.list"], scopes: [scope] }), {
-          method: "session.members.list",
-          requiredScope: "operator.read",
-        }).allowed,
-      ).toBe(true);
+    for (const method of ["session.members.list", "session.members.listEvidence"]) {
+      for (const scope of ["operator.read", "operator.write", "operator.admin"]) {
+        expect(
+          readSessionMethodAccess(snapshot({ methods: [method], scopes: [scope] }), {
+            method,
+            requiredScope: "operator.read",
+          }).allowed,
+        ).toBe(true);
+      }
     }
   });
 
   it("rejects a read-scoped action without a compatible operator scope", () => {
     expect(
       readSessionMethodAccess(
-        snapshot({ methods: ["session.members.list"], scopes: ["operator.approvals"] }),
-        { method: "session.members.list", requiredScope: "operator.read" },
+        snapshot({ methods: ["session.members.listEvidence"], scopes: ["operator.approvals"] }),
+        { method: "session.members.listEvidence", requiredScope: "operator.read" },
       ),
     ).toMatchObject({
       allowed: false,
