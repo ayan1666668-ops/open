@@ -126,6 +126,7 @@ Configuring a custom/local provider `baseUrl` is also the narrow network trust d
     | `requiresAssistantAfterToolResult` | Requires an assistant message after tool results. |
     | `requiresThinkingAsText` | Replays reasoning as text rather than structured content. |
     | `requiresReasoningContentOnAssistantMessages` | Preserves DeepSeek-style `reasoning_content` during replay. |
+    | `reasoningContentReplay` | Forces `preserve` or `strip` for reasoning replay fields on replayed assistant messages. Set `strip` for endpoints that treat these fields as output-only (e.g. vLLM). |
     | `toolSchemaProfile` | Selects a tool-schema normalization profile. Custom model entries recognize `llamacpp` and `gemini`. The `llamacpp` profile removes `pattern` and `maxLength` values at or above 2000; built-in `llama-cpp`, `ollama`, and `lmstudio` providers apply the same cleaner automatically. Custom provider IDs pointed at llama-server must select it explicitly. See the [llama.cpp example](/gateway/config-tools/provider-examples#local-models-llama-cpp-llama-server). |
     | `unsupportedToolSchemaKeywords` | Removes named JSON Schema keywords rejected by the endpoint before tool schemas are sent. Use this for endpoint-specific gaps beyond a profile's targeted transformations. |
     | `toolCallArgumentsEncoding` | Selects the endpoint's tool-call argument encoding. |

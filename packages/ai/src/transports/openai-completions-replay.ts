@@ -236,8 +236,22 @@ function getReasoningContentReplayModelIdCandidates(modelId: unknown): string[] 
 
 function shouldPreserveReasoningContentReplay(
   model: OpenAIModeModel,
-  compat: { requiresReasoningContentOnAssistantMessages: boolean; thinkingFormat: string },
+  compat: {
+    requiresReasoningContentOnAssistantMessages: boolean;
+    thinkingFormat: string;
+    reasoningContentReplay?: "preserve" | "strip";
+  },
 ): boolean {
+  // Explicit per-model override wins over every heuristic below: "strip" is for
+  // endpoints that treat reasoning fields as output-only (e.g. vLLM), where
+  // replaying them only grows the prompt. A hard "requires" flag still wins so
+  // an endpoint that actually errors on missing reasoning_content is never broken.
+  if (
+    compat.reasoningContentReplay === "strip" &&
+    !compat.requiresReasoningContentOnAssistantMessages
+  ) {
+    return false;
+  }
   if (
     compat.requiresReasoningContentOnAssistantMessages ||
     compat.thinkingFormat === "deepseek" ||
@@ -306,6 +320,7 @@ export function applyCompletionsReplay(
   compat: {
     requiresReasoningContentOnAssistantMessages: boolean;
     thinkingFormat: string;
+    reasoningContentReplay?: "preserve" | "strip";
   },
 ): void {
   injectToolCallThoughtSignatures(outgoingMessages, context, model);
