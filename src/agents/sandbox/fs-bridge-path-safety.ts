@@ -5,6 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { sameFileIdentity } from "@openclaw/fs-safe/advanced";
 import { resolveIdentityPathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
 import type { PathAliasPolicy } from "../../infra/path-alias-guards.js";
@@ -214,7 +215,12 @@ export class SandboxFsPathGuard {
     } catch {
       // Keep the lexical path; openRootFile reports the boundary or IO failure.
     }
-    const resolutionIdentity = fs.statSync(resolvedHostPath, { throwIfNoEntry: false });
+    // Exact bigint identity at both ends of the window: numeric dev/ino lose
+    // precision for large inode values and can compare equal after rounding.
+    const resolutionIdentity = fs.statSync(resolvedHostPath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
     await this.beforeDescriptorAdmission?.(resolvedHostPath);
     const guarded = await openRootFile({
       absolutePath: resolvedHostPath,
@@ -228,8 +234,12 @@ export class SandboxFsPathGuard {
       allowedType: options?.allowedType,
     });
     if (guarded.ok && resolutionIdentity) {
-      const admitted = fs.fstatSync(guarded.fd);
-      if (admitted.dev !== resolutionIdentity.dev || admitted.ino !== resolutionIdentity.ino) {
+      const admittedIdentity = fs.fstatSync(guarded.fd, { bigint: true });
+      // Exact bigint comparison via the fs-safe owner's comparator: numeric
+      // dev/ino lose precision for large inode values and can compare equal
+      // after Number rounding, while unavailable Windows identity components
+      // are not provably different and never reject a stable file.
+      if (!sameFileIdentity(resolutionIdentity, admittedIdentity)) {
         fs.closeSync(guarded.fd);
         throw new Error(
           `Sandbox file identity changed between canonical resolution and descriptor admission; cannot ${action}: ${target.containerPath}`,

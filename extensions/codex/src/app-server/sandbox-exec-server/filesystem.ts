@@ -507,6 +507,12 @@ async function copySandboxPath(
   if (!sourceStat) {
     throw new JsonRpcProtocolError(JSON_RPC_NOT_FOUND, "file not found");
   }
+  if (sourceStat.type !== "file" && sourceStat.type !== "directory") {
+    // Authoritative kind check: directory listings may not classify entry
+    // kinds, so the pinned stat decides. FIFOs, sockets, and devices are never
+    // copy sources.
+    throw new Error(`Cannot copy unsupported filesystem entry: ${params.sourcePath}`);
+  }
   // Authorize the canonical copy destination before pinning the mutation so a
   // symlinked parent cannot redirect an approved copy into a protected path.
   // Recursive directory copies authorize the destination directory itself (an
@@ -552,9 +558,9 @@ async function copySandboxPath(
       params.sourcePath,
       params.fsSandboxPolicy,
     )) {
-      if (!entry.isDirectory && !entry.isFile) {
-        throw new Error(`Cannot copy unsupported filesystem entry: ${entry.fileName}`);
-      }
+      // Entry kinds from listings may be unclassified; each child resolves its
+      // own authoritative kind through the pinned stat inside copySandboxPath,
+      // which declines unsupported entry kinds before any read effect.
       await copySandboxPath(execServer, {
         sourcePath: joinSandboxChildPath(params.sourcePath, entry.fileName),
         destinationPath: joinSandboxChildPath(params.destinationPath, entry.fileName),

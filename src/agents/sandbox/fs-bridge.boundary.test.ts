@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { sameFileIdentity } from "@openclaw/fs-safe/advanced";
 import { describe, expect, it, vi } from "vitest";
 import { resolveSandboxFilePolicyPath } from "./file-mutation-identity.js";
 import {
@@ -19,6 +20,46 @@ import {
 
 describe("sandbox fs bridge boundary validation", () => {
   installFsBridgeTestHarness();
+
+  it("distinguishes large inode values that collide as Numbers", () => {
+    // The admission window compares exact bigint identities through the fs-safe
+    // owner's comparator: the Number conversion collapses these two distinct
+    // inode values into one.
+    const largeInodeA = 9007199254740992n;
+    const largeInodeB = 9007199254740993n;
+    expect(Number(largeInodeA)).toBe(Number(largeInodeB));
+    expect(
+      sameFileIdentity(
+        { dev: 1n, ino: largeInodeA } as fsSync.BigIntStats,
+        { dev: 1n, ino: largeInodeB } as fsSync.BigIntStats,
+      ),
+    ).toBe(false);
+  });
+
+  it("matches identical bigint identities", () => {
+    expect(
+      sameFileIdentity(
+        { dev: 1n, ino: 9007199254740992n } as fsSync.BigIntStats,
+        { dev: 1n, ino: 9007199254740992n } as fsSync.BigIntStats,
+      ),
+    ).toBe(true);
+  });
+
+  it("never rejects unavailable Windows identities as mismatches", () => {
+    const known = { dev: 1n, ino: 9007199254740992n } as fsSync.BigIntStats;
+    const unknown = { dev: 0n, ino: 0n } as fsSync.BigIntStats;
+    expect(sameFileIdentity(known, unknown, "win32")).toBe(true);
+    expect(sameFileIdentity(unknown, known, "win32")).toBe(true);
+  });
+
+  it("rejects definite known-value mismatches", () => {
+    expect(
+      sameFileIdentity(
+        { dev: 1n, ino: 9007199254740992n } as fsSync.BigIntStats,
+        { dev: 1n, ino: 42n } as fsSync.BigIntStats,
+      ),
+    ).toBe(false);
+  });
 
   it("blocks writes into read-only bind mounts", async () => {
     const sandbox = createSandbox({

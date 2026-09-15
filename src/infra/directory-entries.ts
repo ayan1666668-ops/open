@@ -15,14 +15,16 @@ export function parseDirectoryEntries(text: string): DirectoryEntry[] {
   }
   return entries.map((entry: unknown) => {
     const record = asNullableRecord(entry);
-    if (
-      !record ||
-      typeof record.name !== "string" ||
-      typeof record.isDirectory !== "boolean" ||
-      typeof record.isFile !== "boolean"
-    ) {
+    if (!record || typeof record.name !== "string" || typeof record.isDirectory !== "boolean") {
       throw new Error("Invalid sandbox directory entry.");
     }
-    return { name: record.name, isDirectory: record.isDirectory, isFile: record.isFile };
+    // Absent isFile preserves unsupported entry kinds: a listing source may not
+    // classify kinds, and consumers decline anything not explicitly a regular
+    // file. Explicit non-boolean kinds are still invalid.
+    const isFile = record.isFile ?? false;
+    if (typeof isFile !== "boolean") {
+      throw new Error("Invalid sandbox directory entry.");
+    }
+    return { name: record.name, isDirectory: record.isDirectory, isFile };
   });
 }

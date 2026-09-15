@@ -10,8 +10,8 @@ import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/s
 import { readFileDescriptorBounded } from "../../infra/boundary-file-read.js";
 import { resolveIdentityPathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { parseDirectoryEntries, type DirectoryEntry } from "../../infra/directory-entries.js";
-import { isPathInside } from "../../infra/path-guards.js";
 import { GUEST_FILESYSTEM_CREATE_EXISTS_EXIT_CODE } from "../../infra/guest-filesystem.js";
+import { isPathInside } from "../../infra/path-guards.js";
 import type {
   SandboxBackendCommandResult,
   SandboxFsBridgeContext,
