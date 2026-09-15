@@ -585,7 +585,6 @@ export function createManagedServiceManagerBoundary({
         const updated = activated && options.nativePreparation !== "timeout-stop";
         await expect(pathExists(updaterPath)).resolves.toBe(updated);
       } else if (options?.parentExitTimeoutMs !== undefined) {
-        const timeout = options.parentExitTimeoutMs + (options.launchdTeardown ? 8_000 : 3_000);
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           expect(
@@ -594,7 +593,7 @@ export function createManagedServiceManagerBoundary({
               new Promise<never>((_resolve, reject) => {
                 timer = setTimeout(
                   () => reject(new Error("managed helper did not restore the stalled parent")),
-                  timeout,
+                  options.parentExitTimeoutMs + (options.launchdTeardown ? 8_000 : 3_000),
                 );
               }),
             ]),
