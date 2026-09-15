@@ -72,7 +72,7 @@ describe("readWindowsProcessStartTimeSync", () => {
   });
 
   it("does not start WMIC once PowerShell has spent the whole budget", () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       spawnSyncMock.mockImplementationOnce(() => {
         vi.advanceTimersByTime(1000);
@@ -89,7 +89,7 @@ describe("readWindowsProcessStartTimeSync", () => {
   });
 
   it("gives WMIC only the time left on the caller's budget", () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       spawnSyncMock
         .mockImplementationOnce(() => {
@@ -111,7 +111,7 @@ describe("readWindowsProcessStartTimeSync", () => {
   });
 
   it("preserves the default WMIC fallback after PowerShell spends five seconds", () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       spawnSyncMock
         .mockImplementationOnce(() => {
@@ -130,6 +130,42 @@ describe("readWindowsProcessStartTimeSync", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    { clockStepMs: -60_000, elapsedMs: 600, expectedTimeout: 400 },
+    { clockStepMs: 60_000, elapsedMs: 600, expectedTimeout: 400 },
+    { clockStepMs: -60_000, elapsedMs: 1000, expectedTimeout: null },
+    { clockStepMs: 60_000, elapsedMs: 1000, expectedTimeout: null },
+  ])(
+    "keeps the fallback budget after $elapsedMs ms and a $clockStepMs ms wall-clock step",
+    ({ clockStepMs, elapsedMs, expectedTimeout }) => {
+      vi.useFakeTimers({ toFake: ["Date", "performance"] });
+      try {
+        vi.setSystemTime(new Date("2026-07-13T08:00:00Z"));
+        spawnSyncMock
+          .mockImplementationOnce(() => {
+            vi.advanceTimersByTime(elapsedMs);
+            vi.setSystemTime(Date.now() + clockStepMs);
+            return { status: 1, stdout: "" };
+          })
+          .mockReturnValueOnce({
+            status: 0,
+            stdout: Buffer.from("CreationDate=20260713092049.123456+120\r\n"),
+          });
+
+        const result = readWindowsProcessStartTimeSync(654, 1000);
+        expect(result).toBe(
+          expectedTimeout === null ? null : Date.parse("2026-07-13T07:20:49.123Z"),
+        );
+        expect(spawnSyncMock).toHaveBeenCalledTimes(expectedTimeout === null ? 1 : 2);
+        if (expectedTimeout !== null) {
+          expect(spawnSyncMock.mock.calls[1]?.[2]).toMatchObject({ timeout: expectedTimeout });
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("returns null when process creation time is unavailable", () => {
     spawnSyncMock
