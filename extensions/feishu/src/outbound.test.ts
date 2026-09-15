@@ -3875,6 +3875,75 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     resetOutboundMocks();
   });
 
+  describe.each(["raw", "core-rendered"] as const)("presentation via %s payload", (entry) => {
+    it.each(
+      (["bullets", "code"] as const).flatMap((tables) =>
+        (["channel", "named", "defaultAccount"] as const).map((selection) => ({
+          tables,
+          selection,
+        })),
+      ),
+    )("projects $selection $tables prose, blocks and fallback", async ({ tables, selection }) => {
+      const cfg: ClawdbotConfig = {
+        channels: {
+          feishu: {
+            markdown: { tables: selection === "channel" ? tables : "off" },
+            ...(selection === "defaultAccount" ? { defaultAccount: "work" } : {}),
+            accounts: {
+              work: { ...(selection !== "channel" ? { markdown: { tables } } : {}) },
+              other: {},
+            },
+          },
+        },
+      };
+      const presentation: MessagePresentation = {
+        blocks: [
+          { type: "text", text: tableMarkdown },
+          { type: "context", text: tableMarkdown },
+          {
+            type: "buttons",
+            buttons: [{ label: "Continue", action: { type: "command", command: "/continue" } }],
+          },
+        ],
+      };
+      let payload: ReplyPayload = { text: tableMarkdown, presentation };
+      const ctx = {
+        cfg,
+        to: "chat_1",
+        text: tableMarkdown,
+        accountId: selection === "named" ? "work" : undefined,
+        payload,
+      };
+      const converted = convertMarkdownTables(tableMarkdown, tables);
+      if (entry === "core-rendered") {
+        const rendered = await feishuOutbound.renderPresentation?.({ payload, presentation, ctx });
+        expect(rendered).toBeDefined();
+        if (!rendered) {
+          throw new Error("expected a rendered presentation");
+        }
+        expect(rendered.text?.split(converted)).toHaveLength(4);
+        expect(rendered.text).not.toContain("| --- |");
+        const { presentation: _presentation, ...consumed } = rendered;
+        payload = consumed;
+      }
+
+      await feishuOutbound.sendPayload?.({ ...ctx, text: payload.text ?? "", payload });
+
+      const card = sendCardCall()?.card;
+      expect(card).toBeDefined();
+      const elements = card.body.elements.filter(
+        (element: { tag: string }) => element.tag === "markdown",
+      );
+      expect(elements.map((element: { content: string }) => element.content)).toEqual([
+        converted,
+        converted,
+        `<font color='grey'>${converted}</font>`,
+      ]);
+      expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("follows defaultAccount when the account id is omitted", async () => {
     const cfg: ClawdbotConfig = {
       channels: {

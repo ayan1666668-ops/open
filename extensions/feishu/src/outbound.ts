@@ -519,6 +519,17 @@ async function sendFeishuTtsSupplementPayload(params: {
   return lastResult ?? { channel: "feishu", messageId: "" };
 }
 
+function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">) {
+  const account = resolveFeishuAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+  const tableMode = resolveMarkdownTableMode({
+    cfg: ctx.cfg,
+    channel: "feishu",
+    accountId: account.accountId,
+    supportsBlockTables: true,
+  });
+  return (text: string) => (tableMode === "block" ? text : convertMarkdownTables(text, tableMode));
+}
+
 // `feishuOutbound` keeps the shared `ChannelOutboundAdapter` shape (whose
 // `sendMedia` is optional) so the object literal — which spreads
 // `createAttachedChannelResultAdapter` (returning `sendMedia?: ... | undefined`)
@@ -533,9 +544,18 @@ export const feishuOutbound: ChannelOutboundAdapter = {
   chunkerMode: "markdown",
   textChunkLimit: FEISHU_TEXT_CHUNK_LIMIT,
   presentationCapabilities: FEISHU_PRESENTATION_CAPABILITIES,
-  renderPresentation: renderFeishuPresentationPayload,
+  renderPresentation: (params) =>
+    renderFeishuPresentationPayload({
+      ...params,
+      ctx: { ...params.ctx, renderText: presentationTextRenderer(params.ctx) },
+    }),
   sendPayload: async (ctx) => {
     const { payload, presentationFallback } = consumeFeishuPresentationFallbackMarker(ctx.payload);
+    // Core-rendered payloads already carry their card or fallback. Only authored
+    // presentations reaching this entry directly still need the prose projection.
+    const renderText = resolveFeishuRichReply(payload).presentation
+      ? presentationTextRenderer(ctx)
+      : undefined;
     const ttsSupplement = getReplyPayloadTtsSupplement(payload);
     if (parseFeishuCommentTarget(ctx.to)) {
       const { presentation } = resolveFeishuRichReply(payload);
@@ -577,18 +597,21 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       payload,
       text: ctx.text,
       identity: ctx.identity,
+      renderText,
     });
     if (!card) {
       const { presentation } = resolveFeishuRichReply(payload);
       const fallbackPayload = presentation
         ? {
             ...payload,
-            text: renderFeishuPresentationFallbackText(
-              {
-                text: readNativeFeishuCardJson(payload.text) ? undefined : payload.text,
-                presentation,
-              },
-              "markdown",
+            text: (renderText ?? ((text: string) => text))(
+              renderFeishuPresentationFallbackText(
+                {
+                  text: readNativeFeishuCardJson(payload.text) ? undefined : payload.text,
+                  presentation,
+                },
+                "markdown",
+              ),
             ),
             presentation: undefined,
             interactive: undefined,
