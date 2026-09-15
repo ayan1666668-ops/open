@@ -118,7 +118,18 @@ export function registerCronAddCommand(cron: Command) {
             }
 
             const rawAgentId = normalizeOptionalString(opts.agent);
+            if (typeof opts.agent === "string" && !rawAgentId) {
+              throw new CronCliError("--agent must not be blank");
+            }
             const agentId = rawAgentId ? sanitizeAgentId(rawAgentId) : undefined;
+            const sessionKey = normalizeOptionalString(opts.sessionKey);
+            if (typeof opts.sessionKey === "string" && !sessionKey) {
+              throw new CronCliError("--session-key must not be blank");
+            }
+            const commandCwd = normalizeOptionalString(opts.commandCwd);
+            if (typeof opts.commandCwd === "string" && !commandCwd) {
+              throw new CronCliError("--command-cwd must not be blank");
+            }
 
             const hasAnnounce = Boolean(opts.announce) || opts.deliver === true;
             const hasNoDeliver = opts.deliver === false;
@@ -215,7 +226,7 @@ export function registerCronAddCommand(cron: Command) {
                 return {
                   kind: "command" as const,
                   argv: commandArgv ?? ["sh", "-lc", commandShell ?? ""],
-                  cwd: normalizeOptionalString(opts.commandCwd),
+                  cwd: commandCwd,
                   env: parseCronCommandEnv(opts.commandEnv),
                   input: typeof opts.commandInput === "string" ? opts.commandInput : undefined,
                   timeoutSeconds,
@@ -362,7 +373,6 @@ export function registerCronAddCommand(cron: Command) {
               throw new CronCliError("--pacing-max must not be blank");
             }
 
-            const sessionKey = normalizeOptionalString(opts.sessionKey);
             const triggerScriptPath = readNonBlankString(opts.triggerScript);
             if ((opts.triggerOnce || opts.triggerScript !== undefined) && !triggerScriptPath) {
               throw new CronCliError(
