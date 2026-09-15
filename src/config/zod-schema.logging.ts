@@ -38,6 +38,14 @@ export const DiagnosticsConfigSchema = z
         flushIntervalMs: z.number().int().nonnegative().optional(),
         /** Opt in to raw non-system message/tool content in OTEL span attributes. */
         captureContent: z.boolean().optional(),
+        /** Compute content-derived skill versions for skill-used trace spans. Default: false. */
+        skillContentHash: z.boolean().optional(),
+        /** Diagnostic attribute names to retain on traces even when omitted by default. */
+        traceAttributes: z.array(z.string()).optional(),
+        /** Diagnostic attribute names to retain on logs even when omitted by default. */
+        logAttributes: z.array(z.string()).optional(),
+        /** Diagnostic attribute names to retain on metrics even when omitted by default. */
+        metricAttributes: z.array(z.string()).optional(),
       })
       .optional(),
     cacheTrace: z

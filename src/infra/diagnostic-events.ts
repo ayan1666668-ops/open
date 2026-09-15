@@ -36,6 +36,8 @@ import {
 } from "./diagnostic-trace-propagation.js";
 import { isBlockedObjectKey } from "./prototype-keys.js";
 
+export { MAX_DIAGNOSTIC_CONTENT_CHARS } from "./diagnostic-content.js";
+
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
 
 type DiagnosticBaseEvent = {
@@ -623,6 +625,7 @@ type DiagnosticRunBaseEvent = DiagnosticBaseEvent & {
   runId: string;
   sessionKey?: string;
   sessionId?: string;
+  agentId?: string;
   provider?: string;
   model?: string;
   trigger?: string;
@@ -649,6 +652,7 @@ type DiagnosticHarnessRunBaseEvent = DiagnosticBaseEvent & {
   runId: string;
   sessionKey?: string;
   sessionId?: string;
+  agentId?: string;
   provider?: string;
   model?: string;
   trigger?: string;
@@ -685,6 +689,7 @@ export type DiagnosticHarnessRunErrorEvent = DiagnosticHarnessRunBaseEvent & {
 type DiagnosticModelCallBaseEvent = DiagnosticBaseEvent & {
   type: "model.call.started" | "model.call.completed" | "model.call.error";
   runId: string;
+  agentId?: string;
   callId: string;
   sessionKey?: string;
   sessionId?: string;
@@ -944,6 +949,8 @@ export type DiagnosticToolCallContent = Readonly<{
 
 export type DiagnosticSkillUsagePrivateData = Readonly<{
   skillFile: string;
+  /** Immutable identity of the instructions or verified bundle loaded by the runtime. */
+  contentHash?: string;
 }>;
 
 export type DiagnosticEventPrivateData = Readonly<{
@@ -952,6 +959,10 @@ export type DiagnosticEventPrivateData = Readonly<{
   modelContent?: DiagnosticModelCallContent;
   skillUsage?: DiagnosticSkillUsagePrivateData;
   toolContent?: DiagnosticToolCallContent;
+  // Content gated by captureContent policy; routed privately so it never reaches untrusted onDiagnosticEvent listeners.
+  messageContent?: { userPrompt?: string; finalResponse?: string };
+  // Same gating as messageContent but for harness.run started/completed events.
+  harnessContent?: { userPrompt?: string; finalResponse?: string };
 }>;
 
 type DiagnosticEventListener = (
@@ -1518,6 +1529,14 @@ export function emitDiagnosticEventWithTrustedTraceContext(event: DiagnosticEven
 /** Emits an untrusted diagnostic event tagged as internal dispatcher provenance. */
 export function emitInternalDiagnosticEvent(event: DiagnosticEventInput) {
   emitDiagnosticEventWithTrust(event, false, { internal: true });
+}
+
+/** Emits an untrusted internal diagnostic event with private listener-only payload data. */
+export function emitInternalDiagnosticEventWithPrivateData(
+  event: DiagnosticEventInput,
+  privateData?: DiagnosticEventPrivateData,
+): void {
+  emitDiagnosticEventWithTrust(event, false, { internal: true, privateData });
 }
 
 /** Returns the latest diagnostic event sequence number assigned in this process. */
