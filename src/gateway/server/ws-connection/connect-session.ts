@@ -713,10 +713,11 @@ export async function attachAuthenticatedGatewayConnect(
             result = await nextClient.authenticatedGitHubIdentitySync!();
             break;
           } catch (error) {
-            if (attempt >= IDENTITY_SYNC_RETRY_DELAYS_MS.length) {
+            const delay = IDENTITY_SYNC_RETRY_DELAYS_MS[attempt];
+            if (delay === undefined) {
               throw error;
             }
-            await sleep(IDENTITY_SYNC_RETRY_DELAYS_MS[attempt], signal);
+            await sleep(delay, signal);
           }
         }
         const profile = nextClient.authenticatedUserProfile;
