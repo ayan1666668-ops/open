@@ -5139,6 +5139,41 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     }
 
     it.each(convertingModes)(
+      "converts all $tables presentation prose and its fallback",
+      async ({ tables, converted }) => {
+        const { options } = createBlockTableHarness(tableCfg(tables));
+        const delivery = await options.deliver(
+          {
+            text: tableMarkdown,
+            presentation: {
+              blocks: [
+                { type: "text", text: tableMarkdown },
+                { type: "context", text: tableMarkdown },
+                {
+                  type: "buttons",
+                  buttons: [
+                    { label: "Continue", action: { type: "command", command: "/continue" } },
+                  ],
+                },
+              ],
+            },
+          },
+          { kind: "final" },
+        );
+
+        expect(presentationCardMarkdown()).toEqual([
+          converted(),
+          converted(),
+          `<font color='grey'>${converted()}</font>`,
+        ]);
+        expect(delivery?.content?.split(converted())).toHaveLength(4);
+        expect(delivery?.content).not.toContain("| --- |");
+        expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(convertingModes)(
       "converts the table a $tables presentation card carries",
       async ({ tables, converted }) => {
         const delivery = await deliverPresentationTable(tables);

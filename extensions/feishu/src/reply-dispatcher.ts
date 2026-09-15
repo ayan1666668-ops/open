@@ -1435,19 +1435,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       // Delivery runs after modifying hooks. Render here so native cards carry the
       // accepted prose, and a canceled payload never creates a card.
       const sourceText = inputPayload.text ?? "";
-      // Convert before the presentation renderer reads the prose: it feeds one text into
-      // the card's markdown element, the presentation fallback and the payload the text
-      // path sends, and a card built from unconverted prose draws a native table whatever
-      // the mode says. The pass below covers stream text instead of repeating this one.
-      const prepared = await renderFeishuReplyPayload(
-        sourceText ? { ...inputPayload, text: renderTables(sourceText) } : inputPayload,
-        {
-          to: sendTarget,
-          identity,
-          // Cards notify only required bot recipients; incoming user mentions remain context.
-          mentions: requiredMentionTargets,
-        },
-      );
+      const prepared = await renderFeishuReplyPayload(inputPayload, {
+        to: sendTarget,
+        identity,
+        renderText: renderTables,
+        // Cards notify only required bot recipients; incoming user mentions remain context.
+        mentions: requiredMentionTargets,
+      });
       const rendered = consumeFeishuPresentationFallbackMarker(prepared.payload);
       const payload = rendered.payload;
       const presentationCard = prepared.card;
