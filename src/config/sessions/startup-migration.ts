@@ -121,7 +121,9 @@ export function assertSessionStoreMigrationComplete(params: {
     }
     return [...required].some(({ target, destination }) => {
       const receipt = readDeferredPluginSessionImport({
-        target: { ...target, sqlitePath: destination },
+        cfg: params.cfg,
+        target,
+        sqlitePath: destination,
         env,
       });
       return (
