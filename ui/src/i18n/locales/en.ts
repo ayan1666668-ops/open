@@ -2516,15 +2516,16 @@ export const en: TranslationMap & {
     },
     unavailable: {
       title: "Found, but needs attention",
-      signIn: "Sign in with {provider}",
+      signIn: "Set up & verify {provider}",
       useApiKey: "Use API key",
     },
     signIn: {
-      title: "Connect an AI provider",
+      title: "Set up and verify a model",
+      description:
+        "Setup requests a model reply. To save an account first, choose Connect provider.",
+      verify: "Set up & verify",
       install: "Review & install",
       custom: "Set up endpoint",
-      signIn: "Sign in",
-      pair: "Pair",
       more: "More sign-in options",
     },
     prepare: {
@@ -2586,6 +2587,9 @@ export const en: TranslationMap & {
       dialogLabel: "Provider sign-in",
       prepareDialogLabel: "Local model setup",
       title: "Sign in with a provider",
+      connected: "Account connected. Choose a model when you want to test a reply.",
+      failed: "Could not finish. Open Details to see what to do next.",
+      details: "Details",
       prepareTitle: "Set up a local model",
       starting: "Starting provider sign-in…",
       prepareStarting: "Starting local model setup…",
@@ -3280,6 +3284,19 @@ export const en: TranslationMap & {
     },
   },
   connection: {
+    browserSignIn: {
+      title: "Sign in to continue loading content",
+      description:
+        "Your website sign-in has expired. Images and files cannot load until you sign in again. Your conversation and draft will stay open.",
+      action: "Sign in",
+      dismiss: "Not now",
+      returnHint:
+        "Finish signing in in the new tab, then return here. Visible attachments will retry automatically.",
+      checkAgain: "Check again",
+      checking: "Checking access…",
+      stillRequired: "Sign-in is still required. Finish signing in, then check again.",
+      unavailable: "Could not verify access. Check your connection and try again.",
+    },
     disconnectedTitle: "Disconnected",
     connecting: "Connecting…",
     queuedCount: "{count} queued",

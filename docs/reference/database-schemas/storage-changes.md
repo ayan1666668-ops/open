@@ -43,6 +43,15 @@ joins worker cleanup before the send publishes its receipt. Numeric message IDs 
 rules, including the five-second polling deadline. This does not migrate
 iMessage's startup watermark or conversation-binding queries.
 
+Memory-host event appends and bounded journal reads execute on the shared state
+worker. The plugin-state owner allocates the sequence, rereads the cursor and
+retained tail, writes both rows, and applies retention in one synchronous write
+transaction on that worker. Caller event fields are serialized before admission;
+the owner adds the sequence while preserving the existing stored JSON and keys.
+Reads use the existing-only worker path and do not create a missing database.
+Public event helpers and exports await durable completion. Cursor eviction,
+namespace-wide append ordering, sibling row budgets, and rollback remain unchanged.
+
 Use Kysely for ordinary queries and mutations. The current
 `getNodeSqliteKysely` facade compiles queries; `executeSqliteQuerySync` runs them
 on the supplied `node:sqlite` connection. Calling Kysely's asynchronous
@@ -92,6 +101,10 @@ Reset-recall metadata crosses the worker boundary with the prepared content.
 If secret registration invalidates both preparation attempts, the export rejects
 for retry instead of reading SQLite on the Gateway thread. Failed index rebuilds
 preserve the published index and retained retry state.
+Chunk preparation from captured session text uses the existing local workspace
+queue without a durable write lease. File and multimodal preparation retain that
+lease, as do all cache, index, and publication mutations. Those mutations recheck
+current ownership and session tombstones after awaited preparation.
 Incognito databases, archive materialization, and caller-owned transcript
 observers retain their existing local execution. Index publication and
 restoration remain with their existing database and lifecycle owners.
@@ -169,6 +182,16 @@ admission. Publish live session changes and other dependent effects only after
 the durable write succeeds. A future network-backed owner must preserve that
 ordering while awaiting its driver.
 
+Read-only callbacks made while a cached agent writer holds a transaction use a
+separate read-only companion connection. Each call rereads committed rows and
+checks the current schema, agent owner, and physical file identity. The companion
+retains prepared statements and connection-local canonical-key validation, never
+an authorization result or an open read transaction. Canonical validation checks
+the committed main-key policy before reuse. The companion retires with its writer's
+native close, disposal, or replacement, including eviction and update cleanup.
+Cold and extension-capable readers remain one-shot; incognito reads retain their
+existing process-local owner. This changes no schema or migration requirement.
+
 Correlated conversation replies retain their original store and state environment
 while waiting for write admission. Capture rechecks the live reply claim and
 session lifecycle before recording a replayable reply. Cancellation or a changed
@@ -189,8 +212,12 @@ one captured database context through enqueue, retry bookkeeping, and settlement
 The scheduler stops admission and joins its reads and active drains before the
 database closes. Queue payloads retain their JSON serialization boundary before
 worker transport. Compound task/subagent admission and settlement retain their
-existing synchronous transaction owner; the outbound queue and its media custody
-operations remain separate migration work.
+existing synchronous transaction owner. Outbound dead-letter health counts use
+the existing grouped-count kernel in the shared-state worker. Health collection
+captures its original worker admission before awaiting configuration and other
+health work; cached health replies await the count while retaining cached ingress
+pressure. Other outbound queue operations and media custody remain separate
+migration work.
 
 Conversation sends, turns, and queue completion retain their logical agent and
 physical store while waiting for agent write admission. Retry validation reads
@@ -216,9 +243,10 @@ Backup outcome recording and freshness reads expose asynchronous operations from
 the shared-state owner. Archive, SQLite snapshot, and Git backup commands await
 recording before reporting completion; a recording failure remains a warning and
 does not change the backup result. Status and Doctor await freshness before
-formatting it. These operations still execute synchronous SQLite internally;
-they retain the existing insertion-and-pruning transaction, 200-row limit, and
-non-creating freshness reads.
+formatting it. Outcome recording executes its insertion-and-pruning transaction
+in the shared-state worker, preserving the 200-row limit and leaving absent
+databases absent. Freshness reads still execute synchronous SQLite internally
+and remain non-creating.
 
 Explicit session deletion, lifecycle-artifact cleanup, and history disk-budget
 eviction prepare their plans inside the session writer queue. When the parent database handle is cold, its
