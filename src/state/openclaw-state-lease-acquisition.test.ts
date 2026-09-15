@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import * as backoff from "../infra/backoff.js";
+import { readSqliteBusyTimeout } from "../infra/sqlite-busy-timeout.js";
 import { tryAcquireExclusiveSqliteCoordinator } from "../infra/sqlite-coordinator.js";
 import {
   resolveStateDatabaseCoordinatorPath,
@@ -8,10 +9,16 @@ import {
 } from "../infra/state-database-coordinator.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { withAgentDatabaseMaintenanceLease } from "./openclaw-agent-db-maintenance-lease.js";
+import {
+  OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
+  OPENCLAW_STATE_SCHEMA_VERSION,
+} from "./openclaw-state-db-contract.js";
 import * as stateDatabaseOpen from "./openclaw-state-db-open.js";
+import { CONTENT_VERSION_KEY } from "./openclaw-state-db-schema-version.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
+  registerOpenClawStateDatabaseLifecycleListener,
   runOpenClawStateWriteTransaction,
 } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
@@ -186,6 +193,55 @@ it("does not enter maintenance after cancellation during storage preparation", a
     expect(
       openOpenClawStateDatabase({ env: state.env }).db.prepare("SELECT * FROM state_leases").all(),
     ).toEqual([]);
+  });
+});
+
+it("restores the cached connection timeout after preparation fails during schema publication", async () => {
+  await withOpenClawTestState({ label: "lease-preparation-restoration" }, async (state) => {
+    const database = openOpenClawStateDatabase({ env: state.env });
+    database.db
+      .prepare(
+        "INSERT INTO config_machine_state (state_key, value_json, updated_at_ms) VALUES (?, ?, ?)",
+      )
+      .run(CONTENT_VERSION_KEY, String(OPENCLAW_STATE_SCHEMA_VERSION), Date.now());
+    database.db.exec(`
+      PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION - 1};
+      UPDATE schema_meta SET schema_version = ${OPENCLAW_STATE_SCHEMA_VERSION - 1}
+      WHERE meta_key = 'primary';
+    `);
+    const coordinatorPath = resolveStateDatabaseCoordinatorPath({
+      databasePath: database.path,
+      runtimeDirectory: resolveStateLifecycleRuntimeDirectory(),
+      uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+    });
+    closeOpenClawStateDatabaseForTest();
+    let writer: ReturnType<typeof tryAcquireExclusiveSqliteCoordinator> | undefined;
+    let preparedBusyTimeoutMs: number | undefined;
+    const unregister = registerOpenClawStateDatabaseLifecycleListener((event) => {
+      if (event.kind === "opened" && event.database.path === database.path) {
+        preparedBusyTimeoutMs = readSqliteBusyTimeout(event.database.db);
+        writer = tryAcquireExclusiveSqliteCoordinator(coordinatorPath, { busyTimeoutMs: 0 });
+        if (!writer) {
+          throw new Error("independent writer did not acquire its coordinator");
+        }
+      }
+    });
+    const sleep = vi.spyOn(backoff, "sleepWithAbort").mockImplementation(async () => {
+      writer?.release();
+    });
+    try {
+      await withAgentDatabaseMaintenanceLease({ env: state.env }, async (lease) => {
+        lease.assertOwned();
+      });
+      expect(preparedBusyTimeoutMs).toBe(0);
+      expect(sleep).toHaveBeenCalled();
+      expect(readSqliteBusyTimeout(openOpenClawStateDatabase({ env: state.env }).db)).toBe(
+        OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
+      );
+    } finally {
+      unregister();
+      writer?.release();
+    }
   });
 });
 
