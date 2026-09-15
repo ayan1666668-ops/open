@@ -61,6 +61,7 @@ type ChatModelControlsProps = {
   renderAccountSection?: (model: string) => ChatModelAccountSection | undefined;
   activeRunId: string | null;
   activeRunSessionKey?: string;
+  modelObservedRunId?: string;
   agentDefaultModel?: string;
   connected: boolean;
   gatewayAvailable: boolean;
@@ -304,9 +305,11 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     props.sending || Boolean(activeRunId) || stream !== null || sessionRunning;
   const currentRunMatches =
     sessionRunning &&
+    !props.sending &&
     (!activeRunId ||
-      !activeSession?.activeRunIds ||
-      activeSession.activeRunIds.includes(activeRunId));
+      (activeSession?.activeRunIds
+        ? activeSession.activeRunIds.includes(activeRunId)
+        : props.modelObservedRunId === activeRunId));
   // The row can still describe the previous turn while a send is being admitted.
   // Only the current run's complete provider/model pair identifies its execution.
   const activeModelValue = hasPendingModelSelection

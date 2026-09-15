@@ -55,7 +55,7 @@ import { resolveSessionStoreAgentId } from "../session-store-key.js";
 import { readSessionPreviewItemsFromTranscript } from "../session-transcript-preview.js";
 import type { SessionListActiveRunProjector } from "../session-utils-contracts.js";
 import { projectGatewaySessionActiveRun } from "../session-utils-display.js";
-import { resolveGatewaySessionListActiveModel } from "../session-utils-row.js";
+import { resolveGatewaySessionActiveModel } from "../session-utils-row.js";
 import {
   listSessionsFromStoreAsync,
   loadCombinedSessionStoreForGatewayCore,
@@ -456,8 +456,11 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
           );
           diagnostics?.mark("decoration");
           const projectPlacement = createSessionPlacementBatchProjector(context, result.sessions);
-          const projectActiveRun = createVisibleActiveSessionRunProjector(context);
           const projectedAgentRuns = buildProjectedAgentRunIndex();
+          const projectActiveRun = createVisibleActiveSessionRunProjector(
+            context,
+            projectedAgentRuns,
+          );
           // These rows are unpublished; decorate them with fresh caller facts after the yields.
           const sharing = prepareSessionSharing({ client, cfg });
           measureDiagnosticsTimelineSpanSync(
@@ -498,7 +501,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
                   defaultAgentId: tryResolveSessionCompatibilityOwnerAgentId(cfg, storeKey),
                 });
                 const target = targetsBySessionKey.get(session.key);
-                const activeModel = resolveGatewaySessionListActiveModel({
+                const activeModel = resolveGatewaySessionActiveModel({
                   cfg,
                   active: activeRunState.active,
                   agentId:

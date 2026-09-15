@@ -173,12 +173,12 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
 ): Promise<EmbeddedAgentRunEntryResult<T>> {
   const lifecycleGeneration = captureAgentRunLifecycleGeneration(params.identity.runId);
   const runContext = getAgentRunContext(params.identity.runId);
-  const publishModel = (provider: string | null, model: string | null) => {
+  const clearObservedModel = () => {
     const event = {
       ...params.identity,
       lifecycleGeneration,
       stream: "lifecycle",
-      data: { phase: "model", provider, model },
+      data: { phase: "model", provider: null, model: null },
     } as const;
     if (runContext) {
       emitAgentEventForRunContext(event, runContext);
@@ -400,7 +400,6 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
             }
             return classified.value;
           };
-          publishModel(provider, model);
           try {
             const result = await params.runCandidate(provider, model, {
               assistantErrorTranscript,
@@ -433,7 +432,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
               turnAttempt: contextEngineTurnCandidate,
             };
           } finally {
-            publishModel(null, null);
+            clearObservedModel();
           }
         },
       });

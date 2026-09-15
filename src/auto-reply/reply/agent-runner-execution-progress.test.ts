@@ -45,6 +45,20 @@ vi.mock("../../agents/embedded-agent-helpers/sanitize-user-facing-text.js", asyn
 const state = await setupAgentRunnerExecutionTestState();
 const executeAgentTurn = await getExecuteAgentTurnForTest();
 
+function terminalEventsForRun(
+  calls: Parameters<typeof import("../../infra/agent-events.js").emitAgentEvent>[],
+  runId: string,
+) {
+  return calls
+    .map(([event]) => event)
+    .filter(
+      (event) =>
+        event.runId === runId &&
+        event.stream === "lifecycle" &&
+        (event.data.phase === "end" || event.data.phase === "error"),
+    );
+}
+
 beforeEach(() => {
   sanitizerState.sanitizeUserFacingText.mockClear();
   resetDiagnosticRunActivityForTest();
@@ -691,14 +705,10 @@ describe("executeAgentTurn: lifecycle progress", () => {
 
       await executeTestTurn({ opts: { runId: "run-deferred-diagnostic" } });
 
-      const terminalEvents = emitAgentEvent.mock.calls
-        .map(([event]) => event)
-        .filter(
-          (event) =>
-            event.runId === "run-deferred-diagnostic" &&
-            event.stream === "lifecycle" &&
-            (event.data.phase === "end" || event.data.phase === "error"),
-        );
+      const terminalEvents = terminalEventsForRun(
+        emitAgentEvent.mock.calls,
+        "run-deferred-diagnostic",
+      );
       expect(terminalEvents).toHaveLength(1);
       const lifecycleEvent = requireRecord(terminalEvents[0], "terminal event");
       expectRecordFields(requireRecord(lifecycleEvent.data, "lifecycle data"), {
@@ -736,14 +746,7 @@ describe("executeAgentTurn: lifecycle progress", () => {
 
       expect(result.kind).toBe("success");
       expect(onAgentRunTerminalOutcome).not.toHaveBeenCalledWith("failed");
-      const terminalEvents = emitAgentEvent.mock.calls
-        .map(([event]) => event)
-        .filter(
-          (event) =>
-            event.runId === "run-tool-diagnostic" &&
-            event.stream === "lifecycle" &&
-            (event.data.phase === "end" || event.data.phase === "error"),
-        );
+      const terminalEvents = terminalEventsForRun(emitAgentEvent.mock.calls, "run-tool-diagnostic");
       expect(terminalEvents).toHaveLength(1);
       const lifecycleEvent = requireRecord(terminalEvents[0], "terminal event");
       const lifecycleData = requireRecord(lifecycleEvent.data, "lifecycle data");
@@ -876,14 +879,7 @@ describe("executeAgentTurn: lifecycle progress", () => {
     );
 
     expect(result.kind).toBe("success");
-    const terminalEvents = emitAgentEvent.mock.calls
-      .map(([event]) => event)
-      .filter(
-        (event) =>
-          event.runId === "run-complete" &&
-          event.stream === "lifecycle" &&
-          (event.data.phase === "end" || event.data.phase === "error"),
-      );
+    const terminalEvents = terminalEventsForRun(emitAgentEvent.mock.calls, "run-complete");
     expect(terminalEvents).toEqual([]);
   });
 

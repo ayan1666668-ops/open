@@ -7664,6 +7664,12 @@ describe("chat model controls", () => {
       activeModel: "fallback",
     },
     {
+      name: "previous run without exact identities",
+      hasActiveRun: true,
+      activeRunIds: undefined,
+      activeModel: "fallback",
+    },
+    {
       name: "unreported executing model",
       hasActiveRun: true,
       activeRunIds: ["current-run"],

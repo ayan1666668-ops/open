@@ -212,21 +212,14 @@ export function buildGatewaySessionRow(params: {
     model: rowModel,
     rowContext,
   });
-  const liveModel = resolveProjectedAgentRunModel({
-    agentId: sessionAgentId,
-    sessionId: entry?.sessionId,
-    index: rowContext
-      ? (rowContext.projectedAgentRuns ??= buildProjectedAgentRunIndex())
-      : undefined,
-  });
-  const liveRun = liveModel !== undefined || entry?.status === "running";
   // Display aliases do not change the selected route's catalog or runtime policy.
-  const completedFallbackModel = resolveGatewaySessionFallbackModel({
+  const activeModel = resolveGatewaySessionActiveModel({
     cfg,
-    selectedProvider: rowModelProvider,
-    selectedModel: rowModel,
+    selectedModel,
+    projectedAgentRuns: (rowContext.projectedAgentRuns ??= buildProjectedAgentRunIndex()),
     entry,
     agentId: sessionAgentId,
+    sessionId: entry?.sessionId,
     sessionKey: key,
     storePath,
   });
@@ -486,8 +479,8 @@ export function buildGatewaySessionRow(params: {
     }).mode,
     modelProvider: rowModelIdentity.provider,
     model: rowModelIdentity.model,
-    activeModelProvider: liveRun ? liveModel?.provider : completedFallbackModel?.provider,
-    activeModel: liveRun ? liveModel?.model : completedFallbackModel?.model,
+    activeModelProvider: activeModel?.provider,
+    activeModel: activeModel?.model,
     modelOverrideSource:
       selectedModel.storedOverrideSource === "parent"
         ? "inherited"
@@ -513,18 +506,48 @@ export function buildGatewaySessionRow(params: {
   };
 }
 
-function resolveGatewaySessionFallbackModel(params: {
+export function resolveGatewaySessionActiveModel(params: {
   cfg: OpenClawConfig;
-  selectedProvider: string;
-  selectedModel: string;
-  entry?: InternalSessionEntry;
-  agentId: string;
+  active?: boolean;
+  agentId?: string;
+  sessionId?: string;
   sessionKey: string;
-  storePath: string;
+  projectedAgentRuns: ProjectedAgentRunIndex;
+  selectedModel?: { provider: string; model: string };
+  modelSource?: GatewaySessionModelSource;
+  entry?: InternalSessionEntry;
+  storePath?: string;
 }): { provider: string; model: string } | undefined {
+  if (!params.agentId) {
+    return undefined;
+  }
+  const liveModel = resolveProjectedAgentRunModel({
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    index: params.projectedAgentRuns,
+  });
+  if (params.active ?? (liveModel !== undefined || params.entry?.status === "running")) {
+    return liveModel ?? undefined;
+  }
+  if (!params.entry?.fallbackNotice || params.storePath === undefined) {
+    return undefined;
+  }
+  const selectedModel =
+    params.selectedModel ??
+    (params.modelSource
+      ? resolveSessionSelectedModelRef({
+          cfg: params.cfg,
+          source: params.modelSource,
+          agentId: params.agentId,
+          sessionKey: params.sessionKey,
+        })
+      : undefined);
+  if (!selectedModel) {
+    return undefined;
+  }
   const completedModel = readSessionFallbackModel({
-    selectedProvider: params.selectedProvider,
-    selectedModel: params.selectedModel,
+    selectedProvider: selectedModel.provider,
+    selectedModel: selectedModel.model,
     sessionEntry: params.entry,
     config: params.cfg,
     sessionScope: {
@@ -534,60 +557,16 @@ function resolveGatewaySessionFallbackModel(params: {
     },
   });
   const runtimeModels = resolveSelectedAndActiveModel({
-    selectedProvider: params.selectedProvider,
-    selectedModel: params.selectedModel,
+    selectedProvider: selectedModel.provider,
+    selectedModel: selectedModel.model,
     sessionEntry: completedModel ?? params.entry,
   });
-  const activeFallback = resolveActiveFallbackState({
+  return resolveActiveFallbackState({
     selectedModelRef: runtimeModels.selected.label,
     activeModelRef: runtimeModels.active.label,
     config: params.cfg,
     state: params.entry,
-  });
-  return activeFallback.active
+  }).active
     ? { provider: runtimeModels.active.provider, model: runtimeModels.active.model }
     : undefined;
-}
-
-export function resolveGatewaySessionListActiveModel(params: {
-  cfg: OpenClawConfig;
-  active: boolean;
-  agentId?: string;
-  sessionId?: string;
-  sessionKey: string;
-  projectedAgentRuns: ProjectedAgentRunIndex;
-  modelSource?: GatewaySessionModelSource;
-  entry?: InternalSessionEntry;
-  storePath?: string;
-}): { provider: string; model: string } | undefined {
-  if (!params.agentId) {
-    return undefined;
-  }
-  if (params.active) {
-    return (
-      resolveProjectedAgentRunModel({
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        index: params.projectedAgentRuns,
-      }) ?? undefined
-    );
-  }
-  if (!params.modelSource || !params.entry?.fallbackNotice || !params.storePath) {
-    return undefined;
-  }
-  const selectedModel = resolveSessionSelectedModelRef({
-    cfg: params.cfg,
-    source: params.modelSource,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  });
-  return resolveGatewaySessionFallbackModel({
-    cfg: params.cfg,
-    selectedProvider: selectedModel.provider,
-    selectedModel: selectedModel.model,
-    entry: params.entry,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    storePath: params.storePath,
-  });
 }
