@@ -1350,6 +1350,31 @@ struct TalkModeRuntimeSpeechTests {
 }
 
 extension TalkModeRuntimeSpeechTests {
+    @Test(arguments: [false, true]) @MainActor
+    func `aggregate input recovery remains visible after native fallback`(recognitionStarted: Bool) async throws {
+        let runtime = TalkModeRuntime()
+        let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()
+        let recognitionGeneration = try #require(await runtime._test_beginRecognitionAttempt(
+            lifecycleGeneration: lifecycleGeneration))
+        let relayGeneration = await runtime.realtimeRelayGeneration
+        let suggestion = try #require(MacRealtimeTalkInputChannels.MappingError.aggregateInputSelected
+            .recoverySuggestion)
+
+        #expect(await runtime.commitNativeFallback(
+            recognitionStarted: recognitionStarted,
+            lifecycleGeneration: lifecycleGeneration,
+            recognitionGeneration: recognitionGeneration,
+            relayGeneration: relayGeneration,
+            status: "native",
+            recoverySuggestion: suggestion))
+        #expect(TalkModeController.shared.partialTranscript.hasSuffix(suggestion))
+        if !recognitionStarted {
+            #expect(TalkModeController.shared.partialTranscript.hasPrefix(
+                String(localized: "Realtime unavailable — native speech could not start")))
+        }
+        await runtime.setEnabled(false)
+    }
+
     @Test(arguments: ["native recognition", "relay retirement", "relay reconfiguration"])
     func `preference suspension rejects stale commands and transcripts`(replacement: String) async throws {
         let runtime = TalkModeRuntime()

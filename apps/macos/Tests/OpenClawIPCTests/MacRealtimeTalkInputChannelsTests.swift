@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import OpenClaw
 
@@ -54,11 +55,37 @@ struct MacRealtimeTalkInputChannelsTests {
         }
         let channels = includesLoopback ? 3 : 1
         let device = Mapping.Device(uid: "aggregate", inputChannels: channels, children: children)
-        #expect(throws: Mapping.MappingError.selectedInputMissingOrAmbiguous) {
+        #expect(throws: Mapping.MappingError.aggregateInputSelected) {
             try Mapping.resolve(
                 device: device, selectedInputUID: "aggregate", deliveredChannels: channels, channelMap: nil)
         }
         #expect(try Mapping.resolve(
             device: device, selectedInputUID: "microphone", deliveredChannels: channels, channelMap: nil) == 0..<1)
+    }
+
+    @Test func `aggregate input failure recommends selecting a microphone without mislabeling other failures`() {
+        let error = Mapping.MappingError.aggregateInputSelected
+        #expect(error.errorDescription?.contains("aggregate device") == true)
+        #expect(error.recoverySuggestion?.contains("Select an individual microphone") == true)
+        #expect(error.recoverySuggestion?.contains("turn Talk off and on") == true)
+        #expect(Mapping.MappingError.selectedInputMissingOrAmbiguous.recoverySuggestion == nil)
+        #expect(Mapping.MappingError.unreadableLayout.recoverySuggestion == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `native fallback presentation preserves aggregate recovery and existing statuses`(
+        recognitionStarted: Bool) throws
+    {
+        let suggestion = try #require(Mapping.MappingError.aggregateInputSelected.recoverySuggestion)
+        let base = recognitionStarted
+            ? "native"
+            : String(localized: "Realtime unavailable — native speech could not start")
+        #expect(TalkModeRuntime.nativeFallbackStatus(
+            recognitionStarted: recognitionStarted, status: "native", recoverySuggestion: suggestion) ==
+            "\(base) \(suggestion)")
+        #expect(TalkModeRuntime.nativeFallbackStatus(
+            recognitionStarted: recognitionStarted, status: "native", recoverySuggestion: nil) == base)
+        #expect(TalkModeRuntime.nativeFallbackStatus(
+            recognitionStarted: true, status: nil, recoverySuggestion: nil) == nil)
     }
 }

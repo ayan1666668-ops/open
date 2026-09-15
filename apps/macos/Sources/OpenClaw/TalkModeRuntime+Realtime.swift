@@ -133,6 +133,7 @@ extension TalkModeRuntime {
             return
         }
         var nativeFallbackStatus: String?
+        var nativeFallbackRecoverySuggestion: String?
         if self.macOSRealtimeRelayOptIn, !bypassRealtime {
             let fallbackRecognitionGeneration = recognitionGeneration
             let fallbackRealtimeRelayGeneration = realtimeRelayGeneration &+ 1
@@ -163,9 +164,14 @@ extension TalkModeRuntime {
                     "talk realtime unavailable; using native fallback: " +
                         "\(error.localizedDescription, privacy: .public)")
                 nativeFallbackStatus = String(localized: "Realtime unavailable — using native speech")
+                nativeFallbackRecoverySuggestion = (error as? MacRealtimeTalkInputChannels.MappingError)?
+                    .recoverySuggestion
             }
         }
-        await self.startNativeFallback(generation: gen, status: nativeFallbackStatus)
+        await self.startNativeFallback(
+            generation: gen,
+            status: nativeFallbackStatus,
+            recoverySuggestion: nativeFallbackRecoverySuggestion)
     }
 
     func consumePendingRealtimeRelayStart() -> Bool {
@@ -176,7 +182,11 @@ extension TalkModeRuntime {
             self.macOSRealtimeRelayOptIn
     }
 
-    private func startNativeFallback(generation: Int, status: String? = nil) async {
+    private func startNativeFallback(
+        generation: Int,
+        status: String? = nil,
+        recoverySuggestion: String? = nil) async
+    {
         let relayGeneration = realtimeRelayGeneration
         let recognitionStarted = await startRecognition(lifecycleGeneration: generation)
         guard await self.commitNativeFallback(
@@ -184,7 +194,8 @@ extension TalkModeRuntime {
             lifecycleGeneration: generation,
             recognitionGeneration: recognitionGeneration,
             relayGeneration: relayGeneration,
-            status: status)
+            status: status,
+            recoverySuggestion: recoverySuggestion)
         else { return }
         guard recognitionStarted else { return }
         startAudioInputObserver()
@@ -196,7 +207,8 @@ extension TalkModeRuntime {
         lifecycleGeneration: Int,
         recognitionGeneration: Int,
         relayGeneration: UInt64,
-        status: String?) async -> Bool
+        status: String?,
+        recoverySuggestion: String? = nil) async -> Bool
     {
         let ownsFallback = {
             self.canCommitRecognitionStart(
@@ -208,14 +220,26 @@ extension TalkModeRuntime {
         guard ownsFallback() else { return false }
         phase = recognitionStarted ? .listening : .idle
         return await self.projectRealtimeRelay(relayGeneration, nil) {
-            if recognitionStarted, let status {
-                TalkModeController.shared.updatePartialTranscript(status)
-            } else if !recognitionStarted {
-                TalkModeController.shared.updatePartialTranscript(
-                    String(localized: "Realtime unavailable — native speech could not start"))
+            if let message = Self.nativeFallbackStatus(
+                recognitionStarted: recognitionStarted,
+                status: status,
+                recoverySuggestion: recoverySuggestion)
+            {
+                TalkModeController.shared.updatePartialTranscript(message)
             }
             TalkModeController.shared.updatePhase(recognitionStarted ? .listening : .idle)
         }
+    }
+
+    nonisolated static func nativeFallbackStatus(
+        recognitionStarted: Bool,
+        status: String?,
+        recoverySuggestion: String?) -> String?
+    {
+        let status = recognitionStarted
+            ? status
+            : String(localized: "Realtime unavailable — native speech could not start")
+        return status.map { [$0, recoverySuggestion].compactMap(\.self).joined(separator: " ") }
     }
 
     func inputDeviceSelectionDidChange() async {

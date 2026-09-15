@@ -14,10 +14,20 @@ enum MacRealtimeTalkInputChannels {
         case unreadableLayout
         case invalidLayout
         case selectedInputMissingOrAmbiguous
+        case aggregateInputSelected
         case unsupportedChannelMap
 
         var errorDescription: String? {
-            "The selected microphone's audio channels could not be verified. Reconnect the microphone and try again."
+            if self == .aggregateInputSelected {
+                return String(localized: "Realtime Talk cannot use an aggregate device as its microphone.")
+            }
+            return "The microphone's audio channels could not be verified. Reconnect the microphone and try again."
+        }
+
+        var recoverySuggestion: String? {
+            guard self == .aggregateInputSelected else { return nil }
+            return String(localized:
+                "Select an individual microphone in Settings → Talk → This Mac, then turn Talk off and on.")
         }
     }
 
@@ -83,7 +93,7 @@ enum MacRealtimeTalkInputChannels {
         if device.uid == selectedInputUID {
             // An aggregate UID selects a composition, not a verified microphone leaf.
             // Reject even one active child: later composition changes must not widen capture.
-            guard device.children.isEmpty else { throw MappingError.selectedInputMissingOrAmbiguous }
+            guard device.children.isEmpty else { throw MappingError.aggregateInputSelected }
             matches.append(offset..<(offset + device.inputChannels))
         }
         guard !device.children.isEmpty else { return }
