@@ -71,7 +71,7 @@ function projectSourceParticipant(
 }
 
 /** Converts local attribution into a portable claim, never a remote access grant. */
-export function projectSessionCatalogSourceParticipant(
+function projectSessionCatalogSourceParticipant(
   params: SourceParticipantParams,
 ): SessionParticipant {
   return projectSourceParticipant(params, readSourceProfileFacts);
