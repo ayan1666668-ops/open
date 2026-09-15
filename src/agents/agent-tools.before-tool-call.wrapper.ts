@@ -40,6 +40,7 @@ import {
   summarizeToolParams,
 } from "./agent-tools.before-tool-call.diagnostics.js";
 import {
+  BeforeToolCallFailureError,
   buildBlockedToolResult,
   getBeforeToolCallFailureDisposition,
   isBeforeToolCallBlockedError,

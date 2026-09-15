@@ -21,16 +21,14 @@ class BeforeToolCallBlockedError extends Error {
 }
 
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.beforeToolCallBlockedErrorTestApi")
-  ] = {
+  Reflect.set(globalThis, Symbol.for("openclaw.beforeToolCallBlockedErrorTestApi"), {
     create(message: string): Error {
       return new BeforeToolCallBlockedError(message);
     },
-  };
+  });
 }
 
-class BeforeToolCallFailureError extends Error {
+export class BeforeToolCallFailureError extends Error {
   constructor(
     message: string,
     readonly disposition: BeforeToolCallFailureDisposition,
