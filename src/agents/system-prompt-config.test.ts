@@ -1,5 +1,6 @@
 // System prompt config tests cover config-to-prompt parameter resolution through
 // the canonical agent prompt facade.
+import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "@openclaw/ai/internal/shared";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import * as ttsSettings from "../tts/tts-settings.js";
@@ -210,5 +211,139 @@ describe("buildConfiguredAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("## Delegation");
+  });
+});
+
+function fleetConfig(): OpenClawConfig {
+  return {
+    agents: {
+      ownership: "explicit",
+      defaults: { subagents: { allowAgents: ["*"] } },
+      entries: {
+        main: {},
+        research: {
+          name: "Researcher",
+          description: "Sources and summarizes current information.",
+        },
+        writer: { name: "Writer", description: "Drafts, edits, and polishes prose." },
+      },
+    },
+  };
+}
+
+describe("config-backed Delegation Targets roster", () => {
+  it("renders allowed configured targets with names and descriptions", () => {
+    const prompt = buildPrompt(fleetConfig(), "main");
+
+    expect(prompt).toContain("## Delegation Targets");
+    expect(prompt).toContain(
+      "- research (Researcher): Sources and summarizes current information.",
+    );
+    expect(prompt).toContain("- writer (Writer): Drafts, edits, and polishes prose.");
+    expect(prompt.indexOf("- research")).toBeLessThan(prompt.indexOf("- writer"));
+  });
+
+  it("re-resolves the roster below the cache boundary on every build", () => {
+    const withDescription = fleetConfig();
+    const first = buildConfiguredAgentSystemPrompt({
+      config: withDescription,
+      agentId: "main",
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["sessions_spawn", "subagents"],
+    });
+    const firstPrefix = first.slice(0, first.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY));
+
+    // Description edited between builds.
+    const entries = withDescription.agents?.entries as Record<string, { description?: string }>;
+    entries.research!.description = "Digs up primary sources and interviews.";
+    const edited = buildConfiguredAgentSystemPrompt({
+      config: withDescription,
+      agentId: "main",
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["sessions_spawn", "subagents"],
+    });
+    const editedPrefix = edited.slice(0, edited.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY));
+
+    expect(editedPrefix).toBe(firstPrefix);
+    expect(edited).toContain("- research (Researcher): Digs up primary sources and interviews.");
+    expect(edited).not.toContain("Sources and summarizes current information.");
+
+    // Allowed set narrowed between builds.
+    delete entries.writer;
+    const narrowed = buildConfiguredAgentSystemPrompt({
+      config: {
+        ...withDescription,
+        agents: {
+          ...withDescription.agents,
+          defaults: {
+            ...withDescription.agents?.defaults,
+            subagents: { allowAgents: ["research"] },
+          },
+        },
+      },
+      agentId: "main",
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["sessions_spawn", "subagents"],
+    });
+
+    expect(narrowed).toContain("- research (Researcher): Digs up primary sources and interviews.");
+    expect(narrowed).not.toContain("- writer (Writer)");
+    expect(narrowed.slice(0, narrowed.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY))).toBe(firstPrefix);
+  });
+
+  it("renders no roster in minimal prompt mode", () => {
+    const prompt = buildConfiguredAgentSystemPrompt({
+      config: fleetConfig(),
+      agentId: "main",
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["sessions_spawn", "subagents"],
+      promptMode: "minimal",
+    });
+
+    expect(prompt).not.toContain("## Delegation Targets");
+    expect(prompt).not.toContain("(Writer)");
+  });
+
+  it("renders no roster for a single-agent deployment even with a description", () => {
+    // Exactly one configured agent with a description but no multi-agent policy:
+    // default spawn policy admits only the requester, so nothing is listed.
+    const config: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        entries: { solo: { description: "The only worker." } },
+      },
+    };
+
+    expect(buildPrompt(config, "solo")).not.toContain("## Delegation Targets");
+    expect(buildPrompt(config, "solo")).not.toContain("The only worker");
+  });
+
+  it("renders no roster without config", () => {
+    const prompt = buildConfiguredAgentSystemPrompt({
+      config: undefined,
+      agentId: "main",
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["sessions_spawn", "subagents"],
+    });
+
+    expect(prompt).not.toContain("## Delegation Targets");
+  });
+
+  it("uses the requester's per-agent allowAgents instead of the fleet default", () => {
+    const config: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        defaults: { subagents: { allowAgents: ["writer"] } },
+        entries: {
+          main: { subagents: { allowAgents: ["research"] } },
+          research: { description: "Sources." },
+          writer: { description: "Drafts." },
+        },
+      },
+    };
+
+    const prompt = buildPrompt(config, "main");
+    expect(prompt).toContain("- research: Sources.");
+    expect(prompt).not.toContain("- writer: Drafts.");
   });
 });

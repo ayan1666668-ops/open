@@ -8,6 +8,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { buildTtsSystemPromptHint } from "../tts/tts-settings.js";
 import { resolveMainSessionDelegationMode } from "./delegation-guidance.js";
+import { resolveDelegationTargets } from "./delegation-target-roster.js";
 import { buildAgentSystemPrompt } from "./system-prompt.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "./tool-fs-policy.js";
 
@@ -19,6 +20,7 @@ type ResolvedAgentSystemPromptConfig = Pick<
   | "ownerDisplay"
   | "ownerDisplaySecret"
   | "subagentDelegationMode"
+  | "delegationTargets"
   | "ttsHint"
   | "modelAliasLines"
   | "memoryCitationsMode"
@@ -58,6 +60,10 @@ function resolveAgentSystemPromptConfig(params: {
     ownerDisplay: "raw",
     ownerDisplaySecret: undefined,
     subagentDelegationMode: resolveMainSessionDelegationMode({ config, agentId, sessionKey }),
+    delegationTargets:
+      config && agentId && includeFullSections
+        ? resolveDelegationTargets({ cfg: config, requesterAgentId: agentId })
+        : undefined,
     ttsHint:
       config && includeFullSections
         ? buildTtsSystemPromptHint(config, agentId, {

@@ -49,6 +49,10 @@ import {
 import { buildCredentialSafetyPrompt } from "./credential-safety-prompt.js";
 import { buildTemporalContextSection } from "./date-time.js";
 import { buildDelegationGuidanceSection } from "./delegation-guidance.js";
+import {
+  buildDelegationTargetRosterSection,
+  type DelegationTarget,
+} from "./delegation-target-roster.js";
 import type { EmbeddedContextFile } from "./embedded-agent-helpers.js";
 import type {
   EmbeddedFullAccessBlockedReason,
@@ -799,6 +803,9 @@ export function buildAgentSystemPrompt(params: {
   requireExplicitMessageTarget?: boolean;
   /** Prompt-only strength for delegating non-trivial work through sub-agents. */
   subagentDelegationMode?: SubagentDelegationMode;
+  /** Allowed delegation targets (id/name/description) for the roster; rendered only in full mode
+   *  when sessions_spawn is visible. Below the cache boundary; never part of the stable prefix. */
+  delegationTargets?: DelegationTarget[];
   /** Run-scoped Ultra behavior below the cache boundary; independent from delegation preference. */
   proactiveSubagentOrchestration?: boolean;
   /** Whether ACP-specific routing guidance should be included. Defaults to true. */
@@ -1045,6 +1052,18 @@ export function buildAgentSystemPrompt(params: {
         hasSessionsSend: availableTools.has("sessions_send"),
       })
     : [];
+  // Computing above the boundary is fine (same as the delegation guidance above);
+  // the roster is pushed into the volatile suffix below and never feeds the cache key/prefix.
+  const delegationRosterSection =
+    !isMinimal &&
+    hasSessionsSpawn &&
+    params.delegationTargets &&
+    params.delegationTargets.length > 0
+      ? buildDelegationTargetRosterSection({
+          targets: params.delegationTargets,
+          mentionAgentsList: availableTools.has("agents_list"),
+        })
+      : [];
   const sourceMessageToolOnly = params.sourceReplyDeliveryMode === "message_tool_only";
   const messageChannelOptions = availableTools.has("message")
     ? buildMessageChannelOptions(runtimeChannel)
@@ -1446,6 +1465,7 @@ export function buildAgentSystemPrompt(params: {
       hasSessionsSpawn,
     }),
     ...subagentDelegationPreferenceSection,
+    ...delegationRosterSection,
     params.sandboxInfo?.enabled && elevated
       ? elevated.allowed && elevated.fullAccessAvailable
         ? `Current elevated level: ${elevated.defaultLevel} (ask runs exec on host with approvals; full auto-approves).`
