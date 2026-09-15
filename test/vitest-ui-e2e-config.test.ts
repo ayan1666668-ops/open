@@ -560,9 +560,16 @@ describe("Control UI E2E resource ownership", () => {
           workers: 1,
           fileParallelism: false,
         },
+        {
+          file: "ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts",
+          project: "ui-e2e-serial-standalone",
+          phase: 1,
+          workers: 1,
+          fileParallelism: false,
+        },
       ]);
       const parallel = result.files.filter((entry) => entry.phase === 2);
-      expect(parallel).toHaveLength(27);
+      expect(parallel).toHaveLength(26);
       expect(parallel.every((entry) => entry.fileParallelism)).toBe(true);
       expect(parallel.every((entry) => entry.workers === result.rootWorkers)).toBe(true);
       for (const entry of parallel) {
