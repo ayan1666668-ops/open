@@ -3,10 +3,10 @@ import type { GetPublishedPreparedModelCatalogOwnerParams } from "../../agents/p
 import type { PreparedModelRuntimeSnapshot } from "../../agents/prepared-model-runtime.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type {
+  ChatMetadataContext,
   ChatMetadataProjectionFacts,
   prepareChatMetadataModelProjection,
 } from "./chat-metadata-session-projection.js";
-import type { GatewayRequestContext } from "./types.js";
 
 export type PreparedAgentFacts = ChatMetadataProjectionFacts & {
   authStoreRevision: string;
@@ -21,8 +21,9 @@ export type PreparedGenerationFacts = {
   agents: PreparedAgentFacts[];
 };
 
-type ChatMetadataFactsDeps = {
+export type ChatMetadataRuntimeDeps = {
   getConfig: () => OpenClawConfig;
+  getContext: () => ChatMetadataContext;
   getPreparedOwner: (
     params: GetPublishedPreparedModelCatalogOwnerParams,
   ) => PreparedModelRuntimeSnapshot | undefined;
@@ -33,10 +34,6 @@ type ChatMetadataFactsDeps = {
   getAuthStoreRevision: (agentDir?: string) => number;
   getSkillsVersion: (workspaceDir?: string) => number;
   getPluginRegistryVersion: () => number;
-};
-
-export type ChatMetadataRuntimeDeps = ChatMetadataFactsDeps & {
-  getContext: () => GatewayRequestContext;
   buildCommands: (params: {
     cfg: OpenClawConfig;
     agentId: string;
