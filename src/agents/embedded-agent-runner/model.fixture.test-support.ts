@@ -5,17 +5,18 @@ import * as authProfileStore from "../auth-profiles/store-runtime.js";
 
 export function guardModelFixtureAuth(root: string) {
   const violations: Array<string | undefined> = [];
-  const ensureAuthProfileStore = authProfileStore.ensureAuthProfileStore;
+  const loadAuthProfileStoreForRuntime = authProfileStore.loadAuthProfileStoreForRuntime;
   const spy = vi
-    .spyOn(authProfileStore, "ensureAuthProfileStore")
-    .mockImplementation((dir, options) => {
+    .spyOn(authProfileStore, "loadAuthProfileStoreForRuntime")
+    .mockImplementation((...args) => {
+      const [dir] = args;
       // Any necessary native auth reads must remain inside the fixture's owned state.
       // Record even swallowed violations before the owner can inspect the path.
       if (!dir || !isPathInside(root, dir)) {
         violations.push(dir);
         throw new Error("Auth profile request escaped the model fixture");
       }
-      return ensureAuthProfileStore(dir, options);
+      return loadAuthProfileStoreForRuntime(...args);
     });
   return { spy, verify: () => expect(violations).toEqual([]) };
 }
