@@ -91,11 +91,16 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   // The first Lit update must render even while hidden; later hidden work parks.
   // Disconnect releases the waiter so reconnect can schedule in its new lifecycle.
   private hiddenUpdateResume: (() => void) | undefined;
+  private resumeHiddenUpdates(): void {
+    const resume = this.hiddenUpdateResume;
+    this.hiddenUpdateResume = undefined;
+    resume?.();
+  }
   private readonly handleVisibilityChange = () => {
     // Lit parks hidden updates, but progress watches must follow visibility immediately.
     this.progressCard.hostUpdate();
     if (document.visibilityState !== "hidden") {
-      this.hiddenUpdateResume?.();
+      this.resumeHiddenUpdates();
       return;
     }
     const state = this.state;
@@ -124,7 +129,11 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     this.paneLifecycleRoot?.dispatchEvent(new Event(CHAT_PANE_LIFECYCLE_CHANGED_EVENT));
   }
   protected override async scheduleUpdate() {
-    while (this.hasUpdated && this.isConnected && document.visibilityState === "hidden") {
+    while (
+      this.hasUpdated &&
+      this.isConnected &&
+      (document.visibilityState === "hidden" || !this.visuallyPresented)
+    ) {
       await new Promise<void>((resolve) => {
         this.hiddenUpdateResume = resolve;
       });
@@ -138,7 +147,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
       this.synchronizeForegroundTranscript,
     );
     this.context?.connectionBootstrap.setForegroundPane(this, null);
-    this.hiddenUpdateResume?.();
+    this.resumeHiddenUpdates();
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     super.disconnectedCallback();
     // A removed Home pane cannot bubble its final loading edge. Notify its
@@ -182,6 +191,9 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     }
     const wasConversationPresented = this.conversationPresented;
     this.visuallyPresentedValue = value;
+    if (value) {
+      this.resumeHiddenUpdates();
+    }
     this.requestUpdate("visuallyPresented", previous);
     this.notifyConversationPresentation(wasConversationPresented);
   }
