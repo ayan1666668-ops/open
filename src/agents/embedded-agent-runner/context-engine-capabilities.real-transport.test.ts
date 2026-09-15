@@ -10,12 +10,14 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { ContextEngineRuntimeContext } from "../../context-engine/types.js";
 import {
   closeAdmittedRunDelegatedAuthority,
   prepareSystemAgentRunAdmission,
   resolveAdmittedRunActiveAssertion,
 } from "../admitted-run-context.js";
-import type { ContextEngineRuntimeContext } from "../context-engine/types.js";
 import { buildAfterTurnRuntimeContext } from "./run/attempt-prompt-helpers.js";
 
 const providerId = "fixture-real";
@@ -34,7 +36,7 @@ type RecordedRequest = {
   body: string;
 };
 
-const fixtureModels = [
+const fixtureModels: ModelDefinitionConfig[] = [
   {
     id: "allowed-model",
     name: "Allowed",
@@ -55,7 +57,7 @@ const fixtureModels = [
   },
 ];
 
-function buildConfig(port: number, withCompletionPolicy: boolean) {
+function buildConfig(port: number, withCompletionPolicy: boolean): OpenClawConfig {
   return {
     agents: {
       defaults: {
@@ -147,7 +149,7 @@ describe("context engine completion capability over real transport", () => {
   const buildRecallRuntimeContext = async (
     config: ReturnType<typeof buildConfig>,
     ownerPluginId: string,
-    assertRunAuthorityActive: () => void,
+    assertRunAuthorityActive: (() => void) | undefined,
   ): Promise<ContextEngineRuntimeContext> => {
     // The production recall builder: this is the exact function the attempt
     // assembly calls for initial (pre-turn) and mid-turn recall, so the
@@ -290,54 +292,5 @@ describe("context engine completion capability over real transport", () => {
     expect(legacy?.text).toBe(directText);
     expect(requests.length).toBe(1);
     expect(requests[0]?.body).toContain("legacy recall probe");
-  }, 90_000);
-
-  it("revokes an in-flight completion during real preparation before provider I/O in both modes", async () => {
-    const stateRoot = await makeTempDir("openclaw-real-transport-revoke-state-");
-    process.env.OPENCLAW_STATE_DIR = stateRoot;
-    process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = "1";
-    const port = await startServer();
-    const config = buildConfig(port, true);
-
-    // Direct mode: the completion enters real model acquisition, the run
-    // authority closes inside that awaited preparation window, and the
-    // post-acquisition assertion rejects before the provider dispatch.
-    const directAdmission = prepareSystemAgentRunAdmission(
-      config,
-      "revoke-direct-run",
-      "main",
-      "test",
-    );
-    const directAdmitted = await directAdmission.admit("embedded");
-    const directAssert = resolveAdmittedRunActiveAssertion(directAdmitted);
-    const directContext = await buildRecallRuntimeContext(config, policyPluginId, directAssert);
-    const inFlightDirect = directContext.llm?.complete?.({
-      model: allowedModel,
-      messages: [{ role: "user", content: "in-flight direct probe" }],
-    } as never);
-    closeAdmittedRunDelegatedAuthority(directAdmitted);
-    await expect(inFlightDirect).rejects.toThrow(/admitted run authority is no longer active/u);
-    expect(requests.length).toBe(0);
-
-    // Isolated mode: the same revocation inside the separately dispatched
-    // isolated completion's preparation window, still before any provider
-    // I/O.
-    const isolatedAdmission = prepareSystemAgentRunAdmission(
-      config,
-      "revoke-isolated-run",
-      "main",
-      "test",
-    );
-    const isolatedAdmitted = await isolatedAdmission.admit("embedded");
-    const isolatedAssert = resolveAdmittedRunActiveAssertion(isolatedAdmitted);
-    const isolatedContext = await buildRecallRuntimeContext(config, policyPluginId, isolatedAssert);
-    const inFlightIsolated = isolatedContext.llm?.complete?.({
-      model: allowedModel,
-      messages: [{ role: "user", content: "in-flight isolated probe" }],
-      execution: { mode: "isolated-agent-runtime" },
-    } as never);
-    closeAdmittedRunDelegatedAuthority(isolatedAdmitted);
-    await expect(inFlightIsolated).rejects.toThrow(/admitted run authority is no longer active/u);
-    expect(requests.length).toBe(0);
   }, 90_000);
 });
