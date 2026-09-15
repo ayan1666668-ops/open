@@ -295,10 +295,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   });
   // Post rendering has no native tables, so block falls back to code there. An
   // explicit off, bullets or code converts before any card decision, so the mode
-  // applies in auto mode and to the text a streaming card commits. Partial
-  // previews stream raw text, but streamed content enters the ownership state
-  // (closing record, settlement, delivered finals) and every comparison against
-  // a final in this one rendered form.
+  // applies in auto mode and to the text a streaming card commits. Partial previews
+  // stream raw text, so the preview dedupe compares payload text, while streamed
+  // content enters the ownership state (closing record, settlement, delivered finals)
+  // and every comparison against a final in this one rendered form.
   const nativeTables = tableMode === "block";
   const postTableMode = nativeTables ? "code" : tableMode;
   const renderTables = (value: string): string =>
@@ -435,17 +435,23 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     nextText: string,
     options?: {
       dedupeWithLastPartial?: boolean;
+      /** Payload text behind nextText, compared instead of it when the two differ. */
+      dedupeSource?: string;
       mode?: StreamTextUpdateMode;
     },
   ) => {
     if (!nextText) {
       return;
     }
-    if (options?.dedupeWithLastPartial && nextText === lastPartial) {
+    // Previews queue the payload text as it arrived, so the comparison has to run on
+    // that same unconverted text. A block whose table was converted cannot equal the raw
+    // preview under bullets or code, and the delta then repeats the table.
+    const dedupeSource = options?.dedupeSource || nextText;
+    if (options?.dedupeWithLastPartial && dedupeSource === lastPartial) {
       return;
     }
     if (options?.dedupeWithLastPartial) {
-      lastPartial = nextText;
+      lastPartial = dedupeSource;
     }
     const mode = options?.mode ?? "snapshot";
     if (mode === "delta") {
@@ -1427,6 +1433,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     deliver: async (inputPayload: ReplyPayload, info) => {
       // Delivery runs after modifying hooks. Render here so native cards carry the
       // accepted prose, and a canceled payload never creates a card.
+      const sourceText = inputPayload.text ?? "";
       const prepared = await renderFeishuReplyPayload(inputPayload, {
         to: sendTarget,
         identity,
@@ -1619,7 +1626,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             if (info?.kind === "block") {
               // Some runtimes emit block payloads without onPartial/final callbacks.
               // Mirror block text into streamText so onIdle close still sends content.
-              queueStreamingUpdate(text, { mode: "delta", dedupeWithLastPartial: true });
+              // A block repeating what the preview already streamed is compared on the
+              // payload text both sides started from, so only new text is appended.
+              queueStreamingUpdate(text, {
+                mode: "delta",
+                dedupeWithLastPartial: true,
+                dedupeSource: sourceText,
+              });
             }
             if (info?.kind === "final") {
               // Final payloads can be cumulative snapshots or independent

@@ -4566,7 +4566,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       return tables ? { channels: { feishu: { markdown: { tables } } } } : {};
     }
 
-    function createBlockTableHarness() {
+    function createBlockTableHarness(cfg: ClawdbotConfig = tableCfg("off")) {
       resolveFeishuAccountMock.mockReturnValue({
         accountId: "main",
         appId: "app_id",
@@ -4577,7 +4577,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
           streaming: { mode: "partial", block: { enabled: true } },
         },
       });
-      return createDispatcherHarness({ accountId: "main", cfg: tableCfg("off") });
+      return createDispatcherHarness({ accountId: "main", cfg });
     }
 
     it("reuses the posted block receipt when idle closes its matching off preview", async () => {
@@ -5049,6 +5049,72 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         });
         expect(streamingInstances).toHaveLength(1);
         expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    const convertingModes = [
+      { tables: "bullets" as const, converted: () => bulletsCard },
+      { tables: "code" as const, converted: () => codeText },
+    ];
+
+    it.each(convertingModes)(
+      "commits one table when a $tables block repeats its streamed preview",
+      async ({ tables, converted }) => {
+        const { result, options } = createBlockTableHarness(tableCfg(tables));
+        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        await options.deliver({ text: tableMarkdown }, { kind: "block" });
+        await options.onIdle?.();
+
+        expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledTimes(1);
+        expect(firstStreamingCloseText()).toBe(converted());
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(convertingModes)(
+      "still mirrors $tables block text the preview never streamed",
+      async ({ tables, converted }) => {
+        const { result, options } = createBlockTableHarness(tableCfg(tables));
+        result.replyOptions.onPartialReply?.({ text: "Intro line." });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        await options.deliver({ text: `\n\n${tableMarkdown}` }, { kind: "block" });
+        await options.onIdle?.();
+
+        expect(firstStreamingCloseText()).toBe(`Intro line.\n\n${converted()}`);
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(convertingModes)(
+      "mirrors a $tables block that arrives without any preview",
+      async ({ tables, converted }) => {
+        const { options } = createBlockTableHarness(tableCfg(tables));
+
+        await options.deliver({ text: tableMarkdown }, { kind: "block" });
+        await options.onIdle?.();
+
+        expect(firstStreamingCloseText()).toBe(converted());
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["block", undefined] as const)(
+      "keeps one native table when a %s block repeats its streamed preview",
+      async (tables) => {
+        const { result, options } = createBlockTableHarness(tableCfg(tables));
+        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        await options.deliver({ text: tableMarkdown }, { kind: "block" });
+        await options.onIdle?.();
+
+        expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledTimes(1);
+        expect(firstStreamingCloseText()).toBe(tableMarkdown);
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
       },
     );
