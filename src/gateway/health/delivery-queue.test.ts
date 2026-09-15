@@ -1,5 +1,6 @@
 // Delivery queue health tests cover independent inbound and outbound diagnostic reads.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as deliveryQueueState from "../../infra/delivery-queue-sqlite.js";
 
 const countOutbound = vi.fn();
 const countIngressFailed = vi.fn();
@@ -97,5 +98,26 @@ describe("buildDeliveryQueueHealthSummary", () => {
       ingressPressure,
     });
     expect(countIngressPressure).not.toHaveBeenCalled();
+  });
+
+  it("preserves cached ingress diagnostics when outbound admission capture fails", async () => {
+    const capture = vi
+      .spyOn(deliveryQueueState, "captureDeliveryQueueStateContext")
+      .mockImplementation(() => {
+        throw new Error("outbound admission unavailable");
+      });
+    countIngressFailed.mockReturnValue(ingressFailed);
+    try {
+      expect(await buildDeliveryQueueHealthSummary(ingressPressure)).toEqual({
+        failed: [],
+        ingressFailed,
+        ingressPressure,
+      });
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(countOutbound).not.toHaveBeenCalled();
+      expect(countIngressPressure).not.toHaveBeenCalled();
+    } finally {
+      capture.mockRestore();
+    }
   });
 });

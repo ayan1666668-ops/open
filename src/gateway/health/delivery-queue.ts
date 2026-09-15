@@ -28,17 +28,29 @@ async function readQueueHealth<T>(message: string, read: () => T[] | Promise<T[]
   }
 }
 
+type DeliveryQueueHealthContext = { stateContext: DeliveryQueueStateContext } | { error: unknown };
+
+export function captureDeliveryQueueHealthContext(): DeliveryQueueHealthContext {
+  try {
+    return { stateContext: captureDeliveryQueueStateContext() };
+  } catch (error) {
+    return { error };
+  }
+}
+
 /** Builds redacted inbound pressure and dead-letter health for gateway snapshots. */
 export async function buildDeliveryQueueHealthSummary(
   cachedIngressPressure?: ReturnType<typeof countChannelIngressQueuePressure>,
-  context?: DeliveryQueueStateContext,
+  context: DeliveryQueueHealthContext = captureDeliveryQueueHealthContext(),
 ) {
-  const stateContext = context ?? captureDeliveryQueueStateContext();
   // Queue health reads are diagnostic; a storage failure must not take the
   // gateway health endpoint down with it.
-  const failed = await readQueueHealth("outbound delivery queue health read failed", () =>
-    countFailedDeliveryQueueEntries(undefined, stateContext),
-  );
+  const failed = await readQueueHealth("outbound delivery queue health read failed", () => {
+    if ("error" in context) {
+      throw context.error;
+    }
+    return countFailedDeliveryQueueEntries(undefined, context.stateContext);
+  });
   const ingressFailed = await readQueueHealth(
     "channel ingress failed queue health read failed",
     countFailedChannelIngressQueueEntries,
