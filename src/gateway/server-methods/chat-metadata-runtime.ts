@@ -39,13 +39,13 @@ import {
   sessionProjectionKey,
   resolveSessionCatalogProfiles,
   projectChatSessionMetadata,
-  type ChatMetadataContext,
   type PreparedAgentProjection,
 } from "./chat-metadata-session-projection.js";
 import type {
   ChatStartupProjectionReadParams,
   ChatStartupProjectionResult,
 } from "./chat-startup-projection-contract.js";
+import type { GatewayModelCatalogContext } from "./models-list-context.js";
 
 type PreparedAgentMetadata = PreparedAgentFacts & {
   commands?: unknown[];
@@ -127,7 +127,7 @@ function captureGenerationFacts(deps: ChatMetadataRuntimeDeps): PreparedGenerati
 
 export function createGatewayChatMetadataRuntime(params: {
   getConfig: () => OpenClawConfig;
-  getContext: () => ChatMetadataContext;
+  getContext: () => GatewayModelCatalogContext;
   beforeRefresh?: () => Promise<void>;
   onChanged?: () => void;
   refreshOnRead?: boolean;

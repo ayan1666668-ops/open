@@ -16,12 +16,7 @@ import type {
   ChatMetadataResult,
   ChatMetadataSessionEntry,
 } from "./chat-metadata-contract.js";
-import type { prepareModelsListResult } from "./models-list-result.js";
-
-export type ChatMetadataContext = Extract<
-  Parameters<typeof prepareModelsListResult>[0]["source"],
-  { kind: "gateway" }
->["context"];
+import type { GatewayModelCatalogContext } from "./models-list-context.js";
 
 export type ChatMetadataProjectionFacts = {
   agentId: string;
@@ -38,7 +33,7 @@ export type PreparedAgentProjection<T = ChatMetadataResult> = {
 };
 
 export async function prepareChatMetadataModelProjection(params: {
-  context: ChatMetadataContext;
+  context: GatewayModelCatalogContext;
   facts: ChatMetadataProjectionFacts;
   requesterProfileId?: string;
   preferredProfileId?: string;
