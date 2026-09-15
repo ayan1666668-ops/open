@@ -76,6 +76,7 @@ describe("ChatGPT Responses tool request controls", () => {
           type: "function",
           name: "lookup",
           description: "Look up a value.",
+          strict: false,
           parameters: {
             type: "object",
             properties: { query: { type: "string" } },
@@ -86,5 +87,29 @@ describe("ChatGPT Responses tool request controls", () => {
       tool_choice: "auto",
       parallel_tool_calls: true,
     });
+  });
+
+  it("declares non-strict tools so optional properties stay optional", async () => {
+    // An absent `strict` is strict mode on the Responses API: the model then fills
+    // every optional property with a placeholder instead of omitting it.
+    const payload = await capturePayload({
+      ...context,
+      tools: [
+        {
+          name: "board",
+          description: "Read or edit a board.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, after: { type: "string" } },
+            required: ["action"],
+            additionalProperties: false,
+          },
+        },
+      ],
+    });
+
+    const [tool] = payload.tools as [{ strict: unknown; parameters: { required: string[] } }];
+    expect(tool.strict).toBe(false);
+    expect(tool.parameters.required).toEqual(["action"]);
   });
 });
