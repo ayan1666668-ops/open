@@ -61,6 +61,30 @@ async function expectSidebarPickerOnly(page: Page) {
 }
 
 suite.define(() => {
+  it.each([1440, 390])("closes only the agent menu on Escape at %ipx", async (width) => {
+    await suite.withPage(
+      { viewport: { width, height: 900 }, locale: "en-US", reducedMotion: "reduce" },
+      async ({ page }) => {
+        await installSettingsGateway(page);
+        await page.goto(`${suite.server.baseUrl}settings/appearance`);
+        await waitForControlUiRoute(page, { routeId: "appearance" });
+        if (width === 390) {
+          await page.locator(".topbar-nav-toggle").click();
+        }
+        const picker = page.locator(".settings-sidebar openclaw-agent-select");
+        const trigger = picker.locator(".agent-select__trigger");
+        await trigger.focus();
+        await page.keyboard.press("Enter");
+        await picker.getByRole("menuitemradio", { name: "Research", exact: true }).waitFor();
+        await page.keyboard.press("Escape");
+        await expect.poll(() => trigger.getAttribute("aria-expanded")).toBe("false");
+        expect(new URL(page.url()).pathname).toBe("/settings/appearance");
+        expect(await trigger.isVisible()).toBe(true);
+        expect(await trigger.evaluate((element) => element === document.activeElement)).toBe(true);
+      },
+    );
+  });
+
   it("retains the Settings agent across pages and history without changing the chat agent", async () => {
     await suite.withPage(
       {

@@ -307,9 +307,7 @@ export function renderApplicationShell(host: ShellViewHost) {
           basePath: context.basePath,
           activeRouteId: activeRoute,
           agents: context.agents.state.agentsList?.agents ?? [],
-          defaultAgentId: context.agents.state.agentsList?.selectionRequired
-            ? null
-            : context.agents.state.agentsList?.defaultId,
+          agentIdentity: context.agentIdentity,
           settingsAgentSelection: context.settingsAgentSelection,
           activePathname: host.routeState.location?.pathname ?? "",
           activeSearch: host.routeState.location?.search ?? "",

@@ -25,11 +25,8 @@ import { beginNativeWindowDragFromTopInset } from "../app/native-window-drag.ts"
 import type { UpdateProgress } from "../app/update-confirmation.ts";
 import type { ApplicationStatusBanner } from "../app/update-overlay-helpers.ts";
 import { t } from "../i18n/index.ts";
-import {
-  agentBadgeText,
-  listSelectableAgents,
-  normalizeAgentLabel,
-} from "../lib/agents/display.ts";
+import { listSelectableAgents, normalizeAgentLabel } from "../lib/agents/display.ts";
+import type { AgentIdentityCapability } from "../lib/agents/identity.ts";
 import { redactLoginFailureError } from "../lib/connection-hints.ts";
 import { shouldHandleNavigationClick } from "../lib/navigation-click.ts";
 import { normalizeAgentId } from "../lib/sessions/session-key.ts";
@@ -52,7 +49,7 @@ type SettingsSidebarProps = {
   basePath: string;
   activeRouteId: RouteId;
   agents: readonly AgentRosterRow[];
-  defaultAgentId?: string | null;
+  agentIdentity: AgentIdentityCapability;
   settingsAgentSelection: AgentSelectionCapability;
   activePathname?: string;
   activeSearch?: string;
@@ -313,22 +310,24 @@ function renderSettingsAgentSelector(props: SettingsSidebarProps) {
         : agent.creatorAgentId,
     }),
   );
-  const defaultId = props.defaultAgentId ? normalizeAgentId(props.defaultAgentId) : null;
   const options = buildAgentRosterTree(agents).map(({ agent, creatorAgentId }) => ({
     value: agent.id,
     label: normalizeAgentLabel(agent),
     agent,
     description: creatorAgentId ? t("agents.createdBy", { id: creatorAgentId }) : undefined,
-    badge: agentBadgeText(agent.id, defaultId) ?? undefined,
   }));
   return html`<div class="settings-sidebar__agent">
     <openclaw-agent-select
       .options=${options}
+      .identityById=${Object.fromEntries(
+        props.agentIdentity.entries().map((identity) => [identity.agentId, identity]),
+      )}
       .value=${props.settingsAgentSelection.state.selectedId ?? ""}
       .accessibleLabel=${t("agentScope.label")}
       .menuLabel=${t("agentScope.label")}
       .disabled=${options.length <= 1}
       .onSelect=${(agentId: string) => props.settingsAgentSelection.set(agentId)}
+      @wa-show=${() => void props.agentIdentity.ensure(agents.map((agent) => agent.id))}
     ></openclaw-agent-select>
   </div>`;
 }

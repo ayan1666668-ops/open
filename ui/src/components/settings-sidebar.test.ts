@@ -27,7 +27,13 @@ const sidebarAgentProps = () => ({
     { id: "main", name: "Main" },
     { id: "research", name: "Research" },
   ],
-  defaultAgentId: "main",
+  agentIdentity: {
+    get: () => null,
+    entries: () => [],
+    ensure: async () => {},
+    invalidate: () => {},
+    subscribe: () => () => {},
+  },
   settingsAgentSelection: {
     state: { selectedId: "main", scopeId: "main" },
     intentRevision: 0,
@@ -734,7 +740,7 @@ describe("Settings agent selector", () => {
     },
   );
 
-  it("preserves creator grouping and default badges without hiding dangling or cyclic agents", async () => {
+  it("preserves creator grouping without hiding dangling or cyclic agents", async () => {
     renderSidebar({
       agents: [
         { id: "main", name: "Main" },
@@ -755,9 +761,6 @@ describe("Settings agent selector", () => {
       "cycle-b",
     ]);
     const rows = selector.querySelectorAll("[data-agent-option]");
-    expect(rows[0]?.querySelector(".agent-select__badge")?.textContent?.trim()).toBe(
-      t("agents.default"),
-    );
     expect(rows[1]?.querySelector(".agent-select__option-description")?.textContent?.trim()).toBe(
       t("agents.createdBy", { id: "main" }),
     );
