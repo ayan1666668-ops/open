@@ -17,6 +17,10 @@ import { wrapPromptDataBlock } from "../../sanitize-for-prompt.js";
 import { extractStoredAssistantText } from "../../tools/chat-history-text.js";
 import { isAnnounceSkip } from "../../tools/sessions-send-tokens.js";
 import { resolveSubagentCompletionResultText } from "../completion/subagent-completion-result.js";
+import {
+  SUBAGENT_ENDED_REASON_KILLED,
+  type SubagentLifecycleEndedReason,
+} from "../registry/subagent-lifecycle-events.js";
 import { recordLatestSubagentRun } from "../registry/subagent-run-generation.js";
 import { classifySubagentTerminalOutcome } from "../subagent-terminal-outcome.js";
 import {
@@ -421,7 +425,12 @@ export async function captureSubagentCompletionReply(
   });
 }
 
-function describeSubagentOutcome(outcome?: SubagentRunOutcome): string {
+function describeSubagentOutcome(child: ChildCompletionRow): string {
+  const outcome = child.execution.outcome;
+  if (child.endedReason === SUBAGENT_ENDED_REASON_KILLED) {
+    const error = outcome?.error?.trim();
+    return error ? `cancelled: ${error}` : "cancelled";
+  }
   if (!outcome) {
     return "unknown";
   }
@@ -457,9 +466,11 @@ type ChildCompletionExecution = { endedAt?: number; outcome?: SubagentRunOutcome
 type ChildCompletionRow = {
   childSessionKey: string;
   task: string;
+  taskName?: string;
   label?: string;
   createdAt: number;
   execution: ChildCompletionExecution;
+  endedReason?: SubagentLifecycleEndedReason;
   completion?: Parameters<typeof resolveSubagentCompletionResultText>[0]["completion"];
 };
 
@@ -503,7 +514,7 @@ export function buildChildCompletionFindings(
   const sections: ChildCompletionSection[] = [];
   for (const [index, child] of sorted.entries()) {
     const resultText = resolveSubagentCompletionResultText(child);
-    const outcome = describeSubagentOutcome(child.execution.outcome);
+    const outcome = describeSubagentOutcome(child);
     if (
       child.execution.outcome?.status === "ok" &&
       !resultText &&
@@ -512,6 +523,7 @@ export function buildChildCompletionFindings(
       continue;
     }
     const title =
+      child.taskName?.trim() ||
       child.label?.trim() ||
       child.task.trim() ||
       child.childSessionKey.trim() ||
@@ -521,7 +533,12 @@ export function buildChildCompletionFindings(
       index: displayIndex,
       actionable: child.execution.outcome?.status !== "ok",
       text: [
-        `${displayIndex}. ${truncateChildCompletionField(title)}`,
+        wrapPromptDataBlock({
+          label: `${displayIndex}. Child task`,
+          text: title,
+          maxEscapedChars: MAX_CHILD_COMPLETION_FIELD_CHARS,
+          truncationMarker: "…",
+        }),
         `status: ${truncateChildCompletionField(outcome)}`,
         formatChildResultData(resultText),
       ].join("\n"),
