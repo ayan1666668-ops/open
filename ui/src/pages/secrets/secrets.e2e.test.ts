@@ -154,22 +154,6 @@ suite.define(() => {
         const access = row.locator(".secrets-store__mode");
 
         expect(await name.getAttribute("title")).toBe(longNameSecretEntry.name);
-        await expect
-          .poll(async () => {
-            const [nameBox, accessBox] = await Promise.all([
-              name.boundingBox(),
-              access.boundingBox(),
-            ]);
-            if (!nameBox || !accessBox) {
-              return null;
-            }
-            return {
-              nameRight: nameBox.x + nameBox.width,
-              accessLeft: accessBox.x,
-            };
-          })
-          .not.toBeNull();
-
         const layout = await Promise.all([name.boundingBox(), access.boundingBox()]);
         const nameBox = layout[0];
         const accessBox = layout[1];
@@ -209,25 +193,37 @@ suite.define(() => {
 
         await page.goto(`${suite.server.baseUrl}settings/secrets`);
         const row = page.getByRole("row", { name: longNameSecretEntry.name });
-        const table = page.locator(".secrets-store__table");
         const name = row.locator(".secrets-store__name");
 
-        expect(
-          await table.evaluate((element) => element.classList.contains("settings-table--stacked")),
-        ).toBe(true);
+        expect(await name.textContent()).toBe(longNameSecretEntry.name);
         const nameStyle = await name.evaluate((element) => {
           const style = getComputedStyle(element);
+          const text = document.createRange();
+          text.selectNodeContents(element);
           return {
             overflowWrap: style.overflowWrap,
             whiteSpace: style.whiteSpace,
             fitsHorizontally: element.scrollWidth <= element.clientWidth,
+            wraps: text.getClientRects().length > 1,
           };
         });
         expect(nameStyle).toEqual({
           overflowWrap: "anywhere",
           whiteSpace: "normal",
           fitsHorizontally: true,
+          wraps: true,
         });
+        for (const selector of ["html", ".secrets-store__table-wrap", ".secrets-store__table"]) {
+          const fits = await page.locator(selector).evaluate((element) => {
+            const box = element.getBoundingClientRect();
+            return (
+              element.scrollWidth <= element.clientWidth &&
+              box.left >= 0 &&
+              box.right <= window.innerWidth
+            );
+          });
+          expect(fits, `${selector} stays inside the phone viewport`).toBe(true);
+        }
       },
     );
   });
