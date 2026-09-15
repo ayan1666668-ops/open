@@ -104,7 +104,7 @@ class PluginsPage extends OpenClawLightDomElement {
   private readonly discovery = new PluginDiscoveryController(this, {
     getClient: () => this.gateway.client,
     isConnected: () => this.gateway.connected,
-    onEntriesChanged: () => this.syncCatalogIcons(),
+    onEntriesChanged: () => this.icons.syncCatalog(this.discovery, this.catalogDetail?.result),
   });
 
   private readonly consentController = new PluginsConsentController({
@@ -545,7 +545,7 @@ class PluginsPage extends OpenClawLightDomElement {
       const result = await loadPluginDiscoveryDetail(scope.client, detail.id);
       if (this.gateway.isCurrent(scope) && this.catalogDetail === detail) {
         this.catalogDetail = { ...detail, result };
-        this.syncCatalogIcons();
+        this.icons.syncCatalog(this.discovery, this.catalogDetail?.result);
         const installedId = result.plugin.local.installed
           ? result.plugin.local.pluginId
           : undefined;
@@ -580,7 +580,7 @@ class PluginsPage extends OpenClawLightDomElement {
       if (!this.gateway.isCurrent(scope) || !opening.isCurrent()) {
         return;
       }
-      this.syncCatalogIcons(result);
+      this.icons.syncCatalog(this.discovery, result);
       opening.open(result);
     } catch (error) {
       if (this.gateway.isCurrent(scope) && opening.isCurrent()) {
@@ -596,10 +596,6 @@ class PluginsPage extends OpenClawLightDomElement {
     this.context.navigate("plugins", {
       pathname: pathForRoute("plugins", this.context.basePath),
     });
-  }
-
-  private syncCatalogIcons(detail = this.catalogDetail?.result) {
-    this.icons.syncCatalog(this.discovery, detail);
   }
 
   private async uninstall(pluginId: string, rowKey: string): Promise<void> {
