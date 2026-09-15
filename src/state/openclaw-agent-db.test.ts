@@ -239,9 +239,11 @@ function ensureV13WorkerAgentDatabaseTemplate(): string {
     ).toEqual([{ name: "session_entries" }, { name: "session_routes" }, { name: "sessions" }]);
     expect(
       verified
-        .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'session_nodes'")
-        .get(),
-    ).toBeUndefined();
+        .prepare(
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('session_nodes', 'session_pending_inputs', 'session_input_completions')",
+        )
+        .all(),
+    ).toEqual([]);
   } finally {
     verified.close();
   }
@@ -314,6 +316,7 @@ function downgradeCurrentAgentDatabaseToV13(databasePath: string): void {
       DROP TABLE session_participants;
       DROP TABLE session_recipient_authority;
       DROP TABLE session_pending_inputs;
+      DROP TABLE session_input_completions;
       DROP INDEX IF EXISTS idx_agent_session_windows_updated_at;
       DROP INDEX IF EXISTS idx_agent_session_windows_created_at;
       DROP INDEX IF EXISTS idx_agent_session_windows_conversation;
@@ -1294,7 +1297,7 @@ describe("openclaw agent database", () => {
         .run(before.updated_at + 1);
       expect(read()).toEqual({ found: true, value: before });
       expect(readDb === owner.db).toBe(false);
-      expect(readDb?.isOpen).toBe(false);
+      expect(readDb?.isOpen).toBe(true);
       expect(owner.db.isTransaction).toBe(true);
     } finally {
       owner.db.exec("ROLLBACK;");

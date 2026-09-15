@@ -21,6 +21,7 @@ export function prepareSubagentSpawnEnvelope(params: {
   spawnMode: SpawnSubagentMode;
   hasBoundThreadDeliveryOrigin: boolean;
   expectsCompletionMessage: boolean;
+  completionTarget?: "parent";
   soleCollectorChild: boolean;
   task: string;
   requesterSessionKey?: string;
@@ -61,6 +62,7 @@ export function prepareSubagentSpawnEnvelope(params: {
 
   const envelope = buildSubagentSpawnEnvelope({
     completionMode,
+    completionTarget: params.completionTarget,
     soleCollectorChild: params.soleCollectorChild,
     spawnMode: params.spawnMode,
     task: params.task,

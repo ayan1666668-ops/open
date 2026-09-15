@@ -1,7 +1,6 @@
 // Covers session delivery queue persistence state transitions.
 import { describe, expect, it } from "vitest";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
-import { withTestDir } from "../test-helpers/temp-dir.js";
 import {
   advanceSessionDeliveryAgentRun,
   deferSessionDelivery,
@@ -11,6 +10,7 @@ import {
   failSessionDelivery,
   loadPendingSessionDelivery,
   loadPendingSessionDeliveries,
+  markSessionDeliveryAttemptStarted,
   mergeSessionDeliveryPreparedMediaBlocks,
   moveSessionDeliveryToFailed,
   releaseSessionDeliveryClaim,
@@ -22,6 +22,7 @@ import {
   rewriteSessionQueueEntry,
   settleSessionDelivery,
 } from "./session-delivery-queue.storage.test-support.js";
+import { withSessionDeliveryQueue } from "./session-delivery-queue.test-helpers.js";
 
 describe("session-delivery queue storage", () => {
   function rewriteSessionQueueEntryKind(
@@ -40,7 +41,7 @@ describe("session-delivery queue storage", () => {
   }
 
   it("dedupes entries when an idempotency key is reused", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const firstId = await enqueueSessionDelivery(
         {
           kind: "agentTurn",
@@ -68,7 +69,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("projects generic queue attachments to descriptor-only metadata before persistence", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const secret = "GENERIC_QUEUE_INLINE_SECRET";
       const widenedRef = {
         kind: "blob-sha256" as const,
@@ -109,7 +110,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("scrubs widened generic attachment metadata during pending recovery", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const secret = "RECOVERED_GENERIC_QUEUE_SECRET";
       const id = await enqueueSessionDelivery(
         {
@@ -157,7 +158,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("requires exact generic metadata kinds and strict generic payload shapes during recovery", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const corruptions = [
         {
           payload: {
@@ -208,7 +209,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("fails closed for untrusted trace context and malformed continuation triggers", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueueSessionDelivery(
         {
           kind: "agentTurn",
@@ -236,7 +237,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("fails a managed delegate return whose durable receipt and projection disagree", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       await expect(
         enqueueSessionDelivery(
           {
@@ -279,7 +280,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("grants one initial-attempt lease and releases it for recovery", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const payload = {
         kind: "agentTurn" as const,
         sessionKey: "agent:main:main",
@@ -304,7 +305,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("reports a dead-letter conflict instead of claiming it as pending", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const payload = {
         kind: "agentTurn" as const,
         sessionKey: "agent:main:main",
@@ -324,7 +325,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("lets an explicit enqueue replace a deleted ordinary failure", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const payload = {
         kind: "systemEvent" as const,
         sessionKey: "agent:main:main",
@@ -341,7 +342,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("never revives a failed permanent producer intent", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const payload = {
         kind: "systemEvent" as const,
         sessionKey: "agent:main:main",
@@ -359,7 +360,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("reports a completed conflict after acknowledgement", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const payload = {
         kind: "agentTurn" as const,
         sessionKey: "agent:main:main",
@@ -384,7 +385,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("persists retry metadata and retains acked idempotency tombstones", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueueSessionDelivery(
         {
           kind: "systemEvent",
@@ -406,7 +407,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("persists only canonical relative post-compaction mount hints", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueuePostCompactionDelegateDelivery(
         {
           sessionKey: "agent:main:main",
@@ -458,7 +459,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("rejects one-sided post-compaction source metadata before persistence", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const mismatchedMetadata = [
         { sourceFlowId: "flow-without-revision" },
         { sourceExpectedRevision: 7 },
@@ -484,7 +485,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters noncanonical recovered post-compaction mount hints and scrubs them", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const invalidMountPaths = [
         "/absolute",
         "handoff/../outside",
@@ -528,7 +529,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("normalizes empty post-compaction attachments to absence", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueuePostCompactionDelegateDelivery(
         {
           sessionKey: "agent:main:main",
@@ -550,7 +551,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("advances only the agent run attempt and can focus its retry media", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueueSessionDelivery(
         {
           kind: "agentTurn",
@@ -641,7 +642,7 @@ describe("session-delivery queue storage", () => {
       },
     ];
 
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const [sequence, corruption] of corruptions.entries()) {
         await expect(
           enqueuePostCompactionDelegateDelivery(
@@ -676,7 +677,7 @@ describe("session-delivery queue storage", () => {
       },
     ];
 
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const [sequence, invalid] of invalidDelegates.entries()) {
         await expect(
           enqueuePostCompactionDelegateDelivery(
@@ -698,7 +699,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters invalid post-compaction JSON without retaining raw bytes", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueuePostCompactionDelegateDelivery(
         {
           sessionKey: "agent:main:main",
@@ -728,7 +729,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters invalid generic JSON without retaining raw bytes", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const id = await enqueueSessionDelivery(
         {
           kind: "systemEvent",
@@ -776,7 +777,7 @@ describe("session-delivery queue storage", () => {
       },
     ];
 
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const [sequence, corruption] of corruptions.entries()) {
         const secret = `QUEUE_ATTACHMENT_VALIDATION_SECRET_${sequence}`;
         const id = await enqueuePostCompactionDelegateDelivery(
@@ -808,7 +809,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters raw post-compaction snapshots when entry_kind is missing or stale", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const [sequence, entryKind] of [null, "agentTurn"].entries()) {
         const secret = `STALE_ENTRY_KIND_SECRET_${sequence}`;
         const id = await enqueuePostCompactionDelegateDelivery(
@@ -840,7 +841,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("accepts generic descriptor attachment refs without widening them to inline input", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const legacySha256 = "legacy-nonhex-descriptor";
       const id = await enqueueSessionDelivery(
         {
@@ -860,7 +861,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters empty or widened generic blob descriptors before returning them", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const corruptions = [
         { kind: "blob-sha256", sha256: "", mediaType: "text/plain" },
         {
@@ -904,7 +905,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters seeded generic inline attachments before they can be returned", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const kind of ["systemEvent", "agentTurn"] as const) {
         const id =
           kind === "systemEvent"
@@ -954,7 +955,7 @@ describe("session-delivery queue storage", () => {
   });
 
   it("dead-letters malformed post-compaction attachment members without retaining content", async () => {
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       const secret = "MALFORMED_QUEUE_ATTACHMENT_SECRET";
       const id = await enqueuePostCompactionDelegateDelivery(
         {
@@ -1022,7 +1023,7 @@ describe("session-delivery queue storage", () => {
       },
     ];
 
-    await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+    await withSessionDeliveryQueue(async (tempDir, _queueContext) => {
       for (const [sequence, corruption] of corruptions.entries()) {
         const secret = `CORRUPT_QUEUE_SECRET_${sequence}`;
         const id = await enqueuePostCompactionDelegateDelivery(
@@ -1058,6 +1059,141 @@ describe("session-delivery queue storage", () => {
           recoveryState: "completed_permanent",
         });
       }
+    });
+  });
+
+  it("retains ambiguous attempt ownership and clears it only for a safe retry", async () => {
+    await withSessionDeliveryQueue(async (_stateDir, queueContext) => {
+      const id = await enqueueSessionDelivery(
+        {
+          kind: "agentTurn",
+          sessionKey: "agent:main:main",
+          message: "generated image ready",
+          messageId: "image:task-attempt-owner:agent-loop",
+        },
+        queueContext,
+      );
+      const entry = await loadPendingSessionDelivery(id, queueContext);
+      if (!entry) {
+        throw new Error("Expected pending session delivery");
+      }
+
+      await markSessionDeliveryAttemptStarted(entry, queueContext);
+      expect(await loadPendingSessionDelivery(id, queueContext)).toMatchObject({
+        deliveryStartedAt: expect.any(Number),
+      });
+
+      await failSessionDelivery(id, "ambiguous failure after send", queueContext);
+      expect(await loadPendingSessionDelivery(id, queueContext)).toMatchObject({
+        deliveryStartedAt: expect.any(Number),
+      });
+
+      await failSessionDelivery(id, "safe failure before commit", queueContext, {
+        releaseAttemptOwnership: true,
+      });
+      expect(await loadPendingSessionDelivery(id, queueContext)).not.toHaveProperty(
+        "deliveryStartedAt",
+      );
+    });
+  });
+
+  it("records which agent run attempt consumed retry budget", async () => {
+    await withSessionDeliveryQueue(async (_stateDir, queueContext) => {
+      const id = await enqueueSessionDelivery(
+        {
+          kind: "agentTurn",
+          sessionKey: "agent:main:main",
+          message: "generated image ready",
+          messageId: "image:task-charge:agent-loop",
+        },
+        queueContext,
+      );
+
+      await failSessionDelivery(id, "delivery failed", queueContext);
+      expect(await loadPendingSessionDelivery(id, queueContext)).toMatchObject({
+        retryCount: 1,
+        lastChargedAgentRunAttempt: 0,
+      });
+
+      await advanceSessionDeliveryAgentRun(id, undefined, queueContext);
+      await failSessionDelivery(id, "fresh delivery failed", queueContext);
+      expect(await loadPendingSessionDelivery(id, queueContext)).toMatchObject({
+        retryCount: 2,
+        agentRunAttempt: 1,
+        lastChargedAgentRunAttempt: 1,
+      });
+    });
+  });
+
+  it("persists agent-loop routing and provenance for restart replay", async () => {
+    await withSessionDeliveryQueue(async (_stateDir, queueContext) => {
+      await enqueueSessionDelivery(
+        {
+          kind: "agentTurn",
+          sessionKey: "agent:main:discord:channel:123",
+          message: "generated image ready",
+          messageId: "image:task-1:agent-loop",
+          route: {
+            channel: "discord",
+            to: "channel:123",
+            accountId: "default",
+            chatType: "channel",
+          },
+          inputProvenance: {
+            kind: "inter_session",
+            sourceSessionKey: "image_generate:task-1",
+            sourceChannel: "internal",
+            sourceTool: "image_generate",
+          },
+          sourceReplyDeliveryMode: "message_tool_only",
+          expectedMediaUrls: ["/tmp/proof.png"],
+        },
+        queueContext,
+      );
+
+      expect(await loadPendingSessionDeliveries(queueContext)).toEqual([
+        expect.objectContaining({
+          route: expect.objectContaining({ channel: "discord", to: "channel:123" }),
+          inputProvenance: expect.objectContaining({ sourceTool: "image_generate" }),
+          sourceReplyDeliveryMode: "message_tool_only",
+          expectedMediaUrls: ["/tmp/proof.png"],
+        }),
+      ]);
+    });
+  });
+
+  it("moves entries into completed idempotency state", async () => {
+    await withSessionDeliveryQueue(async (tempDir, queueContext) => {
+      const id = await enqueueSessionDelivery(
+        {
+          kind: "systemEvent",
+          sessionKey: "agent:main:main",
+          text: "restart complete",
+        },
+        queueContext,
+      );
+
+      await settleSessionDelivery(id, tempDir);
+
+      expect(readSessionQueueStatus(tempDir, id)).toBe("completed");
+    });
+  });
+
+  it("retains a permanent completion receipt", async () => {
+    await withSessionDeliveryQueue(async (tempDir, queueContext) => {
+      const payload = {
+        kind: "systemEvent" as const,
+        sessionKey: "agent:main:main",
+        text: "restart complete",
+        idempotencyKey: "restart:permanent-completed",
+        completionRetention: "permanent" as const,
+      };
+      const id = await enqueueSessionDelivery(payload, queueContext);
+      await settleSessionDelivery(id, tempDir);
+
+      expect(await enqueueSessionDelivery(payload, queueContext)).toBe(id);
+      expect(readSessionQueueStatus(tempDir, id)).toBe("completed");
+      expect(await loadPendingSessionDeliveries(queueContext)).toEqual([]);
     });
   });
 });

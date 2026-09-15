@@ -28,6 +28,7 @@ import {
   closeOpenClawAgentDatabasesForTest,
   runOpenClawAgentWriteTransaction,
 } from "../../../state/openclaw-agent-db.js";
+import { captureOpenClawStateWorkerContext } from "../../../state/openclaw-state-worker-context.js";
 import {
   resolveFinalSystemEventAdoption,
   settleManagedSystemEventsAfterTurnAdoption,
@@ -320,23 +321,28 @@ export async function releaseReturnCovenantCase(params: {
   const keepSilentEvent =
     state.casePlan.kind === "allowed" && state.casePlan.returnMode === "silent";
   if (!keepSilentEvent) {
+    const queueContext = captureOpenClawStateWorkerContext({
+      env: { ...process.env, OPENCLAW_STATE_DIR: stateDirectory(context) },
+    });
     // Keep the durable hold while this phase performs the sole bypass drain.
     // Publishing it as due would let Gateway recovery redrive before adoption.
     await drainPendingSessionDelivery({
       id: state.deliveryId,
       logLabel: "Return-covenant held delivery",
-      stateDir: stateDirectory(context),
+      queueContext,
       bypassBackoff: true,
       log: {
         info() {},
         warn() {},
         error() {},
       },
-      deliver: (entry, deliveryContext = {}) =>
+      deliver: (entry, deliveryContext) =>
         deliverQueuedSessionDeliveryCore({
           deps: createDefaultDeps(),
           entry,
-          ...(deliveryContext.stateDir ? { stateDir: deliveryContext.stateDir } : {}),
+          ...(deliveryContext.queueContext.environment.OPENCLAW_STATE_DIR
+            ? { stateDir: deliveryContext.queueContext.environment.OPENCLAW_STATE_DIR }
+            : {}),
         }),
     });
   }

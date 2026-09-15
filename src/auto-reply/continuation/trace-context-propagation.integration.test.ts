@@ -138,6 +138,7 @@ import {
   type QueuedSessionDelivery,
   type QueuedSessionDeliveryPayload,
 } from "../../infra/session-delivery-queue-storage.js";
+import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { consumePendingDelegates, resetDelegateStoreForTests } from "./delegate-store.js";
 import { enqueueContinuationReturnDeliveries } from "./targeting.js";
@@ -355,6 +356,9 @@ describe("continuation trace-context propagation integration", () => {
     );
 
     await withTestDir({ prefix: "openclaw-trace-replay-" }, async (tempDir) => {
+      const queueContext = captureOpenClawStateWorkerContext({
+        env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+      });
       await enqueueSessionDelivery(
         {
           kind: "systemEvent",
@@ -366,7 +370,7 @@ describe("continuation trace-context propagation integration", () => {
       );
       const replayed: QueuedSessionDelivery[] = [];
       const summary = await recoverPendingSessionDeliveries({
-        stateDir: tempDir,
+        queueContext,
         log: {
           info() {},
           warn() {},

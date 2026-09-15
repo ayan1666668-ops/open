@@ -4,21 +4,23 @@ import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { formatErrorMessage } from "./errors.js";
-import { recordRunStart, shouldDeferWake, type DeferDecision } from "./heartbeat-cooldown.js";
+import { tryResolveAmbientHeartbeatAgentId } from "./heartbeat-agent-resolution.js";
 import {
-  heartbeatLog as log,
   isHeartbeatOwnerUnresolved,
   resolveHeartbeatAgents,
   resolveHeartbeatForWake,
   resolveHeartbeatIntervalMs,
-  tryResolveAmbientHeartbeatAgentId,
   type HeartbeatConfig,
-} from "./heartbeat-runner-config.js";
-import { runHeartbeatOnceCore } from "./heartbeat-runner-run.js";
+} from "./heartbeat-config.js";
+import { recordRunStart, shouldDeferWake, type DeferDecision } from "./heartbeat-cooldown.js";
+import { heartbeatLog as log } from "./heartbeat-log.js";
+import type { runHeartbeatOnceCore } from "./heartbeat-runner-run.js";
 import { isConfiguredHeartbeatAgent, isTargetedUnscheduledWake } from "./heartbeat-wake-policy.js";
 import {
   areHeartbeatsEnabled,
+  getHeartbeatWakeAbortSignal,
   HEARTBEAT_SKIP_NO_PENDING_EVENT,
   hasTrustedContinuationHeartbeatWake,
   type HeartbeatRunResult,
@@ -27,6 +29,8 @@ import {
   isRetryableHeartbeatSkipReason,
   setHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
+
+const loadHeartbeatExecution = createLazyRuntimeModule(() => import("./heartbeat-runner-run.js"));
 
 type HeartbeatAgentState = {
   agentId: string;
@@ -54,7 +58,7 @@ export function startHeartbeatRunnerScheduled(opts: {
   runOnce?: typeof runHeartbeatOnceCore;
 }): HeartbeatRunner {
   const runtime = opts.runtime ?? defaultRuntime;
-  const runOnce = opts.runOnce ?? runHeartbeatOnceCore;
+  const runOnce = opts.runOnce;
   // Cron owns monitor anchors and due slots; local cooldown only limits event
   // follow-ups. Persisted monitor ticks bypass it.
   const state = {
@@ -186,6 +190,7 @@ export function startHeartbeatRunnerScheduled(opts: {
     }
 
     const reason = params.reason;
+    const wakeSignal = getHeartbeatWakeAbortSignal();
     const intent = params.intent;
     const execEventWake = params.source === "exec-event";
     const requestedAgentId = params.agentId ? normalizeAgentId(params.agentId) : undefined;
@@ -252,7 +257,7 @@ export function startHeartbeatRunnerScheduled(opts: {
         ((isInterval || authoritativeScheduledTick) && !requestedSessionKey && !requestedHeartbeat);
       let res: HeartbeatRunResult;
       try {
-        res = await runOnce({
+        const runOptions: Parameters<typeof runHeartbeatOnceCore>[0] = {
           cfg: wakeConfig,
           agentId,
           heartbeat: useEnrolledHeartbeat
@@ -275,7 +280,19 @@ export function startHeartbeatRunnerScheduled(opts: {
             : {}),
           tasks: requestedTasks,
           deps: { runtime: state.runtime },
-        });
+        };
+        const execute = runOnce ?? (await loadHeartbeatExecution()).runHeartbeatOnceCore;
+        // Import can outlive this runner or its wake generation. The wake owner
+        // retains/requeues canceled work; a late loader must not dispatch it too.
+        if (
+          state.stopped ||
+          opts.abortSignal?.aborted ||
+          wakeSignal?.aborted ||
+          !areHeartbeatsEnabled()
+        ) {
+          return { ran: false, result: { status: "skipped", reason: "disabled" } };
+        }
+        res = await execute(runOptions);
       } catch (err) {
         const errMsg = formatErrorMessage(err);
         log.error(`heartbeat runner: runOnce threw unexpectedly: ${errMsg}`, {
@@ -405,3 +422,5 @@ export function startHeartbeatRunnerScheduled(opts: {
 
   return { stop: cleanup, updateConfig };
 }
+
+export { startHeartbeatRunnerScheduled as startHeartbeatRunner };

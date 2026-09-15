@@ -12,6 +12,7 @@ import {
 } from "../../infra/session-delivery-queue-storage.js";
 import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
 import { defaultRuntime } from "../../runtime.js";
+import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
 import { resolveContinuationRuntimeConfig } from "../continuation/config.js";
 import {
   assertStagedPostCompactionFinalizationComplete,
@@ -349,11 +350,14 @@ export async function drainPostCompactionDelegateDeliveries(params: {
   deliveryDeps?: PostCompactionDelegateDeliveryDeps;
 }): Promise<void> {
   const entryIds = new Set(params.entryIds ?? []);
+  const queueContext = captureOpenClawStateWorkerContext({
+    env: params.stateDir ? { ...process.env, OPENCLAW_STATE_DIR: params.stateDir } : process.env,
+  });
   await drainPendingSessionDeliveries({
     drainKey: `post-compaction-delegate:${params.sessionKey ?? "all"}`,
     logLabel: "post-compaction delegate",
     log: params.log ?? defaultRecoveryLog,
-    stateDir: params.stateDir,
+    queueContext,
     deliver: async (entry) => {
       if (entry.kind !== "postCompactionDelegate") {
         return;

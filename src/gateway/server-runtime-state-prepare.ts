@@ -123,6 +123,16 @@ export async function prepareGatewayKernelState(params: {
           registry: desktopSessionRegistry,
         })
       : undefined;
+  const gatewayComputerService = (
+    await startupTrace.measure(
+      "computer.runtime-import",
+      () => import("./desktop/computer-service.js"),
+    )
+  ).createGatewayComputerService({
+    getConfig: getRuntimeConfig,
+    getPluginRegistry: () => pluginRuntime.registry,
+    hostDesktopService,
+  });
   const workerEnvironmentRuntime = workerEnvironmentStartup
     ? await startupTrace.measure("worker-environments.runtime-imports", async () => {
         const workerModule = await loadWorkerEnvironmentStartupModule();
@@ -218,7 +228,16 @@ export async function prepareGatewayKernelState(params: {
           }),
         )
       : undefined;
-  if (workerPlacementRuntime) {
+  if (workerPlacementRuntime && workerEnvironmentService) {
+    const { createDevicePlacementDemandReader } =
+      await import("./worker-environments/device-placement-demand.js");
+    Object.assign(workerPlacementRuntime.dispatchService, {
+      getAdmittedDeviceSessionCounts: createDevicePlacementDemandReader({
+        resolveGatewayContext: resolvePluginGatewayContext,
+        placements: workerPlacementRuntime.placements,
+        environments: workerEnvironmentService,
+      }),
+    });
     bindNodeWorkspaceBindingResolver?.(workerPlacementRuntime.resolveNodeWorkspaceBinding);
     workerEnvironmentRuntime.bindWorkerSessionDispatch?.(
       workerPlacementRuntime.dispatchService.dispatch,
@@ -519,6 +538,7 @@ export async function prepareGatewayKernelState(params: {
     desktopSessionRegistry,
     nodeDesktopStreamBroker,
     hostDesktopService,
+    gatewayComputerService,
     channelLogs,
     channelRuntimeEnvs,
     listStartupChannelGatewayMethods,

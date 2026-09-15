@@ -69,6 +69,7 @@ export type SpawnSubagentParams = {
   context?: SpawnSubagentContextMode;
   lightContext?: boolean;
   expectsCompletionMessage?: boolean;
+  completionTarget?: "parent";
   attachments?: Array<{
     name: string;
     content: string;
@@ -108,6 +109,7 @@ export type SpawnSubagentResult = {
   mode?: SpawnSubagentMode;
   taskName?: string;
   expectsCompletionMessage?: boolean;
+  completionTarget?: "parent";
   note?: string;
   /** Fully resolved model ref applied to the spawned child session. */
   resolvedModel?: string;

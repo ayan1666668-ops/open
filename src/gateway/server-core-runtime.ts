@@ -99,6 +99,7 @@ export async function startGatewayCoreRuntime(input: {
     chatRunState,
     removeChatRun,
     agentRunSeq,
+    nodeHasSessionSubscribers,
     nodeSendToSession,
     runtimeState,
     kernel,
@@ -120,11 +121,18 @@ export async function startGatewayCoreRuntime(input: {
     workerPlacementControlAvailable,
     workerDesktopObserveAvailable,
     desktopSessionRegistry,
+    gatewayComputerService,
     listStartupChannelGatewayMethods,
     workerEnvironmentStartup,
     activateRuntimeSecrets,
   } = runtime;
-  runtime.registerGatewayLifetimeSidecars({ stop: () => desktopSessionRegistry.stopAll() });
+  runtime.registerGatewayLifetimeSidecars({
+    preparePluginReload: gatewayComputerService.preparePluginReload,
+    stop: async () => {
+      await gatewayComputerService.close();
+      await desktopSessionRegistry.stopAll();
+    },
+  });
   const secretEgressProxy =
     cfgAtStart.secrets?.egressProxy?.enabled === true
       ? await import("../secrets/egress-proxy/runtime.js").then((egressRuntime) =>
@@ -222,23 +230,31 @@ export async function startGatewayCoreRuntime(input: {
         import("./server-runtime-startup-services.js"),
       ]),
     );
-  const { sessionCompanion, sessionObserver, ...runtimeSubscriptionUnsubs } =
-    await startupTrace.measure("runtime.subscriptions", () =>
-      startGatewayEventSubscriptions({
-        log,
-        broadcast,
-        broadcastToConnIds,
-        nodeSendToSession,
-        agentRunSeq,
-        chatRunState,
-        toolEventRecipients,
-        sessionEventSubscribers,
-        sessionMessageSubscribers,
-        chatAbortControllers,
-        restartRecoveryCandidates,
-        terminalSessions,
-      }),
-    );
+  const {
+    sessionCompanion,
+    sessionObserver,
+    sessionActivitySummaries,
+    ...runtimeSubscriptionUnsubs
+  } = await startupTrace.measure("runtime.subscriptions", () =>
+    startGatewayEventSubscriptions({
+      signal: runtime.connectionWork.signal,
+      log,
+      broadcast,
+      broadcastToConnIds,
+      nodeHasSessionSubscribers,
+      nodeSendToSession,
+      agentRunSeq,
+      chatRunState,
+      toolEventRecipients,
+      sessionEventSubscribers,
+      sessionMessageSubscribers,
+      chatAbortControllers,
+      restartRecoveryCandidates,
+      terminalSessions,
+      refreshConnectedUserProfiles: () =>
+        runtime.resolvePluginGatewayContext()?.refreshConnectedUserProfile?.(),
+    }),
+  );
   Object.assign(runtimeState, runtimeSubscriptionUnsubs);
 
   await startupTrace.measure("runtime.services", () =>
@@ -251,7 +267,10 @@ export async function startGatewayCoreRuntime(input: {
   // expiry back through the owning manager to release its parked waiter once.
   const approvalManagersForReplay = new Map<
     string,
-    Pick<ExecApprovalManager, "reconcileDurableTerminal">
+    Pick<
+      ExecApprovalManager<unknown>,
+      "reconcileDurableTerminal" | "getLiveSnapshot" | "runtimeEpoch"
+    >
   >();
   const approvalSessionEvents = createOperatorApprovalSessionEventRuntime({
     clients,
@@ -262,6 +281,8 @@ export async function startGatewayCoreRuntime(input: {
       const manager = approvalManagersForReplay.get(record.kind);
       return manager?.reconcileDurableTerminal(record) ?? false;
     },
+    getLiveManager: (kind) => approvalManagersForReplay.get(kind),
+    isCurrent: () => !runtime.connectionWork.signal.aborted,
   });
   // One validator owns both request-time and manager-time checks. Worker claims
   // are always read from the authoritative operational placement store.
@@ -292,6 +313,8 @@ export async function startGatewayCoreRuntime(input: {
         log,
         chatAbortControllers,
         hasRunAbortMarker: (runId) => chatRunState.hasAbortMarker(runId),
+        getNativeApprovalRouteCoordinator: () =>
+          runtime.gatewayInstanceRuntimeRef.current?.nativeApprovals.routeCoordinator,
         // Grant terms freeze at mint. This reads the live config so a policy
         // change applies to grants minted after it, never retroactively.
         resolveGrantDefaultExpiresAtMs: (nowMs) => {
@@ -318,8 +341,11 @@ export async function startGatewayCoreRuntime(input: {
             delegatedAuthority: authority,
           }),
         onApprovalLifecycle: approvalSessionEvents.publish,
-        onAgentRunAuthorityClosed: (authority) => {
-          secretEgressProxy?.revokeRun(authority.operationalRunInstance);
+        onAgentRunAuthorityClosed: (authority, approvalReason) => {
+          gatewayComputerService.revokeRunAuthority(authority);
+          if (!approvalReason) {
+            secretEgressProxy?.revokeRun(authority.operationalRunInstance);
+          }
         },
       }),
       coreGatewayHandlers: coreGatewayHandlersLocal,
@@ -500,6 +526,7 @@ export async function startGatewayCoreRuntime(input: {
     startEarlyRuntime,
     sessionCompanion,
     sessionObserver,
+    sessionActivitySummaries,
     approvalSessionEvents,
     execApprovalManager,
     questionManager,

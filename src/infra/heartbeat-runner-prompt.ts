@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readHeartbeatMonitorScratch } from "../cron/scratch-store.js";
 import { resolveCronJobsStorePathFromConfig } from "../cron/store.js";
 import { formatErrorMessage } from "./errors.js";
+import type { HeartbeatConfig } from "./heartbeat-config.js";
 import {
   buildCronEventPrompt,
   buildExecEventPrompt,
@@ -16,11 +17,10 @@ import {
   isHeartbeatDeliveryAwarenessEvent,
   isRelayableExecCompletionEvent,
 } from "./heartbeat-events-filter.js";
+import { heartbeatLog as log } from "./heartbeat-log.js";
 import {
-  heartbeatLog as log,
   resolveConfiguredHeartbeatPrompt,
   resolveHeartbeatResponseToolPrompt,
-  type HeartbeatConfig,
 } from "./heartbeat-runner-config.js";
 import { resolveHeartbeatSessionSelection } from "./heartbeat-runner-session.js";
 import {
@@ -195,6 +195,7 @@ export async function resolveHeartbeatPreflight(params: {
 
 type HeartbeatPromptResolution = {
   prompt: string;
+  hasTaskContinuation: boolean;
   hasExecCompletion: boolean;
   hasRelayableExecCompletion: boolean;
   hasCronEvents: boolean;
@@ -247,6 +248,9 @@ export function resolveHeartbeatRunPrompt(params: {
   const hasRelayableExecCompletion =
     params.canRelayToUser && execEvents.some((event) => isRelayableExecCompletionEvent(event.text));
   const hasCronEvents = cronEvents.length > 0;
+  const hasBackgroundTaskEvent =
+    params.preflight.session.inspectsRunQueue &&
+    genericEvents.some((event) => event.contextKey?.startsWith("task:"));
   if (params.scheduledTasks.length > 0) {
     const taskList = params.scheduledTasks
       .map((task) => `- ${task.name}: ${task.prompt}`)
@@ -262,6 +266,7 @@ ${completionInstruction}`;
     const prompt = appendHeartbeatScratch(taskPrompt, params.heartbeatScratchContent);
     return {
       prompt,
+      hasTaskContinuation: hasBackgroundTaskEvent,
       hasExecCompletion: false,
       hasRelayableExecCompletion: false,
       hasCronEvents: false,
@@ -297,6 +302,10 @@ ${completionInstruction}`;
   );
   return {
     prompt: basePromptWithDirectives,
+    hasTaskContinuation:
+      hasExecCompletion ||
+      hasBackgroundTaskEvent ||
+      cronEvents.some((event) => event.contextKey?.startsWith("task:")),
     hasExecCompletion,
     hasRelayableExecCompletion,
     hasCronEvents,

@@ -1,17 +1,18 @@
 import { computeBackoff } from "../../packages/retry/src/index.js";
 // Persists queued session deliveries for retry and recovery.
 import type { SessionPostCompactionDelegate } from "../config/sessions/types.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
+import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
+import { runOpenClawStateWorkerOperation } from "../state/openclaw-state-worker-store.js";
 import { sha256Hex } from "./crypto-digest.js";
+import { bindDeliveryQueueEntry } from "./delivery-queue-sqlite-bound.js";
 import type { DeliveryQueueEntryLoadResult } from "./delivery-queue-sqlite-codec.js";
 import {
-  completeDeliveryQueueEntry,
   getDeliveryQueueEntryStatus,
   loadDeliveryQueueEntryResult,
   loadDeliveryQueueEntryResults,
-  moveDeliveryQueueEntryToFailed,
   terminalizePendingDeliveryQueueEntry,
   updateDeliveryQueueEntry,
-  upsertDeliveryQueueEntry,
   type DeliveryQueueEntryState,
 } from "./delivery-queue-sqlite.js";
 import { generateSecureUuid } from "./secure-random.js";
@@ -24,10 +25,24 @@ import {
   normalizeQueuedSessionDeliveryTraceparent,
   normalizeSessionDeliveryForPersistence,
   type QueuedSessionDelivery as CoreQueuedSessionDelivery,
-  type QueuedSessionDeliveryPayload as CoreQueuedSessionDeliveryPayload,
   type SessionDeliveryContext,
   type SessionDeliverySettledOutcome,
 } from "./session-delivery-queue-codec.js";
+import {
+  SESSION_DELIVERY_QUEUE_NAME,
+  SessionDeliveryAcknowledgementFinalizeError,
+  SessionDeliveryAttemptStartError,
+  SessionDeliveryDeadLetteredError,
+  SessionDeliveryDeferredError,
+  SessionDeliveryRetryChargedError,
+  SessionDeliverySafeRetryError,
+  type QueuedSessionDelivery,
+  type QueuedSessionDeliveryPayload,
+} from "./session-delivery-queue.records.js";
+import type {
+  SessionDeliveryAgentRunUpdate,
+  SessionDeliveryWorkerOperations,
+} from "./session-delivery-queue.worker-contract.js";
 
 export type {
   DelegateArtifactDeliveryReceipt,
@@ -36,23 +51,62 @@ export type {
   SessionDeliverySettledOutcome,
 } from "./session-delivery-queue-codec.js";
 
-export type QueuedSessionDeliveryPayload =
-  | (Extract<CoreQueuedSessionDeliveryPayload, { kind: "systemEvent" }> & {
-      /** Recipient agent that exclusively owns this durable system event. */
-      agentId?: string;
-    })
-  | Exclude<CoreQueuedSessionDeliveryPayload, { kind: "systemEvent" }>;
+export {
+  SESSION_DELIVERY_QUEUE_NAME,
+  SessionDeliveryAcknowledgementFinalizeError,
+  SessionDeliveryAttemptStartError,
+  SessionDeliveryDeadLetteredError,
+  SessionDeliveryDeferredError,
+  SessionDeliveryRetryChargedError,
+  SessionDeliverySafeRetryError,
+};
 
-type SessionDeliveryStorageFields = { retainOnFailure?: true };
+export type { QueuedSessionDelivery, QueuedSessionDeliveryPayload };
 
-export type QueuedSessionDelivery =
-  | (Extract<CoreQueuedSessionDelivery, { kind: "systemEvent" }> &
-      SessionDeliveryStorageFields & { agentId?: string })
-  | (Exclude<CoreQueuedSessionDelivery, { kind: "systemEvent" }> & SessionDeliveryStorageFields);
+type SessionDeliveryQueueHandle = OpenClawStateWorkerContext | string | undefined;
 
-// Session delivery queue persists session-scoped messages until channel
-// delivery acknowledges them or recovery exhausts retry policy.
-export const SESSION_DELIVERY_QUEUE_NAME = "session";
+function isWorkerContext(value: SessionDeliveryQueueHandle): value is OpenClawStateWorkerContext {
+  return typeof value === "object" && value !== null && "admission" in value;
+}
+
+function resolveQueueContext(handle: SessionDeliveryQueueHandle): OpenClawStateWorkerContext {
+  if (isWorkerContext(handle)) {
+    return handle;
+  }
+  return captureOpenClawStateWorkerContext({
+    env: handle ? { ...process.env, OPENCLAW_STATE_DIR: handle } : process.env,
+  });
+}
+
+function resolveStateDir(handle: SessionDeliveryQueueHandle): string | undefined {
+  if (typeof handle === "string") {
+    return handle;
+  }
+  if (isWorkerContext(handle)) {
+    return handle.environment.OPENCLAW_STATE_DIR;
+  }
+  return undefined;
+}
+
+function executeSessionDelivery<Key extends keyof SessionDeliveryWorkerOperations>(
+  context: OpenClawStateWorkerContext,
+  command: { type: Key; input: SessionDeliveryWorkerOperations[Key]["input"] },
+): Promise<SessionDeliveryWorkerOperations[Key]["output"]> {
+  // A settled write remains authoritative if its captured owner closes while returning the result.
+  return runOpenClawStateWorkerOperation(context, (scope) => scope.execute(command));
+}
+
+function prepareEntry(
+  entry: QueuedSessionDelivery,
+  mode: "insert" | "update",
+): ReturnType<typeof bindDeliveryQueueEntry> {
+  // Preserve the JSON persistence boundary before the transport serializes its input.
+  return bindDeliveryQueueEntry({
+    queueName: SESSION_DELIVERY_QUEUE_NAME,
+    entry,
+    ...(mode === "insert" ? { insertOnly: true } : { updatePendingOnly: true }),
+  });
+}
 
 function failInvalidSessionDelivery(params: {
   entry: { id: string; enqueuedAt: number; retryCount: number };
@@ -77,7 +131,7 @@ function failInvalidSessionDelivery(params: {
   });
 }
 
-type SessionDeliveryStorageEnvelope = SessionDeliveryStorageFields & { agentId?: string };
+type SessionDeliveryStorageEnvelope = { retainOnFailure?: true; agentId?: string };
 
 function splitSessionDeliveryStorageEnvelope(entry: DeliveryQueueEntryState): {
   coreEntry: DeliveryQueueEntryState;
@@ -137,35 +191,11 @@ export function prepareClaimedSessionDelivery(
   return normalizeSessionDeliveryForStorage({
     ...payload,
     retainOnFailure: true,
-    id: buildEntryId(params.idempotencyKey),
+    id: buildEntryId(payload.idempotencyKey),
     enqueuedAt: now,
     retryCount: 0,
     availableAt: now + Math.max(0, initialAttemptLeaseMs),
   });
-}
-
-export class SessionDeliveryDeferredError extends Error {
-  override name = "SessionDeliveryDeferredError";
-}
-
-/** Signals that retry budget was already persisted before a later transition failed. */
-export class SessionDeliveryRetryChargedError extends Error {
-  override name = "SessionDeliveryRetryChargedError";
-}
-
-/** Signals that durable pre-delivery ownership could not be established. */
-export class SessionDeliveryAttemptStartError extends Error {
-  override name = "SessionDeliveryAttemptStartError";
-}
-
-/** Signals that delivery proved no external or transcript side effect committed. */
-export class SessionDeliverySafeRetryError extends Error {
-  override name = "SessionDeliverySafeRetryError";
-}
-
-/** Signals that recovery must settle this pending row as failed without replaying delivery. */
-export class SessionDeliveryDeadLetteredError extends Error {
-  override name = "SessionDeliveryDeadLetteredError";
 }
 
 function buildEntryId(idempotencyKey?: string): string {
@@ -258,9 +288,9 @@ export function buildPostCompactionDelegateDeliveryPayload(params: {
 /** Enqueue a session delivery and return its durable id. */
 export async function enqueueSessionDelivery(
   params: QueuedSessionDeliveryPayload,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<string> {
-  return (await enqueueSessionDeliveryWithStatus(params, stateDir)).id;
+  return (await enqueueSessionDeliveryWithStatus(params, handle)).id;
 }
 
 /**
@@ -280,11 +310,10 @@ type SessionDeliveryEnqueueResult = {
 
 export async function enqueueSessionDeliveryWithStatus(
   params: QueuedSessionDeliveryPayload,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<SessionDeliveryEnqueueResult> {
   const payload = normalizeQueuedSessionDeliveryTraceparent(params);
   const id = buildEntryId(payload.idempotencyKey);
-
   const entry = normalizeSessionDeliveryForStorage({
     ...payload,
     ...(payload.completionRetention === "permanent" ? { retainOnFailure: true as const } : {}),
@@ -292,14 +321,12 @@ export async function enqueueSessionDeliveryWithStatus(
     enqueuedAt: Date.now(),
     retryCount: 0,
   });
-  upsertDeliveryQueueEntry({
-    queueName: SESSION_DELIVERY_QUEUE_NAME,
-    entry,
-    stateDir,
-    insertOnly: true,
+  const context = resolveQueueContext(handle);
+  const stateDir = resolveStateDir(handle);
+  await executeSessionDelivery(context, {
+    type: "sessionDelivery.enqueue",
+    input: prepareEntry(entry, "insert"),
   });
-  // The upsert deliberately never replaces valid pending/completed ownership,
-  // so read back the authoritative row state rather than assuming insertion.
   let status: SessionDeliveryEnqueueResult["status"];
   try {
     const current = getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
@@ -322,83 +349,55 @@ export async function enqueuePostCompactionDelegateDelivery(
     deliveryContext?: SessionDeliveryContext;
     idempotencyKey?: string;
   },
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<string> {
-  return await enqueueSessionDelivery(buildPostCompactionDelegateDeliveryPayload(params), stateDir);
+  return await enqueueSessionDelivery(buildPostCompactionDelegateDeliveryPayload(params), handle);
 }
 
 /** Enqueue and lease the first attempt to one caller before recovery can see it as eligible. */
 export async function enqueueClaimedSessionDelivery(
   params: QueuedSessionDeliveryPayload,
   initialAttemptLeaseMs: number,
-  stateDir?: string,
-): Promise<{
-  id: string;
-  claimed: boolean;
-  status: "pending" | "failed" | "completed" | "unknown";
-}> {
-  const entry = prepareClaimedSessionDelivery(params, initialAttemptLeaseMs);
-  const id = entry.id;
-  const claimed = upsertDeliveryQueueEntry({
-    queueName: SESSION_DELIVERY_QUEUE_NAME,
-    entry,
-    stateDir,
-    insertOnly: true,
+  handle?: SessionDeliveryQueueHandle,
+): Promise<SessionDeliveryWorkerOperations["sessionDelivery.enqueueClaimed"]["output"]> {
+  return executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.enqueueClaimed",
+    input: prepareEntry(prepareClaimedSessionDelivery(params, initialAttemptLeaseMs), "insert"),
   });
-  let status: "pending" | "failed" | "completed" | undefined;
-  try {
-    status = claimed
-      ? "pending"
-      : getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
-  } catch {
-    // The insert-only conflict already proved another durable owner existed.
-    // Preserve that ownership when diagnostics are temporarily unreadable.
-    return { id, claimed, status: "unknown" };
-  }
-  // Old databases may still delete an acknowledged row between the conflict
-  // and lookup. Treat that race like the explicit completed tombstone.
-  return { id, claimed, status: status ?? "completed" };
 }
 
 /** Release the initial-attempt lease so runtime recovery can retry immediately. */
-export async function releaseSessionDeliveryClaim(id: string, stateDir?: string): Promise<void> {
-  updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => ({
-    ...entry,
-    availableAt: Date.now(),
-  }));
+export async function releaseSessionDeliveryClaim(
+  id: string,
+  handle?: SessionDeliveryQueueHandle,
+): Promise<void> {
+  return executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.releaseClaim",
+    input: { id },
+  });
 }
 
 /** Defer a currently owned delivery without consuming its retry budget. */
 export async function deferSessionDelivery(
   id: string,
   delayMs: number,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<void> {
-  updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => ({
-    ...entry,
-    availableAt: Date.now() + Math.max(0, delayMs),
-  }));
+  return executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.defer",
+    input: { id, delayMs },
+  });
 }
 
 /** Advance only after a completed agent turn proves a fresh run is safe. */
 export async function advanceSessionDeliveryAgentRun(
   id: string,
-  updates?: { expectedMediaUrls?: string[]; message?: string; suppressTextDelivery?: boolean },
-  stateDir?: string,
+  updates?: SessionDeliveryAgentRunUpdate,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<void> {
-  updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => {
-    const queued = entry as QueuedSessionDelivery;
-    if (queued.kind !== "agentTurn") {
-      return queued;
-    }
-    return {
-      ...queued,
-      agentRunAttempt: (queued.agentRunAttempt ?? 0) + 1,
-      deliveryStartedAt: undefined,
-      ...(updates?.message ? { message: updates.message } : {}),
-      ...(updates?.expectedMediaUrls ? { expectedMediaUrls: updates.expectedMediaUrls } : {}),
-      ...(updates?.suppressTextDelivery === true ? { suppressTextDelivery: true as const } : {}),
-    };
+  return executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.advanceAgentRun",
+    input: { id, updates },
   });
 }
 
@@ -407,43 +406,28 @@ export async function mergeSessionDeliveryPreparedMediaBlocks(
   id: string,
   mediaUrl: string,
   blocks: Array<Record<string, unknown>>,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<Array<Record<string, unknown>>> {
-  let retained = blocks;
-  updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => {
-    // SAFETY: this queue namespace stores only QueuedSessionDelivery payloads.
-    const queued = entry as QueuedSessionDelivery;
-    if (queued.kind !== "agentTurn") {
-      return queued;
-    }
-    retained = queued.preparedMediaBlocks?.[mediaUrl] ?? blocks;
-    return {
-      ...queued,
-      // The first durable artifact identity wins if the same attempt is replayed.
-      preparedMediaBlocks: { ...queued.preparedMediaBlocks, [mediaUrl]: retained },
-    };
+  const result = await executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.mergePreparedMedia",
+    input: { id, mediaUrl, blocksJson: JSON.stringify(blocks) },
   });
-  return retained;
+  return result.source === "input" ? blocks : result.blocks;
 }
 
 /** Mark an agent turn before it can commit transcript or channel side effects. */
 export async function markSessionDeliveryAttemptStarted(
   entry: QueuedSessionDelivery,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<void> {
   try {
-    const started = upsertDeliveryQueueEntry({
-      queueName: SESSION_DELIVERY_QUEUE_NAME,
-      entry: {
-        ...entry,
-        deliveryStartedAt: entry.deliveryStartedAt ?? Date.now(),
-      } as QueuedSessionDelivery,
-      stateDir,
-      updatePendingOnly: true,
+    await executeSessionDelivery(resolveQueueContext(handle), {
+      type: "sessionDelivery.markAttemptStarted",
+      input: prepareEntry(
+        { ...entry, deliveryStartedAt: entry.deliveryStartedAt ?? Date.now() },
+        "update",
+      ),
     });
-    if (!started) {
-      throw new Error(`Session delivery ${entry.id} is no longer pending`);
-    }
   } catch (error) {
     throw new SessionDeliveryAttemptStartError(
       `Session delivery ${entry.id} could not persist attempt ownership`,
@@ -452,93 +436,72 @@ export async function markSessionDeliveryAttemptStarted(
   }
 }
 
-/** Signals that a delivered result still needs durable settlement finalization. */
-export class SessionDeliveryAcknowledgementFinalizeError extends Error {
-  constructor(id: string, options?: ErrorOptions) {
-    super(`Session delivery ${id} still needs settlement finalization`, options);
-    this.name = "SessionDeliveryAcknowledgementFinalizeError";
-  }
-}
-
 /** Persist terminal delivery state while retaining settlement cleanup metadata. */
 export async function markSessionDeliverySettlement(
   entry: QueuedSessionDelivery,
   outcome: SessionDeliverySettledOutcome,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<void> {
+  const settledEntry = scrubTerminalQueuedAttachments(entry);
   try {
-    const settledEntry = scrubTerminalQueuedAttachments(entry);
-    const settled = upsertDeliveryQueueEntry({
-      queueName: SESSION_DELIVERY_QUEUE_NAME,
-      entry: {
-        ...settledEntry,
-        settlementOutcome: outcome,
-        ...(outcome === "recovered"
-          ? { acknowledgedAt: settledEntry.acknowledgedAt ?? Date.now() }
-          : {}),
-      } as QueuedSessionDelivery,
-      stateDir,
-      updatePendingOnly: true,
+    await executeSessionDelivery(resolveQueueContext(handle), {
+      type: "sessionDelivery.markSettlement",
+      input: prepareEntry(
+        {
+          ...settledEntry,
+          settlementOutcome: outcome,
+          ...(outcome === "recovered"
+            ? { acknowledgedAt: settledEntry.acknowledgedAt ?? Date.now() }
+            : {}),
+        },
+        "update",
+      ),
     });
-    if (settled) {
-      return;
-    }
-    if (
-      getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, entry.id, stateDir) === "completed"
-    ) {
-      return;
-    }
-    throw new Error(`Session delivery ${entry.id} is no longer pending`);
   } catch (error) {
-    try {
-      if (
-        getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, entry.id, stateDir) === "completed"
-      ) {
-        return;
-      }
-    } catch {
-      // Unprovable state remains settlement finalization, never a delivery retry.
-    }
     throw new SessionDeliveryAcknowledgementFinalizeError(entry.id, { cause: error });
   }
 }
 
 /** Replace a settled pending row with its completed idempotency tombstone. */
-export async function completeSessionDelivery(id: string, stateDir?: string): Promise<void> {
+export async function completeSessionDelivery(
+  id: string,
+  handle?: SessionDeliveryQueueHandle,
+): Promise<void> {
   try {
-    completeDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
+    await executeSessionDelivery(resolveQueueContext(handle), {
+      type: "sessionDelivery.complete",
+      input: { id },
+    });
   } catch (error) {
-    try {
-      if (getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir) === "completed") {
-        return;
-      }
-    } catch {
-      // Unprovable state remains settlement finalization, never a delivery retry.
-    }
     throw new SessionDeliveryAcknowledgementFinalizeError(id, { cause: error });
   }
 }
 
 /** Acknowledge a delivered row and retain its completed idempotency tombstone. */
-export async function ackSessionDelivery(id: string, stateDir?: string): Promise<void> {
-  const entry = await loadPendingSessionDelivery(id, stateDir);
+export async function ackSessionDelivery(
+  id: string,
+  handle?: SessionDeliveryQueueHandle,
+): Promise<void> {
+  const entry = await loadPendingSessionDelivery(id, handle);
+  const stateDir = resolveStateDir(handle);
   if (!entry) {
     if (getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir) === "completed") {
       return;
     }
     throw new SessionDeliveryAcknowledgementFinalizeError(id);
   }
-  await markSessionDeliverySettlement(entry, "recovered", stateDir);
-  await completeSessionDelivery(id, stateDir);
+  await markSessionDeliverySettlement(entry, "recovered", handle);
+  await completeSessionDelivery(id, handle);
 }
 
 /** Record a failed delivery attempt and increment retry metadata. */
 export async function failSessionDelivery(
   id: string,
   error: string,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
   options?: { releaseAttemptOwnership?: boolean },
 ): Promise<void> {
+  const stateDir = resolveStateDir(handle);
   updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => {
     const queued = entry as QueuedSessionDelivery;
     const safeQueued =
@@ -573,24 +536,35 @@ export async function failSessionDelivery(
 /** Load one pending session delivery by durable id. */
 export async function loadPendingSessionDelivery(
   id: string,
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<QueuedSessionDelivery | null> {
+  const stateDir = resolveStateDir(handle);
   const result = loadDeliveryQueueEntryResult(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
   if (!result) {
+    if (isWorkerContext(handle)) {
+      handle.admission.assertCurrent();
+    }
     return null;
   }
   const decoded = decodeStoredSessionDeliveryResult(result);
   if (decoded.status === "invalid") {
     failInvalidSessionDelivery({ ...decoded, stateDir });
+    if (isWorkerContext(handle)) {
+      handle.admission.assertCurrent();
+    }
     return null;
+  }
+  if (isWorkerContext(handle)) {
+    handle.admission.assertCurrent();
   }
   return decoded.entry;
 }
 
 /** Load all pending session deliveries in retry order. */
 export async function loadPendingSessionDeliveries(
-  stateDir?: string,
+  handle?: SessionDeliveryQueueHandle,
 ): Promise<QueuedSessionDelivery[]> {
+  const stateDir = resolveStateDir(handle);
   const entries: QueuedSessionDelivery[] = [];
   for (const result of loadDeliveryQueueEntryResults(SESSION_DELIVERY_QUEUE_NAME, stateDir)) {
     const decoded = decodeStoredSessionDeliveryResult(result);
@@ -600,16 +574,29 @@ export async function loadPendingSessionDeliveries(
     }
     entries.push(decoded.entry);
   }
+  if (isWorkerContext(handle)) {
+    handle.admission.assertCurrent();
+  }
   return entries;
 }
 
 /** Move an exhausted session delivery out of the pending queue. */
-export async function moveSessionDeliveryToFailed(id: string, stateDir?: string): Promise<void> {
+export async function moveSessionDeliveryToFailed(
+  id: string,
+  handle?: SessionDeliveryQueueHandle,
+): Promise<void> {
+  const context = resolveQueueContext(handle);
   try {
-    moveDeliveryQueueEntryToFailed(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
+    await executeSessionDelivery(context, {
+      type: "sessionDelivery.moveToFailed",
+      input: { id },
+    });
   } catch (error) {
     try {
-      if (getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, stateDir) === "failed") {
+      if (
+        getDeliveryQueueEntryStatus(SESSION_DELIVERY_QUEUE_NAME, id, resolveStateDir(handle)) ===
+        "failed"
+      ) {
         return;
       }
     } catch {

@@ -1,6 +1,7 @@
 // Covers terminal session delivery queue recovery and retry exhaustion.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
 import { withTestDir } from "../test-helpers/temp-dir.js";
 
 const sleepMock = vi.hoisted(() => vi.fn<(ms: number) => Promise<void>>());
@@ -43,6 +44,9 @@ describe("session-delivery queue recovery", () => {
 
   it("settles entries moved to failed after startup retry exhaustion", async () => {
     await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+      const queueContext = captureOpenClawStateWorkerContext({
+        env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+      });
       const id = await enqueueSessionDelivery(
         {
           kind: "agentTurn",
@@ -60,13 +64,17 @@ describe("session-delivery queue recovery", () => {
       const summary = await recoverPendingSessionDeliveries({
         deliver,
         onSettled,
-        stateDir: tempDir,
+        queueContext,
         log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       });
 
       expect(deliver).not.toHaveBeenCalled();
       expect(summary.skippedMaxRetries).toBe(1);
-      expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ id }), "moved-to-failed");
+      expect(onSettled).toHaveBeenCalledWith(
+        expect.objectContaining({ id }),
+        "moved-to-failed",
+        queueContext,
+      );
       expect(await loadPendingSessionDeliveries(tempDir)).toEqual([]);
     });
   });
@@ -75,6 +83,9 @@ describe("session-delivery queue recovery", () => {
     "removes post-compaction snapshots after %s retry exhaustion",
     async (mode) => {
       await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+        const queueContext = captureOpenClawStateWorkerContext({
+          env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+        });
         const secret = `POST_COMPACTION_EXHAUSTED_${mode}`;
         const payload = buildPostCompactionDelegateDeliveryPayload({
           sessionKey: "agent:main:main",
@@ -95,14 +106,14 @@ describe("session-delivery queue recovery", () => {
             drainKey: "post-compaction-exhaustion",
             logLabel: "post-compaction exhaustion",
             deliver,
-            stateDir: tempDir,
+            queueContext,
             log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
             selectEntry: (entry) => ({ match: entry.id === id, bypassBackoff: true }),
           });
         } else {
           await recoverPendingSessionDeliveries({
             deliver,
-            stateDir: tempDir,
+            queueContext,
             log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
           });
         }
@@ -121,6 +132,9 @@ describe("session-delivery queue recovery", () => {
       }
       try {
         await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+          const queueContext = captureOpenClawStateWorkerContext({
+            env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+          });
           const id = await enqueueSessionDelivery(
             {
               kind: "agentTurn",
@@ -147,14 +161,14 @@ describe("session-delivery queue recovery", () => {
               drainKey: `test-started-exhausted-${mode}`,
               logLabel: "test started reconciliation",
               deliver,
-              stateDir: tempDir,
+              queueContext,
               log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
               selectEntry: (candidate) => ({ match: candidate.id === id, bypassBackoff: true }),
             });
           } else {
             const summary = await recoverPendingSessionDeliveries({
               deliver,
-              stateDir: tempDir,
+              queueContext,
               log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
             });
             expect(summary.skippedMaxRetries).toBe(0);
@@ -162,7 +176,7 @@ describe("session-delivery queue recovery", () => {
 
           expect(deliver).toHaveBeenCalledWith(
             expect.objectContaining({ id, deliveryStartedAt: expect.any(Number) }),
-            { stateDir: tempDir },
+            { queueContext },
           );
           expect(await loadPendingSessionDeliveries(tempDir)).toEqual([]);
         });
@@ -176,6 +190,9 @@ describe("session-delivery queue recovery", () => {
 
   it("dead-letters a started agent turn after its bounded reconciliation fails", async () => {
     await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+      const queueContext = captureOpenClawStateWorkerContext({
+        env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+      });
       const id = await enqueueSessionDelivery(
         {
           kind: "agentTurn",
@@ -201,7 +218,7 @@ describe("session-delivery queue recovery", () => {
           drainKey: "test-started-reconciliation-failed",
           logLabel: "test started reconciliation",
           deliver,
-          stateDir: tempDir,
+          queueContext,
           log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
           selectEntry: (candidate) => ({ match: candidate.id === id, bypassBackoff: true }),
         });
@@ -223,6 +240,9 @@ describe("session-delivery queue recovery", () => {
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
 
     await withTestDir({ prefix: "openclaw-session-delivery-" }, async (tempDir) => {
+      const queueContext = captureOpenClawStateWorkerContext({
+        env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+      });
       await enqueueSessionDelivery(
         {
           kind: "systemEvent",
@@ -246,7 +266,7 @@ describe("session-delivery queue recovery", () => {
       const deliver = vi.fn(async () => undefined);
       const summary = await recoverPendingSessionDeliveries({
         deliver,
-        stateDir: tempDir,
+        queueContext,
         maxEnqueuedAt,
         log: {
           info: vi.fn(),

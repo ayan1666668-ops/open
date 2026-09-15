@@ -95,6 +95,41 @@ export function loadTranscriptEventsSync(scope: SessionTranscriptReadScope): Tra
   return loadTranscriptReadSnapshotSync(scope).events;
 }
 
+/** Snapshot export payloads and their identity without opening the writable lifecycle. */
+export function readTranscriptExportSnapshotReadOnlySync(scope: SessionTranscriptReadScope) {
+  const resolved = resolveSqliteTranscriptReadScope(scope);
+  const result = withOpenClawAgentDatabaseReadOnly(
+    (database) =>
+      runSqliteDeferredTransactionSync(
+        database.db,
+        () => {
+          const fence = resolveSqliteSessionTranscriptReadFence({ database, ...resolved });
+          const sessionKey =
+            resolved.sessionKey ??
+            executeSqliteQueryTakeFirstSync(
+              database.db,
+              getSessionKysely(database.db)
+                .selectFrom("session_windows")
+                .select("session_key")
+                .where("session_id", "=", resolved.sessionId)
+                .limit(1),
+            )?.session_key;
+          return {
+            events: loadTranscriptEventsFromDatabase(database, resolved.sessionId, {
+              beforeEventSeq: fence?.beforeRawSeq,
+            }),
+            stats: readTranscriptStatsFromDatabase(database, resolved.sessionId),
+            sessionKey,
+          };
+        },
+        { operationLabel: "session transcript export snapshot" },
+      ),
+    toDatabaseOptions(resolved),
+    { throwOnMissingTable: true },
+  );
+  return result.found ? result.value : undefined;
+}
+
 /** Pair loaded bytes with the watermark that also fences opaque navigation edits. */
 export function loadTranscriptReadSnapshotSync(scope: SessionTranscriptReadScope): {
   events: TranscriptEvent[];
@@ -136,20 +171,6 @@ export function inspectTranscriptEventsSync(scope: SessionTranscriptReadScope): 
     {
       databaseLabel: database.path,
       operationLabel: "session transcript inspection",
-    },
-  );
-}
-
-/** Reads only the current transcript mutation fence without parsing transcript rows. */
-export function readTranscriptMutationAtSync(scope: SessionTranscriptReadScope): number | null {
-  const resolved = resolveSqliteTranscriptReadScope(scope);
-  const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  return runSqliteDeferredTransactionSync(
-    database.db,
-    () => readTranscriptMutationStateInTransaction(database, resolved.sessionId).updatedAt,
-    {
-      databaseLabel: database.path,
-      operationLabel: "session transcript mutation read",
     },
   );
 }

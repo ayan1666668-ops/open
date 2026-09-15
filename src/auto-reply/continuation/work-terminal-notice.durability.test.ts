@@ -25,6 +25,7 @@ import {
   enqueueSystemEventRaw as enqueueSystemEvent,
   peekSystemEvents,
 } from "../../infra/system-events.js";
+import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
 import {
   listTaskFlowRecords,
   reloadTaskFlowRegistryFromStore,
@@ -55,11 +56,15 @@ const RAW_DRIVER_ERROR =
  * mocked: the point of these tests is that the durable stores carry the notice.
  */
 function realDeps(stateDir: string) {
+  const queueContext = captureOpenClawStateWorkerContext({
+    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+  });
   return {
     enqueueSessionDeliveryWithStatus,
     scheduleSessionDelivery,
     enqueueSystemEvent,
     requestHeartbeatNow,
+    queueContext,
     stateDir,
   };
 }
@@ -216,14 +221,19 @@ function silentLog() {
  * startup recovery does. `deps` is unused by the systemEvent branch.
  */
 async function runProductionDeliveryRecovery(stateDir: string): Promise<void> {
+  const queueContext = captureOpenClawStateWorkerContext({
+    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+  });
   await recoverPendingSessionDeliveries({
-    deliver: (entry, context = {}) =>
+    deliver: (entry, context) =>
       deliverQueuedSessionDelivery({
         deps: {} as never,
         entry,
-        ...(context.stateDir !== undefined ? { stateDir: context.stateDir } : {}),
+        ...(context.queueContext.environment.OPENCLAW_STATE_DIR
+          ? { stateDir: context.queueContext.environment.OPENCLAW_STATE_DIR }
+          : {}),
       }),
-    stateDir,
+    queueContext,
     log: silentLog(),
   });
 }

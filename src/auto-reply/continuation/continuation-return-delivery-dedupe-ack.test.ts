@@ -12,7 +12,9 @@ function makeDeps(overrides: { enqueueSystemEvent: () => boolean }) {
   const enqueueSessionDelivery = vi.fn<ReturnDeliveryDeps["enqueueSessionDelivery"]>(
     async () => "delivery-id-1",
   );
-  const ackSessionDelivery = vi.fn(async (_id: string, _stateDir?: string): Promise<void> => {});
+  const ackSessionDelivery = vi.fn<NonNullable<ReturnDeliveryDeps["ackSessionDelivery"]>>(
+    async () => {},
+  );
   const enqueueSystemEvent = vi.fn<ReturnDeliveryDeps["enqueueSystemEvent"]>(() =>
     overrides.enqueueSystemEvent(),
   );

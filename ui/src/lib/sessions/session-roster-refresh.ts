@@ -174,7 +174,10 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
 
   const invalidateManagedLists = (
     agentId?: string | null,
-    row?: GatewaySessionRow,
+    row?: Pick<
+      GatewaySessionRow,
+      "key" | "agentId" | "controlOwnerSessionKey" | "parentSessionKey" | "spawnedBy"
+    >,
     sourceListScope?: SessionListScope,
   ) => {
     const matches = sessionListEventMatcher({ agentId, session: row });
@@ -529,6 +532,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     captureReconciliation: () => observations.captureReconciliation(++requestRevision),
     copyRow: observations.copyRow,
     inheritRow: observations.inheritRow,
+    mergeRow: observations.mergeRow,
     registerRow: observations.registerRow,
     currentRow: observations.currentRow,
     mergeRows: observations.mergeRows,
@@ -537,8 +541,10 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     isCurrentRow: observations.isCurrentRow,
     inherit: observations.inherit,
     observeReadRow: observations.observeReadRow,
+    observeReadRows: observations.observeReadRows,
     bindOwner: observations.bindOwner,
-    observeEvent: observations.observeEvent,
+    observeFields: observations.observeFields,
+    fieldObservation: observations.fieldObservation,
     stageObservedRows: observations.stageObservedRows,
     stageManagedResults: observations.stageManagedResults,
     stageRunTerminal: observations.stageRunTerminal,

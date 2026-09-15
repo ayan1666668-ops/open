@@ -286,7 +286,9 @@ export type SessionsPatchResult = SessionsPatchResultBase<{
   lastActivityAt?: number;
   lastInteractionAt?: number;
   permissionMode?: GatewaySessionRow["permissionMode"];
+  boardPresentation?: GatewaySessionRow["boardPresentation"];
   archivedAt?: number;
+  archivedBy?: GatewaySessionRow["archivedBy"];
   archiveReason?: SessionEntryArchiveReason;
   /** Present only while an explicit mark-unread marker owns the row. */
   markedUnreadAt?: number;

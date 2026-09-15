@@ -22,6 +22,10 @@ describe("channel ingress drain lifecycle", () => {
       onDeferred: () => {
         calls.push("deferred");
       },
+      onDeferredHeartbeat: () => {
+        calls.push("heartbeat");
+      },
+      deferredHeartbeatIntervalMs: 1_234,
       onAbandoned: () => {
         calls.push("abandoned");
       },
@@ -30,6 +34,7 @@ describe("channel ingress drain lifecycle", () => {
     expect(bound.turnAdoptionLifecycle).toMatchObject({
       admission: "exclusive",
       abortSignal: abort.signal,
+      deferredHeartbeatIntervalMs: 1_234,
     });
     expect("onFailed" in bound.turnAdoptionLifecycle).toBe(false);
     expect("onCancelled" in bound.turnAdoptionLifecycle).toBe(true);
@@ -40,8 +45,9 @@ describe("channel ingress drain lifecycle", () => {
     expect(calls).toEqual(["deferred", "cancelled"]);
     calls.length = 0;
     bound.turnAdoptionLifecycle.onDeferred();
+    bound.turnAdoptionLifecycle.onDeferredHeartbeat?.();
     await bound.turnAdoptionLifecycle.onAbandoned();
-    expect(calls).toEqual(["deferred", "abandoned"]);
+    expect(calls).toEqual(["deferred", "heartbeat", "abandoned"]);
     calls.length = 0;
     bound.turnAdoptionLifecycle.onDeferred();
     await bound.turnAdoptionLifecycle.onAdopted();

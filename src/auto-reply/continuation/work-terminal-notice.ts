@@ -33,6 +33,8 @@ import { scheduleSessionDelivery } from "../../infra/session-delivery-queue-runt
 import { enqueueSessionDeliveryWithStatus } from "../../infra/session-delivery-queue-storage.js";
 import { enqueueSystemEventRaw as enqueueSystemEvent } from "../../infra/system-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
+import type { OpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.types.js";
 import type { PendingContinuationWork } from "./work-flow-state.js";
 import {
   clearPendingTerminalNotice,
@@ -60,6 +62,7 @@ type ContinuationWorkTerminalNoticeDeps = {
   scheduleSessionDelivery: typeof scheduleSessionDelivery;
   enqueueSystemEvent: typeof enqueueSystemEvent;
   requestHeartbeatNow: typeof requestHeartbeatNow;
+  queueContext?: OpenClawStateWorkerContext;
   stateDir?: string;
 };
 
@@ -90,6 +93,11 @@ export async function deliverPendingTerminalNotice(
   if (!pending) {
     return false;
   }
+  const queueContext =
+    deps.queueContext ??
+    captureOpenClawStateWorkerContext({
+      env: deps.stateDir ? { ...process.env, OPENCLAW_STATE_DIR: deps.stateDir } : process.env,
+    });
   const enqueued = await deps.enqueueSessionDeliveryWithStatus(
     {
       kind: "systemEvent",
@@ -100,7 +108,7 @@ export async function deliverPendingTerminalNotice(
       // adopts it; see the delivery path's plain-event deferral.
       awaitPromptAdoption: true,
     },
-    deps.stateDir,
+    queueContext,
   );
   if (enqueued.status === "unknown") {
     // The authoritative read was inconclusive, so this row may already be a
@@ -140,7 +148,7 @@ export async function deliverPendingTerminalNotice(
   // Startup scans the delivery queue before continuation recovery runs, so a
   // row created here would otherwise carry no timer and wait for unrelated
   // traffic. Arm it explicitly and wake the target.
-  await deps.scheduleSessionDelivery(enqueued.id);
+  await deps.scheduleSessionDelivery(enqueued.id, queueContext);
   deps.requestHeartbeatNow(
     markTrustedContinuationHeartbeatWake({
       sessionKey: pending.sessionKey,

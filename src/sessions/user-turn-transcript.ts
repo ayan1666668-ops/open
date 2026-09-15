@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import type { Result } from "@openclaw/normalization-core/result";
+import type { AgentRunTerminalOutcome } from "../agents/agent-run-terminal-outcome.types.js";
 import {
   bindSessionPendingInputSources,
   persistSessionTranscriptTurn,
   stageSessionPendingInput,
   withSessionPendingInputPersistence,
   readActiveTranscriptEntryAnchor,
+  resolveSessionTranscriptRuntimeTarget,
   type TranscriptEntryAnchor,
   type SessionTranscriptTurnPersistOptions,
 } from "../config/sessions/session-accessor.js";
@@ -195,6 +198,7 @@ export function createUserTurnTranscriptRecorder(
   let replacementText: string | undefined;
   let confirmedSteerTargetRunId: string | undefined;
   let pendingInput: Awaited<ReturnType<typeof stageSessionPendingInput>>;
+  let processingCompletion: Result<AgentRunTerminalOutcome, unknown> | undefined;
   let staging: Promise<boolean> | undefined;
   const replacementSessionDeliveryAckIds = new Set<string>();
   let hasReplacementSessionDeliveryAckIds = false;
@@ -549,6 +553,13 @@ export function createUserTurnTranscriptRecorder(
       return message;
     },
     resolveMessage: resolveMessageForPersistence,
+    assertOriginalInputCommit: params.assertOriginalInputCommit
+      ? () => {
+          if (!blocked && !persisted && !runtimePersisted && !pendingInput) {
+            params.assertOriginalInputCommit!();
+          }
+        }
+      : undefined,
     stageApproved: (options) => {
       staging ??= (async () => {
         const candidate = await resolveMessageForPersistence();
@@ -556,17 +567,23 @@ export function createUserTurnTranscriptRecorder(
         if (!candidate || !target || persisted || runtimePersisted) {
           return false;
         }
-        pendingInput = await stageSessionPendingInput(target, {
-          ...options,
-          requestFingerprint: params.pendingInputRequestFingerprint,
-          message: candidate,
-          config: target.config as SessionTranscriptTurnPersistOptions["config"],
-          prepareMessageAfterIdempotencyCheck: (next) =>
-            preparePersistedUserTurnMessageForTranscriptWrite(next, {
-              ...target,
-              beforeMessageWrite: params.beforeMessageWrite ?? target.beforeMessageWrite,
-            }),
-        });
+        const config = target.config as SessionTranscriptTurnPersistOptions["config"];
+        const runtimeTarget = await resolveSessionTranscriptRuntimeTarget(target, config);
+        pendingInput = await stageSessionPendingInput(
+          { ...target, ...runtimeTarget },
+          {
+            ...options,
+            requestFingerprint: params.pendingInputRequestFingerprint,
+            trackCompletion: params.trackInputCompletion,
+            message: candidate,
+            config,
+            prepareMessageAfterIdempotencyCheck: (next) =>
+              preparePersistedUserTurnMessageForTranscriptWrite(next, {
+                ...target,
+                beforeMessageWrite: params.beforeMessageWrite ?? target.beforeMessageWrite,
+              }),
+          },
+        );
         if (!pendingInput) {
           return false;
         }
@@ -577,6 +594,27 @@ export function createUserTurnTranscriptRecorder(
       return staging;
     },
     getPendingInputMessage: () => pendingInput?.message,
+    getProcessingCompletion: () =>
+      processingCompletion?.ok ? processingCompletion.value : pendingInput?.completion,
+    completeProcessing: (outcome) => {
+      if (!pendingInput?.complete) {
+        return undefined;
+      }
+      // Abort records its terminal outcome before releasing the controller.
+      // Final publication reuses that committed result (or the original write
+      // failure), without trying another write under revoked ownership.
+      if (!processingCompletion) {
+        try {
+          processingCompletion = { ok: true, value: pendingInput.complete(outcome) };
+        } catch (error) {
+          processingCompletion = { ok: false, error };
+        }
+      }
+      if (!processingCompletion.ok) {
+        throw processingCompletion.error;
+      }
+      return processingCompletion.value;
+    },
     isPendingInputConsumed: () => pendingInput?.state === "consumed",
     withPendingInput: (run) => (pendingInput ? pendingInput.run(run) : run()),
     finishPendingInput: (disposition) => {

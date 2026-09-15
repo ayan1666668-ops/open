@@ -1,7 +1,7 @@
 /**
- * Pure subagent registry query helpers.
+ * Shared subagent registry query helpers.
  *
- * Keeps tree traversal and filtering independent from persistence and mutable process state.
+ * Combines snapshot traversal with current execution and reservation ownership.
  */
 import type { DeliveryContext } from "../../../utils/delivery-context.types.js";
 import { isDeliverySuspended } from "./subagent-delivery-state.js";
@@ -13,7 +13,8 @@ import {
 import {
   classifySubagentRunLiveness,
   hasSubagentRunEnded,
-  isLiveUnendedSubagentRun,
+  isRetainedUnendedSubagentRun,
+  isSubagentRunQueued,
   type SubagentRunLiveness,
 } from "./subagent-run-liveness.js";
 
@@ -82,13 +83,13 @@ export function listRunsForRequesterFromRuns(
 }
 
 /** Lists runs controlled by the normalized controller session key. */
-export function listRunsForControllerFromRuns(
-  runs: Map<string, SubagentRunRecord>,
+export function listRunsForControllerFromRuns<T extends SubagentRunReadRecord>(
+  runs: Map<string, T>,
   controllerSessionKey: string,
   controllerAgentId?: string,
-): SubagentRunRecord[] {
+): T[] {
   const key = controllerSessionKey.trim();
-  const results: SubagentRunRecord[] = [];
+  const results: T[] = [];
   if (!key) {
     return results;
   }
@@ -155,6 +156,22 @@ export function buildSubagentRunReadIndexFromRuns<T extends SubagentRunReadRecor
   const activeDescendantCountBySessionKey = new Map<string, number>();
   const pendingDescendantCountBySessionKey = new Map<string, number>();
 
+  const isRetainedReadRun = (entry: T): boolean => {
+    // Compact projections cannot own reservations. Correlate only read accounting
+    // with the matching process-local generation; the queue predicate still
+    // requires that exact raw object to own the current scheduler reservation.
+    const current = inMemoryDisplayByChildSessionKey.get(entry.childSessionKey.trim());
+    return (
+      isRetainedUnendedSubagentRun(entry, now) ||
+      (!hasSubagentRunEnded(entry) &&
+        entry.execution.status === "queued" &&
+        current !== undefined &&
+        current.requesterSessionKey === entry.requesterSessionKey &&
+        compareSubagentRunGeneration(current, entry) === 0 &&
+        isSubagentRunQueued(current))
+    );
+  };
+
   for (const entry of params.inMemoryRuns ?? []) {
     const childSessionKey = entry.childSessionKey.trim();
     if (!childSessionKey) {
@@ -183,7 +200,7 @@ export function buildSubagentRunReadIndexFromRuns<T extends SubagentRunReadRecor
     if (!childSessionKey) {
       continue;
     }
-    const displayRuns = isLiveUnendedSubagentRun(entry, now)
+    const displayRuns = isRetainedReadRun(entry)
       ? latestSnapshotActiveByChildSessionKey
       : latestSnapshotEndedByChildSessionKey;
     recordLatestSubagentRun(displayRuns, childSessionKey, entry);
@@ -254,7 +271,7 @@ export function buildSubagentRunReadIndexFromRuns<T extends SubagentRunReadRecor
     }
     let count = 0;
     forEachDescendantRun(root, (entry) => {
-      if (isLiveUnendedSubagentRun(entry, now)) {
+      if (isRetainedReadRun(entry)) {
         count += 1;
       }
     });
@@ -282,7 +299,7 @@ export function buildSubagentRunReadIndexFromRuns<T extends SubagentRunReadRecor
             options?.treatSuspendedDeliveryAsSettled === true &&
             isDeliveryTerminalForRequesterSettle(entry)
           )
-        : isLiveUnendedSubagentRun(entry, now);
+        : isRetainedReadRun(entry);
       if (runPending) {
         count += 1;
         if (options?.stopAtFirst === true) {
@@ -366,15 +383,6 @@ export function getLatestSubagentRunByChildSessionKeyFromRuns(
   return latest;
 }
 
-/** Returns whether the latest run for a child session is still live. */
-export function isSubagentSessionRunActiveFromRuns(
-  runs: Map<string, SubagentRunRecord>,
-  childSessionKey: string,
-): boolean {
-  const latest = getLatestSubagentRunByChildSessionKeyFromRuns(runs, childSessionKey);
-  return Boolean(latest && isLiveUnendedSubagentRun(latest));
-}
-
 /**
  * Three-state liveness of the latest run for a child session (orphan-reap).
  *
@@ -409,7 +417,7 @@ export function getSubagentRunByChildSessionKeyFromRuns(
     if (entry.childSessionKey !== key) {
       continue;
     }
-    if (isLiveUnendedSubagentRun(entry)) {
+    if (isRetainedUnendedSubagentRun(entry)) {
       if (!latestActive || compareSubagentRunGeneration(entry, latestActive) > 0) {
         latestActive = entry;
       }
@@ -531,7 +539,7 @@ export function countActiveRunsForSessionFromRuns(
 
   let count = 0;
   for (const entry of latestByChildSessionKey.values()) {
-    if (isLiveUnendedSubagentRun(entry)) {
+    if (isRetainedUnendedSubagentRun(entry)) {
       count += 1;
       continue;
     }

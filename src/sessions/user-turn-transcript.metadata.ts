@@ -88,7 +88,7 @@ export function buildPersistedUserTurnMetadata(
           },
         }
       : {}),
-    ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.transport ? { transport: structuredClone(input.transport) } : {}),
     ...(input.sessionDeliveryAckIds?.length
       ? { sessionDeliveryAckIds: [...new Set(input.sessionDeliveryAckIds)] }
       : {}),
@@ -253,7 +253,7 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
   // Hooks receive the original message object and may mutate nested metadata in
   // place. Snapshot transport correlation before handing them that reference.
   const originalTransportRecord = asOptionalRecord(originalTransport);
-  const transport = originalTransportRecord ? { ...originalTransportRecord } : undefined;
+  const transport = originalTransportRecord ? structuredClone(originalTransportRecord) : undefined;
   const nextMessage = applyTranscriptSenderIdentityToWrite(message, () =>
     params.beforeMessageWrite!({
       message,

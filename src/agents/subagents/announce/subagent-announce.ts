@@ -106,6 +106,7 @@ export type SubagentAnnounceFlowParams = {
   childSessionKey: string;
   childAgentId?: string;
   childRunId: string;
+  runTimeoutSeconds?: number;
   requesterSessionKey: string;
   requesterAgentId?: string;
   requesterOrigin?: DeliveryContext;
@@ -127,6 +128,8 @@ export type SubagentAnnounceFlowParams = {
   outcome?: SubagentRunOutcome;
   announceType?: SubagentAnnounceType;
   expectsCompletionMessage?: boolean;
+  completionTarget?: "parent";
+  completionRequesterSessionId?: string;
   spawnMode?: SpawnSubagentMode;
   wakeOnDescendantSettle?: boolean;
   /** Deliver only frozen terminal facts; never inspect or mutate the child session. */
@@ -252,6 +255,7 @@ async function runSubagentAnnounceFlowBound(
     );
 
     let childCompletionFindings: string | undefined;
+    let hasPrivateChildCompletion = false;
     let subagentRegistryRuntime:
       | Awaited<ReturnType<typeof subagentAnnounceDeps.loadSubagentRegistryRuntime>>
       | undefined;
@@ -265,6 +269,7 @@ async function runSubagentAnnounceFlowBound(
           // child, so dropping here strands a completed grandchild before the
           // targeted-return router can deliver to the root.
           if (
+            params.completionTarget !== "parent" &&
             !hasTargeting &&
             !managedArtifactReturn &&
             shouldIgnorePostCompletionAnnounceForSession(targetRequesterSessionKey)
@@ -272,6 +277,10 @@ async function runSubagentAnnounceFlowBound(
             return "delivered";
           }
           if (!hasUsableSessionEntry(readSessionEntryByKey(targetRequesterSessionKey))) {
+            if (params.completionTarget === "parent") {
+              shouldDeleteChildSession = false;
+              return "retryable";
+            }
             const fallback = resolveRequesterForChildSession(targetRequesterSessionKey);
             if (!fallback?.requesterSessionKey) {
               shouldDeleteChildSession = false;
@@ -302,14 +311,16 @@ async function runSubagentAnnounceFlowBound(
           requesterRunId: params.childRunId,
         });
         if (Array.isArray(directChildren) && directChildren.length > 0) {
-          childCompletionFindings = buildChildCompletionFindings(
-            dedupeLatestChildCompletionRows(
-              filterCurrentDirectChildCompletionRows(directChildren, {
-                requesterSessionKey: params.childSessionKey,
-                getLatestSubagentRunByChildSessionKey,
-              }),
-            ),
+          const completionRows = dedupeLatestChildCompletionRows(
+            filterCurrentDirectChildCompletionRows(directChildren, {
+              requesterSessionKey: params.childSessionKey,
+              getLatestSubagentRunByChildSessionKey,
+            }),
           );
+          hasPrivateChildCompletion = completionRows.some(
+            (entry) => entry.completionTarget === "parent",
+          );
+          childCompletionFindings = buildChildCompletionFindings(completionRows);
         }
       }
     } catch {
@@ -337,6 +348,7 @@ async function runSubagentAnnounceFlowBound(
         {
           runId: params.childRunId,
           childSessionKey: params.childSessionKey,
+          runTimeoutSeconds: params.runTimeoutSeconds,
           taskLabel: params.label || params.task || "task",
           findings: childCompletionFindings,
           announceId: wakeAnnounceId,
@@ -368,7 +380,7 @@ async function runSubagentAnnounceFlowBound(
       ? (normalizeSubagentAnnounceReply(fallbackReply ?? "") ?? undefined)
       : undefined;
 
-    if (!childCompletionFindings) {
+    if (!childCompletionFindings || hasPrivateChildCompletion) {
       if (params.terminalReply?.disposition === "silent") {
         if (!hasVisibleFallback && (isAnnounceSkip(fallbackReply) || !expectsCompletionMessage)) {
           return "delivered";
@@ -510,14 +522,10 @@ async function runSubagentAnnounceFlowBound(
     }
 
     const taskLabel = params.label || params.task || "task";
-    let findings = childCompletionFindings || reply || "(no output)";
-    if (
-      childCompletionFindings?.trim() &&
-      findings !== "(no output)" &&
-      findings !== childCompletionFindings
-    ) {
-      findings = `${findings}\n\n[Descendant completions]\n${childCompletionFindings}`;
-    }
+    // Private descendants belong to this parent. Only its own authored result
+    // may travel onward; raw descendant findings remain internal wake context.
+    const childResultText = hasPrivateChildCompletion ? reply : childCompletionFindings || reply;
+    let findings = childResultText || "(no output)";
     const continuationRuntime = await loadSubagentContinuationRuntime();
     failureStage = "terminal-token-admission";
     const continuation = await continuationRuntime.coordinateSubagentContinuation({
@@ -567,7 +575,7 @@ async function runSubagentAnnounceFlowBound(
       directOrigin = resolveAnnounceOrigin(entry, targetRequesterOrigin);
     }
     const candidateCompletionDirectOrigin =
-      expectsCompletionMessage && !requesterIsSubagent
+      expectsCompletionMessage && !requesterIsSubagent && params.completionTarget !== "parent"
         ? !childSessionEffectsAllowed()
           ? targetRequesterOrigin
           : await resolveSubagentCompletionOrigin({
@@ -590,13 +598,15 @@ async function runSubagentAnnounceFlowBound(
     const preserveModelRouteNotice =
       requesterIsSubagent || !completionChannel || !isDeliverableMessageChannel(completionChannel);
 
-    const statsLine = childSessionEffectsAllowed()
-      ? await buildCompactAnnounceStatsLine({
-          sessionKey: params.childSessionKey,
-          startedAt: params.startedAt,
-          endedAt: params.endedAt,
-        })
-      : undefined;
+    const candidateStatsLine =
+      params.completionTarget === "parent" || !childSessionEffectsAllowed()
+        ? undefined
+        : await buildCompactAnnounceStatsLine({
+            sessionKey: params.childSessionKey,
+            startedAt: params.startedAt,
+            endedAt: params.endedAt,
+          });
+    const statsLine = childSessionEffectsAllowed() ? candidateStatsLine : undefined;
     const finalizedArtifactProjections =
       "projections" in artifactFinalization ? artifactFinalization.projections : undefined;
     let artifactProjections: Map<string, DelegateArtifactRecipientProjectionV1> | undefined;
@@ -625,12 +635,14 @@ async function runSubagentAnnounceFlowBound(
         requesterIsSubagent,
         announceType,
         expectsCompletionMessage,
+        completionTarget: params.completionTarget,
         childSessionKey: params.childSessionKey,
         childSessionId: announceSessionId,
         requesterSessionKey: targetRequesterSessionKey,
         taskLabel,
         outcome,
         findings,
+        noVisibleResult: !childResultText && findings === "(no output)",
         statsLine,
         modelRouteChange,
         preserveModelRouteNotice,
@@ -693,16 +705,10 @@ async function runSubagentAnnounceFlowBound(
     const delivery = await deliverSubagentAnnouncement({
       requesterSessionKey: targetRequesterSessionKey,
       requesterAgentId: targetRequesterAgentId,
-      announceId,
       triggerMessage,
       steerMessage: triggerMessage,
       internalEvents,
-      summaryLine: taskLabel,
       requesterSessionOrigin: targetRequesterOrigin,
-      requesterOrigin:
-        expectsCompletionMessage && !requesterIsSubagent
-          ? completionDirectOrigin
-          : targetRequesterOrigin,
       completionDirectOrigin,
       directOrigin,
       sourceSessionKey: params.childSessionKey,
@@ -713,6 +719,8 @@ async function runSubagentAnnounceFlowBound(
       targetRequesterSessionKey,
       requesterIsSubagent,
       expectsCompletionMessage,
+      completionTarget: params.completionTarget,
+      completionRequesterSessionId: params.completionRequesterSessionId,
       bestEffortDeliver: params.bestEffortDeliver,
       directIdempotencyKey,
       onDeliveryResult: reportDeliveryResult,

@@ -84,6 +84,7 @@ export async function wakeSubagentRunAfterDescendants(
   params: {
     runId: string;
     childSessionKey: string;
+    runTimeoutSeconds?: number;
     taskLabel: string;
     findings: string;
     announceId: string;
@@ -227,6 +228,7 @@ export async function wakeSubagentRunAfterDescendants(
             sessionKey: params.childSessionKey,
             message: wakeMessage,
             deliver: false,
+            timeout: params.runTimeoutSeconds ?? 0,
             inputProvenance: {
               kind: "inter_session",
               sourceSessionKey: params.childSessionKey,

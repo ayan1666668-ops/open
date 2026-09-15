@@ -25,6 +25,7 @@ export type OpenClawToolsOptions = {
   sandboxBrowserBridgeUrl?: string;
   allowHostBrowserControl?: boolean;
   agentSessionKey?: string;
+  gatewayUiCommandTarget?: import("../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
   toolBindings?: Readonly<Record<string, unknown>>;
   /** Durable store key when it differs from the sandbox/policy session key. */
   runSessionKey?: string;
@@ -132,6 +133,12 @@ export type OpenClawToolsOptions = {
   disableMessageTool?: boolean;
   swarmCollector?: boolean;
   swarmOutputSchema?: Record<string, unknown>;
+  /**
+   * Re-checked immediately before a collector result is persisted. Supplied by
+   * callers whose collector authority can be revoked while a tool call is
+   * already in flight.
+   */
+  assertCollectorWriteAuthority?: () => void;
   /** If true, include the heartbeat response tool for structured heartbeat outcomes. */
   enableHeartbeatTool?: boolean;
   /** If true, skip plugin tool resolution and return only shipped core tools. */
@@ -186,6 +193,8 @@ export type OpenClawToolsOptions = {
     getContextUsage: () => number | null;
     triggerCompaction: RequestCompactionToolOpts["triggerCompaction"];
   };
+  /** Prepared exec/process isolation key for this run. */
+  processScopeKey?: string;
   /** Allow plugin tools for this tool set to late-bind the gateway subagent. */
   allowGatewaySubagentBinding?: boolean;
 } & SpawnedToolContext &

@@ -665,25 +665,15 @@ async function runLoop(
       );
       const { message } = streamed;
 
-      if (message.stopReason === "error" || message.stopReason === "aborted") {
-        await emit({
-          type: "turn_end",
-          message,
-          toolResults: streamed.batches.flatMap((batch) => batch.messages),
-        });
-        if (message.stopReason === "aborted" && signal?.aborted && !isTurnHandoffAbort(signal)) {
-          await appendInterruptedTurnMessage(newMessages, emit);
-        }
-        await emit({ type: "agent_end", messages: newMessages });
-        return newMessages;
-      }
-
-      const remainingToolCalls = message.content.filter(
-        (item): item is AgentToolCall =>
-          item.type === "toolCall" &&
-          !streamed.executedIds.has(item.id) &&
-          (message.stopReason === "toolUse" || item.async === true),
-      );
+      const providerFailed = message.stopReason === "error" || message.stopReason === "aborted";
+      const remainingToolCalls = providerFailed
+        ? []
+        : message.content.filter(
+            (item): item is AgentToolCall =>
+              item.type === "toolCall" &&
+              !streamed.executedIds.has(item.id) &&
+              (message.stopReason === "toolUse" || item.async === true),
+          );
       const terminalToolBatch =
         remainingToolCalls.length > 0
           ? await executeToolCalls(
@@ -731,20 +721,10 @@ async function runLoop(
       if (executedToolBatch?.fatal) {
         throw executedToolBatch.fatal.error;
       }
-      const repeatedToolError = observeRepeatedToolError({
-        state: repeatedToolErrorState,
-        assistantMessage: message,
-        toolResults,
-      });
-      if (repeatedToolError) {
-        const terminalMessage = createRepeatedToolErrorAssistantMessage(config, repeatedToolError);
-        newMessages.push(terminalMessage);
-        await emit({ type: "turn_start" });
-        turnOpen = true;
-        await emit({ type: "message_start", message: terminalMessage });
-        await emit({ type: "message_end", message: terminalMessage });
-        await emit({ type: "turn_end", message: terminalMessage, toolResults: [] });
-        turnOpen = false;
+      if (message.stopReason === "aborted") {
+        if (signal?.aborted && !isTurnHandoffAbort(signal)) {
+          await appendInterruptedTurnMessage(newMessages, emit);
+        }
         await emit({ type: "agent_end", messages: newMessages });
         return newMessages;
       }
@@ -761,6 +741,29 @@ async function runLoop(
           content: [{ type: "text" as const, text: TOOL_LOOP_RECOVERY_TERMINATED_MESSAGE }],
         };
         state.context.messages.push(terminalMessage);
+        newMessages.push(terminalMessage);
+        await emit({ type: "turn_start" });
+        turnOpen = true;
+        await emit({ type: "message_start", message: terminalMessage });
+        await emit({ type: "message_end", message: terminalMessage });
+        await emit({ type: "turn_end", message: terminalMessage, toolResults: [] });
+        turnOpen = false;
+        await emit({ type: "agent_end", messages: newMessages });
+        return newMessages;
+      }
+
+      if (providerFailed) {
+        await emit({ type: "agent_end", messages: newMessages });
+        return newMessages;
+      }
+
+      const repeatedToolError = observeRepeatedToolError({
+        state: repeatedToolErrorState,
+        assistantMessage: message,
+        toolResults,
+      });
+      if (repeatedToolError) {
+        const terminalMessage = createRepeatedToolErrorAssistantMessage(config, repeatedToolError);
         newMessages.push(terminalMessage);
         await emit({ type: "turn_start" });
         turnOpen = true;

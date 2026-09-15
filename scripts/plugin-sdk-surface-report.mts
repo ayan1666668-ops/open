@@ -203,7 +203,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: canonical node CLI owners for plugin-provided node commands.
       // +3: typed feature contracts, backend registration, and native Control UI hosting.
       // +1: public provider-owned asynchronous embedding batch contract.
-      153,
+      // +1: runtime-neutral WebSocket client/server adapter for bundled and external plugins.
+      154,
       env,
     ),
     publicExports: readPluginSdkSurfaceBudgetEnv(
@@ -371,9 +372,12 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: shared removed-model choice recovery text for channel consumers.
       // +2: shared stored-account key selection and its plugin-owned policy type.
       // +1: shared per-connection webhook request ordering for channel listeners.
+      // +1: approved shared widget CDN policy for core and channel presenters.
+      // +13: runtime-neutral WebSocket client/server, stream, data, and option contracts.
+      // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +17: continuation runtime, task-flow, trace, and channel-ingress contracts.
       // +5: final continuation system-event and diagnostic runtime contracts.
-      4483,
+      4499,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -510,9 +514,11 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: canonical env-value reader and managed SecretRef marker constructor.
       // +1: shared stored-account key selection for channel readers and writers.
       // +1: shared per-connection webhook request ordering for channel listeners.
+      // +4: runtime-neutral WebSocket client/server and stream constructors.
+      // +2: approved process-diagnostics predicate and lightweight subsystem logger.
       // +5: callable continuation and channel-ingress runtime helpers.
       // +2: plugin-safe system-event alias and diagnostic trace scope runner.
-      2645,
+      2651,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

@@ -6,6 +6,8 @@ export {
   assertNoSymlinkParents,
   assertNoSymlinkParentsSync,
   isUnsafeDeviceReadPath,
+  buildRandomTempFilePath,
+  probePathCaseInsensitiveSync,
   readFileHandleBounded,
   type FileIdentityStat,
   sameFileIdentity,

@@ -9,6 +9,7 @@ function buildAnnounceReplyInstruction(params: {
   requesterIsSubagent: boolean;
   announceType: SubagentAnnounceType;
   expectsCompletionMessage?: boolean;
+  completionTarget?: "parent";
   modelRouteChange?: string;
   preserveModelRouteNotice?: boolean;
 }): string {
@@ -17,6 +18,9 @@ function buildAnnounceReplyInstruction(params: {
     : params.preserveModelRouteNotice
       ? " Preserve any runtime-authored model-route change notice in your update."
       : " Keep runtime-authored model-route change notices internal on this shared surface.";
+  if (params.completionTarget === "parent") {
+    return `Process this result privately. Your final reply stays internal; no external response is required. Review the result, continue the task, or reply ONLY: ${SILENT_REPLY_TOKEN}.`;
+  }
   if (params.requesterIsSubagent) {
     return `Convert this completion into a concise internal orchestration update for your parent agent in your own words.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type). If this result is duplicate or no update is needed, reply ONLY: ${SILENT_REPLY_TOKEN}.`;
   }
@@ -37,12 +41,14 @@ export function buildSubagentAnnounceMessages(params: {
   requesterIsSubagent: boolean;
   announceType: SubagentAnnounceType;
   expectsCompletionMessage: boolean;
+  completionTarget?: "parent";
   childSessionKey: string;
   childSessionId: string;
   requesterSessionKey: string;
   taskLabel: string;
   outcome: SubagentRunOutcome;
   findings: string;
+  noVisibleResult?: boolean;
   statsLine?: string;
   modelRouteChange?: string;
   preserveModelRouteNotice?: boolean;
@@ -73,6 +79,7 @@ export function buildSubagentAnnounceMessages(params: {
     status: params.outcome.status,
     statusLabel,
     result: params.findings,
+    ...(params.noVisibleResult ? { noVisibleResult: true } : {}),
     modelRouteChange: params.modelRouteChange,
     statsLine: params.statsLine,
     replyInstruction,

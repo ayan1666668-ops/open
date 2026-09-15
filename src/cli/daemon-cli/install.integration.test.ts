@@ -15,6 +15,7 @@ import {
   mockSystemAccountHome,
 } from "../../daemon/service.test-helpers.js";
 import { buildSystemdUnit, parseSystemdExecStart } from "../../daemon/systemd-unit.js";
+import { systemdManagerVersionProbe } from "../../daemon/systemd-user-bus.test-support.js";
 import { makeTempWorkspace } from "../../test-helpers/workspace.js";
 import { captureEnv, withEnvAsync } from "../../test-utils/env.js";
 import { resolveTestNodeExecPath } from "../../test-utils/node-process.js";
@@ -66,6 +67,7 @@ vi.mock("../../runtime.js", () => ({
   defaultRuntime,
 }));
 
+const daemonExec = await import("../../daemon/exec-file.js");
 const { runDaemonInstall } = await import("./install.js");
 const { buildLaunchAgentPlist, readLaunchAgentProgramArgumentsFromFile } =
   await import("../../daemon/launchd-plist.js");
@@ -127,6 +129,7 @@ describe("runDaemonInstall integration", () => {
   beforeAll(async () => {
     envSnapshot = captureEnv([
       "HOME",
+      "DBUS_SESSION_BUS_ADDRESS",
       "OPENCLAW_STATE_DIR",
       "OPENCLAW_CONFIG_PATH",
       "OPENCLAW_GATEWAY_TOKEN",
@@ -137,6 +140,7 @@ describe("runDaemonInstall integration", () => {
     await fs.mkdir(tempHome);
     configPath = path.join(tempHome, "openclaw.json");
     process.env.HOME = accountHome;
+    process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${path.join(accountHome, "bus")}`;
     process.env.OPENCLAW_STATE_DIR = tempHome;
     process.env.OPENCLAW_CONFIG_PATH = configPath;
   });
@@ -154,6 +158,7 @@ describe("runDaemonInstall integration", () => {
     vi.clearAllMocks();
     mockSystemdUserSessionBus();
     mockSystemAccountHome();
+    vi.spyOn(daemonExec, "execFileUtf8").mockImplementation(systemdManagerVersionProbe);
     resetRuntimeCapture();
     clearRuntimeConfigSnapshot();
     // Keep these defined-but-empty so dotenv won't repopulate from local .env.
