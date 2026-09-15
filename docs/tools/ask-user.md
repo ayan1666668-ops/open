@@ -40,6 +40,12 @@ You can answer from any supported conversation surface:
   number, an option label, or your own answer. For multi-select questions,
   separate choices with commas.
 
+A Voice Call consult run shows no tool results in a chat, so it posts its
+question to the conversation that requested the call (for a call placed from a
+Telegram chat, that chat) and the question stays answerable from the surfaces
+above. A consult with no deliverable requesting conversation keeps the question
+in the Control UI, TUI, and native apps only.
+
 Questions from a standalone [attached MCP client](/cli/attach) do not carry an
 OpenClaw run's creator binding. Answer those using the question controls in the
 Control UI, TUI, or native app, not an ordinary channel message.

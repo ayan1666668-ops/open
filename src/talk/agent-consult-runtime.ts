@@ -8,6 +8,7 @@ import {
 import { resolveSessionAgentId } from "../agents/agent-scope.js";
 import type { RunEmbeddedAgentParams } from "../agents/embedded-agent-runner/run/params.js";
 import type { EmbeddedAgentRunMeta } from "../agents/embedded-agent-runner/types.js";
+import { createChannelQuestionPromptDelivery } from "../agents/tools/question-prompt-send.js";
 import type { ReplyToolAuthorityOverlay } from "../auto-reply/reply/reply-run-registry.contracts.js";
 import {
   buildSessionCreationStamp,
@@ -506,6 +507,15 @@ export async function consultRealtimeVoiceAgent(params: {
         ...toolAuthorityOverlay,
         // ASR voice ingress has no trace/client-tool or privileged handoff capability.
         messageProvider: toolAuthorityOverlay.messageProvider,
+        // The consult shows no tool results, so a blocking question must reach the
+        // conversation that requested the call on its own.
+        questionPrompt: createChannelQuestionPromptDelivery({
+          cfg: params.cfg,
+          channel: consultDeliveryContext?.channel,
+          to: consultDeliveryContext?.to,
+          accountId: consultDeliveryContext?.accountId,
+          threadId: consultDeliveryContext?.threadId,
+        }),
         messageTo: consultDeliveryContext?.to,
         messageThreadId: consultDeliveryContext?.threadId,
         currentChannelId: consultDeliveryContext?.to,
