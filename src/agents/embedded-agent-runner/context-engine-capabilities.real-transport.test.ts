@@ -6,18 +6,25 @@ import fs from "node:fs/promises";
 // acquisition to the real provider boundary. Every completion observation
 // here comes from an actual HTTP round trip against a local provider
 // fixture, not from a mocked completion owner.
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import { formatErrorMessage } from "../../infra/errors.js";
+import { resetPluginLoaderTestStateForTest } from "../../plugins/loader.test-fixtures.js";
+import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
+import { createColdPluginFixture } from "../../plugins/test-helpers/cold-plugin-fixtures.js";
 import {
   closeAdmittedRunDelegatedAuthority,
   prepareSystemAgentRunAdmission,
   resolveAdmittedRunActiveAssertion,
 } from "../admitted-run-context.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "../auth-profiles/runtime-snapshots.js";
+import { resetPreparedModelRuntimeSnapshotsForTest } from "../prepared-model-runtime.test-support.js";
 import { buildAfterTurnRuntimeContext } from "./run/attempt-prompt-helpers.js";
 
 const providerId = "fixture-real";
@@ -100,6 +107,10 @@ describe("context engine completion capability over real transport", () => {
   const tempPaths: string[] = [];
   let previousStateDir: string | undefined;
   let previousDisableBundled: string | undefined;
+  /** Optional per-case handler for the runtime auth-exchange route. */
+  let runtimeAuthExchangeHandler:
+    | ((request: IncomingMessage, response: ServerResponse) => boolean)
+    | undefined;
 
   const startServer = async (): Promise<number> => {
     server = createServer((request: IncomingMessage, response) => {
@@ -112,6 +123,9 @@ describe("context engine completion capability over real transport", () => {
           authorization: request.headers.authorization,
           body: Buffer.concat(chunks).toString("utf8"),
         });
+        if (runtimeAuthExchangeHandler?.(request, response)) {
+          return;
+        }
         // The isolated completion route answers with a different marker so the
         // two dispatch modes are distinguishable at the final I/O boundary.
         const text = requests.length % 2 === 0 ? isolatedText : directText;
@@ -175,6 +189,7 @@ describe("context engine completion capability over real transport", () => {
 
   beforeEach(() => {
     requests = [];
+    runtimeAuthExchangeHandler = undefined;
     previousStateDir = process.env.OPENCLAW_STATE_DIR;
     previousDisableBundled = process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS;
   });
@@ -191,7 +206,14 @@ describe("context engine completion capability over real transport", () => {
       process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = previousDisableBundled;
     }
     await new Promise<void>((resolve) => {
-      server?.close(() => resolve());
+      if (!server) {
+        resolve();
+        return;
+      }
+      server.close(() => resolve());
+      // A case that fails while an exchange response is held must not wedge
+      // the hook on close(): drop any lingering socket deterministically.
+      server.closeAllConnections?.();
     });
     server = undefined;
     await Promise.all(
@@ -292,5 +314,208 @@ describe("context engine completion capability over real transport", () => {
     expect(legacy?.text).toBe(directText);
     expect(requests.length).toBe(1);
     expect(requests[0]?.body).toContain("legacy recall probe");
+  }, 90_000);
+
+  it("rejects a preparing completion whose run authority is revoked during the real runtime auth exchange", async () => {
+    const root = await makeTempDir("openclaw-real-transport-revoke-");
+    const pluginDir = path.join(root, "plugin");
+    await fs.mkdir(pluginDir, { recursive: true });
+    const fixture = createColdPluginFixture({
+      rootDir: pluginDir,
+      pluginId: "real-transport-exchange-plugin",
+      providerId,
+    });
+    // The production runtime auth-exchange seam: this plugin owns the
+    // provider's runtime credential and exchanges it over real HTTP inside
+    // acquisition, exactly where the attempt flow suspends on awaited
+    // preparation work. Revoking run authority while that exchange is in
+    // flight must stop the completion before any provider dispatch.
+    const exchangeArrivals = [createDeferred(), createDeferred()];
+    const exchangeGates = [createDeferred(), createDeferred()];
+    let exchanges = 0;
+    await fs.writeFile(
+      fixture.runtimeSource,
+      `module.exports = { id: ${JSON.stringify(fixture.pluginId)}, register(api) {
+        api.registerProvider({
+          id: ${JSON.stringify(providerId)}, label: "Real transport exchange", auth: [],
+          async prepareRuntimeAuth(ctx) {
+            const response = await fetch(ctx.env.OPENCLAW_FIXTURE_RUNTIME_AUTH_URL + "/runtime-auth-exchange", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ sourceKey: ctx.apiKey }),
+            });
+            const payload = await response.json();
+            return { apiKey: payload.runtimeKey };
+          },
+        });
+      } };`,
+    );
+
+    const previousHome = process.env.OPENCLAW_HOME;
+    const previousBundledDir = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    const previousVersion = process.env.OPENCLAW_VERSION;
+    const previousExchangeUrl = process.env.OPENCLAW_FIXTURE_RUNTIME_AUTH_URL;
+
+    try {
+      process.env.OPENCLAW_HOME = path.join(root, "home");
+      process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = path.join(root, "bundled-plugins");
+      process.env.OPENCLAW_VERSION = "2026.4.25";
+      process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = "1";
+      runtimeAuthExchangeHandler = (request, response) => {
+        // Only the runtime auth-exchange route is intercepted; chat/completions
+        // must always take the normal fixture path so a buggy dispatch shows
+        // up as an assertion instead of a held socket.
+        if (!request.url?.includes("/runtime-auth-exchange")) {
+          return false;
+        }
+        exchanges += 1;
+        exchangeArrivals[exchanges - 1]?.resolve();
+        // Hold the exchange open until the test has revoked the admitting
+        // run, so the revocation deterministically lands while acquisition
+        // is suspended on real network work.
+        void Promise.race([
+          exchangeGates[exchanges - 1]!.promise,
+          new Promise((resolve) => {
+            setTimeout(resolve, 10_000);
+          }),
+        ]).then(() => {
+          if (response.destroyed || response.writableEnded) {
+            return;
+          }
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ runtimeKey: "exchanged-runtime-key" }));
+        });
+        return true;
+      };
+      const port = await startServer();
+      process.env.OPENCLAW_FIXTURE_RUNTIME_AUTH_URL = `http://127.0.0.1:${port}`;
+      process.env.OPENCLAW_STATE_DIR = path.join(root, "state");
+      const config: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: allowedModel,
+          },
+        },
+        models: {
+          providers: {
+            [providerId]: {
+              api: "openai-completions",
+              apiKey: "fixture-real-key",
+              baseUrl: `http://127.0.0.1:${port}/v1`,
+              models: fixtureModels,
+            },
+          },
+        },
+        plugins: {
+          load: { paths: [fixture.rootDir] },
+          entries: {
+            [fixture.pluginId]: {
+              enabled: true,
+              llm: { allowedCompletionModels: [allowedModel] },
+            },
+          },
+        },
+      };
+
+      const beginRevokedCompletion = (
+        runLabel: string,
+        probe: string,
+        execution?: { mode: string },
+      ) => {
+        const exchangeIndex = exchanges;
+        const admission = prepareSystemAgentRunAdmission(config, runLabel, "main", "test");
+        return admission.admit("embedded").then(async (admitted) => {
+          const assertActive = resolveAdmittedRunActiveAssertion(admitted);
+          const runtimeContext = await buildRecallRuntimeContext(
+            config,
+            fixture.pluginId,
+            assertActive,
+          );
+          // The agent's configured default model keeps this inside the owning
+          // plugin's completion allowlist without a model-override authority.
+          const pending = runtimeContext.llm?.complete?.({
+            messages: [{ role: "user", content: probe }],
+            ...(execution ? { execution } : {}),
+          } as never) as Promise<unknown>;
+          // Fail fast with a clear diagnosis if the completion settles before
+          // the exchange arrives: that would mean revocation was not observed
+          // during preparation at all.
+          const earlyFailure = pending.then(
+            () => {
+              throw new Error("completion resolved before the run authority was revoked");
+            },
+            (error: unknown) => {
+              throw new Error(
+                `completion rejected before the auth exchange arrived: ${formatErrorMessage(error)}`,
+              );
+            },
+          );
+          earlyFailure.catch(() => {});
+          return async () => {
+            // The exchange POST arriving at the fixture is the deterministic
+            // real-transport signal that acquisition is in flight. Close the
+            // admitting run now, then release the exchanged credential.
+            await exchangeArrivals[exchangeIndex]!.promise;
+            closeAdmittedRunDelegatedAuthority(admitted);
+            exchangeGates[exchangeIndex]!.resolve();
+            return await pending;
+          };
+        });
+      };
+
+      const revokeDirect = await beginRevokedCompletion(
+        "revoke-preparing-direct",
+        "preparing direct probe",
+      );
+      await expect(revokeDirect()).rejects.toThrow(/admitted run authority is no longer active/u);
+      expect(exchanges).toBe(1);
+
+      const revokeIsolated = await beginRevokedCompletion(
+        "revoke-preparing-isolated",
+        "preparing isolated probe",
+        { mode: "isolated-agent-runtime" },
+      );
+      await expect(revokeIsolated()).rejects.toThrow(/admitted run authority is no longer active/u);
+      expect(exchanges).toBe(2);
+
+      const chatDispatches = requests.filter((request) =>
+        request.url.includes("/chat/completions"),
+      );
+      expect(chatDispatches.length).toBe(0);
+      console.log(
+        "[preparation-revocation proof]",
+        JSON.stringify({
+          direct: "rejected while runtime auth exchange was in flight",
+          isolated: "rejected while runtime auth exchange was in flight",
+          authExchangesObserved: exchanges,
+          providerChatCompletions: chatDispatches.length,
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.OPENCLAW_HOME;
+      } else {
+        process.env.OPENCLAW_HOME = previousHome;
+      }
+      if (previousBundledDir === undefined) {
+        delete process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+      } else {
+        process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = previousBundledDir;
+      }
+      if (previousVersion === undefined) {
+        delete process.env.OPENCLAW_VERSION;
+      } else {
+        process.env.OPENCLAW_VERSION = previousVersion;
+      }
+      if (previousExchangeUrl === undefined) {
+        delete process.env.OPENCLAW_FIXTURE_RUNTIME_AUTH_URL;
+      } else {
+        process.env.OPENCLAW_FIXTURE_RUNTIME_AUTH_URL = previousExchangeUrl;
+      }
+      await resetPreparedModelRuntimeSnapshotsForTest();
+      clearRuntimeAuthProfileStoreSnapshots();
+      clearPluginMetadataLifecycleCaches();
+      resetPluginLoaderTestStateForTest();
+    }
   }, 90_000);
 });
