@@ -3,13 +3,15 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withMockedPlatform } from "../test-utils/vitest-spies.js";
 
-const { readFileSyncMock, spawnMock, spawnSyncMock } = vi.hoisted(() => ({
+const { opendirSyncMock, readFileSyncMock, spawnMock, spawnSyncMock } = vi.hoisted(() => ({
+  opendirSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   spawnMock: vi.fn(),
   spawnSyncMock: vi.fn(),
 }));
 
 vi.mock("node:fs", () => ({
+  opendirSync: (...args: unknown[]) => opendirSyncMock(...args),
   readFileSync: (...args: unknown[]) => readFileSyncMock(...args),
 }));
 
@@ -60,6 +62,15 @@ describe("killProcessTree", () => {
   });
 
   beforeEach(() => {
+    opendirSyncMock.mockReset();
+    opendirSyncMock.mockImplementation((file: string) => {
+      const pid = file.match(/^\/proc\/(\d+)\/task$/)?.[1];
+      let returned = false;
+      return {
+        readSync: () => (returned ? null : ((returned = true), { name: pid })),
+        closeSync: vi.fn(),
+      };
+    });
     readFileSyncMock.mockReset();
     readFileSyncMock.mockImplementation(() => {
       throw new Error("proc unavailable");
@@ -718,7 +729,10 @@ describe("killProcessTree", () => {
     killSpy.mockImplementation(() => true);
     // The root reports 4,098 children so the 4,096-PID cap (which already
     // counts the root) is exceeded inside the child loop.
-    const overCapChildren = Array.from({ length: 4098 }, (_, i) => 6000 + i).join(" ");
+    const childPids = Array.from({ length: 4099 }, (_, i) => 6000 + i)
+      .filter((pid) => pid !== process.pid)
+      .slice(0, 4098);
+    const overCapChildren = childPids.join(" ");
     const probedChildStats = new Set<number>();
     let boundedChildrenRequested = false;
     readFileSyncMock.mockImplementation((filePath: string) => {
@@ -752,8 +766,9 @@ describe("killProcessTree", () => {
       // slot) are ever probed or signaled. Children past the cap are never
       // admitted AND never have their identity probed.
       expect(probedChildStats.size).toBeLessThanOrEqual(4095);
-      // The first over-cap child (index 4095 -> PID 10095) must never be probed.
-      expect(probedChildStats.has(10095)).toBe(false);
+      // The first over-cap child must never be probed. Avoid the test runner's
+      // real PID, which the production walker deliberately excludes.
+      expect(probedChildStats.has(childPids[4095]!)).toBe(false);
       const signaledChildren = (
         killSpy.mock.calls as Array<[number, NodeJS.Signals | number | undefined]>
       )
