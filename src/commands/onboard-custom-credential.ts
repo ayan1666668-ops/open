@@ -7,6 +7,7 @@
  */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveAgentDir, resolveDefaultAgentId } from "../agents/agent-scope-config.js";
+import { resolveSharedMainAuthAgentDir } from "../agents/auth-profiles/shared-main-dir.js";
 import { updateAuthProfileStoreWithLock } from "../agents/auth-profiles/store.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import { isNonSecretApiKeyMarker } from "../agents/model-auth-markers.js";
@@ -41,6 +42,11 @@ function allocateCustomProviderProfileId(store: AuthProfileStore, provider: stri
  * profile. The config catalog copy remains the active runtime credential,
  * matching doctor's own migration end state. Env-ref and marker values are not
  * secrets to store and stay config-owned.
+ *
+ * The config catalog entry is global, and doctor's check matches plaintext
+ * against the shared main store only — so when the target is a different
+ * agent dir, the profile is mirrored into the shared main store as well. No
+ * custom provider add should ever leave doctor something to repair.
  */
 export async function persistCustomProviderCredential(params: {
   config: OpenClawConfig;
@@ -57,22 +63,26 @@ export async function persistCustomProviderCredential(params: {
   const provider = normalizeProviderId(params.providerId);
   const agentDir =
     params.target?.agentDir ?? resolveAgentDir(params.config, resolveDefaultAgentId(params.config));
-  // A null return means SQLite lock contention swallowed the write; treating it
-  // as success would leave doctor's repair prompt as a surprise.
-  const updated = await updateAuthProfileStoreWithLock({
-    agentDir,
-    saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false },
-    updater: (store) => {
-      const profileId = allocateCustomProviderProfileId(store, provider);
-      const existing = store.profiles[profileId];
-      if (existing?.type === "api_key" && existing.key === apiKey) {
-        return false;
-      }
-      store.profiles[profileId] = { type: "api_key", provider, key: apiKey };
-      return true;
-    },
-  });
-  if (!updated) {
-    throw new Error("agent auth profile store could not be updated");
+  const mainAgentDir = resolveSharedMainAuthAgentDir();
+  const storeDirs = agentDir === mainAgentDir ? [agentDir] : [agentDir, mainAgentDir];
+  for (const storeDir of storeDirs) {
+    // A null return means SQLite lock contention swallowed the write; treating
+    // it as success would leave doctor's repair prompt as a surprise.
+    const updated = await updateAuthProfileStoreWithLock({
+      agentDir: storeDir,
+      saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false },
+      updater: (store) => {
+        const profileId = allocateCustomProviderProfileId(store, provider);
+        const existing = store.profiles[profileId];
+        if (existing?.type === "api_key" && existing.key === apiKey) {
+          return false;
+        }
+        store.profiles[profileId] = { type: "api_key", provider, key: apiKey };
+        return true;
+      },
+    });
+    if (!updated) {
+      throw new Error(`agent auth profile store could not be updated (${storeDir})`);
+    }
   }
 }

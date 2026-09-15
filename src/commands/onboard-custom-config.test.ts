@@ -8,6 +8,9 @@ import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 vi.mock("../agents/auth-profiles/store.js", () => ({
   updateAuthProfileStoreWithLock: vi.fn(),
 }));
+vi.mock("../agents/auth-profiles/shared-main-dir.js", () => ({
+  resolveSharedMainAuthAgentDir: () => "/tmp/main-store",
+}));
 import { CONTEXT_WINDOW_HARD_MIN_TOKENS } from "../agents/context-window-guard.js";
 import * as providerModelNormalizationRuntime from "../agents/provider-model-normalization.runtime.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -805,7 +808,9 @@ describe("resolveCustomModelImageInputInference", () => {
 
 describe("persistCustomProviderCredential", () => {
   const emptyStore = (): AuthProfileStore => ({ version: AUTH_STORE_VERSION, profiles: {} });
-  const target = { agentId: "main", agentDir: "/tmp/agent", workspaceDir: "/tmp/ws" };
+  // resolveSharedMainAuthAgentDir is mocked to /tmp/main-store.
+  const target = { agentId: "main", agentDir: "/tmp/main-store", workspaceDir: "/tmp/ws" };
+  const childTarget = { agentId: "ops", agentDir: "/tmp/ops-store", workspaceDir: "/tmp/ws" };
 
   const runUpdater = (
     call: Parameters<typeof updateAuthProfileStoreWithLock>[0],
@@ -839,13 +844,39 @@ describe("persistCustomProviderCredential", () => {
     });
     expect(updateAuthProfileStoreWithLock).toHaveBeenCalledTimes(1);
     const call = captureStoreCall();
-    expect(call.agentDir).toBe("/tmp/agent");
+    expect(call.agentDir).toBe("/tmp/main-store");
     expect(runUpdater(call, store)).toBe(true);
     expect(store.profiles["custom:default"]).toEqual({
       type: "api_key",
       provider: "custom",
       key: "sk-literal",
     });
+  });
+
+  it("mirrors the profile into the shared main store for non-main targets", async () => {
+    const store = emptyStore();
+    const storeMock = vi.mocked(updateAuthProfileStoreWithLock);
+    storeMock.mockReset();
+    storeMock.mockResolvedValue(store);
+    await persistCustomProviderCredential({
+      config: configWithApiKey("sk-literal"),
+      providerId: "custom",
+      target: childTarget,
+    });
+    const [childCall, mainCall] = storeMock.mock.calls;
+    expect(childCall?.[0].agentDir).toBe("/tmp/ops-store");
+    expect(mainCall?.[0].agentDir).toBe("/tmp/main-store");
+    if (!childCall || !mainCall) {
+      throw new Error("expected both store writes");
+    }
+    expect(runUpdater(childCall[0], store)).toBe(true);
+    expect(runUpdater(mainCall[0], store)).toBe(false); // main copy already mirrored
+    expect(store.profiles["custom:default"]).toEqual({
+      type: "api_key",
+      provider: "custom",
+      key: "sk-literal",
+    });
+    vi.mocked(updateAuthProfileStoreWithLock).mockReset();
   });
 
   it("throws when the locked store write fails to persist (lock contention)", async () => {
