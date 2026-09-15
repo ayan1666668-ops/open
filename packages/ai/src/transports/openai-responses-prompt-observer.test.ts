@@ -10,12 +10,14 @@ import {
   streamOpenAICodexResponses,
   streamSimpleOpenAICodexResponses,
 } from "../providers/openai-chatgpt-responses.js";
+import { streamOpenAIResponses } from "../providers/openai-responses.js";
 import { cleanupSessionResources } from "../session-resources.js";
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "../utils/system-prompt-cache-boundary.js";
 import {
   buildOpenAIResponsesReasoningReplayMetadata,
   captureOpenAIResponsesCompaction,
 } from "./openai-responses-compaction-replay.js";
+import { resolveResponsesContextUsageBoundary } from "./openai-responses-context-usage.js";
 import { OPENAI_RESPONSES_REASONING_REPLAY_META_KEY } from "./openai-responses-contracts.js";
 
 type SdkResponse = { data: AsyncIterable<unknown>; response: Response };
@@ -275,6 +277,142 @@ afterEach(() => {
 });
 
 describe("OpenAI Responses provider prompt observer", () => {
+  it.each(["native", "shared", "chatgpt"] as const)(
+    "preserves measured checkpoint usage through %s egress and saved-history replay",
+    async (transport) => {
+      const identity = { sessionId: `usage-${transport}`, authProfileId: "usage-profile" };
+      const model = createModel<Api>(
+        transport === "chatgpt"
+          ? { api: "openai-chatgpt-responses", baseUrl: "https://chatgpt.test/backend-api" }
+          : {},
+      );
+      const context = createOrphanedToolOutputCompactionContext(model, identity);
+      const toolOutput = context.messages.find((message) => message.role === "toolResult");
+      if (!toolOutput || toolOutput.role !== "toolResult") {
+        throw new Error("missing tool-output fixture");
+      }
+      toolOutput.content = [{ type: "text", text: "large historical tool output\n".repeat(8_000) }];
+      const run = async (rewriteInput: boolean) => {
+        sdkState.outcomes = [completedSdkResponse(`resp_usage_${transport}`)];
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => completedSseResponse(`resp_usage_${transport}`)),
+        );
+        const options = {
+          ...identity,
+          apiKey: transport === "chatgpt" ? createJwt() : "test-key",
+          transport: "sse" as const,
+          onPayload: (payload: unknown) => {
+            if (!rewriteInput) {
+              return payload;
+            }
+            const request = payload as Record<string, unknown>;
+            return {
+              ...request,
+              input: [
+                ...(request.input as unknown[]),
+                { role: "user", content: "hook-only history that is absent from the transcript" },
+              ],
+            };
+          },
+        };
+        const stream =
+          transport === "chatgpt"
+            ? streamOpenAICodexResponses(
+                { ...model, api: "openai-chatgpt-responses", compat: undefined },
+                context,
+                options,
+              )
+            : transport === "shared"
+              ? streamOpenAIResponses({ ...model, api: "openai-responses" }, context, options)
+              : await Promise.resolve(
+                  createOpenAIResponsesTransportStreamFn()(model, context, options),
+                );
+        const result = await stream.result();
+        expect(result.stopReason).toBe("stop");
+        expect(result.usage.contextUsage).toEqual({
+          state: "available",
+          promptTokens: 5,
+          totalTokens: 8,
+        });
+        const savedMessages = JSON.parse(
+          JSON.stringify([...context.messages, result]),
+        ) as Context["messages"];
+        return {
+          result,
+          boundary: resolveResponsesContextUsageBoundary(
+            savedMessages,
+            model,
+            identity,
+            context.systemPrompt,
+          ),
+        };
+      };
+
+      const measured = await run(false);
+      expect(measured.result).toMatchObject({
+        openclawResponsesInputReplay: { contextUsage: { totalTokens: 8 } },
+      });
+      expect(measured.boundary).toEqual({
+        index: context.messages.length,
+        totalTokens: 8,
+        suffix: [],
+      });
+
+      const rewritten = await run(true);
+      expect(rewritten.boundary).toBeUndefined();
+    },
+  );
+
+  it("binds measured usage to streamed reasoning when the terminal ciphertext changes", async () => {
+    const model = createModel();
+    const identity = { sessionId: "reasoning-session", authProfileId: "reasoning-profile" };
+    const context = createCompactionContext(model, identity);
+    const reasoning = {
+      type: "reasoning",
+      id: "rs_streamed",
+      content: [],
+      summary: [],
+      encrypted_content: "opaque-streamed-reasoning",
+    };
+    sdkState.outcomes.push({
+      response: new Response(null, { status: 200 }),
+      data: (async function* () {
+        yield { type: "response.output_item.added", output_index: 0, item: reasoning };
+        yield { type: "response.output_item.done", output_index: 0, item: reasoning };
+        yield {
+          type: "response.completed",
+          response: {
+            id: "resp_streamed_reasoning",
+            status: "completed",
+            output: [{ ...reasoning, encrypted_content: "opaque-terminal-reasoning" }],
+            usage: { input_tokens: 500, output_tokens: 25, total_tokens: 525 },
+          },
+        };
+      })(),
+    });
+    const stream = await Promise.resolve(
+      createOpenAIResponsesTransportStreamFn()(model, context, {
+        apiKey: "test-key",
+        ...identity,
+        transport: "sse",
+      }),
+    );
+    const result = await stream.result();
+    expect(result.content[0]).toMatchObject({
+      type: "thinking",
+      thinkingSignature: expect.stringContaining("opaque-streamed-reasoning"),
+    });
+    expect(
+      resolveResponsesContextUsageBoundary(
+        JSON.parse(JSON.stringify([...context.messages, result])),
+        model,
+        identity,
+        context.systemPrompt,
+      ),
+    ).toEqual({ index: context.messages.length, totalTokens: 525, suffix: [] });
+  });
+
   // createModel() defaults to a verified native OpenAI route (see
   // usesVerifiedInstructionsEndpoint in openai-responses-payload-policy.ts),
   // so this request carries the system prompt via top-level `instructions`
@@ -359,6 +497,7 @@ describe("OpenAI Responses provider prompt observer", () => {
       stopReason: "stop",
       providerReplay: { type: "openai-responses-compaction-suppression", data: "rejected" },
     });
+    expect(recovered).not.toHaveProperty("openclawResponsesInputReplay.contextUsage");
     const nextStream = await Promise.resolve(
       streamFn(
         azureModel,
@@ -522,6 +661,15 @@ describe("OpenAI Responses provider prompt observer", () => {
       const result = await stream.result();
       expect(result).toMatchObject({ stopReason: "stop" });
       expect(result.responseModel).toBeUndefined();
+      expect(result).not.toHaveProperty("openclawResponsesInputReplay.contextUsage");
+      expect(
+        resolveResponsesContextUsageBoundary(
+          [...context.messages, result],
+          model,
+          identity,
+          context.systemPrompt,
+        ),
+      ).toBeUndefined();
 
       expect(sdkState.requests).toHaveLength(2);
       expect(requestHasCompaction(sdkState.requests[0])).toBe(true);
@@ -743,6 +891,13 @@ describe("OpenAI Responses provider prompt observer", () => {
 
   it("observes each native WebSocket connection-limit dispatch before send", async () => {
     const prompt = "PRIVATE-NATIVE-WEBSOCKET-PROMPT";
+    const identity = { sessionId: "websocket-usage-session", authProfileId: "websocket-profile" };
+    const model = createModel({
+      api: "openai-chatgpt-responses",
+      baseUrl: "https://chatgpt.test/backend-api",
+    });
+    const context = createCompactionContext(model, identity);
+    context.systemPrompt = prompt;
     const observations: ResponsesPromptObservation[] = [];
     const order: string[] = [];
     const sentRequests: Array<Record<string, unknown>> = [];
@@ -778,22 +933,23 @@ describe("OpenAI Responses provider prompt observer", () => {
     }
     vi.stubGlobal("WebSocket", ConnectionLimitWebSocket);
     vi.stubGlobal("fetch", vi.fn());
-    const options = { apiKey: createJwt(), transport: "websocket" as const };
+    const options = { apiKey: createJwt(), transport: "websocket" as const, ...identity };
     responsesPromptObserver.set(options, (observation) => {
       order.push("observe");
       observations.push(observation);
     });
 
-    const result = await streamOpenAICodexResponses(
-      createModel({
-        api: "openai-chatgpt-responses",
-        baseUrl: "https://chatgpt.test/backend-api",
-      }),
-      createContext(prompt),
-      options,
-    ).result();
+    const result = await streamOpenAICodexResponses(model, context, options).result();
 
     expect(result.stopReason).toBe("stop");
+    expect(
+      resolveResponsesContextUsageBoundary(
+        [...context.messages, result],
+        model,
+        identity,
+        context.systemPrompt,
+      ),
+    ).toEqual({ index: context.messages.length, totalTokens: 8, suffix: [] });
     expect(connections).toBe(2);
     expect(order).toEqual(["observe", "send", "observe", "send"]);
     expect(sentRequests.map((request) => request.instructions)).toEqual([prompt, prompt]);
