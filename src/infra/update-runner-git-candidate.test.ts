@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import { resolveSystemNodeInfo } from "../daemon/runtime-paths.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { hasErrnoCode } from "./errno.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
@@ -17,6 +18,17 @@ async function git(root: string, ...args: string[]) {
     throw new Error(result.stderr);
   }
   return result.stdout.trim();
+}
+
+async function resolveCandidateNodeRuntimeForTest(): Promise<{ path: string; version: string }> {
+  if (!process.versions.bun) {
+    return { path: process.execPath, version: process.versions.node };
+  }
+  const systemNode = await resolveSystemNodeInfo({});
+  if (systemNode?.status !== "supported" || !systemNode.version) {
+    throw new Error("This candidate runtime test requires a supported system Node");
+  }
+  return { path: systemNode.path, version: systemNode.version };
 }
 
 const runtimeImports = [
@@ -331,7 +343,8 @@ describe("Git candidate activation", () => {
   });
 
   it("falls back when only the latest dev candidate requires an incompatible Node runtime", async () => {
-    const requiredMajor = Number.parseInt(process.versions.node.split(".")[0]!, 10) + 1;
+    const nodeRuntime = await resolveCandidateNodeRuntimeForTest();
+    const requiredMajor = Number.parseInt(nodeRuntime.version.split(".")[0]!, 10) + 1;
     const requiredEngine = `>=${requiredMajor}.0.0`;
     const olderCandidate = await advanceRemote();
     await fs.writeFile(
@@ -369,8 +382,8 @@ describe("Git candidate activation", () => {
     });
     const runtimeOutput = `${runtimeSteps[0]?.stdoutTail ?? ""}\n${runtimeSteps[0]?.stderrTail ?? ""}`;
     expect(runtimeOutput).toContain(requiredEngine);
-    expect(runtimeOutput).toContain(process.execPath);
-    expect(runtimeOutput).toContain(process.versions.node);
+    expect(runtimeOutput).toContain(nodeRuntime.path);
+    expect(runtimeOutput).toContain(nodeRuntime.version);
     expect(packageManagerCommands).toContainEqual(["pnpm", "build"]);
     expect(
       result.steps.some(
@@ -384,7 +397,8 @@ describe("Git candidate activation", () => {
 
   it("rejects after all bounded rebased dev candidates require an incompatible Node runtime", async () => {
     const upstreamBase = beforeSha;
-    const requiredMajor = Number.parseInt(process.versions.node.split(".")[0]!, 10) + 1;
+    const nodeRuntime = await resolveCandidateNodeRuntimeForTest();
+    const requiredMajor = Number.parseInt(nodeRuntime.version.split(".")[0]!, 10) + 1;
     const requiredEngine = `>=${requiredMajor}.0.0`;
     await fs.writeFile(
       path.join(root, "package.json"),
@@ -433,8 +447,8 @@ describe("Git candidate activation", () => {
     for (const step of runtimeSteps) {
       const output = `${step.stdoutTail ?? ""}\n${step.stderrTail ?? ""}`;
       expect(output).toContain(requiredEngine);
-      expect(output).toContain(process.execPath);
-      expect(output).toContain(process.versions.node);
+      expect(output).toContain(nodeRuntime.path);
+      expect(output).toContain(nodeRuntime.version);
     }
     expect(packageManagerCommands).toEqual([]);
     expect(stopped).toBe(false);
