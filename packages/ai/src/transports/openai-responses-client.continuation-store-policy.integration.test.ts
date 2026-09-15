@@ -125,7 +125,6 @@ async function run(
     sessionId,
     transport: "sse",
     reasoningEffort: "low",
-    onPayload: (payload: Record<string, unknown>) => ({ ...payload, store: true }),
   } as never);
   return stream.result();
 }
@@ -153,6 +152,7 @@ describe("real HTTP/SSE OpenAI-Responses continuation (loopback server, no SDK m
       );
 
       expect(server.requests).toHaveLength(2);
+      expect(server.requests.map((request) => request.store)).toEqual([true, true]);
       expect(server.requests[0]).not.toHaveProperty("previous_response_id");
       expect(server.requests[1]).toMatchObject({ previous_response_id: "resp_1" });
       expect(server.requests[1]?.input).toEqual([
@@ -229,6 +229,8 @@ describe("real HTTP/SSE OpenAI-Responses continuation (loopback server, no SDK m
         sessionId,
       );
 
+      expect(server.requests).toHaveLength(2);
+      expect(server.requests.map((request) => request.store)).toEqual([false, false]);
       expect(server.requests[1]).not.toHaveProperty("previous_response_id");
       expect((server.requests[1]?.input as unknown[] | undefined)?.length).toBe(3);
     } finally {

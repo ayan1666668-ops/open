@@ -10,7 +10,7 @@ import type { Model } from "openclaw/plugin-sdk/llm";
 import { describe, expect, it } from "vitest";
 
 describe("openai responses payload policy", () => {
-  it("forces store for native OpenAI responses payloads under both provider-policy and disable mode", () => {
+  it("preserves native no-store defaults while provider policy enables storage", () => {
     const model = {
       id: "gpt-5.4",
       name: "GPT-5.4",
@@ -30,13 +30,8 @@ describe("openai responses payload policy", () => {
     expect(providerPolicy.explicitStore).toBe(true);
     expect(providerPolicy.allowsServiceTier).toBe(true);
 
-    // A native, store-eligible connection needs store:true even under
-    // "disable" mode -- that mode's job is forcing store OFF BY DEFAULT,
-    // and eligibility is precisely what overrides that default (this is
-    // what makes HTTP continuation reachable at all for buildOpenAIResponsesParams
-    // callers, which always resolve this policy with storeMode:"disable").
     const disablePolicy = resolveOpenAIResponsesPayloadPolicy(model, { storeMode: "disable" });
-    expect(disablePolicy.explicitStore).toBe(true);
+    expect(disablePolicy.explicitStore).toBe(false);
     expect(disablePolicy.allowsServiceTier).toBe(true);
   });
 
@@ -186,7 +181,7 @@ describe("openai responses payload policy", () => {
       reasoning: {
         effort: "none",
       },
-      store: true,
+      store: false,
     });
   });
 
@@ -211,7 +206,7 @@ describe("openai responses payload policy", () => {
     );
 
     expect(payload).toEqual({
-      store: true,
+      store: false,
     });
   });
 

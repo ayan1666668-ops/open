@@ -9,12 +9,12 @@ import { runDoctorStateSqliteCompact } from "../commands/doctor-state-sqlite-com
 import { planPristineStartupStateMigrations } from "../commands/doctor/shared/pristine-startup-state.js";
 import {
   readConfigHealthStateFromStore,
-  writeConfigHealthStateToStore,
+  patchConfigHealthEntryToStore,
 } from "../config/io.health-state.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { sha256HexPrefixCore } from "../infra/crypto-digest.js";
 import { requireNodeSqlite, resolveImmutableSqliteFileUri } from "../infra/node-sqlite.js";
-import * as sqliteReadonlyLocation from "../infra/sqlite-readonly-location.js";
+import * as sqliteReadonlyLocation from "../infra/sqlite-snapshot-source.js";
 import { withEnv, withEnvAsync } from "../test-utils/env.js";
 import { openClawStateDatabaseCache } from "./openclaw-state-db-cache.js";
 import {
@@ -1012,8 +1012,8 @@ describe("external shared-state ownership", () => {
     };
     expect(readConfigHealthStateFromStore(healthDeps)).toEqual({ entries: {} });
     expect(() =>
-      writeConfigHealthStateToStore(healthDeps, {
-        entries: { "/tmp/openclaw.json": { lastObservedSuspiciousSignature: "test" } },
+      patchConfigHealthEntryToStore(healthDeps, "/tmp/openclaw.json", {
+        lastObservedSuspiciousSignature: "test",
       }),
     ).toThrow(OpenClawStateOwnershipError);
     assert.deepStrictEqual(snapshotSqliteFamily(fixture.databasePath), before);

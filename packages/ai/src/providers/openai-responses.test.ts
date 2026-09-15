@@ -26,7 +26,7 @@ vi.mock("openai", () => ({
 
 import { createOpenAIResponsesClient } from "../transports/openai-responses-client.js";
 import { buildOpenAIResponsesParams } from "../transports/openai-responses-params-internal.js";
-import { streamOpenAIResponses } from "./openai-responses.js";
+import { streamOpenAIResponses, streamSimpleOpenAIResponses } from "./openai-responses.js";
 
 const context = {
   messages: [{ role: "user", content: "hello", timestamp: 0 }],
@@ -67,6 +67,19 @@ describe("OpenAI Responses provider", () => {
       expect(openAiMockState.configs[0]).toMatchObject({
         defaultHeaders: { "x-opencode-session": "conversation-123" },
       });
+    },
+  );
+
+  it.each([undefined, "default", "priority"] as const)(
+    "sends service tier %s from simple completions",
+    async (serviceTier) => {
+      await streamSimpleOpenAIResponses(model(), context, { apiKey: "test", serviceTier }).result();
+      expect(openAiMockState.params).toHaveLength(1);
+      if (serviceTier) {
+        expect(openAiMockState.params[0]).toMatchObject({ service_tier: serviceTier });
+      } else {
+        expect(openAiMockState.params[0]).not.toHaveProperty("service_tier");
+      }
     },
   );
 
@@ -152,14 +165,8 @@ describe("OpenAI Responses provider", () => {
     const result = await streamOpenAIResponses(requestModel, context, options).result();
 
     expect(result.stopReason).toBe("error");
-    // store's value is this model's own explicitStore policy (native OpenAI
-    // is continuation-eligible by default, so this model resolves store:true
-    // here), unrelated to this test's own token-clamping/retry-disabling
-    // scenario and already covered by resolveOpenAIResponsesPayloadPolicy's
-    // own dedicated suite (openai-responses-payload-policy.test.ts) --
-    // assert only what this test is actually about.
     for (const params of [transportParams, openAiMockState.params[0]]) {
-      expect(params).toMatchObject({ max_output_tokens: 16 });
+      expect(params).toMatchObject({ store: false, max_output_tokens: 16 });
     }
     expect(openAiMockState.requestOptions[0]).toMatchObject({ maxRetries: 0 });
   });

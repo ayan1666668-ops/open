@@ -301,13 +301,17 @@ describe("Crabbox durable allocation admission", () => {
     );
   });
 
-  it("carries configured profile and project labels through provisioning to inspection", async () => {
+  it("carries configured profile and project display facts through provisioning to inspection", async () => {
     const { options, observe } = createProjectOptions([]);
     const { provider } = createWarmProvider(observe);
     await provider.provision(PROFILE, "display-facts", {
       ...options,
       profileId: "linux-development",
-      project: { ...options.project, label: "github.com/example/project" },
+      project: {
+        ...options.project,
+        label: "github.com/example/project",
+        root: "/projects/example",
+      },
     });
     expect(listCrabboxWarmImages()).toEqual([
       expect.objectContaining({
@@ -316,6 +320,7 @@ describe("Crabbox durable allocation admission", () => {
         machineClass: "standard",
         os: "linux",
         projectLabel: "github.com/example/project",
+        projectRoot: "/projects/example",
         checkpointId: CHECKPOINT_ID,
       }),
     ]);
@@ -332,6 +337,7 @@ describe("Crabbox durable allocation admission", () => {
       id: "cbx_second",
       profileId: "second",
       projectLabel: "github.com/example/renamed",
+      projectRoot: "/projects/renamed",
     };
     await owner.allocate(next);
     expect(openWarmImageStore().entries()).toHaveLength(1);
@@ -339,11 +345,13 @@ describe("Crabbox durable allocation admission", () => {
       profileKey: original.key,
       profileId: "second",
       projectLabel: next.projectLabel,
+      projectRoot: next.projectRoot,
     });
     await owner.allocate(source);
     const replayed = listCrabboxWarmImages()[0]!;
     expect(replayed.profileId).toBe("first");
     expect(replayed.projectLabel).toBeUndefined();
+    expect(replayed.projectRoot).toBeUndefined();
     expect(replayed.allocations[source.id]).toEqual(original.value.allocations[source.id]);
     await owner.allocate({ ...source, profileId: undefined });
     expect(listCrabboxWarmImages()[0]?.profileId).toBeUndefined();
@@ -581,6 +589,46 @@ describe("Crabbox durable allocation admission", () => {
     expect(calls.some((argv) => argv[2] === "create")).toBe(false);
     expect(openWarmImageStore().entries()[0]?.value.operation).toBeUndefined();
     expect(owner.lookupLease(project.id)?.phase).toBe("prepared");
+  });
+
+  it("does not publish image demand when a fork completes after project expiry", async () => {
+    const now = Date.now();
+    const expiresAt = now + 60_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const { manager, projectContext } = fixture(false, (argv) => {
+      if (argv[2] === "fork") {
+        clock.mockReturnValue(expiresAt);
+      }
+    });
+    const owner = manager();
+    const source = projectContext("cbx_source");
+    await owner.allocate(source);
+    owner.markPrepared(source.id, "a".repeat(40));
+    await owner.capture(source);
+    const before = structuredClone(openWarmImageStore().entries()[0]!.value.image);
+    clock.mockReturnValue(now + 1_000);
+    const next = projectContext("cbx_expired");
+    const signal = new AbortController().signal;
+
+    await expect
+      .soft(
+        owner.allocate({
+          ...next,
+          signal,
+          assertCurrent: () => {
+            if (Date.now() >= expiresAt) {
+              throw new Error("project authority expired");
+            }
+          },
+        }),
+      )
+      .rejects.toThrow();
+    expect(signal.aborted).toBe(false);
+    expect(openWarmImageStore().entries()[0]!.value.image).toEqual(before);
+    expect(owner.lookupLease(next.id)).toMatchObject({
+      phase: "pending",
+      choice: { kind: "checkpoint", checkpointId: CHECKPOINT_ID },
+    });
   });
 
   it("keeps an uncertain project capture fenced before enrollment after restart", async () => {
