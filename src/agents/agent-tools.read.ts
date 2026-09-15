@@ -646,8 +646,8 @@ function mapContainerPathToRoot(params: {
   if (!containerRoot) {
     return { filePath: params.filePath, matched: false };
   }
-  const normalizedRoot = containerRoot.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!normalizedRoot.startsWith("/") || !normalizedRoot) {
+  const normalizedRoot = containerRoot.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  if (!normalizedRoot.startsWith("/")) {
     return { filePath: params.filePath, matched: false };
   }
 
@@ -660,7 +660,7 @@ function mapContainerPathToRoot(params: {
   if (normalizedCandidate === normalizedRoot) {
     return { filePath: path.resolve(params.root), matched: true };
   }
-  const prefix = `${normalizedRoot}/`;
+  const prefix = normalizedRoot === "/" ? "/" : `${normalizedRoot}/`;
   if (!normalizedCandidate.startsWith(prefix)) {
     return { filePath: candidate, matched: false };
   }
