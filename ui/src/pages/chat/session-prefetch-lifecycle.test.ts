@@ -7,7 +7,6 @@ import {
   type ChatMessageCache,
   type ChatSessionSnapshot,
 } from "./session-message-cache.ts";
-import * as snapshotPrewarm from "./session-snapshot-prewarm.ts";
 import {
   createSessionPrefetchFixture,
   PREFETCH_TEST_NOW as NOW,
@@ -17,6 +16,7 @@ import {
   prefetchSessionKeyFromCall as sessionKeyFromCall,
   settleSessionPrefetch as settlePromises,
 } from "./session-prefetch.test-support.ts";
+import * as snapshotPrewarm from "./session-snapshot-prewarm.ts";
 
 describe("session prefetch pane and navigation ownership", () => {
   let fixture: ReturnType<typeof createSessionPrefetchFixture>;
