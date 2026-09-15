@@ -294,7 +294,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     supportsBlockTables: true,
   });
   // Post rendering has no native tables, so block falls back to code there. An
-  // explicit off, bullets or code converts before any card is built or chosen, so the
+  // explicit off, bullets or code converts before each card path that commits it, so the
   // mode applies in auto mode, to a presentation card's own markdown, and to the text a
   // streaming card commits. Partial previews stream raw text, so the preview dedupe
   // compares payload text, while streamed content enters the ownership state (closing
