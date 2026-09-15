@@ -45,6 +45,8 @@ An agent-turn automation bound to a persistent session and carrying a server-aut
 
 When the Gateway automatically resumes an interrupted Control UI turn after a restart, the recovered turn can also create or update pinned dashboard widgets without a connected browser. Recovery uses the same pinned-only surface: set `pin: true` and omit `presentation.target`. Inline previews still require a new turn from a client that declares `inline-widgets`. The resumed turn does not inherit a browser connection or device presentation rights.
 
+A `status: "pinned"` tool result means the widget is on the session dashboard. Open that dashboard tab in the Control UI, or use `dashboard` with `action: "focus_tab"` and the saved widget's `tabId` when the tool is available. Widget hosting URLs are internal rendering resources and should not be opened in the Browser panel to substitute for widget presentation.
+
 Capability transport covers embedded, Codex app-server, and CLI-backed model backends. Grant-authenticated MCP callers without `inline-widgets` remain fail closed unless their trusted run context matches a presenter. Authenticated direct HTTP `tools/invoke` requests cannot request inline rendering, but a request carrying eligible current-channel context can use the matching presenter. Authentication never bypasses presenter or route eligibility.
 
 ## Design system
@@ -265,6 +267,8 @@ Pinned HTML and registered-source widgets expose one ticket-bound host API. An e
 - `openclaw.cron.trigger(jobId)` runs an existing job now only when the exact `cron.trigger:<jobId>` capability was granted.
 
 OpenClaw forwards user-clicked links to `http` or `https` destinations to the Control UI host. The host opens a new tab with `noopener` and `noreferrer`. Forwarding covers a primary click on a `target="_blank"` link and a middle-button click on any link, matching how links behave elsewhere in the Control UI. A widget's own `preventDefault` still cancels the click. The widget sandbox never grants popup permission, and script-initiated `window.open` does not work.
+
+Popup blocking comes from the iframe sandbox permissions. Widgets can define their own `open` function, such as a dialog helper, without colliding with an OpenClaw global. Host APIs remain under `window.openclaw`, with `sendPrompt` retained as a legacy helper.
 
 Network access is separate from host tools. Put exact HTTPS origins in `capabilities.netOrigins`. Once the session policy grants them, only those origins enter the widget's `connect-src`. Wildcards, credentials, paths, query strings, and undeclared origins remain blocked. A literal port is allowed only when it is part of the declared origin.
 

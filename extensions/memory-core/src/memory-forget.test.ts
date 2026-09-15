@@ -524,6 +524,7 @@ describe("memory forget", () => {
   it.each([
     { failure: "none", corpusExtension: "txt" },
     { failure: "index", corpusExtension: "txt" },
+    { failure: "sources", corpusExtension: "txt" },
     { failure: "backup", corpusExtension: "txt" },
     { failure: "memory", corpusExtension: "txt" },
     { failure: "corpus", corpusExtension: "txt" },
@@ -831,12 +832,13 @@ describe("memory forget", () => {
               ? "BEFORE UPDATE ON plugin_state_entries WHEN OLD.plugin_id = 'memory-core' AND OLD.namespace = 'dreaming-memory-backups'"
               : failure === "index"
                 ? "BEFORE DELETE ON memory_index_chunks WHEN OLD.id = 'chunk-0'"
-                : "BEFORE DELETE ON memory_entry_origins WHEN OLD.entry_key = 'mixed-entry'";
-          // Attach the fault to the actual purge connection after schema validation,
-          // so an unexpected persistent trigger cannot fail database admission first.
+                : failure === "sources"
+                  ? "BEFORE DELETE ON memory_index_sources WHEN OLD.source = 'sessions'"
+                  : "BEFORE DELETE ON memory_entry_origins WHEN OLD.entry_key = 'mixed-entry'";
+          // KV writes use the admitted worker; agent writes retain this native connection.
           const faultDb = failure === "backup" ? openOpenClawStateDatabase().db : agentDatabase.db;
           faultDb.exec(
-            `CREATE TEMP TRIGGER abort_forget ${trigger} BEGIN SELECT RAISE(ABORT, '${failureMessage}'); END`,
+            `CREATE ${failure === "backup" ? "" : "TEMP "}TRIGGER abort_forget ${trigger} BEGIN SELECT RAISE(ABORT, '${failureMessage}'); END`,
           );
           try {
             await expect(

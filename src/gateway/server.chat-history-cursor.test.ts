@@ -21,9 +21,11 @@ import { waitForSessionTranscriptIndexReconcile } from "../config/sessions/sessi
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { createNestedToolActivity } from "../sessions/nested-tool-activity.js";
 import {
+  closeOpenClawAgentDatabasesAsync,
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../state/openclaw-agent-db.js";
+import * as userProfileList from "../state/user-profile-list.js";
 import * as userProfiles from "../state/user-profiles.js";
 import { buildControlUiUserAvatarPath } from "./control-ui-contract.js";
 import * as managedOutgoingMedia from "./managed-image-attachments.js";
@@ -131,8 +133,9 @@ function renderedMessages(messages: readonly unknown[]): unknown[] {
   });
 }
 
-afterEach(() => {
+afterEach(async () => {
   for (const directory of tempDirs.dirs) {
+    await closeOpenClawAgentDatabasesAsync(directory);
     closeOpenClawAgentDatabasesForTest(directory);
   }
   testState.sessionStorePath = undefined;
@@ -399,7 +402,7 @@ describe("chat.history cursor catch-up", () => {
       });
       parentId = eventId;
     }
-    const lookup = vi.spyOn(userProfiles, "getUserProfileDisplay");
+    const lookup = vi.spyOn(userProfileList, "getUserProfileDisplay");
     try {
       const avatarUrls: string[] = [];
       for (const byte of [1, 2]) {

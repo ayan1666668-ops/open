@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import path from "node:path";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
@@ -123,17 +124,18 @@ function hashSessionEntrySnapshot(params: {
   lineProvenance: readonly MemoryEntryProvenance[];
   resetRecallCutoff: SessionResetRecallCutoff;
 }): string {
-  const snapshot =
-    params.content +
-    "\n" +
-    params.lineMap.join(",") +
-    "\n" +
-    params.messageTimestampsMs.join(",") +
-    "\n" +
-    JSON.stringify(params.lineProvenance) +
-    "\n" +
-    JSON.stringify(params.resetRecallCutoff);
-  return hashText(snapshot);
+  // Preserve persisted hash bytes without flattening another full export string.
+  return createHash("sha256")
+    .update(params.content)
+    .update("\n")
+    .update(params.lineMap.join(","))
+    .update("\n")
+    .update(params.messageTimestampsMs.join(","))
+    .update("\n")
+    .update(JSON.stringify(params.lineProvenance))
+    .update("\n")
+    .update(JSON.stringify(params.resetRecallCutoff))
+    .digest("hex");
 }
 
 export function readSessionEntryResetRecallCutoff(
@@ -302,7 +304,7 @@ function loadSessionTranscriptClassificationForSessionsDir(
   const agentId = extractAgentIdFromSessionsDir(sessionsDir);
   if (agentId && isCanonicalSessionsDirForAgent(sessionsDir, agentId)) {
     return classifySessionTranscriptCorpusEntries(
-      listSessionTranscriptCorpusEntriesForAgentSync(agentId),
+      listSessionTranscriptCorpusEntriesForAgentSync(agentId, { includeContentRevision: false }),
     );
   }
   const storePath = path.join(sessionsDir, "sessions.json");
@@ -675,8 +677,9 @@ export async function buildSessionEntry(
           : null;
       }
     }
-    // Continuous secret registration cannot publish stale redaction. The rare
-    // fallback retains the original per-message registry checks and yields.
+    throw new Error(
+      "Session transcript redaction changed during preparation; retry the operation.",
+    );
   }
   return buildSessionEntryInProcess(absPath, opts);
 }

@@ -12,6 +12,14 @@ For Linux-specific issues (especially snap Chromium), see
 For WSL2 Gateway + Windows Chrome split-host setups, see
 [WSL2 + Windows + remote Chrome CDP troubleshooting](/tools/browser-wsl2-windows-remote-cdp-troubleshooting).
 
+## Output directory errors
+
+If an output fails with `Invalid path: must stay within output directory`, set
+the output directory to its real, canonical path. Browser outputs reject
+user-created symlinks anywhere in the directory path, including when the final
+directory already exists. The macOS `/tmp` and `/var` system aliases remain
+supported.
+
 ## CDP startup failure vs navigation SSRF block
 
 These are different failure classes and they point to different code paths.
@@ -48,6 +56,7 @@ Important behavior details:
 
 - Browser config defaults to a fail-closed SSRF policy object even when you do not configure `browser.ssrfPolicy`.
 - For the local loopback `openclaw` managed profile, CDP health checks intentionally skip browser SSRF reachability enforcement for OpenClaw's own local control plane.
+- After launching a local managed browser, readiness probes allow up to 1.5 seconds per HTTP request and 2 seconds per WebSocket stage to tolerate Gateway scheduling delays. The readiness retry window is eight seconds; probes near its end use shorter timeouts.
 - Navigation protection is separate. A successful `start` or `tabs` result does not mean a later `open` or `navigate` target is allowed.
 
 Security guidance:
