@@ -503,6 +503,15 @@ export function createSessionCapability(
     if (event.event !== "sessions.changed" && event.event !== "session.message") {
       return;
     }
+    const payload = event.payload as {
+      agentId?: unknown;
+      reason?: unknown;
+      session?: unknown;
+    } | null;
+    // Recaps are opt-in Activity data; shared session queries never include them.
+    if (event.event === "sessions.changed" && payload?.reason === "activity-summary") {
+      return;
+    }
     const eventObservation = roster.captureEvent(event.payload);
     const swarmChanged = swarmActivity.observe(event.payload);
     const { eventInfo, reconciled, claimChanged, notifyManaged } = reconcileChangedEvent(
@@ -513,11 +522,6 @@ export function createSessionCapability(
     if (eventObservation.scope && !connection.isCurrent(eventObservation.scope)) {
       return;
     }
-    const payload = event.payload as {
-      agentId?: unknown;
-      reason?: unknown;
-      session?: unknown;
-    } | null;
     const hasActiveRun = reconciled.hasActiveRun ?? eventInfo?.hasActiveRun;
     const status = reconciled.status ?? eventInfo?.status;
     const runEnded =
