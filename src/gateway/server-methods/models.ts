@@ -1,4 +1,8 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  GATEWAY_CLIENT_CAPS,
+  hasGatewayClientCap,
+} from "../../../packages/gateway-protocol/src/client-info.js";
 // Models gateway methods expose prepared, cached, and explicitly refreshed catalog views.
 import {
   ErrorCodes,
@@ -6,6 +10,7 @@ import {
   validateModelsListParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
+import { PreparedModelRuntimePublicationSupersededError } from "../../agents/prepared-model-runtime.errors.js";
 import { ModelAccountConnectAuthorityError } from "../model-account-connect.js";
 import { resolveAgentIdOrRespondError } from "./agent-id-shared.js";
 import type { ChatMetadataReadParams } from "./chat-metadata-contract.js";
@@ -47,6 +52,10 @@ export const modelsHandlers: GatewayRequestHandlers = {
         source: { kind: "gateway", context },
         agentId: resolved.agentId,
         params,
+        includeManualSelection: hasGatewayClientCap(
+          client?.connect.caps,
+          GATEWAY_CLIENT_CAPS.MODEL_SELECTION_POLICY,
+        ),
         requesterProfileId: scope?.requesterProfileId ?? resolveAuthenticatedProfileId(client),
         ...(scope ? { readScope: scope } : {}),
       });
@@ -63,6 +72,14 @@ export const modelsHandlers: GatewayRequestHandlers = {
         undefined,
       );
     } catch (error) {
+      if (error instanceof PreparedModelRuntimePublicationSupersededError) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.UNAVAILABLE, error.message, { retryable: true, retryAfterMs: 0 }),
+        );
+        return;
+      }
       if (!(error instanceof ModelAccountConnectAuthorityError)) {
         throw error;
       }
