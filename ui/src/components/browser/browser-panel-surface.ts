@@ -60,6 +60,24 @@ export function browserPanelShouldForwardKey(key: string): boolean {
   return FORWARDED_KEYS.has(key) || key.length === 1;
 }
 
+/** Normalized [0..1] stage coordinates for a pointer event, ignoring any letterbox margin. */
+export function browserPanelStageNormalizedPoint(
+  stage: HTMLElement | null,
+  event: MouseEvent,
+): { x: number; y: number } | null {
+  if (!stage) {
+    return null;
+  }
+  const rect = stage.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return {
+    x: (event.clientX - rect.left) / rect.width,
+    y: (event.clientY - rect.top) / rect.height,
+  };
+}
+
 /**
  * Painted frame box inside the stage. The frame image uses `object-fit: contain`,
  * so the visible area letterboxes inside the element box; geometry (pointer

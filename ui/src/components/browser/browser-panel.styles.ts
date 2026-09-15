@@ -79,6 +79,10 @@ export const browserPanelStyles = css`
     background: color-mix(in srgb, var(--text, #d7dae0) 10%, transparent);
     color: var(--text, #d7dae0);
   }
+  .bp-toolbar .bp-icon.is-active {
+    background: color-mix(in srgb, var(--accent, #4c8dff) 22%, transparent);
+    color: var(--text, #d7dae0);
+  }
   .bp-url {
     flex: 1;
     min-width: 0;

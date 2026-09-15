@@ -17,6 +17,7 @@ import type { BrowserPanelPendingInput } from "./browser-panel-pending-input.ts"
 import {
   browserPanelInspectHighlightRegion,
   browserPanelNormalizedPoint,
+  browserPanelStageNormalizedPoint,
   browserPanelRemotePoint,
   browserPanelShouldForwardKey,
   dispatchCompositedBrowserAnnotation,
@@ -173,6 +174,13 @@ export class BrowserPanelInputController {
   handleOverlayPointerDown(event: PointerEvent): void {
     if (this.host.mode === "inspect") {
       this.suppressStageClick = true;
+      if (!this.remotePoint(event)) {
+        // Clicking the letterbox margin is not part of the page and must not
+        // capture the last inspected element.
+        this.host.setState("inspected", null);
+        this.paintOverlay();
+        return;
+      }
       void this.sendAnnotation({ element: this.host.inspected });
       return;
     }
@@ -250,9 +258,14 @@ export class BrowserPanelInputController {
   private queueInspect(event: PointerEvent): void {
     const client = this.host.operations.captureClient();
     const point = this.remotePoint(event);
-    const stagePoint = browserPanelNormalizedPoint(this.stageElement(), event);
+    const stagePoint = browserPanelStageNormalizedPoint(this.stageElement(), event);
     const targetId = this.host.activeTargetId;
     if (!client || !point || !stagePoint || !targetId || this.host.evaluateUnavailable) {
+      if (!point && this.host.mode === "inspect") {
+        // The pointer left the painted frame; a stale element must not stay captured.
+        this.host.setState("inspected", null);
+        this.paintOverlay();
+      }
       return;
     }
     const current = this.host.operations.beginInspection(

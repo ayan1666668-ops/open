@@ -85,6 +85,9 @@ export class BrowserPanelViewportController {
 
   resize(width: number, height: number): void {
     this.observedViewportSize = { width, height };
+    // The dock geometry changed: repaint marks against the new stage even when
+    // the remote viewport itself is left alone (fixed-viewport viewing).
+    this.controller.host.requestUpdate();
     this.schedule();
   }
 
