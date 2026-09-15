@@ -859,8 +859,77 @@ it("retires runtime diagnostics after each actual chat inspect reply", async () 
     const { id, event, config, disposed } = fixture(state);
     await state.writeConfig(config);
     const before = process.listenerCount(event);
+    const stageNames = new Set([
+      "config.snapshot.read.file",
+      "config.snapshot.read.hash",
+      "config.snapshot.read.parse",
+      "config.snapshot.read.includes",
+      "config.snapshot.read.env",
+      "config.snapshot.read.validate",
+      "config.snapshot.read.legacy-issues",
+      "config.snapshot.read.recover-suspicious",
+      "config.snapshot.read.materialize",
+      "config.snapshot.read.observe",
+    ]);
+    const errorNames = [
+      "Error",
+      "TypeError",
+      "RangeError",
+      "ReferenceError",
+      "SyntaxError",
+      "AggregateError",
+    ];
+    const errorCodes = [
+      "ERR_SQLITE_ERROR",
+      "ERR_INVALID_STATE",
+      "EACCES",
+      "EPERM",
+      "ENOENT",
+      "EBUSY",
+      "EMFILE",
+      "ENFILE",
+      "ENOSPC",
+      "EROFS",
+    ];
     for (const name of [id, "all"]) {
-      const configRead = vi.spyOn(configRuntime, "readConfigFileSnapshot");
+      let lastCompletedStage = "<none>";
+      let measuredFailure: { stage: string; errorName: string; errorCode: string } | undefined;
+      const readConfigSnapshot = configRuntime.readConfigFileSnapshot;
+      const configRead = vi
+        .spyOn(configRuntime, "readConfigFileSnapshot")
+        .mockImplementation((options = {}) =>
+          readConfigSnapshot({
+            ...options,
+            measure: async (stage, run) => {
+              const safeStage = stageNames.has(stage) ? stage : "<other stage>";
+              try {
+                const value = await (options.measure ? options.measure(stage, run) : run());
+                lastCompletedStage = safeStage;
+                return value;
+              } catch (error) {
+                measuredFailure = {
+                  stage: safeStage,
+                  errorName: "<other>",
+                  errorCode: "<other-or-absent>",
+                };
+                try {
+                  const errorName = error instanceof Error ? error.name : undefined;
+                  const errorCode =
+                    typeof error === "object" && error !== null && "code" in error
+                      ? error.code
+                      : undefined;
+                  measuredFailure.errorName =
+                    errorNames.find((name) => name === errorName) ?? "<other>";
+                  measuredFailure.errorCode =
+                    errorCodes.find((code) => code === errorCode) ?? "<other-or-absent>";
+                } catch {
+                  // Classification must not replace the caught error, including throwing getters.
+                }
+                throw error;
+              }
+            },
+          }),
+        );
       try {
         const result = await handlePluginsCommand(
           buildPluginsCommandParams({
@@ -909,12 +978,9 @@ it("retires runtime diagnostics after each actual chat inspect reply", async () 
           console.error("diagnostics-chat config snapshot", {
             selection: name,
             readCalls: configRead.mock.calls.length,
-            fixturePath: state.configPath,
-            snapshotPath: snapshot
-              ? snapshot.path === state.configPath
-                ? snapshot.path
-                : "<outside expected fixture>"
-              : "<not captured>",
+            matchesFixturePath: snapshot ? snapshot.path === state.configPath : undefined,
+            lastCompletedStage,
+            measuredFailure: measuredFailure ?? { stage: "<outside measured callback>" },
             valid: snapshot?.valid,
             exists: snapshot?.exists,
             matchesWrittenFixture: snapshot?.raw === `${JSON.stringify(config, null, 2)}\n`,
