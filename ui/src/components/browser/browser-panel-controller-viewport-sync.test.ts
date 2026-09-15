@@ -28,17 +28,17 @@ function requestsForPath(request: ReturnType<typeof createBrowserClient>["reques
 }
 
 describe("BrowserPanelController viewport sync", () => {
-  let followPanelViewport = true;
+  let fixedViewport = false;
   beforeEach(() => {
-    followPanelViewport = true;
+    fixedViewport = false;
     vi.stubGlobal("localStorage", {
       getItem: (key: string) =>
-        followPanelViewport && key === "openclaw.browserPanel.followViewport" ? "1" : null,
+        fixedViewport && key === "openclaw.browserPanel.fixedViewport" ? "1" : null,
     });
   });
 
-  it("keeps the remote viewport when the panel is a viewer (default lock)", async () => {
-    followPanelViewport = false;
+  it("keeps the remote viewport while the panel resizes in fixed-viewport mode", async () => {
+    fixedViewport = true;
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { client, request } = createBrowserClient(async () => ({ ok: true }));
     const controller = createBrowserPanelTestController(client, "tab-a");
@@ -47,8 +47,8 @@ describe("BrowserPanelController viewport sync", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(actionRequests(request, "resize")).toHaveLength(0);
 
-    // Opting back into the legacy behavior resumes panel-driven resizing.
-    followPanelViewport = true;
+    // Turning fixed-viewport viewing back off resumes panel-driven resizing.
+    controller.setFixedViewportView(false);
     controller.view = {
       ...controller.view!,
       metrics: { cssWidth: 640, cssHeight: 480, title: "A", url: "https://example.test/a" },

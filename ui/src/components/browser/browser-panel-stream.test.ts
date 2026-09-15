@@ -622,8 +622,6 @@ describe("Browser panel stream ownership", () => {
 
   it("does not let continuous mismatched frames postpone the debounced viewport sync", async () => {
     const { controller, calls } = setup();
-    // Legacy panel-driven resizing: opt in via the follow flag.
-    vi.stubGlobal("localStorage", { getItem: () => "1" });
     controller.handleViewportResize(500, 300);
     const schedule = vi.spyOn(controller, "scheduleViewportSync");
     const socket = await start(controller);

@@ -189,7 +189,6 @@ describe("browser panel route handoff", () => {
     await waitForFast(() => expect(pageTitle(panel)).toBe("managed"));
     vi.useFakeTimers();
     const controller = controllerFor(panel);
-    vi.stubGlobal("localStorage", { getItem: () => "1" });
     controller.handleViewportResize(640, 480);
     panel.presented = false;
     await panel.updateComplete;
@@ -205,7 +204,6 @@ describe("browser panel route handoff", () => {
     chooseCard(panel, nodeTab);
     panel.refreshOnPresentation = true;
     await waitForFast(() => expect(pageTitle(panel)).toBe("work"));
-    vi.stubGlobal("localStorage", { getItem: () => "1" });
     controller.handleViewportResize(700, 500);
     await vi.advanceTimersByTimeAsync(1_000);
     const requests = gateway.request.mock.calls
@@ -382,7 +380,6 @@ describe("browser panel route handoff", () => {
       controller.handleViewportKeydown(new KeyboardEvent("keydown", { key: "a" }));
       controller.goHistory(-1);
       controller.handleWheel(new WheelEvent("wheel", { deltaY: 40, cancelable: true }));
-      vi.stubGlobal("localStorage", { getItem: () => "1" });
       controller.handleViewportResize(700, 500);
       await waitForFast(() =>
         expect(
@@ -402,6 +399,9 @@ describe("browser panel route handoff", () => {
       vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
         drawImage: vi.fn(),
         clearRect: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
         strokeRect: vi.fn(),
       } as unknown as CanvasRenderingContext2D);
       vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(

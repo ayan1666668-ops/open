@@ -32,7 +32,11 @@ import { BrowserPanelPendingInput } from "./browser-panel-pending-input.ts";
 import { BrowserPanelSnapshotController } from "./browser-panel-snapshot-controller.ts";
 import { BrowserPanelStream } from "./browser-panel-stream.ts";
 import type { BrowserPanelView } from "./browser-panel-surface.ts";
-import { BrowserPanelViewportController } from "./browser-panel-viewport-controller.ts";
+import {
+  BrowserPanelViewportController,
+  readFixedViewportPreference,
+  writeFixedViewportPreference,
+} from "./browser-panel-viewport-controller.ts";
 import { browserRouteKey, type BrowserRoute } from "./browser-target.ts";
 import { normalizeBrowserUrlDraft } from "./browser-url.ts";
 
@@ -59,6 +63,18 @@ export class BrowserPanelController implements ReactiveController {
   evaluateUnavailable = false;
   urlDraft = "";
   pendingNewTab = false;
+  /** Fixed-viewport viewing (toolbar toggle); persisted in localStorage. */
+  fixedViewportView = readFixedViewportPreference();
+
+  setFixedViewportView(value: boolean): void {
+    if (this.fixedViewportView === value) {
+      return;
+    }
+    writeFixedViewportPreference(value);
+    this.setState("fixedViewportView", value);
+    // Reconcile the remote with the active viewing mode.
+    this.scheduleViewportSync();
+  }
 
   readonly native: BrowserPanelNativeController;
   readonly operations: BrowserPanelOperationOwnership;

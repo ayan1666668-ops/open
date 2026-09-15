@@ -14,6 +14,7 @@ interface BrowserPanelViewportHost {
   readonly native: { readonly activeTab: NativeBrowserTab | undefined };
   readonly activeTargetId: string | null;
   readonly view: BrowserPanelView | null;
+  readonly fixedViewportView: boolean;
   readonly operations: Pick<BrowserPanelOperationOwnership, "captureClient">;
   readonly stream: Pick<BrowserPanelStream, "resize">;
   readonly pendingInput: Pick<BrowserPanelPendingInput, "scheduleViewportResize">;
@@ -24,19 +25,25 @@ const VIEWPORT_RESIZE_DELAY_MS = 300;
 const MIN_VIEWPORT_DIMENSION = 100;
 const MAX_VIEWPORT_DIMENSION = 8192;
 
-// Opt back into the legacy panel-driven viewport resizing.
-const VIEWPORT_FOLLOW_PREF_KEY = "openclaw.browserPanel.followViewport";
+const FIXED_VIEWPORT_PREF_KEY = "openclaw.browserPanel.fixedViewport";
 
 /**
- * The panel is a viewer: the remote page owns its viewport, and the live frame
- * scales to the panel. Users who prefer the legacy panel-driven resizing can
- * opt back in with this localStorage flag.
+ * Fixed-viewport viewing: the panel scales the live frame instead of resizing
+ * the remote page, so the page keeps the viewport its agent or document chose.
  */
-function followPanelViewportPreferred(): boolean {
+export function readFixedViewportPreference(): boolean {
   try {
-    return globalThis.localStorage?.getItem(VIEWPORT_FOLLOW_PREF_KEY) === "1";
+    return globalThis.localStorage?.getItem(FIXED_VIEWPORT_PREF_KEY) === "1";
   } catch {
     return false;
+  }
+}
+
+export function writeFixedViewportPreference(value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(FIXED_VIEWPORT_PREF_KEY, value ? "1" : "0");
+  } catch {
+    // Storage can be unavailable (private mode, opaque origin); keep the in-memory value.
   }
 }
 
@@ -93,9 +100,9 @@ export class BrowserPanelViewportController {
       return;
     }
     this.controller.stream.resize();
-    // Locked by default: the panel is a viewer, not the owner of the page's
-    // layout viewport. The live frame scales to the panel instead.
-    if (!followPanelViewportPreferred()) {
+    if (this.controller.fixedViewportView) {
+      // Fixed-viewport viewing: the page owns its viewport and the panel scales
+      // the live frame to fit, instead of resizing the remote page.
       return;
     }
     const width = Math.min(

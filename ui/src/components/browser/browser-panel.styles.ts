@@ -151,6 +151,8 @@ export const browserPanelStyles = css`
   .bp-stage {
     position: relative;
     width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .bp-stage--native {
     flex: 1 1 auto;
@@ -165,7 +167,8 @@ export const browserPanelStyles = css`
   .bp-shot {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
   }
