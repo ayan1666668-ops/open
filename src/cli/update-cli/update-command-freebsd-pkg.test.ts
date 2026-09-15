@@ -131,6 +131,7 @@ describe("FreeBSD pkg update admission", () => {
             claimed = true;
           },
           getManagedServiceEnv: () => undefined,
+          getSnapshotSource: async () => ({ config: {}, env: process.env }),
           allowGatewayServiceRepair: false,
           allowGatewayActivation: false,
         }),
@@ -149,6 +150,7 @@ describe("FreeBSD pkg update admission", () => {
       const checkout = vi
         .spyOn(shared, "ensureGitCheckout")
         .mockRejectedValue(new Error("unexpected checkout mutation"));
+      const getSnapshotSource = vi.fn(async () => ({ config: {}, env: process.env }));
       vi.spyOn(exec, "runCommandBuffered").mockResolvedValue(
         pkgQueryResult(`${selected}/package.json\n`),
       );
@@ -163,12 +165,14 @@ describe("FreeBSD pkg update admission", () => {
           channel: "dev",
           tag: "dev",
           getManagedServiceEnv: () => undefined,
+          getSnapshotSource,
           allowGatewayServiceRepair: false,
           allowGatewayActivation: false,
         }),
       ).rejects.toMatchObject({ reason: "pkg-owned-install" });
       expect(manager).not.toHaveBeenCalled();
       expect(checkout).not.toHaveBeenCalled();
+      expect(getSnapshotSource).not.toHaveBeenCalled();
     });
   });
 
