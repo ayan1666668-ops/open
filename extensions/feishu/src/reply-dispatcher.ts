@@ -33,6 +33,7 @@ import type { MentionTarget } from "./mention-target.types.js";
 import {
   consumeFeishuPresentationFallbackMarker,
   hasCardMarkdownTable,
+  hasUndrawableCardTable,
   renderFeishuReplyPayload,
   shouldUseCard,
   withinCardTableLimit,
@@ -304,6 +305,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // only looks like one does not.
   const tableNeedsPostPath = (value: string): boolean =>
     tableMode === "off" && hasCardMarkdownTable(value);
+  // block keeps its tables raw for a card to draw, so answer text carrying a shape
+  // the card renderer is not expected to draw takes the post path instead. A card
+  // that cannot draw a table drops those rows from the message rather than
+  // degrading them. This asks about the answer alone: reasoning is wrapped in a
+  // blockquote before it reaches the card, which is a separate limitation that
+  // predates this change.
+  const answerTableNeedsPostPath = (value: string): boolean =>
+    nativeTables && hasUndrawableCardTable(value);
   const renderMode = account.config?.renderMode ?? "auto";
   // Streaming cards cannot attach native mention recipients. Bot-authored ingress
   // therefore uses normal cards/posts so every emitted unit reaches the peer bot.
@@ -324,7 +333,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   let streaming: FeishuStreamingSession | null = null;
   let streamText = "";
-  let streamTextIsPreview = true;
   let lastPartial = "";
   let reasoningText = "";
   let statusLine = "";
@@ -427,7 +435,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     });
   };
 
-  const streamDisplayText = () => (streamTextIsPreview ? streamText : renderTables(streamText));
+  // `streamText` stays authored so snapshots and mirrored blocks compare and merge
+  // one representation. The projection belongs here, at display, for a preview
+  // exactly as much as for a settled answer: a card that shows a native table
+  // while generating and the configured form at close has told two stories.
+  const streamDisplayText = () => renderTables(streamText);
 
   const queueStreamingUpdate = (
     nextText: string,
@@ -448,7 +460,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       lastPartial = nextText;
     }
     const mode = options?.mode ?? "snapshot";
-    streamTextIsPreview = mode === "snapshot";
     if (mode === "delta") {
       streamText = `${streamText}${nextText}`;
     } else {
@@ -544,7 +555,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     activeStreamingGeneration = undefined;
     partialUpdateQueue = Promise.resolve();
     streamText = "";
-    streamTextIsPreview = true;
     lastPartial = "";
     reasoningText = "";
     statusLine = "";
@@ -603,7 +613,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // Committing here would put the table in a card just as surely as delivering a
         // final would, so this close drops the card and reuses a matching block
         // receipt or sends the combined text for a final to inherit.
-        const closeNeedsPost = disposition === "closed" && tableNeedsPostPath(text);
+        const closeNeedsPost =
+          disposition === "closed" &&
+          (tableNeedsPostPath(text) || answerTableNeedsPostPath(answerText));
         let closed;
         try {
           if (disposition === "discarded" || closeNeedsPost) {
@@ -882,7 +894,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     // Block receipts are keyed by the rendered answer, never the reasoning preview
     // added by close. Keep that key separate from an unmatched close's post body.
     const matchingBlock =
-      infoKind === "final" && tableNeedsPostPath(blockAnswerText)
+      infoKind === "final" &&
+      (tableNeedsPostPath(blockAnswerText) || answerTableNeedsPostPath(blockAnswerText))
         ? blockPostDeliveries.get(blockAnswerText)
         : undefined;
     const send = () =>
@@ -1091,7 +1104,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     }
     const cardHeader = resolveCardHeader(agentId, identity);
     const cardNote = resolveCardNote(agentId, identity, responsePrefixContextProvider());
-    const useRecoveryCard = !tableNeedsPostPath(content) && withinCardTableLimit(content);
+    const useRecoveryCard =
+      !tableNeedsPostPath(content) &&
+      !answerTableNeedsPostPath(content) &&
+      withinCardTableLimit(content);
     return await sendChunkedTextReply({
       text: content,
       useCard: useRecoveryCard,
@@ -1498,7 +1514,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         info?.kind === "final" && hasText && text.length > textChunkLimit;
       // A block payload reaches a card of its own under block streaming, so the
       // exclusion covers every card-capable payload and not only a final.
-      const tableNeedsPost = hasText && tableNeedsPostPath(text);
+      const tableNeedsPost =
+        hasText && (tableNeedsPostPath(text) || answerTableNeedsPostPath(text));
       // Feishu's table ceiling applies to static card elements, not CardKit's streamed markdown.
       // Keep the intents separate so an active preview cannot fork into an independent post.
       const cardRenderingRequested =
@@ -1664,7 +1681,6 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 streamSourceText,
                 payload.isError === true && hasStreamingFinalText,
               );
-              streamTextIsPreview = false;
               hasStreamingFinalText = true;
               snapshotBaseText = "";
               lastSnapshotTextLength = streamText.length;

@@ -4,6 +4,7 @@ import {
   buildFeishuPresentationCard,
   feishuCardWithinTableLimit,
   isFeishuCardWithinEnvelope,
+  shouldUseCard,
   withinCardTableLimit,
 } from "./presentation-card.js";
 
@@ -126,5 +127,65 @@ describe("feishuCardWithinTableLimit", () => {
       body: { elements: [{ tag: "markdown", content: "plain | pipes but no table" }] },
     };
     expect(feishuCardWithinTableLimit(card)).toBe(true);
+  });
+});
+
+describe("shouldUseCard (tables the card renderer will draw)", () => {
+  const pipedTable = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+  const pipelessTable = "Name | Role\n---- | ----\nAda  | Lead";
+  const quotedTable = "> Name | Role\n> ---- | ----\n> Ada  | Lead";
+  const listTable = "- Name | Role\n  ---- | ----\n  Ada  | Lead";
+  const orderedListTable = "1. Name | Role\n   ---- | ----\n   Ada  | Lead";
+
+  it("promotes a table the renderer draws", () => {
+    expect(shouldUseCard(pipedTable, true)).toBe(true);
+    expect(shouldUseCard(pipelessTable, true)).toBe(true);
+    expect(shouldUseCard("| a | b |\n|:--|--:|\n| 1 | 2 |", true)).toBe(true);
+  });
+
+  it("leaves a quoted table on the post path", () => {
+    // The card renderer does not descend into the quote, so it would draw
+    // neither the table nor its text. The post path converts it to a fence.
+    expect(shouldUseCard(quotedTable, true)).toBe(false);
+  });
+
+  it("leaves a table opened by a list marker on the post path", () => {
+    // Our parser reads the marker as part of the first header cell. The card
+    // renderer reads it as a list item and draws an empty bullet.
+    expect(shouldUseCard(listTable, true)).toBe(false);
+    expect(shouldUseCard(orderedListTable, true)).toBe(false);
+  });
+
+  // Each of these parses to the first header cell `- Name`, exactly like the
+  // list-opened table above, and none of them opens a list. Reading the parsed
+  // cell instead of the source line would send all four to the post path.
+  it.each([
+    ["an outer pipe", "| - Name | Role |\n| --- | --- |\n| Ada | Lead |"],
+    ["an escaped marker", "\\- Name | Role\n--- | ---\nAda | Lead"],
+    ["an inline-code marker", "`- Name` | Role\n--- | ---\nAda | Lead"],
+    ["an emphasized marker", "**- Name** | Role\n--- | ---\nAda | Lead"],
+    ["an entity marker", "&#45; Name | Role\n--- | ---\nAda | Lead"],
+  ])("still promotes a table whose first cell only looks like a marker: %s", (_label, text) => {
+    expect(shouldUseCard(text, true)).toBe(true);
+  });
+
+  it("leaves a message mixing drawable and undrawable tables on the post path", () => {
+    expect(shouldUseCard(`${pipedTable}\n\n${listTable}`, true)).toBe(false);
+  });
+
+  it("lets fenced code promote a message that also holds an undrawable table", () => {
+    // Fenced code answers before tables are counted at all, so this is an
+    // override rather than a table decision. The table in such a message is
+    // still subject to the renderer limitation.
+    expect(shouldUseCard("```js\nconst a = 1;\n```\n\n" + listTable, true)).toBe(true);
+  });
+
+  it("does not promote a table when the mode converts it first", () => {
+    expect(shouldUseCard(pipedTable, false)).toBe(false);
+    expect(shouldUseCard(quotedTable, false)).toBe(false);
+  });
+
+  it("does not promote prose that merely contains pipes", () => {
+    expect(shouldUseCard("hello | world", true)).toBe(false);
   });
 });

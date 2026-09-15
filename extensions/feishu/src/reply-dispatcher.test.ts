@@ -4521,10 +4521,24 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       { shape: "pipeless", text: pipelessTableMarkdown },
       { shape: "leading-pipe-only", text: "| Name | Role\n| --- | ---\n| Ada | Lead" },
       { shape: "trailing-pipe-only", text: "Name | Role |\n--- | --- |\nAda | Lead |" },
-      { shape: "blockquote", text: "> Name | Role\n> --- | ---\n> Ada | Lead" },
-      { shape: "list-item", text: "- Name | Role\n  --- | ---\n  Ada | Lead" },
       { shape: "CRLF pipeless", text: pipelessTableMarkdown.replaceAll("\n", "\r\n") },
       { shape: "aligned-delimiter", text: "Name | Role\n:--- | ---:\nAda | Lead" },
+    ] as const;
+    // Our parser finds a table in these two, but the card renderer does not draw one.
+    // It does not descend into a blockquote, and it claims the leading list marker
+    // for a list. Either way the rows would leave the message, so they take the post
+    // path and arrive as a fenced block instead.
+    const undrawableTableShapes = [
+      {
+        shape: "blockquote",
+        text: "> Name | Role\n> --- | ---\n> Ada | Lead",
+        posted: "> ```\n> | Name | Role |\n> | ---- | ---- |\n> | Ada  | Lead |\n> ```",
+      },
+      {
+        shape: "list-item",
+        text: "- Name | Role\n  --- | ---\n  Ada | Lead",
+        posted: "```\n| - Name | Role |\n| ------ | ---- |\n| Ada    | Lead |\n```",
+      },
     ] as const;
     const nonTableShapes = [
       { shape: "header wider than delimiter", text: "| Name | Role |\n| --- |\n| Ada | Lead |" },
@@ -5100,6 +5114,118 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     });
 
+    it.each([
+      {
+        shape: "blockquote",
+        text: "```js\nconst a = 1;\n```\n\n> Name | Role\n> --- | ---\n> Ada | Lead",
+        posted:
+          "```js\nconst a = 1;\n```\n\n> ```\n> | Name | Role |\n> | ---- | ---- |\n> | Ada  | Lead |\n> ```",
+      },
+      {
+        shape: "list-item",
+        text: "```js\nconst a = 1;\n```\n\n- Name | Role\n  --- | ---\n  Ada | Lead",
+        posted:
+          "```js\nconst a = 1;\n```\n\n```\n| - Name | Role |\n| ------ | ---- |\n| Ada    | Lead |\n```",
+      },
+    ])(
+      "posts a $shape table on a reply even when fenced code would promote it",
+      async ({ text, posted }) => {
+        // shouldUseCard answers true for the fence, and the reply path still
+        // declines the card because the message also holds an ineligible table.
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "off", "feishu"));
+        const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("block") });
+
+        const delivery = await options.deliver({ text }, { kind: "final" });
+        await options.onIdle?.();
+        await delivery?.finalization;
+
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: posted }),
+        );
+      },
+    );
+
+    it.each(undrawableTableShapes)(
+      "posts a $shape table on a reply even when a card was asked for",
+      async ({ text, posted }) => {
+        // A reply vetoes the card for these shapes whatever renderMode says. The
+        // direct send path still honours an explicit card, so the two differ.
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("card", "off", "feishu"));
+        const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("block") });
+
+        const delivery = await options.deliver({ text }, { kind: "final" });
+        await options.onIdle?.();
+        await delivery?.finalization;
+
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: posted }),
+        );
+      },
+    );
+
+    it.each(
+      undrawableTableShapes.flatMap(({ shape, text, posted }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, posted, tables })),
+      ),
+    )(
+      "$tables posts a $shape table when an open preview closes on idle",
+      async ({ tables, text, posted }) => {
+        // The close decision is reached only by an actual preview closing, which
+        // a final-with-streaming-enabled case never exercises.
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+        const { result, options } = createDispatcherHarness({
+          accountId: "main",
+          cfg: tableCfg(tables),
+        });
+        result.replyOptions.onPartialReply?.({ text });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        await options.onIdle?.();
+
+        const instance = requireStreamingInstance(0);
+        expect(instance.closeWithResult).not.toHaveBeenCalled();
+        expect(instance.discard).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: posted }),
+        );
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(
+      undrawableTableShapes.flatMap(({ shape, text, posted }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, posted, tables })),
+      ),
+    )(
+      "$tables posts a $shape table as a fenced block when streaming is on",
+      async ({ tables, text, posted }) => {
+        await deliverFinal(tables, "partial", text);
+
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: posted }),
+        );
+      },
+    );
+
+    it.each(
+      undrawableTableShapes.flatMap(({ shape, text, posted }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, posted, tables })),
+      ),
+    )("$tables posts a $shape table as a fenced block", async ({ tables, text, posted }) => {
+      await deliverFinal(tables, "off", text);
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(expect.objectContaining({ text: posted }));
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
     it.each(
       nonTableShapes.flatMap(({ shape, text }) =>
         (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
@@ -5412,6 +5538,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       { tables: "bullets" as const, converted: () => bulletsCard },
       { tables: "code" as const, converted: () => codeText },
     ];
+
+    it.each(convertingModes)(
+      "projects a $tables table into the card while it is still streaming",
+      async ({ tables, converted }) => {
+        const { result } = createBlockTableHarness(tableCfg(tables));
+
+        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+        const instance = requireStreamingInstance(0);
+        await vi.waitFor(() => expect(instance.update).toHaveBeenCalled());
+
+        expect(instance.update.mock.calls.at(-1)?.[0]).toBe(converted());
+      },
+    );
 
     it.each(convertingModes)(
       "keeps one $tables table when a cumulative partial follows a block",

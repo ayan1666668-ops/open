@@ -201,10 +201,24 @@ const nativeTableShapes = [
   { shape: "pipeless", text: pipelessTableMarkdown },
   { shape: "leading-pipe-only", text: "| Name | Role\n| --- | ---\n| Ada | Lead" },
   { shape: "trailing-pipe-only", text: "Name | Role |\n--- | --- |\nAda | Lead |" },
-  { shape: "blockquote", text: "> Name | Role\n> --- | ---\n> Ada | Lead" },
-  { shape: "list-item", text: "- Name | Role\n  --- | ---\n  Ada | Lead" },
   { shape: "CRLF pipeless", text: pipelessTableMarkdown.replaceAll("\n", "\r\n") },
   { shape: "aligned-delimiter", text: "Name | Role\n:--- | ---:\nAda | Lead" },
+] as const;
+// Our parser finds a table in these two, but the card renderer does not draw one.
+// It does not descend into a blockquote, and it claims the leading list marker
+// for a list. Either way the rows would leave the message, so they take the post
+// path and arrive as a fenced block instead.
+const undrawableTableShapes = [
+  {
+    shape: "blockquote",
+    text: "> Name | Role\n> --- | ---\n> Ada | Lead",
+    posted: "> ```\n> | Name | Role |\n> | ---- | ---- |\n> | Ada  | Lead |\n> ```",
+  },
+  {
+    shape: "list-item",
+    text: "- Name | Role\n  --- | ---\n  Ada | Lead",
+    posted: "```\n| - Name | Role |\n| ------ | ---- |\n| Ada    | Lead |\n```",
+  },
 ] as const;
 const nonTableShapes = [
   { shape: "header wider than delimiter", text: "| Name | Role |\n| --- |\n| Ada | Lead |" },
@@ -4083,6 +4097,18 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
 
       expect(sendStructuredCardCall()?.text).toBe(text);
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      undrawableTableShapes.flatMap(({ shape, text, posted }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, posted, tables })),
+      ),
+    )("$tables posts a $shape table as a fenced block", async ({ tables, text, posted }) => {
+      await sendText({ cfg: tableCfg(scope, tables), to: "chat_1", text, accountId });
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageCall()?.text).toBe(posted);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
     });
 
     it.each(
