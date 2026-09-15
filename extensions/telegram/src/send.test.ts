@@ -858,6 +858,38 @@ describe("sendMessageTelegram", () => {
     expect(botApi.sendChatAction).toHaveBeenCalledTimes(2);
   });
 
+  it("forwards owner cancellation through grammY's AbortSignal while sending typing", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          botToken: "tok",
+        },
+      },
+    });
+    const owner = new AbortController();
+    let forwarded: Parameters<typeof botApi.sendChatAction>[3];
+    botApi.sendChatAction.mockImplementation((_chatId, _action, _params, signal) => {
+      forwarded = signal;
+      return new Promise((_resolve, reject) => {
+        forwarded?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+      });
+    });
+
+    const sending = sendTypingTelegram("telegram:group:-1001234567890", {
+      cfg: TELEGRAM_TEST_CFG,
+      token: "tok",
+      accountId: "default",
+      signal: owner.signal,
+      retry: { attempts: 1, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+    });
+    await vi.waitFor(() => expect(forwarded).toBeDefined());
+    expect(forwarded?.aborted).toBe(false);
+    owner.abort();
+
+    await expect(sending).rejects.toThrow("cancelled");
+    expect(forwarded?.aborted).toBe(true);
+  });
+
   it("pins and unpins Telegram messages", async () => {
     loadConfig.mockReturnValue({
       channels: {

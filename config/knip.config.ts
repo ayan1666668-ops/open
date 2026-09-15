@@ -531,6 +531,10 @@ const config = {
     // Greeting cache/fact contracts (hash, alert text, store shapes) are
     // asserted by the focused greeting unit tests, not by another prod module.
     "src/system-agent/greeting.ts": ["exports", "types"],
+    // Focused durable-terminal tests consume these explicit lifecycle/storage seams;
+    // production reaches the behavior through agent.wait and SQLite receipts.
+    "src/gateway/agent-turn/agent-job.ts": ["exports"],
+    "src/state/agent-run-terminal-receipts.ts": ["exports"],
     // Focused tests consume these diagnostic/test seams; production code uses
     // the surrounding runtime helpers rather than importing the exports.
     "extensions/signal/src/setup-core.ts": ["exports"],
@@ -815,6 +819,9 @@ const config = {
       "src/host/a2ui-app/rolldown.config.mjs!",
       "src/host/a2ui-app/bootstrap.js!",
       "src/host/a2ui-app/bootstrap-v0.9.js!",
+      // Browser hosts load the generated A2UI bundles by path at runtime.
+      "src/host/a2ui/a2ui-v0.9.bundle.js!",
+      "src/host/a2ui/a2ui.bundle.js!",
     ]),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/cloudflare-ai-gateway`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/chutes`]: bundledPluginWorkspace(),
@@ -936,6 +943,11 @@ const config = {
       ignoreDependencies: [...bundledPluginIgnoredRuntimeDependencies, "undici"],
     },
     [`${BUNDLED_PLUGIN_ROOT_DIR}/tavily`]: bundledPluginWorkspace(),
+    [`${BUNDLED_PLUGIN_ROOT_DIR}/telegram`]: {
+      ...bundledPluginWorkspace(),
+      // Retained to keep Telegram's abort-controller compatibility surface pinned.
+      ignoreDependencies: [...bundledPluginIgnoredRuntimeDependencies, "abort-controller"],
+    },
     [`${BUNDLED_PLUGIN_ROOT_DIR}/tencent`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/vllm`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/vault`]: bundledPluginWorkspace([
@@ -948,6 +960,10 @@ const config = {
       // Baileys loads its optional audio decoder at runtime for supported media.
       ignoreDependencies: [...bundledPluginIgnoredRuntimeDependencies, "audio-decode"],
     },
+    [`${BUNDLED_PLUGIN_ROOT_DIR}/workboard`]: bundledPluginWorkspace([
+      // Dashboard runtime loads the hashed control-UI artifact from the plugin manifest.
+      "dist/control-ui/0071f3e81e714748509086f28d4695a5aecd560b340e28cfbf6e07d7dc5b0157/index.js!",
+    ]),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/xiaomi`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/xai`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/llama-cpp`]: {

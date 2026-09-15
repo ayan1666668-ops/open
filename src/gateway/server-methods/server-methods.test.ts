@@ -493,7 +493,8 @@ describe("waitForAgentJob", () => {
       status: "error",
       startedAt: 450,
       endedAt: 500,
-      error: "Context overflow: prompt too large for the model.",
+      error:
+        "Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model.",
       livenessState: "blocked",
     });
   });

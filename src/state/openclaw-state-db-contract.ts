@@ -44,6 +44,7 @@ export const FIRST_USE_STATE_TABLES = [
   "execution_owner_lifecycle_bindings",
   "outbound_message_execution_bindings",
   "outbound_message_progress",
+  "agent_run_terminal_receipts",
 ] as const;
 export const FIRST_USE_STATE_INDEXES = [
   "idx_update_runs_created",
@@ -63,6 +64,7 @@ export const FIRST_USE_STATE_INDEXES = [
   "outbound_message_execution_bindings_execution_event_idx",
   "outbound_message_progress_occurred_idx",
   "outbound_message_progress_run_occurred_idx",
+  "idx_agent_run_terminal_receipts_expiry",
 ] as const;
 // These additive tables stay optional until their feature-local lazy ensures
 // run; fold them into the next natural schema-version bump.

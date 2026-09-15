@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
+import { resolveNonGitTempRoot } from "../../test/helpers/temp-dir.js";
 import { writeAcpSessionMetaForMigration } from "../acp/runtime/session-meta.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { resolveLegacyInheritedAuthAgentId } from "../agents/legacy-inherited-auth-dir.js";
@@ -4852,7 +4853,9 @@ describe("gateway session utils", () => {
   });
 
   test("listAgentsForGateway reports whether each workspace is a git checkout", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-agent-workspace-git-"));
+    const root = fs.mkdtempSync(
+      path.join(resolveNonGitTempRoot(), "openclaw-agent-workspace-git-"),
+    );
     const gitWorkspace = path.join(root, "git");
     const plainWorkspace = path.join(root, "plain");
     fs.mkdirSync(path.join(gitWorkspace, ".git"), { recursive: true });

@@ -95,6 +95,7 @@ import {
 import {
   GIT_LS_FILES_MAX_BUFFER_BYTES,
   createExtensionTestProcessTargetChunks,
+  gitEnvironmentForRepositoryRoot,
   listTrackedTestPlanFiles,
   resolveExtensionTestConfig,
   splitExtensionTestProcessTargets,
@@ -1344,6 +1345,7 @@ function listExplicitTestTargetFilesFromGit(cwd: string) {
     {
       cwd,
       encoding: "utf8",
+      env: gitEnvironmentForRepositoryRoot(cwd),
       maxBuffer: GIT_LS_FILES_MAX_BUFFER_BYTES,
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -1720,14 +1722,18 @@ function listImportGraphFilesForCwd(cwd: string, options: ImportGraphOptions = {
   }
   const roots = tooling ? TOOLING_IMPORT_GRAPH_ROOTS : SOURCE_ROOTS_FOR_IMPORT_GRAPH;
   const extensions = tooling ? TOOLING_IMPORTABLE_FILE_EXTENSIONS : IMPORTABLE_FILE_EXTENSIONS;
-  const files = listTrackedTestPlanFiles(
+  const trackedFiles = listTrackedTestPlanFiles(
     cwd,
     tooling ? TOOLING_IMPORT_GRAPH_GREP_PATHS : IMPORT_GRAPH_GREP_PATHS,
-  ) ?? [
-    ...roots.flatMap((root) => listImportGraphFiles(cwd, root, [], extensions)),
-    // Root configs are inputs; UI caches and generated sibling trees are not.
-    ...listImportGraphFiles(cwd, "ui", [], extensions, false),
-  ];
+  );
+  const files =
+    trackedFiles && trackedFiles.length > 0
+      ? trackedFiles
+      : [
+          ...roots.flatMap((root) => listImportGraphFiles(cwd, root, [], extensions)),
+          // Root configs are inputs; UI caches and generated sibling trees are not.
+          ...listImportGraphFiles(cwd, "ui", [], extensions, false),
+        ];
   cachedImportGraphFiles.set(cacheKey, files);
   return files;
 }
@@ -1828,6 +1834,7 @@ function listImportGraphGrepMatches(
   const spawnOptions: SpawnSyncOptionsWithStringEncoding = {
     cwd,
     encoding: "utf8",
+    env: gitEnvironmentForRepositoryRoot(cwd),
     // A frontier can exceed the platform argv limit; Git accepts stdin patterns.
     input: missing.join("\n"),
     maxBuffer: GIT_LS_FILES_MAX_BUFFER_BYTES,

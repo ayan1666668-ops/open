@@ -14,6 +14,12 @@ import { SessionOwnerSchema } from "./sessions-row.js";
 export { SessionsCreateParamsSchema };
 export * from "./sessions-activity-summary.js";
 export {
+  SessionsAbortParamsSchema,
+  SessionsAbortResultSchema,
+  type SessionsAbortParams,
+  type SessionsAbortResult,
+} from "./sessions-abort.js";
+export {
   SessionsStorageParamsSchema,
   SessionsStorageStatusResultSchema,
   type SessionsStorageStatusResult,
@@ -509,15 +515,6 @@ export const SessionsMessagesUnsubscribeParamsSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
 });
 
-/** Aborts the active or named run for a session. */
-export const SessionsAbortParamsSchema = closedObject({
-  key: Type.Optional(NonEmptyString),
-  runId: Type.Optional(NonEmptyString),
-  agentId: Type.Optional(NonEmptyString),
-  /** Also discard followup and lane queues for a key-only non-global session abort. */
-  clearQueued: Type.Optional(Type.Boolean()),
-});
-
 /** Updates or clears one plugin namespace value on a session record. */
 export const SessionsPluginPatchParamsSchema = closedObject({
   key: NonEmptyString,
@@ -851,7 +848,6 @@ export type SessionsMessagesSubscribeParams = Static<typeof SessionsMessagesSubs
 export type SessionsMessagesUnsubscribeParams = Static<
   typeof SessionsMessagesUnsubscribeParamsSchema
 >;
-export type SessionsAbortParams = Static<typeof SessionsAbortParamsSchema>;
 export type SessionsPluginPatchParams = Static<typeof SessionsPluginPatchParamsSchema>;
 export type SessionsPluginPatchResult = Static<typeof SessionsPluginPatchResultSchema>;
 export type SessionsResetParams = Static<typeof SessionsResetParamsSchema>;

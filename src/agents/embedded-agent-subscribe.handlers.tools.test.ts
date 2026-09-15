@@ -3094,7 +3094,7 @@ describe("handleToolExecutionEnd exec approval prompts", () => {
       expect.objectContaining({ toolName: "exec", isError: true }),
     ]);
     const [
-      { normalizeAgentRunTerminalReceipt },
+      { normalizeAgentRunTerminalReceiptDraft },
       { createUsageAccumulator },
       { createEmbeddedRunContextRecoveryState },
       { prepareEmbeddedRunTerminal },
@@ -3146,7 +3146,7 @@ describe("handleToolExecutionEnd exec approval prompts", () => {
       },
     });
     expect(
-      normalizeAgentRunTerminalReceipt(Reflect.get(prepared.agentMeta, "terminalReceipt"))
+      normalizeAgentRunTerminalReceiptDraft(Reflect.get(prepared.agentMeta, "terminalReceipt"))
         ?.successfulToolNames,
     ).toEqual([]);
     expect(ctx.state.deterministicApprovalPromptSent).toBe(false);

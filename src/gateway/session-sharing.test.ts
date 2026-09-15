@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
 import { addSessionMember } from "../config/sessions/session-sharing-store.js";
+import { writeAgentRunTerminalReceipt } from "../state/agent-run-terminal-receipts.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { ensureProfileForEmail } from "../state/user-profiles.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
@@ -23,7 +25,10 @@ import {
   rolePolicyConfig,
 } from "./session-sharing.test-utils.js";
 
-afterEach(() => closeOpenClawAgentDatabasesForTest());
+afterEach(() => {
+  closeOpenClawAgentDatabasesForTest();
+  closeOpenClawStateDatabaseForTest();
+});
 
 type SharingTarget = Parameters<typeof resolveSessionSharingRole>[0]["target"];
 
@@ -725,6 +730,167 @@ describe("session sharing policy", () => {
           context,
         }).error,
       ).toBeNull();
+    });
+  });
+
+  it("resolves a run-only abort target from a retained terminal receipt", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = rolePolicyConfig();
+      const owner = roleClient("none", "durable-abort-owner");
+      const outsider = roleClient("none", "durable-abort-outsider");
+      const sessionKey = "agent:main:durable-abort-authorization";
+      const sessionId = "session-durable-abort-authorization";
+      const runId = "run-durable-abort-authorization";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: owner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "main", sessionKey, sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: owner,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toBeNull();
+      expect(
+        resolveSessionMutationAuthorization({
+          client: outsider,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("not found") });
+    });
+  });
+
+  it("does not authorize a run-only abort from an incognito retained terminal receipt", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = rolePolicyConfig();
+      const solo = client({});
+      const sessionKey = "agent:main:dashboard:incognito-durable-abort";
+      const sessionId = "session-incognito-durable-abort";
+      const runId = "run-incognito-durable-abort";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          incognito: true,
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: "durable-abort-incognito-owner",
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "main", sessionKey, sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: solo,
+          method: "sessions.abort",
+          requestParams: { runId },
+          context,
+        }).error,
+      ).toMatchObject({
+        code: "INVALID_REQUEST",
+        details: { code: "SESSION_MUTATION_TARGET_REQUIRED" },
+      });
+    });
+  });
+
+  it("scopes a main alias plus agent ID to the retained run owner's session", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const cfg = {
+        ...rolePolicyConfig(),
+        agents: { list: [{ id: "main", default: true }, { id: "work" }] },
+      };
+      const workOwner = roleClient("none", "durable-work-owner");
+      const mainOwner = roleClient("none", "durable-main-owner");
+      const sessionId = "session-work-main";
+      const runId = "run-work-main";
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: "main" },
+        {
+          sessionId: "session-main-main",
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: mainOwner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      await upsertSessionEntryCore(
+        { agentId: "work", sessionKey: "main" },
+        {
+          sessionId,
+          updatedAt: 1,
+          visibility: "shared",
+          createdActor: {
+            type: "human",
+            source: "profile",
+            id: workOwner.authenticatedUserProfile!.profileId,
+          },
+        },
+      );
+      writeAgentRunTerminalReceipt({
+        runId,
+        owner: { agentId: "work", sessionKey: "agent:work:main", sessionId },
+        terminalJson: JSON.stringify({ status: "ok", startedAt: 10, endedAt: 20 }),
+      });
+      const context = {
+        chatAbortControllers: new Map(),
+        getRuntimeConfig: () => cfg,
+      } as GatewayRequestContext;
+      const requestParams = { key: "main", agentId: "work", runId };
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: workOwner,
+          method: "sessions.abort",
+          requestParams,
+          context,
+        }).error,
+      ).toBeNull();
+      expect(
+        resolveSessionMutationAuthorization({
+          client: mainOwner,
+          method: "sessions.abort",
+          requestParams,
+          context,
+        }).error,
+      ).toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("not found") });
     });
   });
 

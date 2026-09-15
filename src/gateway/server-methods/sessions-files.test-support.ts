@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { expect, vi } from "vitest";
+import { resolveNonGitTempRoot } from "../../../test/helpers/temp-dir.js";
 import type { GatewayRequestHandlers, RespondFn } from "./types.js";
 
 type SessionFilesMethod =
@@ -149,8 +149,7 @@ export function writeWorkspaceFile(root: string, filePath: string, content: stri
 }
 
 export function createWorkspaceFixture(prefix: string): string {
-  const tempRoot = fs.realpathSync(os.tmpdir());
-  const workspaceRoot = fs.mkdtempSync(path.join(tempRoot, prefix));
+  const workspaceRoot = fs.mkdtempSync(path.join(resolveNonGitTempRoot(), prefix));
   writeWorkspaceFile(workspaceRoot, "package.json", '{"name":"openclaw-test"}\n');
   writeWorkspaceFile(workspaceRoot, "src/readme.md", "# Read me\n");
   writeWorkspaceFile(workspaceRoot, "ui/chat.ts", "export const chat = true;\n");

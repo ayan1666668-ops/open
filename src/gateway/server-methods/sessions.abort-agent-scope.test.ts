@@ -270,6 +270,7 @@ describe("sessions.abort agent scope", () => {
       ok: true,
       abortedRunId: null,
       status: "no-active-run",
+      runState: "unknown",
     });
   });
 
@@ -306,6 +307,7 @@ describe("sessions.abort agent scope", () => {
         ok: true,
         abortedRunId: "run-embedded",
         status: "aborted",
+        runState: "active",
       });
     } finally {
       clearActiveEmbeddedRun("session-embedded", handle, sessionKey);
@@ -780,7 +782,7 @@ describe("sessions.abort agent scope", () => {
     expect(abortEmbeddedAgentRunMock).not.toHaveBeenCalled();
     expect(respond).toHaveBeenCalledWith(
       true,
-      { ok: true, abortedRunId: null, status: "no-active-run" },
+      { ok: true, abortedRunId: null, status: "no-active-run", runState: "unknown" },
       undefined,
       undefined,
     );

@@ -4,7 +4,10 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import {
+  resolveNonGitTempRoot,
+  useAutoCleanupTempDirTracker,
+} from "../../../test/helpers/temp-dir.js";
 import { NODE_WORKER_WORKSPACE_EXEC_COMMAND } from "../../infra/node-commands.js";
 import { ensureStagedInputDirectory, stagedInputDirectory } from "../../media/staged-inputs.js";
 import { invokeNodeWorkerSupervisorCommand } from "../../node-host/node-worker-supervisor-commands.js";
@@ -102,7 +105,7 @@ function retryOrUploadStatus(retryStarted: Promise<void>, upload: Promise<unknow
 
 describe("node workspace transfer service", () => {
   it("keeps a plain workspace transferable after durable result staging initializes Git", async () => {
-    const root = tempDirs.make("node-workspace-transfer-unborn-git-");
+    const root = tempDirs.make("node-workspace-transfer-unborn-git-", resolveNonGitTempRoot());
     const localPath = path.join(root, "workspace");
     await fs.mkdir(localPath);
     await fs.writeFile(path.join(localPath, "input.txt"), "gateway input\n");

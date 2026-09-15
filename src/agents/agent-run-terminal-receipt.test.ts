@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   formatAgentRunRouteChange,
+  normalizeAgentRunTerminalReceipt,
+  normalizeAgentRunTerminalReceiptDraft,
   type AgentRunTerminalReceipt,
 } from "./agent-run-terminal-receipt.js";
 import { isProviderModelRerouted } from "./provider-model-route.js";
@@ -106,5 +108,110 @@ describe("formatAgentRunRouteChange", () => {
 
     expect(routeChange).not.toContain(secret);
     expect(routeChange?.length).toBeLessThanOrEqual(320);
+  });
+});
+
+describe("normalizeAgentRunTerminalReceipt", () => {
+  it("preserves a producer draft until the terminal owner adds disposition", () => {
+    const { terminalDisposition: _terminalDisposition, ...draft } = visibleRerouteReceipt;
+
+    expect(normalizeAgentRunTerminalReceiptDraft(draft)).toEqual(draft);
+    expect(normalizeAgentRunTerminalReceipt(draft)).toBeUndefined();
+  });
+
+  it("bounds and deduplicates delegation and approval linkage", () => {
+    const normalized = normalizeAgentRunTerminalReceipt({
+      ...visibleRerouteReceipt,
+      acceptedDelegations: [
+        { runId: "child-1", childSessionKey: "agent:main:child", completionWatch: true },
+        { runId: "", childSessionKey: "agent:main:invalid", completionWatch: false },
+      ],
+      approvalReceipts: [
+        { approvalId: "approval-1", toolCallId: "tool-1", state: "waiting" },
+        { approvalId: "approval-1", state: "resolved" },
+        { approvalId: "approval-invalid", state: "pending" },
+      ],
+    });
+
+    expect(normalized).toMatchObject({
+      acceptedDelegations: [
+        { runId: "child-1", childSessionKey: "agent:main:child", completionWatch: true },
+      ],
+      approvalReceipts: [{ approvalId: "approval-1", toolCallId: "tool-1", state: "resolved" }],
+    });
+  });
+
+  it("preserves opaque run and turn identifiers without trimming or per-field truncation", () => {
+    const runId = ` ${"r".repeat(300)} `;
+    const turnId = ` ${"t".repeat(300)} `;
+    const delegatedRunId = ` ${"d".repeat(300)} `;
+
+    expect(
+      normalizeAgentRunTerminalReceipt({
+        ...visibleRerouteReceipt,
+        runId,
+        turnId,
+        acceptedDelegations: [
+          {
+            runId: delegatedRunId,
+            childSessionKey: "agent:main:child",
+            completionWatch: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      runId,
+      turnId,
+      acceptedDelegations: [{ runId: delegatedRunId }],
+    });
+  });
+
+  it("merges updates for retained approvals after reaching the cap", () => {
+    const waiting = Array.from({ length: 20 }, (_, index) => ({
+      approvalId: `approval-${index}`,
+      state: "waiting" as const,
+    }));
+    const normalized = normalizeAgentRunTerminalReceipt({
+      ...visibleRerouteReceipt,
+      approvalReceipts: [
+        ...waiting,
+        { approvalId: "approval-0", toolCallId: "tool-0", state: "resolved" },
+        { approvalId: "approval-over-cap", state: "resolved" },
+      ],
+    });
+
+    expect(normalized?.approvalReceipts).toHaveLength(20);
+    expect(normalized?.approvalReceipts?.[0]).toEqual({
+      approvalId: "approval-0",
+      toolCallId: "tool-0",
+      state: "resolved",
+    });
+    expect(normalized?.approvalReceipts).not.toContainEqual(
+      expect.objectContaining({ approvalId: "approval-over-cap" }),
+    );
+  });
+
+  it("omits absent optional linkage", () => {
+    const normalized = normalizeAgentRunTerminalReceipt(visibleRerouteReceipt);
+    expect(normalized).not.toHaveProperty("acceptedDelegations");
+    expect(normalized).not.toHaveProperty("approvalReceipts");
+  });
+
+  it("rejects malformed required terminal facts", () => {
+    expect(
+      normalizeAgentRunTerminalReceipt({ ...visibleRerouteReceipt, runId: "" }),
+    ).toBeUndefined();
+    expect(
+      normalizeAgentRunTerminalReceipt({
+        ...visibleRerouteReceipt,
+        successfulToolNames: "sessions_spawn",
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeAgentRunTerminalReceipt({
+        ...visibleRerouteReceipt,
+        terminalDisposition: "hidden",
+      }),
+    ).toBeUndefined();
   });
 });

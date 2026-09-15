@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import {
+  resolveNonGitTempRoot,
+  useAutoCleanupTempDirTracker,
+} from "../../../test/helpers/temp-dir.js";
 import { AcceptedWorkspacePublicationIndeterminateError } from "./workspace-accepted-publication.js";
 import { verifyReconciledWorkspaceFinal } from "./workspace-finalize.js";
 import { serializeWorkerWorkspaceManifest } from "./workspace-manifest.js";
@@ -33,6 +36,7 @@ vi.mock("../../logging/subsystem.js", async (importOriginal) => {
 });
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
 afterEach(() => {
   workspaceWarning.mockReset();
   vi.unstubAllEnvs();
@@ -173,8 +177,9 @@ describe("worker workspace reconciliation publication", () => {
     ["preserves publication failures and rollback when scratch cleanup fails", true, true],
     ["removes disposable scratch without warning when cleanup succeeds", false, false],
   ])("%s", async (_name, cleanupFails, publicationFails) => {
-    const local = tempDirs.make("openclaw-workspace-result-cleanup-local-");
-    const payload = tempDirs.make("openclaw-workspace-result-cleanup-payload-");
+    const tempRoot = resolveNonGitTempRoot();
+    const local = tempDirs.make("openclaw-workspace-result-cleanup-local-", tempRoot);
+    const payload = tempDirs.make("openclaw-workspace-result-cleanup-payload-", tempRoot);
     await fs.writeFile(path.join(local, "result.txt"), "base\n");
     await fs.writeFile(path.join(payload, "result.txt"), "worker\n");
     const base = await readActualWorkspaceManifest({ root: local, baseCommit: null });
@@ -204,7 +209,7 @@ describe("worker workspace reconciliation publication", () => {
       },
     });
     const remove = fs.rm;
-    const scratch = tempDirs.make("openclaw-workspace-result-cleanup-scratch-");
+    const scratch = tempDirs.make("openclaw-workspace-result-cleanup-scratch-", tempRoot);
     const makeScratch = vi.spyOn(fs, "mkdtemp").mockResolvedValueOnce(scratch);
     const removeSpy = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
       if (target === scratch) {

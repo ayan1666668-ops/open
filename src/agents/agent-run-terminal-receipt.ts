@@ -3,7 +3,20 @@ import { redactSensitiveText } from "../logging/redact.js";
 
 type AgentRunTerminalModelRef = { provider: string; model: string };
 
+type AgentRunAcceptedDelegationReceipt = {
+  runId: string;
+  childSessionKey: string;
+  completionWatch: boolean;
+};
+
+export type AgentRunApprovalReceipt = {
+  approvalId: string;
+  toolCallId?: string;
+  state: "waiting" | "resolved";
+};
+
 const AGENT_RUN_ROUTE_CHANGE_MAX_CHARS = 320;
+export const AGENT_RUN_TERMINAL_LINK_MAX_ITEMS = 20;
 
 export type AgentRunTerminalReceipt = {
   runId: string;
@@ -12,24 +25,172 @@ export type AgentRunTerminalReceipt = {
   requested: AgentRunTerminalModelRef;
   effective: AgentRunTerminalModelRef & { responseModel: string };
   successfulToolNames: string[];
+  acceptedDelegations?: AgentRunAcceptedDelegationReceipt[];
+  approvalReceipts?: AgentRunApprovalReceipt[];
   /** A final reply was delivered to the external source conversation. */
   sourceReplyDelivered?: true;
   rerouted: boolean;
   terminalDisposition: "visible" | "not-visible";
 };
 
+export type AgentRunTerminalReceiptDraft = Omit<AgentRunTerminalReceipt, "terminalDisposition">;
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized && normalized.length <= maxLength ? normalized : undefined;
+}
+
+function opaqueNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeModelRef(value: unknown): AgentRunTerminalModelRef | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  // SAFETY: the object/non-array guard above narrows the runtime shape to an indexable record.
+  const record = value as Record<string, unknown>;
+  const provider = boundedString(record.provider, 128);
+  const model = boundedString(record.model, 256);
+  return provider && model ? { provider, model } : undefined;
+}
+
+function normalizeSuccessfulToolNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return [
+    ...new Set(
+      value
+        .slice(0, AGENT_RUN_TERMINAL_LINK_MAX_ITEMS)
+        .map((entry) => boundedString(entry, 128))
+        .filter((entry): entry is string => Boolean(entry)),
+    ),
+  ];
+}
+
+function normalizeAgentRunAcceptedDelegationReceipts(
+  value: unknown,
+): AgentRunAcceptedDelegationReceipt[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalized = value
+    .slice(0, AGENT_RUN_TERMINAL_LINK_MAX_ITEMS)
+    .flatMap((entry): AgentRunAcceptedDelegationReceipt[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return [];
+      }
+      // SAFETY: the object/non-array guard above narrows the runtime shape to an indexable record.
+      const record = entry as Record<string, unknown>;
+      const runId = opaqueNonEmptyString(record.runId);
+      const childSessionKey = boundedString(record.childSessionKey, 1_024);
+      if (!runId || !childSessionKey || typeof record.completionWatch !== "boolean") {
+        return [];
+      }
+      return [{ runId, childSessionKey, completionWatch: record.completionWatch }];
+    });
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function normalizeAgentRunApprovalReceipts(
+  value: unknown,
+): AgentRunApprovalReceipt[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const byApprovalId = new Map<string, AgentRunApprovalReceipt>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    // SAFETY: the object/non-array guard above narrows the runtime shape to an indexable record.
+    const record = entry as Record<string, unknown>;
+    const approvalId = boundedString(record.approvalId, 256);
+    const toolCallId = boundedString(record.toolCallId, 256);
+    const state = record.state;
+    if (!approvalId || (state !== "waiting" && state !== "resolved")) {
+      continue;
+    }
+    const previous = byApprovalId.get(approvalId);
+    if (!previous && byApprovalId.size >= AGENT_RUN_TERMINAL_LINK_MAX_ITEMS) {
+      continue;
+    }
+    byApprovalId.set(approvalId, {
+      approvalId,
+      ...(toolCallId
+        ? { toolCallId }
+        : previous?.toolCallId
+          ? { toolCallId: previous.toolCallId }
+          : {}),
+      state: previous?.state === "resolved" || state === "resolved" ? "resolved" : "waiting",
+    });
+  }
+  const normalized = Array.from(byApprovalId.values());
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+export function normalizeAgentRunTerminalReceiptDraft(
+  value: unknown,
+): AgentRunTerminalReceiptDraft | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  // SAFETY: the object/non-array guard above narrows the runtime shape to an indexable record.
+  const receipt = value as Record<string, unknown>;
+  const runId = opaqueNonEmptyString(receipt.runId);
+  const sessionId = boundedString(receipt.sessionId, 256);
+  const turnId = opaqueNonEmptyString(receipt.turnId);
+  const requested = normalizeModelRef(receipt.requested);
+  const effectiveBase = normalizeModelRef(receipt.effective);
+  // SAFETY: `normalizeModelRef` has already accepted `receipt.effective` as a record-like object.
+  const effectiveRecord = receipt.effective as Record<string, unknown> | undefined;
+  const responseModel = boundedString(effectiveRecord?.responseModel, 256);
+  const successfulToolNames = normalizeSuccessfulToolNames(receipt.successfulToolNames);
+  if (
+    !runId ||
+    !sessionId ||
+    !turnId ||
+    !requested ||
+    !effectiveBase ||
+    !responseModel ||
+    !successfulToolNames ||
+    typeof receipt.rerouted !== "boolean"
+  ) {
+    return undefined;
+  }
+  const acceptedDelegations = normalizeAgentRunAcceptedDelegationReceipts(
+    receipt.acceptedDelegations,
+  );
+  const approvalReceipts = normalizeAgentRunApprovalReceipts(receipt.approvalReceipts);
+  return {
+    runId,
+    sessionId,
+    turnId,
+    requested,
+    effective: { ...effectiveBase, responseModel },
+    successfulToolNames,
+    ...(acceptedDelegations ? { acceptedDelegations } : {}),
+    ...(approvalReceipts ? { approvalReceipts } : {}),
+    ...(receipt.sourceReplyDelivered === true ? { sourceReplyDelivered: true } : {}),
+    rerouted: receipt.rerouted,
+  };
+}
+
 export function normalizeAgentRunTerminalReceipt(
   value: unknown,
 ): AgentRunTerminalReceipt | undefined {
-  const receipt = value as AgentRunTerminalReceipt | undefined;
-  return receipt &&
-    typeof receipt.runId === "string" &&
-    typeof receipt.sessionId === "string" &&
-    typeof receipt.turnId === "string" &&
-    receipt.requested &&
-    receipt.effective &&
-    Array.isArray(receipt.successfulToolNames)
-    ? receipt
+  const draft = normalizeAgentRunTerminalReceiptDraft(value);
+  let terminalDisposition: unknown;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    // SAFETY: the object/non-array guard above narrows the runtime shape to an indexable record.
+    terminalDisposition = (value as Record<string, unknown>).terminalDisposition;
+  }
+  return draft && (terminalDisposition === "visible" || terminalDisposition === "not-visible")
+    ? { ...draft, terminalDisposition }
     : undefined;
 }
 

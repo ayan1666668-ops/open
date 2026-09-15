@@ -142,6 +142,16 @@ export function ensureConfigRevisionKeySchema(database: DatabaseSync): void {
   ); // sqlite-allow-raw -- Canonical additive DDL only; key rows use Kysely.
 }
 
+/** Lazily installs bounded terminal run receipts at the first admitted run start. */
+export function ensureAgentRunTerminalReceiptSchema(database: DatabaseSync): void {
+  database.exec(
+    extractSqliteTableSchema(OPENCLAW_STATE_SCHEMA_SQL, "agent_run_terminal_receipts", {
+      endMarker: "ON agent_run_terminal_receipts(expires_at_ms, created_at_ms, run_id);",
+      errorMessage: "Agent run terminal receipt schema marker is missing.",
+    }),
+  ); // sqlite-allow-raw -- Canonical lazy additive DDL only.
+}
+
 export function ensureAgentDeletionJournalSchema(database: DatabaseSync): void {
   database.exec(extractSqliteTableSchema(OPENCLAW_STATE_SCHEMA_SQL, "agent_deletion_journal"));
 }

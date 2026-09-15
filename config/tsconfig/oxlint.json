@@ -7,5 +7,11 @@
     "../../extensions/**/*",
     "../../scripts/**/*"
   ],
-  "exclude": ["../../node_modules", "../../dist", "../../dist-runtime"]
+  "exclude": [
+    "../../node_modules",
+    "../../ui/node_modules",
+    "../../**/.artifacts",
+    "../../dist",
+    "../../dist-runtime"
+  ]
 }

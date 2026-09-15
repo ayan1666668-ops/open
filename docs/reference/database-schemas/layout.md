@@ -15,6 +15,25 @@ title: "Database layout"
 
 The task registry uses the shared state database. Runtime trajectory events live with their sessions in the per-agent database or a configured shared session SQLite store.
 
+### Agent run terminal receipts
+
+`agent_run_terminal_receipts` stores bounded terminal control-plane snapshots in
+`state/openclaw.sqlite` so `agent.wait` and exact `sessions.abort` calls can recover the
+final status after a Gateway process restart. The row records the run ID, trusted
+agent/session ownership tuple, normalized terminal JSON, and creation/expiry
+timestamps. It never stores transcript messages or raw model output.
+
+The table and expiry index are installed on first admitted run start as a
+same-version additive extension. Creating them does not change the state schema
+marker, and older readers such as 2026.9.3 ignore the extra objects. Opaque
+non-empty `run_id` values are retained exactly. The first execution terminal for
+a run ID is authoritative; the exact owner may promote a provisional delivery
+receipt once execution settles. A newly admitted owner deletes any retained row
+for a reused run ID before execution, and reads with live ownership metadata
+require an exact owner match. Rows expire after seven days; writes prune expired
+rows and cap the table at 5,000 newest receipts. Terminal JSON is limited to 64
+KiB of UTF-8 bytes.
+
 ### Activity session recaps
 
 [Activity](/web/control-ui/settings#activity-tab) stores one optional `activitySummary` object in the existing `session_nodes.entry_json` session metadata. This is a reconstructible cache; the transcript remains canonical. The [approved persistence design](https://github.com/openclaw/openclaw/issues/147383) adds no SQL table, column, or database schema-version change. Current and `v2026.9.4` metadata serializers preserve unknown optional fields; unknown recap payload versions are treated as cache misses.

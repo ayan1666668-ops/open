@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import * as temp from "../../../test/helpers/temp-dir.js";
 import { NODE_WORKER_ENVIRONMENT_STOP_COMMAND } from "../../infra/node-commands.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import {
@@ -35,7 +35,6 @@ import { workerProjectSeedKey } from "./workspace-git-base.js";
 import type { WorkspaceReconcileMetrics } from "./workspace-hash-memo.js";
 import { serializeWorkerWorkspaceManifest } from "./workspace-manifest.js";
 import { readActualWorkspaceManifest } from "./workspace-reconcile.js";
-
 const workspaceInfo = vi.hoisted(() => vi.fn());
 const workspaceDebug = vi.hoisted(() => vi.fn());
 const tunnelWarn = vi.hoisted(() => vi.fn());
@@ -53,7 +52,7 @@ vi.mock("../../logging/subsystem.js", async (importOriginal) => {
   };
 });
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const tempDirs = temp.useAutoCleanupTempDirTracker(afterEach);
 
 describe("node worker tunnel manager", () => {
   it.each([
@@ -632,7 +631,7 @@ describe("node worker tunnel manager", () => {
   it("preserves a typed workspace transfer cause from the node", async () => {
     workspaceInfo.mockClear();
     const record = environment();
-    const localPath = tempDirs.make("node-worker-transfer-error-");
+    const localPath = tempDirs.make("node-worker-transfer-error-", temp.resolveNonGitTempRoot());
     const rawManifest = serializeWorkerWorkspaceManifest({
       version: 1,
       baseCommit: null,

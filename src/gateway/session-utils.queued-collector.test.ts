@@ -373,7 +373,7 @@ describe("queued collector session projection", () => {
       });
       expect(respond).toHaveBeenCalledWith(
         true,
-        { ok: true, status: "aborted", abortedRunId: entry.runId },
+        { ok: true, status: "aborted", abortedRunId: entry.runId, runState: "active" },
         undefined,
         undefined,
       );
@@ -611,7 +611,7 @@ describe("queued collector session projection", () => {
     });
     expect(respond).toHaveBeenCalledWith(
       true,
-      { ok: true, status: "aborted", abortedRunId: entry.runId },
+      { ok: true, status: "aborted", abortedRunId: entry.runId, runState: "active" },
       undefined,
       undefined,
     );
@@ -792,7 +792,7 @@ describe("queued collector session projection", () => {
       });
       expect(sessionResponse).toHaveBeenCalledWith(
         true,
-        { ok: true, status: "no-active-run", abortedRunId: null },
+        { ok: true, status: "no-active-run", abortedRunId: null, runState: "unknown" },
         undefined,
         undefined,
       );

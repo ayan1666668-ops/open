@@ -104,6 +104,7 @@ type AgentEventState = {
   runListeners: Map<string, AgentEventListeners>;
   nextListenerId: number;
   listenerRevision: number;
+  listenerResetEpoch: number;
   auditListeners: Set<(evt: AgentEventPayload) => void>;
   lifecycleRotationHandlers?: Map<string, (lifecycleGeneration: string) => void>;
 };
@@ -126,6 +127,7 @@ function getAgentEventState(): AgentEventState {
     runListeners: new Map(),
     nextListenerId: 0,
     listenerRevision: 0,
+    listenerResetEpoch: 0,
     auditListeners: new Set<(evt: AgentEventPayload) => void>(),
   }));
 }
@@ -492,6 +494,12 @@ export function onAgentEvent(listener: (evt: AgentEventPayload) => void) {
   return registerAgentEventListener(listener);
 }
 
+/** Monotonic marker for listeners cleared by runtime/test lifecycle reset. */
+export function getAgentEventListenerResetEpoch(): number {
+  const state = getAgentEventState();
+  return (state.listenerResetEpoch ??= 0);
+}
+
 /** Subscribes Gateway internals that consume non-public ownership and routing metadata. */
 export function onAgentRuntimeEvent(listener: (evt: AgentEventRuntimePayload) => void) {
   return registerAgentEventListener(listener);
@@ -548,5 +556,6 @@ export function resetAgentEventsForTest(options?: { preserveListeners?: boolean 
     state.auditListeners.clear();
     // Do not reuse IDs: an active dispatch resumes strictly after its last yield.
     state.listenerRevision++;
+    state.listenerResetEpoch++;
   }
 }

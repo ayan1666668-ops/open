@@ -409,6 +409,7 @@ describe("oxlint config", () => {
       "skills/**",
       "src/auto-reply/reply/export-html/template.js",
       "vendor/",
+      "**/.artifacts/**",
       "**/.cache/**",
       "**/.openclaw-runtime-deps-copy-*/**",
       "**/build/**",
@@ -512,6 +513,18 @@ describe("oxlint config", () => {
       ]),
     );
     expect(exactExceptions).toEqual([
+      {
+        files: ["ui/src/pages/chat/components/chat-transcript-controller.test.ts"],
+        rules: {
+          "max-lines": ["error", { max: 1050, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: ["ui/src/test-helpers/app-sidebar-cases/session-ownership.ts"],
+        rules: {
+          "max-lines": ["error", { max: 750, skipBlankLines: true, skipComments: true }],
+        },
+      },
       {
         files: ["extensions/copilot/src/event-bridge.ts"],
         rules: {

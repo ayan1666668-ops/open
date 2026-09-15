@@ -22,6 +22,7 @@ function waitThroughGateway(
       params,
       respond,
       context: {
+        getRuntimeConfig: () => ({}),
         chatAbortControllers: activeKind
           ? new Map([[params.runId, { kind: activeKind }]])
           : new Map(),
@@ -66,6 +67,37 @@ afterEach(() => {
 });
 
 describe("agent.wait gateway dedupe observations", () => {
+  it("preserves the exact run ID through the public wait service", async () => {
+    const paddedRunId = " run-public-exact-id ";
+    const plainRunId = paddedRunId.trim();
+    const dedupe = new Map<string, DedupeEntry>();
+    setGatewayDedupeEntry({
+      dedupe,
+      key: `agent:${paddedRunId}`,
+      entry: {
+        ts: 100,
+        ok: false,
+        payload: { runId: paddedRunId, status: "error", error: "padded run", endedAt: 100 },
+      },
+    });
+    setGatewayDedupeEntry({
+      dedupe,
+      key: `agent:${plainRunId}`,
+      entry: {
+        ts: 200,
+        ok: true,
+        payload: { runId: plainRunId, status: "ok", endedAt: 200 },
+      },
+    });
+
+    const waiter = waitThroughGateway({ runId: paddedRunId, timeoutMs: 0 });
+    await waiter.promise;
+    expect(waiter.respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ runId: paddedRunId, status: "error", endedAt: 100 }),
+    );
+  });
+
   it.each([undefined, true] as const)(
     "retires a sticky terminal only for an admitted new attempt: %s",
     async (startNewAttempt) => {

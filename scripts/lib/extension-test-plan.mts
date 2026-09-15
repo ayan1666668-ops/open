@@ -178,12 +178,22 @@ let trackedRepoTestFiles: string[] | null | undefined;
 // ENOBUFS would otherwise trigger expensive extension-directory walks.
 export const GIT_LS_FILES_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
+export function gitEnvironmentForRepositoryRoot(cwd: string) {
+  return {
+    ...process.env,
+    // Callers pass the repository root. Do not let fixture/archive directories
+    // inherit an unrelated ancestor repository when their own .git is absent.
+    GIT_CEILING_DIRECTORIES: path.dirname(path.resolve(cwd)),
+  };
+}
+
 export function listTrackedTestPlanFiles(cwd: string, pathspecs: readonly string[]) {
   // Query only the planner-owned tree: a full-repo inventory can overflow
   // spawnSync's buffer and either truncate the plan or force directory walks.
   const result = spawnSync("git", ["ls-files", "-z", "--", ...pathspecs], {
     cwd,
     encoding: "utf8",
+    env: gitEnvironmentForRepositoryRoot(cwd),
     maxBuffer: GIT_LS_FILES_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "ignore"],
   });

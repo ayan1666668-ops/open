@@ -678,8 +678,16 @@ describe("run-oxlint", () => {
     expect(shards.slice(0, 4)).toEqual([
       oxlintShard("core:src:alpha", "core", "src/alpha"),
       oxlintShard("core:src:root", "core", "src/omega.ts", "src/zeta.ts"),
-      oxlintShard("core:ui", "core", "ui"),
-      oxlintShard("core:packages", "core", "packages"),
+      oxlintShard(
+        "core:ui",
+        "core",
+        "ui/src",
+        "ui/config",
+        "ui/vite.config.ts",
+        "ui/vitest.config.ts",
+        "ui/vitest.node.config.ts",
+      ),
+      oxlintShard("extensions", "extensions", "extensions"),
     ]);
   });
 
@@ -715,8 +723,11 @@ describe("run-oxlint", () => {
         [
           ...directories.map((directory) => `src/${directory}`),
           "src/root.ts",
-          "ui",
-          "packages",
+          "ui/src",
+          "ui/config",
+          "ui/vite.config.ts",
+          "ui/vitest.config.ts",
+          "ui/vitest.node.config.ts",
         ].toSorted(),
       );
       expect(new Set(targets).size).toBe(targets.length);
@@ -915,11 +926,7 @@ describe("run-oxlint", () => {
       new Set(["core"]),
     );
 
-    expect(shards.map((shard) => shard.name)).toEqual([
-      "core:src:alpha",
-      "core:ui",
-      "core:packages",
-    ]);
+    expect(shards.map((shard) => shard.name)).toEqual(["core:src:alpha", "core:ui"]);
   });
 
   it.each([
