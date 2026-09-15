@@ -46,7 +46,9 @@ suite.define(() => {
                 {
                   ...xai,
                   displayName: "xAI",
-                  profiles: xai.profiles.map((profile) => ({ ...profile, source: "saved" })),
+                  profiles: xai.profiles.map((profile) =>
+                    Object.assign({}, profile, { source: "saved" }),
+                  ),
                 },
                 {
                   provider: "minimax",
