@@ -24,8 +24,8 @@ import {
 
 const sink = vi.hoisted(() => ({ throwing: false, attempts: 0 }));
 
-vi.mock("openclaw/plugin-sdk/logging-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/logging-core")>();
+vi.mock("openclaw/plugin-sdk/diagnostic-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/diagnostic-runtime")>();
   return {
     ...actual,
     createSubsystemLogger: (...args: Parameters<typeof actual.createSubsystemLogger>) => {

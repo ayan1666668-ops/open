@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { isMainThread, threadId } from "node:worker_threads";
-import { areDiagnosticsEnabledForProcess } from "openclaw/plugin-sdk/diagnostic-runtime";
-import { createSubsystemLogger } from "openclaw/plugin-sdk/logging-core";
+import {
+  areDiagnosticsEnabledForProcess,
+  createSubsystemLogger,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
 
 const log = createSubsystemLogger("gateway/session-catalog");
 const listScope = new AsyncLocalStorage<CodexCatalogListDiagnostics | undefined>();

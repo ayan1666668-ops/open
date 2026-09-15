@@ -212,15 +212,19 @@ ownership of log labels, warning thresholds, and when to emit a summary.
 
 For process-scoped performance logging,
 `openclaw/plugin-sdk/diagnostic-runtime` exports
-`areDiagnosticsEnabledForProcess(): boolean`. It reads the current process-wide
+`areDiagnosticsEnabledForProcess(): boolean` and `createSubsystemLogger`. This
+focused entrypoint does not load live session diagnostics or network dispatcher
+configuration during plugin descriptor registration. The predicate reads the current process-wide
 diagnostic setting; `isDiagnosticsEnabled(config)` instead reads the supplied
 configuration snapshot. Neither function changes the setting or enables an
 exporter. Combine the process predicate with the selected log level before
 collecting diagnostic-only state:
 
 ```typescript
-import { areDiagnosticsEnabledForProcess } from "openclaw/plugin-sdk/diagnostic-runtime";
-import { createSubsystemLogger } from "openclaw/plugin-sdk/logging-core";
+import {
+  areDiagnosticsEnabledForProcess,
+  createSubsystemLogger,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
 
 const log = createSubsystemLogger("example/catalog");
 function diagnosticsEnabled() {
