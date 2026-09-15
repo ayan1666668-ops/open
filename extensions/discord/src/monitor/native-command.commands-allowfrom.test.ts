@@ -229,9 +229,6 @@ describe("Discord native slash commands with commands.allowFrom", () => {
   it("tolerates partial guild channels whose name getter throws", async () => {
     const { dispatchSpy, interaction } = await runGuildSlashCommand({
       mutateInteraction: (currentInteraction) => {
-        if (!currentInteraction.channel) {
-          throw new Error("expected guild channel");
-        }
         defineThrowingDiscordChannelGetter(currentInteraction.channel, "name");
       },
     });
@@ -243,9 +240,6 @@ describe("Discord native slash commands with commands.allowFrom", () => {
   it("tolerates partial guild channels whose topic getter throws", async () => {
     const { dispatchSpy, interaction } = await runGuildSlashCommand({
       mutateInteraction: (currentInteraction) => {
-        if (!currentInteraction.channel) {
-          throw new Error("expected guild channel");
-        }
         defineThrowingDiscordChannelGetter(currentInteraction.channel, "topic");
       },
     });
@@ -257,16 +251,10 @@ describe("Discord native slash commands with commands.allowFrom", () => {
   it("tolerates partial guild thread channels whose parentId getter throws", async () => {
     const { dispatchSpy, interaction } = await runGuildSlashCommand({
       mutateInteraction: (currentInteraction) => {
-        if (!currentInteraction.channel) {
-          throw new Error("expected guild channel");
-        }
         currentInteraction.channel = {
           type: ChannelType.PublicThread,
           id: currentInteraction.channel.id,
         } as MockCommandInteraction["channel"];
-        if (!currentInteraction.channel) {
-          throw new Error("expected rewritten thread channel");
-        }
         defineThrowingDiscordChannelGetter(currentInteraction.channel, "parentId");
       },
     });
@@ -278,9 +266,6 @@ describe("Discord native slash commands with commands.allowFrom", () => {
   it("tolerates guild thread channels exposed through a Proxy whose has trap throws", async () => {
     const { dispatchSpy, interaction } = await runGuildSlashCommand({
       mutateInteraction: (currentInteraction) => {
-        if (!currentInteraction.channel) {
-          throw new Error("expected guild channel");
-        }
         const baseChannel = {
           type: ChannelType.PublicThread,
           id: currentInteraction.channel.id,
@@ -309,74 +294,6 @@ describe("Discord native slash commands with commands.allowFrom", () => {
         cfg.commands = {
           ...cfg.commands,
           allowFrom: undefined,
-        };
-      },
-    });
-    expect(dispatchSpy).toHaveBeenCalledTimes(1);
-    expectNotUnauthorizedReply(interaction);
-  });
-
-  it("authorizes guild slash commands using raw channel_id when the interaction channel object is missing", async () => {
-    const { dispatchSpy, interaction } = await runGuildSlashCommand({
-      mutateConfig: (cfg) => {
-        cfg.commands = {
-          ...cfg.commands,
-          allowFrom: undefined,
-        };
-      },
-      mutateInteraction: (currentInteraction) => {
-        currentInteraction.channel = null;
-      },
-    });
-    expect(dispatchSpy).toHaveBeenCalledTimes(1);
-    expectNotUnauthorizedReply(interaction);
-  });
-
-  it("authorizes thread slash commands through an allowlisted parent channel resolved from raw channel_id", async () => {
-    const { dispatchSpy, interaction } = await runGuildSlashCommand({
-      mutateConfig: (cfg) => {
-        cfg.commands = {
-          ...cfg.commands,
-          allowFrom: undefined,
-        };
-        cfg.channels = {
-          ...cfg.channels,
-          discord: {
-            ...cfg.channels?.discord,
-            guilds: {
-              "345678901234567890": {
-                channels: {
-                  "456789012345678901": {
-                    enabled: true,
-                    requireMention: false,
-                  },
-                },
-              },
-            },
-          },
-        };
-      },
-      mutateInteraction: (currentInteraction) => {
-        currentInteraction.channel = null;
-        currentInteraction.rawData.channel_id = "567890123456789012";
-        currentInteraction.client = {
-          fetchChannel: vi.fn(async (channelId: string) => {
-            if (channelId === "567890123456789012") {
-              return {
-                id: "567890123456789012",
-                type: ChannelType.PublicThread,
-                parent_id: "456789012345678901",
-              };
-            }
-            if (channelId === "456789012345678901") {
-              return {
-                id: "456789012345678901",
-                type: ChannelType.GuildText,
-                name: "allowed-parent",
-              };
-            }
-            return null;
-          }),
         };
       },
     });

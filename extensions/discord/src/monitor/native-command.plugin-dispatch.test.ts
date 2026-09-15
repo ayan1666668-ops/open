@@ -1721,9 +1721,6 @@ describe("Discord native plugin command dispatch", () => {
       guildId: "345678901234567890",
       guildName: "Test Guild",
     });
-    if (!interaction.channel) {
-      throw new Error("expected thread channel");
-    }
     defineThrowingDiscordChannelGetter(interaction.channel, "parentId");
     (interaction.client as { fetchChannel: ReturnType<typeof vi.fn> }).fetchChannel = vi.fn(
       async (channelId: string) => {

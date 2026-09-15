@@ -35,10 +35,7 @@ import {
 import { renderDiscordModelPickerModelsView } from "./model-picker.view.js";
 import { resolveDiscordNativeInteractionRouteState } from "./native-command-route.js";
 import type { SafeDiscordInteractionCall } from "./native-command-ui.types.js";
-import {
-  resolveDiscordNativeInteractionChannelContext,
-  resolveDiscordNativeInteractionChannelIdFallback,
-} from "./native-interaction-channel-context.js";
+import { resolveDiscordNativeInteractionChannelContext } from "./native-interaction-channel-context.js";
 import type { ThreadBindingManager } from "./thread-bindings.js";
 
 type DiscordNativeChoiceInteraction =
@@ -135,8 +132,7 @@ async function resolveDiscordModelPickerRouteState(params: {
       channel: interaction.channel,
       client: interaction.client,
       hasGuild: Boolean(interaction.guild),
-      channelIdFallback:
-        resolveDiscordNativeInteractionChannelIdFallback(interaction.rawData) || "unknown",
+      channelIdFallback: interaction.rawData.channel_id ?? "unknown",
     });
   const memberRoleIds = Array.isArray(interaction.rawData.member?.roles)
     ? interaction.rawData.member.roles.map((roleId: string) => roleId)
