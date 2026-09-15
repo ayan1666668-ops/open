@@ -2450,7 +2450,7 @@ describe("cli session history", () => {
         importedMessages: [importedUser, importedInterim, importedFinal],
       });
 
-      expect(merged).toEqual([localUser, importedInterim, importedFinal]);
+      expect(merged).toEqual([importedUser, importedInterim, importedFinal]);
     },
   );
 
@@ -2496,7 +2496,17 @@ describe("cli session history", () => {
       importedMessages: [importedUser, importedInterim, importedFinal],
     });
 
-    expect(merged).toEqual([localUser, importedInterim, importedFinal]);
+    expect(merged).toEqual([
+      {
+        ...localUser,
+        __openclaw: {
+          importedFrom: "claude-cli",
+          cliSessionId: "session-1",
+        },
+      },
+      importedInterim,
+      importedFinal,
+    ]);
   });
 
   it("keeps a local cli-assistant aggregate when only the final imported segment matches", () => {
@@ -2657,10 +2667,10 @@ describe("cli session history", () => {
     });
 
     expect(merged).toEqual([
-      first.localUser,
+      first.importedUser,
       first.importedInterim,
       first.importedFinal,
-      second.localUser,
+      second.importedUser,
       second.importedInterim,
       second.importedFinal,
     ]);
@@ -2704,7 +2714,7 @@ describe("cli session history", () => {
       importedMessages: [importedUser, importedInterim, importedFinal],
     });
 
-    expect(merged).toEqual([localUser, importedInterim, importedFinal, retriedAggregate]);
+    expect(merged).toEqual([importedUser, importedInterim, importedFinal, retriedAggregate]);
   });
 
   it("maps untimestamped imported segments to their own turn, not the last local one", () => {
@@ -2745,8 +2755,8 @@ describe("cli session history", () => {
 
     // Only run-1 is covered; the equal-text run-2 belongs to a turn nothing was imported for.
     expect(merged).toEqual([
-      firstUser,
-      secondUser,
+      importedFirstUser,
+      importedSecondUser,
       secondAggregate,
       importedInterim,
       importedFinal,
@@ -2833,8 +2843,8 @@ describe("cli session history", () => {
     });
 
     expect(merged).toEqual([
-      first.localUser,
-      second.localUser,
+      first.importedUser,
+      second.importedUser,
       first.importedInterim,
       first.importedFinal,
       second.importedInterim,
