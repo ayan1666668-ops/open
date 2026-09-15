@@ -57,6 +57,7 @@ import type {
   PaneSessionChangeOptions,
 } from "./chat-pane-shared.ts";
 import { SessionParticipationTracker } from "./chat-pane-state.ts";
+import { ChatPaneUpdateGate } from "./chat-pane-update-gate.ts";
 import {
   ChatSessionCompanionThreads,
   requestSessionCompanionAnswer,
@@ -88,19 +89,12 @@ import {
 
 export abstract class ChatPaneBase extends OpenClawLightDomElement {
   private paneLifecycleRoot: Element | null = null;
-  // The first Lit update must render even while hidden; later hidden work parks.
-  // Disconnect releases the waiter so reconnect can schedule in its new lifecycle.
-  private hiddenUpdateResume: (() => void) | undefined;
-  private resumeHiddenUpdates(): void {
-    const resume = this.hiddenUpdateResume;
-    this.hiddenUpdateResume = undefined;
-    resume?.();
-  }
+  private readonly hiddenUpdateGate = new ChatPaneUpdateGate();
   private readonly handleVisibilityChange = () => {
     // Lit parks hidden updates, but progress watches must follow visibility immediately.
     this.progressCard.hostUpdate();
     if (document.visibilityState !== "hidden") {
-      this.resumeHiddenUpdates();
+      this.hiddenUpdateGate.release();
       return;
     }
     const state = this.state;
@@ -129,15 +123,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     this.paneLifecycleRoot?.dispatchEvent(new Event(CHAT_PANE_LIFECYCLE_CHANGED_EVENT));
   }
   protected override async scheduleUpdate() {
-    while (
-      this.hasUpdated &&
-      this.isConnected &&
-      (document.visibilityState === "hidden" || !this.visuallyPresented)
-    ) {
-      await new Promise<void>((resolve) => {
-        this.hiddenUpdateResume = resolve;
-      });
-    }
+    await this.hiddenUpdateGate.waitWhileBlocked(this);
     await super.scheduleUpdate();
   }
 
@@ -147,7 +133,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
       this.synchronizeForegroundTranscript,
     );
     this.context?.connectionBootstrap.setForegroundPane(this, null);
-    this.resumeHiddenUpdates();
+    this.hiddenUpdateGate.release();
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
     super.disconnectedCallback();
     // A removed Home pane cannot bubble its final loading edge. Notify its
@@ -192,7 +178,7 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
     const wasConversationPresented = this.conversationPresented;
     this.visuallyPresentedValue = value;
     if (value) {
-      this.resumeHiddenUpdates();
+      this.hiddenUpdateGate.release();
     }
     this.requestUpdate("visuallyPresented", previous);
     this.notifyConversationPresentation(wasConversationPresented);
