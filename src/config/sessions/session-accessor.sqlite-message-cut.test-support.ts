@@ -1,7 +1,13 @@
 import { afterEach } from "vitest";
 import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db.js";
+import {
+  closeOpenClawAgentDatabasesAsync,
+  closeOpenClawAgentDatabasesForTest,
+} from "../../state/openclaw-agent-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../../state/openclaw-state-db.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import {
   appendTranscriptEvent,
@@ -21,8 +27,12 @@ export const sourceExpectedState = {
 export function useSessionMessageCutFixtures() {
   const tempDirs = createTempDirTracker();
   afterEach(async () => {
+    // Keep drains and resets together: consumer afterEach hooks run before this hook.
+    // A synchronous reset there would retire native handles before workers finish.
     await closeOpenClawAgentDatabasesAsync();
     await closeOpenClawStateDatabaseAsync();
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
     tempDirs.cleanup();
   });
   async function createSiblingSession(params: {
