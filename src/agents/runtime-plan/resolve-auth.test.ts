@@ -1,6 +1,11 @@
 import type { Model } from "openclaw/plugin-sdk/llm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, aroundEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import { SecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import type { AuthProfileStore } from "../auth-profiles.js";
+import { createApiKeyCredential } from "../auth-profiles/credential-fixtures.test-support.js";
+import { OAuthRefreshFailureError } from "../auth-profiles/oauth-refresh-failure.js";
 import {
   resolvePreparedRuntimeAuthAttempts,
   resolvePreparedRuntimeModelAuth,
@@ -14,6 +19,13 @@ vi.mock("../model-auth-env-vars.js", async (importOriginal) => ({
     envCandidateMap: { openai: ["OPENAI_API_KEY", "OPENAI_OAUTH_TOKEN"] },
     authEvidenceMap: {},
     setupProviderFallbackRefs: [],
+  }),
+}));
+
+vi.mock("../../llm/oauth.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../llm/oauth.js")>()),
+  getOAuthApiKey: vi.fn(async () => {
+    throw new Error("invalid_grant");
   }),
 }));
 
@@ -41,6 +53,17 @@ function authStore(profiles: AuthProfileStore["profiles"]): AuthProfileStore {
 }
 
 describe("resolvePreparedRuntimeModelAuth", () => {
+  aroundEach((runTest) =>
+    withPluginRuntimeGenerationScope(
+      {
+        metadataSnapshot: createPluginMetadataSnapshotFixture({
+          plugins: [{ id: "openai", providers: ["openai"] }],
+        }),
+      },
+      runTest,
+    ),
+  );
+
   beforeEach(() => {
     vi.stubEnv("OPENCLAW_TEST_MISSING_PREPARED_AUTH", "");
     vi.stubEnv("OPENCLAW_TEST_MISSING_BOUND_AUTH", "");
@@ -59,11 +82,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
           token: "subscription-token",
           expires: Date.now() + 60_000,
         },
-        "openai:platform": {
-          type: "api_key",
-          provider: "openai",
-          key: "platform-key",
-        },
+        "openai:platform": createApiKeyCredential("openai", "platform-key"),
       }),
       order: { openai: ["openai:subscription", "openai:platform"] },
       lastGood: { openai: "openai:subscription" },
@@ -100,7 +119,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
     });
   });
 
-  it("resolves a later same-route profile when the first SecretRef is unavailable", async () => {
+  it("keeps a failed explicit SecretRef terminal across prepared profile candidates", async () => {
     const store = authStore({
       "openai:missing": {
         type: "api_key",
@@ -111,11 +130,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
           id: "OPENCLAW_TEST_MISSING_PREPARED_AUTH",
         },
       },
-      "openai:backup": {
-        type: "api_key",
-        provider: "openai",
-        key: "backup-key",
-      },
+      "openai:backup": createApiKeyCredential("openai", "backup-key"),
     });
 
     await expect(
@@ -141,17 +156,9 @@ describe("resolvePreparedRuntimeModelAuth", () => {
         store,
         secretSentinels: true,
       }),
-    ).resolves.toMatchObject({
-      auth: {
-        profileId: "openai:backup",
-        mode: "api-key",
-      },
-      plan: {
-        forwardedAuthProfileId: "openai:backup",
-        forwardedAuthProfileSource: "auto",
-        forwardedAuthProfileCandidateIds: ["openai:backup"],
-        selectedAuthMode: "api-key",
-      },
+    ).rejects.toMatchObject({
+      code: "SECRET_SURFACE_UNAVAILABLE",
+      ownerKind: "account",
     });
   });
 
@@ -161,11 +168,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
     async () => {
       vi.stubEnv("OPENAI_API_KEY", "");
       const store = authStore({
-        "openai:platform": {
-          type: "api_key",
-          provider: "openai",
-          key: "platform-key",
-        },
+        "openai:platform": createApiKeyCredential("openai", "platform-key"),
       });
 
       await expect(
@@ -282,11 +285,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
   it("materializes authored OpenAI oauth without borrowing the API-only full store", async () => {
     vi.stubEnv("OPENAI_API_KEY", "");
     const store = authStore({
-      "openai:platform": {
-        type: "api_key",
-        provider: "openai",
-        key: "platform-key",
-      },
+      "openai:platform": createApiKeyCredential("openai", "platform-key"),
     });
     await expect(
       resolvePreparedRuntimeModelAuth({
@@ -334,11 +333,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
 
   it("skips a prepared candidate whose stored credential class changed", async () => {
     const store = authStore({
-      "openai:changed": {
-        type: "api_key",
-        provider: "openai",
-        key: "platform-key",
-      },
+      "openai:changed": createApiKeyCredential("openai", "platform-key"),
       "openai:backup": {
         type: "token",
         provider: "openai",
@@ -380,18 +375,55 @@ describe("resolvePreparedRuntimeModelAuth", () => {
     });
   });
 
+  it("falls through from a stale OAuth automatic candidate to a prepared backup profile", async () => {
+    const store = authStore({
+      "openai:expired": {
+        type: "oauth",
+        provider: "openai",
+        access: "expired-access",
+        refresh: "expired-refresh",
+        expires: Date.now() - 60_000,
+      },
+      "openai:backup": createApiKeyCredential("openai", "backup-key"),
+    });
+
+    await expect(
+      resolvePreparedRuntimeModelAuth({
+        plan: {
+          providerForAuth: "openai",
+          authProfileProviderForAuth: "openai",
+          forwardedAuthProfileId: "openai:expired",
+          forwardedAuthProfileSource: "auto",
+          forwardedAuthProfileCandidateIds: ["openai:expired", "openai:backup"],
+          selectedAuthMode: "api_key",
+          modelRoute: {
+            provider: "openai",
+            modelId: "gpt-5.5",
+            api: "openai-responses",
+            baseUrl: "https://api.openai.com/v1",
+            authRequirement: "api-key",
+            requestTransportOverrides: "none",
+          },
+        },
+        model: platformModel,
+        cfg: {},
+        store,
+        secretSentinels: true,
+      }),
+    ).resolves.toMatchObject({
+      auth: { profileId: "openai:backup", mode: "api-key" },
+      plan: {
+        forwardedAuthProfileId: "openai:backup",
+        forwardedAuthProfileCandidateIds: ["openai:backup"],
+        selectedAuthMode: "api-key",
+      },
+    });
+  });
+
   it("skips an automatic candidate that cooled down after plan preparation", async () => {
     const store = authStore({
-      "openai:first": {
-        type: "api_key",
-        provider: "openai",
-        key: "first-key",
-      },
-      "openai:backup": {
-        type: "api_key",
-        provider: "openai",
-        key: "backup-key",
-      },
+      "openai:first": createApiKeyCredential("openai", "first-key"),
+      "openai:backup": createApiKeyCredential("openai", "backup-key"),
     });
     const plan = {
       providerForAuth: "openai",
@@ -513,6 +545,116 @@ describe("resolvePreparedRuntimeModelAuth", () => {
     expect(resolveAuth).not.toHaveBeenCalled();
   });
 
+  it("does not unlock another prepared attempt after an explicit profile ref fails", async () => {
+    const profilePlan = {
+      providerForAuth: "openai",
+      authProfileProviderForAuth: "openai",
+      forwardedAuthProfileId: "openai:cold",
+      forwardedAuthProfileSource: "auto" as const,
+      forwardedAuthProfileCandidateIds: ["openai:cold"],
+    };
+    const directPlan = {
+      providerForAuth: "openai",
+      authProfileProviderForAuth: "openai",
+    };
+    const unavailable = new SecretSurfaceUnavailableError({
+      ownerKind: "account",
+      ownerId: "openai:cold",
+      state: "unavailable",
+      paths: ["auth-profiles.openai:cold.key"],
+      refKeys: ["env:default:MISSING_OPENAI_KEY"],
+      reason: "secret reference was not found",
+    });
+    const resolveAuth = vi.fn(async ({ attempt }: { attempt: { kind: string } }) => {
+      if (attempt.kind === "profile") {
+        throw unavailable;
+      }
+      return { plan: directPlan, auth: "must-not-be-used" };
+    });
+    const materializeModel = vi.fn(async () => platformModel);
+
+    await expect(
+      resolvePreparedRuntimeAuthAttempts({
+        attempts: [
+          { kind: "profile", plan: profilePlan, profileId: "openai:cold" },
+          {
+            kind: "direct",
+            plan: directPlan,
+            allowAuthProfileFallback: false,
+            requiresPriorProfileAttempt: true,
+          },
+        ],
+        store: authStore({
+          "openai:cold": { type: "api_key", provider: "openai", key: "unused" },
+        }),
+        modelId: "gpt-5.5",
+        model: platformModel,
+        materializeModel,
+        resolveAuth,
+        errorMessage: "prepared auth failed",
+      }),
+    ).rejects.toBe(unavailable);
+    expect(resolveAuth).toHaveBeenCalledOnce();
+    expect(materializeModel).toHaveBeenCalledOnce();
+  });
+
+  it("does not unlock direct fallback after a prepared OAuth refresh failure", async () => {
+    const profilePlan = {
+      providerForAuth: "openai",
+      authProfileProviderForAuth: "openai",
+      forwardedAuthProfileId: "openai:oauth",
+      forwardedAuthProfileSource: "auto" as const,
+      forwardedAuthProfileCandidateIds: ["openai:oauth"],
+    };
+    const directPlan = {
+      providerForAuth: "openai",
+      authProfileProviderForAuth: "openai",
+      selectedAuthMode: "api-key",
+    };
+    const refreshFailure = new OAuthRefreshFailureError({
+      provider: "openai",
+      profileId: "openai:oauth",
+      message: "OAuth token refresh failed for openai: expired refresh credential",
+    });
+    const resolveAuth = vi.fn(async ({ attempt }: { attempt: { kind: string } }) => {
+      if (attempt.kind === "profile") {
+        throw refreshFailure;
+      }
+      return { plan: directPlan, auth: "must-not-be-used" };
+    });
+    const materializeModel = vi.fn(async () => platformModel);
+
+    await expect(
+      resolvePreparedRuntimeAuthAttempts({
+        attempts: [
+          { kind: "profile", plan: profilePlan, profileId: "openai:oauth" },
+          {
+            kind: "direct",
+            plan: directPlan,
+            allowAuthProfileFallback: false,
+            requiresPriorProfileAttempt: true,
+          },
+        ],
+        store: authStore({
+          "openai:oauth": {
+            type: "oauth",
+            provider: "openai",
+            access: "expired-access",
+            refresh: "expired-refresh",
+            expires: Date.now() - 60_000,
+          },
+        }),
+        modelId: "gpt-5.5",
+        model: platformModel,
+        materializeModel,
+        resolveAuth,
+        errorMessage: "prepared auth failed",
+      }),
+    ).rejects.toBe(refreshFailure);
+    expect(resolveAuth).toHaveBeenCalledOnce();
+    expect(materializeModel).toHaveBeenCalledOnce();
+  });
+
   it("forces unscoped model rematerialization for direct fallback after profile failure", async () => {
     const store = authStore({
       "github-copilot:first": {
@@ -615,11 +757,7 @@ describe("resolvePreparedRuntimeModelAuth", () => {
           id: "OPENCLAW_TEST_MISSING_BOUND_AUTH",
         },
       },
-      "openai:unbound": {
-        type: "api_key",
-        provider: "openai",
-        key: "must-not-be-borrowed",
-      },
+      "openai:unbound": createApiKeyCredential("openai", "must-not-be-borrowed"),
     });
 
     await expect(

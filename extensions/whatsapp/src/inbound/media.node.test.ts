@@ -1,11 +1,23 @@
 // Whatsapp tests cover media plugin behavior.
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { mockNormalizeMessageContent } from "../../../../test/mocks/baileys.js";
+import {
+  mockExtractMessageContent,
+  mockGetContentType,
+  mockNormalizeMessageContent,
+} from "../../../../test/mocks/baileys.js";
 
 type MockMessageInput = Parameters<typeof mockNormalizeMessageContent>[0];
 
-const { normalizeMessageContent, downloadMediaMessage, saveMediaStream } = vi.hoisted(() => ({
+const {
+  extractMessageContent,
+  getContentType,
+  normalizeMessageContent,
+  downloadMediaMessage,
+  saveMediaStream,
+} = vi.hoisted(() => ({
+  extractMessageContent: vi.fn((msg: MockMessageInput) => mockExtractMessageContent(msg)),
+  getContentType: vi.fn((msg: MockMessageInput) => mockGetContentType(msg)),
   normalizeMessageContent: vi.fn((msg: MockMessageInput) => mockNormalizeMessageContent(msg)),
   downloadMediaMessage: vi.fn().mockResolvedValue(Buffer.from("fake-media-data")),
   saveMediaStream: vi.fn(),
@@ -14,6 +26,8 @@ const { normalizeMessageContent, downloadMediaMessage, saveMediaStream } = vi.ho
 vi.mock("baileys", async () => {
   return {
     DisconnectReason: { loggedOut: 401 },
+    extractMessageContent,
+    getContentType,
     normalizeMessageContent,
     downloadMediaMessage,
   };
@@ -24,12 +38,16 @@ vi.mock("openclaw/plugin-sdk/media-store", () => ({
 }));
 
 let downloadInboundMedia: typeof import("./media.js").downloadInboundMedia;
-
-const WHATSAPP_INBOUND_MEDIA_IDLE_TIMEOUT_MS = 30_000;
+let downloadQuotedInboundMedia: typeof import("./media.js").downloadQuotedInboundMedia;
 
 const mockSock = {
   updateMediaMessage: vi.fn(),
   logger: { child: () => ({}) },
+  user: {
+    id: "15559876543:7@s.whatsapp.net",
+    lid: "277038292303944@lid",
+    phoneNumber: "15559876543@s.whatsapp.net",
+  },
 };
 
 async function expectMimetype(message: Record<string, unknown>, expected: string) {
@@ -48,7 +66,7 @@ async function expectMimetype(message: Record<string, unknown>, expected: string
 
 describe("downloadInboundMedia", () => {
   beforeAll(async () => {
-    ({ downloadInboundMedia } = await import("./media.js"));
+    ({ downloadInboundMedia, downloadQuotedInboundMedia } = await import("./media.js"));
   });
 
   beforeEach(() => {
@@ -100,6 +118,7 @@ describe("downloadInboundMedia", () => {
   it.each([
     { name: "image", message: { imageMessage: {} }, mimetype: "image/jpeg" },
     { name: "video", message: { videoMessage: {} }, mimetype: "video/mp4" },
+    { name: "video note", message: { ptvMessage: {} }, mimetype: "video/mp4" },
     { name: "sticker", message: { stickerMessage: {} }, mimetype: "image/webp" },
   ])("defaults MIME for $name messages without explicit MIME", async ({ message, mimetype }) => {
     await expectMimetype(message, mimetype);
@@ -139,6 +158,28 @@ describe("downloadInboundMedia", () => {
     expect(downloadMediaMessage.mock.calls[0]?.[1]).toBe("stream");
   });
 
+  it("preserves the store's fractional limit error for the message owner", async () => {
+    const limitError = Object.assign(new Error("Media exceeds 256KB limit"), { code: "too-large" });
+    const source = new PassThrough();
+    const stream = source.pipe(new PassThrough());
+    const closed = new Promise<void>((resolve) => {
+      stream.once("close", resolve);
+    });
+    downloadMediaMessage.mockResolvedValueOnce(stream);
+    saveMediaStream.mockRejectedValueOnce(limitError);
+
+    await expect(
+      downloadInboundMedia(
+        { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
+        mockSock as never,
+        0.25 * 1024 * 1024,
+      ),
+    ).rejects.toBe(limitError);
+    await closed;
+    expect(stream.destroyed).toBe(true);
+    expect(source.destroyed).toBe(true);
+  });
+
   it("propagates transport download failures to the message owner", async () => {
     downloadMediaMessage.mockRejectedValueOnce(new Error("expired media reference"));
 
@@ -150,165 +191,96 @@ describe("downloadInboundMedia", () => {
     ).rejects.toThrow("expired media reference");
   });
 
-  describe("chunk-idle timeout", () => {
-    function neverYieldingStream(): AsyncIterable<Buffer> {
-      return {
-        [Symbol.asyncIterator]() {
-          return {
-            next(): Promise<IteratorResult<Buffer>> {
-              return new Promise<IteratorResult<Buffer>>(() => {});
+  it.each([
+    {
+      name: "the bot's device-scoped phone identity",
+      participant: "15559876543@s.whatsapp.net",
+      expectedFromMe: true,
+    },
+    {
+      name: "the bot's LID identity",
+      participant: "277038292303944@lid",
+      expectedFromMe: true,
+    },
+    {
+      name: "another sender",
+      participant: "15550000000@s.whatsapp.net",
+      expectedFromMe: false,
+    },
+  ])("preserves quoted media authorship for $name", async ({ participant, expectedFromMe }) => {
+    await downloadQuotedInboundMedia(
+      {
+        key: { remoteJid: "120363000000000000@g.us", id: "reply-1", fromMe: false },
+        message: {
+          extendedTextMessage: {
+            text: "inspect this",
+            contextInfo: {
+              stanzaId: "quoted-image",
+              participant,
+              quotedMessage: { imageMessage: { mimetype: "image/jpeg" } },
             },
-          };
+          },
         },
-      };
-    }
+      } as never,
+      mockSock as never,
+    );
 
-    it("negative control: never-yielding stream without idle wrap stays pending", async () => {
-      // Pre-fix shape: saveMediaStream's unbounded `for await` on a stalled
-      // Baileys stream never settles. Prove the hang before asserting the wrap.
-      const consume = (async () => {
-        // Hang on the first stalled `next()` — same unbounded wait as bare `for await`.
-        await neverYieldingStream()[Symbol.asyncIterator]().next();
-      })();
-      const outcome = await Promise.race([
-        consume.then(() => "resolved" as const),
-        new Promise<"still-pending">((resolve) => {
-          setTimeout(() => resolve("still-pending"), 150);
-        }),
-      ]);
-      expect(outcome).toBe("still-pending");
-      console.log(
-        `[whatsapp media idle negative control] outcome=${outcome} wait_ms=150 without_idle_wrap=true`,
-      );
+    const quotedMessage = downloadMediaMessage.mock.calls[0]?.[0] as
+      | { key?: { fromMe?: boolean; id?: string; participant?: string } }
+      | undefined;
+    expect(quotedMessage?.key).toMatchObject({
+      fromMe: expectedFromMe,
+      id: "quoted-image",
+      participant,
     });
-
-    function delayedStream(payload: Buffer, delayMs: number): AsyncIterable<Buffer> {
-      let yielded = false;
-      return {
-        [Symbol.asyncIterator]() {
-          return {
-            async next(): Promise<IteratorResult<Buffer>> {
-              if (yielded) {
-                return { value: undefined as unknown as Buffer, done: true };
-              }
-              await new Promise<void>((resolve) => {
-                setTimeout(resolve, delayMs);
-              });
-              yielded = true;
-              return { value: payload, done: false };
-            },
-          };
-        },
-      };
-    }
-
-    it("rejects when the Baileys stream stalls past chunkTimeoutMs", async () => {
-      downloadMediaMessage.mockResolvedValueOnce(neverYieldingStream());
-      const startedAt = Date.now();
-      const promise = downloadInboundMedia(
-        { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
-        mockSock as never,
-        1024 * 1024,
-        { chunkTimeoutMs: 50 },
-      );
-      await expect(promise).rejects.toMatchObject({
-        name: "WhatsAppInboundMediaTimeoutError",
-        chunkTimeoutMs: 50,
+  });
+  it("releases both a stalled decrypt stream and its piped HTTP source after the idle deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const source = new PassThrough();
+      const stream = source.pipe(new PassThrough());
+      const closed = new Promise<void>((resolve) => {
+        stream.once("close", resolve);
       });
-      const elapsedMs = Date.now() - startedAt;
-      expect(elapsedMs).toBeLessThan(1_000);
-      console.log(
-        `[whatsapp media idle proof] timed_out=true elapsed_ms=${elapsedMs} chunkTimeoutMs=50 production_ms=${WHATSAPP_INBOUND_MEDIA_IDLE_TIMEOUT_MS}`,
-      );
-    });
-
-    it("does not reject when chunks arrive within chunkTimeoutMs", async () => {
-      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
-      downloadMediaMessage.mockResolvedValueOnce(delayedStream(jpeg, 10));
-      const result = await downloadInboundMedia(
+      downloadMediaMessage.mockResolvedValueOnce(stream);
+      const download = downloadInboundMedia(
         { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
         mockSock as never,
-        1024 * 1024,
-        { chunkTimeoutMs: 500 },
       );
-      expect(result?.mimetype).toBe("image/jpeg");
-      expect(result?.saved.size).toBe(jpeg.byteLength);
-    });
+      const rejection = expect(download).rejects.toMatchObject({
+        name: "WhatsAppInboundMediaTimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejection;
+      await closed;
+      expect(source.destroyed).toBe(true);
+      expect(stream.destroyed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    it("defaults to a 30s production idle floor when chunkTimeoutMs is omitted", async () => {
-      vi.useFakeTimers();
-      try {
-        downloadMediaMessage.mockResolvedValueOnce(neverYieldingStream());
-        const promise = downloadInboundMedia(
-          { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
-          mockSock as never,
-          1024 * 1024,
-        );
-        const expectation = expect(promise).rejects.toMatchObject({
-          name: "WhatsAppInboundMediaTimeoutError",
-          chunkTimeoutMs: WHATSAPP_INBOUND_MEDIA_IDLE_TIMEOUT_MS,
-        });
-        await vi.advanceTimersByTimeAsync(WHATSAPP_INBOUND_MEDIA_IDLE_TIMEOUT_MS - 1);
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(1);
-        await expectation;
-        console.log(
-          `[whatsapp media idle proof] production_default_ms=${WHATSAPP_INBOUND_MEDIA_IDLE_TIMEOUT_MS} timed_out=true`,
-        );
-      } finally {
-        vi.useRealTimers();
+  it("resets the idle deadline as media progresses beyond one timeout interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = new PassThrough();
+      downloadMediaMessage.mockResolvedValueOnce(stream);
+      let settled = false;
+      const download = downloadInboundMedia(
+        { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
+        mockSock as never,
+      ).finally(() => {
+        settled = true;
+      });
+      for (let chunk = 0; chunk < 3; chunk++) {
+        stream.write(Buffer.from("part"));
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(settled).toBe(false);
       }
-    });
-
-    it("calls iterator.return() exactly once on timeout so the upstream Readable is destroyed", async () => {
-      const returnSpy = vi.fn(async () => ({ value: undefined as unknown as Buffer, done: true }));
-      const stream: AsyncIterable<Buffer> = {
-        [Symbol.asyncIterator]() {
-          return {
-            next(): Promise<IteratorResult<Buffer>> {
-              return new Promise<IteratorResult<Buffer>>(() => {});
-            },
-            return: returnSpy as () => Promise<IteratorResult<Buffer>>,
-          };
-        },
-      };
-      downloadMediaMessage.mockResolvedValueOnce(stream);
-      await expect(
-        downloadInboundMedia(
-          { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
-          mockSock as never,
-          1024 * 1024,
-          { chunkTimeoutMs: 50 },
-        ),
-      ).rejects.toMatchObject({ name: "WhatsAppInboundMediaTimeoutError" });
-      expect(returnSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls source.destroy() on timeout so the underlying Readable resource closes", async () => {
-      const destroySpy = vi.fn();
-      const stream: AsyncIterable<Buffer> & { destroy: (err?: Error) => void } = {
-        destroy: destroySpy,
-        [Symbol.asyncIterator]() {
-          return {
-            next(): Promise<IteratorResult<Buffer>> {
-              return new Promise<IteratorResult<Buffer>>(() => {});
-            },
-          };
-        },
-      };
-      downloadMediaMessage.mockResolvedValueOnce(stream);
-      await expect(
-        downloadInboundMedia(
-          { message: { imageMessage: { mimetype: "image/jpeg" } } } as never,
-          mockSock as never,
-          1024 * 1024,
-          { chunkTimeoutMs: 50 },
-        ),
-      ).rejects.toMatchObject({ name: "WhatsAppInboundMediaTimeoutError" });
-      expect(destroySpy).toHaveBeenCalledTimes(1);
-      const destroyArg = destroySpy.mock.calls[0]?.[0] as Error | undefined;
-      expect(destroyArg).toBeDefined();
-      expect(destroyArg?.message).toContain("stalled");
-    });
+      stream.end();
+      expect((await download)?.saved.size).toBe(12);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

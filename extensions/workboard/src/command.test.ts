@@ -3,36 +3,17 @@ import { expectDefined } from "@openclaw/normalization-core";
 import type { OpenClawPluginCommandDefinition } from "openclaw/plugin-sdk/core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "../api.js";
-import { handleWorkboardCommand, registerWorkboardCommand } from "./command.js";
-import type { WorkboardSubagentRuntime, WorkboardWorktreeRuntime } from "./dispatcher.js";
-import { WorkboardStore, type PersistedWorkboardCard, type WorkboardKeyedStore } from "./store.js";
+import { registerWorkboardCommand } from "./command.js";
+import type { WorkboardStore } from "./store.js";
+import { createWorkboardSqliteTestStore } from "./test/sqlite-store.js";
 import {
   resolveAgentWorkboardWorkspaceRuntime,
   resolveCommandWorkboardWorkspaceAccess,
 } from "./workspace-access.js";
 
-function createMemoryStore<T = PersistedWorkboardCard>(): WorkboardKeyedStore<T> {
-  const entries = new Map<string, T>();
+function createApi(run = vi.fn().mockResolvedValue({ runId: "run-1" })): OpenClawPluginApi {
   return {
-    async register(key, value) {
-      entries.set(key, value);
-    },
-    async lookup(key) {
-      return entries.get(key);
-    },
-    async delete(key) {
-      return entries.delete(key);
-    },
-    async entries() {
-      return [...entries].flatMap(([key, value]) => (value ? [{ key, value }] : []));
-    },
-  };
-}
-
-function createApi(run = vi.fn().mockResolvedValue({ runId: "run-1" })): {
-  runtime: { subagent: WorkboardSubagentRuntime; worktrees: WorkboardWorktreeRuntime };
-} {
-  return {
+    registerCommand: vi.fn(),
     runtime: {
       subagent: { run },
       worktrees: {
@@ -41,8 +22,46 @@ function createApi(run = vi.fn().mockResolvedValue({ runId: "run-1" })): {
         release: vi.fn(),
         removeIfLossless: vi.fn(),
       },
+      sandbox: {
+        resolveWorkspaceAuthority: vi.fn(() => ({
+          sandboxed: false,
+          workspaceAccess: "rw",
+        })),
+        prepareWorkspaceAuthority: vi.fn(async () => ({
+          sandboxed: false,
+          workspaceAccess: "rw",
+        })),
+      },
     },
+  } as unknown as OpenClawPluginApi;
+}
+
+async function runWorkboardCommand(params: {
+  api: OpenClawPluginApi;
+  store: WorkboardStore;
+  args?: string;
+  context?: {
+    senderIsOwner?: boolean;
+    gatewayClientScopes?: string[];
+    config?: Record<string, unknown>;
+    agentId?: string;
+    sessionKey?: string;
   };
+}) {
+  let command: OpenClawPluginCommandDefinition | undefined;
+  vi.mocked(params.api.registerCommand).mockImplementationOnce((definition) => {
+    command = definition;
+  });
+  registerWorkboardCommand({ api: params.api, store: params.store });
+  return await expectDefined(command, "registered Workboard command").handler({
+    channel: "test",
+    isAuthorizedSender: true,
+    commandBody: "/workboard",
+    config: {},
+    sessionKey: "agent:main:main",
+    args: params.args,
+    ...params.context,
+  } as never);
 }
 
 async function createAmbiguousPrefix(store: WorkboardStore): Promise<string> {
@@ -125,7 +144,7 @@ describe("handleWorkboardCommand", () => {
   });
 
   it("attests the default agent for an unassigned slash-command card", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     await store.create({
       title: "Unassigned slash card",
       status: "ready",
@@ -190,15 +209,15 @@ describe("handleWorkboardCommand", () => {
   });
 
   it("creates, lists, and dispatches workboard cards", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const api = createApi();
 
     await expect(
-      handleWorkboardCommand({
+      runWorkboardCommand({
         api,
         store,
         args: "create Ship CLI",
-        senderIsOwner: true,
+        context: { senderIsOwner: true },
       }),
     ).resolves.toEqual(expect.objectContaining({ text: expect.stringContaining("Ship CLI") }));
     const card = expectDefined((await store.list())[0], "created workboard card");
@@ -207,43 +226,43 @@ describe("handleWorkboardCommand", () => {
       metadata: { automation: { workspaceAccess: { unrestricted: true } } },
     });
 
-    await expect(handleWorkboardCommand({ api, store, args: "list" })).resolves.toEqual(
+    await expect(runWorkboardCommand({ api, store, args: "list" })).resolves.toEqual(
       expect.objectContaining({ text: expect.stringContaining("Ship CLI") }),
     );
     await store.update(card.id, { status: "ready" });
     await expect(
-      handleWorkboardCommand({
+      runWorkboardCommand({
         api,
         store,
         args: "dispatch",
-        gatewayClientScopes: ["operator.write"],
+        context: { senderIsOwner: true },
       }),
     ).resolves.toEqual(expect.objectContaining({ text: expect.stringContaining("started=1") }));
     expect(api.runtime.subagent.run).toHaveBeenCalledOnce();
   });
 
   it("requires write access for slash mutations", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const api = createApi();
     const card = await store.create({ title: "Ready worker", status: "ready" });
 
-    await expect(handleWorkboardCommand({ api, store, args: "list" })).resolves.toEqual(
+    await expect(runWorkboardCommand({ api, store, args: "list" })).resolves.toEqual(
       expect.objectContaining({ text: expect.stringContaining("Ready worker") }),
     );
-    await expect(handleWorkboardCommand({ api, store, args: "create Blocked" })).resolves.toEqual(
+    await expect(runWorkboardCommand({ api, store, args: "create Blocked" })).resolves.toEqual(
       expect.objectContaining({
         isError: true,
         text: expect.stringContaining("operator.write"),
       }),
     );
-    await expect(handleWorkboardCommand({ api, store, args: "dispatch" })).resolves.toEqual(
+    await expect(runWorkboardCommand({ api, store, args: "dispatch" })).resolves.toEqual(
       expect.objectContaining({
         isError: true,
         text: expect.stringContaining("operator.write"),
       }),
     );
     await expect(
-      handleWorkboardCommand({ api, store, args: `move ${card.id} --status running` }),
+      runWorkboardCommand({ api, store, args: `move ${card.id} --status running` }),
     ).resolves.toEqual(
       expect.objectContaining({
         isError: true,
@@ -254,18 +273,31 @@ describe("handleWorkboardCommand", () => {
     await expect(store.get(card.id)).resolves.toMatchObject({ status: "ready" });
   });
 
+  it("shows when an archived card is excluded from dispatch", async () => {
+    const store = createWorkboardSqliteTestStore();
+    const api = createApi();
+    const card = await store.create({ title: "Archived slash card", status: "ready" });
+    await store.archive(card.id, true);
+
+    await expect(runWorkboardCommand({ api, store, args: `show ${card.id}` })).resolves.toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("archived: yes (excluded from dispatch)"),
+      }),
+    );
+  });
+
   it("moves claimed cards for operators on slash-command surfaces", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const api = createApi();
     const card = await store.create({ title: "Claimed slash card", status: "todo" });
     await store.claim(card.id, { ownerId: "worker", token: "secret-token" });
 
     await expect(
-      handleWorkboardCommand({
+      runWorkboardCommand({
         api,
         store,
         args: `move ${card.id.slice(0, 8)} --status review`,
-        gatewayClientScopes: ["operator.write"],
+        context: { gatewayClientScopes: ["operator.write"] },
       }),
     ).resolves.toEqual(expect.objectContaining({ text: expect.stringContaining("review") }));
     await expect(store.get(card.id)).resolves.toMatchObject({
@@ -275,16 +307,16 @@ describe("handleWorkboardCommand", () => {
   });
 
   it("rejects invalid slash-command move statuses", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const api = createApi();
     const card = await store.create({ title: "Invalid slash move" });
 
     await expect(
-      handleWorkboardCommand({
+      runWorkboardCommand({
         api,
         store,
         args: `move ${card.id} --status later`,
-        senderIsOwner: true,
+        context: { senderIsOwner: true },
       }),
     ).resolves.toEqual(
       expect.objectContaining({ isError: true, text: expect.stringContaining("status must be") }),
@@ -292,8 +324,11 @@ describe("handleWorkboardCommand", () => {
   });
 
   it("uses the slash caller's workspace access for worktree materialization", async () => {
-    const store = new WorkboardStore(createMemoryStore());
-    const api = createApi();
+    const store = createWorkboardSqliteTestStore();
+    const run = vi.fn(async (input: { idempotencyKey: string }) => ({
+      runId: `accepted:${input.idempotencyKey}`,
+    }));
+    const api = createApi(run);
     const createWorktree = vi.mocked(api.runtime.worktrees.create);
     createWorktree.mockResolvedValue({
       id: "managed-id",
@@ -306,13 +341,33 @@ describe("handleWorkboardCommand", () => {
       workspace: { kind: "worktree", path: "/repo-denied" },
     });
 
+    const restrictedConfig = {
+      tools: { fs: { workspaceOnly: true } },
+      agents: {
+        list: [
+          { id: "main", default: true, workspace: "/workspace" },
+          { id: "restricted", workspace: "/workspace" },
+        ],
+      },
+    };
+    vi.mocked(api.runtime.sandbox.resolveWorkspaceAuthority).mockReturnValue({
+      sandboxed: true,
+      workspaceAccess: "rw",
+    });
+    vi.mocked(api.runtime.sandbox.prepareWorkspaceAuthority).mockResolvedValue({
+      sandboxed: true,
+      workspaceAccess: "rw",
+    });
     await expect(
-      handleWorkboardCommand({
+      runWorkboardCommand({
         api,
         store,
         args: "dispatch",
-        gatewayClientScopes: ["operator.write"],
-        workspaceAccess: { unrestricted: false, roots: ["/workspace"], writable: true },
+        context: {
+          gatewayClientScopes: ["operator.write"],
+          config: restrictedConfig,
+          agentId: "main",
+        },
       }),
     ).resolves.toEqual(
       expect.objectContaining({ text: expect.stringContaining("outside the caller") }),
@@ -328,17 +383,15 @@ describe("handleWorkboardCommand", () => {
       agentId: "restricted",
       workspace: { kind: "worktree", path: "/workspace" },
     });
-    await handleWorkboardCommand({
+    await runWorkboardCommand({
       api,
       store,
       args: "dispatch",
-      senderIsOwner: true,
-      resolveAgentWorkspace: () => "/workspace",
-      resolveAgentWorkspaceRuntime: () => ({
-        sandboxed: true,
-        workspaceAccess: { unrestricted: false, roots: ["/workspace"], writable: true },
-      }),
-      workspaceAccess: { unrestricted: false, roots: ["/workspace"], writable: true },
+      context: {
+        senderIsOwner: true,
+        config: restrictedConfig,
+        agentId: "main",
+      },
     });
     expect(createWorktree).not.toHaveBeenCalled();
     expect(api.runtime.subagent.run).toHaveBeenCalledWith(
@@ -355,12 +408,23 @@ describe("handleWorkboardCommand", () => {
       workspace: { kind: "worktree", path: "/repo-allowed" },
       workspaceAccess: { unrestricted: true },
     });
-    await handleWorkboardCommand({
+    vi.mocked(api.runtime.sandbox.resolveWorkspaceAuthority).mockReturnValue({
+      sandboxed: false,
+      workspaceAccess: "rw",
+    });
+    vi.mocked(api.runtime.sandbox.prepareWorkspaceAuthority).mockResolvedValue({
+      sandboxed: false,
+      workspaceAccess: "rw",
+    });
+    await runWorkboardCommand({
       api,
       store,
       args: "dispatch",
-      gatewayClientScopes: ["operator.admin"],
-      workspaceAccess: { unrestricted: true },
+      context: {
+        gatewayClientScopes: ["operator.admin"],
+        config: { agents: { list: [{ id: "admin", default: true, workspace: "/repo-allowed" }] } },
+        agentId: "admin",
+      },
     });
 
     expect(createWorktree).toHaveBeenCalledWith(
@@ -369,14 +433,27 @@ describe("handleWorkboardCommand", () => {
         ownerId: allowed.id,
       }),
     );
+    expect(run).toHaveBeenCalledTimes(2);
+    for (const [index, id] of [restricted.id, allowed.id].entries()) {
+      const runId = `accepted:${run.mock.calls[index]?.[0].idempotencyKey}`;
+      await expect(store.get(id)).resolves.toMatchObject({
+        status: "running",
+        runId,
+        execution: { runId },
+        metadata: {
+          automation: { launch: { phase: "accepted", acceptedRunId: runId } },
+          attempts: [expect.objectContaining({ id: runId, runId })],
+        },
+      });
+    }
   });
 
   it("rejects ambiguous card id prefixes", async () => {
-    const store = new WorkboardStore(createMemoryStore());
+    const store = createWorkboardSqliteTestStore();
     const api = createApi();
     const prefix = await createAmbiguousPrefix(store);
 
-    await expect(handleWorkboardCommand({ api, store, args: `show ${prefix}` })).resolves.toEqual(
+    await expect(runWorkboardCommand({ api, store, args: `show ${prefix}` })).resolves.toEqual(
       expect.objectContaining({
         isError: true,
         text: expect.stringContaining("Ambiguous card id prefix"),

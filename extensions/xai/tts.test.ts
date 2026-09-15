@@ -1,18 +1,9 @@
 // Xai tests cover tts plugin behavior.
 import { mockPinnedHostnameResolution } from "openclaw/plugin-sdk/test-env";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import type { RawData } from "ws";
-import {
-  assertXaiNativeTtsStreamEndpoint,
-  decodeWebSocketTextMessage,
-  isValidXaiTtsVoice,
-  listXaiTtsVoices,
-  toXaiTtsWsUrl,
-  XAI_BASE_URL,
-  XAI_TTS_FALLBACK_VOICES,
-  xaiTTS,
-  xaiTTSStream,
-} from "./tts.js";
+import { XAI_BASE_URL } from "./model-definitions.js";
+import { isValidXaiTtsVoice, XAI_TTS_FALLBACK_VOICES } from "./speech-provider-metadata.js";
+import { listXaiTtsVoices, xaiTTS, xaiTTSStream } from "./tts.js";
 
 const { FakeWebSocket } = vi.hoisted(() => {
   type Listener = (...args: unknown[]) => void;
@@ -75,8 +66,8 @@ const { FakeWebSocket } = vi.hoisted(() => {
   return { FakeWebSocket: MockWebSocket };
 });
 
-vi.mock("ws", () => ({
-  default: FakeWebSocket,
+vi.mock("./ws-runtime.js", () => ({
+  WebSocket: FakeWebSocket,
 }));
 
 function createStreamingAudioResponse(params: {
@@ -138,75 +129,24 @@ describe("xai tts", () => {
     });
   });
 
-  describe("decodeWebSocketTextMessage", () => {
-    it("decodes supported WebSocket payload shapes", () => {
-      expect(decodeWebSocketTextMessage(Buffer.from('{"type":"audio.done"}'))).toBe(
-        '{"type":"audio.done"}',
-      );
-      expect(decodeWebSocketTextMessage(Buffer.from("buf", "utf8"))).toBe("buf");
-      expect(decodeWebSocketTextMessage(new TextEncoder().encode("view").buffer)).toBe("view");
-      expect(decodeWebSocketTextMessage([Buffer.from("a"), Buffer.from("b")])).toBe("ab");
-    });
-
-    it("rejects unsupported WebSocket payload shapes", () => {
-      expect(() => decodeWebSocketTextMessage(42 as unknown as RawData)).toThrow(
-        "unsupported WebSocket message payload",
-      );
-    });
-  });
-
-  describe("assertXaiNativeTtsStreamEndpoint", () => {
-    it("accepts the native api.x.ai host", () => {
-      expect(() => assertXaiNativeTtsStreamEndpoint(XAI_BASE_URL)).not.toThrow();
-    });
-
-    it("rejects the native host over HTTP", () => {
-      expect(() => assertXaiNativeTtsStreamEndpoint("http://api.x.ai/v1")).toThrow(
-        'only supports HTTPS for the native api.x.ai endpoint; got protocol "http:"',
-      );
-    });
-
-    it("rejects non-native streaming hosts", () => {
-      expect(() => assertXaiNativeTtsStreamEndpoint("https://proxy.example/v1")).toThrow(
-        'only supports the native api.x.ai endpoint; got host "proxy.example"',
-      );
-    });
-
-    it.each([
-      "https://api.x.ai:8443/v1",
-      ["https://user", "password@api.x.ai/v1"].join(":"),
-      "https://api.x.ai/custom",
-      "https://api.x.ai/v1?existing=value",
-      "https://api.x.ai/v1#fragment",
-    ])("rejects non-canonical native endpoint shape %s", (baseUrl) => {
-      expect(() => assertXaiNativeTtsStreamEndpoint(baseUrl)).toThrow(
-        `requires the canonical ${XAI_BASE_URL} base URL`,
-      );
-    });
-  });
-
   describe("listXaiTtsVoices", () => {
     it("maps the authenticated catalog and sends the expected request", async () => {
       vi.stubEnv("OPENCLAW_VERSION", "2026.7.9");
-      const fetchMock = vi.fn(
-        async (_input: RequestInfo | URL, _init?: RequestInit) =>
-          new Response(
-            JSON.stringify({
-              voices: [
-                {
-                  voice_id: "altair",
-                  name: "Altair",
-                  language: "en",
-                  gender: "male",
-                },
-                { voice_id: "  celeste  ", name: " Celeste " },
-                { voice_id: " " },
-                { name: "missing id" },
-                null,
-              ],
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({
+          voices: [
+            {
+              voice_id: "altair",
+              name: "Altair",
+              language: "en",
+              gender: "male",
+            },
+            { voice_id: "  celeste  ", name: " Celeste " },
+            { voice_id: " " },
+            { name: "missing id" },
+            null,
+          ],
+        }),
       );
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -261,13 +201,7 @@ describe("xai tts", () => {
     });
 
     it("rejects malformed catalog payloads", async () => {
-      globalThis.fetch = vi.fn(
-        async () =>
-          new Response(JSON.stringify({ items: [] }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ) as unknown as typeof fetch;
+      globalThis.fetch = vi.fn(async () => Response.json({ items: [] })) as unknown as typeof fetch;
 
       await expect(listXaiTtsVoices({ apiKey: "xai-key" })).rejects.toThrow(
         "xAI TTS voices: malformed JSON response",
@@ -275,37 +209,13 @@ describe("xai tts", () => {
     });
 
     it("caps catalog responses before parsing JSON", async () => {
-      globalThis.fetch = vi.fn(
-        async () =>
-          new Response(JSON.stringify({ voices: [], padding: "x".repeat(1024 * 1024) }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
+      globalThis.fetch = vi.fn(async () =>
+        Response.json({ voices: [], padding: "x".repeat(1024 * 1024) }),
       ) as unknown as typeof fetch;
 
       await expect(listXaiTtsVoices({ apiKey: "xai-key" })).rejects.toThrow(
         "xAI TTS voices: JSON response exceeds 1048576 bytes",
       );
-    });
-  });
-
-  describe("toXaiTtsWsUrl", () => {
-    it("builds a websocket URL with voice, language, codec, and speed", () => {
-      const url = new URL(
-        toXaiTtsWsUrl({
-          baseUrl: XAI_BASE_URL,
-          voiceId: "eve",
-          language: "en",
-          responseFormat: "mp3",
-          speed: 1.1,
-        }),
-      );
-      expect(url.protocol).toBe("wss:");
-      expect(url.pathname).toBe("/v1/tts");
-      expect(url.searchParams.get("voice")).toBe("eve");
-      expect(url.searchParams.get("language")).toBe("en");
-      expect(url.searchParams.get("codec")).toBe("mp3");
-      expect(url.searchParams.get("speed")).toBe("1.1");
     });
   });
 
@@ -318,11 +228,18 @@ describe("xai tts", () => {
         voiceId: "eve",
         language: "en",
         responseFormat: "mp3",
+        speed: 1.1,
         timeoutMs: 5_000,
         maxBytes: 3_000,
       });
       const ws = FakeWebSocket.instances.at(0);
-      expect(ws?.url).toContain("wss://api.x.ai/v1/tts");
+      const wsUrl = new URL(ws?.url ?? "");
+      expect(wsUrl.protocol).toBe("wss:");
+      expect(wsUrl.pathname).toBe("/v1/tts");
+      expect(wsUrl.searchParams.get("voice")).toBe("eve");
+      expect(wsUrl.searchParams.get("language")).toBe("en");
+      expect(wsUrl.searchParams.get("codec")).toBe("mp3");
+      expect(wsUrl.searchParams.get("speed")).toBe("1.1");
       expect(ws?.headers?.Authorization).toBe(["Bearer", "dummy"].join(" "));
       expect(ws?.maxPayload).toBe(5_024);
       ws?.emit("open");
@@ -342,6 +259,28 @@ describe("xai tts", () => {
       expect(Buffer.from(first.value ?? []).toString("utf8")).toBe("abc");
       const second = await reader.read();
       expect(second.done).toBe(true);
+      await result.release();
+    });
+
+    it("errors and releases the stream for malformed audio base64", async () => {
+      const resultPromise = xaiTTSStream({
+        text: "hello",
+        apiKey: "dummy",
+        baseUrl: XAI_BASE_URL,
+        voiceId: "eve",
+        timeoutMs: 5_000,
+      });
+      const ws = FakeWebSocket.instances.at(0);
+      ws?.emit("open");
+      const result = await resultPromise;
+      const reader = result.audioStream.getReader();
+
+      ws?.emit("message", JSON.stringify({ type: "audio.delta", delta: "not-base64!" }));
+
+      await expect(reader.read()).rejects.toThrow(
+        "xAI TTS stream returned malformed base64 audio data",
+      );
+      expect(ws?.readyState).toBe(FakeWebSocket.CLOSED);
       await result.release();
     });
 
@@ -464,6 +403,25 @@ describe("xai tts", () => {
           timeoutMs: 5_000,
         }),
       ).rejects.toThrow("only supports HTTPS for the native api.x.ai endpoint");
+      expect(FakeWebSocket.instances).toHaveLength(0);
+    });
+
+    it.each([
+      "https://api.x.ai:8443/v1",
+      ["https://user", "password@api.x.ai/v1"].join(":"),
+      "https://api.x.ai/custom",
+      "https://api.x.ai/v1?existing=value",
+      "https://api.x.ai/v1#fragment",
+    ])("rejects non-canonical native endpoint shape %s", async (baseUrl) => {
+      await expect(
+        xaiTTSStream({
+          text: "hello",
+          apiKey: "dummy",
+          baseUrl,
+          voiceId: "eve",
+          timeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(`requires the canonical ${XAI_BASE_URL} base URL`);
       expect(FakeWebSocket.instances).toHaveLength(0);
     });
 
@@ -666,5 +624,30 @@ describe("xai tts", () => {
         }),
       ).rejects.toThrow("xAI TTS API error (503): temporary upstream outage");
     });
+  });
+  it.each([
+    { name: "JSON error", contentType: "application/json", body: '{"error":"denied"}' },
+    { name: "problem JSON", contentType: "application/problem+json", body: '{"title":"denied"}' },
+    { name: "HTML", contentType: "text/html; charset=utf-8", body: "<html>sign in</html>" },
+    { name: "empty audio", contentType: "audio/mpeg", body: "" },
+  ])("rejects a successful $name response as synthesized audio", async ({ contentType, body }) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200, headers: { "content-type": contentType } }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      xaiTTS({
+        text: "hello",
+        apiKey: "ok-key",
+        baseUrl: XAI_BASE_URL,
+        voiceId: "eve",
+        language: "en",
+        responseFormat: "mp3",
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toThrow("xAI TTS API error: malformed audio response");
   });
 });

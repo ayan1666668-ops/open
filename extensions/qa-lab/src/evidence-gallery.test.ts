@@ -16,8 +16,8 @@ import {
   type QaEvidenceSummaryJson,
 } from "./evidence-summary.js";
 
-async function createTempRepo() {
-  return fs.mkdtemp(path.join(os.tmpdir(), "qa-evidence-gallery-"));
+async function createTempRepo(prefix = "qa-evidence-gallery-") {
+  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
 async function writeJson(filePath: string, value: unknown) {
@@ -168,6 +168,106 @@ describe("evidence gallery", () => {
     });
   });
 
+  it.each([
+    {
+      kind: "gif-runner-log",
+      file: "artifact.LOG",
+      content: "runner passed\n",
+      mediaKind: "text",
+      preview: "runner passed\n",
+    },
+    {
+      kind: "video-report",
+      file: "artifact.json",
+      content: '{"ok":true}',
+      mediaKind: "json",
+      preview: '{\n  "ok": true\n}',
+    },
+    {
+      kind: "screenshot-validation",
+      file: "artifact.webm",
+      content: "video",
+      mediaKind: "video",
+      preview: null,
+    },
+    {
+      kind: "video-report",
+      file: "artifact.png",
+      content: "image",
+      mediaKind: "image",
+      preview: null,
+    },
+    {
+      kind: "motion-preview-gif",
+      file: "artifact",
+      content: "image",
+      mediaKind: "image",
+      preview: null,
+    },
+    {
+      kind: "video-capture",
+      file: "artifact.capture",
+      content: "video",
+      mediaKind: "video",
+      preview: null,
+    },
+    {
+      kind: "validation-result",
+      file: "artifact.data",
+      content: '{"ok":true}',
+      mediaKind: "json",
+      preview: '{\n  "ok": true\n}',
+    },
+    {
+      kind: "report",
+      file: "artifact.html",
+      content: "<p>report</p>",
+      mediaKind: "text",
+      preview: "<p>report</p>",
+    },
+    {
+      kind: "video-screenshot",
+      file: "artifact.data",
+      content: "image",
+      mediaKind: "image",
+      preview: null,
+    },
+    {
+      kind: "attachment",
+      file: "artifact.data",
+      content: "opaque",
+      mediaKind: "file",
+      preview: null,
+    },
+  ])(
+    "classifies $file with $kind metadata",
+    async ({ kind, file, content, mediaKind, preview }) => {
+      const repoRoot = await createTempRepo();
+      try {
+        const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "vitest");
+        await fs.mkdir(outputDir, { recursive: true });
+        await fs.writeFile(path.join(outputDir, file), content, "utf8");
+        await writeJson(
+          path.join(outputDir, QA_EVIDENCE_FILENAME),
+          vitestArtifactEvidence({
+            id: "qa-lab.artifact-classification",
+            title: "Artifact classification",
+            artifact: { kind, path: file },
+          }),
+        );
+        const model = await buildQaEvidenceGalleryModel({ evidencePath: outputDir, repoRoot });
+        expect(model.entries[0]?.artifacts[0]).toMatchObject({
+          exists: true,
+          kind,
+          mediaKind,
+          preview,
+        });
+      } finally {
+        await fs.rm(repoRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("sanitizes local roots from gallery failure reasons", async () => {
     const repoRoot = await createTempRepo();
     const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "vitest");
@@ -202,8 +302,34 @@ describe("evidence gallery", () => {
     expect(JSON.stringify(model)).not.toContain(repoRoot);
   });
 
+  it("classifies a path-like artifact kind by its final segment", async () => {
+    // The repo root deliberately contains "gif". A path-valued kind must not let
+    // an unrelated directory name decide the media type and drop the preview.
+    const repoRoot = await createTempRepo("qa-evidence-gallery-gif-");
+    const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "vitest");
+    // No file extension, so classification has to fall back to the kind label.
+    const artifactPath = path.join(outputDir, "absolute");
+    await fs.mkdir(outputDir, { recursive: true });
+    await fs.writeFile(artifactPath, "absolute artifact\n", "utf8");
+    const evidence: QaEvidenceSummaryJson = vitestArtifactEvidence({
+      id: "qa-lab.path-like-kind",
+      title: "Path-like artifact kind",
+      artifact: { kind: `${repoRoot}/log`, path: artifactPath },
+    });
+    await writeJson(path.join(outputDir, QA_EVIDENCE_FILENAME), evidence);
+
+    const model = await buildQaEvidenceGalleryModel({ evidencePath: outputDir, repoRoot });
+
+    const artifact = model.entries[0]?.artifacts[0];
+    expect(artifact).toMatchObject({
+      exists: true,
+      mediaKind: "text",
+      preview: "absolute artifact\n",
+    });
+  });
+
   it("normalizes absolute source and declared artifact paths for gallery links", async () => {
-    const repoRoot = await createTempRepo();
+    const repoRoot = await createTempRepo("qa-evidence-gallery-gif-");
     const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "vitest");
     const artifactPath = path.join(outputDir, "absolute.log");
     await fs.mkdir(outputDir, { recursive: true });
@@ -233,7 +359,7 @@ describe("evidence gallery", () => {
     );
     evidence.entries[0] = {
       ...absoluteEntry,
-      coverage: [{ id: `${repoRoot}/coverage`, role: `${repoRoot}/role` }],
+      coverage: [{ id: "qa-lab.absolute-artifact-path", role: `${repoRoot}/role` }],
       execution: {
         ...absoluteExecution,
         artifacts: [
@@ -268,6 +394,7 @@ describe("evidence gallery", () => {
     expect(artifact).toMatchObject({
       exists: true,
       kind: "<repo-root>/log",
+      mediaKind: "text",
       path: ".artifacts/qa-e2e/vitest/absolute.log",
       preview: "absolute artifact <repo-root>\nfile://<repo-root>/trace.log\n",
       source: "<repo-root>/vitest",
@@ -283,7 +410,7 @@ describe("evidence gallery", () => {
     expect(relativeArtifact?.href).toContain("entryIndex=0&artifactIndex=1");
     expect(model.entries[0]?.sourcePath).toBe("extensions/qa-lab/src/absolute.test.ts");
     expect(model.entries[0]).toMatchObject({
-      coverage: [{ id: "<repo-root>/coverage", role: "<repo-root>/role" }],
+      coverage: [{ id: "qa-lab.absolute-artifact-path", role: "<repo-root>/role" }],
       id: "<repo-root>/qa-lab.absolute-artifact-path",
       kind: "<repo-root>/vitest-test",
       title: "Absolute artifact path at <repo-root>",
@@ -314,17 +441,17 @@ describe("evidence gallery", () => {
       suiteDir,
       "script",
       ...producerRootLeakSegments(repoRoot),
-      "ux-matrix-evidence-dashboard",
+      "ux-matrix-producer",
       "run-1",
     );
     const expectedWebScreenshotNeedle =
       process.platform === "win32"
         ? ".artifacts/qa-e2e/suite/script/nested"
-        : ".artifacts/qa-e2e/suite/script/nested<repo-root>/ux-matrix-evidence-dashboard/run-1/surfaces/web-ui/stages/first-run/screenshot.png";
+        : ".artifacts/qa-e2e/suite/script/nested<repo-root>/ux-matrix-producer/run-1/surfaces/web-ui/stages/first-run/screenshot.png";
     const expectedCliLogNeedle =
       process.platform === "win32"
         ? ".artifacts/qa-e2e/suite/script/nested"
-        : ".artifacts/qa-e2e/suite/script/nested<repo-root>/ux-matrix-evidence-dashboard/run-1/surfaces/cli/stages/error-state/logs.txt";
+        : ".artifacts/qa-e2e/suite/script/nested<repo-root>/ux-matrix-producer/run-1/surfaces/cli/stages/error-state/logs.txt";
     await fs.mkdir(path.join(runDir, "surfaces", "web-ui", "stages", "first-run"), {
       recursive: true,
     });
@@ -365,24 +492,25 @@ describe("evidence gallery", () => {
       cells: [
         null,
         {
-          coverageIds: [`${repoRoot}/ui.control`],
+          coverageIds: [],
           runner: {
             availability: "local",
-            command: `${repoRoot}/openclaw.mjs qa suite --scenario ux-matrix-evidence-dashboard`,
+            command: `node ${repoRoot}/external/qa/ux-matrix-producer.mjs --artifact-base ${runDir}`,
             lane: "web-ui-playwright",
-            workflow: `${repoRoot}/.github/workflows/ux-matrix-qa.yml#ux-matrix-local`,
+            workflow: `${repoRoot}/external/ci/ux-matrix.yml#matrix-local`,
           },
           stage: "first-run",
           status: "pass",
           surface: "web-ui",
         },
         {
-          coverageIds: ["cli.entrypoint"],
+          coverageIds: [],
           runner: {
             availability: "local",
-            command: "pnpm openclaw qa suite --scenario ux-matrix-evidence-dashboard",
+            command:
+              "node external/qa/ux-matrix-producer.mjs --artifact-base .artifacts/external-qa/ux-matrix",
             lane: "cli-status",
-            workflow: ".github/workflows/ux-matrix-qa.yml#ux-matrix-local",
+            workflow: "external/ci/ux-matrix.yml#matrix-local",
           },
           stage: "first-run",
           status: "proof-gap",
@@ -399,7 +527,11 @@ describe("evidence gallery", () => {
       },
     });
     await fs.writeFile(path.join(runDir, "scorecard.md"), "# UX Matrix\n\n- pass: 1\n", "utf8");
-    await fs.writeFile(path.join(runDir, "commands.txt"), "node ux matrix\n", "utf8");
+    await fs.writeFile(
+      path.join(runDir, "commands.txt"),
+      "node external/qa/ux-matrix-producer.mjs --artifact-base .artifacts/external-qa/ux-matrix\n",
+      "utf8",
+    );
     await fs.mkdir(path.join(runDir, "preflight"), { recursive: true });
     await fs.writeFile(path.join(runDir, "preflight", "memory.txt"), "memory ok\n", "utf8");
     await fs.writeFile(
@@ -419,9 +551,9 @@ describe("evidence gallery", () => {
             kind: "ux-matrix-cell",
             id: "ux-matrix.web-ui.first-run",
             title: `UX Matrix: web-ui / first-run at ${repoRoot}`,
-            source: { path: "scripts/ux-matrix/dashboard.ts" },
+            source: { path: "external/qa/ux-matrix-producer.mjs" },
           },
-          coverage: [{ id: "ui.control", role: "primary" }],
+          coverage: [],
           execution: {
             runner: "ux-matrix-dashboard",
             environment: {
@@ -458,9 +590,9 @@ describe("evidence gallery", () => {
             kind: "ux-matrix-cell",
             id: "qa-lab.wrapper-cli-error",
             title: "UX Matrix: cli / error-state",
-            source: { path: "scripts/ux-matrix/dashboard.ts" },
+            source: { path: "external/qa/ux-matrix-producer.mjs" },
           },
-          coverage: [{ id: "cli.status-snapshots", role: "primary" }],
+          coverage: [],
           execution: {
             runner: "ux-matrix-dashboard",
             environment: {
@@ -530,12 +662,13 @@ describe("evidence gallery", () => {
       {
         artifactKinds: ["screenshot"],
         artifactPaths: [expect.stringContaining(expectedWebScreenshotNeedle)],
-        coverageIds: ["<repo-root>/ui.control"],
+        coverageIds: [],
         runner: {
           availability: "local",
-          command: "<repo-root>/openclaw.mjs qa suite --scenario ux-matrix-evidence-dashboard",
+          command:
+            "node <repo-root>/external/qa/ux-matrix-producer.mjs --artifact-base <repo-root>/.artifacts/qa-e2e/suite/script/nested<repo-root>/ux-matrix-producer/run-1",
           lane: "web-ui-playwright",
-          workflow: "<repo-root>/.github/workflows/ux-matrix-qa.yml#ux-matrix-local",
+          workflow: "<repo-root>/external/ci/ux-matrix.yml#matrix-local",
         },
         stage: "first-run",
         status: "pass",
@@ -546,12 +679,13 @@ describe("evidence gallery", () => {
       {
         artifactKinds: [],
         artifactPaths: [],
-        coverageIds: ["cli.entrypoint"],
+        coverageIds: [],
         runner: {
           availability: "local",
-          command: "pnpm openclaw qa suite --scenario ux-matrix-evidence-dashboard",
+          command:
+            "node external/qa/ux-matrix-producer.mjs --artifact-base .artifacts/external-qa/ux-matrix",
           lane: "cli-status",
-          workflow: ".github/workflows/ux-matrix-qa.yml#ux-matrix-local",
+          workflow: "external/ci/ux-matrix.yml#matrix-local",
         },
         stage: "first-run",
         status: "proof-gap",
@@ -576,7 +710,9 @@ describe("evidence gallery", () => {
     expect(decodeURIComponent(model.producerContext?.scorecard?.href ?? "")).not.toContain(
       repoRoot,
     );
-    expect(model.producerContext?.commands?.preview).toBe("node ux matrix\n");
+    expect(model.producerContext?.commands?.preview).toBe(
+      "node external/qa/ux-matrix-producer.mjs --artifact-base .artifacts/external-qa/ux-matrix\n",
+    );
     expect(model.producerContext?.commands?.path).toContain("commands.txt");
     expect(decodeURIComponent(model.producerContext?.commands?.href ?? "")).not.toContain(repoRoot);
     expect(model.producerContext?.manifest?.preview).toContain('"runId": "run-1"');

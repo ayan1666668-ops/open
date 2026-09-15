@@ -1,8 +1,8 @@
 // Logbook analysis pipeline: frames -> observations -> revised timeline cards.
 // Pure parsing/validation lives here so tests can cover it without the SDK.
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
+import { dayKeyFor } from "./day.js";
 import { CARD_CATEGORIES } from "./prompts.js";
-import { dayKeyFor } from "./store.js";
 import type { LogbookCard, LogbookCardDraft, LogbookDistraction } from "./types.js";
 
 /** Cards within this window before a batch are treated as a revisable draft. */
@@ -15,7 +15,7 @@ export const MAX_FRAMES_PER_CALL = 16;
 type ParsedSegment = { startMs: number; endMs: number; text: string };
 
 /** Parses "HH:MM:SS" (or "H:MM", with optional am/pm) on a local day into epoch ms. */
-export function clockToMs(day: string, clock: string): number | null {
+function clockToMs(day: string, clock: string): number | null {
   const match = /^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\s*$/i.exec(clock);
   if (!match) {
     return null;
@@ -24,6 +24,9 @@ export function clockToMs(day: string, clock: string): number | null {
   const minutes = Number(match[2]);
   const seconds = Number(match[3] ?? "0");
   const meridiem = match[4]?.toLowerCase();
+  if (meridiem && (hours < 1 || hours > 12)) {
+    return null;
+  }
   if (meridiem === "pm" && hours < 12) {
     hours += 12;
   }
@@ -57,7 +60,7 @@ export function clockToMs(day: string, clock: string): number | null {
 }
 
 /** Strips code fences and extracts the outermost JSON array/object from model text. */
-export function extractJsonPayload(raw: string): string {
+function extractJsonPayload(raw: string): string {
   const cleaned = raw.replaceAll("```json", "").replaceAll("```", "").trim();
   const firstBracket = cleaned.search(/[[{]/);
   if (firstBracket < 0) {
@@ -385,25 +388,6 @@ export function selectBatchFrames(params: {
     startMs: first.capturedAtMs,
     endMs,
   };
-}
-
-/** Evenly samples frames so a batch stays within the per-call image budget. */
-export function sampleFrames<T>(frames: T[], max: number): T[] {
-  if (max <= 0) {
-    return [];
-  }
-  if (frames.length <= max) {
-    return frames;
-  }
-  if (max === 1) {
-    return [expectDefined(frames[0], "first Logbook frame sample")];
-  }
-  const sampled: T[] = [];
-  const step = (frames.length - 1) / (max - 1);
-  for (let i = 0; i < max; i += 1) {
-    sampled.push(expectDefined(frames[Math.round(i * step)], "sampled Logbook frame"));
-  }
-  return [...new Set(sampled)];
 }
 
 /** Picks the frame closest to a card's midpoint as its keyframe. */

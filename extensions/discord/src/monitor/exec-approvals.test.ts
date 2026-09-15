@@ -16,7 +16,10 @@ vi.mock("openclaw/plugin-sdk/approval-gateway-runtime", async (importOriginal) =
   };
 });
 
-import { ExecApprovalButton, createDiscordExecApprovalButtonContext } from "./exec-approvals.js";
+import {
+  createDiscordExecApprovalButtonContext,
+  createExecApprovalButton,
+} from "./exec-approvals.js";
 
 function buildConfig(
   execApprovals?: NonNullable<NonNullable<OpenClawConfig["channels"]>["discord"]>["execApprovals"],
@@ -31,11 +34,27 @@ function buildConfig(
   } as OpenClawConfig;
 }
 
-function createInteraction(overrides?: Partial<ButtonInteraction>): ButtonInteraction {
+function createInteraction(
+  overrides?: Partial<ButtonInteraction>,
+  approvalKind: Parameters<typeof buildExecApprovalCustomId>[1] = "exec",
+  approvalId = "abc",
+): ButtonInteraction {
   return {
     userId: "123",
     reply: vi.fn(),
     acknowledge: vi.fn(),
+    message: { id: "message-1" },
+    fetchReply: vi.fn(async () => ({
+      components: [
+        {
+          type: 1,
+          components: (["allow-once", "allow-always", "deny"] as const).map((decision) => ({
+            type: 2,
+            custom_id: buildExecApprovalCustomId(approvalId, approvalKind, decision),
+          })),
+        },
+      ],
+    })),
     editReply: vi.fn(),
     followUp: vi.fn(),
     ...overrides,
@@ -68,6 +87,8 @@ describe("discord exec approval monitor helpers", () => {
   it.each([
     ["exec", "plugin:looks-like-plugin", "allow-once"],
     ["plugin", "plain-plugin-id", "deny"],
+    ["system-agent", "change-1", "allow-once"],
+    ["system-agent", "change-2", "deny"],
   ] as const)("round-trips %s approval custom ids", (approvalKind, approvalId, action) => {
     const customId = buildExecApprovalCustomId(approvalId, approvalKind, action);
     const parsed = parseCustomId(customId);
@@ -90,7 +111,7 @@ describe("discord exec approval monitor helpers", () => {
 
   it("rejects invalid approval button payloads", async () => {
     const interaction = createInteraction();
-    const button = new ExecApprovalButton({
+    const button = createExecApprovalButton({
       getApprovers: () => ["123"],
       resolveApproval: async () => ({ ok: true, resolution: createApprovalResolution() }),
     });
@@ -103,26 +124,10 @@ describe("discord exec approval monitor helpers", () => {
     });
   });
 
-  it("blocks non-approvers from approving", async () => {
-    const interaction = createInteraction({ userId: "999" });
-    const button = new ExecApprovalButton({
-      getApprovers: () => ["123"],
-      resolveApproval: async () => ({ ok: true, resolution: createApprovalResolution() }),
-    });
-
-    await button.run(interaction, { kind: "exec", id: "abc", action: "allow-once" });
-
-    expect(interaction["reply"]).toHaveBeenCalledWith({
-      content: "⛔ You are not authorized to approve requests.",
-      ephemeral: true,
-    });
-  });
-
-  it.each(["exec", "plugin"] as const)(
-    "acknowledges and resolves valid %s approval clicks",
+  it.each(["exec", "plugin", "system-agent"] as const)(
+    "blocks non-approvers from approving %s clicks before resolution",
     async (approvalKind) => {
-      const editReply = vi.fn();
-      const interaction = createInteraction({ editReply });
+      const interaction = createInteraction({ userId: "999" });
       const resolveApproval = vi.fn(
         async () =>
           ({
@@ -130,7 +135,34 @@ describe("discord exec approval monitor helpers", () => {
             resolution: createApprovalResolution(),
           }) as const,
       );
-      const button = new ExecApprovalButton({
+      const button = createExecApprovalButton({
+        getApprovers: () => ["123"],
+        resolveApproval,
+      });
+
+      await button.run(interaction, { kind: approvalKind, id: "abc", action: "allow-once" });
+
+      expect(interaction["reply"]).toHaveBeenCalledWith({
+        content: "⛔ You are not authorized to approve requests.",
+        ephemeral: true,
+      });
+      expect(resolveApproval).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["exec", "plugin", "system-agent"] as const)(
+    "acknowledges and resolves valid %s approval clicks",
+    async (approvalKind) => {
+      const editReply = vi.fn();
+      const interaction = createInteraction({ editReply }, approvalKind);
+      const resolveApproval = vi.fn(
+        async () =>
+          ({
+            ok: true,
+            resolution: createApprovalResolution(),
+          }) as const,
+      );
+      const button = createExecApprovalButton({
         getApprovers: () => ["123"],
         resolveApproval,
       });
@@ -138,7 +170,7 @@ describe("discord exec approval monitor helpers", () => {
       await button.run(interaction, { kind: approvalKind, id: "abc", action: "allow-once" });
 
       expect(interaction["acknowledge"]).toHaveBeenCalled();
-      expect(resolveApproval).toHaveBeenCalledWith("abc", approvalKind, "allow-once");
+      expect(resolveApproval).toHaveBeenCalledWith("abc", approvalKind, "allow-once", "123");
       expect(JSON.stringify(editReply.mock.calls[0]?.[0])).toContain("Approval resolved");
       expect(interaction["followUp"]).not.toHaveBeenCalled();
     },
@@ -150,7 +182,7 @@ describe("discord exec approval monitor helpers", () => {
         throw new Error("message edit failed");
       }),
     });
-    const button = new ExecApprovalButton({
+    const button = createExecApprovalButton({
       getApprovers: () => ["123"],
       resolveApproval: async () => ({
         ok: true,
@@ -172,7 +204,7 @@ describe("discord exec approval monitor helpers", () => {
 
   it("cleans stale controls and shows the canonical winner after losing the race", async () => {
     const editReply = vi.fn();
-    const interaction = createInteraction({ editReply });
+    const interaction = createInteraction({ editReply }, "plugin", "plain-plugin-id");
     const resolution = createApprovalResolution({
       id: "plain-plugin-id",
       applied: false,
@@ -180,7 +212,7 @@ describe("discord exec approval monitor helpers", () => {
       decision: "deny",
     });
     resolveApprovalOverGatewayMock.mockResolvedValueOnce(resolution);
-    const button = new ExecApprovalButton(
+    const button = createExecApprovalButton(
       createDiscordExecApprovalButtonContext({
         cfg: buildConfig({ enabled: true, approvers: ["123"] }),
         accountId: "default",
@@ -212,9 +244,72 @@ describe("discord exec approval monitor helpers", () => {
     });
   });
 
+  it.each(["Applied", "Not applied"])(
+    "preserves the native %s card when its controls are already gone",
+    async (outcome) => {
+      const currentMessage = { components: [{ type: 10, content: outcome }] };
+      const fetchReply = vi.fn(async () => currentMessage);
+      const editReply = vi.fn();
+      const followUp = vi.fn();
+      const interaction = createInteraction({ fetchReply, editReply, followUp });
+      const button = createExecApprovalButton({
+        getApprovers: () => ["123"],
+        resolveApproval: async () => ({ ok: true, resolution: createApprovalResolution() }),
+      });
+
+      await button.run(interaction, { kind: "system-agent", id: "abc", action: "allow-once" });
+
+      expect(fetchReply).toHaveBeenCalledOnce();
+      expect(editReply).not.toHaveBeenCalled();
+      expect(followUp).toHaveBeenCalledWith({
+        content: "Approval resolved: Allowed once.",
+        ephemeral: true,
+      });
+    },
+  );
+
+  it("preserves the card when its current controls cannot be read", async () => {
+    const editReply = vi.fn();
+    const followUp = vi.fn();
+    const interaction = createInteraction({
+      editReply,
+      followUp,
+      fetchReply: vi.fn(async () => {
+        throw new Error("message lookup failed");
+      }),
+    });
+    const button = createExecApprovalButton({
+      getApprovers: () => ["123"],
+      resolveApproval: async () => ({ ok: true, resolution: createApprovalResolution() }),
+    });
+
+    await button.run(interaction, { kind: "system-agent", id: "abc", action: "allow-once" });
+
+    expect(editReply).not.toHaveBeenCalled();
+    expect(followUp).toHaveBeenCalledWith({
+      content: "Approval resolved: Allowed once.",
+      ephemeral: true,
+    });
+  });
+
+  it("does not replace another approval's controls on the same message", async () => {
+    const editReply = vi.fn();
+    const followUp = vi.fn();
+    const interaction = createInteraction({ editReply, followUp }, "system-agent", "replacement");
+    const button = createExecApprovalButton({
+      getApprovers: () => ["123"],
+      resolveApproval: async () => ({ ok: true, resolution: createApprovalResolution() }),
+    });
+
+    await button.run(interaction, { kind: "system-agent", id: "abc", action: "allow-once" });
+
+    expect(editReply).not.toHaveBeenCalled();
+    expect(followUp).toHaveBeenCalledOnce();
+  });
+
   it("shows a follow-up when gateway resolution fails", async () => {
     const interaction = createInteraction();
-    const button = new ExecApprovalButton({
+    const button = createExecApprovalButton({
       getApprovers: () => ["123"],
       resolveApproval: async () => ({ ok: false, reason: "error" }),
     });
@@ -230,7 +325,7 @@ describe("discord exec approval monitor helpers", () => {
 
   it("shows a follow-up for already-resolved approval clicks", async () => {
     const interaction = createInteraction();
-    const button = new ExecApprovalButton({
+    const button = createExecApprovalButton({
       getApprovers: () => ["123"],
       resolveApproval: async () => ({ ok: false, reason: "not-found" }),
     });
@@ -245,7 +340,7 @@ describe("discord exec approval monitor helpers", () => {
     });
   });
 
-  it.each(["exec", "plugin"] as const)(
+  it.each(["exec", "plugin", "system-agent"] as const)(
     "routes %s button resolutions through the canonical gateway method",
     async (approvalKind) => {
       const cfg = buildConfig({ enabled: true, approvers: ["123"] });
@@ -259,7 +354,7 @@ describe("discord exec approval monitor helpers", () => {
       });
 
       expect(ctx.getApprovers()).toEqual(["123"]);
-      await expect(ctx.resolveApproval("abc", approvalKind, "allow-once")).resolves.toEqual({
+      await expect(ctx.resolveApproval("abc", approvalKind, "allow-once", "123")).resolves.toEqual({
         ok: true,
         resolution,
       });
@@ -268,8 +363,10 @@ describe("discord exec approval monitor helpers", () => {
         approvalId: "abc",
         approvalKind,
         decision: "allow-once",
+        channel: "discord",
+        accountId: "default",
+        senderId: "123",
         gatewayUrl: "ws://127.0.0.1:18789",
-        clientDisplayName: "Discord approval (default)",
       });
     },
   );
@@ -282,7 +379,7 @@ describe("discord exec approval monitor helpers", () => {
       config: { enabled: true, approvers: ["123"] },
     });
 
-    await expect(ctx.resolveApproval("abc", "exec", "allow-once")).resolves.toEqual({
+    await expect(ctx.resolveApproval("abc", "exec", "allow-once", "123")).resolves.toEqual({
       ok: false,
       reason: "error",
     });
@@ -300,7 +397,7 @@ describe("discord exec approval monitor helpers", () => {
       config: { enabled: true, approvers: ["123"] },
     });
 
-    await expect(ctx.resolveApproval("abc", "plugin", "allow-once")).resolves.toEqual({
+    await expect(ctx.resolveApproval("abc", "plugin", "allow-once", "123")).resolves.toEqual({
       ok: false,
       reason: "not-found",
     });
@@ -314,7 +411,7 @@ describe("discord exec approval monitor helpers", () => {
       config: { enabled: true, approvers: ["123"] },
     });
 
-    await expect(ctx.resolveApproval("abc", "exec", "allow-once")).resolves.toEqual({
+    await expect(ctx.resolveApproval("abc", "exec", "allow-once", "123")).resolves.toEqual({
       ok: false,
       reason: "error",
     });

@@ -3,12 +3,15 @@ import path from "node:path";
 import { sortUniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { writeJson } from "../../src/infra/json-files.ts";
 import {
+  collectPackageDistContentInventory,
+  PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH,
   collectPackageDistInventory,
-  PACKAGE_DIST_INVENTORY_RELATIVE_PATH,
 } from "../../src/infra/package-dist-inventory.ts";
+import { PACKAGE_DIST_INVENTORY_RELATIVE_PATH } from "./package-dist-inventory-contract.mts";
+import { PACKAGE_LIFECYCLE_PENDING_RELATIVE_PATH } from "./package-lifecycle-marker.mjs";
 
-export { LOCAL_BUILD_METADATA_DIST_PATHS } from "./local-build-metadata-paths.mjs";
-export { PACKAGE_DIST_INVENTORY_RELATIVE_PATH };
+export { LOCAL_BUILD_METADATA_DIST_PATHS } from "./local-build-metadata-paths.mts";
+export { PACKAGE_DIST_INVENTORY_RELATIVE_PATH } from "./package-dist-inventory-contract.mts";
 
 const INSTALL_STAGE_DEBRIS_DIR_PATTERN = /^\.openclaw-install-stage(?:-[^/]+)?$/iu;
 
@@ -116,10 +119,35 @@ async function assertNoLegacyPluginDependencyStagingDebris(packageRoot: string):
   );
 }
 
+async function writePackageDistInventoryFile(
+  packageRoot: string,
+  entries: string[],
+): Promise<string[]> {
+  const files = entries.filter((entry) => entry !== PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH);
+  const content = await collectPackageDistContentInventory(packageRoot, files);
+  await writeJson(path.join(packageRoot, PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH), content, {
+    mode: 0o644,
+    trailingNewline: true,
+  });
+  const inventory = sortUniqueStrings([...files, PACKAGE_DIST_CONTENT_INVENTORY_RELATIVE_PATH]);
+  const inventoryPath = path.join(packageRoot, PACKAGE_DIST_INVENTORY_RELATIVE_PATH);
+  await writeJson(inventoryPath, inventory, { mode: 0o644, trailingNewline: true });
+  return inventory;
+}
+
 export async function writePackageDistInventory(packageRoot: string): Promise<string[]> {
   await assertNoLegacyPluginDependencyStagingDebris(packageRoot);
-  const inventory = sortUniqueStrings(await collectPackageDistInventory(packageRoot));
-  const inventoryPath = path.join(packageRoot, PACKAGE_DIST_INVENTORY_RELATIVE_PATH);
-  await writeJson(inventoryPath, inventory, { trailingNewline: true });
+  return writePackageDistInventoryFile(packageRoot, await collectPackageDistInventory(packageRoot));
+}
+
+async function writePackageLifecyclePendingMarker(packageRoot: string): Promise<void> {
+  const markerPath = path.join(packageRoot, PACKAGE_LIFECYCLE_PENDING_RELATIVE_PATH);
+  await fs.mkdir(path.dirname(markerPath), { recursive: true });
+  await fs.writeFile(markerPath, "pending\n", "utf8");
+}
+
+export async function writePackageDistInventoryForPublish(packageRoot: string): Promise<string[]> {
+  const inventory = await writePackageDistInventory(packageRoot);
+  await writePackageLifecyclePendingMarker(packageRoot);
   return inventory;
 }

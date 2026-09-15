@@ -1,14 +1,19 @@
 // Control UI chat module implements chat welcome behavior.
-import { expectDefined } from "@openclaw/normalization-core";
 import { html, nothing } from "lit";
-import type { GatewaySessionRow, SessionsListResult } from "../../../api/types.ts";
-import {
-  canonicalLobsterLook,
-  LOBSTER_PET_PALETTES,
-  renderLobsterSvg,
-} from "../../../components/lobster-pet.ts";
+import type {
+  AgentsListResult,
+  GatewaySessionRow,
+  SessionsListResult,
+} from "../../../api/types.ts";
+import { renderAgentIdentityAvatar } from "../../../components/identity-avatar-view.ts";
+import "../../../components/openclaw-mascot.ts";
 import { t } from "../../../i18n/index.ts";
-import { resolveAssistantTextAvatar, resolveChatAvatarRenderUrl } from "../../../lib/avatar.ts";
+import { resolveAgentTextAvatar } from "../../../lib/agents/display.ts";
+import {
+  resolveAgentAvatarUrl,
+  resolveAssistantTextAvatar,
+  resolveChatAvatarRenderUrl,
+} from "../../../lib/avatar.ts";
 import { formatRelativeTimestamp } from "../../../lib/format.ts";
 import {
   resolveChannelSessionInfo,
@@ -24,6 +29,8 @@ import {
 } from "../../../lib/sessions/session-key.ts";
 
 type ChatWelcomeProps = {
+  currentAgentId?: string;
+  agents?: AgentsListResult["agents"];
   assistantName: string;
   assistantAvatar: string | null;
   assistantAvatarUrl?: string | null;
@@ -31,9 +38,15 @@ type ChatWelcomeProps = {
   hint?: unknown;
   /** Rendered between the hero and the recents (the new-session draft composer). */
   composer?: unknown;
+  /** Hide recents and suggestions when the surrounding flow must stay ephemeral. */
+  hideSecondaryContent?: boolean;
+  /** Visually retire secondary content while the new-session draft is active. */
+  fadeSecondaryContent?: boolean;
   sessions?: SessionsListResult | null;
   sessionKey?: string;
   sessionHost?: UiSessionDefaultsHost | null;
+  modelSetupRequired?: boolean;
+  onModelSetup?: () => void;
   onDraftChange: (next: string) => void;
   onSend: () => void;
   onOpenSession?: (sessionKey: string) => void;
@@ -48,21 +61,27 @@ const WELCOME_SUGGESTION_KEYS = [
 
 const WELCOME_RECENT_SESSION_LIMIT = 5;
 
-function resolveAssistantAvatarUrl(
-  props: Pick<ChatWelcomeProps, "assistantAvatar" | "assistantAvatarUrl">,
-): string | null {
-  return resolveChatAvatarRenderUrl(props.assistantAvatarUrl, {
+export function resolveAssistantDisplayAvatar(
+  props: Pick<
+    ChatWelcomeProps,
+    "currentAgentId" | "agents" | "assistantAvatar" | "assistantAvatarUrl"
+  >,
+) {
+  const id = props.currentAgentId ?? "main";
+  const agent = props.agents?.find((entry) => entry.id === id);
+  const avatar = resolveChatAvatarRenderUrl(props.assistantAvatarUrl, {
     identity: {
       avatar: props.assistantAvatar ?? undefined,
       avatarUrl: props.assistantAvatarUrl ?? undefined,
     },
   });
-}
-
-export function resolveAssistantDisplayAvatar(
-  props: Pick<ChatWelcomeProps, "assistantAvatar" | "assistantAvatarUrl">,
-): string | null {
-  return resolveAssistantAvatarUrl(props) ?? resolveAssistantTextAvatar(props.assistantAvatar);
+  return {
+    id,
+    avatar: avatar ?? (agent ? resolveAgentAvatarUrl(agent) : null),
+    textAvatar:
+      resolveAssistantTextAvatar(props.assistantAvatar) ??
+      (agent ? resolveAgentTextAvatar(agent) : null),
+  };
 }
 
 /**
@@ -96,20 +115,10 @@ function selectWelcomeRecentSessions(
   );
 }
 
-// The default Clawd mascot: same species as the sidebar lobster pet, rendered
-// big and borderless with its own gentle idle loop (see layout.css).
 function renderWelcomeClawd() {
-  const palette =
-    LOBSTER_PET_PALETTES.find((entry) => entry.id === "crimson") ??
-    expectDefined(LOBSTER_PET_PALETTES[0], "welcome lobster palette");
-  const look = canonicalLobsterLook(palette);
   return html`
-    <div
-      class="agent-chat__welcome-clawd"
-      style=${`--lob-shell:${look.palette.shell};--lob-claw:${look.palette.claw}`}
-      aria-hidden="true"
-    >
-      ${renderLobsterSvg(look)}
+    <div class="agent-chat__welcome-clawd" aria-hidden="true">
+      <openclaw-mascot mood="idle" .size=${112}></openclaw-mascot>
     </div>
   `;
 }
@@ -160,33 +169,51 @@ function renderWelcomeSuggestions(props: Pick<ChatWelcomeProps, "onDraftChange" 
 }
 
 function renderWelcomeHero(
-  props: Pick<ChatWelcomeProps, "assistantName" | "assistantAvatar" | "assistantAvatarUrl"> & {
+  props: Pick<
+    ChatWelcomeProps,
+    "currentAgentId" | "agents" | "assistantName" | "assistantAvatar" | "assistantAvatarUrl"
+  > & {
     hint: unknown;
   },
 ) {
   const name = props.assistantName || "Assistant";
-  const avatar = resolveAssistantAvatarUrl(props);
-  const avatarText = avatar ? null : resolveAssistantTextAvatar(props.assistantAvatar);
   return html`
-    ${avatar
-      ? html`<img class="agent-chat__welcome-avatar" src=${avatar} alt=${name} />`
-      : avatarText
-        ? html`<div class="agent-chat__avatar agent-chat__avatar--text" aria-label=${name}>
-            ${avatarText}
-          </div>`
-        : renderWelcomeClawd()}
-    <h2>${name}</h2>
-    <p class="agent-chat__hint">${props.hint}</p>
+    <div class="agent-chat__welcome-identity">
+      <span class="agent-chat__welcome-avatar" role="img" aria-label=${name}>
+        ${renderAgentIdentityAvatar(resolveAssistantDisplayAvatar(props))}
+      </span>
+      <div class="agent-chat__welcome-identity-copy">
+        <h2>${name}</h2>
+        <p class="agent-chat__hint">${props.hint}</p>
+      </div>
+    </div>
   `;
 }
 
 /** The start-screen welcome block, shared by the empty chat and the new-session draft. */
 export function renderWelcomeState(props: ChatWelcomeProps) {
+  if (props.modelSetupRequired) {
+    return html`
+      <div class="agent-chat__welcome agent-chat__welcome--setup" role="alert">
+        ${renderWelcomeClawd()}
+        <h2>${t("modelSetup.required.title")}</h2>
+        <p class="agent-chat__hint">${t("modelSetup.required.body")}</p>
+        ${
+          props.onModelSetup
+            ? html`<button class="btn primary" type="button" @click=${props.onModelSetup}>
+                ${t("modelSetup.required.action")}
+              </button>`
+            : nothing
+        }
+      </div>
+    `;
+  }
   const recentSessions = selectWelcomeRecentSessions(props);
-
   return html`
     <div class="agent-chat__welcome" style="--agent-color: var(--accent)">
       ${renderWelcomeHero({
+        currentAgentId: props.currentAgentId,
+        agents: props.agents,
         assistantName: props.assistantName,
         assistantAvatar: props.assistantAvatar,
         assistantAvatarUrl: props.assistantAvatarUrl,
@@ -197,9 +224,25 @@ export function renderWelcomeState(props: ChatWelcomeProps) {
             )}`,
       })}
       ${props.composer ?? nothing}
-      ${recentSessions.length > 0
-        ? renderWelcomeRecentSessions(recentSessions, props.onOpenSession)
-        : renderWelcomeSuggestions(props)}
+      ${
+        props.hideSecondaryContent
+          ? nothing
+          : html`<div
+              class="agent-chat__welcome-secondary ${
+                props.fadeSecondaryContent ? "agent-chat__welcome-secondary--hidden" : ""
+              }"
+              aria-hidden=${props.fadeSecondaryContent ? "true" : "false"}
+              ?inert=${props.fadeSecondaryContent}
+            >
+              <div class="agent-chat__welcome-secondary-inner">
+                ${
+                  recentSessions.length > 0
+                    ? renderWelcomeRecentSessions(recentSessions, props.onOpenSession)
+                    : renderWelcomeSuggestions(props)
+                }
+              </div>
+            </div>`
+      }
     </div>
   `;
 }
