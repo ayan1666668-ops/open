@@ -4,10 +4,12 @@ scenario:
   id: telegram-workboard-dispatch-capacity-skip
   surface: channels
   category: channels.channel-actions-commands-and-approvals
+  plugins:
+    - workboard
   coverage:
     primary:
       - telegram.built-in-commands
-      - workboard.dispatch-capacity-skips
+      - automation.workboard-planning-and-dispatch
   regressionRefs:
     - openclaw/openclaw#148348
   objective: Verify Telegram renders the Workboard dispatch skipped count and owner-capacity explanation.
