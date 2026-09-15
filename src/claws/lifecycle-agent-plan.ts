@@ -1,7 +1,6 @@
 // Plans the agent entry for a Claw add without mutating configuration.
 import { materializeClawToolProfile } from "./tool-profile-consent.js";
 import type {
-  ClawAddCapabilityChange,
   ClawAddPlan,
   ClawAddPlanAction,
   ClawDiagnostic,
@@ -22,10 +21,6 @@ export function planClawAgent(params: {
   config: ClawAddPlan["agent"]["config"];
   action: ClawAddPlanAction;
   blockers: ClawDiagnostic[];
-  capabilityChange?: Omit<
-    ClawAddCapabilityChange,
-    "classification" | "requiresDistinctConsent" | "digest"
-  >;
 } {
   const idValid = AGENT_ID_PATTERN.test(params.finalId);
   const blocked = new Set(params.existingAgentIds ?? []).has(params.finalId);
@@ -58,14 +53,6 @@ export function planClawAgent(params: {
     id: params.finalId,
     workspace: params.workspace,
   };
-  const effect = {
-    ...(settings.model ? { model: settings.model } : {}),
-    ...(settings.subagents ? { subagents: settings.subagents } : {}),
-    ...(settings.sandbox ? { sandbox: settings.sandbox } : {}),
-    ...(settings.tools ? { tools: settings.tools } : {}),
-    ...(settings.memory ? { memory: settings.memory } : {}),
-    ...(settings.heartbeat ? { heartbeat: settings.heartbeat } : {}),
-  };
   return {
     config,
     blockers,
@@ -77,20 +64,5 @@ export function planClawAgent(params: {
       details: { ...config, expectedState: "absent" },
       blocked: blocked || !idValid,
     },
-    ...(Object.keys(effect).length > 0
-      ? {
-          capabilityChange: {
-            kind: "agent",
-            id: params.finalId,
-            path: "agent",
-            action: "create",
-            reason:
-              settings.model || settings.subagents
-                ? "The new agent declares model, delegation, sandbox, tool, memory-search, or recurring heartbeat configuration."
-                : "The new agent declares sandbox, tool, memory-search, or recurring heartbeat capabilities.",
-            effect,
-          },
-        }
-      : {}),
   };
 }

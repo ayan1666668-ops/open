@@ -12,6 +12,7 @@ import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js"
 import { resolveUserPath } from "../utils.js";
 import {
   clawAddCapabilityChange,
+  clawAgentCapabilityChange,
   clawAgentConfigurationNotices,
   findClawExtensionPackageCollisions,
   planClawExtensions,
@@ -241,8 +242,9 @@ export async function buildClawAddPlan(params: {
   const agentConfig = agentPlan.config;
   blockers.push(...agentPlan.blockers);
   actions.push(agentPlan.action);
-  if (agentPlan.capabilityChange) {
-    capabilityChanges.push(clawAddCapabilityChange(agentPlan.capabilityChange));
+  const agentCapability = clawAgentCapabilityChange(finalId, openClawAgentSettings);
+  if (agentCapability) {
+    capabilityChanges.push(agentCapability);
   }
 
   // Ancestor/descendant overlap, not just an exact match: adopting a subdirectory of another
