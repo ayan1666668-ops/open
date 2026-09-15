@@ -1,3 +1,4 @@
+import type { Result } from "@openclaw/normalization-core/result";
 // RPC adapter for chat.abort; cancellation policy lives in the sibling modules.
 import {
   ErrorCodes,
@@ -6,6 +7,7 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
+import { createChatAbortOps } from "../chat-abort-ops.js";
 import { abortChatRunById, type ChatAbortControllerEntry } from "../chat-abort.js";
 import { abortQueuedChatTurnById, type QueuedChatTurnEntry } from "../chat-queued-turns.js";
 import { chatRunBelongsToAgent } from "../chat-run-owner.js";
@@ -27,19 +29,21 @@ import {
 import {
   abortChatRunsForSessionKeyWithPartials,
   cancelWorkerInferenceForSession,
-  createChatAbortOps,
-  persistAbortedPartials,
+  abortControlledSubagents,
+  descendantAbortError,
 } from "./chat-abort-runtime.js";
 import {
   normalizeOptionalChatText as normalizeOptionalText,
   normalizeUnknownChatText as normalizeUnknownText,
 } from "./chat-text-normalization.js";
+import { captureAbortedPartial, persistAbortedPartials } from "./chat-transcript-persistence.js";
 import type { GatewayRequestContext, GatewayRequestHandlerOptions } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
 type ChatAbortLifecycle = {
   onAuthorizedAfterQueuedAbort?: () => boolean;
   excludeRunIds?: ReadonlySet<string>;
+  cascadeDescendants?: true;
 };
 
 type ChatAbortTarget = Pick<
@@ -48,7 +52,7 @@ type ChatAbortTarget = Pick<
 >;
 
 export async function handleChatAbortRequestWithLifecycle(
-  { params, respond, context, client }: GatewayRequestHandlerOptions,
+  { params, respond, context, client, sessionMutationAuthorization }: GatewayRequestHandlerOptions,
   lifecycle: ChatAbortLifecycle = {},
 ): Promise<void> {
   if (!assertValidParams(params, validateChatAbortParams, "chat.abort", respond)) {
@@ -122,16 +126,23 @@ export async function handleChatAbortRequestWithLifecycle(
   const requester = resolveChatAbortRequester(client);
 
   const sessionLoadOptions = { agentId: abortAgentId };
-  const { entry: abortSessionEntry } = loadSessionEntry(
-    canonicalAbortSessionKey,
-    sessionLoadOptions,
-  );
+  const abortSession: Result<ReturnType<typeof loadSessionEntry>, unknown> = (() => {
+    try {
+      return { ok: true, value: loadSessionEntry(canonicalAbortSessionKey, sessionLoadOptions) };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  })();
+  const abortSessionEntry = abortSession.ok ? abortSession.value.entry : undefined;
   const cancelWorkerRun = (sessionId = abortSessionEntry?.sessionId): string[] =>
     requester.isAdmin
       ? cancelWorkerInferenceForSession({ context, sessionId, ...(runId ? { runId } : {}) })
       : [];
   const respondWithWorkerRuns = (localRunIds: string[], sessionId?: string): void => {
     const runIds = [...new Set([...localRunIds, ...cancelWorkerRun(sessionId)])];
+    if (!abortSession.ok) {
+      throw abortSession.error;
+    }
     respond(true, { ok: true, aborted: runIds.length > 0, runIds });
   };
 
@@ -143,16 +154,24 @@ export async function handleChatAbortRequestWithLifecycle(
       sessionKeyAliases: canonicalAbortSessionKey === rawSessionKey ? undefined : [rawSessionKey],
       agentId: abortAgentId,
       sessionId: abortSessionEntry?.sessionId,
+      session: abortSession,
       defaultAgentId: compatibilityDefaultAgentId,
       abortOrigin: "rpc",
       stopReason: "rpc",
       requester,
+      assertCurrent: sessionMutationAuthorization?.assertCurrent,
       preserveSideRuns,
       excludeRunIds: lifecycle.excludeRunIds,
       onAuthorizedAfterQueuedAbort: lifecycle.onAuthorizedAfterQueuedAbort,
+      cascadeDescendants: lifecycle.cascadeDescendants,
     });
     if (res.unauthorized) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unauthorized"));
+      return;
+    }
+    const error = res.error ?? descendantAbortError(res.descendants, "Session");
+    if (error) {
+      respond(false, undefined, error);
       return;
     }
     respond(true, { ok: true, aborted: res.aborted, runIds: res.runIds });
@@ -279,6 +298,9 @@ export async function handleChatAbortRequestWithLifecycle(
         runId,
       )
     ) {
+      if (!abortSession.ok) {
+        throw abortSession.error;
+      }
       respond(true, { ok: true, aborted: false, runIds: [] });
       return;
     }
@@ -292,29 +314,44 @@ export async function handleChatAbortRequestWithLifecycle(
   if (!authorizeRunTarget(active)) {
     return;
   }
-
-  const partialText = context.chatRunState.resolveBuffer(runId).text;
-  const res = abortChatRunById(ops, {
-    runId,
-    sessionKey: active.sessionKey,
-    stopReason: "rpc",
-  });
-  if (res.aborted && active.controlUiVisible !== false && partialText && partialText.trim()) {
-    await persistAbortedPartials({
-      context,
-      sessionKey: active.sessionKey,
-      snapshots: [
-        {
+  let aborted = false;
+  const { sessionKey, sessionId, agentId, controlUiVisible } = active;
+  const partialText = context.chatRunState.resolveBuffer(runId, { final: true }).text;
+  const snapshot =
+    controlUiVisible !== false && partialText?.trim()
+      ? captureAbortedPartial({
           runId,
-          sessionId: active.sessionId,
-          agentId: active.agentId,
+          sessionKey,
+          sessionId,
+          agentId: agentId ?? abortAgentId,
           text: partialText,
           abortOrigin: "rpc",
-        },
-      ],
-    });
+          ...(sessionKey === rawSessionKey || sessionKey === canonicalAbortSessionKey
+            ? { session: abortSession }
+            : {}),
+        })
+      : undefined;
+  const descendants = await abortControlledSubagents({
+    cfg: abortCfg,
+    sessionKey,
+    agentId,
+    requesterTurnRunId: runId,
+    beforeKill: () =>
+      (aborted = abortChatRunById(ops, { runId, sessionKey, stopReason: "rpc" }).aborted),
+  });
+  // Transcript failure must not abandon children after the parent loses its controller.
+  if (aborted && snapshot) {
+    await persistAbortedPartials({ context, snapshots: [snapshot] });
   }
-  respondWithWorkerRuns(res.aborted ? [runId] : [], active.sessionId);
+  if (!abortSession.ok) {
+    throw abortSession.error;
+  }
+  const descendantError = descendantAbortError(descendants, "Parent run");
+  if (descendantError) {
+    respond(false, undefined, descendantError);
+    return;
+  }
+  respondWithWorkerRuns(aborted ? [runId] : [], sessionId);
 }
 
 export async function handleChatAbortRequest(options: GatewayRequestHandlerOptions): Promise<void> {

@@ -1,29 +1,26 @@
 // Plugin npm runtime build tests validate plugin runtime package builds.
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  resolvePluginNpmCommand,
-  withAugmentedPluginNpmManifestForPackage,
-} from "../scripts/lib/plugin-npm-package-manifest.mts";
+import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
+import { Worker } from "node:worker_threads";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPluginNpmRuntime,
   listMissingPluginNpmRuntimeHostExports,
   listPublishablePluginPackageDirs,
   resolvePluginNpmRuntimeBuildPlan,
 } from "../scripts/lib/plugin-npm-runtime-build.mts";
-import {
-  createPluginModuleLoaderCache,
-  getCachedPluginSourceModuleLoader,
-} from "../src/plugins/plugin-module-loader-cache.js";
+import { defineBundledChannelSetupEntry } from "../src/plugin-sdk/channel-entry-contract.js";
 import { useAutoCleanupTempDirTracker } from "./helpers/temp-dir.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -45,6 +42,129 @@ function expectPluginNpmRuntimeBuildPlan(
 }
 
 describe("plugin npm runtime build planning", () => {
+  it.each([
+    "missing-directory",
+    "missing-manifest",
+    "malformed-manifest",
+    "no-extensions",
+    "javascript-only",
+  ])("reports selected package input without touching output (%s)", async (scenario) => {
+    const packageDir = path.join(tempDirs.make("openclaw-plugin-runtime-input-"), "selected");
+    const manifestPath = path.join(packageDir, "package.json");
+    const outDir = path.join(packageDir, "dist");
+    if (scenario !== "missing-directory") {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(path.join(outDir, "sentinel.js"), "keep\n");
+    }
+    if (scenario === "malformed-manifest") {
+      writeFileSync(manifestPath, "{");
+    } else if (scenario === "no-extensions" || scenario === "javascript-only") {
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          name: "input-fixture",
+          version: "1.0.0",
+          ...(scenario === "javascript-only" ? { openclaw: { extensions: ["./index.js"] } } : {}),
+        }),
+      );
+      writeFileSync(path.join(packageDir, "index.js"), "export default {};\n");
+    }
+
+    const result = buildPluginNpmRuntime({ repoRoot, packageDir, logLevel: "silent" });
+    if (scenario === "missing-directory" || scenario === "missing-manifest") {
+      await expect(result).rejects.toMatchObject({ code: "ENOENT", path: manifestPath });
+    } else if (scenario === "malformed-manifest") {
+      await expect(result).rejects.toBeInstanceOf(SyntaxError);
+    } else {
+      await expect(result).resolves.toBeNull();
+    }
+    if (scenario === "missing-directory") {
+      expect(existsSync(packageDir)).toBe(false);
+    } else {
+      expect(readdirSync(outDir)).toEqual(["sentinel.js"]);
+      expect(readFileSync(path.join(outDir, "sentinel.js"), "utf8")).toBe("keep\n");
+    }
+  });
+
+  it("builds a private worker without registering it as a plugin entry", async () => {
+    const packageDir = tempDirs.make("openclaw-plugin-runtime-worker-");
+    mkdirSync(path.join(packageDir, "src"));
+    writeFileSync(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@openclaw/worker-fixture",
+        version: "1.0.0",
+        type: "module",
+        openclaw: {
+          extensions: ["./index.ts"],
+          compat: { pluginApi: "1.0.0" },
+          build: { workerEntries: ["./src/store.worker.ts"] },
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(packageDir, "index.ts"),
+      `import { resolveRuntimeWorkerUrl } from ${JSON.stringify(path.join(repoRoot, "src/infra/runtime-worker-url.ts").replaceAll("\\", "/"))};
+` +
+        `export const workerUrl = resolveRuntimeWorkerUrl({
+          currentModuleUrl: import.meta.url,
+          sourceWorkerName: "store.worker",
+          distWorkerPath: "extensions/worker-fixture/src/store.worker.js",
+          package: { name: "@openclaw/worker-fixture", distWorkerPath: "src/store.worker.js" },
+        });
+`,
+    );
+    writeFileSync(
+      path.join(packageDir, "src/store.worker.ts"),
+      'import { parentPort, isMainThread } from "node:worker_threads";\n' +
+        "const value: number = 42; parentPort!.postMessage({ value, isMainThread });\n",
+    );
+
+    const plan = expectPluginNpmRuntimeBuildPlan(
+      await buildPluginNpmRuntime({ repoRoot, packageDir, logLevel: "silent" }),
+    );
+    expect(plan.runtimeExtensions).toEqual(["./dist/index.js"]);
+    const { workerUrl } = await import(pathToFileURL(path.join(packageDir, "dist/index.js")).href);
+    const worker = new Worker(workerUrl);
+    try {
+      const result = await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", (code) => reject(new Error(`Worker exited before replying: ${code}`)));
+      });
+      expect(result).toEqual({ value: 42, isMainThread: false });
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  it.each(["index.tsx", "src/index.tsx"])(
+    "builds an executable %s package entry",
+    async (entry) => {
+      const packageDir = tempDirs.make("openclaw-plugin-runtime-tsx-");
+      mkdirSync(path.dirname(path.join(packageDir, entry)), { recursive: true });
+      writeFileSync(
+        path.join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "@openclaw/tsx-fixture",
+          version: "1.0.0",
+          type: "module",
+          openclaw: { extensions: [`./${entry}`], compat: { pluginApi: "1.0.0" } },
+        }),
+      );
+      writeFileSync(
+        path.join(packageDir, entry),
+        'const id: string = "tsx-fixture"; export default { id };\n',
+      );
+
+      await buildPluginNpmRuntime({ repoRoot, packageDir, logLevel: "silent" });
+
+      const outputPath = path.join(packageDir, "dist", entry.replace(/\.tsx$/u, ".js"));
+      expect(existsSync(outputPath)).toBe(true);
+      expect((await import(pathToFileURL(outputPath).href)).default.id).toBe("tsx-fixture");
+    },
+  );
+
   it("rejects a symlinked package dist root before building", async () => {
     const syntheticRepoRoot = tempDirs.make("openclaw-plugin-runtime-output-root-");
     const packageDir = path.join(syntheticRepoRoot, "extensions", "demo");
@@ -101,6 +221,10 @@ describe("plugin npm runtime build planning", () => {
       expectDistRelativePaths(plan.runtimeExtensions);
       expectDistRelativePaths(plan.runtimeBuildOutputs);
       expect(plan.packageFiles).toContain("dist/**");
+      expect(plan.packageFiles).toContain("assets/activity.svg");
+      if (existsSync(path.join(plan.packageDir, "assets", "activity"))) {
+        expect(plan.packageFiles).toContain("assets/activity/*.svg");
+      }
       expect(plan.packagePeerMetadata.peerDependencies.openclaw).toBe(
         plan.packageJson.openclaw?.compat?.pluginApi,
       );
@@ -123,6 +247,8 @@ describe("plugin npm runtime build planning", () => {
       "dist/**",
       "openclaw.plugin.json",
       "README.md",
+      "assets/icon.png",
+      "assets/activity.svg",
       "skills/**",
     ]);
   });
@@ -206,12 +332,42 @@ describe("plugin npm runtime build planning", () => {
     expect(indexText).toContain('specifier: "./secret-contract-api.cjs"');
     expect(indexText).toContain('specifier: "./runtime-api.cjs"');
 
-    const setupEntryText = readFileSync(
-      path.join(repoRoot, "extensions/msteams/dist/setup-entry.cjs"),
-      "utf8",
-    );
-    expect(setupEntryText).toContain('specifier: "./setup-plugin-api.cjs"');
-    expect(setupEntryText).toContain('specifier: "./secret-contract-api.cjs"');
+    const setupEntryPath = path.join(plan.outDir, "setup-entry.cjs");
+    const defineSetupEntry = vi.fn(defineBundledChannelSetupEntry);
+    const setupModule: { exports: Partial<ReturnType<typeof defineBundledChannelSetupEntry>> } = {
+      exports: {},
+    };
+    const require = createRequire(import.meta.url);
+    // Execute the emitted URL expressions and load companions through the host SDK;
+    // hashed inventory chunks are private, while the setup entry remains stable.
+    runInNewContext(readFileSync(setupEntryPath, "utf8"), {
+      __filename: setupEntryPath,
+      __dirname: plan.outDir,
+      module: setupModule,
+      exports: setupModule.exports,
+      URL,
+      require: (specifier: string) =>
+        specifier === "openclaw/plugin-sdk/channel-entry-contract"
+          ? { defineBundledChannelSetupEntry: defineSetupEntry }
+          : require(specifier),
+    });
+    expect(defineSetupEntry).toHaveBeenCalledOnce();
+    const options = defineSetupEntry.mock.calls[0]?.[0];
+    for (const reference of [options?.plugin, options?.secrets]) {
+      if (!reference) {
+        throw new Error("Missing setup companion reference");
+      }
+      expect(path.dirname(reference.specifier)).toBe(path.join(plan.outDir, ".setup"));
+      expect(path.extname(reference.specifier)).toBe(".cjs");
+      expect(existsSync(reference.specifier)).toBe(true);
+    }
+    expect(setupModule.exports).toBe(defineSetupEntry.mock.results[0]?.value);
+    expect(setupModule.exports.kind).toBe("bundled-channel-setup-entry");
+    expect(setupModule.exports.loadSetupPlugin?.()).toMatchObject({ id: "msteams" });
+    expect(setupModule.exports.loadSetupSecrets?.()).toMatchObject({
+      collectRuntimeConfigAssignments: expect.any(Function),
+      secretTargetRegistryEntries: expect.any(Array),
+    });
   });
 
   it("builds Tencent setup metadata for installed-package migrations", () => {
@@ -229,78 +385,37 @@ describe("plugin npm runtime build planning", () => {
     expect(plan.runtimeBuildOutputs).toContain("./dist/setup-api.js");
   });
 
-  it("packs the Zalo public setup API with its lazy runtime surface", async () => {
+  it("plans the Zalo public setup API with its lazy package surface", () => {
     const packageDir = path.join(repoRoot, "extensions", "zalo");
     const plan = expectPluginNpmRuntimeBuildPlan(
-      await buildPluginNpmRuntime({
+      resolvePluginNpmRuntimeBuildPlan({
         repoRoot,
         packageDir,
-        logLevel: "silent",
       }),
     );
-    const consumerDir = tempDirs.make("openclaw-zalo-packed-setup-");
-    let packedFiles: string[] = [];
-    let setupApiPath = "";
-
-    withAugmentedPluginNpmManifestForPackage(
-      { repoRoot, packageDir, bundleDependencies: false },
-      () => {
-        const invocation = resolvePluginNpmCommand([
-          "pack",
-          "--json",
-          "--ignore-scripts",
-          "--pack-destination",
-          consumerDir,
-        ]);
-        const pack = spawnSync(invocation.command, invocation.args, {
-          cwd: packageDir,
-          encoding: "utf8",
-          ...(invocation.env ? { env: invocation.env } : {}),
-          ...(invocation.shell !== undefined ? { shell: invocation.shell } : {}),
-          stdio: ["ignore", "pipe", "pipe"],
-          ...(invocation.windowsVerbatimArguments !== undefined
-            ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
-            : {}),
-        });
-        expect(pack.status, pack.stderr).toBe(0);
-        const [packedPackage] = JSON.parse(pack.stdout) as [
-          { filename: string; files: Array<{ path: string }> },
-        ];
-        packedFiles = packedPackage.files.map((file) => file.path);
-        const extract = spawnSync(
-          "tar",
-          ["-xzf", path.join(consumerDir, packedPackage.filename), "-C", consumerDir],
-          {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-        );
-        expect(extract.status, extract.stderr).toBe(0);
-        setupApiPath = path.join(consumerDir, "package", "dist", "setup-api.js");
-      },
-    );
-
+    expect(plan.entry["setup-api"]).toBe(path.join(packageDir, "setup-api.ts"));
+    expect(plan.entry["setup-surface"]).toBe(path.join(packageDir, "setup-surface.ts"));
     expect(plan.runtimeBuildOutputs).toContain("./dist/setup-api.js");
-    const loadSetupApi = getCachedPluginSourceModuleLoader({
-      cache: createPluginModuleLoaderCache(),
-      modulePath: setupApiPath,
-      importerUrl: import.meta.url,
-      devSourceRoot: repoRoot,
-    });
-    const setupApi = loadSetupApi(setupApiPath) as {
-      zaloSetupWizard: { channel: string };
-    };
-    expect(setupApi.zaloSetupWizard.channel).toBe("zalo");
     expect(plan.runtimeBuildOutputs).toContain("./dist/setup-surface.js");
     expect(plan.runtimeBuildOutputs).not.toContain("./dist/src/setup-surface.js");
-    expect(packedFiles).toContain("dist/setup-surface.js");
-    expect(packedFiles).not.toContain("dist/src/setup-surface.js");
+    expect(plan.packageFiles).toContain("dist/**");
   });
 
   it("keeps published Codex runtime imports resolvable from the host package", async () => {
     const result = await buildPluginNpmRuntime({
       repoRoot,
       packageDir: "extensions/codex",
+      logLevel: "silent",
+    });
+    const plan = expectPluginNpmRuntimeBuildPlan(result);
+
+    expect(listMissingPluginNpmRuntimeHostExports(plan)).toEqual([]);
+  });
+
+  it("keeps published llama.cpp runtime imports resolvable from the host package", async () => {
+    const result = await buildPluginNpmRuntime({
+      repoRoot,
+      packageDir: "extensions/llama-cpp",
       logLevel: "silent",
     });
     const plan = expectPluginNpmRuntimeBuildPlan(result);

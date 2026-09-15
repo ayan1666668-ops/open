@@ -1,8 +1,11 @@
 // Control UI route classifier for base-path and root-mounted SPA serving.
+import { isControlUiFocusPath } from "@openclaw/session-url-contract";
+import { resolvePluginDiscoveryIdentity } from "../plugins/catalog-discovery.js";
 import { acceptsControlUiHtmlResponse, isReadHttpMethod } from "./control-ui-http-utils.js";
 import {
   classifyGatewayProbePath,
   classifyMcpAppStandalonePath,
+  classifyNodeWorkspaceTransferPath,
   classifyWorkerGatewayPath,
 } from "./gateway-http-route-contracts.js";
 
@@ -44,6 +47,14 @@ export function isControlUiApprovalDocumentPath(params: {
   return encodedId.length > 0 && !encodedId.includes("/");
 }
 
+/** Focused presentation namespace used only after plugin routing declines it. */
+export function isControlUiFocusDocumentPath(params: {
+  basePath: string;
+  pathname: string;
+}): boolean {
+  return isControlUiFocusPath(params.pathname, params.basePath);
+}
+
 /** Classify an HTTP request as Control UI serving, redirect, 404, or non-Control-UI. */
 export function classifyControlUiRequest(params: {
   basePath: string;
@@ -76,10 +87,21 @@ export function classifyControlUiRequest(params: {
     if (classifyWorkerGatewayPath(pathname) !== "outside") {
       return { kind: "not-control-ui" };
     }
-    // Keep plugin-owned HTTP routes outside the root-mounted Control UI SPA
-    // fallback so untrusted plugins cannot claim arbitrary UI paths.
-    if (pathname === "/plugins" || pathname.startsWith("/plugins/")) {
+    // Node workspace transfers are authenticated core routes. Reserve malformed
+    // descendants too, so the SPA never turns a transfer failure into HTML.
+    if (classifyNodeWorkspaceTransferPath(pathname) !== "outside") {
       return { kind: "not-control-ui" };
+    }
+    // Marketplace documents own the catalogue root and canonical generated catalog IDs.
+    // Other descendants and non-document requests remain plugin HTTP routes.
+    if (pathname === "/plugins" || pathname.startsWith("/plugins/")) {
+      const marketplaceDocument =
+        pathname === "/plugins" ||
+        pathname === "/plugins/" ||
+        resolvePluginDiscoveryIdentity(pathname.slice("/plugins/".length)) !== undefined;
+      if (!marketplaceDocument || !isReadHttpMethod(method) || !spaFallback) {
+        return { kind: "not-control-ui" };
+      }
     }
     if (pathname === "/api" || pathname.startsWith("/api/")) {
       return { kind: "not-control-ui" };
