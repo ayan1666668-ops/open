@@ -107,21 +107,23 @@ describeShimmer("Control UI shimmer", () => {
         ".memory-import__skeleton",
         ".chat-controls__model-trigger-skeleton",
       ]) {
-        const animation = await page.locator(selector).evaluate(async (element) => {
-          const highlight = getComputedStyle(element, "::after");
-          await new Promise<void>((resolve) => {
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        const readAnimation = () =>
+          page.locator(selector).evaluate((element) => {
+            const highlight = getComputedStyle(element, "::after");
+            return {
+              duration: highlight.animationDuration,
+              iterations: highlight.animationIterationCount,
+              running: element
+                .getAnimations({ subtree: true })
+                .some((item) => item.playState === "running"),
+              settledTransform: highlight.transform,
+              width: element.clientWidth,
+            };
           });
-          return {
-            duration: highlight.animationDuration,
-            iterations: highlight.animationIterationCount,
-            running: element
-              .getAnimations({ subtree: true })
-              .some((item) => item.playState === "running"),
-            settledTransform: highlight.transform,
-            width: element.clientWidth,
-          };
-        });
+
+        // Frame callbacks do not guarantee that compositor startup has settled.
+        await expect.poll(async () => (await readAnimation()).running).toBe(false);
+        const animation = await readAnimation();
 
         expect(animation.iterations).toBe("1");
         expect(Number.parseFloat(animation.duration)).toBeLessThanOrEqual(0.00001);
