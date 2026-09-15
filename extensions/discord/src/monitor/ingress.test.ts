@@ -250,8 +250,8 @@ describe("Discord durable ingress", () => {
   it("admits a later same-channel message while an earlier one is deferred", async () => {
     await withQueue(async (queue) => {
       const dispatched: string[] = [];
-      const dispatch = vi.fn(async (event: { id: string }) => {
-        dispatched.push(event.id);
+      const dispatch = vi.fn(async (event: { id?: string }) => {
+        dispatched.push(event.id ?? "");
         if (event.id === "2001") {
           return { kind: "deferred" as const };
         }
