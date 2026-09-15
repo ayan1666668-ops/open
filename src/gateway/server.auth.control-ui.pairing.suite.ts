@@ -21,9 +21,126 @@ import {
   readConnectChallengeNonce,
   restoreGatewayToken,
   TEST_OPERATOR_CLIENT,
+  testState,
 } from "./server.auth.test-helpers.js";
 
 export function registerControlUiPairingSuite(): void {
+  test("keeps pending Control UI operator pairing reconnecting without enabling ordinary node retries", async () => {
+    const { mutateConfigFile } = await import("../config/config.js");
+    const { publicKeyRawBase64UrlFromPem } = await import("../infra/device-identity.js");
+    const { approveDevicePairing } = await import("../infra/device-pairing-approval.js");
+    const { listDevicePairing, requestDevicePairing } = await import("../infra/device-pairing.js");
+    const origin = "https://control-ui.example.test";
+    testState.gatewayControlUi = { allowedOrigins: [origin] };
+    await mutateConfigFile({
+      mutate(config) {
+        config.gateway = {
+          ...config.gateway,
+          trustedProxies: ["127.0.0.1"],
+          controlUi: { ...config.gateway?.controlUi, allowedOrigins: [origin] },
+        };
+      },
+      afterWrite: { mode: "auto" },
+    });
+    await withControlUiServer(async ({ port }) => {
+      const connectBrowser = async (
+        identityPath: string,
+        role: "operator" | "node",
+        scopes: string[],
+      ) => {
+        const socket = await openWs(port, {
+          origin,
+          "x-forwarded-for": "203.0.113.50",
+        });
+        try {
+          return await connectReq(socket, {
+            token: "secret",
+            role,
+            scopes,
+            client: CONTROL_UI_CLIENT,
+            device: await buildSignedDeviceForIdentity({
+              identityPath,
+              client: CONTROL_UI_CLIENT,
+              role,
+              scopes,
+              nonce: await readConnectChallengeNonce(socket),
+            }),
+          });
+        } finally {
+          socket.close();
+        }
+      };
+
+      for (const reason of [
+        "not-paired",
+        "role-upgrade",
+        "scope-upgrade",
+        "metadata-upgrade",
+      ] as const) {
+        const { identityPath, identity } = await createOperatorIdentityFixture(
+          `openclaw-control-ui-retry-${reason}-`,
+        );
+        if (reason !== "not-paired") {
+          const seeded = await requestDevicePairing({
+            deviceId: identity.deviceId,
+            publicKey: publicKeyRawBase64UrlFromPem(identity.publicKeyPem),
+            role: reason === "role-upgrade" ? "node" : "operator",
+            scopes:
+              reason === "role-upgrade"
+                ? []
+                : reason === "scope-upgrade"
+                  ? ["operator.read"]
+                  : ["operator.admin"],
+            clientId: CONTROL_UI_CLIENT.id,
+            clientMode: CONTROL_UI_CLIENT.mode,
+            platform:
+              reason === "metadata-upgrade" ? "previous-platform" : CONTROL_UI_CLIENT.platform,
+          });
+          expect(
+            (
+              await approveDevicePairing(seeded.request.requestId, {
+                callerScopes: ["operator.admin"],
+              })
+            )?.status,
+          ).toBe("approved");
+        }
+
+        let requestId: string | undefined;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const response = await connectBrowser(identityPath, "operator", ["operator.admin"]);
+          expect(response.ok).toBe(false);
+          const pending = (await listDevicePairing()).pending.filter(
+            (entry) => entry.deviceId === identity.deviceId,
+          );
+          expect(pending).toHaveLength(1);
+          requestId ??= pending[0]?.requestId;
+          expect(pending[0]?.requestId).toBe(requestId);
+          expect(response.error?.details).toMatchObject({
+            code: "PAIRING_REQUIRED",
+            reason,
+            requestId,
+            recommendedNextStep: "wait_then_retry",
+            retryable: true,
+            pauseReconnect: false,
+          });
+        }
+      }
+      const { identityPath } = await createOperatorIdentityFixture(
+        "openclaw-control-ui-node-retry-",
+      );
+      const response = await connectBrowser(identityPath, "node", []);
+      expect(response.ok).toBe(false);
+      expect(response.error?.details).toMatchObject({
+        code: "PAIRING_REQUIRED",
+        reason: "not-paired",
+        requestId: expect.any(String),
+      });
+      expect(response.error?.details).not.toHaveProperty("recommendedNextStep");
+      expect(response.error?.details).not.toHaveProperty("retryable");
+      expect(response.error?.details).not.toHaveProperty("pauseReconnect");
+    });
+  });
+
   const tamperPairedMetadata = async (
     deviceId: string,
     mutate: (metadata: Record<string, unknown>) => void,
@@ -59,7 +176,7 @@ export function registerControlUiPairingSuite(): void {
       metadata.approvedScopes = ["operator.read", null, 42, ""];
     });
   };
-  test("auto-approves local-direct operator pairing despite a remote-looking host header", async () => {
+  test("auto-approves local-direct operator pairing and scope upgrades despite a remote-looking host header", async () => {
     const { getPairedDevice, listDevicePairing } = await import("../infra/device-pairing.js");
     const { server, port, prevToken, identityPath, identity, client } =
       await startControlUiServerWithOperatorIdentity();
@@ -104,23 +221,22 @@ export function registerControlUiPairingSuite(): void {
         nonce: nonce2,
       }),
     });
-    expect(res.ok).toBe(false);
-    expect(res.error?.message ?? "").toContain("pairing required");
+    // A local shared-auth connect could pair a fresh identity at admin, so the
+    // widening self-approves silently instead of queueing an unanswerable prompt.
+    expect(res.ok).toBe(true);
     pairing = await listDevicePairing();
     const pendingAfterAdmin = pairing.pending.filter(
       (entry) => entry.deviceId === identity.deviceId,
     );
-    expect(pendingAfterAdmin).toHaveLength(1);
-    expectArrayIncludes(pendingAfterAdmin[0]?.scopes, ["operator.admin"]);
-    if (!(await getPairedDevice(identity.deviceId))) {
-      throw new Error(`expected paired device ${identity.deviceId}`);
-    }
+    expect(pendingAfterAdmin).toHaveLength(0);
+    const widened = await getPairedDevice(identity.deviceId);
+    expectArrayIncludes(widened?.approvedScopes, ["operator.admin", "operator.read"]);
     ws2.close();
     await server.close();
     restoreGatewayToken(prevToken);
   });
 
-  test("requires approval for loopback scope upgrades for control ui clients", async () => {
+  test("silently widens loopback control ui scope upgrades under shared auth", async () => {
     const { getPairedDevice, listDevicePairing } = await import("../infra/device-pairing.js");
     const { server, port, prevToken } = await startControlUiServer("secret");
     const { identity, identityPath } = await seedApprovedOperatorReadPairing({
@@ -144,21 +260,22 @@ export function registerControlUiPairingSuite(): void {
         nonce: nonce2,
       }),
     });
-    expect(upgraded.ok).toBe(false);
-    expect(upgraded.error?.message ?? "").toContain("pairing required");
+    // A fresh Control UI browser identity holding the shared secret could pair
+    // at admin silently, so an existing row widens the same way.
+    expect(upgraded.ok).toBe(true);
     const pending = await listDevicePairing();
     const pendingUpgrade = pending.pending.filter((entry) => entry.deviceId === identity.deviceId);
-    expect(pendingUpgrade).toHaveLength(1);
-    expectArrayIncludes(pendingUpgrade[0]?.scopes, ["operator.admin"]);
+    expect(pendingUpgrade).toHaveLength(0);
     const updated = await getPairedDevice(identity.deviceId);
-    expect(updated?.tokens?.operator?.scopes ?? []).not.toContain("operator.admin");
+    expect(updated?.tokens?.operator?.scopes ?? []).toContain("operator.admin");
 
     ws2.close();
     await server.close();
     restoreGatewayToken(prevToken);
   });
 
-  test("returns pairing-required for malformed persisted access lists", async () => {
+  test("silently repairs malformed persisted access lists on local re-approval", async () => {
+    const { getPairedDevice } = await import("../infra/device-pairing.js");
     const { identity, identityPath } = await seedApprovedOperatorReadPairing({
       identityPrefix: "openclaw-device-malformed-access-",
       clientId: TEST_OPERATOR_CLIENT.id,
@@ -185,11 +302,12 @@ export function registerControlUiPairingSuite(): void {
         }),
       });
 
-      expect(result.ok).toBe(false);
-      expect(result.error?.message ?? "").toContain("pairing required");
-      expect((result.error?.details as { reason?: string } | undefined)?.reason).toBe(
-        "scope-upgrade",
-      );
+      // Malformed persisted access lists never grant access by themselves: the
+      // connect is re-authorized by a fresh silent local approval, which also
+      // rewrites the row with a clean scope list.
+      expect(result.ok).toBe(true);
+      const repaired = await getPairedDevice(identity.deviceId);
+      expect(repaired?.approvedScopes ?? []).toContain("operator.admin");
     } finally {
       ws?.close();
       await server.close();
@@ -207,8 +325,14 @@ export function registerControlUiPairingSuite(): void {
     });
     await overwritePairedPublicKey(identity.deviceId, "mismatched-public-key");
 
-    const { server, port, prevToken } = await startControlUiServer("secret");
-    const ws2 = await openTailscaleWs(port);
+    const { server, prevToken } = await startControlUiServer("secret", {
+      tailscale: { mode: "serve" },
+    });
+    const tailscaleEndpoint = server.getTailscaleIngressEndpoint();
+    if (!tailscaleEndpoint) {
+      throw new Error("expected managed Tailscale listener");
+    }
+    const ws2 = await openTailscaleWs(tailscaleEndpoint);
     try {
       const nonce2 = await readConnectChallengeNonce(ws2);
       const mismatched = await connectReq(ws2, {
@@ -284,7 +408,7 @@ export function registerControlUiPairingSuite(): void {
     }
   });
 
-  test("auto-approves local-direct node pairing, then queues operator scope approval", async () => {
+  test("auto-approves local-direct node pairing, then silently grants operator scopes", async () => {
     const { getPairedDevice, listDevicePairing } = await import("../infra/device-pairing.js");
     const { identityPath, identity, client } =
       await createOperatorIdentityFixture("openclaw-device-scope-");
@@ -318,15 +442,13 @@ export function registerControlUiPairingSuite(): void {
         "operator.read",
         "operator.write",
       ]);
-      expect(operatorConnect.ok).toBe(false);
-      expect(operatorConnect.error?.message ?? "").toContain("pairing required");
+      expect(operatorConnect.ok).toBe(true);
 
       const pending = await listDevicePairing();
       const pendingForTestDevice = pending.pending.filter(
         (entry) => entry.deviceId === identity.deviceId,
       );
-      expect(pendingForTestDevice).toHaveLength(1);
-      expectArrayIncludes(pendingForTestDevice[0]?.scopes, ["operator.read", "operator.write"]);
+      expect(pendingForTestDevice).toHaveLength(0);
 
       const paired = await getPairedDevice(identity.deviceId);
       expectArrayIncludes(paired?.roles, ["node", "operator"]);
@@ -375,7 +497,8 @@ export function registerControlUiPairingSuite(): void {
 
   test("allows operator shared auth with legacy paired metadata", async () => {
     const { publicKeyRawBase64UrlFromPem } = await import("../infra/device-identity.js");
-    const { approveDevicePairing, getPairedDevice, listDevicePairing, requestDevicePairing } =
+    const { approveDevicePairing } = await import("../infra/device-pairing-approval.js");
+    const { getPairedDevice, listDevicePairing, requestDevicePairing } =
       await import("../infra/device-pairing.js");
     const { identityPath, identity } = await createOperatorIdentityFixture(
       "openclaw-device-legacy-meta-",
@@ -430,7 +553,7 @@ export function registerControlUiPairingSuite(): void {
     }
   });
 
-  test("requires approval for local scope upgrades even when paired metadata is legacy-shaped", async () => {
+  test("silently widens local scope upgrades even when paired metadata is legacy-shaped", async () => {
     const { getPairedDevice, listDevicePairing } = await import("../infra/device-pairing.js");
     const { identity, identityPath } = await seedApprovedOperatorReadPairing({
       identityPrefix: "openclaw-device-legacy-",
@@ -461,68 +584,18 @@ export function registerControlUiPairingSuite(): void {
           nonce: upgradeNonce,
         }),
       });
-      expect(upgraded.ok).toBe(false);
-      expect(upgraded.error?.message ?? "").toContain("pairing required");
-      expect(
-        (
-          upgraded.error?.details as
-            | {
-                reason?: string;
-                requestedRole?: string;
-                requestedScopes?: string[];
-                approvedScopes?: string[];
-              }
-            | undefined
-        )?.reason,
-      ).toBe("scope-upgrade");
-      expect(
-        (
-          upgraded.error?.details as
-            | {
-                reason?: string;
-                requestedRole?: string;
-                requestedScopes?: string[];
-                approvedScopes?: string[];
-              }
-            | undefined
-        )?.requestedRole,
-      ).toBe("operator");
-      expect(
-        (
-          upgraded.error?.details as
-            | {
-                reason?: string;
-                requestedRole?: string;
-                requestedScopes?: string[];
-                approvedScopes?: string[];
-              }
-            | undefined
-        )?.requestedScopes,
-      ).toEqual(["operator.admin"]);
-      expect(
-        (
-          upgraded.error?.details as
-            | {
-                reason?: string;
-                requestedRole?: string;
-                requestedScopes?: string[];
-                approvedScopes?: string[];
-              }
-            | undefined
-        )?.approvedScopes,
-      ).toEqual(["operator.read"]);
+      // Legacy-shaped rows must not break the upgrade flow: the silent local
+      // approval rewrites the row with the widened, normalized scope list.
+      expect(upgraded.ok).toBe(true);
       wsUpgrade.close();
 
       const pendingUpgrade = (await listDevicePairing()).pending.find(
         (entry) => entry.deviceId === identity.deviceId,
       );
-      if (!pendingUpgrade) {
-        throw new Error(`expected pending upgrade for device ${identity.deviceId}`);
-      }
-      expectArrayIncludes(pendingUpgrade.scopes, ["operator.admin"]);
+      expect(pendingUpgrade).toBeUndefined();
       const repaired = await getPairedDevice(identity.deviceId);
       expect(repaired?.role).toBe("operator");
-      expectArrayIncludes(repaired?.approvedScopes, ["operator.read"]);
+      expectArrayIncludes(repaired?.approvedScopes, ["operator.admin", "operator.read"]);
     } finally {
       ws2?.close();
       await server.close();

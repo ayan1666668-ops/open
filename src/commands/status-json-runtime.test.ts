@@ -1,10 +1,11 @@
 // Status JSON runtime tests cover runtime status payload construction and command dependencies.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveStatusJsonOutput } from "./status-json-runtime.ts";
+import { createStatusScanResultFixture } from "./status.test-support.ts";
 
 const mocks = vi.hoisted(() => ({
   buildStatusJsonPayload: vi.fn((input) => ({ built: true, input })),
-  readBackupFreshness: vi.fn(() => ({
+  readBackupRunFreshness: vi.fn(async () => ({
     latest: {
       id: "backup-1",
       createdAt: 123,
@@ -16,8 +17,8 @@ const mocks = vi.hoisted(() => ({
   resolveStatusRuntimeSnapshot: vi.fn(),
 }));
 
-vi.mock("./backup-health.js", () => ({
-  readBackupFreshness: mocks.readBackupFreshness,
+vi.mock("../state/backup-run-records.js", () => ({
+  readBackupRunFreshness: mocks.readBackupRunFreshness,
 }));
 
 vi.mock("./status-json-payload.ts", () => ({
@@ -29,38 +30,37 @@ vi.mock("./status-runtime-shared.ts", () => ({
 }));
 
 function createScan() {
-  return {
+  return createStatusScanResultFixture({
     env: { OPENCLAW_STATE_DIR: "/tmp/status-json-runtime-state" },
     cfg: { update: { channel: "stable" }, gateway: {} },
     sourceConfig: { gateway: {} },
-    summary: { ok: true },
-    update: {
-      root: "/tmp/openclaw",
-      installKind: "package",
-      packageManager: "npm",
-    },
-    osSummary: { platform: "linux" },
+    summary: { ok: true } as never,
+    osSummary: { platform: "linux" } as never,
     memory: null,
-    memoryPlugin: { enabled: true },
+    memoryPlugin: { enabled: true, slot: "memory" },
     gatewayMode: "local" as const,
-    gatewayConnection: { url: "ws://127.0.0.1:18789", urlSource: "config" },
+    gatewayConnection: {
+      url: "ws://127.0.0.1:18789",
+      urlSource: "config",
+      message: "Gateway target: ws://127.0.0.1:18789",
+    },
     remoteUrlMissing: false,
     gatewayReachable: true,
-    gatewayProbe: { connectLatencyMs: 42, error: null },
     gatewayProbeAuth: { token: "tok" },
     gatewaySelf: { host: "gateway" },
-    gatewayProbeAuthWarning: null,
-    agentStatus: { agents: [{ id: "main" }], defaultId: "main" },
+    gatewayProbeAuthWarning: undefined,
+    agentStatus: { agents: [{ id: "main" }], defaultId: "main" } as never,
     secretDiagnostics: [],
     pluginCompatibility: [
       {
         pluginId: "legacy",
-        code: "deprecated-memory-embedding-provider-api",
-        severity: "warn",
+        code: "hook-only",
+        compatCode: "hook-only-plugin-shape",
+        severity: "info",
         message: "warn",
       },
     ],
-  } satisfies Parameters<typeof resolveStatusJsonOutput>[0]["scan"];
+  });
 }
 
 function requireStatusPayloadInput() {
@@ -89,7 +89,7 @@ describe("status-json-runtime", () => {
     const scan = createScan();
     const result = await resolveStatusJsonOutput({
       scan,
-      opts: { deep: true, usage: true, timeoutMs: 1234 },
+      opts: { deep: true, usage: true, agent: "beta", timeoutMs: 1234 },
       includeSecurityAudit: true,
       includePluginCompatibility: true,
     });
@@ -98,6 +98,7 @@ describe("status-json-runtime", () => {
       config: { update: { channel: "stable" }, gateway: {} },
       sourceConfig: { gateway: {} },
       timeoutMs: 1234,
+      agentId: "beta",
       usage: true,
       deep: true,
       gatewayReachable: true,
@@ -105,11 +106,12 @@ describe("status-json-runtime", () => {
       suppressHealthErrors: undefined,
     });
     expect(mocks.buildStatusJsonPayload).toHaveBeenCalledOnce();
-    expect(mocks.readBackupFreshness).toHaveBeenCalledWith(scan.env);
+    expect(mocks.readBackupRunFreshness).toHaveBeenCalledWith(scan.env);
     const payloadInput = requireStatusPayloadInput();
     expect(payloadInput.surface.gatewayConnection).toStrictEqual({
       url: "ws://127.0.0.1:18789",
       urlSource: "config",
+      message: "Gateway target: ws://127.0.0.1:18789",
     });
     expect(payloadInput.surface.gatewayProbeAuth).toStrictEqual({ token: "tok" });
     expect(payloadInput.surface.gatewayService).toStrictEqual({ label: "LaunchAgent" });
@@ -121,15 +123,16 @@ describe("status-json-runtime", () => {
     expect(payloadInput.pluginCompatibility).toStrictEqual([
       {
         pluginId: "legacy",
-        code: "deprecated-memory-embedding-provider-api",
-        severity: "warn",
+        code: "hook-only",
+        compatCode: "hook-only-plugin-shape",
+        severity: "info",
         message: "warn",
       },
     ]);
     expect(result).toEqual({
       built: true,
       input: payloadInput,
-      backups: mocks.readBackupFreshness(),
+      backups: await mocks.readBackupRunFreshness(),
     });
   });
 
@@ -162,7 +165,7 @@ describe("status-json-runtime", () => {
       suppressHealthErrors: undefined,
     });
     expect(mocks.buildStatusJsonPayload).toHaveBeenCalledOnce();
-    expect(mocks.readBackupFreshness).toHaveBeenCalledWith({});
+    expect(mocks.readBackupRunFreshness).toHaveBeenCalledWith({});
     const payloadInput = requireStatusPayloadInput();
     expect(payloadInput.surface.gatewayProbeAuth).toStrictEqual({ token: "tok" });
     expect(payloadInput.securityAudit).toBeUndefined();

@@ -4,28 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import type { SkillSnapshot, SkillUsagePath } from "../skills/types.js";
+import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import { createWarnLogCapture } from "../logging/test-helpers/warn-log-capture.js";
+import type { SkillUsagePath } from "../skills/types.js";
 import { registerSandboxBackend } from "./sandbox/backend.js";
 import { ensureSandboxWorkspaceForSession, resolveSandboxContext } from "./sandbox/context.js";
 import { isSandboxProvisioningError } from "./sandbox/provisioning-error.js";
-import { readPublishedSandboxSkills } from "./sandbox/published-skills-handoff.js";
 
 const updateRegistryMock = vi.hoisted(() => vi.fn());
 const readRegisteredSandboxRuntimeIdsMock = vi.hoisted(() => vi.fn(async () => [] as string[]));
 const syncSkillsToWorkspaceMock = vi.hoisted(() =>
-  vi.fn(
-    async (): Promise<{
-      skillUsagePaths: SkillUsagePath[];
-      skillsSnapshot: SkillSnapshot;
-    }> => ({
-      skillUsagePaths: [],
-      skillsSnapshot: {
-        prompt: "",
-        skills: [],
-        resolvedSkills: [],
-      },
-    }),
-  ),
+  vi.fn<() => Promise<SkillUsagePath[]>>(async () => []),
 );
 const ensureSandboxBrowserMock = vi.hoisted(() => vi.fn(async () => null));
 const resolveNodeExecEligibilityMock = vi.hoisted(() => vi.fn(() => ({ canExec: false })));
@@ -96,43 +85,36 @@ afterAll(async () => {
 });
 
 describe("resolveSandboxContext", () => {
-  it("does not sandbox the agent main session in non-main mode", async () => {
-    const cfg: OpenClawConfig = {
-      agents: {
-        defaults: {
-          sandbox: { mode: "non-main", scope: "session" },
-        },
-        list: [{ id: "main" }],
+  describe.each([
+    { name: "context", resolve: resolveSandboxContext },
+    { name: "workspace", resolve: ensureSandboxWorkspaceForSession },
+  ])("sandbox $name", ({ resolve }) => {
+    it.each(["per-sender", "global"] as const)(
+      "bypasses the selected main session in %s scope",
+      async (scope) => {
+        const cfg: OpenClawConfig = {
+          session: { scope },
+          agents: {
+            ownership: "explicit",
+            defaults: {
+              sandbox: { mode: "non-main", scope: "session" },
+            },
+            entries: { main: {}, other: {} },
+          },
+        };
+
+        const result = await resolve({
+          config: cfg,
+          agentId: "main",
+          sessionKey: scope === "global" ? "global" : "agent:main:main",
+          workspaceDir: "/tmp/openclaw-test",
+        });
+
+        expect(result).toBeNull();
       },
-    };
-
-    const result = await resolveSandboxContext({
-      config: cfg,
-      sessionKey: "agent:main:main",
-      workspaceDir: "/tmp/openclaw-test",
-    });
-
-    expect(result).toBeNull();
-  }, 15_000);
-
-  it("does not create a sandbox workspace for the agent main session in non-main mode", async () => {
-    const cfg: OpenClawConfig = {
-      agents: {
-        defaults: {
-          sandbox: { mode: "non-main", scope: "session" },
-        },
-        list: [{ id: "main" }],
-      },
-    };
-
-    const result = await ensureSandboxWorkspaceForSession({
-      config: cfg,
-      sessionKey: "agent:main:main",
-      workspaceDir: "/tmp/openclaw-test",
-    });
-
-    expect(result).toBeNull();
-  }, 15_000);
+      15_000,
+    );
+  });
 
   it("does not touch sandbox backends for cron or sub-agent sessions when sandbox mode is off", async () => {
     // Mode=off should short-circuit before resolving any backend implementation.
@@ -183,6 +165,72 @@ describe("resolveSandboxContext", () => {
 
       expect(backendFactory).not.toHaveBeenCalled();
     } finally {
+      restore();
+    }
+  }, 15_000);
+
+  it("provisions and marks a required sandbox when the agent sandbox mode is off", async () => {
+    const sessionKey = "agent:main:guest";
+    const workspaceDir = await createSandboxFixtureDir("required-sandbox");
+    const storePath = path.join(workspaceDir, "agents", "main", "sessions", "sessions.json");
+    const entry = {
+      sessionId: "guest-session",
+      updatedAt: 1,
+      sandbox: "required" as const,
+      createdActor: { type: "human" as const, source: "unknown" as const, id: "guest-principal" },
+    };
+    await replaceSessionEntry({ sessionKey, storePath }, entry);
+    const backendFactory = vi.fn(async () => ({
+      id: "required-backend",
+      runtimeId: "required-runtime",
+      runtimeLabel: "Required Runtime",
+      workdir: "/workspace",
+      buildExecSpec: async () => ({
+        argv: ["required-backend", "exec"],
+        env: {},
+        stdinMode: "pipe-closed" as const,
+      }),
+      runShellCommand: async () => ({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        code: 0,
+      }),
+    }));
+    const restore = registerSandboxBackend("required-backend", backendFactory);
+    const warnLogs = createWarnLogCapture("openclaw-required-sandbox-workspace");
+
+    try {
+      const sandbox = await resolveSandboxContext({
+        config: {
+          session: { store: storePath },
+          agents: {
+            defaults: {
+              sandbox: {
+                mode: "off",
+                backend: "required-backend",
+                scope: "shared",
+                workspaceAccess: "rw",
+                prune: { idleHours: 0, maxAgeDays: 0 },
+              },
+            },
+            list: [{ id: "main" }],
+          },
+        },
+        sessionKey,
+        workspaceDir,
+      });
+
+      expect(sandbox).toMatchObject({
+        required: true,
+        workspaceAccess: "ro",
+      });
+      expect(sandbox?.workspaceDir).not.toBe(workspaceDir);
+      expect(await warnLogs.findText("workspaceAccess")).toMatch(/rw.*ro/i);
+      expect(backendFactory).toHaveBeenCalledWith(
+        expect.objectContaining({ cfg: expect.objectContaining({ scope: "agent" }) }),
+      );
+    } finally {
+      warnLogs.cleanup();
       restore();
     }
   }, 15_000);
@@ -300,7 +348,6 @@ describe("resolveSandboxContext", () => {
       expect(syncSkillsToWorkspaceMock).toHaveBeenCalledWith(
         expect.objectContaining({ skillsSnapshot }),
       );
-      expect(result).not.toHaveProperty("skillsSnapshot");
 
       const workspace = await ensureSandboxWorkspaceForSession({
         config: cfg,
@@ -411,6 +458,54 @@ describe("resolveSandboxContext", () => {
         code: "sandbox_provisioning",
         backendId: "broken-backend",
         message: "Sandbox image not found: missing:test",
+        cause: backendFailure,
+      });
+    } finally {
+      restore();
+    }
+  }, 15_000);
+
+  it("fails closed when a required sandbox cannot be provisioned with agent sandbox mode off", async () => {
+    const sessionKey = "agent:main:guest";
+    const workspaceDir = await createSandboxFixtureDir("required-sandbox-failure");
+    const storePath = path.join(workspaceDir, "agents", "main", "sessions", "sessions.json");
+    const entry = {
+      sessionId: "guest-session",
+      updatedAt: 1,
+      sandbox: "required" as const,
+      createdActor: { type: "human" as const, source: "unknown" as const, id: "guest-principal" },
+    };
+    await replaceSessionEntry({ sessionKey, storePath }, entry);
+    const backendFailure = new Error("Required sandbox backend unavailable");
+    const restore = registerSandboxBackend("required-broken-backend", async () => {
+      throw backendFailure;
+    });
+
+    try {
+      await expect(
+        resolveSandboxContext({
+          config: {
+            session: { store: storePath },
+            agents: {
+              defaults: {
+                sandbox: {
+                  mode: "off",
+                  backend: "required-broken-backend",
+                  scope: "session",
+                  workspaceAccess: "rw",
+                  prune: { idleHours: 0, maxAgeDays: 0 },
+                },
+              },
+              list: [{ id: "main" }],
+            },
+          },
+          sessionKey,
+          workspaceDir,
+        }),
+      ).rejects.toMatchObject({
+        code: "sandbox_provisioning",
+        backendId: "required-broken-backend",
+        message: "Required sandbox backend unavailable",
         cause: backendFailure,
       });
     } finally {
@@ -758,15 +853,7 @@ describe("resolveSandboxContext", () => {
         skillSource: "workspace" as const,
       },
     ];
-    const skillsSnapshot = {
-      prompt: "<available_skills></available_skills>",
-      skills: [{ name: "demo" }],
-      resolvedSkills: [],
-    } satisfies SkillSnapshot;
-    syncSkillsToWorkspaceMock.mockResolvedValueOnce({
-      skillUsagePaths,
-      skillsSnapshot,
-    });
+    syncSkillsToWorkspaceMock.mockResolvedValueOnce(skillUsagePaths);
 
     const cfg: OpenClawConfig = {
       agents: {
@@ -812,47 +899,6 @@ describe("resolveSandboxContext", () => {
       remote: { note: "test-remote" },
     });
     expect(result.skillUsagePaths).toEqual(skillUsagePaths);
-  }, 15_000);
-
-  it("carries the published catalog on session workspace objects", async () => {
-    syncSkillsToWorkspaceMock.mockClear();
-    const bundledDir = await createSandboxFixtureDir("bundled");
-    const workspaceDir = await createSandboxFixtureDir("workspace");
-    const skillsSnapshot = {
-      prompt: "<available_skills></available_skills>",
-      skills: [{ name: "demo" }],
-      resolvedSkills: [],
-    } satisfies SkillSnapshot;
-    syncSkillsToWorkspaceMock.mockResolvedValueOnce({
-      skillUsagePaths: [],
-      skillsSnapshot,
-    });
-
-    const cfg: OpenClawConfig = {
-      agents: {
-        defaults: {
-          sandbox: {
-            mode: "all",
-            scope: "session",
-            workspaceAccess: "ro",
-            workspaceRoot: path.join(bundledDir, "sandboxes"),
-          },
-        },
-      },
-    };
-
-    const result = await ensureSandboxWorkspaceForSession({
-      config: cfg,
-      sessionKey: "agent:main:main",
-      workspaceDir,
-    });
-
-    if (!result) {
-      throw new Error("expected sandbox workspace resolution");
-    }
-    expect(readPublishedSandboxSkills(result)).toEqual(skillsSnapshot);
-    // The catalog rides the opaque handoff, never the public workspace shape.
-    expect(result).not.toHaveProperty("skillsSnapshot");
   }, 15_000);
 
   it("materializes skills into a hidden read-only workspace for writable sandboxes", async () => {

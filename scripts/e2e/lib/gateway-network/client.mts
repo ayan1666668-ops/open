@@ -32,6 +32,7 @@ type GatewayPayload = Record<string, unknown> & {
   defaultAgentId?: string;
   durationMs?: number;
   expiresAtMs?: number;
+  features?: Record<string, unknown>;
   ok?: boolean;
   ready?: boolean;
   resumed?: boolean;
@@ -57,7 +58,13 @@ type GatewayRequestContext = {
   token: string;
   url: string;
 };
-type GatewayClientOptions = { statePath?: string; timeoutMs?: number; token: string; url: string };
+type GatewayClientOptions = {
+  capabilitiesPath?: string;
+  statePath?: string;
+  timeoutMs?: number;
+  token: string;
+  url: string;
+};
 type GatewayFetchDeps = { fetchImpl?: typeof fetch };
 type GatewayNetworkDeps = {
   delay?: (ms: number) => Promise<void>;
@@ -105,6 +112,28 @@ function hasGatewayHealthSummaryPayload(
     Array.isArray(payload.channelOrder) &&
     isRecord(payload.sessions)
   );
+}
+
+const SUSPENSION_METHODS = [
+  "gateway.suspend.prepare",
+  "gateway.suspend.status",
+  "gateway.suspend.resume",
+] as const;
+
+function classifySuspensionCapability(connectResponse: GatewayFrame) {
+  const features = connectResponse.payload?.features;
+  const methods = isRecord(features) ? features.methods : undefined;
+  if (!Array.isArray(methods) || methods.some((method) => typeof method !== "string")) {
+    throw new Error("connect hello suspension methods are malformed");
+  }
+  const availableCount = SUSPENSION_METHODS.filter((method) => methods.includes(method)).length;
+  if (availableCount === 0) {
+    return "unsupported" as const;
+  }
+  if (availableCount === SUSPENSION_METHODS.length) {
+    return "supported" as const;
+  }
+  throw new Error("connect hello contains partial suspension methods");
 }
 
 function httpUrl(url: string, pathname = "/") {
@@ -280,25 +309,23 @@ function assertAdminSuccess(response: GatewayAdminResponse, message: string) {
   return assertRpcSuccess(response.body, message);
 }
 
-export async function verifyPreparedSuspensionSocket(
+async function verifyPreparedSuspensionSocket(
   options: GatewayClientOptions & { deadline: number; suspensionId: string },
-  deps: Pick<GatewayNetworkDeps, "onceFrame" | "openSocket" | "protocolVersion"> = {},
 ) {
   const { deadline, suspensionId, token, url } = options;
-  const onceFrameImpl = deps.onceFrame ?? onceFrame;
-  const ws = await (deps.openSocket ?? openSocket)(url, remainingDeadlineMs(deadline));
+  const ws = await openSocket(url, remainingDeadlineMs(deadline));
   try {
     let requestIndex = 0;
     const request = async (method: string, params: Record<string, unknown> = {}) => {
       const id = `s${++requestIndex}`;
       ws.send(JSON.stringify({ type: "req", id, method, params }));
-      return (await onceFrameImpl(
+      return (await onceFrame(
         ws,
         (frame) => frame?.type === "res" && frame?.id === id,
         remainingDeadlineMs(deadline),
       )) as GatewayFrame;
     };
-    const protocolVersion = deps.protocolVersion ?? (await readProtocolVersion());
+    const protocolVersion = await readProtocolVersion();
     assertRpcSuccess(
       await request("connect", {
         minProtocol: protocolVersion,
@@ -505,7 +532,12 @@ async function readProtocolVersion() {
 }
 
 export async function runGatewayNetworkClient(
-  { token, url, timeoutMs = readGatewayNetworkClientConnectTimeoutMs() }: GatewayClientOptions,
+  {
+    capabilitiesPath,
+    token,
+    url,
+    timeoutMs = readGatewayNetworkClientConnectTimeoutMs(),
+  }: GatewayClientOptions,
   deps: GatewayNetworkDeps = {},
 ) {
   const deadline = Date.now() + timeoutMs;
@@ -552,6 +584,13 @@ export async function runGatewayNetworkClient(
           throw lastError;
         }
       } else {
+        let suspension: "supported" | "unsupported" | undefined;
+        let capabilityError: Error | undefined;
+        try {
+          suspension = classifySuspensionCapability(connectRes);
+        } catch (error) {
+          capabilityError = error instanceof Error ? error : new Error(String(error));
+        }
         ws.send(JSON.stringify({ type: "req", id: "h1", method: "health" }));
         const healthRes = await onceFrameImpl(
           ws,
@@ -562,8 +601,16 @@ export async function runGatewayNetworkClient(
           if (!hasGatewayHealthSummaryPayload(healthRes)) {
             throw new Error("health failed: missing health summary payload");
           }
+          if (capabilityError) {
+            throw capabilityError;
+          }
+          assert(suspension, "connect hello suspension capability must be classified");
+          const capabilities = { suspension };
+          if (capabilitiesPath) {
+            await writeFile(capabilitiesPath, JSON.stringify(capabilities));
+          }
           stdout("ok");
-          return;
+          return capabilities;
         }
 
         throw responseError("health", healthRes);
@@ -594,7 +641,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const mode = process.env.GW_MODE ?? "network";
   if (mode === "network") {
-    await runGatewayNetworkClient({ token, url });
+    await runGatewayNetworkClient({
+      capabilitiesPath: process.env.GW_CAPABILITIES_PATH,
+      token,
+      url,
+    });
   } else {
     const statePath = process.env.GW_STATE_PATH;
     if (!statePath) {

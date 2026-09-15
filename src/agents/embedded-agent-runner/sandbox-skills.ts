@@ -5,26 +5,28 @@
  * copies instead of reusing host-path snapshots.
  */
 import path from "node:path";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { escapeSkillXml, type Skill } from "../../skills/loading/skill-contract.js";
+import { escapeSkillXml } from "../../skills/loading/skill-contract.js";
 import { compactPromptSkills } from "../../skills/loading/skill-paths.js";
-import { resolveSkillsPrompt } from "../../skills/loading/workspace-skill-prompt.js";
-import { resolveEmbeddedRunSkillEntries } from "../../skills/runtime/embedded-run-entries.js";
+import { formatSkillsForPromptBounded } from "../../skills/loading/skill-prompt-limits.js";
 import type {
   SkillEligibilityContext,
-  SkillEntry,
   SkillSnapshot,
   SkillUsagePath,
+  SkillEntry,
 } from "../../skills/types.js";
 import { readPublishedSandboxSkills } from "../sandbox/published-skills-handoff.js";
-import type { SandboxContext, SandboxWorkspaceInfo } from "../sandbox/types.js";
+import type { SandboxContext } from "../sandbox/types.js";
 
 const MATERIALIZED_SKILLS_WORKSPACE_CONTAINER_PARTS = [".openclaw", "sandbox-skills"] as const;
 type SandboxSkillRuntimeContext = Pick<SandboxContext, "enabled"> &
   Partial<
     Pick<
       SandboxContext,
-      "skillsEligibility" | "skillsWorkspaceDir" | "containerWorkdir" | "workspaceAccess"
+      | "skillsEligibility"
+      | "skillsWorkspaceDir"
+      | "containerWorkdir"
+      | "workspaceAccess"
+      | "skillUsagePaths"
     >
   >;
 
@@ -66,46 +68,6 @@ function mapPathFromWorkspaceToContainer(params: {
   return containerJoin(params.targetWorkspaceDir, ...relativePath.split(path.sep).filter(Boolean));
 }
 
-function mapSandboxSkillForPrompt(params: {
-  skill: Skill;
-  skillsWorkspaceDir: string;
-  skillsPromptWorkspaceDir: string;
-}): Skill {
-  const filePath =
-    mapPathFromWorkspaceToContainer({
-      filePath: params.skill.filePath,
-      sourceWorkspaceDir: params.skillsWorkspaceDir,
-      targetWorkspaceDir: params.skillsPromptWorkspaceDir,
-    }) ?? params.skill.filePath;
-  const baseDir =
-    mapPathFromWorkspaceToContainer({
-      filePath: params.skill.baseDir,
-      sourceWorkspaceDir: params.skillsWorkspaceDir,
-      targetWorkspaceDir: params.skillsPromptWorkspaceDir,
-    }) ?? params.skill.baseDir;
-  const sourceInfoPath =
-    mapPathFromWorkspaceToContainer({
-      filePath: params.skill.sourceInfo.path,
-      sourceWorkspaceDir: params.skillsWorkspaceDir,
-      targetWorkspaceDir: params.skillsPromptWorkspaceDir,
-    }) ?? params.skill.sourceInfo.path;
-  const sourceInfoBaseDir = mapPathFromWorkspaceToContainer({
-    filePath: params.skill.sourceInfo.baseDir,
-    sourceWorkspaceDir: params.skillsWorkspaceDir,
-    targetWorkspaceDir: params.skillsPromptWorkspaceDir,
-  });
-  return {
-    ...params.skill,
-    filePath,
-    baseDir,
-    sourceInfo: {
-      ...params.skill.sourceInfo,
-      path: sourceInfoPath,
-      ...(sourceInfoBaseDir === undefined ? {} : { baseDir: sourceInfoBaseDir }),
-    },
-  };
-}
-
 export function mapSandboxSkillEntriesForPrompt(params: {
   entries?: SkillEntry[];
   skillsWorkspaceDir: string;
@@ -114,31 +76,60 @@ export function mapSandboxSkillEntriesForPrompt(params: {
   if (!params.entries || params.skillsWorkspaceDir === params.skillsPromptWorkspaceDir) {
     return params.entries;
   }
-  return params.entries.map((entry) => ({
-    ...entry,
-    skill: mapSandboxSkillForPrompt({
-      skill: entry.skill,
+  return params.entries.map((entry) => {
+    const filePath =
+      mapPathFromWorkspaceToContainer({
+        filePath: entry.skill.filePath,
+        sourceWorkspaceDir: params.skillsWorkspaceDir,
+        targetWorkspaceDir: params.skillsPromptWorkspaceDir,
+      }) ?? entry.skill.filePath;
+    const baseDir =
+      mapPathFromWorkspaceToContainer({
+        filePath: entry.skill.baseDir,
+        sourceWorkspaceDir: params.skillsWorkspaceDir,
+        targetWorkspaceDir: params.skillsPromptWorkspaceDir,
+      }) ?? entry.skill.baseDir;
+    const sourceInfoPath =
+      mapPathFromWorkspaceToContainer({
+        filePath: entry.skill.sourceInfo.path,
+        sourceWorkspaceDir: params.skillsWorkspaceDir,
+        targetWorkspaceDir: params.skillsPromptWorkspaceDir,
+      }) ?? entry.skill.sourceInfo.path;
+    const sourceInfoBaseDir = mapPathFromWorkspaceToContainer({
+      filePath: entry.skill.sourceInfo.baseDir,
+      sourceWorkspaceDir: params.skillsWorkspaceDir,
+      targetWorkspaceDir: params.skillsPromptWorkspaceDir,
+    });
+    return {
+      ...entry,
+      skill: {
+        ...entry.skill,
+        filePath,
+        baseDir,
+        sourceInfo: {
+          ...entry.skill.sourceInfo,
+          path: sourceInfoPath,
+          ...(sourceInfoBaseDir === undefined ? {} : { baseDir: sourceInfoBaseDir }),
+        },
+      },
+    };
+  });
+}
+
+export function createSandboxPromptEntryLoader(params: {
+  loadEntries: () => SkillEntry[] | Promise<SkillEntry[]>;
+  skillsWorkspaceDir: string;
+  skillsPromptWorkspaceDir: string;
+}): () => Promise<SkillEntry[]> {
+  return async () =>
+    mapSandboxSkillEntriesForPrompt({
+      entries: await params.loadEntries(),
       skillsWorkspaceDir: params.skillsWorkspaceDir,
       skillsPromptWorkspaceDir: params.skillsPromptWorkspaceDir,
-    }),
-  }));
+    }) ?? [];
 }
 
-function replaceSerializedSkillLocation(params: {
-  prompt: string;
-  hostPath: string;
-  mappedPath: string;
-}): string {
-  // The catalog renderer serializes arbitrary description and location-note
-  // prose next to <location>. Substitute only that element so a skill that
-  // documents its host path keeps the rest of the prompt byte-for-byte. The
-  // caller passes the path exactly as the renderer serialized it.
-  const from = `<location>${escapeSkillXml(params.hostPath)}</location>`;
-  const to = `<location>${escapeSkillXml(params.mappedPath)}</location>`;
-  return from === to ? params.prompt : params.prompt.replaceAll(from, to);
-}
-
-export function mapSandboxSkillUsagePaths(params: {
+function mapSandboxSkillUsagePaths(params: {
   paths?: SkillUsagePath[];
   skillsWorkspaceDir: string;
   skillsPromptWorkspaceDir: string;
@@ -157,58 +148,23 @@ export function mapSandboxSkillUsagePaths(params: {
   }));
 }
 
-function remapMaterializedSkillsSnapshotForPrompt(params: {
-  skillsSnapshot: SkillSnapshot;
-  skillsWorkspaceDir: string;
-  skillsPromptWorkspaceDir: string;
-}): SkillSnapshot {
-  if (params.skillsWorkspaceDir === params.skillsPromptWorkspaceDir) {
-    return params.skillsSnapshot;
-  }
-  // Remap destination paths only. Rebuilding via buildSkillSnapshot would
-  // re-apply default prompt limits and can shrink a complete published catalog.
-  const hostSkills = params.skillsSnapshot.resolvedSkills ?? [];
-  const mappedSkills = hostSkills.map((skill) =>
-    mapSandboxSkillForPrompt({
-      skill,
-      skillsWorkspaceDir: params.skillsWorkspaceDir,
-      skillsPromptWorkspaceDir: params.skillsPromptWorkspaceDir,
-    }),
-  );
-  // The renderer compacts $HOME-rooted locations to "~/…" and the materialized
-  // skills dir lives under the state dir, so match the serialized form. Matching
-  // the absolute path silently leaves host "~/…" locations in the prompt.
-  const serializedHostPaths = compactPromptSkills(hostSkills).map((skill) => skill.filePath);
-  let prompt = params.skillsSnapshot.prompt;
-  for (let index = 0; index < hostSkills.length; index += 1) {
-    const hostPath = serializedHostPaths[index];
-    const mappedPath = mappedSkills[index]?.filePath;
-    if (!hostPath || !mappedPath || hostPath === mappedPath) {
-      continue;
-    }
-    prompt = replaceSerializedSkillLocation({ prompt, hostPath, mappedPath });
-  }
-  return {
-    ...params.skillsSnapshot,
-    prompt,
-    resolvedSkills: mappedSkills,
-  };
-}
-
 export function resolveSandboxSkillRuntimeInputs(params: {
   sandbox?: SandboxSkillRuntimeContext | null;
-  effectiveWorkspace: string;
+  publishedSkillsOwner?: object;
+  // Fallback skill discovery anchors to the configured agent workspace so
+  // snapshot and fallback paths agree.
+  skillsAnchorWorkspace: string;
   skillsSnapshot?: SkillSnapshot;
-  publishedSkillsOwner?: object | null;
 }): {
   skillsEligibility?: SkillEligibilityContext;
+  skillUsagePaths?: SkillUsagePath[];
   skillsPromptWorkspaceDir: string;
   skillsSnapshot?: SkillSnapshot;
   skillsWorkspaceDir: string;
   workspaceOnly: boolean;
 } {
   if (params.sandbox?.enabled === true) {
-    const skillsWorkspaceDir = params.sandbox.skillsWorkspaceDir ?? params.effectiveWorkspace;
+    const skillsWorkspaceDir = params.sandbox.skillsWorkspaceDir ?? params.skillsAnchorWorkspace;
     const skillsPromptWorkspaceDir =
       params.sandbox.workspaceAccess === "rw" &&
       params.sandbox.skillsWorkspaceDir &&
@@ -218,87 +174,132 @@ export function resolveSandboxSkillRuntimeInputs(params: {
             ...MATERIALIZED_SKILLS_WORKSPACE_CONTAINER_PARTS,
           )
         : (params.sandbox.containerWorkdir ?? skillsWorkspaceDir);
-    // Use the catalog attached to this sandbox/run, not the workspace-global
-    // publisher cache. Concurrent sessions can publish different eligibility
-    // snapshots into the same skills directory; peeking the last writer would
-    // inject the wrong catalog into this run's prompt.
-    const publishedSnapshot = readPublishedSandboxSkills(
-      params.publishedSkillsOwner ?? params.sandbox,
-    );
-    const materializedSnapshot = publishedSnapshot
-      ? remapMaterializedSkillsSnapshotForPrompt({
-          skillsSnapshot: publishedSnapshot,
-          skillsWorkspaceDir,
-          skillsPromptWorkspaceDir,
-        })
-      : undefined;
+    const skillUsagePaths = mapSandboxSkillUsagePaths({
+      paths: params.sandbox.skillUsagePaths,
+      skillsWorkspaceDir,
+      skillsPromptWorkspaceDir,
+    });
+    const published = readPublishedSandboxSkills(params.publishedSkillsOwner ?? params.sandbox);
+    // An explicit empty snapshot excludes instructions; it has no host paths to remap.
+    let selectedSnapshot =
+      params.skillsSnapshot && !params.skillsSnapshot.prompt.trim()
+        ? params.skillsSnapshot
+        : undefined;
+    if (!published && params.skillsSnapshot?.librarySelections?.length) {
+      const usageBySkillName = new Map<string, SkillUsagePath>();
+      for (const usage of skillUsagePaths ?? []) {
+        // Duplicate names keep their first delivered path.
+        if (!usageBySkillName.has(usage.skillName)) {
+          usageBySkillName.set(usage.skillName, usage);
+        }
+      }
+      const resolvedSkills = params.skillsSnapshot.resolvedSkills?.map((skill) => {
+        const materialized = usageBySkillName.get(skill.name);
+        if (!materialized) {
+          throw new Error(`Selected skill ${skill.name} was not delivered to the sandbox.`);
+        }
+        return {
+          ...skill,
+          filePath: materialized.readPath,
+          baseDir: path.posix.dirname(materialized.readPath),
+        };
+      });
+      if (!resolvedSkills) {
+        throw new Error("Selected skill snapshot must be hydrated before sandbox delivery.");
+      }
+      selectedSnapshot = {
+        ...params.skillsSnapshot,
+        resolvedSkills,
+        prompt: formatSkillsForPromptBounded({ skills: resolvedSkills, preserveOrder: true }),
+      };
+    }
     return {
       ...(params.sandbox.skillsEligibility
         ? { skillsEligibility: params.sandbox.skillsEligibility }
         : {}),
+      ...(skillUsagePaths ? { skillUsagePaths } : {}),
       skillsPromptWorkspaceDir,
-      skillsSnapshot: materializedSnapshot,
+      skillsSnapshot: published
+        ? remapPublishedSnapshot(published, skillsWorkspaceDir, skillsPromptWorkspaceDir)
+        : selectedSnapshot,
       skillsWorkspaceDir,
       workspaceOnly: true,
     };
   }
   return {
-    skillsPromptWorkspaceDir: params.effectiveWorkspace,
+    ...(params.sandbox?.skillUsagePaths ? { skillUsagePaths: params.sandbox.skillUsagePaths } : {}),
+    skillsPromptWorkspaceDir: params.skillsAnchorWorkspace,
     skillsSnapshot: params.skillsSnapshot,
-    skillsWorkspaceDir: params.effectiveWorkspace,
+    skillsWorkspaceDir: params.skillsAnchorWorkspace,
     workspaceOnly: false,
   };
 }
 
-// CLI and command inspection share this assembly.
-export function resolveSandboxedWorkspaceSkillsPrompt(params: {
-  agentId: string;
-  config?: OpenClawConfig;
-  workspace: SandboxWorkspaceInfo;
-}): string {
-  const {
-    skillsEligibility,
-    skillsPromptWorkspaceDir,
-    skillsSnapshot,
-    skillsWorkspaceDir,
-    workspaceOnly,
-  } = resolveSandboxSkillRuntimeInputs({
-    sandbox: {
-      enabled: true,
-      ...(params.workspace.containerWorkdir
-        ? { containerWorkdir: params.workspace.containerWorkdir }
-        : {}),
-      ...(params.workspace.skillsEligibility
-        ? { skillsEligibility: params.workspace.skillsEligibility }
-        : {}),
-      ...(params.workspace.skillsWorkspaceDir
-        ? { skillsWorkspaceDir: params.workspace.skillsWorkspaceDir }
-        : {}),
-      ...(params.workspace.workspaceAccess
-        ? { workspaceAccess: params.workspace.workspaceAccess }
-        : {}),
+/** Rewrites host-generated explicit skill references to the prepared runtime's exact copies. */
+export function remapSkillReferencePaths(
+  text: string,
+  paths?: readonly Pick<SkillUsagePath, "skillFile" | "readPath">[],
+): string {
+  return (paths ?? []).reduce(
+    (result, item) => result.replaceAll(item.skillFile, item.readPath),
+    text,
+  );
+}
+
+function remapPublishedSnapshot(
+  snapshot: SkillSnapshot,
+  source: string,
+  target: string,
+): SkillSnapshot {
+  if (source === target) {
+    return snapshot;
+  }
+  const hostSkills = snapshot.resolvedSkills ?? [];
+  const serialized = compactPromptSkills(hostSkills);
+  const resolvedSkills = hostSkills.map((skill) => ({
+    ...skill,
+    filePath:
+      mapPathFromWorkspaceToContainer({
+        filePath: skill.filePath,
+        sourceWorkspaceDir: source,
+        targetWorkspaceDir: target,
+      }) ?? skill.filePath,
+    baseDir:
+      mapPathFromWorkspaceToContainer({
+        filePath: skill.baseDir,
+        sourceWorkspaceDir: source,
+        targetWorkspaceDir: target,
+      }) ?? skill.baseDir,
+    sourceInfo: {
+      ...skill.sourceInfo,
+      path:
+        mapPathFromWorkspaceToContainer({
+          filePath: skill.sourceInfo.path,
+          sourceWorkspaceDir: source,
+          targetWorkspaceDir: target,
+        }) ?? skill.sourceInfo.path,
+      ...(skill.sourceInfo.baseDir === undefined
+        ? {}
+        : {
+            baseDir: mapPathFromWorkspaceToContainer({
+              filePath: skill.sourceInfo.baseDir,
+              sourceWorkspaceDir: source,
+              targetWorkspaceDir: target,
+            }),
+          }),
     },
-    effectiveWorkspace: params.workspace.workspaceDir,
-    publishedSkillsOwner: params.workspace,
-  });
-  const { shouldLoadSkillEntries, skillEntries } = resolveEmbeddedRunSkillEntries({
-    workspaceDir: skillsWorkspaceDir,
-    config: params.config,
-    agentId: params.agentId,
-    eligibility: skillsEligibility,
-    skillsSnapshot,
-    workspaceOnly,
-  });
-  return resolveSkillsPrompt({
-    skillsSnapshot,
-    entries: mapSandboxSkillEntriesForPrompt({
-      entries: shouldLoadSkillEntries ? skillEntries : undefined,
-      skillsWorkspaceDir,
-      skillsPromptWorkspaceDir,
-    }),
-    workspaceDir: skillsPromptWorkspaceDir,
-    config: params.config,
-    agentId: params.agentId,
-    eligibility: skillsEligibility,
-  });
+  }));
+  let prompt = snapshot.prompt;
+  const mappedLocations = new Map(resolvedSkills.map((skill) => [skill.name, skill.filePath]));
+  // Configured roots can preserve absolute paths instead of the usual home shorthand.
+  for (const skill of [...hostSkills, ...serialized]) {
+    const location = mappedLocations.get(skill.name);
+    if (location !== undefined) {
+      prompt = prompt.replaceAll(
+        `<location>${escapeSkillXml(skill.filePath)}</location>`,
+        `<location>${escapeSkillXml(location)}</location>`,
+      );
+    }
+  }
+  return { ...snapshot, prompt, resolvedSkills };
 }

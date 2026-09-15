@@ -35,10 +35,7 @@ vi.mock("../process/exec.js", async (importOriginal) => ({
 }));
 
 vi.mock("../skills/loading/workspace-skill-sync.runtime.js", () => ({
-  syncWorkspaceSkills: vi.fn(async () => ({
-    skillUsagePaths: [],
-    skillsSnapshot: { prompt: "", skills: [], resolvedSkills: [] },
-  })),
+  syncWorkspaceSkills: vi.fn(async () => undefined),
 }));
 
 let resolveSandboxContext: typeof import("./sandbox/context.js").resolveSandboxContext;
@@ -218,7 +215,7 @@ describe("Agent-specific sandbox config", () => {
 
     const sandbox = resolveSandboxConfigForAgent(cfg, "restricted");
     expect(sandbox.tools).toEqual({
-      allow: ["read", "write", "image"],
+      allow: ["read", "write", "view_image"],
       deny: ["edit"],
     });
   });
@@ -393,7 +390,7 @@ describe("Agent-specific sandbox config", () => {
     for (const scenario of [
       {
         cfg: createDefaultsSandboxConfig(),
-        expected: ["session_status", "image"],
+        expected: ["session_status", "view_image"],
       },
       {
         cfg: {
@@ -414,7 +411,7 @@ describe("Agent-specific sandbox config", () => {
             },
           },
         } satisfies OpenClawConfig,
-        expected: ["image"],
+        expected: ["view_image"],
       },
     ]) {
       const sandbox = resolveSandboxConfigForAgent(scenario.cfg, "main");

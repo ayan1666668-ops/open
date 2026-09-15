@@ -9,6 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { stripLeadingPackageManagerSeparator } from "./lib/arg-utils.mts";
+import { readProcessTreeCpuMs } from "./lib/gateway-bench-probes.ts";
 import {
   BUILD_STAMP_FILE,
   writeBuildStamp,
@@ -17,8 +18,6 @@ import {
 import { parseStrictNonNegativeDecimal as readNonNegativeInteger } from "./lib/numeric-options.mjs";
 import { sleep } from "./lib/sleep.mjs";
 import { resolveBuildRequirement } from "./run-node.mts";
-
-export { readNonNegativeInteger };
 
 const DEFAULTS = {
   outputDir: path.join(process.cwd(), ".local", "gateway-watch-regression"),
@@ -135,7 +134,7 @@ type WatchFindingResult = {
   exit?: WatchExit | null;
   exitedBeforeReady?: boolean;
   exitedBeforeStop?: boolean;
-  idleCpuMs?: number | null;
+  idleCpuMs: number | null;
   readyBeforeWindow: boolean;
   spawnError: string | null;
   timingFileMissing: boolean;
@@ -449,79 +448,6 @@ function runCheckedCommand(command: string, args: string[]) {
   throw new Error(`${command} ${args.join(" ")} failed with status ${result.status ?? "unknown"}`);
 }
 
-function parsePsCpuTimeMs(timeText: string): number | null {
-  const [maybeDays, clockText] = timeText.includes("-") ? timeText.split("-", 2) : ["0", timeText];
-  const days = Number(maybeDays);
-  const parts = clockText!.split(":");
-  if (!Number.isFinite(days) || parts.length < 2 || parts.length > 3) {
-    return null;
-  }
-  const seconds = Number(parts.at(-1));
-  const minutes = Number(parts.at(-2));
-  const hours = parts.length === 3 ? Number(parts[0]) : 0;
-  if (![seconds, minutes, hours].every(Number.isFinite)) {
-    return null;
-  }
-  return Math.round(((days * 24 + hours) * 60 * 60 + minutes * 60 + seconds) * 1000);
-}
-
-function readProcessTreeCpuMs(rootPid: number): number | null {
-  if (!Number.isInteger(rootPid) || rootPid <= 0) {
-    return null;
-  }
-  const result = spawnSync("ps", ["-eo", "pid=,ppid=,time="], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (result.status !== 0) {
-    return null;
-  }
-
-  const rows: Array<{ pid: number; ppid: number; cpuMs: number }> = [];
-  for (const line of result.stdout.split("\n")) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/);
-    if (!match) {
-      continue;
-    }
-    const pid = Number(match[1]);
-    const ppid = Number(match[2]);
-    const cpuMs = parsePsCpuTimeMs(match[3]!);
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || cpuMs == null) {
-      continue;
-    }
-    rows.push({ pid, ppid, cpuMs });
-  }
-
-  const childrenByParent = new Map<number, number[]>();
-  const cpuByPid = new Map<number, number>();
-  for (const row of rows) {
-    cpuByPid.set(row.pid, row.cpuMs);
-    const children = childrenByParent.get(row.ppid) ?? [];
-    children.push(row.pid);
-    childrenByParent.set(row.ppid, children);
-  }
-  if (!cpuByPid.has(rootPid)) {
-    return null;
-  }
-
-  let totalCpuMs = 0;
-  const seen = new Set<number>();
-  const stack = [rootPid];
-  while (stack.length > 0) {
-    const pid = stack.pop();
-    if (!pid || seen.has(pid)) {
-      continue;
-    }
-    seen.add(pid);
-    totalCpuMs += cpuByPid.get(pid) ?? 0;
-    for (const childPid of childrenByParent.get(pid) ?? []) {
-      stack.push(childPid);
-    }
-  }
-  return totalCpuMs;
-}
-
 /**
  * Reports whether gateway watch output contains a ready marker.
  */
@@ -789,7 +715,7 @@ export async function runTimedWatch(
         exitedBeforeStop = true;
       }
     }
-    if (!exit) {
+    if (!exit && readyBeforeWindow) {
       idleCpuStartMs = watchPid ? readCpuMs(watchPid) : null;
       const windowResult = await raceChildLifecycle(sleepMs(options.windowMs));
       if (windowResult.type === "spawn-error") {
@@ -982,13 +908,16 @@ export function writeBuildAndRuntimePostBuildStamps(params: { cwd?: string } = {
   writeRuntimePostBuildStamp({ cwd });
 }
 
+export function calculateDistRuntimeByteGrowth(beforeBytes: number, afterBytes: number): number {
+  return afterBytes - beforeBytes;
+}
 /**
  * Collects pass/fail findings for the bounded gateway watch regression run.
  */
 export function collectGatewayWatchFindings(params: {
-  cpuMs: number;
   distRuntimeByteGrowth: number;
   distRuntimeFileGrowth: number;
+  removedPaths: number;
   options: Pick<
     WatchOptions,
     "cpuFailMs" | "cpuWarnMs" | "distRuntimeByteGrowthMax" | "distRuntimeFileGrowthMax" | "windowMs"
@@ -998,9 +927,9 @@ export function collectGatewayWatchFindings(params: {
   watchTriggeredBuild: boolean;
 }): { failures: string[]; warnings: string[] } {
   const {
-    cpuMs,
     distRuntimeByteGrowth,
     distRuntimeFileGrowth,
+    removedPaths,
     options,
     watchBuildReason,
     watchResult,
@@ -1034,6 +963,13 @@ export function collectGatewayWatchFindings(params: {
     failures.push(
       "gateway:watch invalid local run: dirty watched source tree forced a rebuild during the watch window",
     );
+  } else if (watchTriggeredBuild) {
+    failures.push(
+      `gateway:watch unexpectedly rebuilt prebuilt artifacts (${watchBuildReason ?? "unknown reason"})`,
+    );
+  }
+  if (removedPaths > 0) {
+    failures.push(`gateway:watch removed ${removedPaths} prebuilt artifact paths`);
   }
   if (distRuntimeFileGrowth > options.distRuntimeFileGrowthMax) {
     failures.push(
@@ -1045,16 +981,21 @@ export function collectGatewayWatchFindings(params: {
       `dist-runtime apparent byte growth ${distRuntimeByteGrowth} exceeded max ${options.distRuntimeByteGrowthMax}`,
     );
   }
-  if (!Number.isFinite(cpuMs)) {
-    failures.push("failed to parse CPU timing from the bounded gateway:watch run");
-  } else if (cpuMs > options.cpuFailMs) {
-    failures.push(
-      `LOUD ALARM: gateway:watch used ${cpuMs}ms CPU in ${options.windowMs}ms window, above loud-alarm threshold ${options.cpuFailMs}ms`,
-    );
-  } else if (cpuMs > options.cpuWarnMs) {
-    warnings.push(
-      `gateway:watch used ${cpuMs}ms CPU in ${options.windowMs}ms window, above target ${options.cpuWarnMs}ms`,
-    );
+  if (watchResult.readyBeforeWindow) {
+    const cpuMs = watchResult.idleCpuMs;
+    if (cpuMs === null || !Number.isFinite(cpuMs)) {
+      if (!watchResult.exitedBeforeStop && !watchResult.spawnError) {
+        failures.push("failed to collect idle CPU timing from the ready gateway:watch window");
+      }
+    } else if (cpuMs > options.cpuFailMs) {
+      failures.push(
+        `LOUD ALARM: gateway:watch used ${cpuMs}ms CPU in ${options.windowMs}ms window, above loud-alarm threshold ${options.cpuFailMs}ms`,
+      );
+    } else if (cpuMs > options.cpuWarnMs) {
+      warnings.push(
+        `gateway:watch used ${cpuMs}ms CPU in ${options.windowMs}ms window, above target ${options.cpuWarnMs}ms`,
+      );
+    }
   }
   return { failures, warnings };
 }
@@ -1113,16 +1054,13 @@ async function main() {
     writeBuildAndRuntimePostBuildStamps();
     preflightBuildRequirement = resolveBuildRequirement(buildRunNodeDeps(process.env));
   }
-  if (
-    preflightBuildRequirement.shouldBuild &&
-    preflightBuildRequirement.reason === "dirty_watched_tree"
-  ) {
+  if (preflightBuildRequirement.shouldBuild) {
     const summary = {
       windowMs: options.windowMs,
       invalidated: true,
       invalidationReason: preflightBuildRequirement.reason,
       invalidationMessage:
-        "gateway-watch-regression cannot run on a dirty watched tree because run-node will intentionally rebuild during the watch window.",
+        "gateway-watch-regression requires a complete, current prebuilt artifact set; run-node would rebuild during the watch window.",
     };
     fs.writeFileSync(
       path.join(options.outputDir, "summary.json"),
@@ -1130,7 +1068,7 @@ async function main() {
     );
     console.log(JSON.stringify(summary, null, 2));
     fail(
-      "gateway-watch-regression invalid local run: dirty watched source tree would force a rebuild inside the watch window",
+      `gateway-watch-regression invalid local run: ${preflightBuildRequirement.reason} would force a rebuild inside the watch window`,
     );
     process.exit(1);
   }
@@ -1150,14 +1088,13 @@ async function main() {
     entry.startsWith("dist-runtime/"),
   ).length;
   const distRuntimeFileGrowth = distRuntimeAddedPaths;
-  const distRuntimeByteGrowth =
-    distRuntimeAddedPaths === 0
-      ? 0
-      : post.distRuntime.apparentBytes - pre.distRuntime.apparentBytes;
+  const distRuntimeByteGrowth = calculateDistRuntimeByteGrowth(
+    pre.distRuntime.apparentBytes,
+    post.distRuntime.apparentBytes,
+  );
   const totalCpuMs = Math.round(
     (watchResult.timing.userSeconds + watchResult.timing.sysSeconds) * 1000,
   );
-  const cpuMs = watchResult.idleCpuMs ?? totalCpuMs;
   const watchTriggeredBuild = watchResult.watchTriggeredBuild;
   const watchBuildReason = watchResult.watchBuildReason;
 
@@ -1165,7 +1102,7 @@ async function main() {
     windowMs: options.windowMs,
     watchTriggeredBuild,
     watchBuildReason,
-    cpuMs,
+    cpuMs: watchResult.idleCpuMs,
     totalCpuMs,
     readyBeforeWindow: watchResult.readyBeforeWindow,
     exitedBeforeReady: watchResult.exitedBeforeReady,
@@ -1178,7 +1115,9 @@ async function main() {
     distRuntimeByteGrowthMax: options.distRuntimeByteGrowthMax,
     distRuntimeAddedPaths,
     addedPaths: diff.added.length,
-    removedPaths: diff.removed.length,
+    // A previously absent tree becoming present removes only the snapshot's
+    // diagnostic sentinel, not an artifact (for example during metadata sync).
+    removedPaths: diff.removed.filter((entry) => !entry.endsWith(" (missing)")).length,
     watchExit: watchResult.exit,
     spawnError: watchResult.spawnError,
     stdoutPath: watchResult.stdoutPath,
@@ -1194,9 +1133,9 @@ async function main() {
   console.log(JSON.stringify(summary, null, 2));
 
   const { failures, warnings } = collectGatewayWatchFindings({
-    cpuMs,
     distRuntimeByteGrowth,
     distRuntimeFileGrowth,
+    removedPaths: summary.removedPaths,
     options,
     watchBuildReason,
     watchResult,

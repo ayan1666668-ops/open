@@ -2,10 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createExtensionPluginSdkBoundaryChecker,
-  main as extensionPluginSdkMain,
-} from "../scripts/check-extension-plugin-sdk-boundary.mts";
+import { createExtensionPluginSdkBoundaryChecker } from "../scripts/check-extension-plugin-sdk-boundary.mts";
 import { main as sdkPackageMain } from "../scripts/check-sdk-package-extension-import-boundary.mts";
 import { main as srcExtensionMain } from "../scripts/check-src-extension-import-boundary.mts";
 import { createCapturedIo } from "./helpers/captured-io.js";
@@ -27,18 +24,6 @@ const boundaryInventoryCases: Array<{
   {
     name: "sdk/package extension import boundary",
     output: getJsonOutput(sdkPackageMain, ["--json"]),
-  },
-  {
-    name: "extension src outside plugin-sdk boundary",
-    output: getJsonOutput(extensionPluginSdkMain, ["--mode=src-outside-plugin-sdk", "--json"]),
-  },
-  {
-    name: "extension relative-outside-package boundary",
-    output: getJsonOutput(extensionPluginSdkMain, ["--mode=relative-outside-package", "--json"]),
-  },
-  {
-    name: "extension normalization-core bypass boundary",
-    output: getJsonOutput(extensionPluginSdkMain, ["--mode=normalization-core-bypass", "--json"]),
   },
 ];
 
@@ -72,6 +57,57 @@ function createBoundaryFixture(fixture: BoundaryFixture) {
   );
   return createExtensionPluginSdkBoundaryChecker({ repoRoot });
 }
+
+describe("aggregate extension plugin SDK boundaries", () => {
+  const modes = ["src-outside-plugin-sdk", "normalization-core-bypass", "relative-outside-package"];
+
+  it.each([
+    { name: "clean", source: 'import "./local.js";', expectedCode: 0 },
+    { name: "core escape", source: 'import "../../../src/private.js";', expectedCode: 1 },
+    { name: "normalization", source: 'import "@openclaw/normalization-core";', expectedCode: 1 },
+    { name: "relative escape", source: 'import "../../other/api.js";', expectedCode: 1 },
+    {
+      name: "overlapping modes",
+      source: 'import "../../../src/utils/boolean.js";',
+      expectedCode: 1,
+    },
+  ])("preserves all mode reports for $name", async ({ source, expectedCode }) => {
+    const fixture = { source };
+    const expected = createCapturedIo();
+    for (const mode of modes) {
+      await createBoundaryFixture(fixture).main([`--mode=${mode}`], expected.io);
+    }
+    const actual = createCapturedIo();
+    const code = await createBoundaryFixture(fixture).main(["--all"], actual.io);
+    expect(code).toBe(expectedCode);
+    expect(actual.readStdout()).toBe(expected.readStdout());
+    expect(actual.readStderr()).toBe(expected.readStderr());
+  });
+
+  it("reports inventory failure for every mode and fails the aggregate", async () => {
+    const checker = createBoundaryFixture({ source: " ".repeat(2 * 1024 * 1024 + 1) });
+    const actual = createCapturedIo();
+    expect(await checker.main(["--all"], actual.io)).toBe(1);
+    expect(actual.readStdout()).toBe("");
+    const errors = actual.readStderr();
+    expect(errors.match(/exceeds 2097152 byte limit/gu)).toHaveLength(3);
+    expect(errors).toContain("must not import src/**");
+    expect(errors).toContain("must not import normalization-core directly");
+    expect(errors).toContain("relative imports that escape");
+  });
+
+  it.each([
+    ["--all", "--json"],
+    ["--all", "--mode=src-outside-plugin-sdk"],
+  ])("rejects conflicting aggregate arguments %j", async (...argv) => {
+    const actual = createCapturedIo();
+    await expect(createBoundaryFixture({ source: "" }).main(argv, actual.io)).rejects.toThrow(
+      "--all cannot be combined with --json or --mode",
+    );
+    expect(actual.readStdout()).toBe("");
+    expect(actual.readStderr()).toBe("");
+  });
+});
 
 describe("production plugin normalization ownership boundary", () => {
   it.each([
