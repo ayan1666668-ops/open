@@ -219,21 +219,11 @@ extension TalkModeRuntime {
     }
 
     func inputDeviceSelectionDidChange() async {
-        if let realtimeSession {
+        if realtimeSession != nil {
             guard isEnabled, !isPaused else { return }
-            let relayGeneration = realtimeRelayGeneration
-            do {
-                try await MainActor.run {
-                    try realtimeSession.setInputPaused(true)
-                    try realtimeSession.setInputPaused(false)
-                }
-            } catch {
-                logger.error(
-                    "talk realtime input restart failed: \(error.localizedDescription, privacy: .public)")
-                await self.handleRealtimeInputRestartFailure(
-                    error.localizedDescription,
-                    relayGeneration: relayGeneration)
-            }
+            // Capture and playback share the graph. A microphone change must
+            // retire its whole relay instead of stopping a still-owned player.
+            await self.realtimeRelayPreferenceDidChange()
             return
         }
         guard isEnabled, !isPaused, phase == .listening else { return }
@@ -391,9 +381,13 @@ extension TalkModeRuntime {
         guard isCurrent(lifecycleGeneration), !isPaused,
               realtimeRelayGeneration == relayGeneration
         else { throw CancellationError() }
-        let activeSessionKey = await MainActor.run {
-            WebChatManager.shared.activeSessionKey
+        let (activeSessionKey, stopPhrases) = await MainActor.run {
+            (WebChatManager.shared.activeSessionKey, AppStateStore.shared.talkStopPhrases)
         }
+        guard isCurrent(lifecycleGeneration), !self.isPaused,
+              realtimeRelayGeneration == relayGeneration,
+              realtimeRelayStartGeneration == relayGeneration
+        else { throw CancellationError() }
         let sessionKey: String = if let activeSessionKey {
             activeSessionKey
         } else {
@@ -403,7 +397,8 @@ extension TalkModeRuntime {
             sessionKey: sessionKey,
             provider: realtimeProvider,
             model: realtimeModelId,
-            voice: realtimeSpeakerVoice)
+            voice: realtimeSpeakerVoice,
+            localStopPhrases: stopPhrases)
         #if DEBUG
         let audioCaptureProvider = self.realtimeAudioCaptureProvider
         #endif
@@ -417,7 +412,8 @@ extension TalkModeRuntime {
                 transport: bootstrap.transport,
                 options: options,
                 audioCapture: audioCapture,
-                pcmPlayer: RealtimePCMStreamingAudioPlayer(),
+                pcmPlayer: (audioCapture as? MacRealtimeTalkAudioCapture)?
+                    .pcmPlayer ?? RealtimePCMStreamingAudioPlayer(),
                 onStatus: { [weak self] status in
                     Task { await self?.handleRealtimeStatus(status, relayGeneration: relayGeneration) }
                 },
@@ -664,6 +660,13 @@ extension TalkModeRuntime {
         let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard transcript.role == "user" else { return }
+        let owner = self.transcriptOwner
+        if await self.handleLocalTalkExitCommand(
+            text,
+            isFinal: transcript.isFinal,
+            lifecycleGeneration: owner.lifecycle)
+        { return }
+        guard self.ownsTranscript(owner), self.ownsRealtimeRelay(relayGeneration, session) else { return }
         if transcript.isFinal {
             phase = .thinking
             _ = await self.projectRealtimeRelay(relayGeneration, session) {

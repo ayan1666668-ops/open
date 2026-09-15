@@ -20370,6 +20370,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
     public let model: String?
     public let voice: String?
     public let language: String?
+    public let transcriptionhints: [String: AnyCodable]?
     public let vadthreshold: Double?
     public let silencedurationms: Int?
     public let prefixpaddingms: Int?
@@ -20386,6 +20387,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         model: String? = nil,
         voice: String? = nil,
         language: String? = nil,
+        transcriptionhints: [String: AnyCodable]? = nil,
         vadthreshold: Double? = nil,
         silencedurationms: Int? = nil,
         prefixpaddingms: Int? = nil,
@@ -20401,6 +20403,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         self.model = model
         self.voice = voice
         self.language = language
+        self.transcriptionhints = transcriptionhints
         self.vadthreshold = vadthreshold
         self.silencedurationms = silencedurationms
         self.prefixpaddingms = prefixpaddingms
@@ -20418,6 +20421,7 @@ public struct TalkSessionCreateParams: Codable, Sendable {
         case model
         case voice
         case language
+        case transcriptionhints = "transcriptionHints"
         case vadthreshold = "vadThreshold"
         case silencedurationms = "silenceDurationMs"
         case prefixpaddingms = "prefixPaddingMs"
