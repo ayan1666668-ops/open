@@ -3253,8 +3253,9 @@ export const en: TranslationMap & {
         xl: "XL · Full width",
       },
       presetHeightHint:
-        "Size presets also fix the height. Choose Auto height to fit the content again.",
+        "Size presets also fix the height. Auto height fits the content and keeps the saved width.",
       autoHeight: "Auto height",
+      fullWidthAutoHeight: "Full width + auto height",
       remove: "Delete",
       needsApproval: "Needs approval",
       needsApprovalDetail: "This widget requested additional access.",
