@@ -136,7 +136,7 @@ describe("gateway method authorization", () => {
   it("rejects every node RPC when its connection no longer owns the pairing generation", async () => {
     const handler = vi.fn<GatewayRequestHandler>(({ respond }) => respond(true, { ok: true }));
     const respond = vi.fn();
-    const isConnectionCurrentPairingState = vi.fn().mockResolvedValue(false);
+    const resolveConnectionPairingState = vi.fn().mockResolvedValue("stale");
     const invalidateConnectionForPairingChange = vi.fn().mockReturnValue(false);
 
     await handleGatewayRequest({
@@ -162,12 +162,12 @@ describe("gateway method authorization", () => {
       isWebchatConnect: () => false,
       context: {
         logGateway: { warn: vi.fn() },
-        nodeRegistry: { isConnectionCurrentPairingState, invalidateConnectionForPairingChange },
+        nodeRegistry: { resolveConnectionPairingState, invalidateConnectionForPairingChange },
       } as unknown as Parameters<typeof handleGatewayRequest>[0]["context"],
       extraHandlers: { "node.event": handler },
     });
 
-    expect(isConnectionCurrentPairingState).toHaveBeenCalledWith("conn-node-stale");
+    expect(resolveConnectionPairingState).toHaveBeenCalledWith("conn-node-stale");
     expect(invalidateConnectionForPairingChange).toHaveBeenCalledWith(
       "conn-node-stale",
       "node pairing changed before request dispatch",
