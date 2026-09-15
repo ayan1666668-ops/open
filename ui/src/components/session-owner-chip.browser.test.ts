@@ -6,6 +6,27 @@ import "../test-helpers/load-styles.ts";
 import { renderSessionLeadingState } from "./session-leading-indicator.ts";
 import "./session-owner-chip.ts";
 
+function renderedLuminance(...backgrounds: string[]): number {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d")!;
+  for (const color of backgrounds) {
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+  }
+  const channels = context.getImageData(0, 0, 1, 1).data;
+  expect(channels[3]).toBe(255);
+  return [0.2126, 0.7152, 0.0722].reduce((sum, weight, index) => {
+    const value = channels[index]! / 255;
+    const linear = value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    return sum + linear * weight;
+  }, 0);
+}
+
+function contrastRatio(first: number, second: number): number {
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
 const originalTheme = document.documentElement.getAttribute("data-theme-mode");
 const hasBrowserLayout = !navigator.userAgent.toLowerCase().includes("jsdom");
 
@@ -99,6 +120,8 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
         sidebar,
       );
       const row = sidebar.querySelector<HTMLElement>(".sidebar-recent-session")!;
+      // Contrast is measured at each interaction endpoint, outside its transition.
+      row.style.transition = "none";
       const chip = sidebar.querySelector("openclaw-session-owner-chip")!;
       await chip.updateComplete;
       await Promise.all(
@@ -186,19 +209,24 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
         }
         const style = getComputedStyle(peer);
         expect(style.borderTopWidth).toBe("1px");
-        const luminances = [style.color, style.backgroundColor].map((color) => {
-          const channels = color.match(/^rgb\((\d+), (\d+), (\d+)\)$/u);
-          if (!channels) {
-            throw new Error(`Expected opaque sRGB color, got ${color}`);
-          }
-          return channels.slice(1).reduce((sum, channel, index) => {
-            const value = Number(channel) / 255;
-            const linear = value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-            return sum + linear * [0.2126, 0.7152, 0.0722][index]!;
-          }, 0);
-        });
+        const rowBackground = [
+          getComputedStyle(sidebar).backgroundColor,
+          getComputedStyle(row).backgroundColor,
+        ];
+        const rowLuminance = renderedLuminance(...rowBackground);
+        const counterLuminance = renderedLuminance(...rowBackground, style.backgroundColor);
+        const textLuminance = renderedLuminance(
+          ...rowBackground,
+          style.backgroundColor,
+          style.color,
+        );
         expect(
-          (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05),
+          contrastRatio(counterLuminance, rowLuminance),
+          `${theme} ${state} surface`,
+        ).toBeGreaterThanOrEqual(1.3);
+        expect(
+          contrastRatio(textLuminance, counterLuminance),
+          `${theme} ${state} text`,
         ).toBeGreaterThanOrEqual(4.5);
       }
     },

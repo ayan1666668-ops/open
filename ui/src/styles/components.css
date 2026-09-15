@@ -201,7 +201,7 @@ openclaw-session-owner-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--text-strong) 26%, var(--bg-elevated));
   color: var(--text-strong);
   font-weight: 700;
   line-height: 1;
