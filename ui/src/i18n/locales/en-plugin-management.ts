@@ -162,7 +162,7 @@ const enPluginManagement = {
     reload: "Reload",
     reloadNamed: "Reload {name}",
     reloadHint:
-      "Reload plugin code in the Gateway without changing enablement. Other entries in the same package also reload.",
+      "Install and enablement changes apply automatically. Reload changed plugin code or retry a failed apply; enablement stays unchanged. Rebuild compiled plugins first. Compiled bundled code also needs a Gateway restart. Reload itself does not restart the Gateway; other entries in this package reload too.",
     reloadUnavailable: "Plugin reload is unavailable in the current Gateway runtime.",
     reloadedSuccess: "Reloaded {name} (Gateway generation {generation}).",
     installSaved: "Installation of {name} was saved. {error}",

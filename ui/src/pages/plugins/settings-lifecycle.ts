@@ -41,6 +41,7 @@ export function renderPluginLifecycle(
         ?disabled=${!blockedReason && (!allowed || busy)}
         aria-disabled=${!allowed || busy ? "true" : nothing}
         aria-label=${className.includes("plugins-reload") ? t("pluginsPage.reloadNamed", { name: plugin.name }) : `${label} ${plugin.name}`}
+        title=${className.includes("plugins-reload") ? t("pluginsPage.reloadHint") : nothing}
         @click=${() => {
           if (allowed && !busy) {
             onClick();
@@ -51,11 +52,8 @@ export function renderPluginLifecycle(
       </button>`,
     );
   return html`
-    ${action(t("pluginsPage.detailReload"), "primary plugins-reload oc-action-primary", props.reloadBlockedReason, canReload, () => props.onReload(plugin.id, key))}
-    ${action(t(plugin.enabled ? "pluginsPage.detailDisable" : "pluginsPage.detailEnable"), "oc-action-secondary", props.mutationBlockedReason ?? (plugin.state === "needs-setup" ? t("pluginsPage.setupRequiredNotice") : null), props.canMutate && plugin.state !== "needs-setup", () => props.onSetEnabled(plugin.id, !plugin.enabled, key))}
-    ${plugin.removable ? action(t("pluginsPage.uninstall"), "oc-action-secondary", props.mutationBlockedReason, props.canMutate, () => props.onUninstall(plugin.id, key)) : nothing}
     <a
-      class="btn oc-action oc-action-secondary"
+      class="btn primary oc-action oc-action-primary"
       href=${props.settingsHref}
       @click=${(event: MouseEvent) => {
         if (shouldHandleNavigationClick(event)) {
@@ -65,5 +63,8 @@ export function renderPluginLifecycle(
       }}
       >${icons.settings} ${t("pluginsPage.detailSettings")}</a
     >
+    ${action(t(plugin.enabled ? "pluginsPage.detailDisable" : "pluginsPage.detailEnable"), "oc-action-secondary", props.mutationBlockedReason ?? (plugin.state === "needs-setup" ? t("pluginsPage.setupRequiredNotice") : null), props.canMutate && plugin.state !== "needs-setup", () => props.onSetEnabled(plugin.id, !plugin.enabled, key))}
+    ${action(t("pluginsPage.detailReload"), "plugins-reload oc-action-secondary", props.reloadBlockedReason, canReload, () => props.onReload(plugin.id, key))}
+    ${plugin.removable ? action(t("pluginsPage.uninstall"), "oc-action-secondary", props.mutationBlockedReason, props.canMutate, () => props.onUninstall(plugin.id, key)) : nothing}
   `;
 }
