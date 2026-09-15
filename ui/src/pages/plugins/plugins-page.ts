@@ -224,13 +224,11 @@ class PluginsPage extends OpenClawLightDomElement {
   }
 
   private readonly handleDocumentKeydown = (event: KeyboardEvent) => {
-    if (document.querySelector(".shell-nav[aria-modal='true']")) {
-      return;
-    }
     // WebAwesome dismisses its open dropdown at document bubble. Let that
     // owner close the menu and restore focus before this page handles Escape.
     if (
       event.key !== "Escape" ||
+      document.querySelector(".shell-nav[aria-modal='true']") ||
       (event.target instanceof Element && event.target.closest("wa-dropdown[open]"))
     ) {
       return;
@@ -248,6 +246,8 @@ class PluginsPage extends OpenClawLightDomElement {
     if (document.querySelector("openclaw-modal-dialog")) {
       return;
     }
+    // Firefox does not emit blur when a focused input is removed from the document.
+    this.querySelector<HTMLElement>(":focus")?.blur();
     if (this.catalogDetail) {
       this.closeCatalogDetail();
       event.stopPropagation();
