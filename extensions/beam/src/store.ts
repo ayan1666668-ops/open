@@ -5,7 +5,11 @@ import { BEAM_MAX_SESSIONS, BEAM_RETENTION_MS } from "./types.js";
 export type BeamStore = {
   upload: (
     upload: BeamUpload,
-    receipt: { receivedAt: number; uploaderProfileId?: string },
+    receipt: {
+      receivedAt: number;
+      uploaderProfileId?: string;
+      revalidatePublisher?: () => Promise<void>;
+    },
   ) => Promise<boolean>;
   get: (beamId: string) => Promise<BeamStoredSession | undefined>;
   delete: (beamId: string) => Promise<boolean>;
@@ -50,7 +54,7 @@ export function createBeamStore(runtime: PluginRuntime): BeamStore {
     defaultTtlMs: BEAM_RETENTION_MS,
   });
   return {
-    async upload(upload, { receivedAt, uploaderProfileId }) {
+    async upload(upload, { receivedAt, uploaderProfileId, revalidatePublisher }) {
       if (!store.observe || !store.compareAndApply) {
         throw new Error("Beam uploads require plugin-state observe and compareAndApply support");
       }
@@ -63,6 +67,7 @@ export function createBeamStore(runtime: PluginRuntime): BeamStore {
       let observation = await store.observe(snapshot.beamId);
       for (;;) {
         const value = decideBeamUpload(observation.value, snapshot);
+        await revalidatePublisher?.();
         const result = await store.compareAndApply(
           snapshot.beamId,
           observation.comparison,

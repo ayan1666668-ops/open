@@ -89,11 +89,13 @@ export function createBeamRequestHandler(params: {
         sendJson(res, 400, { ok: false, error: parsed.error });
         return true;
       }
-      await getPluginRuntimeGatewayRequestScope()?.revalidate?.();
+      const revalidatePublisher = getPluginRuntimeGatewayRequestScope()?.revalidate;
+      await revalidatePublisher?.();
       const receivedAt = params.now?.() ?? Date.now();
       await params.store.upload(parsed.value, {
         receivedAt,
         uploaderProfileId: client.profileId,
+        revalidatePublisher,
       });
       sendJson(res, 200, {
         ok: true,
