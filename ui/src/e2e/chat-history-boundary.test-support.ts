@@ -2,7 +2,7 @@ import type { Locator, Page } from "playwright";
 import { expect } from "vitest";
 
 export async function expectHistoryBoundaryState(scope: Page | Locator, loading: boolean) {
-  const label = loading ? "Loading earlier messages…" : "Show earlier";
+  const label = loading ? "Loading earlier…" : "Show earlier";
   const action = scope.getByRole("button", { name: label, exact: true });
   await action.waitFor({ state: "attached" });
   expect((await action.textContent())?.trim()).toBe(label);

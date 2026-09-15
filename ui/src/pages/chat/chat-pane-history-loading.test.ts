@@ -32,8 +32,8 @@ describe("chat pane history loading", () => {
     await vi.waitFor(() => expect(state.chatLoading).toBe(true));
     const loading = historyAction();
     expect(loading.disabled).toBe(true);
-    expect(loading.textContent?.trim()).toBe("Loading earlier messages…");
-    expect(loading.getAttribute("aria-label")).toBe("Loading earlier messages…");
+    expect(loading.textContent?.trim()).toBe("Loading earlier…");
+    expect(loading.getAttribute("aria-label")).toBe("Loading earlier…");
     expect(loading.getAttribute("aria-busy")).toBe("true");
     expect(loading.closest(".chat-history-boundary--loading")).not.toBeNull();
     loading.click();
