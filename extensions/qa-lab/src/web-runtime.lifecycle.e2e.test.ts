@@ -4,6 +4,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { chromium, type Browser } from "playwright-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeQaWebSessions, createQaWebPageOpener, qaWebSnapshot } from "./web-runtime.js";
+import { withPendingWebPage } from "./web-runtime.pending-navigation.test-helper.js";
 
 describe("QA web session ownership with Chromium", () => {
   let server: Server | undefined;
@@ -98,13 +99,19 @@ describe("QA web session ownership with Chromium", () => {
     const otherOwner = new Set<string>();
     const openPending = createQaWebPageOpener(pendingOwner);
     const other = await createQaWebPageOpener(otherOwner)({ url: baseUrl });
-    const opening = openPending({ url: `${baseUrl}/waiting` }).catch((error: unknown) => error);
-    await waiting.promise;
+    const opening = openPending({ url: `${baseUrl}/waiting` });
 
-    await Promise.all([closeQaWebSessions(pendingOwner), closeQaWebSessions(pendingOwner)]);
-    await expect(opening).resolves.toBeInstanceOf(Error);
-    expect(pendingOwner.size).toBe(0);
-    expect(browsers.map((browser) => browser.isConnected())).toEqual([true, false]);
+    await withPendingWebPage({
+      opening,
+      ready: waiting.promise,
+      close: () => closeQaWebSessions(pendingOwner),
+      verify: async () => {
+        await Promise.all([closeQaWebSessions(pendingOwner), closeQaWebSessions(pendingOwner)]);
+        await expect(opening).rejects.toBeInstanceOf(Error);
+        expect(pendingOwner.size).toBe(0);
+        expect(browsers.map((browser) => browser.isConnected())).toEqual([true, false]);
+      },
+    });
     await expect(qaWebSnapshot({ pageId: other.pageId })).resolves.toMatchObject({
       text: "owned page",
     });
@@ -118,15 +125,20 @@ describe("QA web session ownership with Chromium", () => {
     const cancelled = new Error("scenario cancelled");
     const openPage = createQaWebPageOpener(owner, controller.signal);
     const opening = openPage({ url: `${baseUrl}/waiting` });
-    const rejected = expect(opening).rejects.toBe(cancelled);
-    await waiting.promise;
-    expect(owner.size).toBe(1);
-    expect(browsers.map((browser) => browser.isConnected())).toEqual([true]);
+    await withPendingWebPage({
+      opening,
+      ready: waiting.promise,
+      close: () => controller.abort(cancelled),
+      verify: async () => {
+        expect(owner.size).toBe(1);
+        expect(browsers.map((browser) => browser.isConnected())).toEqual([true]);
 
-    controller.abort(cancelled);
-    await rejected;
-    expect(owner.size).toBe(0);
-    expect(browsers.map((browser) => browser.isConnected())).toEqual([false]);
+        controller.abort(cancelled);
+        await expect(opening).rejects.toBe(cancelled);
+        expect(owner.size).toBe(0);
+        expect(browsers.map((browser) => browser.isConnected())).toEqual([false]);
+      },
+    });
     await expect(openPage({ url: baseUrl })).rejects.toBe(cancelled);
     expect(browsers).toHaveLength(1);
 
