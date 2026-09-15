@@ -21,7 +21,7 @@ export type PluginHookBeforeModelResolveResult = {
 // before_prompt_build hook
 export type PluginHookBeforePromptBuildEvent = {
   prompt: string;
-  /** Current request before history/context projection, when supplied by the harness. */
+  /** Current request before projection. Empty means no textual request; omission is legacy. */
   currentUserMessage?: string;
   /** Stable native admission identity across rebuilds; differs between admitted requests. */
   currentUserMessageId?: string;

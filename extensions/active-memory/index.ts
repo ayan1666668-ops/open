@@ -346,6 +346,21 @@ export default definePluginEntry({
             };
             // Use the producer's request, never infer it from user-controlled envelope markers.
             const currentUserMessage = event.currentUserMessage ?? event.prompt;
+            if (event.currentUserMessage !== undefined && !currentUserMessage.trim()) {
+              api.logger.debug?.("active-memory: recall skipped reason=no-current-text");
+              return undefined;
+            }
+            // Omission preserves legacy producers. Explicit text without an admission ID
+            // cannot identify a request, even when the correlation runId and text match.
+            const requestKey =
+              event.currentUserMessage === undefined
+                ? undefined
+                : event.currentUserMessageId
+                  ? JSON.stringify({
+                      message: currentUserMessage,
+                      messageId: event.currentUserMessageId,
+                    })
+                  : null;
             const recentTurns = extractRecentTurns(event.messages);
             const searchQuery = buildSearchQuery({
               latestUserMessage: currentUserMessage,
@@ -394,6 +409,7 @@ export default definePluginEntry({
                   activeProjectKeys: ctx.activeProjectKeys,
                   signal: AbortSignal.timeout(triggerLookupTimeoutMs),
                   runId: ctx.runId,
+                  requestKey,
                   authorityFingerprint: toolAuthority.fingerprint,
                 }).catch((error: unknown) => {
                   api.logger.debug?.(
@@ -501,8 +517,7 @@ export default definePluginEntry({
               messageProvider: ctx.messageProvider,
               channelId: ctx.channelId,
               query,
-              currentUserMessage: event.currentUserMessage,
-              currentUserMessageId: event.currentUserMessageId,
+              requestKey,
               searchQuery,
               currentModelProviderId: ctx.modelProviderId,
               currentModelId: ctx.modelId,

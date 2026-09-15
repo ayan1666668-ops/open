@@ -1072,6 +1072,91 @@ describe("active-memory plugin", () => {
     }
   });
 
+  it.each(["", " \n "])(
+    "does not recall historical text for an explicit empty request %j",
+    async (currentUserMessage) => {
+      registerPluginConfig({ mode: "always" });
+      const search = vi.fn(async () => []);
+      hoisted.getActiveMemorySearchManager.mockResolvedValue({
+        manager: { search, listTriggerCandidates: vi.fn(async () => []) },
+      } as never);
+      await runPromptBuild({
+        prompt: "What do you remember about my preferences?",
+        currentUserMessage,
+        currentUserMessageId: "empty-admission",
+        messages: [{ role: "user", content: "What do you remember about my preferences?" }],
+      });
+      expect(search).not.toHaveBeenCalled();
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    "separates equal-text trigger requests with native identity: %s",
+    async (withIdentity) => {
+      registerPluginConfig({ mode: "escalate" });
+      const search = vi.fn(async () => []);
+      hoisted.getActiveMemorySearchManager.mockResolvedValue({
+        manager: { search, listTriggerCandidates: vi.fn(async () => []) },
+      } as never);
+      const context = { runId: "trigger-admissions" };
+      for (const id of ["first", "second"]) {
+        await runPromptBuild(
+          {
+            prompt: "projected history",
+            currentUserMessage: "Please calculate 17 plus 25.",
+            ...(withIdentity ? { currentUserMessageId: id } : {}),
+          },
+          context,
+        );
+      }
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reuses one trigger admission across history changes and keeps authority separate", async () => {
+    registerPluginConfig({ mode: "escalate" });
+    const search = vi.fn(async () => []);
+    hoisted.getActiveMemorySearchManager.mockResolvedValue({
+      manager: { search, listTriggerCandidates: vi.fn(async () => []) },
+    } as never);
+    for (const [history, fingerprint] of [
+      ["old history", "authority-a"],
+      ["rebuilt history", "authority-a"],
+      ["rebuilt history", "authority-b"],
+    ] as const) {
+      await runPromptBuild(
+        {
+          prompt: history,
+          currentUserMessage: "ok",
+          currentUserMessageId: "same-admission",
+          messages: [{ role: "user", content: history }],
+        },
+        {
+          runId: "trigger-rebuild",
+          toolAuthority: { fingerprint, allows: () => true, assertActive: () => undefined },
+        },
+      );
+    }
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not invent model-recall identity when the producer has no admission ID", async () => {
+    runEmbeddedAgent.mockImplementation(async () => ({ payloads: [] }));
+    for (let invocation = 0; invocation < 2; invocation += 1) {
+      await runPromptBuild(
+        {
+          prompt: "projected history",
+          currentUserMessage: "What do you remember about my preferences?",
+        },
+        { runId: "no-recorder-correlation" },
+      );
+    }
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(2);
+  });
+
   it("does not share recall results across changed prompts in one run", async () => {
     const context = {
       runId: "run-changed-prompt-retry",
