@@ -70,6 +70,7 @@ function flattenFields(
     params.schema.additionalProperties === false &&
     !params.schema.anyOf &&
     !params.schema.oneOf &&
+    !params.schema.enum &&
     !params.unsupported.has(pathKey(params.path)) &&
     !hasSensitiveConfigData(params.value, params.path, params.hints) &&
     !shouldStageStructuredDraft(params, initial)
@@ -176,7 +177,16 @@ export class PluginSettingsEditor extends OpenClawLightDomElement {
   }
 
   private renderGroups(params: ConfigNodeRenderParams, hasPermissions: boolean): TemplateResult {
-    const object = resolveConfigObjectFields(params);
+    // Grouping changes presentation only: unions and enums must keep the
+    // canonical whole-value control or valid alternatives become uneditable.
+    const object =
+      schemaType(params.schema) !== "object" ||
+      params.schema.anyOf ||
+      params.schema.oneOf ||
+      params.schema.enum ||
+      params.unsupported.has(pathKey(params.path))
+        ? { fields: [params], additional: undefined }
+        : resolveConfigObjectFields(params);
     const groups = (hintForPath(params.path, params.hints)?.groups ?? []).toSorted(
       (a, b) => (a.order ?? 0) - (b.order ?? 0),
     );
