@@ -110,6 +110,7 @@ import { resolveToolFsConfig } from "./tool-fs-policy.js";
 import type { PreparedSessionPermissionPolicy } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { buildDeclaredToolAllowlistContext } from "./tool-policy-declared-context.js";
+import { isToolAllowedByPolicyName } from "./tool-policy-match.js";
 import { applyToolPolicyPipeline } from "./tool-policy-pipeline.js";
 import {
   expandToolGroups,
@@ -532,11 +533,25 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     ...(forceHeartbeatTool ? [HEARTBEAT_RESPONSE_TOOL_NAME] : []),
     ...toolSearchControlAllowlist,
   ];
+  // A senderless child may retain the OpenClaw expert only through its persisted
+  // parent tool projection; ordinary senderless and explicitly denied children stay closed.
+  const trustedChildOpenClawProjection =
+    capabilityProfile.policy.delegated &&
+    capabilityProfile.policy.requesterPolicySource === "persisted-child" &&
+    isToolAllowedByPolicyName("openclaw", capabilityProfile.policy.inheritedToolPolicy);
   const conversationToolPolicies = resolveConversationToolPolicies({
     capabilityProfile,
     additionalProfileAllow: runtimeProfileAlsoAllow,
     additionalPolicyAllow: toolSearchControlAllowlist,
   });
+  if (trustedChildOpenClawProjection && conversationToolPolicies.subagentPolicy?.deny) {
+    conversationToolPolicies.subagentPolicy = {
+      ...conversationToolPolicies.subagentPolicy,
+      deny: conversationToolPolicies.subagentPolicy.deny.filter(
+        (toolName) => normalizeToolPolicyName(toolName) !== "openclaw",
+      ),
+    };
+  }
   const sandboxWorkspaceMediaReadAllowed =
     projectConversationToolNames({
       capabilityProfile,
@@ -735,14 +750,16 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   });
   const cronCreatorAuthorityResolver = bindActiveCronCreatorAuthorityResolver(options?.runId);
   const cronManagementGrant = bindCronManagementGrant(options?.runId);
-  // Exact-run capabilities authorize only their automation operations. Keep every
-  // other owner-only control-plane tool denied for senderless operator turns.
+  // Exact-run capabilities authorize only their automation operations.
   const ownerOnlyCoreToolDenylist =
     options?.senderIsOwner === false
       ? GATEWAY_OWNER_ONLY_CORE_TOOLS.filter(
           (toolName) =>
-            toolName !== AUTOMATIONS_TOOL_NAME ||
-            !(cronCreatorAuthorityResolver || cronManagementGrant),
+            !(
+              (toolName === AUTOMATIONS_TOOL_NAME &&
+                (cronCreatorAuthorityResolver || cronManagementGrant)) ||
+              (toolName === "openclaw" && trustedChildOpenClawProjection)
+            ),
         )
       : [];
   const ownerOnlyCoreToolPolicy =
@@ -776,6 +793,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
       ? {
           agentId: executionAgentId,
           sessionKey: executionSessionKey.trim(),
+          operationalRunInstance: options.operationalRunInstance,
           ...(options.abortSignal ? { approvalSignals: [options.abortSignal] } : {}),
           turnSourceChannel: resolveGatewayMessageChannel(
             options.messageChannel ?? options.messageProvider,
@@ -872,6 +890,7 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
             agentSessionKey: options?.sessionKey,
             runId: options?.runId,
+            operationalRunInstance: options?.operationalRunInstance,
             ...(options?.questionPrompt ? { questionPrompt: options.questionPrompt } : {}),
             requesterThinkingLevel: options?.requesterThinkingLevel,
             sessionPermissionPolicy,

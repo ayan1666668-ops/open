@@ -43,6 +43,7 @@ export function createOpenClawDelegateToolsForRun(
     | "runSessionKey"
     | "agentSessionKey"
     | "agentChannel"
+    | "operationalRunInstance"
     | "currentMessagingTarget"
     | "currentChannelId"
     | "agentTo"
@@ -101,6 +102,7 @@ export function createOpenClawDelegateToolsForRun(
             agentId: options.sessionAgentId,
             sessionKey,
             fullPermission,
+            operationalRunInstance: options.operationalRunInstance,
             approvalSignals: signal ? [signal] : [],
           }
         : undefined;

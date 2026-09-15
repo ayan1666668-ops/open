@@ -20,6 +20,29 @@ beforeEach(() => {
 });
 
 describe("openclaw delegation tool", () => {
+  it("carries the exact admitted operational run through its nested caller", async () => {
+    const operationalRunInstance = Object.freeze({
+      instanceId: "instance-delegate",
+      runId: "run-delegate",
+    });
+    callGateway.mockImplementation(async () => {
+      expect(getGatewayToolCallerIdentity()?.operationalRunInstance).toBe(operationalRunInstance);
+      return { sessionId: "delegate", reply: "Inspected." };
+    });
+    const [tool] = createOpenClawDelegateToolsForRun({
+      sessionAgentId: "main",
+      runSessionKey: "agent:main:dashboard:child",
+      operationalRunInstance,
+    });
+    if (!tool) {
+      throw new Error("expected OpenClaw delegation tool");
+    }
+
+    await tool.execute("call-authority", { message: "Inspect only." });
+
+    expect(callGateway).toHaveBeenCalledOnce();
+  });
+
   it("relays context and the completed approval outcome", async () => {
     callGateway.mockResolvedValue({
       sessionId: "ignored-by-client",

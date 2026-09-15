@@ -182,6 +182,91 @@ function cronCreatorToolNames(
 }
 
 describe("createOpenClawCodingTools", () => {
+  it("binds the exact admitted operational run to every Gateway-backed tool", async () => {
+    const operationalRunInstance = Object.freeze({
+      instanceId: "instance-delegated-openclaw",
+      runId: "run-delegated-openclaw",
+    });
+    const execute = vi.fn(async () => {
+      expect(getGatewayToolCallerIdentity()?.operationalRunInstance).toBe(operationalRunInstance);
+      return { content: [], details: {} };
+    });
+    vi.mocked(createOpenClawTools).mockReturnValueOnce([
+      { ...stubTool("openclaw"), label: "OpenClaw", execute },
+    ]);
+
+    const tools = createOpenClawCodingTools({
+      sessionKey: "agent:main:dashboard:delegated-child",
+      operationalRunInstance,
+    });
+    await requireToolExecute(requireTool(tools, "openclaw"))("call-openclaw", {
+      message: "Inspect only.",
+    });
+
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("projects owner-only tools only through a trusted child policy envelope", async () => {
+    const storeTemplate = path.join(
+      tempDirs.make("openclaw-owner-child-policy-"),
+      "{agentId}",
+      "sessions.json",
+    );
+    const agentId = "owner-child-policy";
+    const trustedChild = `agent:${agentId}:dashboard:trusted-child`;
+    const nonOwnerChild = `agent:${agentId}:dashboard:non-owner-child`;
+    const childEnvelope = {
+      updatedAt: Date.now(),
+      spawnDepth: 1,
+      subagentRole: "leaf" as const,
+      subagentControlScope: "none" as const,
+      inheritedToolPolicyVersion: 1 as const,
+    };
+    await writeSessionStore(storeTemplate, agentId, {
+      [trustedChild]: {
+        ...childEnvelope,
+        sessionId: "trusted-child-session",
+        spawnedBy: `agent:${agentId}:main`,
+      },
+      [nonOwnerChild]: {
+        ...childEnvelope,
+        sessionId: "non-owner-child-session",
+        spawnedBy: `agent:${agentId}:discord:direct:guest`,
+        inheritedToolDeny: ["openclaw"],
+      },
+    });
+    const config = { session: { store: storeTemplate } };
+
+    expect(
+      toolNameList(
+        createOpenClawCodingTools({ config, sessionKey: trustedChild, senderIsOwner: false }),
+      ),
+    ).toContain("openclaw");
+    expect(
+      toolNameList(
+        createOpenClawCodingTools({ config, sessionKey: nonOwnerChild, senderIsOwner: false }),
+      ),
+    ).not.toContain("openclaw");
+    expect(
+      toolNameList(
+        createOpenClawCodingTools({
+          config: { ...config, tools: { deny: ["openclaw"] } },
+          sessionKey: trustedChild,
+          senderIsOwner: false,
+        }),
+      ),
+    ).not.toContain("openclaw");
+    expect(
+      toolNameList(
+        createOpenClawCodingTools({
+          config,
+          sessionKey: "agent:main:dashboard:senderless-untrusted",
+          senderIsOwner: false,
+        }),
+      ),
+    ).not.toContain("openclaw");
+  });
+
   it("forwards the session web-search gate to core tool materialization", () => {
     vi.mocked(createOpenClawTools).mockClear();
     createOpenClawCodingTools({ webSearchEnabled: false });

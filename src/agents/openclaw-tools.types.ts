@@ -8,6 +8,7 @@ import type { ConversationReadInvocationOrigin } from "../channels/plugins/conve
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ExecMode } from "../infra/exec-approvals.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
+import type { OperationalRunInstanceRef } from "./admitted-run-context.js";
 import type { HookContext } from "./agent-tools.before-tool-call.js";
 import type { PreparedPairedComputerUse } from "./computer-use-node-capabilities.js";
 import type { ConversationRecallContext } from "./conversation-recall.types.js";
@@ -29,6 +30,8 @@ export type OpenClawToolsOptions = {
   runSessionKey?: string;
   agentChannel?: string;
   runId?: string;
+  /** Exact admitted run carried privately to lifecycle-bound Gateway tools. */
+  operationalRunInstance?: OperationalRunInstanceRef;
   /** Exact admitted session policy shared with terminal-input authorization. */
   execSession?: ExecSessionDefaults;
   /** Effective run-local exec overrides, including prepared permission mode. */
