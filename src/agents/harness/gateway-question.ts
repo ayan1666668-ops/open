@@ -12,7 +12,7 @@ import {
   createQuestionPromptLifetime,
   type GatewayQuestionCall,
 } from "../tools/gateway-question-lifecycle.js";
-import { registerQuestionAliases, releaseQuestionAliases } from "./gateway-question-aliases.js";
+import { questionAliases } from "./gateway-question-aliases.js";
 import {
   QuestionAnswerUnconfirmedError,
   QuestionDispatchRefusedError,
@@ -194,7 +194,6 @@ export function registerPendingAgentQuestion(params: {
   isResolving: () => boolean;
   dispose: () => void;
 } {
-  const { answerSessionKeys, ...questionParams } = params;
   const sessionKey = params.sessionKey.trim();
   const answerAuthority = captureAgentQuestionAnswerAuthority(sessionKey);
   const existing = pendingAgentQuestions.get(sessionKey);
@@ -211,7 +210,7 @@ export function registerPendingAgentQuestion(params: {
   let registrationAttached = false;
   const state: PendingAgentQuestion = {
     kind: "gateway",
-    ...questionParams,
+    ...params,
     sessionKey,
     answerAuthority,
     gatewayCall: resolveAgentQuestionGatewayCall(params.gatewayCall),
@@ -229,8 +228,7 @@ export function registerPendingAgentQuestion(params: {
     resolving: false,
   };
   pendingAgentQuestions.set(sessionKey, state);
-  // Aliases share the creator's authority; current-state checks keep the owning key.
-  const aliasSessionKeys = registerQuestionAliases(pendingAgentQuestions, state, answerSessionKeys);
+  const aliasSessionKeys = questionAliases.register(state, params.answerSessionKeys);
   return {
     attachRegistration: state.attachRegistration,
     setAnswer: (answer) => {
@@ -250,7 +248,7 @@ export function registerPendingAgentQuestion(params: {
       if (pendingAgentQuestions.get(sessionKey) === state) {
         pendingAgentQuestions.delete(sessionKey);
       }
-      releaseQuestionAliases(pendingAgentQuestions, state, aliasSessionKeys);
+      questionAliases.release(state, aliasSessionKeys);
       if (!registrationAttached) {
         rejectRegistration(new Error("gateway question registration disposed before attachment"));
       }
@@ -267,9 +265,9 @@ export async function claimPendingAgentQuestionAnswerFromCaller(params: {
   caller: ReplyToolAuthorityOverlay;
   assertSourceCurrent: () => void;
 }): Promise<boolean> {
-  const state = params.sessionKey ? pendingAgentQuestions.get(params.sessionKey.trim()) : undefined;
+  const route = questionAliases.resolveAnswerRoute(pendingAgentQuestions, params.sessionKey);
   return claimPendingAgentQuestionAnswer({
-    sessionKey: params.sessionKey,
+    sessionKey: route?.state.sessionKey ?? params.sessionKey,
     text: params.text,
     persist: params.persist,
     sourceRecorder: params.sourceRecorder,
@@ -278,12 +276,9 @@ export async function claimPendingAgentQuestionAnswerFromCaller(params: {
       assertCurrent: () => {
         try {
           params.assertSourceCurrent();
-          if (state) {
-            if (!state.answerAuthority) {
-              throw new Error("pending question has no prepared creator authority");
-            }
-            state.answerAuthority.assertCaller(params.caller);
-            if (pendingAgentQuestions.get(state.sessionKey) !== state) {
+          if (route) {
+            route.assertCaller(params.caller);
+            if (pendingAgentQuestions.get(route.state.sessionKey) !== route.state) {
               throw new Error("pending question is no longer current");
             }
           }

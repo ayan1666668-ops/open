@@ -582,85 +582,145 @@ describe("gateway harness questions", () => {
     expect(onBlockReply).not.toHaveBeenCalled();
   });
 
-  it("accepts a plain-text reply from a registered answer alias session", async () => {
-    const registration = createDeferred<{ id: string }>();
-    const answer = createDeferred<{
-      status: "answered";
-      answers: { answers: Record<string, string[]> };
-    }>();
-    const gatewayCall: AgentHarnessQuestionGatewayCall = async (method, _opts, params) => {
-      if (method === "question.request") {
-        return await registration.promise;
-      }
-      if (method === "question.waitAnswer") {
-        return await answer.promise;
-      }
-      if (method === "question.resolve") {
-        const resolvedAnswers = (params as { answers?: { answers: Record<string, string[]> } })
-          .answers;
-        if (!resolvedAnswers) {
-          return { status: "cancelled" };
-        }
-        const result = { status: "answered" as const, answers: resolvedAnswers };
-        answer.resolve(result);
-        return result;
-      }
-      throw new Error(`unexpected gateway method: ${method}`);
-    };
-    const run = runAgentHarnessGatewayQuestion({
-      questions,
-      sessionKey: "agent:main:voice:15550001234",
-      answerSessionKeys: ["agent:main:telegram:direct:42"],
-      timeoutMs: 60_000,
-      gatewayCall,
-      delivery: { onBlockReply: vi.fn() },
-      questionId: "ask_44444444444444444444444444444444",
-    });
-
-    // The chat that requested the voice consult answers with plain text.
-    const claim = claimPendingAgentQuestionAnswer({
-      sessionKey: "agent:main:telegram:direct:42",
-      text: "Production",
-    });
-    registration.resolve({ id: "ask_44444444444444444444444444444444" });
-    await expect(claim).resolves.toBe(true);
-    await expect(run).resolves.toEqual({
-      status: "answered",
-      answers: { answers: { answer: ["Production"] } },
-    });
-    // The alias is released with the question.
-    await expect(
-      claimPendingAgentQuestionAnswer({
-        sessionKey: "agent:main:telegram:direct:42",
-        text: "Late",
-      }),
-    ).resolves.toBe(false);
-  });
-
-  it("does not shadow an alias session's own pending question", async () => {
+  it("keeps an answer alias out of the requesting chat's own question slot", () => {
+    const chatSessionKey = "agent:main:telegram:direct:43";
     const gatewayCall = vi.fn<AgentHarnessQuestionGatewayCall>();
-    const own = registerPendingAgentQuestion({
-      questionId: "ask_55555555555555555555555555555555",
-      sessionKey: "agent:main:telegram:direct:43",
-      questions,
-      gatewayCall,
-    });
     const aliased = registerPendingAgentQuestion({
       questionId: "ask_66666666666666666666666666666666",
       sessionKey: "agent:main:voice:15550001235",
-      answerSessionKeys: ["agent:main:telegram:direct:43"],
+      answerSessionKeys: [chatSessionKey],
       questions,
       gatewayCall,
     });
-
-    aliased.dispose();
-    // The chat keeps its own question after the aliased one is gone.
-    const late = claimPendingAgentQuestionAnswer({
-      sessionKey: "agent:main:telegram:direct:43",
-      text: "Still mine",
+    // The chat can still ask its own question while a consult's alias points at it.
+    const own = registerPendingAgentQuestion({
+      questionId: "ask_55555555555555555555555555555555",
+      sessionKey: chatSessionKey,
+      questions,
+      gatewayCall,
     });
+    aliased.dispose();
+    expect(() =>
+      registerPendingAgentQuestion({
+        questionId: "ask_77777777777777777777777777777777",
+        sessionKey: chatSessionKey,
+        questions,
+        gatewayCall,
+      }),
+    ).toThrow(/already has a pending agent input request/);
     own.dispose();
-    await expect(late).resolves.toBe(false);
+  });
+
+  async function withRequesterAliasedConsult(
+    requesterSessionKey: string,
+    body: (consult: {
+      run: ReturnType<typeof runAgentHarnessGatewayQuestion>;
+      host: Awaited<ReturnType<typeof createAdmittedHostCapabilityTestFixture>>;
+      fixture: Parameters<Parameters<typeof withQuestionGateway>[0]>[0];
+      questionId: string;
+      answerFrom: (sessionKey: string, senderIsOwner?: boolean) => Promise<boolean>;
+    }) => Promise<void>,
+  ) {
+    await withQuestionGateway(async (fixture) => {
+      const attempt = {
+        sessionId: "voice-consult-session",
+        sessionKey: "agent:main:voice:15550001234",
+        runId: "voice-consult-run",
+        agentId: "main",
+        config: {},
+        sessionFile: "/tmp/voice-consult-session.jsonl",
+        workspaceDir: "/tmp/voice-consult-workspace",
+        provider: "openai",
+        modelId: "gpt-test",
+        messageProvider: "voice-call",
+        senderIsOwner: true,
+      };
+      const questionId = "ask_44444444444444444444444444444444";
+      const host = await createAdmittedHostCapabilityTestFixture(attempt);
+      const promptDelivered = createDeferred();
+      // The default dispatcher is the only source-bound route, so the answer
+      // reaches the real question.resolve RPC of the synthetic Gateway.
+      const run = withPreparedEmbeddedRunToolAuthority(
+        { admittedRunContext: host.admittedRunContext },
+        { ...attempt, hostCapabilities: host.hostCapabilities },
+        undefined,
+        () =>
+          runAgentHarnessGatewayQuestion({
+            questionId,
+            sessionKey: attempt.sessionKey,
+            runId: attempt.runId,
+            answerSessionKeys: [requesterSessionKey],
+            questions,
+            timeoutMs: 60_000,
+            signal: fixture.backingRun.signal,
+            delivery: {
+              hostCapabilities: host.hostCapabilities,
+              onBlockReply: async () => promptDelivered.resolve(),
+            },
+          }),
+      );
+      await Promise.all([fixture.waitStarted, promptDelivered.promise]);
+      try {
+        await body({
+          run,
+          host,
+          fixture,
+          questionId,
+          // Inbound chat replies carry trace authority the voice consult run never had.
+          answerFrom: (sessionKey, senderIsOwner = true) =>
+            claimPendingAgentQuestionAnswerFromCaller({
+              sessionKey,
+              text: "Production",
+              caller: {
+                senderIsOwner,
+                disableTools: false,
+                traceAuthorized: true,
+                messageProvider: "telegram",
+              },
+              assertSourceCurrent: () => {},
+            }),
+        });
+      } finally {
+        fixture.backingRun.abort();
+        await run.catch(() => undefined);
+        host.closeHost();
+        host.closeAdmission();
+      }
+    });
+  }
+
+  it("answers a consult question only from the requesting chat's owner", async () => {
+    const requesterSessionKey = "agent:main:telegram:direct:42";
+    await withRequesterAliasedConsult(requesterSessionKey, async (consult) => {
+      await expect(consult.answerFrom("agent:main:telegram:direct:99")).resolves.toBe(false);
+      const refused = consult.answerFrom(requesterSessionKey, false);
+      await expect(refused).rejects.toBeInstanceOf(QuestionDispatchRefusedError);
+      await expect(refused).rejects.toThrow(/owner of the requesting conversation/);
+      expect(consult.fixture.manager.get(consult.questionId)?.status).toBe("pending");
+      await expect(consult.answerFrom(requesterSessionKey)).resolves.toBe(true);
+      await expect(consult.run).resolves.toEqual({
+        status: "answered",
+        answers: { answers: { answer: ["Production"] } },
+      });
+      expect(
+        consult.fixture.requests.filter((frame) => frame.method === "question.resolve"),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("refuses requester replies once the consult's creator authority is gone", async () => {
+    const requesterSessionKey = "agent:main:telegram:direct:42";
+    await withRequesterAliasedConsult(requesterSessionKey, async (consult) => {
+      consult.host.closeHost();
+      const refused = consult.answerFrom(requesterSessionKey);
+      await expect(refused).rejects.toBeInstanceOf(QuestionDispatchRefusedError);
+      await expect(refused).rejects.toThrow(/host capability|admitted run/);
+      expect(consult.fixture.manager.get(consult.questionId)?.status).toBe("pending");
+      consult.fixture.backingRun.abort();
+      await expect(consult.run).resolves.toEqual({ status: "cancelled" });
+      // The alias is released with the question.
+      await expect(consult.answerFrom(requesterSessionKey)).resolves.toBe(false);
+    });
   });
 
   it("releases a claimed reply when gateway registration fails", async () => {

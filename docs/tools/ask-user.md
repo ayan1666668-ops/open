@@ -42,10 +42,11 @@ You can answer from any supported conversation surface:
 
 A Voice Call consult run shows no tool results in a chat, so it posts its
 question to the conversation that requested the call (for a call placed from a
-Telegram chat, that chat). Buttons and plain-text replies in that chat answer
-it, and the question stays answerable from the surfaces above. A consult with
-no deliverable requesting conversation keeps the question in the Control UI,
-TUI, and native apps only.
+Telegram chat, that chat). Buttons in that chat answer it, and so does a
+plain-text reply from that chat's owner while the call's run is still active.
+The question stays answerable from the surfaces above. A consult with no
+deliverable requesting conversation keeps the question in the Control UI, TUI,
+and native apps only.
 
 Questions from a standalone [attached MCP client](/cli/attach) do not carry an
 OpenClaw run's creator binding. Answer those using the question controls in the
