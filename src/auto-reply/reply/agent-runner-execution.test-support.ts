@@ -19,6 +19,11 @@ import {
   type PersistedUserTurnMessage,
 } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
+import {
+  activateTestChannelRegistry,
+  createChannelTestPluginBase,
+  createTestRegistry,
+} from "../../test-utils/channel-plugins.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
@@ -267,9 +272,7 @@ vi.mock("./current-turn-images.js", () => ({
 }));
 
 vi.mock("./agent-runner-utils.js", async () => ({
-  resolveRunThinkingLevelForFallbackCandidate: (
-    await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")
-  ).resolveRunThinkingLevelForFallbackCandidate,
+  ...(await vi.importActual<typeof import("./agent-runner-utils.js")>("./agent-runner-utils.js")),
   buildEmbeddedRunExecutionParams: (
     params: Parameters<typeof buildEmbeddedRunExecutionParams>[0],
   ) =>
@@ -656,7 +659,7 @@ export function createMinimalRunAgentTurnParams(overrides?: {
   replyOperation?: ReplyOperation;
   sessionCtx?: TemplateContext;
   typingSignals?: TypingSignaler;
-}) {
+}): AgentTurnParams {
   return {
     commandBody: "fix it",
     followupRun: overrides?.followupRun ?? createFollowupRun(),
@@ -669,18 +672,7 @@ export function createMinimalRunAgentTurnParams(overrides?: {
     opts: overrides?.opts ?? ({} satisfies GetReplyOptions),
     replyOperation: overrides?.replyOperation,
     typingSignals: overrides?.typingSignals ?? createMockTypingSignaler(),
-    blockReplyPipeline: null,
-    blockStreamingEnabled: false,
-    resolvedBlockStreamingBreak: "message_end" as const,
-    applyReplyToMode: (payload: ReplyPayload) => payload,
-    shouldEmitToolResult: () => true,
-    shouldEmitToolOutput: () => false,
-    pendingToolTasks: new Set<Promise<void>>(),
-    resetSessionAfterRoleOrderingConflict: async () => false,
-    isHeartbeat: false,
-    sessionKey: "main",
-    getActiveSessionEntry: () => undefined,
-    resolvedVerboseLevel: "off" as const,
+    ...createAgentTurnExecutionDefaults(),
   };
 }
 
@@ -711,7 +703,7 @@ export async function setupAgentRunnerExecutionTestState() {
   // Hook timeouts cannot cancel imports; cleanup must not overtake module readiness.
   await getExecuteAgentTurnForTest();
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useRealTimers();
     state.runEmbeddedAgentMock.mockReset();
     state.runEmbeddedAgentEntryMock
@@ -749,6 +741,14 @@ export async function setupAgentRunnerExecutionTestState() {
       model: "claude",
       attempts: [],
     }));
+    // The failure table includes Teams; its channel runtime is outside these execution tests.
+    const teams = createChannelTestPluginBase({
+      id: "msteams",
+      capabilities: { chatTypes: ["channel"] },
+    });
+    await activateTestChannelRegistry(
+      createTestRegistry([{ pluginId: "msteams", plugin: teams, source: "test" }]),
+    );
   });
 
   afterEach(() => {
