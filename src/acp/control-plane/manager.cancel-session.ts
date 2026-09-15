@@ -11,7 +11,6 @@ import type {
   EnsureManagerRuntimeHandle,
   ResolveManagerSession,
   SetManagerSessionState,
-  TurnSetupState,
   WithManagerSessionActor,
 } from "./manager.types.js";
 import { normalizeActorKey, requireReadySessionMeta } from "./manager.utils.js";
@@ -22,32 +21,18 @@ export async function runManagerCancelSession(params: {
   sessionKey: string;
   reason?: string;
   activeTurnBySession: Map<string, ActiveTurnState>;
-  turnSetupBySession: Map<string, Set<TurnSetupState>>;
   withSessionActor: WithManagerSessionActor;
   resolveSession: ResolveManagerSession;
   ensureRuntimeHandle: EnsureManagerRuntimeHandle;
   setSessionState: SetManagerSessionState;
 }): Promise<void> {
   const actorKey = normalizeActorKey(params.sessionKey);
-  const setupStates = [...(params.turnSetupBySession.get(actorKey) ?? [])];
-  for (const setupState of setupStates) {
-    if (!setupState.abortController.signal.aborted) {
-      setupState.abortController.abort(params.reason?.trim() || "cancel");
-    }
-  }
-
   const activeTurn = params.activeTurnBySession.get(actorKey);
   if (activeTurn) {
     await cancelActiveTurn({
       activeTurn,
       reason: params.reason,
     });
-  }
-
-  if (setupStates.length > 0) {
-    await Promise.all(setupStates.map((setupState) => setupState.completion));
-  }
-  if (activeTurn || setupStates.length > 0) {
     return;
   }
 

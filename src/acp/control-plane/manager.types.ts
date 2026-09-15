@@ -142,11 +142,6 @@ export type ActiveTurnState = {
   cancelPromise?: Promise<void>;
 };
 
-export type TurnSetupState = {
-  abortController: AbortController;
-  completion: Promise<void>;
-};
-
 export type TurnLatencyStats = {
   completed: number;
   failed: number;
