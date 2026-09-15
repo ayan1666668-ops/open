@@ -451,11 +451,8 @@ export function createChannelIngressDrain<
     // settles; when the inherited root is already released, dispatch outside it
     // so the dead lease cannot make session admission refuse the turn as
     // draining. A real restart drain still refuses both paths at admission.
-    // The task also outlives the async work scope it inherits. A detached webhook
-    // pump's scope closes once the pump returns, and a tracked step of the turn, or
-    // of a followup the turn leaves queued, would then fail with "Async work scope
-    // is closed". Channels started with the Gateway dispatch with no scope, so every
-    // task runs that way instead of inside whichever scope requested the drain.
+    // Dispatches and queued followups outlive the pump's async work scope.
+    // Leave that scope so its closure cannot reject their later tracked work.
     const releaseRootWork = retainGatewayRootWorkAdmissionContinuation();
     state.task = runOutsideAsyncWorkScope(async () => {
       try {

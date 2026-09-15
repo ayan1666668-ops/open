@@ -1,62 +1,102 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { AsyncWorkScope, trackAsyncWork } from "../../shared/async-work-scope.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
-import { createChannelIngressDrain } from "./ingress-drain.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  clearSessionQueues,
+  enqueueFollowupRun,
+  scheduleFollowupDrain,
+} from "../../auto-reply/reply/queue.js";
+import { createQueueTestRun } from "../../auto-reply/reply/queue.test-helpers.js";
+import { runDetachedWebhookWork } from "../../plugin-sdk/webhook-request-guards.js";
+import {
+  getActiveGatewayRootWorkCount,
+  resetGatewayWorkAdmission,
+} from "../../process/gateway-work-admission.js";
+import { getAsyncWorkSignal, trackAsyncWork } from "../../shared/async-work-scope.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import {
   createTestIngressQueue,
   type IngressDrainTestPayload as Payload,
   withTempState,
 } from "./ingress-drain.test-helpers.js";
-
-type Tracked = "turn" | "followup" | Error;
-
-function track(value: "turn" | "followup"): Promise<Tracked> {
-  return trackAsyncWork(async () => value).catch((error: unknown) => error as Error);
-}
+import { createChannelIngressMonitor } from "./ingress-monitor.js";
 
 describe("channel ingress drain async work ownership", () => {
   afterEach(() => {
-    closeOpenClawStateDatabaseForTest();
+    resetGatewayWorkAdmission();
   });
 
-  // Webhook spools run the pump through runDetachedWebhookWork, whose async work scope
-  // closes as soon as the pump returns. drainOnce does not wait for the dispatches it
-  // starts, and a turn can leave a queued followup that starts after the turn settles.
-  it("lets a dispatch and the followup it leaves track work after the pump's scope closes", async () => {
+  it("tracks a monitor delivery after its webhook pump closes and a queued followup after delivery settles", async () => {
     await withTempState(async (stateDir) => {
       const queue = createTestIngressQueue(stateDir);
-      await queue.enqueue("evt-scope", { text: "hello" }, { laneKey: "lane-a" });
-      let releaseTurn = () => {};
-      const turnGate = new Promise<void>((resolve) => {
-        releaseTurn = resolve;
-      });
-      let releaseFollowup = () => {};
-      const followupGate = new Promise<void>((resolve) => {
-        releaseFollowup = resolve;
-      });
-      let turn: Tracked | undefined;
-      let followup: Promise<Tracked> | undefined;
-      const drain = createChannelIngressDrain<Payload>({
+      const turnGate = createDeferredCore();
+      const followupGate = createDeferredCore();
+      const followupFinished = createDeferredCore();
+      const pumpSignals: AbortSignal[] = [];
+      const events: string[] = [];
+      const followupKey = `ingress-async-work:${stateDir}`;
+      const monitor = createChannelIngressMonitor<Payload, Payload, Payload>({
         queue,
-        dispatchClaimedEvent: async (_event, lifecycle) => {
-          await turnGate;
-          turn = await track("turn");
-          followup = followupGate.then(() => track("followup"));
+        inspect: (raw) => ({ eventId: raw.text, laneKey: "lane-a" }),
+        payload: {
+          version: 1,
+          serialize: (raw) => raw,
+          deserialize: (raw) => raw,
+          encode: ({ body }) => body,
+          decode: (body) => ({ version: 1, body }),
+          createClaimError: (kind) => new Error(kind),
+        },
+        pollIntervalMs: 60_000,
+        retention: "standard",
+        runPumpTask: (work) =>
+          runDetachedWebhookWork(async () => {
+            const signal = getAsyncWorkSignal();
+            expect(signal).toBeDefined();
+            if (signal) {
+              pumpSignals.push(signal);
+            }
+            await work();
+          }),
+        deliver: async (_raw, lifecycle) => {
+          await turnGate.promise;
+          await trackAsyncWork(() => events.push("turn"));
+          enqueueFollowupRun(followupKey, createQueueTestRun({ prompt: "followup" }), {
+            mode: "followup",
+            debounceMs: 0,
+          });
+          scheduleFollowupDrain(followupKey, async () => {
+            try {
+              await followupGate.promise;
+              await trackAsyncWork(() => events.push("followup"));
+            } finally {
+              followupFinished.resolve();
+            }
+          });
           await lifecycle.onAdopted();
         },
       });
 
-      const pump = new AsyncWorkScope();
-      const { started } = await pump.track(() => drain.drainOnce());
-      await pump.drain();
-      releaseTurn();
-      await drain.waitForIdle();
-      releaseFollowup();
+      try {
+        await monitor.admit({ text: "evt-scope" });
+        monitor.start();
+        await monitor.waitForPumpIdle();
+        await vi.waitFor(() => expect(pumpSignals[0]?.aborted).toBe(true));
+        expect(events).toEqual([]);
 
-      expect(started).toBe(1);
-      expect(turn).toBe("turn");
-      await expect(followup).resolves.toBe("followup");
-      drain.dispose();
+        turnGate.resolve();
+        await monitor.waitForIdle();
+        expect(events).toEqual(["turn"]);
+        await expect(queue.listPending()).resolves.toEqual([]);
+        await expect(queue.listClaims()).resolves.toEqual([]);
+
+        followupGate.resolve();
+        await followupFinished.promise;
+        expect(events).toEqual(["turn", "followup"]);
+      } finally {
+        turnGate.resolve();
+        followupGate.resolve();
+        await monitor.stop();
+        clearSessionQueues([followupKey]);
+        await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(0));
+      }
     });
   });
 });
