@@ -98,6 +98,9 @@ export async function deleteSubagentSessionForCleanup(
     import("../../../auto-reply/continuation/delegate-store-post-compaction.js"),
     import("./subagent-registry-read.js"),
   ]);
+  if (params.isCurrent?.() === false) {
+    return "changed";
+  }
   // A continuation_work TaskFlow, an in-flight regular continuation delegate, or
   // an accepted child run that still uses this session as requester owns
   // same-session re-entry. Keep the child session entry until the remaining work

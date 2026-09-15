@@ -1,4 +1,3 @@
-import { computeBackoff } from "../../packages/retry/src/index.js";
 // Persists queued session deliveries for retry and recovery.
 import type { SessionPostCompactionDelegate } from "../config/sessions/types.js";
 import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
@@ -9,17 +8,10 @@ import { bindDeliveryQueueEntry } from "./delivery-queue-sqlite-bound.js";
 import type { DeliveryQueueEntryLoadResult } from "./delivery-queue-sqlite-codec.js";
 import {
   getDeliveryQueueEntryStatus,
-  loadDeliveryQueueEntryResult,
-  loadDeliveryQueueEntryResults,
-  terminalizePendingDeliveryQueueEntry,
-  updateDeliveryQueueEntry,
   type DeliveryQueueEntryState,
 } from "./delivery-queue-sqlite.js";
 import { generateSecureUuid } from "./secure-random.js";
-import {
-  hasOnlyGenericAttachmentRefs,
-  scrubTerminalQueuedAttachments,
-} from "./session-delivery-queue-attachment-metadata.js";
+import { scrubTerminalQueuedAttachments } from "./session-delivery-queue-attachment-metadata.js";
 import {
   decodeSessionDeliveryResult,
   normalizeQueuedSessionDeliveryTraceparent,
@@ -108,26 +100,18 @@ function prepareEntry(
   });
 }
 
-function failInvalidSessionDelivery(params: {
-  entry: { id: string; enqueuedAt: number; retryCount: number };
-  error: string;
-  entryJson: string;
-  stateDir?: string;
-}): void {
-  terminalizePendingDeliveryQueueEntry({
-    queueName: SESSION_DELIVERY_QUEUE_NAME,
-    id: params.entry.id,
-    lastError: params.error,
-    entry: {
-      id: params.entry.id,
-      enqueuedAt: params.entry.enqueuedAt,
-      retryCount: params.entry.retryCount,
-      retainOnFailure: true,
+async function failInvalidSessionDelivery(
+  params: SessionDeliveryWorkerOperations["sessionDelivery.failInvalid"]["input"] & {
+    context: OpenClawStateWorkerContext;
+  },
+): Promise<void> {
+  await executeSessionDelivery(params.context, {
+    type: "sessionDelivery.failInvalid",
+    input: {
+      entry: params.entry,
+      error: params.error,
+      entryJson: params.entryJson,
     },
-    // The rejected row has no decoded value to re-serialize. Guard on the
-    // persisted text while the shared terminalizer writes one payload-free receipt.
-    expectedEntryJson: params.entryJson,
-    stateDir: params.stateDir,
   });
 }
 
@@ -501,35 +485,9 @@ export async function failSessionDelivery(
   handle?: SessionDeliveryQueueHandle,
   options?: { releaseAttemptOwnership?: boolean },
 ): Promise<void> {
-  const stateDir = resolveStateDir(handle);
-  updateDeliveryQueueEntry(SESSION_DELIVERY_QUEUE_NAME, id, stateDir, (entry) => {
-    const queued = entry as QueuedSessionDelivery;
-    const safeQueued =
-      queued.kind === "postCompactionDelegate" || hasOnlyGenericAttachmentRefs(queued)
-        ? queued
-        : scrubTerminalQueuedAttachments(queued);
-    const retryCount = queued.retryCount + 1;
-    const now = Date.now();
-    return {
-      ...safeQueued,
-      retryCount,
-      ...(safeQueued.kind === "agentTurn"
-        ? { lastChargedAgentRunAttempt: safeQueued.agentRunAttempt ?? 0 }
-        : {}),
-      ...(options?.releaseAttemptOwnership === true ? { deliveryStartedAt: undefined } : {}),
-      lastAttemptAt: now,
-      ...(safeQueued.kind === "agentTurn" && safeQueued.owner?.kind === "subagent_completion"
-        ? {
-            availableAt:
-              now +
-              computeBackoff(
-                { initialMs: 15_000, factor: 2, maxMs: 5 * 60_000, jitter: 0.2 },
-                retryCount,
-              ),
-          }
-        : {}),
-      lastError: error,
-    };
+  await executeSessionDelivery(resolveQueueContext(handle), {
+    type: "sessionDelivery.fail",
+    input: { id, error, ...options },
   });
 }
 
@@ -538,24 +496,20 @@ export async function loadPendingSessionDelivery(
   id: string,
   handle?: SessionDeliveryQueueHandle,
 ): Promise<QueuedSessionDelivery | null> {
-  const stateDir = resolveStateDir(handle);
-  const result = loadDeliveryQueueEntryResult(SESSION_DELIVERY_QUEUE_NAME, id, stateDir);
+  const context = resolveQueueContext(handle);
+  const result = await executeSessionDelivery(context, {
+    type: "sessionDelivery.load",
+    input: { id },
+  });
+  context.admission.assertCurrent();
   if (!result) {
-    if (isWorkerContext(handle)) {
-      handle.admission.assertCurrent();
-    }
     return null;
   }
   const decoded = decodeStoredSessionDeliveryResult(result);
   if (decoded.status === "invalid") {
-    failInvalidSessionDelivery({ ...decoded, stateDir });
-    if (isWorkerContext(handle)) {
-      handle.admission.assertCurrent();
-    }
+    await failInvalidSessionDelivery({ ...decoded, context });
+    context.admission.assertCurrent();
     return null;
-  }
-  if (isWorkerContext(handle)) {
-    handle.admission.assertCurrent();
   }
   return decoded.entry;
 }
@@ -564,19 +518,22 @@ export async function loadPendingSessionDelivery(
 export async function loadPendingSessionDeliveries(
   handle?: SessionDeliveryQueueHandle,
 ): Promise<QueuedSessionDelivery[]> {
-  const stateDir = resolveStateDir(handle);
+  const context = resolveQueueContext(handle);
+  const results = await executeSessionDelivery(context, {
+    type: "sessionDelivery.list",
+    input: undefined,
+  });
+  context.admission.assertCurrent();
   const entries: QueuedSessionDelivery[] = [];
-  for (const result of loadDeliveryQueueEntryResults(SESSION_DELIVERY_QUEUE_NAME, stateDir)) {
+  for (const result of results) {
     const decoded = decodeStoredSessionDeliveryResult(result);
     if (decoded.status === "invalid") {
-      failInvalidSessionDelivery({ ...decoded, stateDir });
+      await failInvalidSessionDelivery({ ...decoded, context });
       continue;
     }
     entries.push(decoded.entry);
   }
-  if (isWorkerContext(handle)) {
-    handle.admission.assertCurrent();
-  }
+  context.admission.assertCurrent();
   return entries;
 }
 

@@ -1,6 +1,6 @@
 import type { bindDeliveryQueueEntry } from "./delivery-queue-sqlite-bound.js";
+import type { DeliveryQueueEntryLoadResult } from "./delivery-queue-sqlite-codec.js";
 import type { DeliveryQueueStoredStatus } from "./delivery-queue-sqlite.kernel.js";
-import type { QueuedSessionDelivery } from "./session-delivery-queue.records.js";
 
 export type SessionDeliveryAgentRunUpdate = {
   expectedMediaUrls?: string[];
@@ -33,7 +33,15 @@ export type SessionDeliveryWorkerOperations = {
     input: { id: string; error: string; releaseAttemptOwnership?: boolean };
     output: void;
   };
-  "sessionDelivery.load": { input: { id: string }; output: QueuedSessionDelivery | null };
-  "sessionDelivery.list": { input: undefined; output: QueuedSessionDelivery[] };
+  "sessionDelivery.failInvalid": {
+    input: {
+      entry: { id: string; enqueuedAt: number; retryCount: number };
+      error: string;
+      entryJson: string;
+    };
+    output: void;
+  };
+  "sessionDelivery.load": { input: { id: string }; output: DeliveryQueueEntryLoadResult | null };
+  "sessionDelivery.list": { input: undefined; output: DeliveryQueueEntryLoadResult[] };
   "sessionDelivery.moveToFailed": { input: { id: string }; output: void };
 };

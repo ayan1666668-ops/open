@@ -179,6 +179,28 @@ describe("deleteSubagentSessionForCleanup", () => {
     });
   });
 
+  it("does not mutate delegate state after cleanup ownership changes", async () => {
+    const callGateway = vi.fn(async function mockCallGateway<T = Record<string, unknown>>(
+      _opts: CallGatewayOptions,
+    ): Promise<T> {
+      return { ok: true } as T;
+    }) as typeof defaultCallGateway;
+
+    const result = await deleteSubagentSessionForCleanup({
+      callGateway,
+      childSessionKey: "agent:main:subagent:replaced",
+      ...cleanupSessionIdentity,
+      isCurrent: () => false,
+    });
+
+    expect(result).toBe("changed");
+    expect(hasLiveOrRecentlyDispatchedContinuationWorkMock).not.toHaveBeenCalled();
+    expect(hasRecoverablePendingDelegateMock).not.toHaveBeenCalled();
+    expect(countActiveDescendantRunsMock).not.toHaveBeenCalled();
+    expect(failStagedPostCompactionDelegatesForCleanupMock).not.toHaveBeenCalled();
+    expect(callGateway).not.toHaveBeenCalled();
+  });
+
   it("logs delete failures and retries cleanup a bounded number of times", async () => {
     const callGateway = vi.fn(async function mockCallGateway<T = Record<string, unknown>>(
       _opts: CallGatewayOptions,

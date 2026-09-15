@@ -34,6 +34,7 @@ import {
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { OutboundReplyPayload } from "../plugin-sdk/reply-payload.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
+import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { deliverQueuedGeneratedMediaAgentTurn } from "./server-restart-sentinel-agent-delivery.js";
 import { loadSessionEntry } from "./session-utils.js";
@@ -46,10 +47,6 @@ type QueuedAgentTurnSessionDelivery = Extract<QueuedSessionDelivery, { kind: "ag
 type ResolvedQueuedSessionDelivery = QueuedSessionDelivery & {
   runtimeContextFragments?: RuntimeContextFragment[];
 };
-
-function sessionDeliveryStateDirArgs(stateDir?: string): [] | [string] {
-  return stateDir === undefined ? [] : [stateDir];
-}
 
 function enqueueRestartSentinelWake(params: {
   message: string;
@@ -152,7 +149,7 @@ function resolveQueuedSessionDeliveryContext(entry: QueuedSessionDelivery):
 export async function deliverQueuedSessionDeliveryCore(params: {
   deps: CliDeps;
   entry: QueuedSessionDelivery;
-  stateDir?: string;
+  queueContext: OpenClawStateWorkerContext;
   resolveGatewayContext?: import("./server-methods/types.js").GatewayContextResolver;
 }) {
   return await deliverResolvedQueuedSessionDelivery({
@@ -164,9 +161,11 @@ export async function deliverQueuedSessionDeliveryCore(params: {
 async function deliverResolvedQueuedSessionDelivery(params: {
   deps: CliDeps;
   entry: ResolvedQueuedSessionDelivery;
-  stateDir?: string;
+  queueContext: OpenClawStateWorkerContext;
   resolveGatewayContext?: import("./server-methods/types.js").GatewayContextResolver;
 }) {
+  params.queueContext.admission.assertCurrent();
+  const stateDir = params.queueContext.environment.OPENCLAW_STATE_DIR;
   if (params.entry.kind === "postCompactionDelegate") {
     await deliverQueuedPostCompactionDelegate({ entry: params.entry });
     return;
@@ -232,10 +231,10 @@ async function deliverResolvedQueuedSessionDelivery(params: {
           recipientSessionKey: receipt.recipientSessionKey,
           recipientSessionId: receipt.recipientSessionId,
           reason: "recipient-incarnation-changed",
-          ...(params.stateDir
+          ...(stateDir
             ? {
                 options: {
-                  env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir },
+                  env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
                 },
               }
             : {}),
@@ -261,10 +260,10 @@ async function deliverResolvedQueuedSessionDelivery(params: {
           recipientSessionKey: receipt.recipientSessionKey,
           recipientSessionId: receipt.recipientSessionId,
           reason: "delivery-state-unavailable",
-          ...(params.stateDir
+          ...(stateDir
             ? {
                 options: {
-                  env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir },
+                  env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
                 },
               }
             : {}),
@@ -277,10 +276,10 @@ async function deliverResolvedQueuedSessionDelivery(params: {
         runtimeEnabled: runtime.enabled,
         crossSessionEnabled: runtime.crossSessionTargeting === "enabled",
         currentRecipientSessionId: entry?.sessionId,
-        ...(params.stateDir
+        ...(stateDir
           ? {
               options: {
-                env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir },
+                env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
               },
             }
           : {}),
@@ -297,20 +296,20 @@ async function deliverResolvedQueuedSessionDelivery(params: {
           recipientSessionKey: receipt.recipientSessionKey,
           recipientSessionId: receipt.recipientSessionId,
           reason: "delivery-state-unavailable",
-          ...(params.stateDir
+          ...(stateDir
             ? {
                 options: {
-                  env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir },
+                  env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
                 },
               }
             : {}),
         });
         return;
       }
-      const artifactOptions = params.stateDir
+      const artifactOptions = stateDir
         ? {
             options: {
-              env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir },
+              env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
             },
           }
         : {};
@@ -346,7 +345,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
-      sessionDeliveryAckStateDir: params.stateDir,
+      sessionDeliveryAckStateDir: stateDir,
       expectedSessionId: params.entry.expectedSessionId,
       recipientAuthority,
       delegateArtifactReceipt: params.entry.managedDelegateArtifactDelivery?.receipt,
@@ -393,7 +392,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
-      sessionDeliveryAckStateDir: params.stateDir,
+      sessionDeliveryAckStateDir: stateDir,
     });
     return;
   }
@@ -405,7 +404,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
       deliveryContext: queuedDeliveryContext,
       traceparent: params.entry.traceparent,
       sessionDeliveryAckId: params.entry.id,
-      sessionDeliveryAckStateDir: params.stateDir,
+      sessionDeliveryAckStateDir: stateDir,
     });
     return;
   }
@@ -418,7 +417,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
       agentId,
       storePath,
       sessionEntry: entry,
-      ...(params.stateDir !== undefined ? { stateDir: params.stateDir } : {}),
+      queueContext: params.queueContext,
       ...(params.resolveGatewayContext
         ? { resolveGatewayContext: params.resolveGatewayContext }
         : {}),
@@ -427,11 +426,7 @@ async function deliverResolvedQueuedSessionDelivery(params: {
     return;
   }
   if (params.entry.deliveryStartedAt !== undefined) {
-    await markSessionDeliverySettlement(
-      params.entry,
-      "moved-to-failed",
-      ...sessionDeliveryStateDirArgs(params.stateDir),
-    );
+    await markSessionDeliverySettlement(params.entry, "moved-to-failed", params.queueContext);
     throw new SessionDeliveryDeadLetteredError(
       "queued agent turn dead-lettered after an interrupted unproven attempt",
     );
@@ -495,11 +490,10 @@ async function deliverResolvedQueuedSessionDelivery(params: {
     // has durably adopted the turn and before it can execute tools or reply.
     turnAdoptionLifecycle: {
       admission: "cancel-only",
-      onAdopted: () =>
-        markSessionDeliveryAttemptStarted(
-          params.entry,
-          ...sessionDeliveryStateDirArgs(params.stateDir),
-        ),
+      onAdopted: async () => {
+        await markSessionDeliveryAttemptStarted(params.entry, params.queueContext);
+        params.queueContext.admission.assertCurrent();
+      },
     },
     delivery: {
       preparePayload: (payload) => {

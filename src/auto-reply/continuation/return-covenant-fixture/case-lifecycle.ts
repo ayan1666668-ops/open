@@ -340,9 +340,7 @@ export async function releaseReturnCovenantCase(params: {
         deliverQueuedSessionDeliveryCore({
           deps: createDefaultDeps(),
           entry,
-          ...(deliveryContext.queueContext.environment.OPENCLAW_STATE_DIR
-            ? { stateDir: deliveryContext.queueContext.environment.OPENCLAW_STATE_DIR }
-            : {}),
+          queueContext: deliveryContext.queueContext,
         }),
     });
   }

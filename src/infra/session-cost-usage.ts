@@ -89,7 +89,6 @@ export async function discoverAllSessions(params?: {
         sessionId: parentId,
         sessionFile: checkpointPath,
         mtime,
-        firstUserMessage: undefined,
       });
       continue;
     }

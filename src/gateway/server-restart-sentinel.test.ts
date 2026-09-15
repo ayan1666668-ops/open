@@ -1698,12 +1698,14 @@ describe("scheduleRestartSentinelWake", () => {
     });
 
     expect(mocks.prepareDelegateArtifactDelivery).not.toHaveBeenCalled();
-    expect(mocks.markDelegateArtifactDeliveryUnavailable).toHaveBeenCalledWith({
-      dispatchId: "dispatch-1",
-      recipientSessionKey: "agent:main:main",
-      recipientSessionId: "session-1",
-      reason: "delivery-state-unavailable",
-    });
+    expect(mocks.markDelegateArtifactDeliveryUnavailable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatchId: "dispatch-1",
+        recipientSessionKey: "agent:main:main",
+        recipientSessionId: "session-1",
+        reason: "delivery-state-unavailable",
+      }),
+    );
     expect(mocks.enqueueSystemEvent).not.toHaveBeenCalled();
   });
 
@@ -1921,6 +1923,7 @@ describe("scheduleRestartSentinelWake", () => {
         threadId: "fresh-thread",
       },
       sessionDeliveryAckId: wakeQueueId,
+      sessionDeliveryAckStateDir: testState.stateDir,
       trusted: true,
     });
   });
@@ -2112,6 +2115,45 @@ describe("scheduleRestartSentinelWake", () => {
       expect.objectContaining({ id: "session-delivery-generic-state-dir" }),
       expectQueueContext("/tmp/custom-generic-session-delivery-state"),
     );
+  });
+
+  it("rejects an adopted turn when its captured queue admission retires", async () => {
+    let current = true;
+    const captured = captureOpenClawStateWorkerContext();
+    const capturedQueueContext = {
+      ...captured,
+      admission: {
+        ...captured.admission,
+        assertCurrent: () => {
+          if (!current) {
+            throw new Error("captured queue admission retired");
+          }
+        },
+      },
+    } satisfies OpenClawStateWorkerContext;
+    mocks.markSessionDeliveryAttemptStarted.mockImplementationOnce(async () => {
+      current = false;
+    });
+    mocks.recordInboundSessionAndDispatchReply.mockImplementationOnce(async (params) => {
+      await params.turnAdoptionLifecycle?.onAdopted();
+    });
+
+    await expect(
+      deliverQueuedSessionDelivery({
+        deps: {} as never,
+        queueContext: capturedQueueContext,
+        entry: {
+          id: "session-delivery-retired-admission",
+          kind: "agentTurn",
+          sessionKey: "agent:main:main",
+          message: "continue",
+          messageId: "restart-sentinel:retired-admission",
+          enqueuedAt: 1,
+          retryCount: 0,
+          route: { channel: "discord", to: "channel:123", chatType: "channel" },
+        },
+      }),
+    ).rejects.toThrow("captured queue admission retired");
   });
 
   it("keeps a generated-media gateway rejection before acceptance retryable", async () => {
@@ -3392,6 +3434,7 @@ describe("scheduleRestartSentinelWake", () => {
         threadId: "thread-42",
       },
       sessionDeliveryAckId: continuationQueueId,
+      sessionDeliveryAckStateDir: testState.stateDir,
       trusted: true,
     });
     expect(mocks.requestHeartbeat).toHaveBeenCalledWith({
@@ -3443,6 +3486,7 @@ describe("scheduleRestartSentinelWake", () => {
         threadId: "thread-42",
       },
       sessionDeliveryAckId: continuationQueueId,
+      sessionDeliveryAckStateDir: testState.stateDir,
       trusted: true,
     });
     expect(mocks.recordInboundSessionAndDispatchReply).not.toHaveBeenCalled();
@@ -3937,6 +3981,7 @@ describe("scheduleRestartSentinelWake", () => {
         threadId: "thread-42",
       },
       sessionDeliveryAckId: continuationQueueId,
+      sessionDeliveryAckStateDir: testState.stateDir,
       trusted: true,
     });
     expect(mocks.requestHeartbeat).toHaveBeenNthCalledWith(1, {

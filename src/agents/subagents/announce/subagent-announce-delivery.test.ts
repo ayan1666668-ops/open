@@ -3,6 +3,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { validateAgentParams } from "../../../../packages/gateway-protocol/src/index.js";
+import { formatValidationErrors } from "../../../../packages/gateway-protocol/src/validation-errors.js";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
 import type { SessionEntry } from "../../../config/sessions.js";
 import { formatSqliteSessionFileMarker } from "../../../config/sessions/legacy-sqlite-marker.js";
@@ -454,6 +456,36 @@ function registerDirectTargetTestChannel(channelId: string): void {
   );
 }
 
+function registerThreadedTargetTestChannel(channelId: string): void {
+  setActivePluginRegistry(
+    createTestRegistry([
+      {
+        pluginId: channelId,
+        source: "test",
+        plugin: {
+          ...createChannelTestPluginBase({
+            id: channelId,
+            capabilities: { chatTypes: ["group", "channel", "thread"] },
+          }),
+          messaging: {
+            inferTargetChatType: () => "group",
+            resolveSessionConversation: ({ rawId }: { rawId: string }) => {
+              const topic = /^(.*):topic:(.+)$/u.exec(rawId);
+              const id = topic?.[1] ?? rawId;
+              return {
+                id,
+                threadId: topic?.[2],
+                baseConversationId: id,
+                parentConversationCandidates: [],
+              };
+            },
+          },
+        },
+      },
+    ]),
+  );
+}
+
 function registerTestSessionBindings(
   channel: string,
   accountId: string,
@@ -787,6 +819,10 @@ async function deliverSlackChannelAnnouncement(params: {
 }
 
 describe("resolveAnnounceOrigin threaded route targets", () => {
+  beforeEach(() => {
+    registerThreadedTargetTestChannel("topicchat");
+  });
+
   it.each([
     {
       name: "does not inherit a target or thread from another account on the same channel",
@@ -2239,6 +2275,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         status: "error",
         statusLabel: "failed: all models failed",
         result: "(no output)",
+        noVisibleResult: true,
       }),
     });
 
@@ -3156,6 +3193,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         status: "ok",
         statusLabel: "completed successfully",
         result: "(no output)",
+        noVisibleResult: true,
       }),
     });
 
@@ -3919,6 +3957,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         traceparentProvenance: "internal",
       }),
       expect.any(Number),
+      expectQueueContext(),
     );
     expect(callGateway).not.toHaveBeenCalled();
   });
@@ -4254,6 +4293,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
           status: "ok",
           statusLabel: "completed successfully",
           result: "(no output)",
+          noVisibleResult: true,
         }),
       });
 
@@ -4331,6 +4371,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         status: "ok",
         statusLabel: "completed successfully",
         result: "(no output)",
+        noVisibleResult: true,
       });
       const result =
         route === "configured Slack channel"
@@ -4434,6 +4475,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
           status,
           statusLabel,
           result: "(no output)",
+          noVisibleResult: true,
         }),
       });
 
@@ -4448,6 +4490,58 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       });
     },
   );
+
+  // These inputs differ only in the typed no-visible-result fact. Keep the
+  // authority boundary on the fact rather than the placeholder wording.
+  it("gates a reworded no-visible-result placeholder for channel completions", async () => {
+    const callGateway = createPayloadGatewayMock({ text: "NO_REPLY" });
+    const childSessionKey = "agent:worker:subagent:reworded-placeholder";
+    const result = await deliverSlackChannelAnnouncement({
+      callGateway,
+      directIdempotencyKey: "announce-channel-subagent-reworded-placeholder",
+      sourceTool: "subagent_announce",
+      sourceSessionKey: childSessionKey,
+      runtimeConfig: { messages: { groupChat: { visibleReplies: "automatic" } } },
+      internalEvents: taskCompletionEvents({
+        childSessionKey,
+        childSessionId: "child-session-id",
+        taskLabel: "reworded placeholder completion smoke",
+        status: "ok",
+        statusLabel: "completed successfully",
+        result: "(no result yet; child still running)",
+        noVisibleResult: true,
+      }),
+    });
+
+    expectRecordFields(result, {
+      delivered: false,
+      path: "direct",
+      reason: "visible_reply_missing",
+      error: "completion agent did not produce a visible reply",
+    });
+  });
+
+  it("does not gate visible output that only resembles the placeholder", async () => {
+    const callGateway = createPayloadGatewayMock({ text: "NO_REPLY" });
+    const childSessionKey = "agent:worker:subagent:placeholder-shaped-output";
+    const result = await deliverSlackChannelAnnouncement({
+      callGateway,
+      directIdempotencyKey: "announce-channel-subagent-placeholder-shaped-output",
+      sourceTool: "subagent_announce",
+      sourceSessionKey: childSessionKey,
+      runtimeConfig: { messages: { groupChat: { visibleReplies: "automatic" } } },
+      internalEvents: taskCompletionEvents({
+        childSessionKey,
+        childSessionId: "child-session-id",
+        taskLabel: "placeholder-shaped output completion smoke",
+        status: "ok",
+        statusLabel: "completed successfully",
+        result: "(no output)",
+      }),
+    });
+
+    expectDeliveryPath(result, "direct");
+  });
 
   it("preserves intentional silence for no-output channel harness completions", async () => {
     const callGateway = createPayloadGatewayMock({ text: "NO_REPLY" });
@@ -4467,6 +4561,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         status: "error",
         statusLabel: "failed",
         result: "(no output)",
+        noVisibleResult: true,
       }),
     });
 
@@ -4479,6 +4574,31 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       threadId: undefined,
       sourceReplyDeliveryMode: "message_tool_only",
     });
+  });
+
+  it("sends no-output completion params accepted by the Gateway validator", async () => {
+    const callGateway = createPayloadGatewayMock({ text: "NO_REPLY" });
+    const childSessionKey = "agent:worker:subagent:no-output-wire-contract";
+    await deliverSlackChannelAnnouncement({
+      callGateway,
+      directIdempotencyKey: "announce-channel-no-output-wire-contract",
+      sourceTool: "subagent_announce",
+      sourceSessionKey: childSessionKey,
+      internalEvents: taskCompletionEvents({
+        childSessionKey,
+        childSessionId: "child-session-id",
+        taskLabel: "no-output completion wire contract",
+        result: "(no output)",
+        noVisibleResult: true,
+      }),
+    });
+
+    const request = expectRecordFields(mockCallArg(callGateway), { method: "agent" });
+    const sentEvents = (request.params as { internalEvents?: Array<{ noVisibleResult?: boolean }> })
+      .internalEvents;
+    expect(sentEvents?.[0]?.noVisibleResult).toBe(true);
+    const isValid = validateAgentParams(request.params);
+    expect(isValid ? "" : formatValidationErrors(validateAgentParams.errors)).toBe("");
   });
 
   it("does not count a different channel target as the requester completion delivery", async () => {
@@ -4582,6 +4702,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
         status: "ok",
         statusLabel: "completed successfully",
         result: "(no output)",
+        noVisibleResult: true,
       }),
     });
 
@@ -4685,6 +4806,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       internalEvents: taskCompletionEvents({
         childSessionId: "child-session-id",
         result: "(no output)",
+        noVisibleResult: true,
       }),
     });
 

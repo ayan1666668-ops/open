@@ -172,6 +172,7 @@ vi.mock("./subagent-announce-delivery.js", () => ({
   runAnnounceDeliveryWithRetry: async <T>(params: { run: () => Promise<T> }) => await params.run(),
 }));
 vi.mock("./subagent-announce.runtime.js", () => ({
+  callGateway: createGatewayCallModuleMock().callGateway,
   callSubagentLifecycleGateway: createGatewayCallModuleMock().callGateway,
   dispatchGatewayMethodInProcess: async (
     method: string,
@@ -210,6 +211,7 @@ vi.mock("../registry/subagent-registry-read.js", () => ({
   countActiveDescendantRuns: () => 0,
   countPendingDescendantRuns: () => pendingDescendantRuns,
   hasDescendantRunAwaitingSettle: () => false,
+  getLatestLiveSubagentRunByChildSessionKey: () => undefined,
   getLatestSubagentRunByChildSessionKey: () => undefined,
   listSubagentRunsForRequester: () => [],
   isSubagentSessionRunActive: () => subagentSessionRunActive,
@@ -506,23 +508,30 @@ describe("subagent announce timeout config", () => {
     expect(internalEvents[0]?.result).not.toContain("private tool output");
   });
 
-  it("keeps authoritative visible timeout output without transcript inference", async () => {
-    chatHistoryMessages = [
-      { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
-    ];
+  it.each(["authoritative progress", "(no output)"])(
+    "keeps authoritative visible timeout output %s without transcript inference",
+    async (text) => {
+      chatHistoryMessages = [
+        { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
+      ];
 
-    await runAnnounceFlowForTest("run-timeout-visible-terminal", {
-      outcome: { status: "timeout" },
-      roundOneReply: undefined,
-      terminalReply: { disposition: "visible", text: "authoritative progress" },
-    });
+      await runAnnounceFlowForTest("run-timeout-visible-terminal", {
+        outcome: { status: "timeout" },
+        roundOneReply: undefined,
+        terminalReply: { disposition: "visible", text },
+      });
 
-    const directAgentCall = findFinalDirectAgentCall();
-    const internalEvents =
-      (directAgentCall?.params?.internalEvents as Array<{ result?: string }>) ?? [];
-    expect(internalEvents[0]?.result).toBe("authoritative progress");
-    expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
-  });
+      const directAgentCall = findFinalDirectAgentCall();
+      const internalEvents =
+        (directAgentCall?.params?.internalEvents as Array<{
+          result?: string;
+          noVisibleResult?: boolean;
+        }>) ?? [];
+      expect(internalEvents[0]?.result).toBe(text);
+      expect(internalEvents[0]?.noVisibleResult).toBeUndefined();
+      expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
+    },
+  );
 
   it("keeps authoritative silence on timeout without transcript inference", async () => {
     chatHistoryMessages = [
@@ -536,6 +545,28 @@ describe("subagent announce timeout config", () => {
     });
 
     expect(findFinalDirectAgentCall()).toBeUndefined();
+    expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
+  });
+
+  it("keeps authoritative empty success intentional without transcript inference", async () => {
+    chatHistoryMessages = [
+      { role: "assistant", content: [{ type: "text", text: "stale transcript output" }] },
+    ];
+
+    await runAnnounceFlowForTest("run-ok-empty-terminal", {
+      outcome: { status: "ok" },
+      roundOneReply: undefined,
+      terminalReply: { disposition: "empty" },
+    });
+
+    const directAgentCall = findFinalDirectAgentCall();
+    const internalEvents =
+      (directAgentCall?.params?.internalEvents as Array<{
+        result?: string;
+        noVisibleResult?: boolean;
+      }>) ?? [];
+    expect(internalEvents[0]?.result).toBe("(no output)");
+    expect(internalEvents[0]?.noVisibleResult).toBe(true);
     expect(gatewayCalls.some((call) => call.method === "chat.history")).toBe(false);
   });
 

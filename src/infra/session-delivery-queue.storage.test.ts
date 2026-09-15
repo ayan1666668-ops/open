@@ -1,6 +1,8 @@
 // Covers session delivery queue persistence state transitions.
 import { describe, expect, it } from "vitest";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
+import { captureOpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.js";
+import type { OpenClawStateWorkerContext } from "../state/openclaw-state-worker-context.types.js";
 import {
   advanceSessionDeliveryAgentRun,
   deferSessionDelivery,
@@ -403,6 +405,37 @@ describe("session-delivery queue storage", () => {
       await settleSessionDelivery(id, tempDir);
       expect(await loadPendingSessionDeliveries(tempDir)).toStrictEqual([]);
       expect(readSessionQueueStatus(tempDir, id)).toBe("completed");
+    });
+  });
+
+  it("does not charge a retry through a retired worker admission", async () => {
+    await withSessionDeliveryQueue(async (tempDir, queueContext) => {
+      const id = await enqueueSessionDelivery(
+        {
+          kind: "systemEvent",
+          sessionKey: "agent:main:main",
+          text: "restart complete",
+        },
+        queueContext,
+      );
+      const captured = captureOpenClawStateWorkerContext({
+        env: { ...process.env, OPENCLAW_STATE_DIR: tempDir },
+      });
+      const retiredContext = {
+        ...captured,
+        admission: {
+          ...captured.admission,
+          assertCurrent: () => {
+            throw new Error("captured database admission retired");
+          },
+        },
+      } satisfies OpenClawStateWorkerContext;
+
+      await expect(failSessionDelivery(id, "must not persist", retiredContext)).rejects.toThrow(
+        "captured database admission retired",
+      );
+
+      expect((await loadPendingSessionDelivery(id, queueContext))?.retryCount).toBe(0);
     });
   });
 

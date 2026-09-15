@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
+import {
+  stagePostCompactionDelegate,
+  stagedPostCompactionDelegateCount,
+} from "../../../auto-reply/continuation/delegate-store-post-compaction.js";
+import { cancelPendingDelegates } from "../../../auto-reply/continuation/delegate-store.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions.js";
 import {
   deleteSessionEntryLifecycle,
@@ -397,6 +402,11 @@ describe("subagent registry recovery scheduling", () => {
               }
               return deleted;
             });
+            stagePostCompactionDelegate(sibling.childSessionKey, {
+              task: "successor-owned work",
+              createdAt: Date.now(),
+              silent: true,
+            });
             try {
               await sweeper.sweepOnce();
               expect(
@@ -408,7 +418,9 @@ describe("subagent registry recovery scheduling", () => {
                 sessionId: sibling.runId,
                 lifecycleRevision: "reset-revision",
               });
+              expect(stagedPostCompactionDelegateCount(sibling.childSessionKey)).toBe(1);
             } finally {
+              cancelPendingDelegates(sibling.childSessionKey);
               sweeper.reset();
             }
           });

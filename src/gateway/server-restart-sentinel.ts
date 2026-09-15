@@ -113,7 +113,7 @@ export async function deliverQueuedSessionDelivery(input: {
   return await deliverQueuedSessionDeliveryCore({
     deps: input.deps,
     entry: input.entry,
-    stateDir: queueContext.environment.OPENCLAW_STATE_DIR,
+    queueContext,
     ...(input.resolveGatewayContext ? { resolveGatewayContext: input.resolveGatewayContext } : {}),
   });
 }

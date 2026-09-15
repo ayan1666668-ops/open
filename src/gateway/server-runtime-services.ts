@@ -8,11 +8,8 @@ import {
 } from "../infra/delivery-queue-sqlite.js";
 import { computeBackoffMs } from "../infra/delivery-recovery.shared.js";
 import { resolveHeartbeatAgents, resolveHeartbeatIntervalMs } from "../infra/heartbeat-config.js";
-import {
-  startHeartbeatRunner,
-  type HeartbeatRunner,
-  type runHeartbeatOnce,
-} from "../infra/heartbeat-runner.js";
+import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner-scheduler.js";
+import type { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { getHeartbeatWakeAbortSignal } from "../infra/heartbeat-wake.js";
 import type { DeliverOutboundPayloadsParams } from "../infra/outbound/deliver.js";
 import {

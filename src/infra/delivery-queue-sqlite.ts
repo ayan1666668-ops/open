@@ -320,6 +320,19 @@ function terminalizeContinuationEntryInDatabase(
   return { status: "terminalized", retained: retention !== undefined };
 }
 
+export function terminalizeInvalidDeliveryQueueEntryInDatabase(
+  database: OpenClawStateDatabase,
+  params: {
+    queueName: string;
+    id: string;
+    entry: DeliveryQueueEntryState;
+    expectedEntryJson: string;
+    lastError: string;
+  },
+): TerminalizePendingDeliveryQueueEntryResult {
+  return terminalizeContinuationEntryInDatabase(database, prepareContinuationTerminalEntry(params));
+}
+
 /** Atomically delete or tombstone a pending row only while its value is unchanged. */
 export function terminalizePendingDeliveryQueueEntry(
   params: TerminalizePendingDeliveryQueueEntryParams & { stateDir?: string },

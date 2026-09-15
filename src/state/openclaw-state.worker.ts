@@ -326,6 +326,7 @@ function createSharedStateWorkerBackend(
         command.type === "sessionDelivery.markSettlement" ||
         command.type === "sessionDelivery.complete" ||
         command.type === "sessionDelivery.fail" ||
+        command.type === "sessionDelivery.failInvalid" ||
         command.type === "sessionDelivery.load" ||
         command.type === "sessionDelivery.list" ||
         command.type === "sessionDelivery.moveToFailed"

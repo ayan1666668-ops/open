@@ -13,7 +13,7 @@ type FrozenSessionIdentity = {
 export function createSubagentSweepSessionCleanup(call: typeof callGateway) {
   const freezeSessionIdentity = (
     childSessionKey: string,
-    storeCache: SubagentSessionStoreCache,
+    storeCache?: SubagentSessionStoreCache,
   ): FrozenSessionIdentity | undefined => {
     const sessionEntry = loadSubagentSessionEntry({ childSessionKey, storeCache });
     const sessionId = sessionEntry?.sessionId?.trim();
@@ -21,9 +21,21 @@ export function createSubagentSweepSessionCleanup(call: typeof callGateway) {
     return sessionId && lifecycleRevision ? { sessionId, lifecycleRevision } : undefined;
   };
 
+  const isSessionIdentityCurrent = (
+    childSessionKey: string,
+    identity: FrozenSessionIdentity,
+  ): boolean => {
+    const current = freezeSessionIdentity(childSessionKey);
+    return (
+      current?.sessionId === identity.sessionId &&
+      current.lifecycleRevision === identity.lifecycleRevision
+    );
+  };
+
   const deleteSession = async (
     childSessionKey: string,
     identity: FrozenSessionIdentity,
+    isCurrent: () => boolean,
   ): Promise<"deleted" | "changed"> => {
     let failure: unknown;
     const outcome = await deleteSubagentSessionForCleanup({
@@ -31,6 +43,7 @@ export function createSubagentSweepSessionCleanup(call: typeof callGateway) {
       childSessionKey,
       expectedSessionId: identity.sessionId,
       expectedLifecycleRevision: identity.lifecycleRevision,
+      isCurrent,
       onError: (error) => {
         failure = error;
       },
@@ -41,5 +54,5 @@ export function createSubagentSweepSessionCleanup(call: typeof callGateway) {
     return outcome;
   };
 
-  return { deleteSession, freezeSessionIdentity };
+  return { deleteSession, freezeSessionIdentity, isSessionIdentityCurrent };
 }
