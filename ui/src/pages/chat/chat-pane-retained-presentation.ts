@@ -105,10 +105,11 @@ export abstract class ChatPaneRetainedPresentation extends ChatPaneBoard {
         sessionId: ChatPageHost["currentSessionId"];
         agentId: string | undefined;
         card: ProgressCard;
+        identity: string;
       }
     | undefined;
 
-  protected get presentedProgressCard(): ProgressCard | null {
+  protected get progressCardPresentation(): { card: ProgressCard; identity: string } | null {
     const state = this.state;
     if (
       !state ||
@@ -134,7 +135,8 @@ export abstract class ChatPaneRetainedPresentation extends ChatPaneBoard {
       this.retainedProgressCard = undefined;
     }
     const card = this.progressCard.card;
-    if (card) {
+    const target = this.resolveChatReadTarget();
+    if (card && target) {
       this.retainedProgressCard = {
         gatewayScope,
         client: state.client,
@@ -142,12 +144,14 @@ export abstract class ChatPaneRetainedPresentation extends ChatPaneBoard {
         sessionId: state.currentSessionId,
         agentId,
         card,
+        // Global and ordinary sessions can share the progress-card wire key.
+        identity: JSON.stringify([target.agentId ?? null, target.sessionKey]),
       };
     } else if (!this.progressCard.loading) {
       this.retainedProgressCard = undefined;
     }
     // Reconnect retires read admission, not the mounted card's disclosure state.
-    return this.retainedProgressCard?.card ?? null;
+    return this.retainedProgressCard ?? null;
   }
 
   protected override initialProgressCardTarget() {

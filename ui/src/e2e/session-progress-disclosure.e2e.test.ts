@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Page } from "playwright";
 import { expect, it } from "vitest";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
+import { controlUiBundledSettingsStorageKey } from "../test-helpers/control-ui-e2e.ts";
 import {
   createChatFlowE2eSuite,
   installMockGateway,
@@ -9,6 +11,47 @@ import {
 } from "./chat-flow.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
+
+async function installProgressGateway(page: Page, sessionKey: string, canonicalKey = sessionKey) {
+  const session = {
+    key: canonicalKey,
+    sessionId: `session:${sessionKey}`,
+    kind: "direct",
+    updatedAt: 1,
+    hasActiveRun: true,
+    activeRunIds: ["progress-run"],
+  };
+  return installMockGateway(page, {
+    sessionKey,
+    sessionInfo: session,
+    sessions: [session],
+    inFlightRun: { runId: "progress-run", startedAt: Date.now() },
+    historyMessages: Array.from({ length: 80 }, (_, index) => ({
+      role: index % 2 ? "assistant" : "user",
+      content: [{ type: "text", text: `History ${index}: ${"Reading context. ".repeat(8)}` }],
+    })),
+    methodResponses: {
+      "progressCard.get": {
+        cases: [
+          {
+            match: { sessionKey: canonicalKey },
+            response: {
+              card: {
+                sessionKey: canonicalKey,
+                revision: 1,
+                updatedAt: Date.now(),
+                steps: [
+                  { step: "Inspect the conversation", status: "in_progress" },
+                  { step: "Verify navigation", status: "pending" },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    },
+  });
+}
 
 suite.define(() => {
   it("wires settled transcript gestures, escalation, keyboard choices, and visit reset", async () => {
@@ -18,28 +61,7 @@ suite.define(() => {
     });
     const page = await context.newPage();
     const sessionKey = "agent:main:main";
-    const gateway = await installMockGateway(page, {
-      sessionKey,
-      sessionInfo: { key: sessionKey, hasActiveRun: true, activeRunIds: ["progress-run"] },
-      inFlightRun: { runId: "progress-run", startedAt: Date.now() },
-      historyMessages: Array.from({ length: 80 }, (_, index) => ({
-        role: index % 2 ? "assistant" : "user",
-        content: [{ type: "text", text: `History ${index}: ${"Reading context. ".repeat(8)}` }],
-      })),
-      methodResponses: {
-        "progressCard.get": {
-          card: {
-            sessionKey,
-            revision: 1,
-            updatedAt: Date.now(),
-            steps: [
-              { step: "Inspect the conversation", status: "in_progress" },
-              { step: "Verify navigation", status: "pending" },
-            ],
-          },
-        },
-      },
-    });
+    const gateway = await installProgressGateway(page, sessionKey);
     const card = page.locator(".session-progress-card--composer");
     const thread = page.locator(".chat-thread");
     const open = () => card.evaluate((element) => (element as HTMLDetailsElement).open);
@@ -160,4 +182,86 @@ suite.define(() => {
       await suite.closeBrowserContext(context);
     }
   });
+
+  it.each(["automatic", "manual"])(
+    "keeps %s collapse in a retained short-name pane through reconnect",
+    async (choice) => {
+      const artifactDir = createControlUiE2eArtifactDir(`session-progress-reconnect-${choice}`);
+      const context = await suite.newBrowserContext({ viewport: { width: 1440, height: 900 } });
+      await context.addInitScript((settingsKey) => {
+        localStorage.setItem(
+          settingsKey,
+          JSON.stringify({
+            chatSplitLayout: {
+              activePaneId: "p1",
+              columnWeights: [0.5, 0.5],
+              columns: [
+                {
+                  id: "c1",
+                  paneWeights: [1],
+                  panes: [{ id: "p1", sessionKey: "agent:main:main" }],
+                },
+                { id: "c2", paneWeights: [1], panes: [{ id: "p2", sessionKey: "notes" }] },
+              ],
+            },
+          }),
+        );
+      }, controlUiBundledSettingsStorageKey(suite.server.baseUrl));
+      const page = await context.newPage();
+      const gateway = await installProgressGateway(page, "notes", "agent:main:notes");
+      const card = page.locator(".session-progress-card--composer");
+      const pane = page.locator("openclaw-chat-pane").filter({ has: card });
+      const thread = pane.locator(".chat-thread");
+      const open = () => card.evaluate((element) => (element as HTMLDetailsElement).open);
+      try {
+        await page.goto(`${suite.server.baseUrl}chat`);
+        await card.waitFor();
+        await expect
+          .poll(() =>
+            thread.evaluate(
+              (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+            ),
+          )
+          .toBeLessThan(2);
+        expect(
+          await pane.evaluate(
+            (element) => (element as HTMLElement & { sessionKey: string }).sessionKey,
+          ),
+        ).toBe("notes");
+        if (choice === "automatic") {
+          const box = await thread.boundingBox();
+          await page.mouse.move(box!.x + box!.width / 2, box!.y + 80);
+          for (let index = 0; index < 2; index++) {
+            const before = await thread.evaluate((element) => element.scrollTop);
+            await page.mouse.wheel(0, -320);
+            await expect
+              .poll(() => thread.evaluate((element) => element.scrollTop))
+              .toBeLessThan(before);
+            await page.waitForTimeout(201); // Separate native gestures beyond the 200 ms burst window.
+          }
+          await expect.poll(open).toBe(false);
+        }
+        await gateway.setOnline(false);
+        await pane.locator('.agent-chat__composer-underlaps[data-tone="warn"]').waitFor();
+        if (choice === "manual") {
+          await card.locator("summary").press("Enter");
+          expect(
+            await pane.evaluate(
+              (element) => (element as HTMLElement & { sessionKey: string }).sessionKey,
+            ),
+          ).toBe("notes");
+        }
+        await page.screenshot({ path: path.join(artifactDir, "disconnected.png") });
+        expect(await open()).toBe(false);
+        await gateway.setOnline(true);
+        await pane
+          .locator('.agent-chat__composer-underlaps[data-tone="warn"]')
+          .waitFor({ state: "hidden" });
+        await page.screenshot({ path: path.join(artifactDir, "reconnected.png") });
+        expect(await open()).toBe(false);
+      } finally {
+        await suite.closeBrowserContext(context);
+      }
+    },
+  );
 });

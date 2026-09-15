@@ -60,7 +60,7 @@ function createHistoryProgressPane(request: GatewayRequestHandler) {
   state.settings = { sessionKey: "notes", lastActiveSessionKey: "notes" } as typeof state.settings;
   const presentation = pane as TestChatPane & {
     progressCard: SessionProgressCardController;
-    readonly presentedProgressCard: ProgressCard | null;
+    readonly progressCardPresentation: { card: ProgressCard; identity: string } | null;
   };
   const progress = presentation.progressCard;
   onTestFinished(() => progress.hostDisconnected());
@@ -191,7 +191,8 @@ describe("retained bare pane progress follows accepted history ownership", () =>
     progress.hostUpdate();
     await vi.waitFor(() => expect(progress.card).toEqual(card));
 
-    expect(presentation.presentedProgressCard).toEqual(card);
+    const presented = presentation.progressCardPresentation;
+    expect(presented?.card).toEqual(card);
 
     if (transition === "navigation") {
       state.sessionKey = "scratch";
@@ -211,8 +212,8 @@ describe("retained bare pane progress follows accepted history ownership", () =>
     }
     progress.hostUpdate();
     expect(progress.card).toBeNull();
-    expect(presentation.presentedProgressCard).toEqual(
-      transition === "reconnect" || transition === "disconnect" ? card : null,
+    expect(presentation.progressCardPresentation).toEqual(
+      transition === "reconnect" || transition === "disconnect" ? presented : null,
     );
     expect(request.mock.calls.filter(([method]) => method === "progressCard.get")).toHaveLength(1);
   });

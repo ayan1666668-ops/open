@@ -84,6 +84,7 @@ export class ChatPane extends ChatPaneLayoutRender {
     }
     const selectedSession = selectedChatSessionRow(state);
     const readTarget = this.resolveChatReadTarget();
+    const progressPresentation = this.progressCardPresentation;
     const selectedSessionArchived = this.isCurrentSessionArchived(state);
     const mutationAccess = readChatPaneMutationAccess(
       this.context.gateway.snapshot,
@@ -402,10 +403,8 @@ export class ChatPane extends ChatPaneLayoutRender {
       compactionStatus: state.compactionStatus,
       fallbackStatus: state.fallbackStatus,
       providerPolicyNotice: catalogKey ? null : state.providerPolicyNotice,
-      progressCard: this.presentedProgressCard,
-      // Global and ordinary sessions can project the same progress-card wire key.
-      progressCardIdentity:
-        readTarget && JSON.stringify([readTarget.agentId ?? null, readTarget.sessionKey]),
+      progressCard: progressPresentation?.card ?? null,
+      progressCardIdentity: progressPresentation?.identity,
       gatewayScope: gatewayPresentationScope(this.context.gateway),
       progressCardInitialLoading: this.progressCardInitialLoading,
       collapseTaskProgress: state.settings.chatCollapseTaskProgress === true,

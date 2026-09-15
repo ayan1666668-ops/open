@@ -121,7 +121,10 @@ class ProgressDisclosureController {
       choices.set(this.sessionKey, this.state.open);
       manualChoicesByGateway.set(this.gatewayScope, choices);
     } else if (event.type === "settle" && previous.open && !this.state.open) {
-      manualChoicesByGateway.get(this.gatewayScope)?.delete(this.sessionKey);
+      const choices = manualChoicesByGateway.get(this.gatewayScope);
+      if (choices?.get(this.sessionKey) === true) {
+        choices.delete(this.sessionKey);
+      }
     }
   }
 

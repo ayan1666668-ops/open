@@ -946,6 +946,26 @@ describe("renderSessionProgressCard", () => {
     },
   );
 
+  it("preserves another pane's manual close after automatic collapse and remount", async () => {
+    const first = createContainer();
+    const second = createContainer();
+    const lifecycle = { gatewayScope: {}, readingHistory: true };
+    renderTranscriptCard(first, lifecycle);
+    renderTranscriptCard(second, lifecycle);
+    const transcript = observeTranscript(first, transcriptCleanups);
+    await Promise.resolve();
+    second.querySelector("summary")!.click();
+    expect(second.querySelector("details")!.open).toBe(false);
+    transcript.wheel(200);
+    vi.advanceTimersByTime(201);
+    transcript.wheel(200);
+    vi.advanceTimersByTime(300);
+    expect(first.querySelector("details")!.open).toBe(false);
+    render(nothing, second);
+    renderTranscriptCard(second, lifecycle);
+    expect(second.querySelector("details")!.open).toBe(false);
+  });
+
   it.each([
     { first: progressCard.sessionKey, next: "agent:main:next" },
     { first: "global", next: "agent:main:global" },
