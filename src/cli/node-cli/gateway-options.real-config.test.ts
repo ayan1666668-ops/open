@@ -2,12 +2,9 @@
 // upgrade behavior. Uses the REAL resolver + REAL SQLite node-host config via
 // withOpenClawTestState (real isolated state dir, no mocks).
 import { describe, expect, it } from "vitest";
-import { resolveNodeGatewayOptions } from "./gateway-options.js";
-import {
-  configureNodeHost,
-  loadNodeHostConfig,
-} from "../../node-host/config.js";
+import { configureNodeHost, loadNodeHostConfig } from "../../node-host/config.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { resolveNodeGatewayOptions } from "./gateway-options.js";
 
 describe("node gateway options (real config)", () => {
   it(
