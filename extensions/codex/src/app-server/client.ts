@@ -32,7 +32,6 @@ import {
 } from "./protocol.js";
 import { createCodexRequestAttempt, type CodexRequestAttempt } from "./request-attempt.js";
 import { CodexAppServerRpcError } from "./rpc-error.js";
-import { retireSharedCodexAppServerClientIfCurrent } from "./shared-client-lifecycle.js";
 import { createStdioTransport } from "./transport-stdio.js";
 import { createWebSocketTransport } from "./transport-websocket.js";
 import {
@@ -244,6 +243,7 @@ export class CodexAppServerClient {
         abortMessage: string;
       }) => Promise<() => void>)
     | undefined;
+  private retireAfterIndeterminateThreadRequest: (() => boolean) | undefined;
   private stderrTail = "";
   private readonly privateTransportSecrets = new Set<string>();
   private privateStderrPending = "";
@@ -397,7 +397,7 @@ export class CodexAppServerClient {
     return this.modelCatalogRevision;
   }
 
-  /** Installs the spawn-owner check run before config-loading thread requests. */
+  /** Installs the spawn-owner guard and retirement for config-loading thread requests. */
   setThreadSessionRequestGuard(
     guard:
       | ((options: {
@@ -407,8 +407,10 @@ export class CodexAppServerClient {
           abortMessage: string;
         }) => Promise<() => void>)
       | undefined,
+    retireAfterIndeterminateRequest?: () => boolean,
   ): void {
     this.threadSessionRequestGuard = guard;
+    this.retireAfterIndeterminateThreadRequest = retireAfterIndeterminateRequest;
   }
 
   /** Returns the local transport PID for scoped child-process cleanup, when available. */
@@ -453,6 +455,7 @@ export class CodexAppServerClient {
         ? this.threadSessionRequestGuard
         : undefined;
     if (guard) {
+      const retire = this.retireAfterIndeterminateThreadRequest;
       if (
         !options.signal &&
         !(
@@ -542,7 +545,7 @@ export class CodexAppServerClient {
             }
             // New acquisitions need a fresh client; existing peers can finish,
             // including guarded helper startup after the native response arrives.
-            if (!retireSharedCodexAppServerClientIfCurrent(this)) {
+            if (!retire?.()) {
               await this.closeAndRunAfterExit(release, method);
             }
           }
