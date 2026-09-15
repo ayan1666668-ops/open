@@ -476,6 +476,45 @@ describe("Codex Computer Use setup", () => {
     expectRequestMethodNotCalled(request, "plugin/install");
   });
 
+  it("probes unified Computer Use through its JavaScript tool", async () => {
+    const request = createComputerUseRequest({
+      installed: true,
+      pluginName: "unified-computer-use",
+      mcpServerName: "cua_repl",
+      mcpTools: ["js", "js_reset", "turn_ended"],
+    });
+
+    const status = await readCodexComputerUseStatus({
+      pluginConfig: {
+        computerUse: {
+          enabled: true,
+          marketplaceName: "desktop-tools",
+          pluginName: "unified-computer-use",
+          mcpServerName: "cua_repl",
+        },
+      },
+      request,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "mcpServer/tool/call",
+      {
+        threadId: "computer-use-probe-thread-1",
+        server: "cua_repl",
+        tool: "js",
+        arguments: { code: "await cua.getState();" },
+      },
+      { timeoutMs: 60_000 },
+    );
+    expectStatusFields(status, {
+      ready: true,
+      reason: "ready",
+      pluginName: "unified-computer-use",
+      mcpServerName: "cua_repl",
+      tools: ["js", "js_reset", "turn_ended"],
+    });
+  });
+
   it("inherits managed security policy when starting a Computer Use readiness probe", async () => {
     const request = createComputerUseRequest({ installed: true });
     const managedRequest = vi.fn(async (method: string, params?: unknown) => {
@@ -1823,6 +1862,9 @@ describe("Codex Computer Use setup", () => {
 function createComputerUseRequest(params: {
   installed: boolean;
   enabled?: boolean;
+  pluginName?: string;
+  mcpServerName?: string;
+  mcpTools?: readonly string[];
   nativePluginsEnabled?: boolean | "absent";
   marketplaceAvailableAfterListCalls?: number;
   liveTestFailures?: number;
@@ -1840,13 +1882,23 @@ function createComputerUseRequest(params: {
   let liveTestFailures = params.liveTestFailures ?? 0;
   let reloadFailures = params.reloadFailures ?? 0;
   let threadStartCalls = 0;
+  const pluginName = params.pluginName ?? "computer-use";
+  const mcpServerName = params.mcpServerName ?? "computer-use";
+  const mcpTools = params.mcpTools ?? ["list_apps"];
   const marketplaceName = params.remoteMarketplace?.name ?? "desktop-tools";
   const marketplacePath = params.remoteMarketplace
     ? null
     : `/marketplaces/${marketplaceName}/.agents/plugins/marketplace.json`;
   const source = params.remoteMarketplace ? "remote" : "local";
   const currentPluginSummary = () =>
-    pluginSummary(installed, marketplaceName, enabled, source, params.remoteMarketplace?.pluginId);
+    pluginSummary(
+      installed,
+      marketplaceName,
+      enabled,
+      source,
+      params.remoteMarketplace?.pluginId,
+      pluginName,
+    );
   return vi.fn(async (method: string, requestParams?: unknown) => {
     if (method === "experimentalFeature/enablement/set") {
       return {
@@ -1898,7 +1950,7 @@ function createComputerUseRequest(params: {
               remoteMarketplaceName: marketplaceName,
               pluginName: params.remoteMarketplace.pluginId,
             }
-          : { marketplacePath, pluginName: "computer-use" },
+          : { marketplacePath, pluginName },
       );
       return {
         plugin: {
@@ -1908,7 +1960,7 @@ function createComputerUseRequest(params: {
           description: "Control desktop apps.",
           skills: [],
           apps: [],
-          mcpServers: ["computer-use"],
+          mcpServers: [mcpServerName],
         },
       };
     }
@@ -1936,16 +1988,13 @@ function createComputerUseRequest(params: {
           installed && enabled
             ? [
                 {
-                  name: "computer-use",
+                  name: mcpServerName,
                   tools:
                     params.mcpToolsAvailable === false
                       ? {}
-                      : {
-                          list_apps: {
-                            name: "list_apps",
-                            inputSchema: { type: "object" },
-                          },
-                        },
+                      : Object.fromEntries(
+                          mcpTools.map((name) => [name, { name, inputSchema: { type: "object" } }]),
+                        ),
                   resources: [],
                   resourceTemplates: [],
                   authStatus: "unsupported",
@@ -1966,15 +2015,16 @@ function createComputerUseRequest(params: {
       };
     }
     if (method === "mcpServer/tool/call") {
+      const tool = mcpTools.includes("list_apps") ? "list_apps" : "js";
       expect(requestParams).toEqual({
         threadId: `computer-use-probe-thread-${threadStartCalls}`,
-        server: "computer-use",
-        tool: "list_apps",
-        arguments: {},
+        server: mcpServerName,
+        tool,
+        arguments: tool === "js" ? { code: "await cua.getState();" } : {},
       });
       if (liveTestFailures > 0) {
         liveTestFailures -= 1;
-        throw new Error("list_apps timed out");
+        throw new Error(`${tool} timed out`);
       }
       return { content: [{ type: "text", text: "[]" }] };
     }
@@ -2286,14 +2336,15 @@ function pluginSummary(
   enabled = installed,
   source: "local" | "remote" = "local",
   remotePluginId?: string | null,
+  pluginName = "computer-use",
 ) {
   return {
-    id: `computer-use@${marketplaceName}`,
+    id: `${pluginName}@${marketplaceName}`,
     ...(source === "remote" ? { remotePluginId: remotePluginId ?? null } : {}),
-    name: "computer-use",
+    name: pluginName,
     source:
       source === "local"
-        ? { type: "local", path: `/marketplaces/${marketplaceName}/plugins/computer-use` }
+        ? { type: "local", path: `/marketplaces/${marketplaceName}/plugins/${pluginName}` }
         : { type: "remote" },
     installed,
     enabled,
