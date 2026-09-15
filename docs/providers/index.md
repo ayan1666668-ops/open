@@ -32,6 +32,7 @@ Looking for chat channel docs (WhatsApp/Telegram/Discord/Slack/Mattermost (plugi
 - [Azure Speech](/providers/azure-speech)
 - [Baseten (Inkling + Model APIs)](/providers/baseten)
 - [BytePlus (International)](/concepts/model-providers#byteplus-international)
+- [BytesBrains Cruise](/providers/cruise)
 - [Cerebras](/providers/cerebras)
 - [Chutes](/providers/chutes)
 - [ClawRouter (managed multi-provider routing)](/providers/clawrouter)
@@ -105,6 +106,7 @@ Looking for chat channel docs (WhatsApp/Telegram/Discord/Slack/Mattermost (plugi
 
 ## Community tools
 
+- [BytesBrains Cruise](/providers/cruise) - Community provider plugin: one OpenAI-compatible endpoint with budgets, lanes, and live `GET /v1/models` discovery ([bytesbrains/openclaw-cruise](https://github.com/bytesbrains/openclaw-cruise))
 - [Claude Max API Proxy](/providers/claude-max-api-proxy) - Community proxy for Claude subscription credentials (verify Anthropic policy/terms before use)
 
 For the full provider catalog (xAI, Groq, Mistral, etc.) and advanced configuration,
