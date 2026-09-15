@@ -131,20 +131,31 @@ export const finalizeResumedAnnounceGiveUp = async (
   }
 };
 
-export const retryDeferredCompletedAnnounces = (
+export const resumeAncestorCleanup = (
   context: SubagentLifecycleAnnounceCleanupContext,
-  excludeRunId?: string,
+  settledEntry: SubagentRunRecord,
 ) => {
   const params = context.options;
   const now = Date.now();
-  for (const [runId, entry] of params.runs.entries()) {
-    if (excludeRunId && runId === excludeRunId) {
-      continue;
+  const visited = new Set([settledEntry.childSessionKey]);
+  let requesterSessionKey = settledEntry.requesterSessionKey;
+  while (requesterSessionKey && !visited.has(requesterSessionKey)) {
+    visited.add(requesterSessionKey);
+    const entry = params.getLatestRunForChildSession(requesterSessionKey);
+    if (!entry || params.runs.get(entry.runId) !== entry) {
+      break;
     }
+    requesterSessionKey = entry.requesterSessionKey;
+    const { runId } = entry;
     if (typeof entry.execution.endedAt !== "number") {
       continue;
     }
     if (entry.cleanupCompletedAt || entry.cleanupHandled) {
+      continue;
+    }
+    // A failed cleanup belongs to its retry timer or exhausted process-local
+    // budget; even descendant settlement must not reopen that attempt early.
+    if (context.hasCleanupFailure(entry)) {
       continue;
     }
     if (isDeliverySuspended(entry)) {
@@ -385,6 +396,16 @@ export const startSubagentAnnounceCleanupFlow = (
   }
   const cleanup = entry.cleanup;
   const skipRequesterDelivery = entry.suppressCompletionDelivery === true;
+  // The spawning turn decides between individual review and a yielded batch.
+  // Keep private results durable without admitting a competing requester turn.
+  if (
+    entry.completionTarget === "parent" &&
+    entry.requesterTurnRunId &&
+    !skipRequesterDelivery &&
+    entry.delivery?.status !== "delivered"
+  ) {
+    return false;
+  }
   // A terminal delivery failure closes upward delivery, not live descendants.
   // Their completion callback re-enters this same cleanup path without a timer.
   if (
@@ -395,6 +416,7 @@ export const startSubagentAnnounceCleanupFlow = (
     entry.cleanupHandled = false;
     params.resumedRuns.delete(runId);
     params.persist(runId);
+    context.clearCleanupFailureCount(entry);
     return true;
   }
   let suppressSessionEffects = shouldSuppressSubagentRecoverySessionEffects(entry);
@@ -511,6 +533,10 @@ export const startSubagentAnnounceCleanupFlow = (
   }
   const pendingPayload = loadPendingFinalDeliveryPayload(entry);
   const requesterOrigin = normalizeDeliveryContext(pendingPayload.requesterOrigin);
+  const requesterSettleGeneration = entry.requesterSettleWake?.rearmGeneration;
+  const requesterTookCompletion = () =>
+    entry.requesterTurnYielded === true ||
+    entry.requesterSettleWake?.rearmGeneration !== requesterSettleGeneration;
   let latestDeliveryError = getDeliveryLastError(entry);
   let committedDelivery: SubagentRunRecord["delivery"];
   const finalizeAnnounceCleanup = async (announceOutcome: SubagentAnnounceFlowOutcome) => {
@@ -528,7 +554,8 @@ export const startSubagentAnnounceCleanupFlow = (
     }
     // Requester-settle can commit delivery while the mirror lookup is pending.
     const shouldCreditPriorDelivery = entry.delivery?.status === "delivered" || hasDeliveryMirror;
-    if (shouldCreditPriorDelivery) {
+    const handedOff = requesterTookCompletion();
+    if (shouldCreditPriorDelivery || handedOff) {
       latestDeliveryError = undefined;
     }
     if (announceOutcome !== "delivered" && latestDeliveryError) {
@@ -538,7 +565,11 @@ export const startSubagentAnnounceCleanupFlow = (
       context,
       runId,
       cleanup,
-      shouldCreditPriorDelivery ? "delivered" : announceOutcome,
+      shouldCreditPriorDelivery
+        ? "delivered"
+        : handedOff
+          ? "intentional_non_delivery"
+          : announceOutcome,
       cleanupGeneration,
     );
   };
@@ -546,6 +577,7 @@ export const startSubagentAnnounceCleanupFlow = (
   const announceParams: Parameters<RunSubagentAnnounceFlow>[0] = {
     childSessionKey: pendingPayload.childSessionKey,
     childRunId: pendingPayload.childRunId,
+    runTimeoutSeconds: entry.runTimeoutSeconds,
     requesterSessionKey: pendingPayload.requesterSessionKey,
     requesterAgentId: resolveSubagentRequesterAgentId(params.getRuntimeConfig(), entry),
     requesterOrigin,
@@ -563,11 +595,14 @@ export const startSubagentAnnounceCleanupFlow = (
     outcome: pendingPayload.outcome,
     spawnMode: pendingPayload.spawnMode,
     expectsCompletionMessage: pendingPayload.expectsCompletionMessage,
+    completionTarget: pendingPayload.completionTarget,
+    completionRequesterSessionId: pendingPayload.completionRequesterSessionId,
     wakeOnDescendantSettle: pendingPayload.wakeOnDescendantSettle === true,
     suppressChildSessionEffects: suppressSessionEffects,
     isChildSessionEffectsAllowed: childSessionEffectsAllowed,
     isCompletionDeliveryAllowed: () =>
       entry.suppressCompletionDelivery !== true &&
+      !isDeliverySuspended(entry) &&
       (entry.delivery?.status !== "delivered" || entry.delivery === committedDelivery) &&
       context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration),
     isCompletionOwnedByRequesterYield: () =>
@@ -617,6 +652,11 @@ export const startSubagentAnnounceCleanupFlow = (
       if (entry.delivery?.status === "delivered") {
         return;
       }
+      // A late failure cannot rearm an announcement transferred to the batch.
+      // Committed sends still retain their delivery evidence.
+      if (!delivery.delivered && requesterTookCompletion()) {
+        return;
+      }
       recordAnnounceDeliveryResult(entry, delivery, params.runs);
       if (delivery.delivered) {
         const deliveryState = ensureDeliveryState(entry);
@@ -640,6 +680,21 @@ export const startSubagentAnnounceCleanupFlow = (
         deliveryState.status = "failed";
       }
       latestDeliveryError = formatAnnounceDeliveryError(delivery);
+      if (
+        delivery.reason === "message_tool_delivery_missing" &&
+        delivery.disposition === "permanent_failure" &&
+        shouldSuspendPendingFinalDelivery(entry)
+      ) {
+        // Commit the recoverable block at the execution-result edge, before
+        // best-effort mirrors or the detached announce tail can stall.
+        suspendPendingFinalDelivery(context, {
+          runId,
+          entry,
+          reason: "permanent_failure",
+          error: latestDeliveryError,
+        });
+        return;
+      }
       if (
         deliveryState.lastError !== latestDeliveryError ||
         deliveryState.lastDropReason !== previousDropReason

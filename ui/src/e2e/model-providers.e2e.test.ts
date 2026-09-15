@@ -130,14 +130,16 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       const response = await page.goto(`${server.baseUrl}settings/model-providers`);
       expect(response?.status()).toBe(200);
       const openaiCard = page.locator('[data-provider-id="openai"]');
+      const providerStatus = openaiCard.locator(".model-providers__head .settings-status");
       const readiness = page.locator('[data-model-readiness="model-required"]');
       await readiness.waitFor();
       await expect
         .poll(async () => readiness.textContent())
         .toContain("Connect a verified AI model");
       await expect.poll(async () => readiness.textContent()).toContain("Model required");
-      await expect.poll(async () => openaiCard.textContent()).toContain("Credentials configured");
-      await expect.poll(async () => openaiCard.textContent()).not.toContain("Signed in");
+      await expect
+        .poll(async () => (await providerStatus.textContent())?.trim())
+        .toBe("Credentials configured");
       expect(
         (await gateway.getRequests("models.list")).filter(
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
@@ -179,7 +181,9 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       }
 
       await page.getByRole("button", { name: "Refresh", exact: true }).click();
-      await expect.poll(async () => openaiCard.textContent()).toContain("Credentials rejected");
+      await expect
+        .poll(async () => (await providerStatus.textContent())?.trim())
+        .toBe("Credentials rejected");
       expect(
         (await gateway.getRequests("models.list")).filter(
           (request) => (request.params as { view?: string } | undefined)?.view === "all",
@@ -709,9 +713,9 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         },
       });
       await resolveConfigMutation(gateway, updatedDefaultsConfig, "model-providers-hash-defaults");
-      await expect
-        .poll(() => page.getByRole("status").filter({ hasText: "Defaults saved" }).count())
-        .toBeGreaterThan(0);
+      await expect.poll(() => primary.locator("button").first().isEnabled()).toBe(true);
+      expect(await modelPickerValue(primary)).toBe("anthropic/claude-sonnet-4-5");
+      expect(await page.locator(".model-providers__defaults .callout.success").count()).toBe(0);
 
       const addSection = page.locator(".settings-section", {
         has: page.getByRole("heading", { name: "Add provider" }),
@@ -835,9 +839,9 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         config = next;
         await gateway.setMethodResponse("config.get", snapshot());
         await gateway.resolveDeferred("config.patch", { ok: true, config, hash, noop });
-        await expect
-          .poll(async () => (await defaults.getByRole("status").textContent())?.trim())
-          .toBe("Defaults saved.");
+        await expect.poll(() => utility.locator("button").first().isEnabled()).toBe(true);
+        expect(await modelPickerValue(utility)).toBe(choice.value);
+        expect(await defaults.locator(".callout.success").count()).toBe(0);
         observations.push({ choice, request, config, selected: await modelPickerValue(utility) });
         if (recordVisuals) {
           await captureProviderProof(`utility-${choice.label}-saved.png`, utility);
@@ -938,7 +942,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
 
     try {
       await page.goto(`${server.baseUrl}settings/model-providers`);
-      const agentPicker = page.locator(".agent-scope-control openclaw-agent-select");
+      const agentPicker = page.locator(".settings-sidebar__agent openclaw-agent-select");
       await agentPicker.locator(".agent-select__trigger").click();
       await agentPicker.locator('wa-dropdown-item[aria-label="Writer"]').click();
       await expect
@@ -961,9 +965,9 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       await selectModelPicker(primary, "openai/saved-model");
       await gateway.waitForRequest("config.patch", { after: savedPatchCount });
       await resolveConfigMutation(gateway, savedConfig, "model-providers-reconnect-saved");
-      await expect
-        .poll(async () => page.getByRole("status").filter({ hasText: "Defaults saved" }).count())
-        .toBeGreaterThan(0);
+      await expect.poll(() => primary.locator("button").first().isEnabled()).toBe(true);
+      expect(await modelPickerValue(primary)).toBe("openai/saved-model");
+      expect(await page.locator(".model-providers__defaults .callout.success").count()).toBe(0);
 
       await gateway.deferNext("config.patch");
       const failedPatchCount = (await gateway.getRequests("config.patch")).length;

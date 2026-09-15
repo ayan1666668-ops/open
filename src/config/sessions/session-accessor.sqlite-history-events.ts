@@ -42,6 +42,7 @@ import {
   assertHistoryReadWindow,
   captureHistoryReadWindow,
   resolveHistoryMessageSequence,
+  resolveVisibleHistoryEventCount,
   resolveVisibleHistoryProjection,
   resolveVisibleHistoryRange,
   type VisibleHistoryBoundary,
@@ -51,7 +52,7 @@ import {
   assertVisibleMessageRangeJson,
   hasUnindexedVisibleMessages,
   iterateVisibleMessageRange,
-  readVisibleMessageMetadata,
+  iterateVisibleMessageMetadata,
   readVisibleMessageRange,
   resolveVisibleMessagePositions,
 } from "./session-accessor.sqlite-reset-window.js";
@@ -162,38 +163,43 @@ function resolveRecentHistoryStart(
   // No result can include more than maxMessages events, so older metadata would
   // only add synchronous work before the backward scan stops.
   const metadataStart = Math.max(messageStart, messageEnd - maxMessages);
-  const messageBytes = new Map(
-    readVisibleMessageMetadata(projection, metadataStart, messageEnd).map((row) => [
-      row.logicalPosition,
-      row.serialized_bytes,
-    ]),
-  );
+  const metadata = iterateVisibleMessageMetadata(projection, metadataStart, messageEnd, "desc");
+  let nextMetadata: ReturnType<typeof metadata.next> | undefined;
   let messageIndex = messageEnd - 1;
   let selectedStart = boundedEnd;
   let selectedCount = 0;
   let bytes = 0;
-  for (
-    let displayPosition = boundedEnd - 1;
-    displayPosition >= boundedStart;
-    displayPosition -= 1
-  ) {
-    if (selectedCount >= maxMessages) {
-      break;
+  try {
+    for (
+      let displayPosition = boundedEnd - 1;
+      displayPosition >= boundedStart;
+      displayPosition -= 1
+    ) {
+      if (selectedCount >= maxMessages) {
+        break;
+      }
+      const boundary = boundaries.get(displayPosition);
+      let serializedBytes = boundary?.serializedBytes;
+      if (!boundary) {
+        nextMetadata ??= metadata.next();
+        if (!nextMetadata.done && nextMetadata.value.logicalPosition === messageIndex) {
+          serializedBytes = nextMetadata.value.serialized_bytes;
+          nextMetadata = undefined;
+        }
+        messageIndex -= 1;
+      }
+      if (serializedBytes === undefined) {
+        continue;
+      }
+      if ((!allowOversizedFirst || selectedCount > 0) && bytes + serializedBytes > maxBytes) {
+        break;
+      }
+      selectedStart = displayPosition;
+      selectedCount += 1;
+      bytes += serializedBytes;
     }
-    const boundary = boundaries.get(displayPosition);
-    const logicalPosition = boundary ? undefined : messageIndex--;
-    const serializedBytes =
-      boundary?.serializedBytes ??
-      (logicalPosition === undefined ? undefined : messageBytes.get(logicalPosition));
-    if (serializedBytes === undefined) {
-      continue;
-    }
-    if ((!allowOversizedFirst || selectedCount > 0) && bytes + serializedBytes > maxBytes) {
-      break;
-    }
-    selectedStart = displayPosition;
-    selectedCount += 1;
-    bytes += serializedBytes;
+  } finally {
+    metadata.return?.();
   }
   return selectedStart;
 }
@@ -349,11 +355,16 @@ export function readTranscriptDisplayDelta(
 
 export function readSessionTranscriptHistoryEvents(
   scope: SessionTranscriptReadScope,
+  options: { readOnly?: boolean } = {},
 ): SessionTranscriptMessageEvent[] {
-  return withCurrentProjectionSnapshot(scope, (projection) => {
-    const history = resolveVisibleHistoryProjection(projection);
-    return readVisibleHistoryRange(projection, 0, history.total, history);
-  });
+  return withCurrentProjectionSnapshot(
+    scope,
+    (projection) => {
+      const history = resolveVisibleHistoryProjection(projection);
+      return readVisibleHistoryRange(projection, 0, history.total, history);
+    },
+    options,
+  );
 }
 
 function readRecentHistoryInSnapshot(
@@ -414,10 +425,13 @@ function readRecentHistoryInSnapshot(
 
 export function readRecentSessionTranscriptHistoryEvents(
   scope: SessionTranscriptReadScope,
-  options: TranscriptRecentReadLimits & TranscriptReadWindowOptions,
+  options: TranscriptRecentReadLimits & TranscriptReadWindowOptions & { readOnly?: boolean },
 ): SessionTranscriptMessageEventPage {
-  return withCurrentProjectionSnapshot(scope, (projection) =>
-    readRecentHistoryInSnapshot(projection, resolveVisibleHistoryProjection(projection), options),
+  return withCurrentProjectionSnapshot(
+    scope,
+    (projection) =>
+      readRecentHistoryInSnapshot(projection, resolveVisibleHistoryProjection(projection), options),
+    options,
   );
 }
 
@@ -493,10 +507,7 @@ export function readSessionTranscriptHistoryEventPage(
 }
 
 export function readSessionTranscriptHistoryEventCount(scope: SessionTranscriptReadScope): number {
-  return withCurrentProjectionSnapshot(
-    scope,
-    (projection) => resolveVisibleHistoryProjection(projection).total,
-  );
+  return withCurrentProjectionSnapshot(scope, resolveVisibleHistoryEventCount);
 }
 
 export function readSessionTranscriptHistoryEventById(
@@ -573,35 +584,39 @@ export function readSessionTranscriptHistoryEventLookup(
 
 export function readSessionTranscriptHistoryAnchorPage(
   scope: SessionTranscriptReadScope,
-  options: TranscriptAnchorPageOptions,
+  options: TranscriptAnchorPageOptions & { readOnly?: boolean },
 ): SessionTranscriptMessageAnchorPage {
-  return withCurrentProjectionSnapshot(scope, (projection) => {
-    const history = resolveVisibleHistoryProjection(projection);
-    assertHistoryReadWindow(projection, history, options.expectedReadWindow);
-    const anchor = resolveHistoryEventById(projection, options.messageId, history);
-    if (!anchor) {
-      // Explicit anchors reopen the closed reset interval that still contains the
-      // active-path row. Unanchored history and current-display lookup stay
-      // latest-reset-relative; missing or off-path IDs stay not-found.
-      return (
-        readHistoricalHistoryAnchorPage(projection, history.displaySource, options) ?? {
-          events: [],
-          found: false,
-          hasOverreadContext: false,
-          offset: 0,
-          displaySource: history.displaySource,
-          totalMessages: history.total,
-        }
-      );
-    }
-    const range = resolveHistoryAnchorPageRange(history.total, anchor.seq - 1, options);
-    return {
-      events: readVisibleHistoryRange(projection, range.readStart, range.endExclusive, history),
-      found: true,
-      hasOverreadContext: range.hasOverreadContext,
-      offset: range.offset,
-      displaySource: history.displaySource,
-      totalMessages: history.total,
-    };
-  });
+  return withCurrentProjectionSnapshot(
+    scope,
+    (projection) => {
+      const history = resolveVisibleHistoryProjection(projection);
+      assertHistoryReadWindow(projection, history, options.expectedReadWindow);
+      const anchor = resolveHistoryEventById(projection, options.messageId, history);
+      if (!anchor) {
+        // Explicit anchors reopen the closed reset interval that still contains the
+        // active-path row. Unanchored history and current-display lookup stay
+        // latest-reset-relative; missing or off-path IDs stay not-found.
+        return (
+          readHistoricalHistoryAnchorPage(projection, history.displaySource, options) ?? {
+            events: [],
+            found: false,
+            hasOverreadContext: false,
+            offset: 0,
+            displaySource: history.displaySource,
+            totalMessages: history.total,
+          }
+        );
+      }
+      const range = resolveHistoryAnchorPageRange(history.total, anchor.seq - 1, options);
+      return {
+        events: readVisibleHistoryRange(projection, range.readStart, range.endExclusive, history),
+        found: true,
+        hasOverreadContext: range.hasOverreadContext,
+        offset: range.offset,
+        displaySource: history.displaySource,
+        totalMessages: history.total,
+      };
+    },
+    options,
+  );
 }
