@@ -40,6 +40,7 @@ export type {
 } from "../infra/diagnostic-events.js";
 export type { DiagnosticModelContentCapturePolicy } from "../infra/diagnostic-llm-content.js";
 export {
+  areDiagnosticsEnabledForProcess,
   emitDiagnosticEvent,
   emitTrustedDiagnosticEvent,
   emitTrustedDiagnosticEventWithPrivateData,

@@ -209,3 +209,25 @@ spans do not advance the checkpoint used by `mark`.
 clock defaults to `Date.now`. Formatting produces comma-separated
 `name:durationMs@elapsedMs` entries (with `ms` units) or `none`. Callers retain
 ownership of log labels, warning thresholds, and when to emit a summary.
+
+For process-scoped performance logging,
+`openclaw/plugin-sdk/diagnostic-runtime` exports
+`areDiagnosticsEnabledForProcess(): boolean`. It reads the current process-wide
+diagnostic setting; `isDiagnosticsEnabled(config)` instead reads the supplied
+configuration snapshot. Neither function changes the setting or enables an
+exporter. Combine the process predicate with the selected log level before
+collecting diagnostic-only state:
+
+```typescript
+import { areDiagnosticsEnabledForProcess } from "openclaw/plugin-sdk/diagnostic-runtime";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/logging-core";
+
+const log = createSubsystemLogger("example/catalog");
+function diagnosticsEnabled() {
+  return areDiagnosticsEnabledForProcess() && log.isEnabled("warn");
+}
+```
+
+Recheck the gates when emitting a delayed summary. Keep fields bounded and
+content-free, and preserve the operation's result if the diagnostic sink fails.
+This predicate does not enable or authorize [audit identity collection](/gateway/audit).
