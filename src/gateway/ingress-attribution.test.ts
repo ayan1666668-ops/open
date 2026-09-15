@@ -254,6 +254,32 @@ describe("gateway ingress attribution", () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it("retains a full late-window source set across the next budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const warn = vi.fn();
+    const report = createGatewayUnattributableProxyReporter({ warn });
+    const attribution = (index: number) =>
+      ({
+        kind: "unattributable-proxy",
+        reason: "proxy_attribution_required",
+        guidance: PROXY_ATTRIBUTION_GUIDANCE,
+        remoteAddress: `192.0.2.${index}`,
+      }) as const;
+
+    vi.setSystemTime(5 * 60_000 - 1_000);
+    for (let index = 0; index < 16; index += 1) {
+      report(attribution(index));
+    }
+    expect(warn).toHaveBeenCalledTimes(16);
+
+    vi.setSystemTime(5 * 60_000 + 1_000);
+    report(attribution(16));
+    report(attribution(0));
+
+    expect(warn).toHaveBeenCalledTimes(17);
+  });
+
   it("resets source suppression when the wall clock moves backward", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

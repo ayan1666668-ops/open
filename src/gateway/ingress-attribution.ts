@@ -283,7 +283,8 @@ export function createGatewayUnattributableProxyReporter(log: {
 }): GatewayUnattributableProxyReporter {
   const reportedSources = createDedupeCache({
     ttlMs: UNATTRIBUTABLE_PROXY_WARNING_WINDOW_MS,
-    maxSize: UNATTRIBUTABLE_PROXY_WARNING_MAX_SOURCES,
+    // A source TTL can straddle an aggregate reset, so retain both adjacent budgets.
+    maxSize: UNATTRIBUTABLE_PROXY_WARNING_MAX_SOURCES * 2,
   });
   let windowStartedAt = Date.now();
   let lastObservedAt = windowStartedAt;
