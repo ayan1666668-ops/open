@@ -36,7 +36,6 @@ import type { ApplicationContext, ApplicationNavigationOptions } from "./context
 import { resolveControlUiAuthToken } from "./control-ui-auth.ts";
 import { gatewayPresentationScope } from "./gateway-presentation-scope.ts";
 import {
-  DEBUG_OVERLAY_ELEMENT,
   isOptionalElementDefined,
   KEYBOARD_SHORTCUTS_ELEMENT,
   type LazyCustomElementRequestController,
@@ -257,11 +256,12 @@ export function renderApplicationShell(host: ShellViewHost) {
   const uiSettings = context.theme.settings;
   // The new-session draft shares the chat layout: full-height pane that owns
   // its scrolling and pins the composer dock to the bottom.
-  const chatLikeRoute = sessionRoute || activeRoute === "new-session";
+  const chatLikeRoute = sessionRoute || activeRoute === "new-session" || activeRoute === "systems";
   if (!settingsTakeover && !nativeEmbed) {
     Object.assign(host.navigationSidebar, {
       basePath: context.basePath,
       activeRouteId: activeRoute,
+      router: host.runtime.router,
       activePluginTabId,
       enabledRouteIds: host.enabledRouteIds(),
       sessionKey: host.activeSessionKey,
@@ -400,11 +400,7 @@ export function renderApplicationShell(host: ShellViewHost) {
           ></openclaw-command-palette>`
         : nothing
     }
-    ${
-      isOptionalElementDefined(DEBUG_OVERLAY_ELEMENT)
-        ? html`<openclaw-debug-overlay></openclaw-debug-overlay>`
-        : nothing
-    }
+    <openclaw-debug-overlay></openclaw-debug-overlay>
     ${
       !nativeEmbed && isOptionalElementDefined(KEYBOARD_SHORTCUTS_ELEMENT)
         ? html`<openclaw-keyboard-shortcuts-dialog
@@ -637,7 +633,7 @@ export function renderApplicationShell(host: ShellViewHost) {
                 data-chat-autotype-exempt
                 .client=${gatewayConnected ? gatewaySnapshot.client : null}
                 .available=${desktopPanelAvailable}
-                .suppressed=${settingsTakeover || nativeEmbed}
+                .suppressed=${settingsTakeover || nativeEmbed || activeRoute === "systems"}
                 .basePath=${context.basePath}
               ></openclaw-desktop-panel>
             `
