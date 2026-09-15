@@ -269,7 +269,10 @@ const calendarInspection = {
 } satisfies PluginsInspectResult;
 
 const matrixDetail = {
-  plugin: matrixDiscoveryPlugin,
+  plugin: {
+    ...matrixDiscoveryPlugin,
+    catalog: { ...matrixDiscoveryPlugin.catalog, latestVersion: "2.1.0" },
+  },
   detail: {
     origin: "clawhub",
     packageName: "matrix",
@@ -318,6 +321,7 @@ const matrixDetail = {
     security: {
       status: "clean",
       verdict: "benign",
+      auditUrl: "https://clawhub.ai/openclaw/plugins/matrix/security-audit",
       summary: "Capabilities match the stated purpose.",
       guidance: "Review the access token before enabling.",
       checkedAt: 1_780_000_000_000,
