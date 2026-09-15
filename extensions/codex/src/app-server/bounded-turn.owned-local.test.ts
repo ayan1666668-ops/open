@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { runBoundedCodexAppServerTurn } from "./bounded-turn.js";
-import { createClientFactory } from "./bounded-turn.test-fixtures.js";
+import { createClientFactory } from "./bounded-turn.test-harness.js";
 
 it.each(["stdio", "websocket", "unix", "stdio-proxy", "stdio-remote-workspace"] as const)(
   "fences owned-local isolated turns before %s client startup",

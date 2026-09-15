@@ -8,7 +8,7 @@ import {
   createClientFactory,
   inProgressTurnResult,
   threadStartResult,
-} from "./bounded-turn.test-fixtures.js";
+} from "./bounded-turn.test-harness.js";
 import type { JsonValue } from "./protocol.js";
 import { createClientHarness } from "./test-support.js";
 
@@ -435,25 +435,43 @@ describe("runBoundedCodexAppServerTurn settled finalization isolation", () => {
     expect(startParams).toMatchObject({ config: { project_doc_max_bytes: 131_072 } });
   });
 
-  it("still fails on a terminal error notification", async () => {
-    const fake = createClientFactory({
-      errorBeforeCompletion: { message: "terminal upstream failure", willRetry: false },
-    });
+  it.each([
+    { receipt: "notification", codexErrorInfo: undefined, status: undefined },
+    { receipt: "notification", codexErrorInfo: "serverOverloaded", status: 503 },
+    { receipt: "turn", codexErrorInfo: "rateLimitExceeded", status: 429 },
+    {
+      receipt: "turn",
+      codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 502 } },
+      status: 502,
+    },
+  ])(
+    "preserves terminal $receipt failure metadata: $codexErrorInfo",
+    async ({ receipt, codexErrorInfo, status }) => {
+      const error = { message: "terminal upstream failure", codexErrorInfo };
+      const fake = createClientFactory(
+        receipt === "notification"
+          ? { errorBeforeCompletion: { ...error, willRetry: false } }
+          : { terminalStatus: "failed", terminalError: error },
+      );
 
-    await expect(
-      runBoundedCodexAppServerTurn({
-        model: { mode: "required", id: "gpt-5.4" },
-        timeoutMs: 5_000,
-        options: { clientFactory: fake.factory },
-        taskLabel: "settled-turn finalization",
-        developerInstructions: "Finalize only.",
-        input: [{ type: "text", text: "Produce the final answer.", text_elements: [] }],
-        requiredModalities: ["text"],
-        isolation: "private-stdio",
-        requireNoExternalCapabilities: true,
-      }),
-    ).rejects.toThrow("terminal upstream failure");
-  });
+      await expect(
+        runBoundedCodexAppServerTurn({
+          model: { mode: "required", id: "gpt-5.4" },
+          timeoutMs: 5_000,
+          options: { clientFactory: fake.factory },
+          taskLabel: "settled-turn finalization",
+          developerInstructions: "Finalize only.",
+          input: [{ type: "text", text: "Produce the final answer.", text_elements: [] }],
+          requiredModalities: ["text"],
+          isolation: "private-stdio",
+          requireNoExternalCapabilities: true,
+        }),
+      ).rejects.toMatchObject({
+        message: "terminal upstream failure",
+        ...(status === undefined ? {} : { status }),
+      });
+    },
+  );
 
   it("rejects an interrupted turn even when it emitted partial assistant text", async () => {
     const fake = createClientFactory({

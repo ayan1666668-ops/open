@@ -730,16 +730,18 @@ export async function detectLegacyStateMigrations(params: {
   const pluginPlans =
     stateSchemaMigrations.length > 0 || !pluginPlanningEnabled
       ? []
-      : await collectPluginDoctorStateMigrationPlans(
-          { config: pluginConfig, env, stateDir, oauthDir },
-          {
-            includeDoctorOnly: params.doctorOnlyStateMigrations === true,
-            warnings: pluginPlanWarnings,
-            // Keep preview facts so execution can receipt the exact frozen endpoints.
-            // The writer validates every declared action before phase filtering.
-            validateDeclarations: false,
-          },
-        );
+      : (
+          await collectPluginDoctorStateMigrationPlans(
+            { config: pluginConfig, env, stateDir, oauthDir },
+            {
+              includeDoctorOnly: params.doctorOnlyStateMigrations === true,
+              warnings: pluginPlanWarnings,
+              // Keep preview facts so execution can receipt the exact frozen endpoints.
+              // The writer validates every declared action before phase filtering.
+              validateDeclarations: false,
+            },
+          )
+        ).plans;
 
   const sessionsHaveLegacy =
     Boolean(sessionMigrationAgentId) &&
@@ -3022,6 +3024,25 @@ async function runLegacyStateMigrationSteps(
   };
 }
 
+function completedPluginMigrationFields(
+  sources: readonly MigrationMessages[],
+): Pick<MigrationMessages, "completedPluginIds" | "requiredPluginIds" | "statelessPluginIds"> {
+  const completedPluginIds = [
+    ...new Set(sources.flatMap((source) => source.completedPluginIds ?? [])),
+  ].toSorted();
+  const requiredPluginIds = [
+    ...new Set(sources.flatMap((source) => source.requiredPluginIds ?? [])),
+  ].toSorted();
+  const statelessPluginIds = [
+    ...new Set(sources.flatMap((source) => source.statelessPluginIds ?? [])),
+  ].toSorted();
+  return {
+    ...(completedPluginIds.length > 0 ? { completedPluginIds } : {}),
+    ...(requiredPluginIds.length > 0 ? { requiredPluginIds } : {}),
+    ...(statelessPluginIds.length > 0 ? { statelessPluginIds } : {}),
+  };
+}
+
 export async function runLegacyStateMigrations(params: {
   detected: LegacyStateDetection;
   config?: OpenClawConfig;
@@ -3096,6 +3117,7 @@ export async function runLegacyStateMigrations(params: {
   ]);
   return {
     mode: "doctor",
+    ...completedPluginMigrationFields(migrations.sources),
     stepReceipts: [...preparation.receipts, ...migrations.receipts],
     changes: [...preparation.sources, ...migrations.sources].flatMap((source) => source.changes),
     warnings: [
@@ -3132,6 +3154,9 @@ export async function autoMigrateLegacyState(params: {
   changes: string[];
   warnings: string[];
   notices?: string[];
+  completedPluginIds?: readonly string[];
+  requiredPluginIds?: readonly string[];
+  statelessPluginIds?: readonly string[];
   stepReceipts: LegacyStateMigrationStepReceipt[];
   postSessionPluginMigration?: PreparedPostSessionPluginMigration;
 }> {
@@ -3949,6 +3974,7 @@ async function executeLegacyStateMigrations(
       skipped: false,
       changes,
       warnings,
+      ...completedPluginMigrationFields(completedSources),
       stepReceipts: [
         ...stateSchemaMigration.receipts,
         ...preludeReceipts,
@@ -4005,6 +4031,7 @@ async function executeLegacyStateMigrations(
     skipped: hasCustomAgentDir,
     changes,
     warnings,
+    ...completedPluginMigrationFields(completedSources),
     stepReceipts: [
       ...stateSchemaMigration.receipts,
       ...preludeReceipts,

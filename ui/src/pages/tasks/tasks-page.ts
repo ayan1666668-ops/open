@@ -1,6 +1,6 @@
 import { consume } from "@lit/context";
 import { initialState, Task, TaskStatus } from "@lit/task";
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { state } from "lit/decorators.js";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import { subtitleForRoute, titleForRoute } from "../../app-navigation.ts";
@@ -31,11 +31,19 @@ import {
   normalizeTasksGetResult,
   normalizeTasksListResult,
   normalizeTasksRecoveryResult,
+  taskTitle,
 } from "../../lib/tasks/data.ts";
 import type { TaskSummary } from "../../lib/tasks/task-summary.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
+import {
+  observeTaskDetailEvent,
+  resetTaskDetail,
+  type TaskTranscriptHost,
+} from "../chat/components/chat-task-detail-state.ts";
+import { renderTaskTranscript } from "../chat/components/chat-task-detail.ts";
+import "../../styles/chat/sidebar.css";
 import { SupervisionPanelController } from "./supervision-panel.ts";
 import { renderTasks } from "./view.ts";
 
@@ -161,6 +169,13 @@ class TasksPage extends OpenClawLightDomElement {
   @state() private copyResultError: string | null = null;
   @state() private cancellingTaskIds = new Set<string>();
 
+  @state() private transcriptTaskId: string | null = null;
+  private readonly transcriptHost: TaskTranscriptHost = {
+    client: null,
+    connected: false,
+    requestUpdate: () => this.requestUpdate(),
+  };
+
   private taskRefreshEvents: TaskRefreshEventBuffer | null = null;
   private taskSnapshotInvalidated = false;
   private copyResultAttempt = 0;
@@ -210,6 +225,7 @@ class TasksPage extends OpenClawLightDomElement {
   }
 
   private invalidateTaskSnapshot() {
+    this.closeTranscript();
     this.taskRefreshEvents = null;
     this.taskSnapshotInvalidated = true;
     this.tasks = [];
@@ -248,6 +264,7 @@ class TasksPage extends OpenClawLightDomElement {
       }
       this.taskSnapshotInvalidated = false;
       this.tasks = tasks;
+      this.reconcileTranscriptSelection();
       if (this.taskRefreshEvents === buffer) {
         this.taskRefreshEvents = null;
       }
@@ -295,6 +312,10 @@ class TasksPage extends OpenClawLightDomElement {
             return;
           }
           this.tasks = result.tasks.filter((task) => taskMatchesAgentScope(task, scopeId));
+          this.reconcileTranscriptSelection();
+          if (normalizedEvent) {
+            observeTaskDetailEvent(this.transcriptHost, normalizedEvent);
+          }
         });
         return stopEvents;
       },
@@ -309,6 +330,7 @@ class TasksPage extends OpenClawLightDomElement {
     );
 
   override disconnectedCallback() {
+    this.closeTranscript();
     this.copyResultAttempt += 1;
     this.copyResultError = null;
     this.subscriptions.clear();
@@ -316,6 +338,7 @@ class TasksPage extends OpenClawLightDomElement {
   }
 
   private cancelGatewayWork() {
+    this.closeTranscript();
     // Reconnects may reuse the client object; the epoch keeps pre-disconnect
     // cancellation responses from mutating the replacement task snapshot.
     this.copyResultAttempt += 1;
@@ -459,6 +482,53 @@ class TasksPage extends OpenClawLightDomElement {
     }
   }
 
+  private async viewTranscript(taskId: string) {
+    this.transcriptTaskId = taskId;
+    await this.updateComplete;
+    if (!this.isConnected || this.transcriptTaskId !== taskId) {
+      return;
+    }
+    const transcript = this.querySelector<HTMLElement>(".tasks-transcript");
+    transcript?.focus({ preventScroll: true });
+    transcript?.scrollIntoView({ block: "start", behavior: "instant" });
+  }
+
+  private closeTranscript() {
+    resetTaskDetail(this.transcriptHost);
+    this.transcriptTaskId = null;
+  }
+
+  private reconcileTranscriptSelection() {
+    if (this.transcriptTaskId && !this.tasks.some((task) => task.id === this.transcriptTaskId)) {
+      this.closeTranscript();
+    }
+  }
+
+  private renderTranscript() {
+    const task = this.tasks.find((item) => item.id === this.transcriptTaskId);
+    if (!task) {
+      return nothing;
+    }
+    Object.assign(this.transcriptHost, {
+      client: this.gateway.client,
+      connected: this.gateway.connected,
+      connectionEpoch: this.gateway.epoch,
+    });
+    return html`<section
+      class="tasks-transcript"
+      tabindex="-1"
+      aria-label=${t("tasksPage.transcript")}
+    >
+      <div class="tasks-transcript__header">
+        <h2>${taskTitle(task)}</h2>
+        <button class="btn btn--sm" type="button" @click=${() => this.closeTranscript()}>
+          ${t("common.close")}
+        </button>
+      </div>
+      ${renderTaskTranscript({ host: this.transcriptHost, task })}
+    </section>`;
+  }
+
   override render() {
     const fallbackAgentId = resolveSessionNavigationAgentId(this.context);
     return html`
@@ -486,7 +556,7 @@ class TasksPage extends OpenClawLightDomElement {
       })}
       ${this.supervision.render(hasOperatorWriteAccess(this.context.gateway.snapshot.hello?.auth ?? null))}
       ${renderSettingsWorkspace(
-        renderTasks({
+        html`${this.renderTranscript()}${renderTasks({
           basePath: this.context.basePath,
           agentId: fallbackAgentId,
           mainKey: resolveUiConfiguredMainKey({
@@ -507,6 +577,7 @@ class TasksPage extends OpenClawLightDomElement {
           onRetry: (taskId) => void this.recoverTask(taskId, "retry"),
           onDismiss: (taskId) => void this.recoverTask(taskId, "dismiss"),
           onCopyResult: (taskId) => void this.copyTaskResult(taskId),
+          onViewTranscript: (taskId) => void this.viewTranscript(taskId),
           onNavigateToChat: (sessionKey) => {
             const face = resolveSessionPreferredFaceForKey(this.context, sessionKey);
             this.context.navigate(
@@ -519,7 +590,7 @@ class TasksPage extends OpenClawLightDomElement {
               }).options,
             );
           },
-        }),
+        })}`,
       )}
     `;
   }

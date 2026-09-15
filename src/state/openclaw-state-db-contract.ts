@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { SqliteWalMaintenance } from "../infra/sqlite-wal.js";
+import type { DatabasePathIdentity } from "../infra/sqlite-worker-identity.js";
 
 // v19 fences workers that ignore physical attempt resource custody.
 // v18 prevents older supervised workers from ignoring accepted workflow contracts.
@@ -135,6 +136,19 @@ export type OpenClawStateDatabase = {
   path: string;
   walMaintenance: SqliteWalMaintenance;
 };
+export type StateDatabaseHandle = Pick<OpenClawStateDatabase, "db" | "path"> &
+  Partial<Pick<OpenClawStateDatabase, "walMaintenance">> & {
+    afterClose?: () => undefined;
+  };
+export type OpenClawStateDatabaseCloseOptions = NonNullable<
+  Parameters<OpenClawStateDatabase["walMaintenance"]["close"]>[0]
+> & { busyTimeoutMs?: number };
+export type OpenClawStateDatabaseLifecycleEvent =
+  | { kind: "opened"; database: OpenClawStateDatabase; identity: DatabasePathIdentity }
+  | { kind: "closed"; path: string; identity: DatabasePathIdentity }
+  | { kind: "failure-cleared"; path: string; identity?: DatabasePathIdentity }
+  | { kind: "terminal-failure"; path: string; identity?: DatabasePathIdentity; error: Error }
+  | { kind: "open-error"; path: string; identity?: DatabasePathIdentity; error: unknown };
 /** Options for resolving or overriding the shared state database path. */
 export type OpenClawStateDatabaseOptions = {
   env?: NodeJS.ProcessEnv;

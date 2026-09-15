@@ -579,9 +579,6 @@ export async function executePreparedCliRun(
         useResume,
         trigger: params.trigger,
       });
-      if (!useManagedClaudeLiveSession) {
-        toolTracking.beginGatewayCapture(initialGatewayCaptureKey);
-      }
       runOutput = await executeCliProcess({
         context,
         assertCurrent,
