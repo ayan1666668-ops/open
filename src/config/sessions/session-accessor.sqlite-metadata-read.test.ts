@@ -61,7 +61,8 @@ it.each(["presence", "mutation"] as const)(
         mutation: [
           { observedAt: 10, updatedAt: 20 },
           { observedAt: 30, updatedAt: 40 },
-          { observedAt: null, updatedAt: null },
+          // Entry creation records updatedAt before any transcript mutation.
+          { observedAt: 1, updatedAt: null },
           { observedAt: null, updatedAt: null },
         ],
       }[kind];
@@ -188,7 +189,8 @@ it("isolates identical session IDs by native handle and reopens without using a 
     expect(closeOpenClawAgentDatabaseByPath(first.database.path, "main")).toBe(true);
     expect(() => readTranscriptMutationStateInTransaction(first.database, "hot")).toThrow();
     const reopened = openOpenClawAgentDatabase(first.options);
-    expect(reopened.db).not.toBe(first.database.db);
+    // Compare identity without the matcher traversing closed SQLite accessors.
+    expect(Object.is(reopened.db, first.database.db)).toBe(false);
     reopened.db.exec(`
       DELETE FROM transcript_events WHERE session_id = 'hot';
       UPDATE session_windows SET transcript_observed_at = 50, transcript_updated_at = 60
