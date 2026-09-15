@@ -504,10 +504,20 @@ export class ChatPage extends OpenClawLightDomElement implements SessionSplitHos
     if (!selectedSessionKey || !areUiSessionKeysEquivalent(selectedSessionKey, sessionKey)) {
       return;
     }
+    persistSessionBoardFace(this.context, sessionKey, face);
+    if (
+      (!this.layout || this.layout.activePaneId === paneId) &&
+      areUiSessionKeysEquivalent(this.data.sessionKey, sessionKey) &&
+      (this.data.face ?? "chat") === face
+    ) {
+      // Applying a dashboard default also announces its face. Keep the current
+      // route intent; only explicit pane focus should supersede pending navigation.
+      this.syncRouteBindings();
+      return;
+    }
     if (this.layout && this.layout.activePaneId !== paneId) {
       this.persistLayout(setActivePane(this.layout, paneId));
     }
-    persistSessionBoardFace(this.context, sessionKey, face);
     this.updateRoute(sessionKey, false, face);
   };
 
