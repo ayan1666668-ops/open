@@ -6,12 +6,16 @@ import Testing
 @MainActor
 enum AppKitTestSupport {
     /// Rendered suites share one process and must initialize AppKit only once.
-    static let application: NSApplication = {
+    private static let initializedApplication: (application: NSApplication, didSetActivationPolicy: Bool) = {
         let application = NSApplication.shared
-        #expect(application.setActivationPolicy(.accessory))
+        let didSetActivationPolicy = application.setActivationPolicy(.accessory)
+        #expect(didSetActivationPolicy)
         application.finishLaunching()
-        return application
+        return (application, didSetActivationPolicy)
     }()
+
+    static var application: NSApplication { self.initializedApplication.application }
+    static var didSetActivationPolicy: Bool { self.initializedApplication.didSetActivationPolicy }
 
     static func accessibilityElements(in root: AnyObject) async throws -> [AnyObject] {
         // SwiftUI materializes its virtual accessibility children after a real client request.
@@ -84,6 +88,23 @@ enum AppKitTestSupport {
         tracking.start()
         defer { tracking.stop() }
         try Task.checkCancellation()
+        func text(_ value: String?) -> String { value.map { String($0.prefix(160)) } ?? "nil" }
+        let value: Any? = button.accessibilityValue?()
+        let valueText = (value as? String) ?? (value as? NSNumber)?.stringValue ??
+            value.map { String(reflecting: type(of: $0)) }
+        let enabled: Bool? = button.isAccessibilityEnabled?()
+        let frame: NSRect? = button.accessibilityFrame?()
+        let windowMatches = (button.accessibilityWindow?() as? NSWindow) === window
+        let pressAllowed = button.isAccessibilitySelectorAllowed?(NSSelectorFromString("accessibilityPerformPress"))
+        let showMenuAllowed = button.isAccessibilitySelectorAllowed?(
+            NSSelectorFromString("accessibilityPerformShowMenu"))
+        print("""
+        Before menu dispatch at \(file):\(line)
+        node=\(ObjectIdentifier(button)) type=\(text(controlType)) role=\(String(describing: role))
+        identifier=\(text(button.accessibilityIdentifier?())) title=\(text(button.accessibilityTitle?())) label=\(text(button.accessibilityLabel?())) value=\(text(valueText))
+        enabled=\(String(describing: enabled)) frame=\(String(describing: frame)) window=\(window.windowNumber) windowMatches=\(windowMatches)
+        pressAllowed=\(String(describing: pressAllowed)) showMenuAllowed=\(String(describing: showMenuAllowed)) remaining=\(ContinuousClock.now.duration(to: tracking.expiresAt)) appRunning=\(NSApp.isRunning)
+        """)
         guard ContinuousClock.now < tracking.expiresAt else {
             throw InteractionFailure(message: "The menu interaction deadline expired before dispatch")
         }

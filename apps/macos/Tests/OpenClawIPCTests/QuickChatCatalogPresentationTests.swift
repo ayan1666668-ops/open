@@ -10,6 +10,7 @@ import XCTest
 final class QuickChatCatalogPresentationTests: XCTestCase {
     func testRenderedPickerUsesCatalogAvailabilityReasoningAndSpeed() async throws {
         let application = AppKitTestSupport.application
+        XCTAssertTrue(AppKitTestSupport.didSetActivationPolicy)
         let fixture = QuickChatCatalogFixture()
         let gateway = Self.makeGateway(fixture: fixture)
         let transport = MacGatewayChatTransport(connection: gateway, defaultGlobalAgentID: "main")

@@ -92,22 +92,13 @@ await runWithFailedTrailer("macos-native", async () => {
     for (const dir of [path.dirname(keychain), path.join(home, "Library/Preferences")]) {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    const run = async (
-      bin: string,
-      commandArgs: string[],
-      timeoutMs?: number,
-      output?: Buffer[],
-      commandEnv = childEnv,
-    ) => {
+    const run = async (bin: string, commandArgs: string[], timeoutMs?: number) => {
       canRemove = false;
       const code = await runManagedCommand({
         bin,
         args: commandArgs,
-        env: commandEnv,
-        stdio: output ? ["inherit", "pipe", "inherit"] : "inherit",
-        onReady: output
-          ? (child) => child.stdout?.on("data", (chunk: Buffer) => output.push(chunk))
-          : undefined,
+        env: childEnv,
+        stdio: "inherit",
         requireProcessTreeExit: true,
         timeoutMs,
       });
@@ -139,8 +130,7 @@ await runWithFailedTrailer("macos-native", async () => {
         "--event-stream-version",
         "6.3",
       ]);
-      // Preserve only the ordinary run's synthetic images after every child/output closes.
-      // A later diagnostic replay may fail cleanup or overwrite its private capture files.
+      // Export synthetic images after every child/output closes and before resource cleanup.
       try {
         const exported = fs.mkdtempSync(
           path.join(env.RUNNER_TEMP, `openclaw-menu-${profileMode}-`),
@@ -265,120 +255,6 @@ await runWithFailedTrailer("macos-native", async () => {
         } catch (error) {
           process.exitCode = 1;
           console.error("[macos-native] Swift exited 0 without valid test completion", error);
-        }
-        // Temporary named-run exit probe; remove once the early exit is attributed.
-        if (process.exitCode === 1 && profileMode === "named") {
-          try {
-            const xcodePaths = { swift: "", lldb: "", platform: "" };
-            for (const [name, query] of [
-              ["swift", ["--find", "swift"]],
-              ["lldb", ["--find", "lldb"]],
-              ["platform", ["--sdk", "macosx", "--show-sdk-platform-path"]],
-            ] as const) {
-              const output: Buffer[] = [];
-              const code = await run("xcrun", [...query], 30_000, output);
-              const resolved = Buffer.concat(output).toString("utf8").trim();
-              if (code !== 0 || !path.isAbsolute(resolved)) {
-                throw new Error(`Could not resolve selected Xcode ${name} (exit ${code})`);
-              }
-              xcodePaths[name] = resolved;
-            }
-            const buildPath = path.resolve("apps/macos/.build/debug");
-            const platformDeveloper = path.join(xcodePaths.platform, "Developer");
-            const diagnosticEnv = {
-              ...childEnv,
-              DYLD_FRAMEWORK_PATH: [
-                childEnv.DYLD_FRAMEWORK_PATH,
-                path.join(platformDeveloper, "Library/Frameworks"),
-                path.join(platformDeveloper, "Library/PrivateFrameworks"),
-              ]
-                .filter(Boolean)
-                .join(":"),
-              DYLD_LIBRARY_PATH: [
-                childEnv.DYLD_LIBRARY_PATH,
-                buildPath,
-                path.join(platformDeveloper, "usr/lib"),
-              ]
-                .filter(Boolean)
-                .join(":"),
-              LLVM_PROFILE_FILE: path.join(root, "named-diagnostic-%m.%p.profraw"),
-            };
-            const diagnosticCode = await run(
-              xcodePaths.lldb,
-              [
-                "--batch",
-                "--no-lldbinit",
-                "-o",
-                "version",
-                "-o",
-                'breakpoint set --func-regex "^(exit|_exit)$" -C "register read x0" -C "thread backtrace all" --auto-continue true',
-                "-o",
-                'breakpoint set --name CFRunLoopStop --name _CFRunLoopStopMode -C "register read x0 x1" -C "thread backtrace all" --auto-continue true',
-                "-o",
-                "breakpoint set --name CFRunLoopRun --thread-index 1 --one-shot true",
-                "-o",
-                "run",
-                "-o",
-                "thread backtrace all",
-                "-o",
-                'script print("runloop-probe outer_match=", lldb.frame.GetFunctionName() == "CFRunLoopRun" and any("swift_task_asyncMainDrainQueue" in (f.GetFunctionName() or "") for f in lldb.thread), "expected_function=CFRunLoopRun actual_function=", lldb.frame.GetFunctionName())',
-                "-o",
-                "disassemble --frame",
-                "-o",
-                "breakpoint set --name CFRunLoopRunSpecific --name _CFRunLoopRunSpecificWithOptions --thread-index 1 --one-shot true",
-                "-o",
-                "continue",
-                "-o",
-                "thread backtrace all",
-                "-o",
-                'script outer_return_pc = lldb.thread.GetFrameAtIndex(1).GetPC(); print("runloop-probe mode_match=", lldb.frame.GetFunctionName() in ("CFRunLoopRunSpecific", "_CFRunLoopRunSpecificWithOptions") and lldb.thread.GetFrameAtIndex(1).GetFunctionName() == "CFRunLoopRun", "expected_function=CFRunLoopRunSpecific|_CFRunLoopRunSpecificWithOptions actual_function=", lldb.frame.GetFunctionName(), "expected_caller=CFRunLoopRun actual_caller=", lldb.thread.GetFrameAtIndex(1).GetFunctionName(), "expected_return_pc=", hex(outer_return_pc))',
-                "-o",
-                "register read x0 x1",
-                "-o",
-                "thread step-out --run-mode all-threads --step-out-avoids-no-debug false",
-                "-o",
-                "register read w0",
-                "-o",
-                "thread backtrace all",
-                "-o",
-                'script print("runloop-probe return_match=", lldb.frame.GetFunctionName() == "CFRunLoopRun" and lldb.frame.GetPC() == outer_return_pc, "expected_function=CFRunLoopRun actual_function=", lldb.frame.GetFunctionName(), "expected_return_pc=", hex(outer_return_pc), "actual_return_pc=", hex(lldb.frame.GetPC()))',
-                "-o",
-                "disassemble --frame",
-                "-o",
-                "continue",
-                "-o",
-                "process status",
-                "-o",
-                "breakpoint list",
-                "-k",
-                "thread backtrace all",
-                "--",
-                path.resolve(
-                  path.dirname(xcodePaths.swift),
-                  "../libexec/swift/pm/swiftpm-testing-helper",
-                ),
-                "--test-bundle-path",
-                path.join(
-                  buildPath,
-                  "OpenClawPackageTests.xctest/Contents/MacOS/OpenClawPackageTests",
-                ),
-                ...args,
-                "--testing-library",
-                "swift-testing",
-              ],
-              120_000,
-              undefined,
-              diagnosticEnv,
-            );
-            console.error(
-              `[macos-native] Named exit diagnostic exited ${diagnosticCode}; preserving completion failure`,
-            );
-          } catch (diagnosticError) {
-            console.error(
-              "[macos-native] Named exit diagnostic failed; preserving completion failure",
-              diagnosticError,
-            );
-          }
         }
       }
     } finally {

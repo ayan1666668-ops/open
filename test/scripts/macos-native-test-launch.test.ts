@@ -40,14 +40,10 @@ function fixture(
   const bin = path.join(root, "bin");
   const home = path.join(root, "ambient-home");
   const runnerTemp = path.join(root, "runner-temp");
-  const platform = path.join(root, "MacOSX.platform");
-  const testingHelper = path.join(root, "libexec/swift/pm/swiftpm-testing-helper");
   const log = path.join(root, "calls.jsonl");
   for (const dir of [bin, home, runnerTemp]) {
     fs.mkdirSync(dir);
   }
-  fs.mkdirSync(platform);
-  fs.mkdirSync(path.dirname(testingHelper), { recursive: true });
   const cache = path.join(home, "Library/Caches/org.swift.swiftpm");
   fs.mkdirSync(cache, { recursive: true });
   fs.writeFileSync(path.join(cache, "fixture-cache"), "reusable build cache");
@@ -124,26 +120,8 @@ if (tool === 'sysctl') {
 if (tool === 'rg') console.log('apps/macos/Sources/Fixture.swift');
 if (tool === 'git' && args[0] === 'rev-parse' && args[1] === '--show-toplevel') console.log(${JSON.stringify(root)});
 if (tool === 'git' && args[0] === 'diff' && args.includes('--name-only')) console.log('apps/macos/Sources/Fixture.swift');
-if (tool === 'xcrun') {
-  if (args[0] === '--find') {
-    assert.equal(args.length, 2);
-    assert.ok(['swift', 'lldb'].includes(args[1]));
-    console.log(path.join(${JSON.stringify(bin)}, args[1]));
-  } else {
-    assert.deepEqual(args, ['--sdk', 'macosx', '--show-sdk-platform-path']);
-    console.log(${JSON.stringify(platform)});
-  }
-}
-if (tool === 'lldb') {
-  assert.ok(args.includes(${JSON.stringify(testingHelper)}));
-  assert.ok(args.includes('--batch') && args.includes('--no-lldbinit'));
-  assert.equal(args[args.indexOf('--testing-library') + 1], 'swift-testing');
-  assert.equal(args[args.indexOf('--filter') + 1], 'AppStateIsolationTests');
-  assert.equal(args[args.indexOf('--test-bundle-path') + 1], ${JSON.stringify(path.join(repo, "apps/macos/.build/debug/OpenClawPackageTests.xctest/Contents/MacOS/OpenClawPackageTests"))});
-  console.log('fake-named-exit-backtrace');
-}
-if (tool === 'swiftpm-testing-helper' || tool === 'xctest') {
-  throw new Error('The fixture native target must only be a fake debugger argument');
+if (['xcrun', 'lldb', 'xctest', 'swiftpm-testing-helper'].includes(tool)) {
+  throw new Error('Unexpected native tool invocation in the fake launcher fixture');
 }
 if (tool === 'swift' && args[0] === 'test') {
   if (env.OPENCLAW_TEST_MENU_CAPTURE_DIR) {
@@ -185,6 +163,7 @@ if (tool === 'swift' && args[0] === 'test') {
     "xcrun",
     "lldb",
     "xctest",
+    "swiftpm-testing-helper",
   ]) {
     if (tool === "node") {
       fs.symlinkSync(process.execPath, path.join(bin, tool));
@@ -192,7 +171,6 @@ if (tool === 'swift' && args[0] === 'test') {
       fs.writeFileSync(path.join(bin, tool), fake, { mode: 0o755 });
     }
   }
-  fs.writeFileSync(testingHelper, fake, { mode: 0o755 });
   const env = {
     PATH: `${bin}:/usr/bin:/bin`,
     HOME: home,
@@ -300,7 +278,7 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
           "--experimental-maximum-parallelization-width",
           expectedWidth,
           index === 0 ? "--skip" : "--filter",
-          "AppStateIsolationTests",
+          "AppStateIsolationTests|ProfileChatPreferencesTests",
           "--event-stream-output-path",
           expect.any(String),
           "--event-stream-version",
@@ -392,10 +370,10 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
   it.each([
     { report: "missing", contents: null },
     { report: "incomplete", contents: eventStream("runStarted") },
-  ])("rejects zero exit with $report Swift Testing completion", ({ report, contents }) => {
+  ])("rejects zero exit with $report Swift Testing completion", ({ contents }) => {
     const f = fixture(0, false, 0, "", "3", contents);
     const result = f.run(
-      "node scripts/test-macos-native.mts named --package-path apps/macos --build-system native --enable-code-coverage --skip-build --experimental-maximum-parallelization-width 3 --filter AppStateIsolationTests",
+      'node scripts/test-macos-native.mts named --package-path apps/macos --build-system native --enable-code-coverage --skip-build --experimental-maximum-parallelization-width 3 --filter "AppStateIsolationTests|ProfileChatPreferencesTests"',
     );
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(1);
@@ -403,57 +381,6 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
     const calls = f.calls();
     const test = calls.find((call) => call.tool === "swift");
     expect(calls.filter((call) => call.tool === "swift")).toHaveLength(1);
-    if (report === "incomplete") {
-      expect(result.stdout).toContain("fake-named-exit-backtrace");
-      const debuggers = calls.filter((call) => call.tool === "lldb");
-      expect(debuggers).toHaveLength(1);
-      const debuggerArgs = debuggers[0].args;
-      expect(debuggerArgs.slice(0, 12)).toEqual([
-        "--batch",
-        "--no-lldbinit",
-        "-o",
-        "version",
-        "-o",
-        'breakpoint set --func-regex "^(exit|_exit)$" -C "register read x0" -C "thread backtrace all" --auto-continue true',
-        "-o",
-        'breakpoint set --name CFRunLoopStop --name _CFRunLoopStopMode -C "register read x0 x1" -C "thread backtrace all" --auto-continue true',
-        "-o",
-        "breakpoint set --name CFRunLoopRun --thread-index 1 --one-shot true",
-        "-o",
-        "run",
-      ]);
-      expect(debuggerArgs).toContain(
-        "breakpoint set --name CFRunLoopRunSpecific --name _CFRunLoopRunSpecificWithOptions --thread-index 1 --one-shot true",
-      );
-      expect(debuggerArgs).toContain(
-        "thread step-out --run-mode all-threads --step-out-avoids-no-debug false",
-      );
-      expect(debuggerArgs).toContain("register read w0");
-      expect(debuggerArgs).toContain("breakpoint list");
-      expect(debuggerArgs.filter((arg: string) => arg.startsWith("script "))).toEqual([
-        expect.stringContaining("runloop-probe outer_match="),
-        expect.stringContaining("runloop-probe mode_match="),
-        expect.stringContaining("runloop-probe return_match="),
-      ]);
-      expect(
-        debuggerArgs.slice(
-          debuggerArgs.indexOf("--test-bundle-path") + 2,
-          debuggerArgs.indexOf("--testing-library"),
-        ),
-      ).toEqual(test.args.slice(1, -4));
-    }
-    expect(
-      calls.some((call) => call.tool === "swiftpm-testing-helper" || call.tool === "xctest"),
-    ).toBe(false);
-    for (const call of calls.filter((entry) => entry.tool === "xcrun" || entry.tool === "lldb")) {
-      expect(call.env.HOME).toBe(test.env.HOME);
-      expect(call.env.OPENCLAW_PROFILE).toBe(test.env.OPENCLAW_PROFILE);
-      expect(call.env.OPENCLAW_STATE_DIR).toBe(test.env.OPENCLAW_STATE_DIR);
-      expect(call.env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
-      expect(call.keychain).toEqual({ locked: false, autoLock: false });
-      expect(call.present.HOME).toBe(true);
-      expect(call.present.OPENCLAW_STATE_DIR).toBe(true);
-    }
     expect(calls.at(-1).args).toEqual(["delete-keychain", test.settings.default]);
     expect(fs.existsSync(path.dirname(test.env.HOME))).toBe(false);
   });
@@ -480,7 +407,6 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
     const result = f.run("node scripts/test-macos-native.mts default --skip-build");
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(expected);
-    expect(f.calls().some((call) => call.tool === "lldb")).toBe(false);
     expect(fs.existsSync(path.dirname(f.calls()[0].env.HOME))).toBe(false);
   });
 
