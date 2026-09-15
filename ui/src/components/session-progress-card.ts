@@ -387,7 +387,7 @@ export function renderSessionProgressCard(
       data-progress-card-placement="composer"
       data-complete=${String(complete)}
       ${composerDisclosure(
-        card.sessionKey,
+        composerRunLifecycle?.sessionIdentity ?? card.sessionKey,
         !complete && !collapseComposerByDefault,
         collapseComposerByDefault,
         composerRunLifecycle,

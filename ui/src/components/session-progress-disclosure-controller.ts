@@ -14,6 +14,7 @@ import {
 
 export type ComposerProgressRunLifecycle = {
   gatewayScope?: object;
+  sessionIdentity?: string;
   activeRunId?: string | null;
   completedRunId?: string | null;
   readingHistory?: boolean;
@@ -61,7 +62,16 @@ class ProgressDisclosureController {
 
   private mount([sessionKey, initialOpen, , lifecycle]: DisclosureInput): ProgressDisclosureState {
     this.resetScrollInput();
-    this.settleWithoutTransition();
+    if (this.settleFrame !== undefined) {
+      cancelAnimationFrame(this.settleFrame);
+    }
+    this.element.classList.add("session-progress-card--settling");
+    this.settleFrame = requestAnimationFrame(() => {
+      this.settleFrame = requestAnimationFrame(() => {
+        this.settleFrame = undefined;
+        this.element.classList.remove("session-progress-card--settling");
+      });
+    });
     return resolveProgressDisclosure(undefined, {
       type: "mount",
       open: initialOpen,
@@ -143,7 +153,7 @@ class ProgressDisclosureController {
       gesture.distancePx > 0 &&
       (gesture.kind === "wheel" || gesture.distancePx > PROGRESS_DISCLOSURE.touchGesturePx)
     ) {
-      this.dispatch({ type: "gesture", distancePx: gesture.distancePx, newGesture: true });
+      this.dispatch({ type: "gesture", distancePx: gesture.distancePx });
     }
   }
 
@@ -162,14 +172,15 @@ class ProgressDisclosureController {
     this.touching = observation.touching;
     if (observation.type === "offset") {
       this.scrolling = observation.scrolling;
+      if (!observation.programmatic && observation.delta !== 0) {
+        if (this.gesture) {
+          this.gesture.distancePx += Math.max(0, -observation.delta);
+        }
+        this.scheduleCollapse();
+      }
       if (!this.scrolling && this.scrollSettled) {
         this.settleDisclosure();
       }
-      if (observation.programmatic || !this.gesture || observation.delta === 0) {
-        return;
-      }
-      this.gesture.distancePx += Math.max(0, -observation.delta);
-      this.scheduleCollapse();
       return;
     }
     const { event } = observation;
@@ -188,6 +199,8 @@ class ProgressDisclosureController {
         this.gesture = { kind: "wheel", valid: true, distancePx: 0 };
       }
       this.lastWheelAt = now;
+      // Keep the gesture alive before offsets arrive or while clamped at an edge.
+      this.scheduleCollapse();
     } else if (typeof TouchEvent !== "undefined" && event instanceof TouchEvent) {
       if (event.type === "touchstart" && event.touches.length === 1) {
         this.flushGesture();
@@ -240,19 +253,6 @@ class ProgressDisclosureController {
     this.unsubscribeTranscript = transcript
       ? subscribeTranscriptScroll(transcript, this.handleTranscriptScroll)
       : undefined;
-  }
-
-  private settleWithoutTransition(): void {
-    if (this.settleFrame !== undefined) {
-      cancelAnimationFrame(this.settleFrame);
-    }
-    this.element.classList.add("session-progress-card--settling");
-    this.settleFrame = requestAnimationFrame(() => {
-      this.settleFrame = requestAnimationFrame(() => {
-        this.settleFrame = undefined;
-        this.element.classList.remove("session-progress-card--settling");
-      });
-    });
   }
 
   dispose(): void {

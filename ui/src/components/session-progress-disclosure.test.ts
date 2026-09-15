@@ -15,8 +15,8 @@ function mount(manualOpen?: boolean) {
   });
 }
 
-function historyScroll(distancePx: number, newGesture = true): ProgressDisclosureEvent {
-  return { type: "gesture", distancePx, newGesture };
+function historyScroll(distancePx: number): ProgressDisclosureEvent {
+  return { type: "gesture", distancePx };
 }
 
 function collapse(state = mount()) {
@@ -32,10 +32,9 @@ describe("progress disclosure transitions", () => {
     expect(state.open).toBe(true);
     state = resolve(state, { type: "history", readingHistory: false });
     state = resolve(state, { type: "history", readingHistory: true });
-    state = resolve(resolve(state, historyScroll(159)), historyScroll(160));
-    state = resolve(state, { type: "settle" });
-    expect(state.open).toBe(true);
-    state = resolve(state, historyScroll(1, false));
+    const firstGesture = resolve(state, historyScroll(159));
+    expect(resolve(resolve(firstGesture, historyScroll(160)), { type: "settle" }).open).toBe(true);
+    state = resolve(firstGesture, historyScroll(161));
     expect(state.open).toBe(true);
     const beforeSettle = Object.freeze(state);
     state = resolve(beforeSettle, { type: "settle" });
@@ -76,12 +75,11 @@ describe("progress disclosure transitions", () => {
     expect(state.open).toBe(true);
     state = resolve(state, { type: "history", readingHistory: false });
     state = resolve(state, { type: "history", readingHistory: true });
-    for (const distance of [200, 200, 239]) {
-      state = resolve(state, historyScroll(distance));
-    }
-    state = resolve(state, { type: "settle" });
-    expect(state.open).toBe(true);
-    state = resolve(state, historyScroll(1, false));
+    const firstTwoGestures = resolve(resolve(state, historyScroll(200)), historyScroll(200));
+    expect(resolve(resolve(firstTwoGestures, historyScroll(239)), { type: "settle" }).open).toBe(
+      true,
+    );
+    state = resolve(firstTwoGestures, historyScroll(240));
     state = resolve(state, { type: "settle" });
     expect(state.open).toBe(false);
     expect(state.manualOpen).toBeUndefined();

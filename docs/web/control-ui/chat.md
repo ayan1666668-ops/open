@@ -410,27 +410,13 @@ Use the mouse wheel or trackpad over the composer or its surrounding space to
 scroll the conversation while the composer stays pinned. Long drafts, task
 progress cards, and menus keep their own scrolling when their content overflows.
 
-The task progress card above the composer starts expanded for active work unless
-**Collapse task progress by default** is enabled. Mounting or switching sessions
-shows its initial state without a fold animation. While reading earlier messages,
-it collapses after at least two upward scroll gestures totaling 320 pixels, once
-scrolling has stopped for 300 milliseconds. Wheel bursts separated by more than
-200 milliseconds count separately; each touch drag counts as one gesture, including
-its inertia. Only upward movement consumed by the transcript counts. Scrolling
-inside tool output, canceled input, and programmatic position adjustments do not
-count toward collapse.
-Returning to the end resets the counts but does not reopen a collapsed card.
-Progress updates also leave it collapsed. Task completion can reopen it only if
-you are already at the end; returning there after completion does not reopen it.
-
-Manual choices are remembered per session in the current Gateway connection until
-reload. Switching Gateway connections starts with a fresh choice. A manual close prevents
-automatic reopening. After the first manual reopen during a visit or task,
-continued upward scrolling can collapse it again after three gestures and
-640 pixels, with the same pause. This clears the remembered open choice. A second
-manual reopen stops automatic collapse for that visit and task. Leaving and
-returning to the chat, or starting a new task, resets the thresholds while
-preserving any remembered manual choice.
+The task progress card above the composer collapses after deliberate upward
+scrolling settles. Returning to the end and progress updates leave it collapsed;
+completion can reopen it only while you are already at the end. Manual choices
+are remembered per session. Continued scrolling after a manual reopen uses a
+higher threshold, and a second reopen keeps it open for that visit and task.
+See [Task progress cards](/tools/progress-card#where-the-card-appears) for gesture thresholds,
+manual-choice scope, and reset behavior.
 
 Streaming output and layout adjustments keep reading mode intact. Scroll back to
 the end or select **Latest** to resume following the conversation.

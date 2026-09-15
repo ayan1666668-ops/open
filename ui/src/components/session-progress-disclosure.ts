@@ -32,7 +32,7 @@ export type ProgressDisclosureEvent =
   | { type: "run"; runId: string; open: boolean }
   | { type: "complete"; runId: string }
   | { type: "history"; readingHistory: boolean }
-  | { type: "gesture"; distancePx: number; newGesture: boolean }
+  | { type: "gesture"; distancePx: number }
   | { type: "settle" }
   | { type: "click"; open: boolean };
 
@@ -92,7 +92,7 @@ export function resolveProgressDisclosure(
     case "gesture":
       return {
         ...state,
-        gestures: state.gestures + Number(event.newGesture),
+        gestures: state.gestures + 1,
         distancePx: state.distancePx + event.distancePx,
       };
     case "settle": {

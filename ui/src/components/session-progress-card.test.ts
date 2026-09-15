@@ -6,6 +6,7 @@ import { html, nothing, render } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { observeTranscript } from "./session-progress-card.test-support.ts";
 import { renderSessionProgressCard } from "./session-progress-card.ts";
+import type { ComposerProgressRunLifecycle } from "./session-progress-disclosure-controller.ts";
 
 const containers: HTMLDivElement[] = [];
 function createContainer() {
@@ -32,6 +33,20 @@ const progressCard: ProgressCard = {
     { step: "Run focused tests", status: "pending" },
   ],
 };
+
+function renderTranscriptCard(
+  container: HTMLElement,
+  lifecycle: ComposerProgressRunLifecycle,
+  showTranscript = true,
+) {
+  return render(
+    html`<div class="chat-main">
+      ${showTranscript ? html`<div class="chat-thread"></div>` : nothing}
+      ${renderSessionProgressCard(progressCard, "composer", undefined, undefined, undefined, undefined, true, false, lifecycle)}
+    </div>`,
+    container,
+  );
+}
 
 describe("renderSessionProgressCard", () => {
   beforeEach(() => {
@@ -476,18 +491,12 @@ describe("renderSessionProgressCard", () => {
       const card = container.querySelector("details")!;
       expect(card.open).toBe(true);
       wheel(200);
-      wheel(200, 100);
-      vi.advanceTimersByTime(300);
-      expect(card.open).toBe(true);
-      renderRun(false);
-      renderRun(true);
-      wheel(159);
-      wheel(160, 201);
-      vi.advanceTimersByTime(300);
-      expect(card.open).toBe(true);
-      wheel(1);
+      wheel(200, 201);
       vi.advanceTimersByTime(299);
       expect(card.open).toBe(true);
+      if (finalInHistory) {
+        transcript.thread.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp" }));
+      }
       transcript.scroll(1);
       vi.advanceTimersByTime(299);
       expect(card.open).toBe(true);
@@ -507,43 +516,13 @@ describe("renderSessionProgressCard", () => {
       expect(card.open).toBe(!finalInHistory);
       renderRun(false, null, "run-1");
       expect(card.open).toBe(!finalInHistory);
-      currentCard = progressCard;
-      renderRun(false, "run-2");
-      expect(card.open).toBe(true);
-      card.querySelector("summary")!.click();
-      renderRun(true, "run-3");
-      expect(card.open).toBe(false);
-      renderRun(false, null, "run-3");
-      expect(card.open).toBe(false);
-      card.querySelector("summary")!.click();
-      renderRun(true, null, "run-3");
-      wheel(200);
-      wheel(200, 201);
-      vi.advanceTimersByTime(300);
-      expect(card.open).toBe(true);
     },
   );
 
-  it("keeps a wheel gesture across the render that enters reading history", async () => {
+  it("keeps gestures across reading-history renders and late native offsets", async () => {
     const container = createContainer();
     const renderHistory = (readingHistory: boolean) =>
-      render(
-        html`<div class="chat-main">
-          <div class="chat-thread"></div>
-          ${renderSessionProgressCard(
-            progressCard,
-            "composer",
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            true,
-            false,
-            { activeRunId: "run-1", readingHistory },
-          )}
-        </div>`,
-        container,
-      );
+      renderTranscriptCard(container, { activeRunId: "run-1", readingHistory });
     renderHistory(false);
     const transcript = observeTranscript(container, transcriptCleanups);
     await Promise.resolve();
@@ -551,8 +530,10 @@ describe("renderSessionProgressCard", () => {
     transcript.wheel(200);
     renderHistory(false);
     renderHistory(true);
-    vi.advanceTimersByTime(201);
-    transcript.wheel(120);
+    vi.advanceTimersByTime(299);
+    transcript.thread.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+    vi.advanceTimersByTime(2);
+    transcript.scroll(120);
     vi.advanceTimersByTime(300);
     expect(card.open).toBe(false);
   });
@@ -560,23 +541,7 @@ describe("renderSessionProgressCard", () => {
   it("counts each touch drag once, waits for scrolling to stop, and cancels on removal", async () => {
     const container = createContainer();
     const renderCard = (activeRunId: string, showTranscript = true) =>
-      render(
-        html`<div class="chat-main">
-          ${showTranscript ? html`<div class="chat-thread"></div>` : nothing}
-          ${renderSessionProgressCard(
-            progressCard,
-            "composer",
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            true,
-            false,
-            { activeRunId, readingHistory: true },
-          )}
-        </div>`,
-        container,
-      );
+      renderTranscriptCard(container, { activeRunId, readingHistory: true }, showTranscript);
     renderCard("run-1");
     const transcript = observeTranscript(container, transcriptCleanups);
     await Promise.resolve();
@@ -928,13 +893,7 @@ describe("renderSessionProgressCard", () => {
         vi.stubGlobal("TouchEvent", undefined);
       }
       const container = createContainer();
-      render(
-        html`<div class="chat-main">
-          <div class="chat-thread" style="line-height: 20px"></div>
-          ${renderSessionProgressCard(progressCard, "composer", undefined, undefined, undefined, undefined, true, false, { activeRunId: "run-1", readingHistory: true })}
-        </div>`,
-        container,
-      );
+      renderTranscriptCard(container, { activeRunId: "run-1", readingHistory: true });
       const transcript = observeTranscript(container, transcriptCleanups);
       await Promise.resolve();
       const card = container.querySelector("details")!;
@@ -958,72 +917,87 @@ describe("renderSessionProgressCard", () => {
     },
   );
 
-  it("counts a reversing wheel burst once until all wheel input pauses", async () => {
-    const container = createContainer();
-    render(
-      html`<div class="chat-main">
-        <div class="chat-thread"></div>
-        ${renderSessionProgressCard(progressCard, "composer", undefined, undefined, undefined, undefined, true, false, { readingHistory: true })}
-      </div>`,
-      container,
-    );
-    const transcript = observeTranscript(container, transcriptCleanups);
-    await Promise.resolve();
-    const card = container.querySelector("details")!;
-    for (const deltaY of [40, -160, 40, 40, -160]) {
-      transcript.wheel(-deltaY);
-      vi.advanceTimersByTime(100);
-    }
-    vi.advanceTimersByTime(300);
-    expect(card.open).toBe(true);
-    transcript.wheel(1);
-    vi.advanceTimersByTime(300);
-    expect(card.open).toBe(false);
-  });
+  it.each([false, true])(
+    "counts a reversing wheel burst once, including a clamped pause: %s",
+    async (clamped) => {
+      const container = createContainer();
+      renderTranscriptCard(container, { readingHistory: true });
+      const transcript = observeTranscript(container, transcriptCleanups);
+      await Promise.resolve();
+      const card = container.querySelector("details")!;
+      for (const deltaY of [40, -160, 40, 40, -160]) {
+        transcript.wheel(-deltaY);
+        vi.advanceTimersByTime(100);
+      }
+      if (clamped) {
+        for (let index = 0; index < 4; index++) {
+          transcript.thread.dispatchEvent(new WheelEvent("wheel", { deltaY: -160, bubbles: true }));
+          vi.advanceTimersByTime(100);
+        }
+        transcript.wheel(-40);
+        vi.advanceTimersByTime(100);
+        transcript.wheel(40);
+      }
+      vi.advanceTimersByTime(300);
+      expect(card.open).toBe(true);
+      transcript.wheel(1);
+      vi.advanceTimersByTime(300);
+      expect(card.open).toBe(false);
+    },
+  );
 
-  it("remembers choices per Gateway and session across switching and remounting", () => {
-    const container = createContainer();
-    const gatewayA = {};
-    const gatewayB = {};
-    const renderCard = (gatewayScope: object, sessionKey = progressCard.sessionKey) =>
-      render(
-        renderSessionProgressCard(
-          { ...progressCard, sessionKey },
-          "composer",
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          true,
-          false,
-          { gatewayScope },
-        ),
-        container,
+  it.each([
+    { first: progressCard.sessionKey, next: "agent:main:next" },
+    { first: "global", next: "agent:main:global" },
+  ])(
+    "remembers choices per Gateway and session across switching and remounting: $first",
+    ({ first: session, next }) => {
+      const container = createContainer();
+      const gatewayA = {};
+      const gatewayB = {};
+      const renderCard = (gatewayScope: object, sessionKey = session) =>
+        render(
+          renderSessionProgressCard(
+            {
+              ...progressCard,
+              sessionKey: sessionKey === "global" ? "agent:main:global" : sessionKey,
+            },
+            "composer",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            true,
+            false,
+            { gatewayScope, sessionIdentity: JSON.stringify(["main", sessionKey]) },
+          ),
+          container,
+        );
+      renderCard(gatewayA);
+      const first = container.querySelector<HTMLDetailsElement>(
+        '[data-progress-card-placement="composer"]',
       );
-    renderCard(gatewayA);
-    const first = container.querySelector<HTMLDetailsElement>(
-      '[data-progress-card-placement="composer"]',
-    );
-    first!.querySelector("summary")!.click();
-    first!.open = true;
-    first!.querySelector("summary")!.click();
-    renderCard(gatewayA);
-    expect(first!.open).toBe(false);
+      first!.querySelector("summary")!.click();
+      first!.open = true;
+      first!.querySelector("summary")!.click();
+      renderCard(gatewayA);
+      expect(first!.open).toBe(false);
 
-    renderCard(gatewayA, "agent:main:next");
+      renderCard(gatewayA, next);
 
-    expect(
-      container.querySelector<HTMLDetailsElement>('[data-progress-card-placement="composer"]')
-        ?.open,
-    ).toBe(true);
-    renderCard(gatewayA);
-    expect(container.querySelector("details")!.open).toBe(false);
-    renderCard(gatewayB);
-    expect(container.querySelector("details")!.open).toBe(true);
-    renderCard(gatewayA);
-    expect(container.querySelector("details")!.open).toBe(false);
-    render(nothing, container);
-    renderCard(gatewayA);
-    expect(container.querySelector("details")!.open).toBe(false);
-  });
+      expect(
+        container.querySelector<HTMLDetailsElement>('[data-progress-card-placement="composer"]')
+          ?.open,
+      ).toBe(true);
+      renderCard(gatewayA);
+      expect(container.querySelector("details")!.open).toBe(false);
+      renderCard(gatewayB);
+      expect(container.querySelector("details")!.open).toBe(true);
+      renderCard(gatewayA);
+      expect(container.querySelector("details")!.open).toBe(false);
+      render(nothing, container);
+      renderCard(gatewayA);
+      expect(container.querySelector("details")!.open).toBe(false);
+    },
+  );
 });
