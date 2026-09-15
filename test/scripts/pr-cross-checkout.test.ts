@@ -129,7 +129,9 @@ printf '%s\\t%s\\n' "$(git rev-parse --show-toplevel)" "$*" >> '${calls}'
 case "$1 $2" in
   "repo view") printf '%s\\n' '${JSON.stringify(repo)}' ;;
   "api --hostname")
-    [ "$*" = 'api --hostname github.com repos/fixture/repo -H Cache-Control: max-age=0' ] || exit 99
+    [ "$*" = 'api --hostname github.com repos/fixture/repo -H Cache-Control: max-age=0' ] || {
+      echo "Unexpected GitHub operation: $*" >&2; exit 99;
+    }
     printf '%s\\n' '${JSON.stringify(repoAuthority)}' ;;
   "api graphql") printf '%s\\n' '${JSON.stringify(response)}' ;;
   "pr view")
