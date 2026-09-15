@@ -5,6 +5,10 @@ import { icons } from "../../../components/icons.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import type { ChatSelectionSource } from "../../../lib/chat/chat-types.ts";
+import {
+  KEYBOARD_SHORTCUT_COMBOS,
+  matchesShortcutCombo,
+} from "../../../lib/keyboard-shortcut-contract.ts";
 
 registerChatMessageMetadataEnglish();
 
@@ -100,11 +104,7 @@ function mountPopup(
   document.addEventListener(
     "keydown",
     (event) => {
-      // oxlint-disable-next-line unicorn/prefer-keyboard-event-key -- IME candidate dismissal can report 229 without isComposing.
-      if (event.isComposing || event.keyCode === 229) {
-        return;
-      }
-      if (event.key === "Escape") {
+      if (matchesShortcutCombo(KEYBOARD_SHORTCUT_COMBOS.escape, event)) {
         event.preventDefault();
         event.stopPropagation();
         removeChatSelectionPopup();
