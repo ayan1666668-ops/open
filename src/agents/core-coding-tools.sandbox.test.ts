@@ -8,6 +8,7 @@ import {
   createSandbox,
   createSandboxFsBridge,
   installFsBridgeTestHarness,
+  mockContainerCanonicalPaths,
   withTempDir,
 } from "./sandbox/fs-bridge.test-helpers.js";
 import { getTextContent } from "./test-helpers/agent-tools-fs-helpers.js";
@@ -41,6 +42,80 @@ function installLocalTransport(bridge: ReturnType<typeof createSandboxFsBridge>)
 
 describe("workspace-only coding tools with effective sandbox mounts", () => {
   installFsBridgeTestHarness();
+
+  it.runIf(process.platform !== "win32").each([true, false])(
+    "reads mapped aliases through real access and queue checks with workspaceOnly=%s",
+    async (workspaceOnly) => {
+      await withTempDir("openclaw-coding-mounts-", async (root) => {
+        const workspaceDir = path.join(root, "workspace");
+        const replacement = path.join(root, "replacement");
+        const hiddenContent = "HIDDEN_ORIGINAL_SYMLINK_BYTES";
+        const visibleContent = "VISIBLE_CONTAINER_BIND_BYTES";
+        await fs.mkdir(path.join(workspaceDir, "cache"), { recursive: true });
+        await fs.mkdir(replacement);
+        await fs.writeFile(path.join(workspaceDir, "visible.txt"), hiddenContent);
+        await fs.symlink("../visible.txt", path.join(workspaceDir, "cache/hop"));
+        await fs.symlink("cache/hop", path.join(workspaceDir, "alias"));
+        await fs.symlink("/data/hop", path.join(workspaceDir, "absolute-alias"));
+        await fs.writeFile(path.join(replacement, "hop"), visibleContent);
+        const sandbox = createSandbox({
+          workspaceDir,
+          agentWorkspaceDir: workspaceDir,
+          workspaceAccess: "rw",
+          docker: {
+            ...createSandbox().docker,
+            binds: [`${replacement}:/workspace/cache:rw`, `${replacement}:/data:rw`],
+          },
+        });
+        const bridge = createSandboxFsBridge({ sandbox });
+        sandbox.fsBridge = bridge;
+        mockContainerCanonicalPaths({
+          "/workspace/alias": "/workspace/cache/hop",
+          "/workspace/absolute-alias": "/data/hop",
+        });
+        const tools = createCoreCodingTools({
+          codingRoot: workspaceDir,
+          containmentRoot: workspaceDir,
+          includeBaseCodingTools: true,
+          includeShellTools: false,
+          workspaceOnly,
+          readOnly: false,
+          sandbox,
+          applyPatchEnabled: false,
+          applyPatchWorkspaceOnly: true,
+          execDefaults: {},
+          processDefaults: {},
+        });
+        const read = tools.find((tool) => tool.name === "read")!;
+        for (const filePath of ["alias", "absolute-alias", "/data/hop"]) {
+          const text = getTextContent(await read.execute("read-alias", { path: filePath }));
+          expect(text).toContain(visibleContent);
+          expect(text).not.toContain(hiddenContent);
+          expect(await resolveSandboxFileIdentity({ bridge, filePath })).toBe(
+            path.join(replacement, "hop"),
+          );
+        }
+        if (workspaceOnly) {
+          for (const name of ["write", "edit", "ls"]) {
+            await expect(
+              tools
+                .find((tool) => tool.name === name)!
+                .execute("deny-extra", {
+                  path: "/data/hop",
+                  content: "changed",
+                  oldText: visibleContent,
+                  newText: "changed",
+                }),
+            ).rejects.toThrow("Path escapes sandbox root");
+          }
+        }
+        expect(await fs.readFile(path.join(workspaceDir, "visible.txt"), "utf8")).toBe(
+          hiddenContent,
+        );
+        expect(await fs.readFile(path.join(replacement, "hop"), "utf8")).toBe(visibleContent);
+      });
+    },
+  );
 
   it.each([true, false])(
     "preserves container execution paths with workspaceOnly=%s",
@@ -360,6 +435,7 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
       expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ filePath: "/extra/new" }));
       if (process.platform !== "win32") {
         await fs.symlink(path.join(outside, "marker"), path.join(replacement, "delete-link"));
+        mockContainerCanonicalPaths({ "/workspace/delete-link": "/outside/marker" });
         await patch.execute("patch-unlink", {
           input: "*** Begin Patch\n*** Delete File: delete-link\n*** End Patch",
         });

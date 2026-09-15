@@ -123,28 +123,20 @@ export class SandboxFsPathGuard {
 
   async openReadableFile(
     target: SandboxResolvedFsPath,
+    signal?: AbortSignal,
   ): Promise<RootFileOpenResult & { ok: true }> {
-    const opened = await this.openBoundaryWithinRequiredMount(target, "read files");
+    const resolved = await this.resolveCanonicalReadTarget(target, "read files", signal);
+    const opened = await this.openBoundaryWithinRequiredMount(resolved.target, "read files");
     if (!opened.ok) {
       throw sandboxBoundaryError("read files", target.containerPath, opened.error);
     }
     try {
-      const lexicalMount = this.resolveRequiredMount(target.containerPath, "read files");
-      const relative = path.relative(opened.rootRealPath, opened.path);
-      const canonicalContainerPath = path.posix.join(
-        lexicalMount.containerRoot,
-        ...relative.split(path.sep),
-      );
-      const visibleMount = this.resolveRequiredMount(canonicalContainerPath, "read files");
-      const visibleHostPath = path.resolve(
-        visibleMount.canonicalHostRoot,
-        ...path.posix.relative(visibleMount.containerRoot, canonicalContainerPath).split("/"),
-      );
-      // The pinned host descriptor must represent the same bytes the container
-      // sees. In-root aliases can cross a tmpfs or a bind with another source;
-      // same-source protected skill overlays remain safe to read.
+      // Resolve aliases in the container before opening host bytes: an
+      // intermediate hop can cross mounts even when its host endpoint does not.
+      // Reject a host alias changed after that resolution; keep the same FD.
       if (
-        getSandboxHostPathPolicyKey(visibleHostPath) !== getSandboxHostPathPolicyKey(opened.path)
+        getSandboxHostPathPolicyKey(resolved.canonicalHostPath) !==
+        getSandboxHostPathPolicyKey(opened.path)
       ) {
         throw new Error(
           `Sandbox path is hidden by another mount: ${target.containerPath}. Use the mounted container path directly.`,
@@ -155,6 +147,68 @@ export class SandboxFsPathGuard {
       throw error;
     }
     return opened;
+  }
+
+  private async resolveCanonicalEndpoint(
+    containerPath: string,
+    options?: { identity?: boolean; signal?: AbortSignal },
+  ) {
+    const canonicalPath = await this.resolveCanonicalContainerPath({
+      containerPath,
+      allowFinalSymlinkForUnlink: false,
+      resolveIdentity: options?.identity,
+      signal: options?.signal,
+    });
+    const mount = resolveSandboxFsMount(
+      this.mountsByContainer,
+      canonicalPath,
+      this.containerOnlyMounts,
+      {
+        containerOnlyAsUnmapped: options?.identity,
+      },
+    );
+    const relative = mount
+      ? path.posix.relative(mount.containerRoot, canonicalPath).split("/")
+      : [];
+    return {
+      containerPath: canonicalPath,
+      mount,
+      hostPath: mount ? path.resolve(mount.hostRoot, ...relative) : undefined,
+      canonicalHostPath: mount ? path.resolve(mount.canonicalHostRoot, ...relative) : undefined,
+    };
+  }
+
+  async resolveFileIdentity(target: SandboxResolvedFsPath, signal?: AbortSignal): Promise<string> {
+    const resolved = await this.resolveCanonicalEndpoint(target.containerPath, {
+      identity: true,
+      signal,
+    });
+    // Identity coordinates callers; it must not authorize a read or prevent
+    // unlinking an unresolved/outside final symlink. Unmapped endpoints never
+    // borrow the hidden host path's identity.
+    return resolved.canonicalHostPath ?? `container:${resolved.containerPath}`;
+  }
+
+  async resolveCanonicalReadTarget(
+    target: SandboxResolvedFsPath,
+    action: string,
+    signal?: AbortSignal,
+  ) {
+    const resolved = await this.resolveCanonicalEndpoint(target.containerPath, { signal });
+    if (!resolved.mount || !resolved.hostPath || !resolved.canonicalHostPath) {
+      throw new Error(
+        `Sandbox path escapes allowed mounts; cannot ${action}: ${resolved.containerPath}`,
+      );
+    }
+    return {
+      target: {
+        ...target,
+        containerPath: resolved.containerPath,
+        hostPath: resolved.hostPath,
+        writable: resolved.mount.writable,
+      },
+      canonicalHostPath: resolved.canonicalHostPath,
+    };
   }
 
   private resolveRequiredMount(containerPath: string, action: string) {
@@ -384,28 +438,56 @@ export class SandboxFsPathGuard {
   private async resolveCanonicalContainerPath(params: {
     containerPath: string;
     allowFinalSymlinkForUnlink: boolean;
+    resolveIdentity?: boolean;
+    signal?: AbortSignal;
   }): Promise<string> {
     // Resolve the deepest existing path and append missing suffixes to handle create operations.
     const script = [
       "set -eu",
       'target="$1"',
       'allow_final="$2"',
+      'identity="$3"',
       'suffix=""',
+      // Explicitly suppress the readlink delimiter and retain a sentinel so
+      // command substitution cannot discard newline bytes from the path.
+      "read_canonical() {",
+      '  canonical=$(readlink -n -f -- "$cursor" && printf .) || return',
+      "  canonical=${canonical%.}",
+      "}",
       'probe="$target"',
-      'if [ "$allow_final" = "1" ] && [ -L "$target" ]; then probe=$(dirname -- "$target"); fi',
+      // Targets are normalized absolute paths; parameter expansion preserves
+      // path bytes that dirname/basename command substitution would strip.
+      'if [ "$allow_final" = "1" ] && [ -L "$target" ]; then probe=${target%/*}; probe=${probe:-/}; fi',
       'cursor="$probe"',
       'while [ ! -e "$cursor" ] && [ ! -L "$cursor" ]; do',
-      '  parent=$(dirname -- "$cursor")',
+      "  parent=${cursor%/*}; parent=${parent:-/}",
       '  if [ "$parent" = "$cursor" ]; then break; fi',
-      '  base=$(basename -- "$cursor")',
+      "  base=${cursor##*/}",
       '  suffix="/$base$suffix"',
       '  cursor="$parent"',
       "done",
-      'canonical=$(readlink -f -- "$cursor")',
+      'if [ "$identity" = "1" ]; then',
+      // Match the host identity owner's existing-ancestor fallback, including
+      // dangling links and loops, without relaxing read/mutation validation.
+      "  while ! read_canonical; do",
+      "    parent=${cursor%/*}; parent=${parent:-/}",
+      '    if [ "$parent" = "$cursor" ]; then canonical="$target"; suffix=""; break; fi',
+      "    base=${cursor##*/}",
+      '    suffix="/$base$suffix"',
+      '    cursor="$parent"',
+      "  done",
+      "else",
+      "  read_canonical",
+      "fi",
       'printf "%s%s\\n" "$canonical" "$suffix"',
     ].join("\n");
     const result = await this.runCommand(script, {
-      args: [params.containerPath, params.allowFinalSymlinkForUnlink ? "1" : "0"],
+      args: [
+        params.containerPath,
+        params.allowFinalSymlinkForUnlink ? "1" : "0",
+        params.resolveIdentity ? "1" : "0",
+      ],
+      signal: params.signal,
     });
     // Remove the record terminator, not significant whitespace in the path.
     const canonical = result.stdout.toString("utf8").replace(/\n$/, "");

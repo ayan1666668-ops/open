@@ -194,6 +194,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
                 additionalContainerMounts: sandboxReadMounts,
                 containerWorkdir: sandbox.containerWorkdir,
                 bridge: sandboxFsBridge,
+                readPathValidation: "bridge",
               }
             : {
                 additionalRoots: skillReadRoots,

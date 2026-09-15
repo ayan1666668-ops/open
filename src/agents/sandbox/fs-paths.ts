@@ -303,6 +303,7 @@ export function resolveSandboxFsMount<T extends { containerRoot: string }>(
   mounts: readonly T[],
   target: string,
   containerOnlyMounts: readonly string[] = [],
+  options?: { containerOnlyAsUnmapped?: boolean },
 ): T | null {
   let mount: T | null = null;
   for (const entry of mounts) {
@@ -320,6 +321,9 @@ export function resolveSandboxFsMount<T extends { containerRoot: string }>(
         (!mount || mask.length >= mount.containerRoot.length),
     )
   ) {
+    if (options?.containerOnlyAsUnmapped) {
+      return null;
+    }
     throw new Error(
       `Sandbox path is container-only: ${target}. Use exec to access this mount; file tools require a host-backed bind mount.`,
     );

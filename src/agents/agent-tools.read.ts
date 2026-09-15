@@ -930,6 +930,7 @@ export function wrapToolWorkspaceRootGuardWithOptions(
     normalizeGuardedPathParams?: boolean;
     resolutionCwd?: string;
     bridge?: SandboxFsBridge;
+    readPathValidation?: "bridge";
   },
 ): AnyAgentTool {
   const pathParamKeys =
@@ -957,8 +958,9 @@ export function wrapToolWorkspaceRootGuardWithOptions(
           normalizedRecord[key] = filePath;
         }
         // The bridge owns relative/host aliases and effective mount selection.
-        // Admission still uses this tool's allowed roots, then checks the
-        // selected host path's symlink boundary before the operation runs.
+        // Admission still uses this tool's allowed roots. Reads delegate the
+        // physical boundary to the bridge, which resolves container aliases;
+        // mutation/list guards retain their selected host boundary check.
         const guardPath = options?.bridge
           ? options.bridge.resolvePath({
               filePath: resolveContainerPathCandidate(filePath) ?? filePath,
@@ -996,27 +998,29 @@ export function wrapToolWorkspaceRootGuardWithOptions(
           guardedRoot === root && !workspaceMapping?.matched
             ? (options?.additionalRoots ?? [])
             : [];
-        let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>>;
+        let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>> | undefined;
         try {
           if (options?.bridge && !workspaceMapping?.matched) {
             throw new Error(
               `Path escapes sandbox root (${options.containerWorkdir ?? root}): ${guardPath}`,
             );
           }
-          sandboxResult = await assertSandboxPathWithinAnyRoot({
-            cwd:
-              guardedRoot === root && !workspaceMapping?.matched
-                ? options?.resolutionCwd
-                : undefined,
-            filePath: sandboxPath,
-            roots: [guardedRoot, ...additionalRoots],
-          });
+          if (!options?.bridge || options.readPathValidation !== "bridge") {
+            sandboxResult = await assertSandboxPathWithinAnyRoot({
+              cwd:
+                guardedRoot === root && !workspaceMapping?.matched
+                  ? options?.resolutionCwd
+                  : undefined,
+              filePath: sandboxPath,
+              roots: [guardedRoot, ...additionalRoots],
+            });
+          }
         } catch (error) {
           throw withWorkspaceSafeTempHint(error);
         }
         if (options?.normalizeGuardedPathParams && record) {
           normalizedRecord ??= { ...record };
-          normalizedRecord[key] = options.bridge ? guardPath : sandboxResult.resolved;
+          normalizedRecord[key] = options.bridge ? guardPath : sandboxResult!.resolved;
         }
       }
       return tool.execute(toolCallId, normalizedRecord ?? args, signal, onUpdate);

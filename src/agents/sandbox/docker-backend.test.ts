@@ -194,6 +194,28 @@ describe("docker sandbox backend manager", () => {
       readable: ["/workspace/cache/live/marker"],
     },
     {
+      name: "intervening tmpfs hides an older sibling bind",
+      binds: [{ source: "/host/export", target: "/workspace/cache/export", writable: true }],
+      tmpfs: { "/workspace/aliases/deep/link": "rw" },
+      table: [
+        "3 2 8:1 /export /workspace/cache/export rw - ext4 /dev/root rw",
+        "4 2 0:9 / /workspace/cache rw - tmpfs tmpfs rw",
+      ],
+      masked: ["/workspace/cache/marker", "/workspace/cache/export/marker"],
+      readable: ["/workspace/other/marker"],
+    },
+    {
+      name: "bind attached inside the intervening tmpfs remains visible",
+      binds: [{ source: "/host/export", target: "/workspace/cache/export", writable: true }],
+      tmpfs: { "/workspace/aliases/deep/link": "rw" },
+      table: [
+        "3 2 0:9 / /workspace/cache rw - tmpfs tmpfs rw",
+        "4 3 8:1 /export /workspace/cache/export rw - ext4 /dev/root rw",
+      ],
+      masked: ["/workspace/cache/marker"],
+      readable: ["/workspace/cache/export/marker"],
+    },
+    {
       name: "identical recursive bind backing with a readonly top",
       binds: [{ source: "/host/export", target: "/workspace/export", writable: false }],
       tmpfs: {},

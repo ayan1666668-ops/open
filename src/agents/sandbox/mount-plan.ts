@@ -9,6 +9,7 @@ import {
   translateSandboxMountSources,
 } from "./docker-mount-source.js";
 import { getSandboxHostPathPolicyKey } from "./host-paths.js";
+import { isPathInsideContainerRoot } from "./path-utils.js";
 import type { SandboxWorkspaceAccess } from "./types.js";
 import {
   normalizeMountContainerPath,
@@ -145,11 +146,15 @@ export async function resolveSandboxContainerOnlyMounts(params: {
     throw new Error("Container mountinfo did not return a mount table.");
   }
   const byDestination = new Map<string, ContainerMountInfo[]>();
+  const byParent = new Map<string, ContainerMountInfo[]>();
   const covered = new Set<string>();
   for (const entry of entries.values()) {
     const group = byDestination.get(entry.destination) ?? [];
     group.push(entry);
     byDestination.set(entry.destination, group);
+    const siblings = byParent.get(entry.parent) ?? [];
+    siblings.push(entry);
+    byParent.set(entry.parent, siblings);
     if (entries.get(entry.parent)?.destination === entry.destination && entry.parent !== entry.id) {
       covered.add(entry.parent);
     }
@@ -163,6 +168,21 @@ export async function resolveSandboxContainerOnlyMounts(params: {
         return true;
       }
       if (parent.destination !== current.destination && covered.has(parent.id)) {
+        return false;
+      }
+      // A later mount on an intervening directory hides an older child even
+      // when both retain the same parent ID. A visible child attaches below
+      // that covering mount instead, so genuine nested binds still recover.
+      if (
+        byParent
+          .get(current.parent)
+          ?.some(
+            (sibling) =>
+              sibling.id !== parent.id &&
+              sibling.destination !== current.destination &&
+              isPathInsideContainerRoot(sibling.destination, current.destination),
+          )
+      ) {
         return false;
       }
       current = parent;

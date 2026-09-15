@@ -15,6 +15,7 @@ import type {
   SandboxFsBridgeContext,
 } from "./backend-handle.types.js";
 import { runDockerSandboxShellCommand } from "./docker-backend.js";
+import { SANDBOX_FILE_IDENTITY } from "./file-mutation-identity.js";
 import { buildPinnedMutationPlan } from "./fs-bridge-mutation-helper.js";
 import { SandboxFsPathGuard, type PinnedSandboxEntry } from "./fs-bridge-path-safety.js";
 import { buildStatPlan, type SandboxFsCommandPlan } from "./fs-bridge-shell-command-plans.js";
@@ -88,6 +89,14 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     };
   }
 
+  async [SANDBOX_FILE_IDENTITY](params: {
+    filePath: string;
+    cwd?: string;
+    signal?: AbortSignal;
+  }): Promise<string> {
+    return this.pathGuard.resolveFileIdentity(this.resolveResolvedPath(params), params.signal);
+  }
+
   async resolvePinnedMutationTarget(
     params: Parameters<NonNullable<SandboxFsBridge["resolvePinnedMutationTarget"]>>[0],
   ): Promise<{ policyPath: string; pinnedPath: string }> {
@@ -104,7 +113,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
 
   async readFile(params: Parameters<SandboxFsBridge["readFile"]>[0]): Promise<Buffer> {
     const target = this.resolveResolvedPath(params);
-    return this.readPinnedFile(target, params.maxBytes);
+    return this.readPinnedFile(target, params.maxBytes, params.signal);
   }
 
   async readDirectory(
@@ -317,9 +326,16 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
 
   async stat(params: Parameters<SandboxFsBridge["stat"]>[0]): Promise<SandboxFsStat | null> {
     const target = this.resolveResolvedPath(params);
+    const resolved = await this.pathGuard.resolveCanonicalReadTarget(
+      target,
+      "stat files",
+      params.signal,
+    );
     const anchoredTarget = await this.pathGuard.resolveAnchoredSandboxEntry(target, "stat files");
     const result = await this.runPlannedCommand(
-      buildStatPlan(target, anchoredTarget),
+      // Keep stat's original parent/basename metadata semantics, while its
+      // boundary check validates the container-visible backing rather than a hidden host alias.
+      buildStatPlan(resolved.target, anchoredTarget),
       params.signal,
     );
     if (result.code !== 0) {
@@ -363,8 +379,12 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     });
   }
 
-  private async readPinnedFile(target: SandboxResolvedFsPath, maxBytes?: number): Promise<Buffer> {
-    const opened = await this.pathGuard.openReadableFile(target);
+  private async readPinnedFile(
+    target: SandboxResolvedFsPath,
+    maxBytes?: number,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    const opened = await this.pathGuard.openReadableFile(target, signal);
     try {
       if (maxBytes === undefined) {
         return await readFileAsync(opened.fd);
