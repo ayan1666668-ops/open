@@ -3257,13 +3257,23 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         OPENCLAW_VITEST_INCLUDE_FILE: undefined,
       }),
     );
+    const returnCovenantFile = "src/gateway/return-covenant-fixture.gateway.test.ts";
     expect(
       listTestFiles("src/gateway")
         .filter(isGatewayServerTestFile)
         .toSorted((a, b) => a.localeCompare(b)),
     ).toEqual(expectedControlPlaneFiles);
-    expect(controlPlaneShardFiles).toEqual(expectedControlPlaneFiles);
+    expect(controlPlaneShardFiles).toEqual(
+      expectedControlPlaneFiles.filter((file) => file !== returnCovenantFile),
+    );
     expect(new Set(controlPlaneShardFiles).size).toBe(controlPlaneShardFiles.length);
+    const gatewayServerShardFiles = [
+      ...controlPlaneShardFiles,
+      ...(shards.find((shard) => shard.shardName === "agentic-gateway-return-covenant")
+        ?.includePatterns ?? []),
+    ].toSorted((a, b) => a.localeCompare(b));
+    expect(gatewayServerShardFiles).toEqual(expectedControlPlaneFiles);
+    expect(new Set(gatewayServerShardFiles).size).toBe(gatewayServerShardFiles.length);
     expect(cliShard).toEqual({
       checkName: "checks-node-agentic-cli",
       shardName: "agentic-cli",
@@ -3615,11 +3625,13 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     const owner = shards.find((shard) => shard.shardName === "agentic-gateway-return-covenant");
 
     expect(owner?.includePatterns).toEqual([target]);
+    expect(owner?.configs).toEqual(["test/vitest/vitest.gateway-server.config.ts"]);
+    expect(isGatewayServerTestFile(target)).toBe(true);
     expect(
       shards
-        .filter((shard) => shard.shardName.startsWith("agentic-gateway-core-"))
-        .flatMap((shard) => shard.includePatterns ?? []),
-    ).not.toContain(target);
+        .filter((shard) => shard.includePatterns?.includes(target))
+        .map((shard) => shard.shardName),
+    ).toEqual(["agentic-gateway-return-covenant"]);
   });
 
   it("keeps changed native browser tests in UI jobs and out of extension fallback", () => {

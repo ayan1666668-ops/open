@@ -35,6 +35,7 @@ export const gatewayServerBackedHttpTestFiles = [
   "src/gateway/openai-http.test.ts",
   "src/gateway/openresponses-http.test.ts",
   "src/gateway/probe.auth.integration.test.ts",
+  "src/gateway/return-covenant-fixture.gateway.test.ts",
   "src/gateway/sessions-history-http.test.ts",
 ];
 
@@ -46,6 +47,8 @@ export const gatewayMethodsIsolatedTestFiles = [
   "src/gateway/server-methods/chat.reset-visible-yield.test.ts",
   // Status uses the host-owned shared SQLite broker.
   "src/gateway/server-methods/health.owner-routing.test.ts",
+  // Process-global fake timers and diagnostics need a private forked module graph.
+  "src/gateway/server-methods/question.recovery.test.ts",
   "src/gateway/server-methods/system-agent-nested-inference.integration.test.ts",
   "src/gateway/server-methods/system-agent-setup-control-ui.test.ts",
   "src/gateway/server-methods/users-preferences.test.ts",

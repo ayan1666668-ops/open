@@ -1372,7 +1372,10 @@ function resolveGatewayServerShardName(file: string): string {
 
 function createGatewayServerSplitShards(): NodeTestSplitShard[] {
   const groups = new Map<string, string[]>();
-  for (const file of listTestFiles("src/gateway").filter(isGatewayServerTestFile)) {
+  for (const file of listTestFiles("src/gateway").filter(
+    (candidate) =>
+      candidate !== RETURN_COVENANT_GATEWAY_TEST_FILE && isGatewayServerTestFile(candidate),
+  )) {
     const shardName = resolveGatewayServerShardName(file);
     groups.set(shardName, [...(groups.get(shardName) ?? []), file]);
   }
@@ -1897,7 +1900,7 @@ function createAgenticGatewayCoreSplitShards(): NodeTestSplitShard[] {
         ]
       : []),
     {
-      configs: ["test/vitest/vitest.gateway-core.config.ts"],
+      configs: ["test/vitest/vitest.gateway-server.config.ts"],
       includePatterns: [RETURN_COVENANT_GATEWAY_TEST_FILE],
       requiresDist: false,
       shardName: "agentic-gateway-return-covenant",
