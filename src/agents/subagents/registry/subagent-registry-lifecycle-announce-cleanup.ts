@@ -366,21 +366,30 @@ const finalizeSubagentCleanup = async (
     return;
   }
 
-  markPendingFinalDelivery({
-    entry,
-    error: "announce deferred or direct delivery failed",
-  });
+  const requesterTurnPending = announceOutcome === "requester_turn_pending";
+  if (!requesterTurnPending) {
+    markPendingFinalDelivery({
+      entry,
+      error: "announce deferred or direct delivery failed",
+    });
+  }
   const delivery = ensureDeliveryState(entry);
+  delivery.status = "pending";
+  delivery.payload ??= loadPendingFinalDeliveryPayload(entry);
   delivery.windowStartedAt ??= entry.execution.endedAt ?? now;
   delivery.deadlineAt ??= delivery.windowStartedAt + ANNOUNCE_COMPLETION_HARD_EXPIRY_MS;
-  delivery.nextAttemptAt = now + (deferredDecision.resumeDelayMs ?? 0);
+  // An admitted requester still owns this delivery; observation is not another failed attempt.
+  const resumeDelayMs = requesterTurnPending
+    ? Math.min(MIN_ANNOUNCE_RETRY_DELAY_MS, delivery.deadlineAt - now)
+    : deferredDecision.resumeDelayMs;
+  delivery.nextAttemptAt = now + (resumeDelayMs ?? 0);
   entry.cleanupHandled = false;
   params.resumedRuns.delete(runId);
   params.persist(runId);
-  if (deferredDecision.resumeDelayMs == null) {
+  if (resumeDelayMs == null) {
     return;
   }
-  scheduleResumeSubagentRun(context, runId, entry, deferredDecision.resumeDelayMs);
+  scheduleResumeSubagentRun(context, runId, entry, resumeDelayMs);
 };
 
 export const startSubagentAnnounceCleanupFlow = (
@@ -676,6 +685,10 @@ export const startSubagentAnnounceCleanupFlow = (
         return;
       }
       const deliveryState = ensureDeliveryState(entry);
+      if (delivery.reason === "requester_turn_pending") {
+        latestDeliveryError = undefined;
+        return;
+      }
       if (delivery.reason === "delivery_suppressed") {
         deliveryState.status = "failed";
       }
