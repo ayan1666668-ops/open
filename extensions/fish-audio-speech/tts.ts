@@ -187,6 +187,9 @@ async function requestVoicePage(params: {
     const payload = await readProviderJsonObjectResponse(response, "Fish Audio voices", {
       maxBytes: FISH_AUDIO_VOICES_MAX_BYTES,
     });
+    // The Fish Audio /model envelope is an object whose `items`/`total` fields
+    // are validated by the Array.isArray checks at each read site.
+    // SAFETY: `readProviderJsonObjectResponse` has already rejected a non-object body.
     return payload as FishAudioVoicePayload;
   } finally {
     await release();
