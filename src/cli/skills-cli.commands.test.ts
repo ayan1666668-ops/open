@@ -8,6 +8,7 @@ import {
   type AgentSelectionContext,
 } from "../agents/agent-scope-config.js";
 import { GatewayTransportError } from "../gateway/transport-error.js";
+import type { SkillStatusReport } from "../skills/discovery/status.js";
 import {
   expectObjectFields,
   mockCall,
@@ -41,7 +42,7 @@ const mocks = vi.hoisted(() => {
   const runtimeStdout: string[] = [];
   const runtimeErrors: string[] = [];
   const stringifyArgs = (args: unknown[]) => args.map((value) => String(value)).join(" ");
-  const skillStatusReportFixture = {
+  const skillStatusReportFixture: SkillStatusReport = {
     workspaceDir: "/tmp/workspace",
     managedSkillsDir: "/tmp/workspace/skills",
     skills: [
@@ -58,7 +59,12 @@ const mocks = vi.hoisted(() => {
         always: false,
         disabled: false,
         blockedByAllowlist: false,
+        blockedByAgentFilter: false,
         eligible: true,
+        platformIncompatible: false,
+        modelVisible: true,
+        userInvocable: true,
+        commandVisible: true,
         primaryEnv: "CALENDAR_API_KEY",
         requirements: {
           bins: [],
@@ -1509,6 +1515,8 @@ describe("skills cli commands", () => {
         ...skill,
         skillKey,
         eligible: false,
+        modelVisible: false,
+        commandVisible: false,
         missing: { ...skill.missing, env: ["CALENDAR_API_KEY"] },
       })),
     });
