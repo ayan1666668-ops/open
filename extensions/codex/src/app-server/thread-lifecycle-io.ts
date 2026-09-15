@@ -272,7 +272,6 @@ export async function resumeExistingCodexThread(
       }
     }
     throwIfAborted();
-    const boundAuthProfileId = authProfileId;
     const nextMcpServersFingerprint =
       params.mcpServersFingerprintEvaluated === true
         ? params.mcpServersFingerprint
@@ -284,11 +283,11 @@ export async function resumeExistingCodexThread(
       pendingResumeConfiguration: undefined,
       cwd: params.cwd,
       rolloutPath: resolveCodexThreadRolloutPath(response.thread) ?? resumeBinding.rolloutPath,
-      authProfileId: boundAuthProfileId,
+      authProfileId,
       model: response.model ?? resumeParams.model ?? params.params.modelId,
       preserveNativeModel: resumeBinding.preserveNativeModel === true ? true : undefined,
       modelProvider: normalizeBindingModelProvider(
-        boundAuthProfileId,
+        authProfileId,
         response.modelProvider ?? requestModelProvider ?? startModelProvider,
       ),
       dynamicToolsFingerprint,
