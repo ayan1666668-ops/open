@@ -194,6 +194,44 @@ suite.define(() => {
     );
   });
 
+  it("wraps long secret names in the stacked phone layout", async () => {
+    await suite.withPage(
+      {
+        viewport: { height: 844, width: 390 },
+      },
+      async ({ page }) => {
+        await installMockGateway(page, {
+          featureMethods: ["secrets.store.list"],
+          methodResponses: {
+            "secrets.store.list": { entries: [longNameSecretEntry] },
+          },
+        });
+
+        await page.goto(`${suite.server.baseUrl}settings/secrets`);
+        const row = page.getByRole("row", { name: longNameSecretEntry.name });
+        const table = page.locator(".secrets-store__table");
+        const name = row.locator(".secrets-store__name");
+
+        expect(
+          await table.evaluate((element) => element.classList.contains("settings-table--stacked")),
+        ).toBe(true);
+        const nameStyle = await name.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            overflowWrap: style.overflowWrap,
+            whiteSpace: style.whiteSpace,
+            fitsHorizontally: element.scrollWidth <= element.clientWidth,
+          };
+        });
+        expect(nameStyle).toEqual({
+          overflowWrap: "anywhere",
+          whiteSpace: "normal",
+          fitsHorizontally: true,
+        });
+      },
+    );
+  });
+
   it("blocks empty protected values without rejecting empty environment entries", async () => {
     await suite.withPage({}, async ({ page }) => {
       const gateway = await installMockGateway(page, {
