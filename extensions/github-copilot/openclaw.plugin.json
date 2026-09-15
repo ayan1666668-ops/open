@@ -282,6 +282,8 @@
     {
       "provider": "github-copilot",
       "method": "device",
+      "credentialOnly": true,
+      "channelLogin": {},
       "choiceId": "github-copilot",
       "appGuidedAuth": "device-code",
       "appGuidedSecret": true,
@@ -299,6 +301,7 @@
     {
       "provider": "github-copilot",
       "method": "device-enterprise",
+      "credentialOnly": true,
       "choiceId": "github-copilot-enterprise",
       "appGuidedAuth": "device-code",
       "choiceLabel": "GitHub Copilot (Enterprise / data residency)",
