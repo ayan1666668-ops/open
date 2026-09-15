@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MSTeamsConfig } from "../runtime-api.js";
 import { MSTEAMS_DELEGATED_TOKEN_MAX_ENTRIES } from "./delegated-state.js";
@@ -451,7 +452,8 @@ describe("token – backward compatibility", () => {
 describe("resolveDelegatedAccessToken", () => {
   let stateDir: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
     setMSTeamsRuntime(msteamsRuntimeStub);
     saveAndClearEnv();
@@ -460,10 +462,11 @@ describe("resolveDelegatedAccessToken", () => {
     oauthTokenMocks.refreshMSTeamsDelegatedTokens.mockReset();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
-    restoreEnv();
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
+    restoreEnv();
     if (stateDir) {
       rmSync(stateDir, { recursive: true, force: true });
       stateDir = undefined;
@@ -491,6 +494,7 @@ describe("resolveDelegatedAccessToken", () => {
 
   it("roundtrips delegated tokens through reopened plugin-state SQLite without a sidecar", async () => {
     await writeDelegatedTokens(Date.now() + 60_000);
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
 
     expect(await loadDelegatedTokens()).toMatchObject({
@@ -606,6 +610,7 @@ describe("resolveDelegatedAccessToken", () => {
         await result;
       }
       expect(await result).toBe(failWrite ? undefined : refreshed.accessToken);
+      await closeOpenClawStateDatabaseAsync();
       resetPluginStateStoreForTests();
       expect((await loadDelegatedTokens())?.accessToken).toBe(
         failWrite ? "stale-access" : refreshed.accessToken,
