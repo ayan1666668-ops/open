@@ -68,7 +68,22 @@ function createHarness(handler: HeartbeatWakeHandler) {
     };
     return executeJobCore(state, job, signal);
   };
-  return { state, run };
+  const runHeartbeat = () => {
+    const job: CronJob = {
+      id: "heartbeat",
+      name: "heartbeat",
+      enabled: true,
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+      schedule: { kind: "every", everyMs: 60_000 },
+      payload: { kind: "heartbeat" },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      state: {},
+    };
+    return executeJobCore(state, job);
+  };
+  return { state, run, runHeartbeat };
 }
 
 it("coalesces two main jobs and settles both only after their shared turn", async () => {
@@ -159,6 +174,37 @@ it.each([
     expect(peekSystemEventEntries(sessionKey)).toHaveLength(0);
   },
 );
+
+it("settles a deferred heartbeat cron attempt while preserving the queued retry", async () => {
+  const retryDelayMs = 60_000;
+  const handler = vi
+    .fn<HeartbeatWakeHandler>()
+    .mockResolvedValueOnce({
+      status: "skipped",
+      reason: "requests-in-flight",
+      retryAtMs: Date.now() + retryDelayMs,
+    })
+    .mockResolvedValue(ran);
+  const { runHeartbeat } = createHarness(handler);
+  let finished = false;
+  const pending = runHeartbeat().then((result) => {
+    finished = true;
+    return result;
+  });
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(finished).toBe(true);
+  await expect(pending).resolves.toEqual({
+    status: "skipped",
+    error: "heartbeat skipped: requests-in-flight",
+  });
+  expect(handler).toHaveBeenCalledTimes(1);
+
+  await vi.advanceTimersByTimeAsync(retryDelayMs - 1);
+  expect(handler).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(handler).toHaveBeenCalledTimes(2);
+});
 
 it("does not spend the busy budget while the model is executing", async () => {
   const release = createDeferred();

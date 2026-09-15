@@ -195,10 +195,13 @@ export async function executeJobCore(
     );
     let heartbeatResult: HeartbeatRunResult;
     try {
-      heartbeatResult = await (state.deps.requestHeartbeatAndWait?.(
-        heartbeatWake,
-        abortSignal ? { abortSignal } : {},
-      ) ?? { status: "failed", reason: "heartbeat wake settlement unavailable" });
+      heartbeatResult = await (state.deps.requestHeartbeatAndWait?.(heartbeatWake, {
+        ...(abortSignal ? { abortSignal } : {}),
+        // The wake queue owns retrying a deferred heartbeat. Settle this cron
+        // attempt as skipped instead of letting its execution watchdog turn
+        // queue contention into a timeout error.
+        stopWaitingOnRetry: () => true,
+      }) ?? { status: "failed", reason: "heartbeat wake settlement unavailable" });
     } finally {
       releaseHeartbeatWait();
     }

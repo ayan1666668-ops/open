@@ -12,6 +12,7 @@ import {
   createStartedCronServiceWithFinishedBarrier,
   installCronTestHooks,
 } from "./service.test-harness.js";
+import type { CronServiceDeps } from "./service/state.js";
 
 const noopLogger = createNoopLogger();
 const { makeStorePath } = createCronStoreHarness();
@@ -148,6 +149,55 @@ describe("heartbeat payload execution", () => {
         lastRunStatus: testCase.expectedStatus,
         lastStatus: testCase.expectedStatus,
         consecutiveErrors: testCase.expectedConsecutiveErrors,
+      });
+    } finally {
+      cron.stop();
+      await cleanup();
+    }
+  });
+
+  it("passes retry detachment policy and records queue contention as skipped", async () => {
+    const { storePath, cleanup } = await makeStorePath();
+    const deferredResult = {
+      status: "skipped" as const,
+      reason: "requests-in-flight",
+    };
+    const requestHeartbeatAndWait = vi.fn(
+      async (
+        _request: Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[0],
+        lifecycle: Parameters<NonNullable<CronServiceDeps["requestHeartbeatAndWait"]>>[1],
+      ): Promise<HeartbeatRunResult> => {
+        expect(lifecycle.stopWaitingOnRetry?.(deferredResult, Date.now() + 60_000)).toBe(true);
+        return deferredResult;
+      },
+    );
+    const { cron } = createStartedCronServiceWithFinishedBarrier({
+      storePath,
+      logger: noopLogger,
+      requestHeartbeatAndWait,
+    });
+    try {
+      await cron.start();
+      const added = await cron.add(
+        {
+          declarationKey: "heartbeat:main",
+          name: "heartbeat-main",
+          agentId: "main",
+          enabled: true,
+          schedule: { kind: "every", everyMs: 60_000 },
+          payload: { kind: "heartbeat" },
+          sessionTarget: "main",
+          wakeMode: "next-heartbeat",
+        },
+        { enabledExplicit: true, systemOwned: true },
+      );
+      const job = "job" in added ? added.job : added;
+
+      await expect(cron.run(job.id, "force")).resolves.toMatchObject({ ok: true, ran: true });
+      expect(requestHeartbeatAndWait).toHaveBeenCalledOnce();
+      expect(cron.getJob(job.id)?.state).toMatchObject({
+        lastRunStatus: "skipped",
+        consecutiveErrors: 0,
       });
     } finally {
       cron.stop();
