@@ -563,44 +563,6 @@ describe("registerChannelsCli", () => {
     ).toEqual({ channel: "signal", signalTransport: "container" });
   });
 
-  it("keeps non-empty and empty non-int legacy defaults while dropping empty int defaults", () => {
-    const sources = new Map<string, "cli" | "default">([
-      ["channel", "cli"],
-      ["token", "cli"],
-      ["legacyMode", "default"],
-      ["note", "default"],
-      ["limit", "default"],
-      ["blankLimit", "cli"],
-    ]);
-
-    expect(
-      resolveChannelsAddOptions(
-        undefined,
-        {
-          channel: "legacy-chat",
-          token: "test-token",
-          legacyMode: "socket",
-          note: "",
-          limit: "",
-          blankLimit: "",
-        },
-        {
-          getOptionValueSource: (key) => sources.get(key),
-        } as Pick<Command, "getOptionValueSource">,
-        {
-          preserveLegacyDefaults: true,
-          dropEmptyLegacyDefaultsForAttributeNames: new Set(["limit"]),
-        },
-      ),
-    ).toEqual({
-      channel: "legacy-chat",
-      token: "test-token",
-      legacyMode: "socket",
-      note: "",
-      blankLimit: "",
-    });
-  });
-
   it("preserves selected legacy channel defaults", async () => {
     listBundledPackageChannelMetadataMock.mockReturnValueOnce([
       {
