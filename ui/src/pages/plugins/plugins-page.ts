@@ -227,7 +227,12 @@ class PluginsPage extends OpenClawLightDomElement {
     if (document.querySelector(".shell-nav[aria-modal='true']")) {
       return;
     }
-    if (event.key !== "Escape") {
+    // WebAwesome dismisses its open dropdown at document bubble. Let that
+    // owner close the menu and restore focus before this page handles Escape.
+    if (
+      event.key !== "Escape" ||
+      (event.target instanceof Element && event.target.closest("wa-dropdown[open]"))
+    ) {
       return;
     }
     if (this.consentController.consent) {
