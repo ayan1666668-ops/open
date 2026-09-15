@@ -239,9 +239,9 @@ class OpenClawBoardView extends OpenClawLightDomElement {
         ],
         t("board.announcement.moved", { title: widget.title || widget.name }),
       ),
-    resizeTo: async (widget, w, h, heightMode = "fixed") =>
+    resizeTo: async (widget, w, h) =>
       this.applyOps(
-        [{ kind: "widget_resize", name: widget.name, sizeW: w, sizeH: h, heightMode }],
+        [{ kind: "widget_resize", name: widget.name, sizeW: w, sizeH: h, heightMode: "fixed" }],
         t("board.announcement.resized", { title: widget.title || widget.name }),
       ),
     setHeightMode: async (widget, mode) => {

@@ -134,9 +134,9 @@ never needs the agent.
   (LG), or all (XL) of the dashboard width when the board is wide enough.
 - **Automatic height.** HTML widgets adjust their height to fit their content.
   Resizing by handle or choosing a size preset fixes the height. Choose
-  **Auto height** from the widget menu to fit the content again while keeping
-  the saved width. Choose **Full width + auto height** to fill all 12 columns
-  and fit the content in one step, including after selecting a smaller preset.
+  **Auto height** from the widget menu to fit the content again.
+  For a full-width HTML dashboard that grows with its content, choose
+  **XL · Full width**, then **Auto height**.
 - **Tabs.** A board can have several pages — say, an overview tab and a
   focused tab with one big widget. Each tab remembers its widget layout.
 - **Dashboard view.** The board can occupy the main area or a resizable side

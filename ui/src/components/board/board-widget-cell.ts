@@ -13,7 +13,6 @@ import { t } from "../../i18n/index.ts";
 import type { BoardGridDirection, BoardGridRect } from "../../lib/board/grid.ts";
 import {
   BOARD_DOCUMENT_AUTO_MAX_ROWS,
-  BOARD_GRID_COLUMNS,
   boardChromeRowPx,
   exactBoardWidgetHeightPx,
   toCssPlacement,
@@ -58,12 +57,7 @@ export type BoardWidgetCellCallbacks = {
   movePointerDown: (widget: BoardWidget, event: PointerEvent) => void;
   resizePointerDown: (widget: BoardWidget, event: PointerEvent) => void;
   moveToTab: (widget: BoardWidget, tabId: string) => Promise<void>;
-  resizeTo: (
-    widget: BoardWidget,
-    w: number,
-    h: number,
-    heightMode?: "auto" | "fixed",
-  ) => Promise<void>;
+  resizeTo: (widget: BoardWidget, w: number, h: number) => Promise<void>;
   setHeightMode: (widget: BoardWidget, mode: "auto" | "fixed") => Promise<void>;
   reportContentHeight: (name: string, height: number) => void;
   remove: (widget: BoardWidget) => Promise<void>;
@@ -226,12 +220,6 @@ class OpenClawBoardWidgetCell extends OpenClawLightDomElement {
     }
     if (value?.startsWith("move:")) {
       void this.runAction(() => callbacks.moveToTab(widget, value.slice("move:".length)));
-      return;
-    }
-    if (value === "size:full-auto" && widget.contentKind === "html") {
-      void this.runAction(() =>
-        callbacks.resizeTo(widget, BOARD_GRID_COLUMNS, widget.sizeH, "auto"),
-      );
       return;
     }
     if (value?.startsWith("resize:")) {
