@@ -1,11 +1,25 @@
 import { defaultRangeExtractor, type Range, Virtualizer } from "@tanstack/virtual-core";
+import { isWebKitEngine } from "../../../lib/webkit-engine.ts";
+
+// WebKit has no CSS scroll anchoring to fall back on, and virtual rows that
+// mount, unmount, and re-measure while a reply streams make its trackpad
+// momentum stutter and fight the reader. Keep every row connected there so
+// the transcript scrolls like a static page; Blink and Gecko stay windowed.
+const WINDOW_TRANSCRIPT_ROWS = !isWebKitEngine();
+
+export function transcriptRowIndexes(range: Range, windowed = WINDOW_TRANSCRIPT_ROWS): number[] {
+  return windowed
+    ? defaultRangeExtractor(range)
+    : Array.from({ length: range.count }, (_, index) => index);
+}
 
 export function extractTranscriptRange(
   range: Range,
   rowIndexesByKey: ReadonlyMap<string, number>,
   focusedRowKey: string | null,
+  windowed = WINDOW_TRANSCRIPT_ROWS,
 ): number[] {
-  const indexes = defaultRangeExtractor(range);
+  const indexes = transcriptRowIndexes(range, windowed);
   const focused = focusedRowKey === null ? undefined : rowIndexesByKey.get(focusedRowKey);
   if (focused === undefined || focused < 0 || focused >= range.count || indexes.includes(focused)) {
     return indexes;
