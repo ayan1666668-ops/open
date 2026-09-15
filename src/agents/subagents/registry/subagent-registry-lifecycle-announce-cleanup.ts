@@ -147,21 +147,16 @@ export const resumeAncestorCleanup = (
     }
     requesterSessionKey = entry.requesterSessionKey;
     const { runId } = entry;
-    if (typeof entry.execution.endedAt !== "number") {
-      continue;
-    }
-    if (entry.cleanupCompletedAt || entry.cleanupHandled) {
-      continue;
-    }
     // A failed cleanup belongs to its retry timer or exhausted process-local
     // budget; even descendant settlement must not reopen that attempt early.
-    if (context.hasCleanupFailure(entry)) {
-      continue;
-    }
-    if (isDeliverySuspended(entry)) {
-      continue;
-    }
-    if (params.suppressAnnounceForSteerRestart(entry)) {
+    if (
+      typeof entry.execution.endedAt !== "number" ||
+      entry.cleanupCompletedAt ||
+      entry.cleanupHandled ||
+      context.hasCleanupFailure(entry) ||
+      isDeliverySuspended(entry) ||
+      params.suppressAnnounceForSteerRestart(entry)
+    ) {
       continue;
     }
     const endedAgo = now - (entry.execution.endedAt ?? now);
@@ -174,13 +169,12 @@ export const resumeAncestorCleanup = (
         runId,
         entry,
         cleanupGeneration,
-        run: async () => {
-          await finalizeResumedAnnounceGiveUp(context, {
+        run: () =>
+          finalizeResumedAnnounceGiveUp(context, {
             runId,
             entry,
             reason: "expiry",
-          });
-        },
+          }),
       });
       continue;
     }
@@ -223,8 +217,7 @@ const finalizeSubagentCleanup = async (
       entry.suppressCompletionDelivery = undefined;
     }
     entry.wakeOnDescendantSettle = undefined;
-    const shouldDeleteAttachments = cleanup === "delete" || !entry.retainAttachmentsOnKeep;
-    if (shouldDeleteAttachments) {
+    if (cleanup === "delete" || !entry.retainAttachmentsOnKeep) {
       await safeRemoveAttachmentsDir(entry);
     }
     if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {
@@ -276,15 +269,10 @@ const finalizeSubagentCleanup = async (
       delivery.attemptCount = undefined;
       delivery.nextAttemptAt = undefined;
     }
-    if (shouldCreditDelivery && !options?.skipDeliveryStatus) {
+    if (!options?.skipDeliveryStatus) {
       safeSetSubagentTaskDeliveryStatus(params, {
         entry,
-        deliveryStatus: "delivered",
-      });
-    } else if (announceOutcome === "intentional_non_delivery" && !options?.skipDeliveryStatus) {
-      safeSetSubagentTaskDeliveryStatus(params, {
-        entry,
-        deliveryStatus: terminalNonDelivery ? "failed" : "pending",
+        deliveryStatus: delivery.status,
         deliveryError: terminalNonDelivery ? getDeliveryLastError(entry) : undefined,
       });
     }
@@ -293,8 +281,7 @@ const finalizeSubagentCleanup = async (
     completion.fallbackResultText = undefined;
     completion.fallbackCapturedAt = undefined;
     const completionReason = resolveCleanupCompletionReason(entry);
-    const shouldDeleteAttachments = cleanup === "delete" || !entry.retainAttachmentsOnKeep;
-    if (shouldDeleteAttachments) {
+    if (cleanup === "delete" || !entry.retainAttachmentsOnKeep) {
       await safeRemoveAttachmentsDir(entry);
     }
     if (!context.isCleanupAttemptCurrent(runId, entry, cleanupGeneration)) {
@@ -386,10 +373,9 @@ const finalizeSubagentCleanup = async (
   entry.cleanupHandled = false;
   params.resumedRuns.delete(runId);
   params.persist(runId);
-  if (resumeDelayMs == null) {
-    return;
+  if (resumeDelayMs != null) {
+    scheduleResumeSubagentRun(context, runId, entry, resumeDelayMs);
   }
-  scheduleResumeSubagentRun(context, runId, entry, resumeDelayMs);
 };
 
 export const startSubagentAnnounceCleanupFlow = (
@@ -438,11 +424,10 @@ export const startSubagentAnnounceCleanupFlow = (
       runId,
       entry,
       cleanupGeneration,
-      run: async () => {
-        await finalizeSubagentCleanup(context, runId, cleanup, "delivered", cleanupGeneration, {
+      run: () =>
+        finalizeSubagentCleanup(context, runId, cleanup, "delivered", cleanupGeneration, {
           skipAnnounce: true,
-        });
-      },
+        }),
     });
     return true;
   }
