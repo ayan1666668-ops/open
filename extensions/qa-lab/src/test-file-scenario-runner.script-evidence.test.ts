@@ -7,6 +7,7 @@ import {
   validateQaEvidenceSummaryJson,
 } from "./evidence-summary.js";
 import type { QaSeedScenarioWithSource } from "./scenario-catalog.js";
+import { resolveQaScriptRuntimeExecutable } from "./test-file-scenario-runner-commands.js";
 import {
   runQaTestFileScenarios,
   type QaScenarioCommandExecution,
@@ -252,6 +253,9 @@ describe("qa test file scenario runner", () => {
       ],
     ]);
     expect(commands.map((command) => command.timeoutMs)).toEqual([30 * 60_000]);
+    expect(commands.map((command) => command.command)).toEqual([
+      resolveQaScriptRuntimeExecutable(),
+    ]);
     const evidence = validateQaEvidenceSummaryJson(
       JSON.parse(await fs.readFile(result.evidencePath, "utf8")),
     );
@@ -421,7 +425,7 @@ describe("qa test file scenario runner", () => {
   ])(
     "retains a $terminal failure beside colliding $producerStatus producer evidence",
     async ({ producerStatus, terminal }) => {
-      const commandName = path.basename(process.execPath);
+      const commandName = path.basename(resolveQaScriptRuntimeExecutable());
       const tempRoot = await makeTempRepo(`qa-script-terminal-${terminal}-${producerStatus}-`);
       const outputDir = path.join(tempRoot, "out");
       const scriptPath = path.join(tempRoot, "terminal-evidence-producer.mjs");

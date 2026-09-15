@@ -86,6 +86,7 @@ export async function createQaSuiteEvidenceInvocation(
       env?: QaSuiteEnvironment;
       selectedId?: string;
       importedEntries?: readonly QaEvidenceSummaryEntry[];
+      childEvidence?: QaEvidenceSummaryJson;
     } = {},
   ) {
     const scenario = context.selectedScenarios[index];
@@ -120,8 +121,39 @@ export async function createQaSuiteEvidenceInvocation(
     };
     const preparedId = `${id}:prepared`;
     const runtimeId = `${id}:runtime`;
+    const childEvidence = options.childEvidence
+      ? validateQaEvidenceSummaryJson(options.childEvidence)
+      : undefined;
+    if (childEvidence && childEvidence.schemaVersion !== 3) {
+      throw new Error("retained flow child evidence requires recorded v3 custody");
+    }
+    const childContent = childEvidence ? `${JSON.stringify(childEvidence, null, 2)}\n` : undefined;
+    const childPath = path.join("artifacts", "occurrences", `${id}.producer-evidence.json`);
+    if (childContent !== undefined) {
+      // The enclosing attempt owns this immutable bundle. Retrying it changes
+      // containment activity, never the child's local rows, flags or receipts.
+      await fs.writeFile(path.join(context.outputDir, childPath), childContent, {
+        flag: "wx",
+        mode: 0o600,
+      });
+    }
     const receipts = [
       { id: preparedId, phase: "prepared" as const, identity: launch, artifact },
+      ...(childContent !== undefined
+        ? [
+            {
+              id: `${id}:bundle`,
+              phase: "prepared" as const,
+              identity: launch,
+              artifact: {
+                kind: "producer-evidence",
+                source: "qa-suite",
+                path: childPath.split(path.sep).join("/"),
+                sha256: createHash("sha256").update(childContent).digest("hex"),
+              },
+            },
+          ]
+        : []),
       ...(runtimeIdentity
         ? [{ id: runtimeId, phase: "runtime" as const, identity: runtimeIdentity, artifact }]
         : []),
@@ -150,6 +182,7 @@ export async function createQaSuiteEvidenceInvocation(
     invocation.complete(id, {
       status: result.status === "skip" ? "skipped" : result.status,
       receipts,
+      childEvidence,
       entries: (options.importedEntries ?? rows).map((entry) =>
         Object.assign({}, entry, options.diagnostic ? { coverage: [] } : {}, {
           binding: {

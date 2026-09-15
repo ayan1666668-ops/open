@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   buildScriptEvidenceSummary,
+  captureQaEvidenceRuntimeIdentity,
   captureQaEvidenceSourceIdentity as readSourceIdentity,
   createQaEvidenceInvocation,
   QA_EVIDENCE_FILENAME,
@@ -17,7 +18,7 @@ import {
   type QaEvidenceIdentity,
   type QaEvidenceStatus,
   type QaEvidenceSummaryJson,
-} from "../extensions/qa-lab/api.js";
+} from "../extensions/qa-lab/test-api.js";
 import type { AgentExecEnvelope } from "../src/commands/agent-exec-result.ts";
 import { requireOptionArgument } from "./lib/arg-utils.mts";
 import { summarizeGatewayMatrixOutcomes } from "./lib/code-mode-matrix-comparison.ts";
@@ -1459,7 +1460,7 @@ export async function runCodeModeModelMatrix(
       ref: sourceIdentity.gitSha,
       integrity: `git:${sourceIdentity.gitSha}${sourceIdentity.sourcePatchSha256 ? `+sha256:${sourceIdentity.sourcePatchSha256}` : ""}`,
     },
-    runtime: { id: "node", version: process.version },
+    runtime: captureQaEvidenceRuntimeIdentity(),
     package: null,
     protocol: null,
     accountRef: null,

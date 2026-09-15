@@ -32,6 +32,7 @@ import {
 } from "./evidence-environment.js";
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   execFileSyncMock.mockReset();
   execFileMock.mockReset();
@@ -103,14 +104,29 @@ describe("captured evidence source identity", () => {
     }
   });
 
-  it("keeps a failed source observation unknown instead of borrowing inherited evidence labels", async () => {
+  it.each([
+    { label: "Node", bun: undefined, runtime: { id: "node", version: process.version } },
+    { label: "simulated Bun", bun: "1.3.14", runtime: { id: "bun", version: "1.3.14" } },
+  ])("captures $label independently of available source identity", async ({ bun, runtime }) => {
+    vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun } });
+    execFileMock.mockImplementation((_command, args, _options, callback) =>
+      callback(null, args[0] === "rev-parse" ? "actual-head\n" : "", ""),
+    );
+    expect(await captureQaEvidenceLaunchIdentity("fixture-checkout")).toEqual({
+      source: { ref: "actual-head", integrity: "git:actual-head" },
+      runtime,
+      package: null,
+      protocol: null,
+      accountRef: null,
+      proofClass: null,
+    });
+
     execFileMock.mockImplementation((_command, _args, _options, callback) =>
       callback(new Error("source unavailable"), "", ""),
     );
-    const identity = await captureQaEvidenceLaunchIdentity("unavailable-checkout");
-    expect(identity).toEqual({
+    expect(await captureQaEvidenceLaunchIdentity("unavailable-checkout")).toEqual({
       source: { ref: null, integrity: null },
-      runtime: { id: "node", version: process.version },
+      runtime,
       package: null,
       protocol: null,
       accountRef: null,

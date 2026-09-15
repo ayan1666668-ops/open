@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { OpenClawCrablineChannelDriverSelection } from "@openclaw/crabline";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
@@ -143,6 +144,30 @@ export async function runQaRuntimeParitySuite(params: {
         progress.markRunning([index]);
         const anchor = recording.invocation.anchors[index]!;
         const comparisonId = recording.invocation.begin(index, undefined, { diagnostic: true });
+        recording.publish();
+        const comparisonDir = path.join(params.outputDir, "runtime-cells", anchor.id, comparisonId);
+        // Each comparison owns two independent runtime instances. Its retry
+        // retires this whole bundle without rewriting captured child history.
+        const cells = await createQaSuiteEvidenceInvocation(
+          {
+            evidenceAnchors: params.runtimePair.map(() => ({
+              ...anchor,
+              id: randomUUID(),
+              scenario: { kind: "instance", resultOccurrenceId: null },
+            })),
+            evidenceMode: params.evidenceMode,
+            channelId: params.channelId,
+            channelDriver: params.channelDriver ?? undefined,
+            channelDriverSelection: params.channelDriverSelection,
+          },
+          {
+            ...params,
+            outputDir: comparisonDir,
+            selectedScenarios: params.runtimePair.map(() => scenario),
+          },
+        );
+        const capturedCells = () =>
+          rebaseQaSuiteEvidence(cells.snapshot(), comparisonDir, params.outputDir);
         let recordingComparison = false;
         try {
           const parity = await runRuntimeParityScenario({
@@ -150,28 +175,26 @@ export async function runQaRuntimeParitySuite(params: {
             runtimeParityUsage: scenario.runtimeParityUsage,
             runtimePair: params.runtimePair,
             runCell: async (runtime) => {
-              const cellOutputDir = path.join(
-                params.outputDir,
-                "runtime-cells",
-                anchor.id,
-                comparisonId,
-                runtime,
-              );
-              const dispatchId = recording.invocation.begin(index, null, { diagnostic: true });
+              const cellIndex = params.runtimePair.indexOf(runtime);
+              const cellOutputDir = path.join(comparisonDir, runtime);
+              const dispatchId = cells.invocation.begin(cellIndex, null, { diagnostic: true });
               const cellStartedAt = Date.now();
               let childEvidence: QaEvidenceSummaryV3Json | undefined;
               const importChild = () => {
                 if (!childEvidence) {
                   return null;
                 }
-                const selected = recording.invocation.importChild(
-                  index,
-                  rebaseQaSuiteEvidence(childEvidence, cellOutputDir, params.outputDir),
+                const selected = cells.invocation.importChild(
+                  cellIndex,
+                  rebaseQaSuiteEvidence(childEvidence, cellOutputDir, comparisonDir),
                 );
-                if (selected) {
-                  recording.invocation.select(index, selected);
+                // A callback can capture an unfinished child with no selection.
+                // Admit that pending history too before an exception unwinds it.
+                if (selected === null) {
+                  cells.invocation.select(cellIndex, null);
+                } else {
+                  cells.invocation.select(cellIndex, selected);
                 }
-                recording.publish();
                 return selected;
               };
               let cellResult: QaSuiteResult;
@@ -211,13 +234,10 @@ export async function runQaRuntimeParitySuite(params: {
                     forcedRuntime: runtime,
                     captureRuntimeParityCell: true,
                     writeEvidenceFile: params.writeEvidenceFile,
-                    // A different runtime is an independent observation, not a retry
-                    // of the preceding runtime's result or selected comparison.
-                    evidenceAnchors: [
-                      { ...anchor, scenario: { kind: "instance", resultOccurrenceId: null } },
-                    ],
+                    evidenceAnchors: [cells.invocation.anchors[cellIndex]!],
                     onEvidence: (summary) => {
                       childEvidence = structuredClone(summary);
+                      importChild();
                     },
                   }),
                 );
@@ -258,18 +278,17 @@ export async function runQaRuntimeParitySuite(params: {
                 if (!childSelectedId || scenarioResult.evidenceOccurrenceId !== childSelectedId) {
                   throw new Error("runtime parity result does not match its child observation");
                 }
-                recording.invocation.complete(dispatchId, {
+                cells.invocation.complete(dispatchId, {
                   status: scenarioResult.status === "skip" ? "skipped" : scenarioResult.status,
                   entries: [],
                 });
-                recording.publish();
               } else {
                 // Only this just-returned child can supply legacy rows. Keep their
                 // complete contents; runtime labels do not establish target proof.
                 const legacy = cellResult.evidence
-                  ? rebaseQaSuiteEvidence(cellResult.evidence, cellOutputDir, params.outputDir)
+                  ? rebaseQaSuiteEvidence(cellResult.evidence, cellOutputDir, comparisonDir)
                   : undefined;
-                scenarioResult = await recording.record(index, dispatchId, scenarioResult, {
+                scenarioResult = await cells.record(cellIndex, dispatchId, scenarioResult, {
                   importedEntries: legacy?.entries,
                 });
               }
@@ -302,6 +321,7 @@ export async function runQaRuntimeParitySuite(params: {
           recordingComparison = true;
           const parityScenarioResult = await recording.record(index, comparisonId, parityResult, {
             diagnostic: true,
+            childEvidence: capturedCells(),
           });
           progress.recordScenarioResult(index, parityScenarioResult);
           writeQaSuiteProgress(
@@ -324,7 +344,7 @@ export async function runQaRuntimeParitySuite(params: {
                   details,
                   steps: [{ name: "runtime parity", status: "fail", details }],
                 },
-                { diagnostic: true },
+                { diagnostic: true, childEvidence: capturedCells() },
               );
             } catch (recordError) {
               throw new AggregateError(

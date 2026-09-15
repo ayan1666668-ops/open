@@ -83,6 +83,13 @@ export function resolveQaEvidenceEnvironment(params: {
   };
 }
 
+/** The harness process is distinct from any runtime it launches or observes. */
+export function captureQaEvidenceRuntimeIdentity(): QaEvidenceIdentity["runtime"] {
+  return process.versions.bun
+    ? { id: "bun", version: process.versions.bun }
+    : { id: "node", version: process.version };
+}
+
 /** Capture the launching checkout/process, never a reporter's inherited label. */
 export async function captureQaEvidenceLaunchIdentity(
   repoRoot: string,
@@ -95,7 +102,7 @@ export async function captureQaEvidenceLaunchIdentity(
         ? `git:${source.gitSha}${source.sourcePatchSha256 ? `+sha256:${source.sourcePatchSha256}` : ""}`
         : null,
     },
-    runtime: { id: "node", version: process.version },
+    runtime: captureQaEvidenceRuntimeIdentity(),
     // Installed target/package/protocol facts need their own producer receipt.
     package: null,
     protocol: null,

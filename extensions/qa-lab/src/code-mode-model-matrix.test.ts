@@ -598,7 +598,9 @@ describe("Code Mode model matrix extended fixtures", () => {
         expect(occurrence.retryOf).toBeNull();
         expect(occurrence.launch).toMatchObject({
           source: { ref: "fixture-source", integrity: "git:fixture-source" },
-          runtime: { id: "node", version: process.version },
+          runtime: process.versions.bun
+            ? { id: "bun", version: process.versions.bun }
+            : { id: "node", version: process.version },
           package: null,
           protocol: null,
           accountRef: null,

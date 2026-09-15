@@ -13,6 +13,7 @@ import { qaProfileEvidencePlan } from "./profile-evidence-plan.js";
 import { readQaScenarioById } from "./scenario-catalog.js";
 import { attachQaProfileScorecardEvidenceToFile } from "./scorecard-evidence.js";
 import { qaMaturityTaxonomyIdentity, readQaMaturityTaxonomySource } from "./scorecard-taxonomy.js";
+import { resolveQaScriptRuntimeExecutable } from "./test-file-scenario-runner-commands.js";
 import { runQaTestFileScenarios } from "./test-file-scenario-runner.js";
 import {
   buildScriptProducerEvidence,
@@ -309,6 +310,8 @@ describe.skipIf(process.platform === "win32")("onboarding assertion attribution"
         "cli.targeted-reconfiguration",
       ];
       const features = coverageIds.map((id) => ({ name: id, coverageIds: [id] }));
+      const docsRoot = path.join(tempRoot, "docs");
+      await fs.mkdir(docsRoot);
       const taxonomyPath = path.join(tempRoot, "taxonomy.json");
       const scoresPath = path.join(tempRoot, "scores.json");
       const surface = { id: "cli", name: "CLI", family: "core", level: "experimental" };
@@ -389,7 +392,7 @@ describe.skipIf(process.platform === "win32")("onboarding assertion attribution"
       });
       expect(result.results[0]).toMatchObject({
         status: "fail",
-        failureMessage: `${path.basename(process.execPath)} exited with 7`,
+        failureMessage: `${path.basename(resolveQaScriptRuntimeExecutable())} exited with 7`,
         includeFallbackEvidence: true,
       });
       expect(result.evidence.entries.map((entry) => [entry.test.id, entry.result.status])).toEqual([
@@ -457,6 +460,8 @@ describe.skipIf(process.platform === "win32")("onboarding assertion attribution"
         "--import",
         "tsx",
         "scripts/qa/render-maturity-docs.ts",
+        "--docs-root",
+        docsRoot,
         "--taxonomy",
         taxonomyPath,
         "--scores",
