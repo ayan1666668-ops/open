@@ -1,7 +1,7 @@
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { resolveSessionStorePathCore } from "../../../config/sessions.js";
 import {
@@ -11,7 +11,10 @@ import {
   resetSessionEntryLifecycle,
 } from "../../../config/sessions/session-accessor.js";
 import type { GatewayRecoveryRuntime } from "../../../gateway/server-instance-runtime.types.js";
-import { resetGatewayWorkAdmission } from "../../../process/gateway-work-admission.js";
+import {
+  markGatewayRestartDraining,
+  resetGatewayWorkAdmission,
+} from "../../../process/gateway-work-admission.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
 import { createSubagentRunRecord } from "../../subagent-test-fixtures.test-helpers.js";
 import { reconcileDurableSubagentKillIntent } from "./subagent-registry-sweep-kill.js";
@@ -168,6 +171,7 @@ function createHarness(runtime: { current?: GatewayRecoveryRuntime }, entry = ru
       ),
     warn,
   });
+  onTestFinished(() => sweeper.reset());
   return {
     entry,
     runs,
@@ -322,7 +326,6 @@ describe("subagent registry recovery scheduling", () => {
     recoverRow.mockResolvedValue({ status: "handled" });
     await sweeper.runTick();
     expect(recoverRow).toHaveBeenCalledTimes(5);
-    sweeper.reset();
   });
 
   it.each(["ordinary", "collector group", "collector launch"])(
@@ -448,7 +451,6 @@ describe("subagent registry recovery scheduling", () => {
       expect(runs.get(changed.runId)).toBe(changed);
       expect(changed.execution.suppressSessionEffects).toBe(suppressed ? true : undefined);
       expect(runs.get(groupmate.runId)).toBe(groupmate);
-      sweeper.reset();
     },
   );
 
@@ -470,7 +472,6 @@ describe("subagent registry recovery scheduling", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(finalizeInterruptedSubagentRun).toHaveBeenCalledOnce();
-    sweeper.reset();
   });
 
   it("coalesces duplicate schedules before the owner pass starts", async () => {
@@ -483,7 +484,6 @@ describe("subagent registry recovery scheduling", () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(recoverRow).toHaveBeenCalledOnce();
-    sweeper.reset();
   });
 
   it("re-resolves a missing runtime without consuming the dispatch budget", async () => {
@@ -500,7 +500,6 @@ describe("subagent registry recovery scheduling", () => {
 
     expect(recoverRow).toHaveBeenCalledTimes(3);
     expect(finalizeInterruptedSubagentRun).not.toHaveBeenCalled();
-    sweeper.reset();
   });
 
   it("never terminalizes deferred accepted-run reconciliation", async () => {
@@ -513,7 +512,6 @@ describe("subagent registry recovery scheduling", () => {
 
     expect(recoverRow.mock.calls.length).toBeGreaterThan(4);
     expect(finalizeInterruptedSubagentRun).not.toHaveBeenCalled();
-    sweeper.reset();
   });
 
   it("does not terminalize a durable kill intent while runtime abort is rejected", async () => {
@@ -550,7 +548,6 @@ describe("subagent registry recovery scheduling", () => {
       }),
       "sweeper-pending-kill-intent",
     );
-    sweeper.reset();
   });
 
   it("terminalizes a legacy unowned kill without touching the current child session", async () => {
@@ -575,7 +572,6 @@ describe("subagent registry recovery scheduling", () => {
       }),
       "sweeper-retired-kill-intent",
     );
-    sweeper.reset();
   });
 
   it.each([
@@ -996,28 +992,19 @@ describe("subagent registry recovery scheduling", () => {
     expect(notifyContextEngineSubagentEnded).not.toHaveBeenCalled();
   });
 
-  it("re-arms a sweep request that arrives while the owner pass is active", async () => {
-    const runtime = { current: {} as GatewayRecoveryRuntime };
-    let release!: () => void;
-    recoverRow
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            release = () => resolve({ status: "handled" });
-          }),
-      )
-      .mockResolvedValue({ status: "handled" });
-    const { sweeper } = createHarness(runtime);
+  it("reports an admitted registry sweep failure even when restart drain has started", async () => {
+    recoverRow.mockImplementationOnce(async () => {
+      markGatewayRestartDraining();
+      throw new Error("unexpected recovery failure");
+    });
+    const { sweeper, warn } = createHarness({});
 
-    const first = sweeper.runTick();
-    await vi.waitFor(() => expect(recoverRow).toHaveBeenCalledOnce());
-    await sweeper.runTick();
-    release();
-    await first;
-    await vi.advanceTimersByTimeAsync(0);
+    sweeper.schedule({ delayMs: 1 });
+    await vi.advanceTimersByTimeAsync(1);
 
-    expect(recoverRow).toHaveBeenCalledTimes(2);
-    sweeper.reset();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "subagent run sweep failed: unexpected recovery failure",
+    );
   });
 
   it("releases the owner lane after an unexpected pass failure", async () => {
@@ -1032,7 +1019,6 @@ describe("subagent registry recovery scheduling", () => {
 
     expect(recoverRow).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledWith("subagent run sweep failed: unexpected recovery failure");
-    sweeper.reset();
   });
 });
 

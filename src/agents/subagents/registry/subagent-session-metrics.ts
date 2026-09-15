@@ -19,7 +19,7 @@ type SubagentSessionRuntimeRecord = Pick<SubagentRunRecord, "accumulatedRuntimeM
 };
 type SubagentSessionStatusRecord = Pick<
   SubagentRunRecord,
-  "endedReason" | "waitExpiryObservedAt"
+  "endedReason" | "waitExpiryObservedAt" | "pauseReason"
 > & {
   execution: Pick<SubagentExecutionMetrics, "status" | "endedAt" | "outcome">;
 };
@@ -136,6 +136,16 @@ export function resolveSubagentDisplayStatus(
     ? "running (wait expired; child stop unconfirmed)"
     : (resolveSubagentSessionStatus(entry) ?? "done");
   const pending = Math.max(0, pendingDescendants);
+  if (
+    entry.pauseReason === "sessions_yield" &&
+    status !== "killed" &&
+    status !== "failed" &&
+    status !== "timeout"
+  ) {
+    return pending > 0
+      ? `waiting on ${pending} ${pending === 1 ? "child" : "children"}`
+      : "waiting for external continuation";
+  }
   if (pending > 0) {
     const childLabel = pending === 1 ? "child" : "children";
     const waiting = `waiting on ${pending} ${childLabel}`;

@@ -108,9 +108,9 @@ export { captureSubagentCompletionReply } from "./subagent-announce-output.js";
 export type { SubagentRunOutcome } from "./subagent-announce-output.js";
 
 type SubagentAnnounceType = "subagent task" | "cron job";
-export type SubagentAnnounceFlowOutcome = NonNullable<
-  SubagentAnnounceDeliveryResult["disposition"]
->;
+export type SubagentAnnounceFlowOutcome =
+  | NonNullable<SubagentAnnounceDeliveryResult["disposition"]>
+  | "requester_turn_pending";
 
 function buildAnnounceReplyInstruction(params: {
   requesterIsSubagent: boolean;
@@ -134,7 +134,7 @@ function buildAnnounceReplyInstruction(params: {
     return `This ${params.announceType} is NOT known to have finished: the wait for it expired without observing it stop, so it may still be running. Do not treat this as a completed result, and do not start a replacement, duplicate, or successor for it — a second worker on the same files or working directory can corrupt what the first one is mid-edit on. Re-check whether it is still live before acting, and keep waiting or harvest its own output when it lands.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type).${parentOnly ? " Your final reply stays internal; no external response is required." : ""} Reply ONLY: ${SILENT_REPLY_TOKEN} if there is nothing to ${parentOnly ? "act on" : "say to the user about this"} yet.`;
   }
   if (params.completionTarget === "parent") {
-    return `Process this result privately. Your final reply stays internal; no external response is required. Review the result, continue the task, or reply ONLY: ${SILENT_REPLY_TOKEN}.`;
+    return `Process this result privately. ${SUBAGENT_COMPLETION_OUTCOME_INSTRUCTION} Your final reply stays internal. If the original request requires a user-facing update, send it through an available, permitted messaging tool; do not rely on your final reply for delivery. Reply ONLY: ${SILENT_REPLY_TOKEN} when no further work or user-facing update is owed, or after sending that update.`;
   }
   if (params.requesterIsSubagent) {
     return `Convert this completion into a concise internal orchestration update for your parent agent in your own words.${modelRouteInstruction} Keep this internal context private (don't mention system/log/stats/session details or announce type). If this result is duplicate or no update is needed, reply ONLY: ${SILENT_REPLY_TOKEN}.`;
@@ -184,6 +184,7 @@ function stripAndClassifyReply(text: string): string | null {
 type SubagentAnnounceFlowParams = {
   childSessionKey: string;
   childRunId: string;
+  runTimeoutSeconds?: number;
   requesterSessionKey: string;
   requesterAgentId?: string;
   requesterOrigin?: DeliveryContext;
@@ -372,6 +373,7 @@ async function runSubagentAnnounceFlowBound(
       const woke = await runDescendantWake({
         runId: params.childRunId,
         childSessionKey: params.childSessionKey,
+        runTimeoutSeconds: params.runTimeoutSeconds,
         taskLabel: params.label || params.task || "task",
         findings: childCompletionFindings,
         announceId,
@@ -666,16 +668,10 @@ async function runSubagentAnnounceFlowBound(
     const delivery = await deliverSubagentAnnouncement({
       requesterSessionKey: targetRequesterSessionKey,
       requesterAgentId: targetRequesterAgentId,
-      announceId,
       triggerMessage,
       steerMessage: triggerMessage,
       internalEvents,
-      summaryLine: taskLabel,
       requesterSessionOrigin: targetRequesterOrigin,
-      requesterOrigin:
-        expectsCompletionMessage && !requesterIsSubagent
-          ? completionDirectOrigin
-          : targetRequesterOrigin,
       completionDirectOrigin,
       directOrigin,
       sourceSessionKey: params.childSessionKey,
@@ -695,7 +691,10 @@ async function runSubagentAnnounceFlowBound(
       resolveGatewayContext: params.resolveGatewayContext,
     });
     reportDeliveryResult(delivery);
-    announceOutcome = delivery.disposition ?? (delivery.delivered ? "delivered" : "retryable");
+    announceOutcome =
+      delivery.reason === "requester_turn_pending"
+        ? "requester_turn_pending"
+        : (delivery.disposition ?? (delivery.delivered ? "delivered" : "retryable"));
     if (!delivery.delivered && delivery.path === "direct" && delivery.error) {
       defaultRuntime.log(
         `[warn] Subagent completion direct announce failed for run ${params.childRunId}: ${delivery.error}`,

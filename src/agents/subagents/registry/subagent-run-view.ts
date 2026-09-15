@@ -37,6 +37,11 @@ export function buildSubagentRunView(params: {
       // may outlive the unended liveness window. Neither proves a child stop.
       // Keep them visible for re-observation, not alongside confirmed endings.
       isSubagentChildStopUnconfirmed(entry) ||
+      (entry.pauseReason === "sessions_yield" &&
+        !entry.killReconciliation &&
+        !entry.killIntent &&
+        entry.endedReason !== "subagent-killed" &&
+        entry.suppressAnnounceReason !== "killed") ||
       params.countPendingDescendantRuns(entry.childSessionKey) > 0
     ) {
       active.push(entry);
