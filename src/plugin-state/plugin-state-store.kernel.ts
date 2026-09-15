@@ -21,14 +21,10 @@ import {
 export const MAX_PLUGIN_STATE_VALUE_BYTES = 1_048_576;
 const PLUGIN_STATE_EXPIRY_BATCH_ROWS = 1_024;
 
-type PluginStateEntriesTable = OpenClawStateKyselyDatabase["plugin_state_entries"];
 type PluginStateStoreDatabase = Pick<OpenClawStateKyselyDatabase, "plugin_state_entries">;
 
-type PluginStateRow = Selectable<PluginStateEntriesTable>;
-export type PluginStateReadRow = Pick<
-  PluginStateRow,
-  "entry_key" | "value_json" | "created_at" | "expires_at"
->;
+type PluginStateRow = Selectable<PluginStateStoreDatabase["plugin_state_entries"]>;
+export type PluginStateReadRow = Omit<PluginStateRow, "plugin_id" | "namespace">;
 
 export type PluginStateDatabase = {
   db: DatabaseSync;
