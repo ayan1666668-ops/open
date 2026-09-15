@@ -1,11 +1,15 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const fixturePath = fileURLToPath(
+  new URL("./startup-orphan-process.test-support.ts", import.meta.url),
+);
 it.each(["default", "shared", "embedded"])(
   "recovers only ownerless predecessor rows in %s state",
   async (layout) => {
@@ -16,11 +20,10 @@ it.each(["default", "shared", "embedded"])(
       OPENCLAW_CONFIG_PATH: path.join(stateDir, "openclaw.json"),
     };
     const run = async (mode: string) => {
-      await promisify(execFile)(
-        process.execPath,
-        ["--import", "tsx", "src/gateway/startup-orphan-process.test-support.ts", mode, layout],
-        { env, timeout: 60000 },
-      );
+      await promisify(execFile)(process.execPath, ["--import", "tsx", fixturePath, mode, layout], {
+        env,
+        timeout: 60000,
+      });
       return JSON.parse(fs.readFileSync(path.join(stateDir, mode + ".json"), "utf8"));
     };
     const predecessor = await run("predecessor");
