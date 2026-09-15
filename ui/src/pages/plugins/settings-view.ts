@@ -17,18 +17,14 @@ import { t } from "../../i18n/index.ts";
 import type { JsonSchema } from "../../lib/config-form-utils.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { shouldHandleNavigationClick } from "../../lib/navigation-click.ts";
-import type {
-  PluginCatalogItem,
-  PluginListResult,
-  PluginsInspectResult,
-} from "../../lib/plugins/index.ts";
+import type { PluginListResult, PluginsInspectResult } from "../../lib/plugins/index.ts";
 import { renderPluginReadme } from "./catalog-detail.ts";
 import {
   renderArtTile,
   renderPluginDeclaredCapabilities,
   renderPluginGrants,
 } from "./consent-dialog.ts";
-import { renderPluginDetailBreadcrumb, renderPluginDetailShell } from "./detail-shell.ts";
+import { renderPluginDetailShell } from "./detail-shell.ts";
 import type { InstalledPluginDetailTab } from "./detail-tabs.ts";
 import {
   renderPluginCapabilitySection,
@@ -45,6 +41,7 @@ import { matchesPluginQuery } from "./plugin-state-presentation.ts";
 import { renderPluginLifecycle } from "./settings-lifecycle.ts";
 import { pluginEntryValue } from "./settings-model.ts";
 import type { PluginToolPreview } from "./tool-preview.ts";
+import "./settings-editor.ts";
 
 export type PluginSettingsTab = "installed" | "advanced";
 
@@ -70,8 +67,8 @@ type SharedProps = {
   onSetEnabled: (pluginId: string, enabled: boolean, rowKey: string) => void;
   onUninstall: (pluginId: string, rowKey: string) => void;
   onReload: (pluginId: string, rowKey: string) => void;
-  onConfigPatch: (path: Array<string | number>, value: unknown) => void;
-  onConfigRemove: (path: Array<string | number>) => void;
+  onConfigPatch: (path: Array<string | number>, value: unknown) => boolean | void;
+  onConfigRemove: (path: Array<string | number>) => boolean | void;
   onConfigReload: () => void;
   onConfigReadRetry: () => void;
   onConfigWriteRetry: () => void;
@@ -309,32 +306,6 @@ export function renderPluginSettingsInventory(props: InventoryProps): TemplateRe
   );
 }
 
-function renderConfiguration(props: DetailProps, plugin: PluginCatalogItem): TemplateResult {
-  if (!props.configValue || !props.configSchema) {
-    if (props.configError) {
-      return renderRetryError(props.configError, props.onConfigReadRetry);
-    }
-    return renderSettingsLoadingSkeleton({ rows: 3, carapace: true });
-  }
-  const pluginEntry = pluginEntryValue(props.configValue, plugin.id);
-  return html`
-    ${renderNode({
-      rawAvailable: false,
-      maskSensitive: true,
-      schema: props.configSchema,
-      value: pluginEntry.config ?? {},
-      path: ["plugins", "entries", plugin.id, "config"],
-      hints: props.configHints,
-      unsupported: new Set(props.configUnsupportedPaths),
-      disabled: !props.canEditConfig || props.configBusy,
-      showLabel: false,
-      onPatch: props.onConfigPatch,
-      onRemove: props.onConfigRemove,
-    })}
-    ${props.configError ? renderRetryError(props.configError, props.onConfigWriteRetry) : nothing}
-  `;
-}
-
 function renderAccess(props: DetailProps): TemplateResult {
   if (!props.inspection) {
     return renderSettingsLoadingSkeleton({ rows: 3, carapace: true });
@@ -384,12 +355,12 @@ function renderAccess(props: DetailProps): TemplateResult {
   `;
 }
 
-function renderInstalledAdvanced(props: DetailProps): TemplateResult {
+function renderPermissions(props: DetailProps, query: string): TemplateResult | typeof nothing {
   if (!props.inspection) {
-    return renderSettingsLoadingSkeleton({ rows: 3, carapace: true });
+    return query ? nothing : renderSettingsLoadingSkeleton({ rows: 3, carapace: true });
   }
   const pluginEntry = pluginEntryValue(props.configValue, props.pluginId);
-  return html`${
+  const controls =
     props.hostControlsSchema && props.configValue
       ? renderNode({
           rawAvailable: false,
@@ -401,13 +372,29 @@ function renderInstalledAdvanced(props: DetailProps): TemplateResult {
           unsupported: new Set(props.configUnsupportedPaths),
           disabled: !props.canEditConfig || props.configBusy,
           showLabel: false,
+          compact: true,
+          commitOnBlur: true,
+          searchCriteria:
+            query && !t("pluginsPage.editor.permissions").toLocaleLowerCase().includes(query)
+              ? { text: query, tags: [] }
+              : undefined,
           onPatch: props.onConfigPatch,
           onRemove: props.onConfigRemove,
         })
-      : nothing
+      : nothing;
+  if (query && controls === nothing) {
+    return nothing;
   }
-  ${renderPluginDeclaredCapabilities(props.inspection.declared)}
-  ${renderPluginGrants(props.inspection.grants, props.inspection.plugin.origin)}`;
+  return html`${controls}
+  ${
+    query
+      ? nothing
+      : html`${renderAccess(props)}
+          <div class="plugin-editor__permission-details">
+            ${renderPluginDeclaredCapabilities(props.inspection.declared)}
+            ${renderPluginGrants(props.inspection.grants, props.inspection.plugin.origin)}
+          </div>`
+  }`;
 }
 
 export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
@@ -455,16 +442,11 @@ export function renderPluginSettingsDetail(props: DetailProps): TemplateResult {
   if (settings) {
     return renderSettingsPage(
       html`
-        ${renderPluginDetailBreadcrumb({
-          name: t("pluginsPage.detailSettings"),
-          backHref: props.backHref,
-          backLabel: plugin.name,
-          onBack: props.onBack,
-        })}
-        <h1>${plugin.name} ${t("pluginsPage.detailSettings")}</h1>
         ${notices}
-        ${props.configSchema || props.configSchemaLoading || props.configError ? renderConfiguration(props, plugin) : nothing}
-        ${renderSettingsSection({ title: t("pluginsPage.detailTabs.access"), carapace: true }, html`${renderAccess(props)}${renderInstalledAdvanced(props)}`)}
+        <openclaw-plugin-settings-editor
+          .model=${props}
+          .renderPermissions=${(query: string) => renderPermissions(props, query)}
+        ></openclaw-plugin-settings-editor>
       `,
       { wide: true, carapace: true },
     );

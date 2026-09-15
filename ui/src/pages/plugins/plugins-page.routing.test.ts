@@ -285,10 +285,13 @@ describe("PluginsPage routing", () => {
     const { page } = await mountPage(context, routeData);
     await switchToSettingsSurface(page, routeData);
 
-    const retry = Array.from(page.querySelectorAll<HTMLElement>(".plugins-settings-error"))
+    await vi.waitFor(() =>
+      expect(page.querySelector(".plugin-editor .callout button")).not.toBeNull(),
+    );
+    const retry = Array.from(page.querySelectorAll<HTMLElement>(".plugin-editor .callout"))
       .find((element) => element.textContent?.includes("Save failed"))
       ?.querySelector<HTMLButtonElement>("button");
-    expect(retry?.textContent?.trim()).toBe("Try again");
+    expect(retry?.textContent?.trim()).toBe("Retry");
     retry?.click();
 
     expect(runtimeConfig.runtimeConfig.retry).toHaveBeenCalledOnce();
@@ -321,7 +324,10 @@ describe("PluginsPage routing", () => {
     const { page } = await mountPage(context, routeData);
     await switchToSettingsSurface(page, routeData);
 
-    page.querySelector<HTMLButtonElement>(".plugins-settings-error button")?.click();
+    await vi.waitFor(() =>
+      expect(page.querySelector(".plugin-editor .callout button")).not.toBeNull(),
+    );
+    page.querySelector<HTMLButtonElement>(".plugin-editor .callout button")?.click();
 
     expect(refresh).toHaveBeenCalledOnce();
     expect(runtimeConfig.runtimeConfig.refreshSchema).toHaveBeenCalledOnce();
@@ -473,10 +479,19 @@ describe("PluginsPage routing", () => {
       ),
     );
     await vi.waitFor(() => expect(catalogs).toBe(1));
-    const input = page.querySelector<HTMLInputElement>('input[type="text"]');
+    await vi.waitFor(() =>
+      expect(page.querySelector('.plugin-editor input[aria-label="Greeting"]')).not.toBeNull(),
+    );
+    const input = page.querySelector<HTMLInputElement>(
+      '.plugin-editor input[aria-label="Greeting"]',
+    );
     expect(input).not.toBeNull();
+    input!.focus();
     input!.value = "After";
     input!.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(runtimeConfig.runtimeConfig.patchForm).not.toHaveBeenCalled();
+    input!.blur();
+    expect(runtimeConfig.runtimeConfig.flushFormChanges).toHaveBeenCalledOnce();
     expect(runtimeConfig.runtimeConfig.patchForm).toHaveBeenCalledWith(
       ["plugins", "entries", "workboard", "config", "greeting"],
       "After",
