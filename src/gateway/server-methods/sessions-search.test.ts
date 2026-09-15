@@ -315,10 +315,12 @@ describe("sessions.search gateway method", () => {
       .mockReturnValueOnce({
         hits: [duplicate, { ...duplicate, messageId: "message-2", score: 1 }],
         indexing: false,
+        archivedTranscriptsExcluded: 2,
       })
       .mockReturnValueOnce({
         hits: [{ ...duplicate }, { ...duplicate, messageId: "message-3", score: 2 }],
         indexing: false,
+        archivedTranscriptsExcluded: 3,
       });
 
     const respond = await callSearch({
@@ -339,6 +341,7 @@ describe("sessions.search gateway method", () => {
     expect(respond).toHaveBeenCalledWith(
       true,
       expect.objectContaining({
+        archivedTranscriptsExcluded: 5,
         results: [
           expect.objectContaining({ messageId: "message-1" }),
           expect.objectContaining({ messageId: "message-3" }),
