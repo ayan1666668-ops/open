@@ -5234,9 +5234,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     );
 
     // off disables table parsing rather than choosing a card-safe shape, so it has no
-    // converted form to put in a card. A presentation card exists to carry its controls,
-    // and those cannot move to a post, so the peer still sees one card whose markdown
-    // element holds the authored pipes and whose buttons remain usable.
+    // converted form to put in a card. An explicit presentation stays a card whenever it
+    // fits the card limits, with or without controls, so the peer sees one card whose
+    // markdown element holds the authored pipes.
     it("keeps the authored table on an off presentation card", async () => {
       const delivery = await deliverPresentationTable("off");
 
