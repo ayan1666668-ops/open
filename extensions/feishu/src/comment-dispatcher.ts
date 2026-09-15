@@ -98,7 +98,13 @@ export function createFeishuCommentReplyDispatcher(
         return noVisibleFeishuReplyDelivery;
       }
       const tableText = core.channel.text.convertMarkdownTables(text, tableMode);
-      const chunks = core.channel.text.chunkTextWithMode(tableText, textChunkLimit, chunkMode);
+      // A converted table is a fenced block, so the chunker has to close and reopen the
+      // fence rather than cut it in half.
+      const chunks = core.channel.text.chunkMarkdownTextWithMode(
+        tableText,
+        textChunkLimit,
+        chunkMode,
+      );
       const results: FeishuReplyDeliverySource[] = [];
       const acceptedChunks: string[] = [];
       for (const chunk of chunks) {

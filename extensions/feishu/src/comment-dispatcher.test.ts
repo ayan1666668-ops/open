@@ -129,7 +129,7 @@ describe("createFeishuCommentReplyDispatcher", () => {
           resolveChunkMode: vi.fn(() => "line"),
           resolveMarkdownTableMode: vi.fn(() => "code"),
           convertMarkdownTables: vi.fn((text: string) => text),
-          chunkTextWithMode: vi.fn((text: string) => [text]),
+          chunkMarkdownTextWithMode: vi.fn((text: string) => [text]),
         },
         reply: { resolveHumanDelayConfig: vi.fn(() => undefined) },
       },
@@ -391,7 +391,7 @@ describe("createFeishuCommentReplyDispatcher", () => {
   });
 
   it("chunks the transformed comment text including attachment links", async () => {
-    const chunkTextWithMode = vi.fn((text: string) =>
+    const chunkMarkdownTextWithMode = vi.fn((text: string) =>
       Array.from({ length: Math.ceil(text.length / 12) }, (_value, index) =>
         text.slice(index * 12, (index + 1) * 12),
       ),
@@ -403,7 +403,7 @@ describe("createFeishuCommentReplyDispatcher", () => {
           resolveChunkMode: vi.fn(() => "line"),
           resolveMarkdownTableMode: vi.fn(() => "code"),
           convertMarkdownTables: vi.fn((text: string) => text),
-          chunkTextWithMode,
+          chunkMarkdownTextWithMode,
         },
       },
     });
@@ -415,7 +415,7 @@ describe("createFeishuCommentReplyDispatcher", () => {
       { kind: "final" },
     );
 
-    expect(chunkTextWithMode).toHaveBeenCalledWith(expected, 12, "line");
+    expect(chunkMarkdownTextWithMode).toHaveBeenCalledWith(expected, 12, "line");
     expect(
       deliverCommentThreadTextMock.mock.calls.every((call) => call[1].content.length <= 12),
     ).toBe(true);
@@ -491,6 +491,47 @@ describe("createFeishuCommentReplyDispatcher", () => {
         expect(deliverCommentThreadTextMock.mock.calls[0]?.[1]?.content).toBe(expected);
       },
     );
+
+    // A converted table is one fenced block, so the chunker that splits it has to
+    // close and reopen the fence instead of cutting the block in half.
+    it("keeps every chunk of an oversized converted table balanced", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const limit = 200;
+      const wideTable = [
+        "| Name | Role |",
+        "| --- | --- |",
+        ...Array.from({ length: 14 }, (_value, index) => `| Member ${index} | Engineer ${index} |`),
+      ].join("\n");
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => limit),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+
+      await replyDispatcherOptions(created).deliver({ text: wideTable }, { kind: "final" });
+
+      const contents = deliverCommentThreadTextMock.mock.calls.map(
+        (call) => call[1].content as string,
+      );
+      expect(actual.convertMarkdownTables(wideTable, "code").length).toBeGreaterThan(limit);
+      // Keeping the block whole by widening the limit would hide the split, not repair it.
+      expect(contents.length).toBeGreaterThan(1);
+      for (const content of contents) {
+        expect(content.length).toBeLessThanOrEqual(limit);
+        expect((content.match(/^`{3,}/gm)?.length ?? 0) % 2).toBe(0);
+      }
+    });
   });
 
   it("retains the accepted comment reply id and text when a later chunk fails", async () => {
@@ -501,7 +542,7 @@ describe("createFeishuCommentReplyDispatcher", () => {
           resolveChunkMode: vi.fn(() => "line"),
           resolveMarkdownTableMode: vi.fn(() => "code"),
           convertMarkdownTables: vi.fn((text: string) => text),
-          chunkTextWithMode: vi.fn(() => ["first", "second"]),
+          chunkMarkdownTextWithMode: vi.fn(() => ["first", "second"]),
         },
         reply: { resolveHumanDelayConfig: vi.fn(() => undefined) },
       },
