@@ -33,6 +33,11 @@ export const TSGO_CORE_TEST_SHARDS = [
   },
   { name: "infra", group: "src", config: "test/tsconfig/tsconfig.core.test.infra.json" },
   {
+    name: "media",
+    group: "src",
+    config: "test/tsconfig/tsconfig.core.test.media.json",
+  },
+  {
     name: "state-logging",
     group: "src",
     config: "test/tsconfig/tsconfig.core.test.state-logging.json",
