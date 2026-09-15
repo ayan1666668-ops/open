@@ -19,6 +19,17 @@ Side chat answers questions about the selected session and its project without e
 
 The question box wraps and grows like the main composer; Enter (or your configured send shortcut) asks the question, and Shift+Enter adds a line. Highlighting text in a chat message offers **Ask in side chat**, which opens the rail with a quoted draft ready to edit.
 
+Highlight text and choose **Add to chat** to attach an annotation to the main
+composer. Add an optional comment, then confirm or choose **Save**. Typing opens
+the larger editor; Command-Enter or Ctrl-Enter saves, and **Cancel** or Escape
+discards the edit. Saving keeps your existing draft and does not send a message.
+
+The annotation chip shows the number of selections. Open it to preview the
+numbered selected text and comments, edit or delete an annotation, or remove the
+whole group. Saved annotations follow the composer's existing draft and queue
+recovery behavior. When you send, each annotation is attached as a text file
+containing the selection, comment, and source message reference.
+
 The headline owns that run's sidebar subtitle instead of heuristic live activity. It is shared with the official iOS and Android session lists. A final done or failed digest remains visible while the session is unread, then the row returns to its normal work subtitle.
 
 Session observation is enabled by default. Safe preamble headlines do not require a utility model; the utility model only owns richer assessments and terminal summaries. In **Settings > Appearance > Sidebar**, you can turn observation off gateway-wide, inspect the resolved small model and its provenance, or choose automatic routing, disable utility tasks, or select an explicit `agents.defaults.utilityModel`. The equivalent config controls are `gateway.controlUi.sessionObserver: false` and `agents.defaults.utilityModel: ""`.

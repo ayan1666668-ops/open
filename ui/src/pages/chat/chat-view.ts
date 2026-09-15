@@ -42,6 +42,8 @@ import type { ChatComposerProps } from "./components/chat-composer-types.ts";
 import { isChatRunWorking, renderChatComposer } from "./components/chat-composer.ts";
 import { isImageLightboxEvent, openInlineChatImage } from "./components/chat-image-lightbox.ts";
 import { renderChatPullRequests } from "./components/chat-pull-requests.ts";
+import { createChatSelectionAttachment } from "./components/chat-selection-annotations.ts";
+import { showChatAnnotationEditor } from "./components/chat-selection-popup.ts";
 import { renderChatSessionSuggestions } from "./components/chat-session-suggestions.ts";
 import { renderChatSwarmProgress } from "./components/chat-swarm-progress.ts";
 import {
@@ -207,10 +209,41 @@ export function renderChat(props: ChatProps) {
           props.canSend && !props.suggestionComposer ? props.onCompanionPrefill : undefined,
         onAddToChat:
           props.canSend && !props.suggestionComposer
-            ? (question) => {
-                const draft = props.getDraft?.() ?? props.draft;
-                props.onDraftChange(draft ? `${draft}\n\n${question}` : question);
-                requestUpdate();
+            ? (selection, anchorRect) => {
+                const focusComposer = () =>
+                  props.transcript.scrollElement
+                    ?.closest(".card.chat")
+                    ?.querySelector<HTMLElement>(".agent-chat__composer-combobox > textarea")
+                    ?.focus({ preventScroll: true });
+                showChatAnnotationEditor({
+                  anchorRect,
+                  comment: "",
+                  readSignal: props.readSignal,
+                  onCancel: focusComposer,
+                  onSave: (comment): boolean => {
+                    if (props.readSignal?.aborted || !props.onAttachmentsChange) {
+                      return true;
+                    }
+                    const attachment = createChatSelectionAttachment(
+                      {
+                        ...selection,
+                        comment,
+                        sessionKey: props.sessionKey,
+                      },
+                      props.attachmentLimits,
+                    );
+                    if (!attachment) {
+                      return false;
+                    }
+                    props.onAttachmentsChange([
+                      ...(props.getAttachments?.() ?? props.attachments ?? []),
+                      attachment,
+                    ]);
+                    requestUpdate();
+                    focusComposer();
+                    return true;
+                  },
+                });
               }
             : undefined,
         onOpenSession: props.onSessionSelect,
