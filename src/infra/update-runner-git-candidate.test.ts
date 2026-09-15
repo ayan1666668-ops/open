@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { resolveSystemNodeInfo } from "../daemon/runtime-paths.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { hasErrnoCode } from "./errno.js";
 import type { UpdateDoctorConfigChange } from "./update-doctor-config.js";
 import { UpdateRequesterRevokedError } from "./update-requester-authority.js";
+import { resolveCandidateNodeRuntimeForTest } from "./update-runner-git-candidate.test-support.js";
 import { prepareGitRuntimePromotion } from "./update-runner-git-runtime.js";
 import { updateGitCheckout } from "./update-runner-git.js";
 import type { CommandRunner, UpdateRunnerOptions } from "./update-runner-types.js";
@@ -18,17 +18,6 @@ async function git(root: string, ...args: string[]) {
     throw new Error(result.stderr);
   }
   return result.stdout.trim();
-}
-
-async function resolveCandidateNodeRuntimeForTest(): Promise<{ path: string; version: string }> {
-  if (!process.versions.bun) {
-    return { path: process.execPath, version: process.versions.node };
-  }
-  const systemNode = await resolveSystemNodeInfo({});
-  if (systemNode?.status !== "supported" || !systemNode.version) {
-    throw new Error("This candidate runtime test requires a supported system Node");
-  }
-  return { path: systemNode.path, version: systemNode.version };
 }
 
 const runtimeImports = [
