@@ -175,50 +175,6 @@ export function inspectTranscriptEventsSync(scope: SessionTranscriptReadScope): 
   );
 }
 
-/** Reads physical transcript presence without decoding events or restoring cold storage. */
-export function hasSessionTranscriptEventsSync(scope: SessionTranscriptReadScope): boolean {
-  const resolved = resolveSqliteTranscriptReadScope(scope);
-  const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  const db = getSessionKysely(database.db);
-  // Archive and restore move events atomically; both stores must share one statement snapshot.
-  // A cold descriptor guarantees a nonempty transcript, even when its archive needs repair.
-  return Boolean(
-    executeSqliteQueryTakeFirstSync(
-      database.db,
-      db
-        .selectFrom("transcript_events")
-        .select("session_id")
-        .where("session_id", "=", resolved.sessionId)
-        .unionAll(
-          db
-            .selectFrom("session_transcript_cold_archives")
-            .select("session_id")
-            .where("session_id", "=", resolved.sessionId),
-        )
-        .limit(1),
-    ),
-  );
-}
-
-/** Reads both physical mutation fences from the same session window snapshot. */
-export function readTranscriptMutationStateSync(scope: SessionTranscriptReadScope) {
-  const resolved = resolveSqliteTranscriptReadScope(scope);
-  const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  return runSqliteDeferredTransactionSync(
-    database.db,
-    () => readTranscriptMutationStateInTransaction(database, resolved.sessionId),
-    {
-      databaseLabel: database.path,
-      operationLabel: "session transcript mutation read",
-    },
-  );
-}
-
-/** Reads only the current transcript mutation fence without parsing transcript rows. */
-export function readTranscriptMutationAtSync(scope: SessionTranscriptReadScope): number | null {
-  return readTranscriptMutationStateSync(scope).updatedAt;
-}
-
 /** Validates a prepared assistant using indexed identities and returns its exact mutation fence. */
 export function validatePreparedAssistantAppendSync(
   scope: SessionTranscriptReadScope,

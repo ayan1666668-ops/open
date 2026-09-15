@@ -4,8 +4,12 @@ import { readTranscriptRawDelta } from "./session-accessor.sqlite-delta.js";
 import { resolveSessionKeyBySessionId as resolveTranscriptSessionKeyBySessionId } from "./session-accessor.sqlite-entry.js";
 import { publishTranscriptUpdate } from "./session-accessor.sqlite-events.js";
 import {
-  findTranscriptEvent,
   hasSessionTranscriptEventsSync,
+  readTranscriptMutationAtSync,
+  readTranscriptMutationStateSync,
+} from "./session-accessor.sqlite-metadata-read.js";
+import {
+  findTranscriptEvent,
   hasSessionTranscriptMessage,
   inspectTranscriptEventsSync,
   loadLatestAssistantText as readLatestTranscriptAssistantText,
@@ -14,8 +18,6 @@ import {
   loadTranscriptEventsSync,
   loadTranscriptHeaderSync,
   loadTranscriptTailEventsSync,
-  readTranscriptMutationAtSync,
-  readTranscriptMutationStateSync,
   readTranscriptExportSnapshotReadOnlySync,
   readTranscriptStatsBatchReadOnlySync,
   readTranscriptStatsSync,

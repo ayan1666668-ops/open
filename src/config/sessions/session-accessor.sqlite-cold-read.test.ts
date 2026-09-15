@@ -25,9 +25,12 @@ import { copySqliteSessionOwnedStateForCanonicalRepair } from "./session-accesso
 import { replaceSessionEntry } from "./session-accessor.sqlite-entry.js";
 import { readRecentSessionTranscriptHistoryEvents } from "./session-accessor.sqlite-history-events.js";
 import {
+  hasSessionTranscriptEventsSync,
+  readTranscriptMutationStateSync,
+} from "./session-accessor.sqlite-metadata-read.js";
+import {
   createTranscriptIdentityReader,
   findTranscriptEventInDatabase,
-  hasSessionTranscriptEventsSync,
   loadLatestAssistantText,
   loadTranscriptEventsFromDatabase,
   loadTranscriptEventRowsAfterSeqSync,
@@ -35,7 +38,6 @@ import {
   loadTranscriptTailEventsSync,
   readTranscriptEventAtSeqSync,
   readTranscriptEventRows,
-  readTranscriptMutationStateSync,
   readTranscriptStatsSync,
   readTranscriptStorageRows,
 } from "./session-accessor.sqlite-read.js";
@@ -341,18 +343,12 @@ it.each(["stats", "search", "presence", "mutation"] as const)(
   async (kind) => {
     await withOpenClawTestState({ label: "cold-metadata-snapshot" }, async (state) => {
       const race = await prepareRace(state);
-      const read = () => {
-        switch (kind) {
-          case "stats":
-            return readTranscriptStatsSync(race.scope);
-          case "search":
-            return searchSessionTranscripts({ ...race.scope, query: "Original" });
-          case "presence":
-            return hasSessionTranscriptEventsSync(race.scope);
-          case "mutation":
-            return readTranscriptMutationStateSync(race.scope);
-        }
-      };
+      const read = {
+        stats: () => readTranscriptStatsSync(race.scope),
+        search: () => searchSessionTranscripts({ ...race.scope, query: "Original" }),
+        presence: () => hasSessionTranscriptEventsSync(race.scope),
+        mutation: () => readTranscriptMutationStateSync(race.scope),
+      }[kind];
       try {
         const original = read();
         race.commitAfterMarkerRead((query) =>
