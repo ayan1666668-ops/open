@@ -157,6 +157,11 @@ export function hasCardMarkdownTable(text: string): boolean {
   return countMarkdownTables(text) > 0;
 }
 
+/** Fenced code promotes a message to a card; native tables use the renderer's parser. */
+export function shouldUseCard(text: string, nativeTables: boolean): boolean {
+  return /```[\s\S]*?```/.test(text) || (nativeTables && hasCardMarkdownTable(text));
+}
+
 export function feishuCardWithinTableLimit(card: Record<string, unknown>): boolean {
   let remaining = FEISHU_CARD_TABLE_LIMIT;
   const visit = (value: unknown): boolean => {

@@ -4052,6 +4052,21 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
     });
 
     it.each(["block", undefined] as const)(
+      "%s promotes a pipeless native table to a card",
+      async (tables) => {
+        await sendText({
+          cfg: tableCfg(scope, tables),
+          to: "chat_1",
+          text: pipelessTableMarkdown,
+          accountId,
+        });
+
+        expect(sendStructuredCardCall()?.text).toBe(pipelessTableMarkdown);
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["block", undefined] as const)(
       "%s keeps the native table on a card",
       async (tables) => {
         await sendText({

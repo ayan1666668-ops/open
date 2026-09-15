@@ -55,6 +55,7 @@ import {
   renderFeishuPresentationPayload,
   renderFeishuPresentationFallbackText,
   resolveFeishuRichReply,
+  shouldUseCard,
   withinCardTableLimit,
 } from "./presentation-card.js";
 import {
@@ -129,18 +130,6 @@ function normalizePossibleLocalImagePath(text: string | undefined): string | nul
   }
 
   return raw;
-}
-
-const MARKDOWN_TABLE_PATTERN = /\|.+\|[\r\n]+\|[-:| ]+\|/;
-
-/** A table a markdown card renderer would parse natively. */
-function hasMarkdownTable(text: string): boolean {
-  return MARKDOWN_TABLE_PATTERN.test(text);
-}
-
-/** Fenced code promotes a message to a card; a table does so only when it renders natively. */
-function shouldUseCard(text: string, nativeTables: boolean): boolean {
-  return /```[\s\S]*?```/.test(text) || (nativeTables && hasMarkdownTable(text));
 }
 
 type FeishuOutboundPayload = Parameters<

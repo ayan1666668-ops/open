@@ -4941,6 +4941,18 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     });
 
     it.each(["block", undefined] as const)(
+      "%s promotes a pipeless native table to a static card",
+      async (tables) => {
+        await deliverFinal(tables, "off", pipelessTableMarkdown);
+
+        expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
+          expect.objectContaining({ text: pipelessTableMarkdown }),
+        );
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["block", undefined] as const)(
       "%s keeps the native table on a static card",
       async (tables) => {
         await deliverFinal(tables, "off");
