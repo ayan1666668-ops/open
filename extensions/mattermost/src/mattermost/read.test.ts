@@ -30,6 +30,21 @@ function createReadFetch(params?: { channelType?: string; postStatus?: number })
         },
       });
     }
+    const postMatch = url.match(/\/api\/v4\/posts\/([^/?]+)$/);
+    if (postMatch?.[1] === "post-1") {
+      return jsonResponse({
+        id: "post-1",
+        channel_id: "CURRENT",
+        message: "older",
+        create_at: 1_000,
+      });
+    }
+    if (postMatch?.[1] === "other-post") {
+      return jsonResponse({ id: "other-post", channel_id: "OTHER", message: "elsewhere" });
+    }
+    if (postMatch) {
+      return jsonResponse({ message: "Unable to find the post." }, 404);
+    }
     throw new Error(`Unexpected Mattermost request: ${url}`);
   });
 }
@@ -222,6 +237,72 @@ describe("readMattermostMessages", () => {
         fetchImpl,
       }),
     ).rejects.toThrow("Mattermost API 403 Forbidden: You do not have the appropriate permissions.");
+  });
+
+  it("returns only the requested post for an exact read", async () => {
+    const fetchImpl = createReadFetch();
+
+    const result = await readMattermostMessages({
+      cfg: createMattermostTestConfig("read-exact"),
+      channelId: "CURRENT",
+      messageId: "post-1",
+      accountId: "default",
+      context: { conversationReadOrigin: "direct-operator" },
+      fetchImpl,
+    });
+
+    expect(result).toEqual({
+      messages: [{ id: "post-1", channel_id: "CURRENT", message: "older", create_at: 1_000 }],
+      hasMore: false,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(requestUrl(fetchImpl.mock.calls[0]![0])).toContain("/api/v4/posts/post-1");
+  });
+
+  it("fails an exact read of a missing post instead of returning history", async () => {
+    const fetchImpl = createReadFetch();
+
+    await expect(
+      readMattermostMessages({
+        cfg: createMattermostTestConfig("read-exact-missing"),
+        channelId: "CURRENT",
+        messageId: "missing-post",
+        accountId: "default",
+        context: { conversationReadOrigin: "direct-operator" },
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Mattermost API 404");
+  });
+
+  it("rejects an exact read of a post from another channel", async () => {
+    const fetchImpl = createReadFetch();
+
+    await expect(
+      readMattermostMessages({
+        cfg: createMattermostTestConfig("read-exact-other-channel"),
+        channelId: "CURRENT",
+        messageId: "other-post",
+        accountId: "default",
+        context: delegatedContext(),
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Mattermost read post belongs to a different channel");
+  });
+
+  it("denies an exact read of an unconfigured channel before fetching the post", async () => {
+    const fetchImpl = createReadFetch();
+
+    await expect(
+      readMattermostMessages({
+        cfg: createMattermostTestConfig("read-exact-denied"),
+        channelId: "OTHER",
+        messageId: "post-1",
+        accountId: "default",
+        context: delegatedContext(),
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Mattermost read target channel is not allowed");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects disabled accounts before provider access", async () => {

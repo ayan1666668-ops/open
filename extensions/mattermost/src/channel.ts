@@ -421,6 +421,7 @@ const mattermostMessageActions: ChannelMessageActionAdapter = {
         }),
         before,
         after,
+        messageId: readStringParam(params, "messageId"),
         accountId: resolvedAccountId,
         context: {
           conversationReadOrigin,

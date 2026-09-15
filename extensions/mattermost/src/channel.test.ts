@@ -1075,6 +1075,56 @@ describe("mattermostPlugin", () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
+    it("reads the exact post named by messageId", async () => {
+      const cfg = createMattermostTestConfig(`read-exact-${++reactionActionSequence}`);
+      const mattermostConfig = cfg.channels?.mattermost;
+      if (!mattermostConfig) {
+        throw new Error("expected Mattermost config fixture");
+      }
+      mattermostConfig.actions = { messages: true };
+      const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+        const url = requestUrl(input);
+        if (!url.endsWith("/api/v4/posts/post-1")) {
+          throw new Error(`Unexpected Mattermost request: ${url}`);
+        }
+        return Response.json({
+          id: "post-1",
+          channel_id: "CURRENT",
+          message: "older",
+          create_at: 1_700_000_001_000,
+        });
+      });
+
+      const result = await withMockedGlobalFetch(fetchImpl, async () =>
+        mattermostPlugin.actions?.handleAction?.(
+          createMattermostActionContext({
+            action: "read",
+            params: { target: "channel:CURRENT", messageId: "post-1" },
+            cfg,
+            accountId: "default",
+            conversationReadOrigin: "direct-operator",
+          }),
+        ),
+      );
+
+      expect(result?.details).toEqual({
+        ok: true,
+        channelId: "CURRENT",
+        messages: [
+          {
+            id: "post-1",
+            channel_id: "CURRENT",
+            message: "older",
+            create_at: 1_700_000_001_000,
+            timestampMs: 1_700_000_001_000,
+            timestampUtc: new Date(1_700_000_001_000).toISOString(),
+          },
+        ],
+        hasMore: false,
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     it("rejects invalid read cursors and limits before provider access", async () => {
       const cfg = createMattermostTestConfig(`read-validation-${++reactionActionSequence}`);
       const mattermostConfig = cfg.channels?.mattermost;

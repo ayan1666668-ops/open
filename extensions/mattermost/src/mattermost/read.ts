@@ -85,6 +85,7 @@ export async function readMattermostMessages(params: {
   limit?: number;
   before?: string;
   after?: string;
+  messageId?: string;
   accountId?: string | null;
   context: ReadContext;
   fetchImpl?: MattermostFetch;
@@ -130,6 +131,17 @@ export async function readMattermostMessages(params: {
     ) {
       throw new Error("Mattermost read target channel is not allowed.");
     }
+  }
+
+  if (params.messageId) {
+    const post = await client.request<MattermostPost>(
+      `/posts/${encodeURIComponent(params.messageId)}`,
+    );
+    // Post IDs resolve server-wide, so bind the post to the channel authorized above.
+    if (post.channel_id?.trim() !== params.channelId) {
+      throw new Error("Mattermost read post belongs to a different channel.");
+    }
+    return { messages: [post], hasMore: false };
   }
 
   return await fetchMattermostChannelPosts(client, params.channelId, {
