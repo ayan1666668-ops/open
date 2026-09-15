@@ -4566,7 +4566,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       return tables ? { channels: { feishu: { markdown: { tables } } } } : {};
     }
 
-    function createBlockTableHarness(cfg: ClawdbotConfig = tableCfg("off")) {
+    function createBlockTableHarness(
+      cfg: ClawdbotConfig = tableCfg("off"),
+      allowReasoningPreview = false,
+    ) {
       resolveFeishuAccountMock.mockReturnValue({
         accountId: "main",
         appId: "app_id",
@@ -4577,8 +4580,78 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
           streaming: { mode: "partial", block: { enabled: true } },
         },
       });
-      return createDispatcherHarness({ accountId: "main", cfg });
+      return createDispatcherHarness({ accountId: "main", cfg, allowReasoningPreview });
     }
+
+    it.each([
+      { waiter: "idle", pending: false },
+      { waiter: "idle", pending: true },
+      // The final-first order is a control for the answer-only lookup already in use.
+      { waiter: "final", pending: false },
+      { waiter: "final", pending: true },
+    ])(
+      "reuses the off answer receipt with reasoning for $waiter and pending=$pending",
+      async ({ waiter, pending }) => {
+        const { result, options } = createBlockTableHarness(tableCfg("off"), true);
+        let acceptPost!: (value: { messageId: string }) => void;
+        sendMessageFeishuMock.mockReturnValueOnce(
+          new Promise((resolve) => {
+            acceptPost = resolve;
+          }),
+        );
+        result.replyOptions.onReasoningStream?.({ text: "Check the team roster." });
+        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+        const block = options.deliver({ text: tableMarkdown }, { kind: "block" });
+        await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
+        if (!pending) {
+          acceptPost({ messageId: "om-reasoned-answer" });
+          await block;
+        }
+        const idle = waiter === "idle" ? Promise.resolve(options.onIdle?.()) : undefined;
+        const final =
+          waiter === "final"
+            ? options.deliver({ text: tableMarkdown }, { kind: "final" })
+            : undefined;
+        await vi.waitFor(() =>
+          expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1),
+        );
+        if (pending) {
+          acceptPost({ messageId: "om-reasoned-answer" });
+        }
+        const acceptedBlock = await block;
+        await idle;
+        const acceptedFinal = final
+          ? await final
+          : await options.deliver({ text: tableMarkdown }, { kind: "final" });
+        await options.onIdle?.();
+
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toBe(tableMarkdown);
+        expect(acceptedFinal).toMatchObject({
+          messageIds: ["om-reasoned-answer"],
+          visibleReplySent: true,
+        });
+        expect(acceptedFinal?.receipt?.parts).toEqual(acceptedBlock?.receipt?.parts);
+        expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    // With no accepted block to reuse, the close still delivers reasoning and answer.
+    it("preserves reasoning when idle alone posts an off answer", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("off"), true);
+      result.replyOptions.onReasoningStream?.({ text: "Check the team roster." });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toContain("> Check the team roster.");
+      expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toContain(tableMarkdown);
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+    });
 
     it("reuses the posted block receipt when idle closes its matching off preview", async () => {
       const { result, options } = createBlockTableHarness();

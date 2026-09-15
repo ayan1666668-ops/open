@@ -596,8 +596,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         statusLine = "";
         const text = buildCombinedStreamText(finalizedReasoningText, answerText);
         // Committing here would put the table in a card just as surely as delivering a
-        // final would, so this close owns the same routing decision: drop the card and
-        // own the post, which keeps one visible delivery for a final to inherit.
+        // final would, so this close drops the card and reuses a matching block
+        // receipt or sends the combined text for a final to inherit.
         const closeNeedsPost = disposition === "closed" && tableNeedsPostPath(text);
         let closed;
         try {
@@ -623,7 +623,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // A failed removal can leave the card visible, so only a clean discard hands
         // the text to a post instead.
         if (closeNeedsPost && finalizationError === undefined) {
-          result = await sendPostReply(text, "final");
+          result = await sendPostReply(text, "final", undefined, answerText);
         }
         if (result.visibleReplySent) {
           markVisibleReplySent();
@@ -868,9 +868,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     });
   };
 
-  const sendPostReply = (text: string, infoKind?: string, firstChunkMentions?: MentionTarget[]) => {
+  const sendPostReply = (
+    text: string,
+    infoKind?: string,
+    firstChunkMentions?: MentionTarget[],
+    blockAnswerText = text,
+  ) => {
+    // Block receipts are keyed by the rendered answer, never the reasoning preview
+    // added by close. Keep that key separate from an unmatched close's post body.
     const matchingBlock =
-      infoKind === "final" && tableNeedsPostPath(text) ? blockPostDeliveries.get(text) : undefined;
+      infoKind === "final" && tableNeedsPostPath(blockAnswerText)
+        ? blockPostDeliveries.get(blockAnswerText)
+        : undefined;
     const send = () =>
       sendChunkedTextReply({
         text,
