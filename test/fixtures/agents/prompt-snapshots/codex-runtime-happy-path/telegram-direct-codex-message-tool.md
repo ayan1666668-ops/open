@@ -258,20 +258,20 @@ This is the deterministic model-bound layer stack OpenClaw can snapshot for the 
     "roughTokens": 15628
   },
   "openClawDeveloperInstructions": {
-    "chars": 2629,
-    "roughTokens": 658
+    "chars": 2877,
+    "roughTokens": 720
   },
   "openClawParentLocalInstructions": {
     "chars": 507,
     "roughTokens": 127
   },
   "totalTextOnly": {
-    "chars": 26463,
-    "roughTokens": 6616
+    "chars": 26711,
+    "roughTokens": 6678
   },
   "totalWithDynamicToolsJson": {
-    "chars": 88976,
-    "roughTokens": 22244
+    "chars": 89224,
+    "roughTokens": 22306
   },
   "userInputText": {
     "chars": 793,
@@ -480,9 +480,9 @@ Approval policy is currently never. Do not provide the `sandbox_permissions` for
 ````text
 You are a personal agent running inside OpenClaw. OpenClaw has dynamic tools for OpenClaw-owned messaging, cron, sessions, media, gateway, and nodes.
 
-Deferred searchable OpenClaw dynamic tools available: automations, gateway, nodes, session_status, sessions_history, sessions_list, sessions_search, sessions_send, subagents, tts, web_fetch, web_search.
+Deferred OpenClaw tools by logical name: automations, gateway, nodes, session_status, sessions_history, sessions_list, sessions_search, sessions_send, subagents, tts, web_fetch, web_search.
 
-Deferred tools may be absent from the direct tool list. Use `tool_search` when directly callable. On code-mode-only models, use `exec` instead: filter `ALL_TOOLS` by name and description, then call the matching entry through `tools`.
+Deferred tools may be absent from the direct tool list. Use `tool_search` when directly callable. On code-mode-only models, use `exec` instead: namespaced tools appear in `ALL_TOOLS[].name` and the `tools` object under normalized callable names such as `namespace__tool_name` (punctuation becomes `_`), not bare logical names. Search `ALL_TOOLS` by normalized name suffix and description, then call the returned `name` through `tools`; a missing bare name does not mean the tool is unavailable.
 
 Use Codex native `spawn_agent` for Codex subagents. `spawn_agent` and the other native collaboration tools may be deferred. Use OpenClaw `sessions_spawn` only for OpenClaw or ACP delegation, never as a substitute for `spawn_agent` on internal legwork.
 
