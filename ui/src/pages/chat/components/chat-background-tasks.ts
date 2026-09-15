@@ -24,6 +24,7 @@ import {
   normalizeTasksListResult,
   sortTasks,
   taskTimestampMs,
+  withLookupFields,
 } from "../../../lib/tasks/data.ts";
 import type { TaskSummary } from "../../../lib/tasks/task-summary.ts";
 import { newestTaskSnapshot } from "./chat-background-tasks-shared.ts";
@@ -511,10 +512,19 @@ export function handleBackgroundTasksEvent(
   observeTaskTerminal(state, newest, "event");
   state.tasks = sortTasks([newest, ...state.tasks.filter((task) => task.id !== event.task.id)]);
   if (detail) {
-    state.taskDetails = new Map(state.taskDetails).set(event.task.id, {
-      ...newest,
-      ...(detail.prompt ? { prompt: detail.prompt } : {}),
-    });
+    const detailWasActive = detail.status === "queued" || detail.status === "running";
+    const nowTerminal = newest.status !== "queued" && newest.status !== "running";
+    if (detailWasActive && nowTerminal) {
+      // The cached lookup predates completion and therefore cannot carry
+      // terminal-only fields (e.g. the bounded exec output tail). Drop it so the
+      // inspector refetches the finished record.
+      state.taskDetails.delete(event.task.id);
+    } else {
+      state.taskDetails = new Map(state.taskDetails).set(
+        event.task.id,
+        withLookupFields(newest, { prompt: detail.prompt, result: detail.result }),
+      );
+    }
   }
   host.requestUpdate?.();
 }
@@ -558,10 +568,10 @@ async function loadBackgroundTaskDetail(
     }
     const newest = newestTaskSnapshot(current, detail);
     observeTaskTerminal(state, newest, "snapshot");
-    state.taskDetails = new Map(state.taskDetails).set(rowId, {
-      ...newest,
-      ...(detail.prompt ? { prompt: detail.prompt } : {}),
-    });
+    state.taskDetails = new Map(state.taskDetails).set(
+      rowId,
+      withLookupFields(newest, { prompt: detail.prompt, result: detail.result }),
+    );
     if (state.tasks) {
       state.tasks = sortTasks([
         newest,

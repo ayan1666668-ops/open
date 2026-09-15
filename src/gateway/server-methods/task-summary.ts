@@ -3,6 +3,7 @@
 import type { TaskSummary } from "../../../packages/gateway-protocol/src/index.js";
 import { getTaskExecutionObservation } from "../../tasks/task-execution-observation.js";
 import { hasTaskTranscript } from "../../tasks/task-history.js";
+import { TASK_OUTPUT_TAIL_MAX_CHARS, readTaskOutputTail } from "../../tasks/task-output-tail.js";
 import { getTaskActivitySnapshot } from "../../tasks/task-registry-activity.js";
 import type { TaskRecord, TaskStatus } from "../../tasks/task-registry.types.js";
 import {
@@ -51,11 +52,7 @@ function sanitizeOptionalTaskText(
 function readExecTaskOutputTail(detail: TaskRecord["detail"]): string {
   // Background exec finalization stores a bounded, redacted output tail in the record detail;
   // surface it as the canonical completion result without flattening its layout.
-  const value =
-    detail && typeof detail === "object" && !Array.isArray(detail)
-      ? (detail as Record<string, unknown>).outputTail
-      : undefined;
-  return typeof value === "string" ? sanitizeTaskPromptText(value, TASK_RESULT_MAX_CHARS) : "";
+  return sanitizeTaskPromptText(readTaskOutputTail(detail), TASK_OUTPUT_TAIL_MAX_CHARS);
 }
 
 export function mapTaskSummary(task: TaskRecord, opts?: { includePrompt?: boolean }): TaskSummary {

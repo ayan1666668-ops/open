@@ -6,12 +6,10 @@ import { redactToolPayloadText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { BACKGROUND_EXEC_TASK_KIND } from "../tasks/background-exec-task-contract.js";
 import { createRunningTaskRun, finalizeTaskRunByRunId } from "../tasks/detached-task-runtime.js";
+import { TASK_OUTPUT_TAIL_MAX_CHARS } from "../tasks/task-output-tail.js";
 import type { ExecProcessOutcome } from "./bash-tools.exec-runtime.js";
 
 const log = createSubsystemLogger("agents/bash-exec-task-tracking");
-
-/** Upper bound for the redacted output tail stored on background exec task records. */
-const EXEC_TASK_OUTPUT_TAIL_MAX_CHARS = 4_000;
 
 function execTaskOutputTail(aggregated: string): string | undefined {
   // Strip escapes before masking so removed bytes cannot split a secret pattern;
@@ -26,11 +24,11 @@ function execTaskOutputTail(aggregated: string): string | undefined {
   if (!sanitized) {
     return undefined;
   }
-  if (sanitized.length <= EXEC_TASK_OUTPUT_TAIL_MAX_CHARS) {
+  if (sanitized.length <= TASK_OUTPUT_TAIL_MAX_CHARS) {
     return sanitized;
   }
   // Keep the tail (most recent output); never split a surrogate pair at the boundary.
-  const sliced = sanitized.slice(sanitized.length - EXEC_TASK_OUTPUT_TAIL_MAX_CHARS + 1);
+  const sliced = sanitized.slice(sanitized.length - TASK_OUTPUT_TAIL_MAX_CHARS + 1);
   const first = sliced.charCodeAt(0);
   return `…${first >= 0xdc00 && first <= 0xdfff ? sliced.slice(1) : sliced}`;
 }
