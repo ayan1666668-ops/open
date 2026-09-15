@@ -1,5 +1,7 @@
+import path from "node:path";
 import { asRecord } from "@openclaw/normalization-core/record-coerce";
 import { expect, it } from "vitest";
+import type { ApplicationContext } from "../app/context.ts";
 import type { JsonSchema } from "../components/config-form.shared.ts";
 import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
@@ -63,7 +65,7 @@ suite.define(() => {
     },
   ])(
     "edits and reloads a $name without splitting its value",
-    async ({ schema, before, after, json }) => {
+    async ({ name, schema, before, after, json }) => {
       await suite.withPage({ viewport: { width: 1280, height: 900 } }, async ({ page }) => {
         const saved = {
           ...config,
@@ -106,6 +108,14 @@ suite.define(() => {
         await page.goto(`${suite.server.baseUrl}settings/plugins/workboard?view=settings`);
         await page.getByRole("heading", { name: "Workboard settings", exact: true }).waitFor();
         const editor = page.locator(".plugin-editor__control");
+        await editor.first().waitFor();
+        if (process.env.OPENCLAW_UPDATE_E2E_SCREENSHOTS === "1") {
+          await page.screenshot({
+            path: path.join(suite.artifactDir, `${name.replaceAll(" ", "-")}-initial.png`),
+            animations: "disabled",
+            caret: "hide",
+          });
+        }
         if (json) {
           const input = editor.locator("textarea");
           await input.waitFor();
@@ -124,6 +134,18 @@ suite.define(() => {
             entries: { workboard: { ...saved.plugins.entries.workboard, config: after } },
           },
         });
+        // A captured request precedes the Gateway reply; reload only after
+        // the existing writer has acknowledged and retained the saved value.
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                document.querySelector<HTMLElement & { context: ApplicationContext }>(
+                  "openclaw-plugins-page",
+                )?.context.runtimeConfig.state.configAutoSaveStatus,
+            ),
+          )
+          .toBe("saved");
         await page.reload();
         await page.getByRole("heading", { name: "Workboard settings", exact: true }).waitFor();
         if (json) {
@@ -138,6 +160,13 @@ suite.define(() => {
                 .isChecked(),
             )
             .toBe(true);
+        }
+        if (process.env.OPENCLAW_UPDATE_E2E_SCREENSHOTS === "1") {
+          await page.screenshot({
+            path: path.join(suite.artifactDir, `${name.replaceAll(" ", "-")}-saved.png`),
+            animations: "disabled",
+            caret: "hide",
+          });
         }
       });
     },
