@@ -178,6 +178,7 @@ export type SubagentCompletionDeliveryState = {
     | "parent_run_ended"
     | "sink_unavailable"
     | "steer_dropped"
+    | "message_tool_delivery_missing"
     | "dedupe"
     | "waiting_for_requester_turn";
 };
