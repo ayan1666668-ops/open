@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
@@ -313,12 +312,10 @@ it("keeps prepared discovery facts when another root loads during health observa
     };
   });
   const io = createConfigIO(first);
-  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
-  const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+  const mainSql = observeMainThreadSql();
   const config = await withPluginCache(createPluginCache(), () => io.loadConfigAsync());
   expect(config.gateway?.port).toBe(19001);
-  expect(prepare).not.toHaveBeenCalled();
-  expect(exec).not.toHaveBeenCalled();
+  mainSql.expectIdle();
 });
 
 it("keeps core-only model defaults out of synchronous plugin discovery", async () => {
@@ -342,14 +339,12 @@ it("keeps core-only model defaults out of synchronous plugin discovery", async (
     vi.stubEnv(key, options.env[key]);
   }
   try {
-    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
-    const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    const mainSql = observeMainThreadSql();
     const config = await withPluginCache(createPluginCache(), () =>
       createConfigIO({ ...options, pluginValidation: "core-only" }).loadConfigAsync(),
     );
     expect(config.models?.providers?.["fixture-provider"]?.models[0]?.id).toBe("fixture-model");
-    expect(prepare).not.toHaveBeenCalled();
-    expect(exec).not.toHaveBeenCalled();
+    mainSql.expectIdle();
   } finally {
     vi.unstubAllEnvs();
   }
