@@ -259,6 +259,8 @@ describe("resolveRequiredConfiguredSecretRefInputString", () => {
 describe("resolveConfiguredSecretInputString target identity", () => {
   it.each([
     { path: 'plugins.entries.fixture.config["simple"]', id: "SIMPLE_TOKEN" },
+    { path: 'plugins.entries.fixture.config["constructor"]', id: "CONSTRUCTOR_TOKEN" },
+    { path: 'plugins.entries.fixture.config["prototype"]', id: "PROTOTYPE_TOKEN" },
     { path: 'plugins.entries.fixture.config["0"]', id: "OBJECT_TOKEN" },
     { path: "plugins.entries.fixture.config.0", id: "OBJECT_TOKEN" },
     { path: "plugins.entries.fixture.config.list[0]", id: "ARRAY_TOKEN" },
@@ -271,6 +273,8 @@ describe("resolveConfiguredSecretInputString target identity", () => {
             fixture: {
               config: {
                 simple: "${SIMPLE_TOKEN}",
+                constructor: "${CONSTRUCTOR_TOKEN}",
+                prototype: "${PROTOTYPE_TOKEN}",
                 "0": "${OBJECT_TOKEN}",
                 list: ["${ARRAY_TOKEN}"],
               },

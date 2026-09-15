@@ -10,7 +10,7 @@ import {
   describeSecretResolutionOperatorRecovery,
 } from "../secrets/resolve-errors.js";
 import { resolveSecretRefValues } from "../secrets/resolve.js";
-import { formatConcreteConfigPath, parseConcreteConfigPathTokens } from "../shared/dot-path.js";
+import { formatConcreteConfigPath, tokenizeConcreteConfigPath } from "../shared/dot-path.js";
 
 export type SecretInputUnresolvedReasonStyle = "generic" | "detailed"; // pragma: allowlist secret
 type ConfiguredSecretInputSource =
@@ -53,7 +53,7 @@ async function resolveConfiguredSecretInput(
   if (typeof params.value === "string" && getConfigResolutionFacts(params.config) !== null) {
     try {
       configPath = formatConcreteConfigPath(
-        parseConcreteConfigPathTokens(configPath),
+        tokenizeConcreteConfigPath(configPath).tokens,
         params.config,
       );
     } catch {
