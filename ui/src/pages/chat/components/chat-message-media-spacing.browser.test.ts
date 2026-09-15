@@ -128,11 +128,15 @@ describe("transcript media block spacing", () => {
       await Promise.all(images.map((element) => element.decode()));
       expectRhythm(container, 11);
       if (streaming) {
-        draw([...content, text("\n\nStreaming continues.")], true);
-        expectRhythm(container, 12);
-        draw([...content, text("\n\nStreaming continues.")]);
-        expectRhythm(container, 12);
-        expect(Array.from(container.querySelectorAll("img.chat-message-image"))).toEqual(images);
+        for (const isStreaming of [true, false]) {
+          draw([...content, text("\n\nStreaming continues.")], isStreaming);
+          expectRhythm(container, 12);
+          const updatedImages = Array.from(container.querySelectorAll("img.chat-message-image"));
+          expect(updatedImages).toHaveLength(images.length);
+          for (const [index, retainedImage] of images.entries()) {
+            expect(updatedImages[index]).toBe(retainedImage);
+          }
+        }
       }
     },
   );
