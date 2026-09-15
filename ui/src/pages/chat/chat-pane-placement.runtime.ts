@@ -69,7 +69,32 @@ async function selectChatPanePlacementTarget(params: {
         : undefined;
     },
     loadCatalog: async () => {
-      const catalog = await requestPlaceCatalog(params.client, runtime?.id);
+      const workspacePath =
+        (typeof (params.row as { cwd?: unknown }).cwd === "string"
+          ? ((params.row as { cwd?: string }).cwd ?? "").trim()
+          : "") ||
+        params.row.spawnedCwd?.trim() ||
+        params.row.sessionRoot?.trim() ||
+        params.row.worktree?.repoRoot?.trim() ||
+        "";
+      const catalog = await requestPlaceCatalog(params.client, {
+        runtimeId: runtime?.id,
+        workspacePath,
+      });
+      const catalogDisabledReason = sessionPlacementDisabledReason(
+        buildSessionPlacementBlockers({
+          runtimeUnsupportedReason:
+            runtime && !runtime.devicePlacement
+              ? t("newSession.deviceRuntimeUnsupported")
+              : undefined,
+          workspaceHasEscapingSymlinks:
+            catalog.sessionPlacement?.workspaceHasEscapingSymlinks === true,
+          missingPreparedAuth: catalog.sessionPlacement?.missingPreparedAuth === true,
+        }),
+      );
+      const disabledReason = !workerAccess.allowed
+        ? workerAccess.reason
+        : (catalogDisabledReason ?? deviceDisabledReason);
       return {
         profiles: hasOperatorAdminAccess(params.gatewaySnapshot.hello?.auth ?? null)
           ? catalog.profiles
@@ -77,7 +102,7 @@ async function selectChatPanePlacementTarget(params: {
         devices: projectDevicePlacements(
           catalog.environments,
           runtime?.devicePlacement,
-          deviceDisabledReason,
+          disabledReason,
         ),
       };
     },

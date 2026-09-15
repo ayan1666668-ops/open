@@ -165,6 +165,7 @@ export function projectDevicePlacements(
       // inventory disqualifiers so operators see the full binding reason.
       const disabledReason = stackDisabledReasons([
         placementDisabledReason,
+        environment.disabledReason,
         unavailableReason(environment, requirement),
       ]);
       const facts = environmentMenuFacts(environment, {

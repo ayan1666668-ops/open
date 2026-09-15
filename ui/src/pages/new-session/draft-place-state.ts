@@ -257,11 +257,11 @@ export class DraftPlaceState {
 
   /** Session-scoped blockers that hard-disable every paired-device row. */
   sessionPlacementBlockers() {
+    const sessionPlacement = this.gateway.sessionPlacement;
     return buildSessionPlacementBlockers({
       runtimeUnsupportedReason: this.modelControl.devicePlacementUnsupportedReason(),
-      // Workspace symlink portability and prepared OpenAI auth stay authoritative at
-      // dispatch until a designed preflight supplies these flags; callers/tests may set
-      // them through buildSessionPlacementBlockers directly.
+      workspaceHasEscapingSymlinks: sessionPlacement?.workspaceHasEscapingSymlinks === true,
+      missingPreparedAuth: sessionPlacement?.missingPreparedAuth === true,
     });
   }
 

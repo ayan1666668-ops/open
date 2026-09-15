@@ -10,12 +10,41 @@ import { deviceUnavailableText, resolveDeviceWorkerAvailability } from "./device
 
 /**
  * Paired-device inventory eligibility (connection, session-host consent, command
- * authority, and worker slots). Session-scoped blockers that also prevent hosting —
- * non-portable workspace symlinks that escape the sync root, and Codex remote-exec
- * prepared OpenAI auth / appServer.homeScope="agent" — are enforced at authoritative
- * dispatch (workspace inventory + auth-bridge) and surfaced in the Control UI picker
- * via session placement blockers when a preflight supplies them.
+ * authority, and worker slots) plus session-scoped placement blockers.
+ * Workspace symlink portability and Codex remote-exec prepared OpenAI auth are
+ * projected onto environments.list as disabledReason when preflight knows them,
+ * so the session host picker hard-disables before dispatch.
  */
+
+/** Operator-facing reason when a workspace cannot sync to paired devices. */
+export const SESSION_PLACEMENT_WORKSPACE_SYMLINKS_REASON =
+  "Workspace contains absolute symlinks and can't be synced to a paired device.";
+
+/** Operator-facing reason when Codex remote-exec lacks prepared OpenAI auth. */
+export const SESSION_PLACEMENT_PREPARED_AUTH_REASON =
+  'Codex remote-exec requires prepared OpenAI auth with appServer.homeScope="agent"; ambient credentials and native Codex auth are not accepted.';
+
+export type SessionPlacementPreflight = Readonly<{
+  workspaceHasEscapingSymlinks?: boolean;
+  missingPreparedAuth?: boolean;
+}>;
+
+/** Stacks session-scoped placement blockers into one disabledReason sentence list. */
+export function resolveSessionPlacementDisabledReason(
+  preflight: SessionPlacementPreflight | undefined,
+): string | undefined {
+  if (!preflight) {
+    return undefined;
+  }
+  const reasons: string[] = [];
+  if (preflight.workspaceHasEscapingSymlinks) {
+    reasons.push(SESSION_PLACEMENT_WORKSPACE_SYMLINKS_REASON);
+  }
+  if (preflight.missingPreparedAuth) {
+    reasons.push(SESSION_PLACEMENT_PREPARED_AUTH_REASON);
+  }
+  return reasons.length > 0 ? reasons.join(" ") : undefined;
+}
 type DevicePlacementEligibility =
   | { ok: true; availableSlots: number; node: NodeWorkerSupervisorNodeProof }
   | { ok: false; error: string };
@@ -36,6 +65,7 @@ export async function resolveDevicePlacementEligibility(params: {
   runtimeId?: string;
   requirement: DevicePlacementRequirement | undefined;
   config: OpenClawConfig;
+  sessionPlacement?: SessionPlacementPreflight;
   currentNode?: {
     nodeId: string;
     connId?: string;
@@ -47,6 +77,10 @@ export async function resolveDevicePlacementEligibility(params: {
   };
 }): Promise<DevicePlacementEligibility> {
   const { deviceId, requirement } = params;
+  const sessionDisabledReason = resolveSessionPlacementDisabledReason(params.sessionPlacement);
+  if (sessionDisabledReason) {
+    return { ok: false, error: sessionDisabledReason };
+  }
   if (!requirement) {
     return {
       ok: false,

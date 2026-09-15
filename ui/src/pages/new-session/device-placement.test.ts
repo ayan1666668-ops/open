@@ -290,6 +290,26 @@ describe("device placement projection", () => {
     expect(devices.map((device) => device.disabledReason)).toEqual([reason, reason]);
   });
 
+  it("hard-disables from environments.list disabledReason / sessionPlacement projection", () => {
+    const listReason = sessionPlacementDisabledReason(
+      buildSessionPlacementBlockers({
+        workspaceHasEscapingSymlinks: true,
+        missingPreparedAuth: true,
+      }),
+    );
+    const [device] = projectDevicePlacements(
+      [
+        node({
+          disabledReason: listReason,
+        }),
+      ],
+      { requiredNodeCommands: [], consumesWorkerSlot: true },
+    );
+    expect(device?.selectable).toBe(false);
+    expect(device?.disabledReason).toMatch(/absolute symlinks/i);
+    expect(device?.disabledReason).toMatch(/prepared OpenAI auth/i);
+  });
+
   it("stackDisabledReasons deduplicates identical sentences", () => {
     expect(stackDisabledReasons(["A.", "A.", "B."])).toBe("A. B.");
     expect(stackDisabledReasons([undefined, "  ", undefined])).toBeUndefined();
