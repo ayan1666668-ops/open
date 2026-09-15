@@ -168,6 +168,12 @@ export function summarizeWorkerEnvironment(
     },
   };
 }
+/**
+ * Projects gateway-visible environments for the session host picker.
+ * Runtime-scoped requiredNodeCommand authority is included when runtimeId is set.
+ * Session-scoped workspace symlink portability and prepared OpenAI auth remain
+ * dispatch-time facts; the Control UI stacks those blockers when preflight knows them.
+ */
 export async function listGatewayEnvironments(
   context: GatewayRequestContext,
   workers = listWorkerEnvironments(context),

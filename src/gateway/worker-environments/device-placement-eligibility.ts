@@ -8,6 +8,14 @@ import type { NodeWorkerSupervisorNodeProof } from "../node-registry-private.js"
 import { readNodeSessionWithheldCommands } from "../node-registry.js";
 import { deviceUnavailableText, resolveDeviceWorkerAvailability } from "./device-provider.js";
 
+/**
+ * Paired-device inventory eligibility (connection, session-host consent, command
+ * authority, and worker slots). Session-scoped blockers that also prevent hosting —
+ * non-portable workspace symlinks that escape the sync root, and Codex remote-exec
+ * prepared OpenAI auth / appServer.homeScope="agent" — are enforced at authoritative
+ * dispatch (workspace inventory + auth-bridge) and surfaced in the Control UI picker
+ * via session placement blockers when a preflight supplies them.
+ */
 type DevicePlacementEligibility =
   | { ok: true; availableSlots: number; node: NodeWorkerSupervisorNodeProof }
   | { ok: false; error: string };
