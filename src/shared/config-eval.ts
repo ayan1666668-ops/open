@@ -64,6 +64,7 @@ type RuntimeRequires = {
   bins?: string[];
   anyBins?: string[];
   env?: string[];
+  anyEnv?: string[];
   config?: string[];
 };
 
@@ -118,6 +119,14 @@ function evaluateRuntimeRequires(params: RuntimeRequirementEvalParams): boolean 
   if (requiredAnyBins.length > 0) {
     const anyFound = requiredAnyBins.some((bin) => params.hasBin(bin));
     if (!anyFound && !params.hasAnyRemoteBin?.(requiredAnyBins)) {
+      return false;
+    }
+  }
+
+  const requiredAnyEnv = requires.anyEnv ?? [];
+  if (requiredAnyEnv.length > 0) {
+    const anyFound = requiredAnyEnv.some((envName) => params.hasEnv(envName));
+    if (!anyFound) {
       return false;
     }
   }

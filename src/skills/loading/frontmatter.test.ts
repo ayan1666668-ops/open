@@ -275,6 +275,7 @@ user-invocable: true
         bins: ["link-cli"],
         anyBins: [],
         env: [],
+        anyEnv: [],
         config: [],
       },
       install: [

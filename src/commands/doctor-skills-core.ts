@@ -28,6 +28,9 @@ export function formatMissingSkillSummary(skill: SkillStatusEntry): string {
   if (skill.missing.env.length > 0) {
     missing.push(`env: ${skill.missing.env.join(", ")}`);
   }
+  if ((skill.missing.anyEnv ?? []).length > 0) {
+    missing.push(`any env: ${(skill.missing.anyEnv ?? []).join(", ")}`);
+  }
   if (skill.missing.config.length > 0) {
     missing.push(`config: ${skill.missing.config.join(", ")}`);
   }

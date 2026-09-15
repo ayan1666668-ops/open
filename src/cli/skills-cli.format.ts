@@ -97,13 +97,14 @@ const SKILL_REQUIREMENT_GROUPS = [
   ["bins", "Binaries"],
   ["anyBins", "Any binaries"],
   ["env", "Environment"],
+  ["anyEnv", "Any environment"],
   ["config", "Config"],
   ["os", "OS"],
 ] as const;
 
 function formatSkillMissingSummary(skill: SkillStatusEntry): string {
-  return SKILL_REQUIREMENT_GROUPS.filter(([key]) => skill.missing[key].length > 0)
-    .map(([key]) => `${key}: ${skill.missing[key].join(", ")}`)
+  return SKILL_REQUIREMENT_GROUPS.filter(([key]) => (skill.missing[key] ?? []).length > 0)
+    .map(([key]) => `${key}: ${(skill.missing[key] ?? []).join(", ")}`)
     .join("; ");
 }
 
@@ -238,17 +239,17 @@ export function formatSkillInfo(
   }
 
   const requirementGroups = SKILL_REQUIREMENT_GROUPS.filter(
-    ([key]) => skill.requirements[key].length > 0,
+    ([key]) => (skill.requirements[key] ?? []).length > 0,
   );
 
   if (requirementGroups.length > 0) {
     lines.push("");
     lines.push(theme.heading("Requirements:"));
     for (const [key, label] of requirementGroups) {
-      const missingRequirements = skill.missing[key];
+      const missingRequirements = skill.missing[key] ?? [];
       const requirementStatus = skill.requirements[key].map((requirement) => {
         const missing =
-          key === "anyBins"
+          key === "anyBins" || key === "anyEnv"
             ? missingRequirements.length > 0
             : missingRequirements.includes(requirement);
         return missing ? theme.error(`✗ ${requirement}`) : theme.success(`✓ ${requirement}`);
@@ -265,7 +266,11 @@ export function formatSkillInfo(
     }
   }
 
-  if (skill.primaryEnv && skill.missing.env.includes(skill.primaryEnv)) {
+  if (
+    skill.primaryEnv &&
+    ((skill.missing.env ?? []).includes(skill.primaryEnv) ||
+      (skill.missing.anyEnv ?? []).includes(skill.primaryEnv))
+  ) {
     lines.push("");
     lines.push(theme.heading("API key setup:"));
     if (safeHomepage) {

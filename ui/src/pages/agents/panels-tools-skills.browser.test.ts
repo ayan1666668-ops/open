@@ -76,8 +76,8 @@ function createSkill(
     modelVisible: !options.blockedByAgentFilter,
     userInvocable: true,
     commandVisible: !options.blockedByAgentFilter,
-    requirements: { bins: [], anyBins: [], env: [], config: [], os: [] },
-    missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
+    requirements: { bins: [], anyBins: [], anyEnv: [], env: [], config: [], os: [] },
+    missing: { bins: [], anyBins: [], anyEnv: [], env: [], config: [], os: [] },
     configChecks: [],
     install: [],
   };
@@ -1002,6 +1002,7 @@ describe("agents skills panel (browser)", () => {
       requirements: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
@@ -1009,6 +1010,7 @@ describe("agents skills panel (browser)", () => {
       missing: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],

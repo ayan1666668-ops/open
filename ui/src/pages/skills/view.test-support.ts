@@ -28,6 +28,7 @@ export function createSkill(overrides: Partial<SkillStatusEntry> = {}): SkillSta
     commandVisible: true,
     requirements: {
       anyBins: [],
+      anyEnv: [],
       bins: [],
       env: [],
       config: [],
@@ -35,6 +36,7 @@ export function createSkill(overrides: Partial<SkillStatusEntry> = {}): SkillSta
     },
     missing: {
       anyBins: [],
+      anyEnv: [],
       bins: [],
       env: [],
       config: [],

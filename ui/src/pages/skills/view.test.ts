@@ -129,6 +129,7 @@ describe("renderSkills", () => {
       requirements: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
@@ -136,6 +137,7 @@ describe("renderSkills", () => {
       missing: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
@@ -193,6 +195,7 @@ describe("renderSkills", () => {
       requirements: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
@@ -200,6 +203,7 @@ describe("renderSkills", () => {
       missing: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
@@ -250,11 +254,12 @@ describe("renderSkills", () => {
       requirements: {
         bins: [],
         anyBins: ["claude", "codex", "opencode"],
+        anyEnv: [],
         env: [],
         config: [],
         os: [],
       },
-      missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
+      missing: { bins: [], anyBins: [], anyEnv: [], env: [], config: [], os: [] },
       install: [{ id: "node-codex", kind: "node", label: "Install Codex CLI", bins: ["codex"] }],
     });
 
@@ -289,7 +294,7 @@ describe("renderSkills", () => {
       this.setAttribute("open", "");
     });
     const skill = createSkill({
-      missing: { anyBins: [], bins: ["skill-cli"], env: [], config: [], os: [] },
+      missing: { anyBins: [], anyEnv: [], bins: ["skill-cli"], env: [], config: [], os: [] },
       install: [{ id: "skill-cli", kind: "node", label: "Install skill-cli", bins: ["skill-cli"] }],
     });
 
@@ -329,7 +334,7 @@ describe("renderSkills", () => {
     const calendar = createSkill({
       skillKey: "calendar",
       name: "Calendar",
-      missing: { anyBins: [], bins: ["calendar-cli"], env: [], config: [], os: [] },
+      missing: { anyBins: [], anyEnv: [], bins: ["calendar-cli"], env: [], config: [], os: [] },
       install: [
         { id: "calendar-cli", kind: "brew", label: "Install calendar-cli", bins: ["calendar-cli"] },
       ],

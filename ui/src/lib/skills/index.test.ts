@@ -567,8 +567,8 @@ describe("loadSkillCard", () => {
           modelVisible: true,
           userInvocable: true,
           commandVisible: true,
-          requirements: { anyBins: [], bins: [], env: [], config: [], os: [] },
-          missing: { anyBins: [], bins: [], env: [], config: [], os: [] },
+          requirements: { anyBins: [], anyEnv: [], bins: [], env: [], config: [], os: [] },
+          missing: { anyBins: [], anyEnv: [], bins: [], env: [], config: [], os: [] },
           configChecks: [],
           install: [],
           skillCard: {
@@ -626,8 +626,8 @@ describe("loadSkillCard", () => {
           modelVisible: true,
           userInvocable: true,
           commandVisible: true,
-          requirements: { anyBins: [], bins: [], env: [], config: [], os: [] },
-          missing: { anyBins: [], bins: [], env: [], config: [], os: [] },
+          requirements: { anyBins: [], anyEnv: [], bins: [], env: [], config: [], os: [] },
+          missing: { anyBins: [], anyEnv: [], bins: [], env: [], config: [], os: [] },
           configChecks: [],
           install: [],
           clawhub: {
