@@ -54,7 +54,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
                     $0.accessibilityLabel?() == "Model and reasoning"
             })
 
-            try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
+            try await AppKitTestSupport.openMenu(button, in: panel) { menu in
                 try AppKitTestSupport.record(menu: menu, content: content, name: "catalog")
                 let provider = try XCTUnwrap(menu.items.first { $0.submenu != nil })
                 let choices = try XCTUnwrap(provider.submenu)
@@ -76,7 +76,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertEqual(model.selectedModelSelectionID, "fixture/allowed")
             XCTAssertEqual(model.displayedModelSelectionID, "fixture/allowed")
 
-            try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
+            try await AppKitTestSupport.openMenu(button, in: panel) { menu in
                 try AppKitTestSupport.record(menu: menu, content: content, name: "selected")
                 let provider = try XCTUnwrap(menu.items.first { $0.submenu != nil })
                 let selected = try XCTUnwrap(provider.submenu?.items.first {
@@ -88,7 +88,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             }
             XCTAssertEqual(model.selectedThinkingLevel, "high")
             XCTAssertTrue(model.modelControlLabel.contains("Thorough"))
-            try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
+            try await AppKitTestSupport.openMenu(button, in: panel) { menu in
                 try AppKitTestSupport.record(menu: menu, content: content, name: "effort")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items.map(\.title), ["Session default", "Fast", "Normal"])
@@ -100,7 +100,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertTrue(model.speed.isEnabled)
             XCTAssertEqual(model.speed.override, .on)
             XCTAssertTrue(model.modelControlLabel.contains("Fast"))
-            try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
+            try await AppKitTestSupport.openMenu(button, in: panel) { menu in
                 try AppKitTestSupport.record(menu: menu, content: content, name: "fast")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items[1].state, .on)
@@ -110,7 +110,7 @@ final class QuickChatCatalogPresentationTests: XCTestCase {
             XCTAssertNil(model.speed.override)
             XCTAssertFalse(model.speed.isEnabled)
             XCTAssertEqual(model.selectedThinkingLevel, "high")
-            try await AppKitTestSupport.pressMenu(button, in: panel) { menu in
+            try await AppKitTestSupport.openMenu(button, in: panel) { menu in
                 try AppKitTestSupport.record(menu: menu, content: content, name: "inherited")
                 let speed = try XCTUnwrap(menu.items.first { $0.title == "Speed" }?.submenu)
                 XCTAssertEqual(speed.items.map(\.state), [.on, .off, .off])

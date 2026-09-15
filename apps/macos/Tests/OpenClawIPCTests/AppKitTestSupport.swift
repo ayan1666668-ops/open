@@ -75,7 +75,7 @@ enum AppKitTestSupport {
         """)
     }
 
-    static func pressMenu(
+    static func openMenu(
         _ button: AnyObject,
         in window: NSWindow,
         file: StaticString = #fileID,
@@ -110,7 +110,7 @@ enum AppKitTestSupport {
         }
         let action: String
         var ownerType: String?
-        var pressed: Bool?
+        var actionResult: Bool?
         if let cell = button as? NSPopUpButtonCell {
             guard let owner = cell.controlView as? NSPopUpButton,
                   owner.cell === cell,
@@ -131,17 +131,25 @@ enum AppKitTestSupport {
                 throw InteractionFailure(message:
                     "Unsupported menu element or fixture window: \(controlType), role=\(String(describing: role)), windowMatches=\(windowMatches)")
             }
-            action = "accessibility-press"
-            pressed = button.accessibilityPerformPress?()
-            guard pressed != nil else {
-                throw InteractionFailure(message: "The fixture button has no direct accessibility Press action")
+            if pressAllowed == true {
+                action = "accessibility-press"
+                actionResult = button.accessibilityPerformPress?()
+            } else if showMenuAllowed == true {
+                action = "accessibility-show-menu"
+                actionResult = button.accessibilityPerformShowMenu?()
+            } else {
+                throw InteractionFailure(message:
+                    "The fixture menu element has no allowed accessibility action: Press=\(String(describing: pressAllowed)), ShowMenu=\(String(describing: showMenuAllowed))")
+            }
+            guard actionResult != nil else {
+                throw InteractionFailure(message: "The fixture menu element does not implement its allowed \(action) action")
             }
         }
         await tracking.waitForCompletion()
         let completed = tracking.observed && tracking.inspectionCompleted && !tracking.timedOut
         print("""
         Menu interaction at \(file):\(line)
-        action=\(action) pressed=\(String(describing: pressed))
+        action=\(action) result=\(String(describing: actionResult))
         observed=\(tracking.observed) inspected=\(tracking.inspectionCompleted) timedOut=\(tracking.timedOut) error=\(String(describing: tracking.error))
         control=\(controlType) owner=\(String(describing: ownerType)) role=\(String(describing: role)) appActive=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow)
         """)
