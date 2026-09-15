@@ -78,12 +78,21 @@ struct AppStateIsolationTests {
 
             let button = try await self.loadedModelMenuButton(in: window, selection: "profile")
             var initiallyPinned = false
+            var modelCaptureError: Error?
             try await AppKitTestSupport.pressMenu(button, in: window) { menu in
                 initiallyPinned = menu.items.contains { $0.title == "Unpin model" }
                 let index = try #require(menu.items.firstIndex { $0.title == "fixture/fresh" })
                 try #require(menu.items[index].isEnabled)
+                // Capture errors must not skip the preference actions and assertions.
+                do {
+                    try AppKitTestSupport.record(
+                        menu: menu, content: window.contentView, name: "model-initial")
+                } catch {
+                    modelCaptureError = error
+                }
                 menu.performActionForItem(at: index)
             }
+            #expect(modelCaptureError == nil)
             #expect(initiallyPinned)
 
             // Wait for the accepted selection in either domain so the baseline reaches the ownership assertions.

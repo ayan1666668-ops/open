@@ -130,30 +130,44 @@ function mount(
 
 describe("renderSessionDetailPanel filtered usage", () => {
   it("formats timeline labels in the selected UTC time zone", () => {
-    vi.spyOn(Date.prototype, "toLocaleTimeString").mockImplementation((_locales, options) =>
-      options?.timeZone === "UTC" ? "utc-time" : "local-time",
-    );
-    vi.spyOn(Date.prototype, "toLocaleString").mockImplementation((_locales, options) =>
-      options?.timeZone === "UTC" ? "utc-date-time" : "local-date-time",
-    );
-
+    const timestamps = [
+      Date.parse("2026-05-13T18:00:00.000Z"),
+      Date.parse("2026-05-13T23:59:59.999Z"),
+    ];
     const container = mount(
-      [
-        point({ timestamp: Date.parse("2026-05-13T18:00:00.000Z") }),
-        point({ timestamp: Date.parse("2026-05-13T23:59:59.999Z") }),
-      ],
+      timestamps.map((timestamp) => point({ timestamp })),
       null,
       null,
       "total",
       { timeZone: "utc" },
     );
-
+    const locale = i18n.getLocale();
     expect(
       [...container.querySelectorAll(".ts-axis-label")].map((label) => label.textContent),
-    ).toEqual(expect.arrayContaining(["utc-time", "utc-time"]));
-    expect(container.querySelector(".ts-bar")?.getAttribute("data-tooltip")).toContain(
-      "utc-date-time",
+    ).toEqual(
+      expect.arrayContaining(
+        timestamps.map((timestamp) =>
+          new Date(timestamp).toLocaleTimeString(locale, {
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "UTC",
+          }),
+        ),
+      ),
     );
+    const bars = [...container.querySelectorAll(".ts-bar")];
+    expect(bars).toHaveLength(timestamps.length);
+    for (const [index, bar] of bars.entries()) {
+      const expectedDate = new Date(timestamps[index]!).toLocaleString(locale, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "UTC",
+      });
+      expect(bar.getAttribute("data-tooltip")).toBe(bar.getAttribute("aria-label"));
+      expect(bar.getAttribute("data-tooltip")?.startsWith(`${expectedDate} · `)).toBe(true);
+    }
   });
 
   it("filters detail points by the selected UTC day and keeps the final millisecond", () => {

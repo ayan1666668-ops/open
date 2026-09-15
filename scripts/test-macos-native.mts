@@ -148,7 +148,7 @@ await runWithFailedTrailer("macos-native", async () => {
         const names =
           profileMode === "default"
             ? ["catalog", "selected", "effort", "fast", "inherited"]
-            : ["thread-reasoning", "thread-tool-activity", "thread-restored"];
+            : ["thread-reasoning", "thread-tool-activity", "model-initial", "thread-restored"];
         const allowed = new RegExp(
           `^(?:${names.join("|")})(?:-window\\.png|-menu-[0-9]+\\.png|-capture-status\\.json)$`,
         );

@@ -159,6 +159,11 @@ Start agent work in the background: hook-dispatched turns for external content, 
     before reporting its result. Updates check the owner, managed mode, and
     expected revision together inside the worker's SQLite transaction.
 
+    On an ordinary persistence rejection, `createManaged` throws
+    `TaskFlow persistence failed.` with the original error in `cause`;
+    `tryCreateManaged` returns `null`. Both methods propagate preparation and
+    input-validation errors.
+
     Results preserve the corresponding synchronous payloads and owner scope.
     Reads query persisted SQLite records in the shared database worker, without
     overwriting the process registry. Cold registry restoration still uses its
@@ -250,3 +255,20 @@ Start agent work in the background: hook-dispatched turns for external content, 
 
   </Accordion>
 </AccordionGroup>
+
+## Harness task execution ownership
+
+`createAgentHarnessTaskRuntime(...)` from
+`openclaw/plugin-sdk/agent-harness-task-runtime` accepts an optional
+`executionPid` for the local process that executes the harness's tasks. The SDK
+captures its host and process start identity once when creating the scoped
+runtime. Task records keep that identity so a successor Gateway can settle
+running tasks whose recorded process is verifiably gone, without waiting for
+their normal reconciliation grace period.
+
+Pass only a local PID reported by the harness transport. Codex's stdio transport
+provides one; its WebSocket and Unix-socket transports do not. Omit `executionPid`
+for remote or unidentified owners, including Copilot, whose SDK does not expose
+its process identity. The SDK never substitutes the Gateway PID. Records without
+an identity retain the existing grace period, including records written before
+execution ownership was available.

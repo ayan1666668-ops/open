@@ -147,9 +147,14 @@ if (tool === 'swiftpm-testing-helper' || tool === 'xctest') {
 }
 if (tool === 'swift' && args[0] === 'test') {
   if (env.OPENCLAW_TEST_MENU_CAPTURE_DIR) {
-    const captureName = env.OPENCLAW_PROFILE === 'default' ? 'catalog' : 'thread-reasoning';
-    fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-window.png'), 'synthetic-png-bytes');
-    fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-capture-status.json'), JSON.stringify({name: captureName, blockers: ['synthetic fixture, not visual proof']}));
+    const captureNames = env.OPENCLAW_PROFILE === 'default' ? ['catalog'] : ['thread-reasoning', 'model-initial'];
+    for (const captureName of captureNames) {
+      fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-window.png'), 'synthetic-png-bytes');
+      fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, captureName + '-capture-status.json'), JSON.stringify({name: captureName, blockers: ['synthetic fixture, not visual proof']}));
+    }
+    if (env.OPENCLAW_PROFILE !== 'default') {
+      fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, 'model-initial-menu-42.png'), 'synthetic-model-menu-bytes');
+    }
     fs.writeFileSync(path.join(env.OPENCLAW_TEST_MENU_CAPTURE_DIR, 'unrelated.log'), 'must remain private');
   }
   const eventPathIndex = args.indexOf('--event-stream-output-path');
@@ -340,6 +345,7 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
         expect(fs.existsSync(ownedRoot)).toBe(false);
         const profileMode = index === 0 ? "default" : "named";
         const captureName = index === 0 ? "catalog" : "thread-reasoning";
+        const captureNames = index === 0 ? [captureName] : [captureName, "model-initial"];
         const exported = f.capturePath(profileMode);
         if (!exported) {
           throw new Error("The joined Swift partition must publish its capture path");
@@ -351,10 +357,18 @@ describe.skipIf(process.platform === "win32")("native test launch ownership", ()
         expect(fs.readdirSync(exported).toSorted()).toEqual(
           [
             "capture-export.json",
-            `${captureName}-capture-status.json`,
-            `${captureName}-window.png`,
+            ...captureNames.flatMap((name) => [
+              `${name}-capture-status.json`,
+              `${name}-window.png`,
+            ]),
+            ...(index === 1 ? ["model-initial-menu-42.png"] : []),
           ].toSorted(),
         );
+        if (index === 1) {
+          expect(fs.readFileSync(path.join(exported, "model-initial-menu-42.png"), "utf8")).toBe(
+            "synthetic-model-menu-bytes",
+          );
+        }
         expect(
           JSON.parse(fs.readFileSync(path.join(exported, "capture-export.json"), "utf8")),
         ).toMatchObject({
