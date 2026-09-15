@@ -254,6 +254,30 @@ describe("gateway ingress attribution", () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it("resets source suppression when the wall clock moves backward", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const warn = vi.fn();
+    const report = createGatewayUnattributableProxyReporter({ warn });
+    const attribution = prepareGatewayIngressAttribution({
+      req: request({ remoteAddress: "192.0.2.10", forwardedFor: "100.64.0.10" }),
+    });
+    if (attribution.kind !== "unattributable-proxy") {
+      throw new Error("expected unattributable proxy");
+    }
+
+    vi.setSystemTime(4 * 60_000);
+    report(attribution);
+    vi.setSystemTime(2 * 60_000);
+    report(attribution);
+    report(attribution);
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    vi.setSystemTime(7 * 60_000);
+    report(attribution);
+    expect(warn).toHaveBeenCalledTimes(3);
+  });
+
   it("bounds warnings from a flood of unique proxy sources", async () => {
     const warn = vi.fn();
     const report = createGatewayUnattributableProxyReporter({ warn });

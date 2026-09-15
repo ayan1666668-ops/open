@@ -286,15 +286,23 @@ export function createGatewayUnattributableProxyReporter(log: {
     maxSize: UNATTRIBUTABLE_PROXY_WARNING_MAX_SOURCES,
   });
   let windowStartedAt = Date.now();
+  let lastObservedAt = windowStartedAt;
   let emittedInWindow = 0;
   return (attribution) => {
     const now = Date.now();
-    // The aggregate budget refills on its own schedule. Source suppression is left to the
-    // cache's TTL so a peer warned just before a refill still waits out its own window.
-    if (now < windowStartedAt || now - windowStartedAt >= UNATTRIBUTABLE_PROXY_WARNING_WINDOW_MS) {
+    // A wall-clock rollback invalidates both schedules; otherwise future-dated source
+    // records could suppress warnings until the clock catches up and their TTL elapses.
+    if (now < lastObservedAt) {
+      windowStartedAt = now;
+      emittedInWindow = 0;
+      reportedSources.clear();
+    } else if (now - windowStartedAt >= UNATTRIBUTABLE_PROXY_WARNING_WINDOW_MS) {
+      // The aggregate budget refills on its own schedule. Source suppression is left to
+      // the cache's TTL so a peer warned just before a refill waits out its own window.
       windowStartedAt = now;
       emittedInWindow = 0;
     }
+    lastObservedAt = now;
     if (
       emittedInWindow >= UNATTRIBUTABLE_PROXY_WARNING_MAX_SOURCES ||
       // Peek rather than check: continued traffic from a suppressed peer must not keep
