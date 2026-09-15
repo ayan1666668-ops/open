@@ -493,7 +493,7 @@ describe("diagnostics.otel privacy controls", () => {
           skillContentHash: true,
           traceAttributes: ["openclaw.sessionId"],
           logAttributes: ["openclaw.runId"],
-          metricAttributes: ["openclaw.agent.id"],
+          metricAttributes: ["openclaw.agent"],
         },
       },
     });

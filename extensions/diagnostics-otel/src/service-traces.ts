@@ -378,7 +378,7 @@ export function createDiagnosticsTraceRuntime(tracer: Tracer, retainedAttributes
       spanAttrs["openclaw.trigger"] = evt.trigger;
     }
     if (evt.agentId) {
-      spanAttrs["openclaw.agent.id"] = normalizeDiagnosticValue(evt.agentId);
+      spanAttrs["openclaw.agent"] = normalizeDiagnosticValue(evt.agentId);
     }
     if (evt.sessionId) {
       spanAttrs["openclaw.sessionId"] = evt.sessionId;

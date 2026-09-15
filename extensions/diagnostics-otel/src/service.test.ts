@@ -4555,7 +4555,7 @@ describe("diagnostics-otel service", () => {
     });
 
     const runSpan = startedSpanOptions("openclaw.run");
-    expect(runSpan?.attributes?.["openclaw.agent.id"]).toBe("ops");
+    expect(runSpan?.attributes?.["openclaw.agent"]).toBe("ops");
     expect(runSpan?.attributes?.["openclaw.sessionId"]).toBe("session-visible-on-trace");
     expect(JSON.stringify(telemetryState.counters)).not.toContain("session-visible-on-trace");
   });
@@ -4639,7 +4639,7 @@ describe("diagnostics-otel service", () => {
     expect(modelOptions?.attributes?.["gen_ai.system"]).toBe("openai");
     expect(modelOptions?.attributes?.["gen_ai.request.model"]).toBe("gpt-5.4");
     expect(modelOptions?.attributes?.["gen_ai.operation.name"]).toBe("text_completion");
-    expect(modelOptions?.attributes?.["openclaw.agent.id"]).toBe("ops");
+    expect(modelOptions?.attributes?.["openclaw.agent"]).toBe("ops");
     expect(Object.hasOwn(modelOptions?.attributes ?? {}, "gen_ai.provider.name")).toBe(false);
     expect(Object.hasOwn(modelOptions?.attributes ?? {}, "openclaw.callId")).toBe(false);
     expect(Object.hasOwn(modelOptions?.attributes ?? {}, "openclaw.runId")).toBe(false);
