@@ -38,6 +38,7 @@ export function observeChatSendCommentaryMedia(params: {
   accountId: string | undefined;
   getRunId: () => string;
   isCurrent: () => boolean;
+  abortSignal?: AbortSignal;
   logGateway: GatewayRequestContext["logGateway"];
 }) {
   const { session } = params;
@@ -110,6 +111,7 @@ export function observeChatSendCommentaryMedia(params: {
       const latest = loadSessionEntry(session.sessionKey, session.sessionLoadOptions);
       if (
         !params.isCurrent() ||
+        params.abortSignal?.aborted ||
         params.getRunId() !== runId ||
         latest.entry?.sessionId !== scope.sessionId ||
         latest.entry.lifecycleRevision !== lifecycleRevision
@@ -156,6 +158,7 @@ export function observeChatSendCommentaryMedia(params: {
                 localRoots: getAgentScopedMediaLocalRoots(session.cfg, scope.agentId),
                 continueOnPrepareError: true,
                 assertCurrent,
+                abortSignal: params.abortSignal,
               });
               blocks.push(
                 ...(getReplyPayloadMetadata(payload)?.assistantMediaFailures ?? []).map(

@@ -182,6 +182,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     prepareAssistantTranscriptMessage: params.prepareAssistantTranscriptMessage,
     isAgentRunStarted: () => agentRunStarted,
     isRunCurrent,
+    abortSignal: activeRunAbort.controller.signal,
     onCommandBlock: isInternalTextSlashCommandTurn
       ? (text) =>
           broadcastChatDelta({

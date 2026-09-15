@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { maxBytesForKind, mediaKindFromMime, type MediaKind } from "@openclaw/media-core/constants";
 import { mimeTypeFromFilePath, normalizeMimeType } from "@openclaw/media-core/mime";
+import { hasHttpUrlPrefix } from "@openclaw/net-policy/url-protocol";
 import { expectDefined } from "@openclaw/normalization-core";
 import {
   asDateTimestampMs,
@@ -1378,6 +1379,7 @@ export async function createManagedOutgoingMediaBlocks(params: {
   continueOnPrepareError?: boolean;
   onPrepareError?: (error: Error) => void;
   assertCurrent?: () => void;
+  abortSignal?: AbortSignal;
 }): Promise<ManagedMediaBlock[]> {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
@@ -1455,18 +1457,24 @@ export async function createManagedOutgoingMediaBlocks(params: {
               // File URLs have already been normalized for display metadata and policy checks.
               // Pass that path to the store instead of treating URI syntax as a filename.
               const ingestSource = localMediaPath ?? mediaUrl;
-              return await saveMediaSource(
-                ingestSource,
-                undefined,
-                "outgoing/originals",
-                Math.max(
-                  limits.maxBytes,
-                  maxBytesForKind("audio"),
-                  maxBytesForKind("video"),
-                  maxBytesForKind("document"),
-                  MEDIA_MAX_BYTES,
-                ),
+              const maxBytes = Math.max(
+                limits.maxBytes,
+                maxBytesForKind("audio"),
+                maxBytesForKind("video"),
+                maxBytesForKind("document"),
+                MEDIA_MAX_BYTES,
               );
+              if (hasHttpUrlPrefix(ingestSource)) {
+                const { saveRemoteMediaForStore } =
+                  await import("../media/store.remote.runtime.js");
+                return await saveRemoteMediaForStore({
+                  source: ingestSource,
+                  subdir: "outgoing/originals",
+                  maxBytes,
+                  abortSignal: params.abortSignal,
+                });
+              }
+              return await saveMediaSource(ingestSource, undefined, "outgoing/originals", maxBytes);
             })();
       savedOriginalPath = savedOriginal.path;
       let savedOriginalContentType = savedOriginal.contentType ?? item.mimeType;

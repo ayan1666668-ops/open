@@ -34,7 +34,13 @@ export function projectAssistantCommentaryFallbacks(
       : typeof entry.id === "string"
         ? entry.id.trim()
         : undefined;
-  const groups: Array<{ itemId: string; content: Record<string, unknown>[]; text: string[] }> = [];
+  const groups: Array<{
+    itemId: string;
+    providerKeyed: boolean;
+    content: Record<string, unknown>[];
+    text: string[];
+    sourceBlocks: unknown[];
+  }> = [];
   const commentaryContent = new Set<unknown>();
   let projectedUnphasedText = false;
   let group: (typeof groups)[number] | undefined;
@@ -49,33 +55,45 @@ export function projectAssistantCommentaryFallbacks(
         ["image", "audio", "video", "attachment", "attachment_error"].includes(String(content.type))
       ) {
         group.content.push(content);
-        commentaryContent.add(block);
+        group.sourceBlocks.push(block);
       }
       continue;
     }
     const signature = parseAssistantTextSignature(content);
     const text = typeof content.text === "string" ? content.text : "";
-    const itemId = signature?.id?.trim() || transcriptId;
+    const providerItemId = signature?.id?.trim();
+    const itemId = providerItemId || transcriptId;
     if (!commentaryBlocks.has(block) || !itemId) {
       group = undefined;
       continue;
     }
-    if (signature?.phase !== "commentary") {
-      commentaryContent.add(block);
-      projectedUnphasedText = true;
-    }
     if (group?.itemId !== itemId) {
-      group = { itemId, content: [], text: [] };
+      group = {
+        itemId,
+        providerKeyed: Boolean(providerItemId),
+        content: [],
+        text: [],
+        sourceBlocks: [],
+      };
       groups.push(group);
+    }
+    group.providerKeyed ||= Boolean(providerItemId);
+    if (signature?.phase !== "commentary") {
+      group.sourceBlocks.push(block);
     }
     if (text.trim()) {
       group.content.push({ type: "text", text });
       group.text.push(text);
     }
   }
-  const fallbacks = groups.flatMap(({ itemId, content, text }) => {
-    if (content.length === 0) {
+  const fallbacks = groups.flatMap(({ itemId, providerKeyed, content, text, sourceBlocks }) => {
+    const hasMedia = content.some((block) => block.type !== "text");
+    if (content.length === 0 || (!providerKeyed && !hasMedia)) {
       return [];
+    }
+    for (const block of sourceBlocks) {
+      commentaryContent.add(block);
+      projectedUnphasedText ||= isAssistantTextContentType(readRecord(block)?.type);
     }
     const projected = truncateChatHistoryText(text.join("\n"), maxChars);
     const projectedMeta = projected.truncated
@@ -114,6 +132,7 @@ export function projectAssistantCommentaryFallbacks(
     Array.isArray(remaining.content) &&
     remaining.content.some((block) => isToolHistoryBlockType(readRecord(block)?.type))
   ) {
+    remaining.content = remaining.content.filter((block) => !commentaryBlocks.has(block));
     delete remaining.phase;
   }
   return { fallbacks, message: remaining };

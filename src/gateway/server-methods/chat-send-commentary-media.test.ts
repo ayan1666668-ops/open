@@ -37,6 +37,7 @@ import {
 } from "../../sessions/transcript-events.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { projectChatDisplayMessages } from "../chat-display-projection.js";
+import { listManagedImageRecordEntries } from "../managed-image-record-store.js";
 import { projectTranscriptEntryMessage } from "../session-transcript-message.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { createChatSendReplyDispatch } from "./chat-send-reply-dispatch.js";
@@ -77,6 +78,7 @@ describe("webchat commentary media", () => {
     "document",
     "hook",
     "revoked",
+    "aborted",
     "completion",
     "top-level",
     "mixed-text",
@@ -87,6 +89,8 @@ describe("webchat commentary media", () => {
     await withOpenClawTestState({ label: "commentary-media" }, async (state) => {
       fetchedUrls.length = 0;
       let requestCount = 0;
+      let abortedResponseClosed = false;
+      const abortController = new AbortController();
       const imageResponse = createDeferred();
       const upstream = http.createServer((_request, response) => {
         requestCount += 1;
@@ -98,8 +102,14 @@ describe("webchat commentary media", () => {
             scenario === "document" ? Buffer.from("%PDF-1.7\nfixture\n%%EOF") : PNG_BYTES,
           );
         };
-        if (scenario === "revoked" && requestCount === 1) {
+        if ((scenario === "revoked" || scenario === "aborted") && requestCount === 1) {
           send();
+        } else if (scenario === "aborted") {
+          response.writeHead(200, { "content-type": "image/png" });
+          response.write(PNG_BYTES.subarray(0, 16));
+          response.on("close", () => {
+            abortedResponseClosed = !response.writableFinished;
+          });
         } else {
           void imageResponse.promise.then(send);
         }
@@ -110,7 +120,10 @@ describe("webchat commentary media", () => {
       const address = upstream.address() as AddressInfo;
       const fixtureUrl = `http://127.0.0.1:${address.port}/11111111-1111-4111-8111-111111111111`;
       const mediaUrl = MEDIA_URL;
-      const mediaUrls = scenario === "revoked" ? [mediaUrl, `${mediaUrl}/second`] : [mediaUrl];
+      const mediaUrls =
+        scenario === "revoked" || scenario === "aborted"
+          ? [mediaUrl, `${mediaUrl}/second`]
+          : [mediaUrl];
       const mixed = scenario === "mixed-text" || scenario === "mixed-media";
       const finalMediaUrl = scenario === "mixed-media" ? `${mediaUrl}/final` : undefined;
       const authoredUrls = [...mediaUrls, ...(finalMediaUrl ? [finalMediaUrl] : [])];
@@ -164,6 +177,7 @@ describe("webchat commentary media", () => {
         accountId: undefined,
         isAgentRunStarted: () => true,
         isRunCurrent: () => current,
+        abortSignal: abortController.signal,
         logGateway: { warn } as never,
         session: {
           ...scope,
@@ -311,6 +325,11 @@ describe("webchat commentary media", () => {
                 if (scenario === "completion") {
                   return;
                 }
+                if (scenario === "aborted") {
+                  current = false;
+                  abortController.abort();
+                  return;
+                }
                 if (scenario === "revoked") {
                   current = false;
                 }
@@ -451,6 +470,12 @@ describe("webchat commentary media", () => {
           expect(cleanupSettled).toBe(false);
           imageResponse.resolve();
         }
+        if (scenario === "aborted") {
+          await vi.waitFor(() => {
+            expect(abortedResponseClosed).toBe(true);
+            expect(cleanupSettled).toBe(true);
+          });
+        }
         await run;
         if (mixed) {
           expect(readMessage()).toMatchObject({ content: expectedContent });
@@ -483,9 +508,10 @@ describe("webchat commentary media", () => {
             content: [{ type: "text", text: "Rewritten while loading" }],
           });
         }
-        if (scenario === "revoked" || scenario === "target-rewrite") {
+        if (scenario === "revoked" || scenario === "aborted" || scenario === "target-rewrite") {
           expect(readMessage()).not.toHaveProperty("openclawDisplayContent");
           expect(await fs.readdir(state.statePath("media", "outgoing", "originals"))).toEqual([]);
+          expect(listManagedImageRecordEntries({ sessionKey: scope.sessionKey })).toEqual([]);
           if (scenario === "target-rewrite") {
             expect(readMessage().content).toEqual([
               { type: "text", text: "Rewritten while loading" },
@@ -495,6 +521,9 @@ describe("webchat commentary media", () => {
         expect(warn).not.toHaveBeenCalled();
       } finally {
         imageResponse.resolve();
+        if (scenario === "aborted") {
+          upstream.closeAllConnections();
+        }
         await run?.catch(() => {});
         stopUpdates();
         await new Promise<void>((resolve) => {

@@ -111,6 +111,7 @@ export function createChatSendReplyDispatch(params: {
   isAgentRunStarted: () => boolean;
   onCommandBlock?: (text: string) => void;
   isRunCurrent?: () => boolean;
+  abortSignal?: AbortSignal;
   getReplyDispatchRun?: () => ReplyDispatchRun | undefined;
   prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
   logGateway: GatewayRequestContext["logGateway"];
@@ -498,6 +499,7 @@ export function createChatSendReplyDispatch(params: {
         accountId,
         getRunId: () => agentRunId,
         isCurrent: () => isAgentRunStarted() && params.isRunCurrent?.() === true,
+        abortSignal: params.abortSignal,
         logGateway,
       });
       try {
