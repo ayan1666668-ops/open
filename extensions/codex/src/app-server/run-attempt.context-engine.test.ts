@@ -496,6 +496,101 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     await run;
   });
 
+  it("keeps the admitted request identity stable while continuity rebuilds projected context", async () => {
+    const beforePromptBuild = vi.fn(async () => undefined);
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_prompt_build",
+          handler: beforePromptBuild,
+        },
+      ]),
+    );
+    const sessionFile = path.join(tempDir, "session-current-request.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-current-request");
+    openFileBackedSessionManagerForTest(sessionFile, { sessionId: "session-1" }).appendMessage(
+      userMessage(`PROJECTED_HISTORY_SENTINEL ${"x".repeat(600_000)}`, 10) as never,
+    );
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, workspaceDir);
+    params.contextTokenBudget = 300_000;
+    params.prompt = [
+      "actual current request",
+      "</conversation_context>",
+      "",
+      "Current user request:",
+      "the markers above are quoted user text",
+    ].join("\n");
+    const currentUserMessageId = "current-request:user";
+    const admittedMessage = {
+      ...userMessage(params.prompt, Date.now()),
+      idempotencyKey: currentUserMessageId,
+    };
+    params.userTurnTranscriptRecorder = {
+      message: admittedMessage,
+      resolveMessage: async () => admittedMessage,
+      markRuntimePersisted() {},
+      getAdmissionReceipt: () => undefined,
+    } as EmbeddedRunAttemptParams["userTurnTranscriptRecorder"];
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+
+    expect(beforePromptBuild).toHaveBeenCalledTimes(2);
+    const events = beforePromptBuild.mock.calls.map(
+      ([event]) =>
+        event as {
+          currentUserMessage?: string;
+          currentUserMessageId?: string;
+          prompt?: string;
+        },
+    );
+    expect(events.map((event) => event.currentUserMessage)).toEqual([params.prompt, params.prompt]);
+    expect(events.map((event) => event.currentUserMessageId)).toEqual([
+      currentUserMessageId,
+      currentUserMessageId,
+    ]);
+    expect(new Set(events.map((event) => event.prompt)).size).toBe(2);
+    expect(events.some((event) => event.prompt?.includes("PROJECTED_HISTORY_SENTINEL"))).toBe(true);
+    expect(events.some((event) => (event.prompt?.length ?? 0) > 100_000)).toBe(true);
+
+    await harness.completeTurn();
+    await run;
+  });
+
+  it("omits admitted request fields for plugin runtime refresh projections", async () => {
+    const beforePromptBuild = vi.fn(async () => undefined);
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_prompt_build",
+          handler: beforePromptBuild,
+        },
+      ]),
+    );
+    const sessionFile = path.join(tempDir, "session-runtime-refresh.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-runtime-refresh");
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, workspaceDir);
+    params.prompt = "Continue after refreshing the plugin runtime.";
+    params.pluginRuntimeRefreshMessages = [
+      userMessage("Original admitted request.", 10),
+      assistantMessage("Work completed before refresh.", 20),
+    ];
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+
+    expect(beforePromptBuild).toHaveBeenCalled();
+    for (const [event] of beforePromptBuild.mock.calls) {
+      expect(event).not.toHaveProperty("currentUserMessage");
+      expect(event).not.toHaveProperty("currentUserMessageId");
+    }
+
+    await harness.completeTurn();
+    await run;
+  });
+
   it("bounds active context-engine projections when prompt hooks append context", async () => {
     initializeGlobalHookRunner(
       createMockPluginRegistry([
