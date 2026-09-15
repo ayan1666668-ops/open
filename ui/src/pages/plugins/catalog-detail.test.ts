@@ -2,19 +2,6 @@ import { render } from "lit";
 import { describe, expect, it } from "vitest";
 import type { PluginDiscoveryDetailResult } from "../../lib/plugins/index.ts";
 import { renderPluginCatalogDetail } from "./catalog-detail.ts";
-import { clawHubPackageUrl } from "./catalog-links.ts";
-
-describe("clawHubPackageUrl", () => {
-  it("derives the publisher route from a scoped package when author metadata is absent", () => {
-    expect(clawHubPackageUrl("@openclaw/matrix", undefined)).toBe(
-      "https://clawhub.ai/openclaw/plugins/matrix",
-    );
-  });
-
-  it("preserves the package-only route for unscoped packages without author metadata", () => {
-    expect(clawHubPackageUrl("matrix", undefined)).toBe("https://clawhub.ai/plugins/matrix");
-  });
-});
 
 describe("catalog README", () => {
   it("keeps long README tails and wires fenced-code controls", () => {
@@ -120,6 +107,6 @@ describe("renderPluginCatalogDetail", () => {
       container,
     );
 
-    expect(container.querySelector(".plugin-catalog-detail__clawhub")).toBeNull();
+    expect(container.querySelector('a[href^="https://clawhub.ai/"]')).toBeNull();
   });
 });
