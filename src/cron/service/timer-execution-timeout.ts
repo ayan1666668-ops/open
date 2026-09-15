@@ -137,7 +137,7 @@ export type ExecuteJobCoreOptions = {
   onHeartbeatExecutionStarted?: (opts: HeartbeatWakeRequest & { agentId: string }) =>
     | {
         onAttemptStarted?: () => void;
-        onRetryScheduled?: () => void;
+        onQueued?: () => void;
       }
     | undefined;
   executionIdentity?: import("./state.js").CronExecutionIdentityAdmission;

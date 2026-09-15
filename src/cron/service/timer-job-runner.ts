@@ -283,12 +283,10 @@ async function executeJobCoreWithTimeoutUnfinalized(
         watchdog && resolveHeartbeatTimeoutMs
           ? (heartbeat) => {
               const heartbeatTimeoutMs = resolveHeartbeatTimeoutMs(heartbeat);
-              // Queue backoff is admission wait, not heartbeat execution. Keep
-              // final settlement attached while timing each actual attempt.
-              watchdog.replaceTimeout(undefined);
+              // The queue owns admission and retries; only attempts spend the deadline.
               return {
                 onAttemptStarted: () => watchdog.replaceTimeout(heartbeatTimeoutMs),
-                onRetryScheduled: () => watchdog.replaceTimeout(undefined),
+                onQueued: () => watchdog.replaceTimeout(undefined),
               };
             }
           : undefined,

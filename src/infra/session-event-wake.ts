@@ -18,11 +18,8 @@ export type SessionEventWakeWaitOptions = {
   abortSignal?: AbortSignal;
   /** Called when the queue starts an attempt for this waiter. */
   onAttemptStarted?: () => void;
-  /** Called when an attempt is retained for a later retry. */
-  onRetryScheduled?: (
-    result: Extract<SessionEventWakeResult, { status: "skipped" }>,
-    retryAtMs: number,
-  ) => void;
+  /** Called whenever this waiter enters the queue, including retained retries. */
+  onQueued?: () => void;
   /** Detach this waiter while the queue retains the wake at its retry deadline. */
   stopWaitingOnRetry?: (
     result: Extract<SessionEventWakeResult, { status: "skipped" }>,
@@ -33,7 +30,7 @@ type Settlement = {
   active: boolean;
   settle: (result: SessionEventWakeResult) => void;
   onAttemptStarted?: SessionEventWakeWaitOptions["onAttemptStarted"];
-  onRetryScheduled?: SessionEventWakeWaitOptions["onRetryScheduled"];
+  onQueued?: SessionEventWakeWaitOptions["onQueued"];
   stopWaitingOnRetry?: SessionEventWakeWaitOptions["stopWaitingOnRetry"];
 };
 type PendingWake = SessionEventWakeRequest & {
@@ -169,6 +166,11 @@ function createSessionEventWakeRuntime() {
     group[slot] = group[slot] ? merge(group[slot], wake) : wake;
     group.blockedUntil = Math.max(group.blockedUntil, blockedUntil);
     pending.set(key, group);
+    for (const entry of wake.settlements) {
+      if (entry.active) {
+        entry.onQueued?.();
+      }
+    }
     return key;
   }
 
@@ -288,11 +290,8 @@ function createSessionEventWakeRuntime() {
     if (result) {
       const retryAtMs = Date.now() + delay;
       for (const entry of wake.settlements) {
-        if (entry.active) {
-          entry.onRetryScheduled?.(result, retryAtMs);
-          if (entry.stopWaitingOnRetry?.(result, retryAtMs)) {
-            entry.settle(result);
-          }
+        if (entry.active && entry.stopWaitingOnRetry?.(result, retryAtMs)) {
+          entry.settle(result);
         }
       }
     }
@@ -534,7 +533,7 @@ function createSessionEventWakeRuntime() {
       const settlement: Settlement = {
         active: true,
         onAttemptStarted: lifecycle?.onAttemptStarted,
-        onRetryScheduled: lifecycle?.onRetryScheduled,
+        onQueued: lifecycle?.onQueued,
         stopWaitingOnRetry: lifecycle?.stopWaitingOnRetry,
         settle: (result) => {
           if (settlement.active) {
