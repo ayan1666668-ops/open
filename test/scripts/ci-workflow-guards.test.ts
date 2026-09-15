@@ -387,7 +387,10 @@ function runWorkflowShellScript(
       );
     const scriptPath = path.join(root, "run.sh");
     writeFileSync(scriptPath, rewritten.endsWith("\n") ? rewritten : `${rewritten}\n`, "utf8");
-    const bash = linuxWorkflow ? (linuxWorkflowBash ??= resolveWorkflowBash()) : "bash";
+    const bash =
+      linuxWorkflow && process.platform === "darwin"
+        ? (linuxWorkflowBash ??= resolveWorkflowBash())
+        : "bash";
     return spawnSync(bash, [scriptPath], {
       ...spawnOptions,
       encoding: "utf8",
