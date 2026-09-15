@@ -905,23 +905,33 @@ describe("killProcessTree", () => {
     });
   });
 
-  it("on Linux skips attached-tree signaling when the root identity is unavailable", async () => {
-    killSpy.mockImplementation(() => true);
-    readFileSyncMock.mockImplementation((filePath: string) => {
-      if (filePath === "/proc/5594/task/5594/children") {
-        return "";
-      }
-      throw new Error("root identity unavailable");
-    });
+  it.each([
+    { force: false, signal: "SIGTERM", expired: false },
+    { force: true, signal: "SIGKILL", expired: false },
+    { force: false, signal: "SIGTERM", expired: true },
+    { force: true, signal: "SIGKILL", expired: true },
+  ] as const)(
+    "on Linux immediately signals only the owned root when identity capture fails: %j",
+    async ({ force, signal, expired }) => {
+      killSpy.mockImplementation(() => true);
+      readFileSyncMock.mockImplementation(() => {
+        if (!expired) {
+          throw new Error("root identity unavailable");
+        }
+        vi.setSystemTime(Date.now() + 501);
+        return "5594 (root) S 1 5594 5594 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 100 0";
+      });
 
-    await withMockedPlatform("linux", async () => {
-      killProcessTree(5594, { graceMs: 10, detached: false });
-      await vi.advanceTimersByTimeAsync(10);
-
-      expect(killSpy).toHaveBeenCalledWith(5594, "SIGTERM");
-      expect(killSpy).not.toHaveBeenCalledWith(5594, "SIGKILL");
-    });
-  });
+      await withMockedPlatform("linux", async () => {
+        const handle = killProcessTree(5594, { force, graceMs: 10, detached: false });
+        expect(handle).toBeUndefined();
+        expect(killSpy.mock.calls).toEqual([[5594, signal]]);
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(killSpy.mock.calls).toEqual([[5594, signal]]);
+      });
+    },
+  );
 
   it("on Unix keeps an attached descendant snapshot after its root exits", async () => {
     const statLine = (pid: number, comm: string, starttime: string, ppid = 1) =>

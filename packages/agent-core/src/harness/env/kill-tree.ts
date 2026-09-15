@@ -70,11 +70,9 @@ export function killProcessTree(
     opts?.detached === false && !useGroupKill && process.platform === "linux";
   const processTree = attachedLinuxTree ? collectUnixProcessTree(pid) : undefined;
   if (attachedLinuxTree && !processTree) {
-    // A missing /proc identity cannot safely survive PID reuse. Keep the
-    // immediate root TERM, but do not schedule or honor a delayed force.
-    if (opts?.force !== true) {
-      signalProcessTreeUnix(pid, "SIGTERM", false);
-    }
+    // Preserve immediate termination of the caller-owned root. Missing procfs
+    // identity cannot authorize descendants or any delayed escalation.
+    signalProcessTreeUnix(pid, opts?.force === true ? "SIGKILL" : "SIGTERM", false);
     return undefined;
   }
 
@@ -463,7 +461,7 @@ function collectUnixProcessTree(rootPid: number): UnixProcessTree | undefined {
   if (!rootIdentity || Date.now() >= deadline) {
     // The root identity is the only thing that lets a delayed signal bind to
     // the supervisor's own child process; without it the caller must fall back
-    // to a single SIGTERM and skip the grace-period escalation entirely.
+    // to one immediate root signal and skip grace-period escalation entirely.
     return undefined;
   }
 
