@@ -1377,6 +1377,7 @@ export async function createManagedOutgoingMediaBlocks(params: {
   localRoots?: readonly string[] | "any";
   continueOnPrepareError?: boolean;
   onPrepareError?: (error: Error) => void;
+  assertCurrent?: () => void;
 }): Promise<ManagedMediaBlock[]> {
   const sessionKey = params.sessionKey.trim();
   if (!sessionKey) {
@@ -1415,6 +1416,7 @@ export async function createManagedOutgoingMediaBlocks(params: {
 
     let savedOriginalPath: string | null = null;
     try {
+      params.assertCurrent?.();
       const parsedDataUrl = parseMediaDataUrl(mediaUrl, fallbackLabel, limits);
       if (parsedDataUrl.kind === "unsupported-data-url") {
         throw new Error("Managed media attachment has an unsupported data URL content type");
@@ -1601,6 +1603,7 @@ export async function createManagedOutgoingMediaBlocks(params: {
         }
       }
       const block = buildManagedMediaBlock(record, playback);
+      params.assertCurrent?.();
       insertManagedImageRecord(record, stateDir);
       const durationMs = asNonNegativeFiniteNumber(item.durationMs);
       const width = asNonNegativeFiniteNumber(item.width);
@@ -1617,6 +1620,16 @@ export async function createManagedOutgoingMediaBlocks(params: {
     } catch (error) {
       if (savedOriginalPath) {
         await fs.rm(savedOriginalPath, { force: true }).catch(() => {});
+      }
+      try {
+        params.assertCurrent?.();
+      } catch (authorityError) {
+        await removeManagedOutgoingMediaBlocks({
+          blocks,
+          messageId: params.messageId ?? null,
+          stateDir,
+        });
+        throw authorityError;
       }
       const sanitizedError = getSanitizedManagedImageAttachmentError(error, label, hintedKind);
       if (params.continueOnPrepareError) {

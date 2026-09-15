@@ -21,6 +21,34 @@ import {
 } from "../test-utils/openclaw-test-state.js";
 import { projectChatDisplayMessages } from "./chat-display-projection.js";
 import { projectSessionMessagePayload } from "./session-transcript-message.js";
+
+it("caps commentary captions across an intervening image as one message", () => {
+  const signature = JSON.stringify({ v: 1, id: "progress-caption", phase: "commentary" });
+  const image = { type: "image", url: "/media/proof.png", mimeType: "image/png" };
+  const source = {
+    role: "assistant",
+    content: [
+      { type: "text", text: "A".repeat(20), textSignature: signature },
+      image,
+      { type: "text", text: "B".repeat(20), textSignature: signature },
+    ],
+  };
+  const projected = projectChatDisplayMessages([source], {
+    includeCommentaryFallbacks: true,
+    maxChars: 30,
+  });
+  expect(projected).toContainEqual(
+    expect.objectContaining({
+      content: [
+        { type: "text", text: "A".repeat(20) },
+        image,
+        { type: "text", text: `${"B".repeat(9)}\n...(truncated)...` },
+      ],
+      __openclaw: expect.objectContaining({ truncated: true }),
+    }),
+  );
+  expect(source.content[2]).toMatchObject({ text: "B".repeat(20) });
+});
 import { readRecentSessionMessagesWithStatsAsync } from "./session-transcript-readers.js";
 
 describe("assistant media directive display projection", () => {

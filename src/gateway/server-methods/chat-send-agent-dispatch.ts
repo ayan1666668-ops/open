@@ -406,7 +406,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
                       reason: "agent.run.started",
                     });
                   }
-                  agentRunStarted = replyDispatch.captureAgentTranscriptStart();
+                  agentRunStarted = replyDispatch.captureAgentTranscriptStart(runId);
                   emitServerTiming(
                     "agent-run-started",
                     runId !== clientRunId ? { agentRunId: runId } : undefined,
