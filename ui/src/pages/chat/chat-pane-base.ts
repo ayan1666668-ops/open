@@ -321,12 +321,11 @@ export abstract class ChatPaneBase extends OpenClawLightDomElement {
   private publishedRunActivity: ChatPaneBase["runActivity"] = null;
   protected readonly chatState = new ChatStateController<ChatPageHost>(this, () => {
     const activity = this.runActivity;
-    const previous = this.publishedRunActivity;
     if (
-      activity?.client === previous?.client &&
-      activity?.agentId === previous?.agentId &&
-      activity?.working === previous?.working &&
-      activity?.completion === previous?.completion
+      activity?.client === this.publishedRunActivity?.client &&
+      activity?.agentId === this.publishedRunActivity?.agentId &&
+      activity?.working === this.publishedRunActivity?.working &&
+      activity?.completion === this.publishedRunActivity?.completion
     ) {
       return;
     }
