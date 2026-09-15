@@ -1,10 +1,12 @@
 import {
   ApplicationCommandOptionType,
   ChannelType,
+  GuildMemberFlags,
   InteractionResponseType,
   InteractionType,
 } from "discord-api-types/v10";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import * as sessionStore from "openclaw/plugin-sdk/session-store-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -143,7 +145,7 @@ function payload(channelId: string, hydrated = false, userId = USER) {
       deaf: false,
       mute: false,
       permissions: "0",
-      flags: 0,
+      flags: GuildMemberFlags.CompletedOnboarding,
     },
     ...(hydrated ? { channel: { id: channelId, type: ChannelType.GuildText } } : {}),
     data: { id: "command1", name: "status", type: 1 },
@@ -306,8 +308,8 @@ describe("Client.handleInteraction native command channel identity", () => {
 
   it("rejects a policy replaced while the channel fetch is pending", async () => {
     const harness = createHarness();
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
     harness.get.mockImplementationOnce(async () => {
       entered.resolve();
       await release.promise;
@@ -345,7 +347,9 @@ describe("Client.handleInteraction native command channel identity", () => {
           name: "topic",
         });
       }
-      if (denial === "identity") Reflect.deleteProperty(interaction, "channel_id");
+      if (denial === "identity") {
+        Reflect.deleteProperty(interaction, "channel_id");
+      }
       await harness.client.handleInteraction(interaction);
       expect(harness.post).toHaveBeenCalledExactlyOnceWith(
         "/interactions/interaction1/test-token/callback",
@@ -377,7 +381,9 @@ describe("Client.handleInteraction native command channel identity", () => {
           name: "topic",
         });
       }
-      if (denial === "identity") Reflect.deleteProperty(interaction, "channel_id");
+      if (denial === "identity") {
+        Reflect.deleteProperty(interaction, "channel_id");
+      }
       await harness.client.handleInteraction(interaction);
       expect(harness.dispatch).not.toHaveBeenCalled();
       expect(JSON.stringify(harness.post.mock.calls)).toContain(
@@ -393,8 +399,8 @@ describe("Client.handleInteraction native command channel identity", () => {
     "denies raw %s when policy changes during the channel fetch",
     async (surface) => {
       const harness = createHarness();
-      const entered = Promise.withResolvers<void>();
-      const release = Promise.withResolvers<void>();
+      const entered = createDeferred<void>();
+      const release = createDeferred<void>();
       harness.get.mockImplementationOnce(async () => {
         entered.resolve();
         await release.promise;
