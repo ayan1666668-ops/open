@@ -1,112 +1,53 @@
-openclaw-chat-selection-annotations {
-  display: flex;
-  flex: 0 0 auto;
-  align-self: flex-start;
-}
-
 .chat-selection-annotations__chip {
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--chat-composer-surface, var(--popover));
   color: var(--text);
+  white-space: nowrap;
 }
 
-.chat-selection-annotations__chip button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-
-.chat-selection-annotations__chip button:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.chat-selection-annotations__chip button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.chat-selection-annotations__chip button:disabled {
-  opacity: 0.5;
-}
-
-.chat-selection-annotations__chip svg {
+.chat-selection-annotations__chip svg,
+.chat-comment-pin svg {
   display: block;
   width: 16px;
   height: 16px;
 }
 
-.chat-selection-annotations__trigger {
-  min-height: 36px;
-  padding: 6px 8px;
-  gap: 6px;
-  white-space: nowrap;
+.chat-thread:has(> openclaw-chat-comment-pins) {
+  position: relative;
 }
 
-.chat-selection-annotations__remove,
-.chat-selection-annotations__edit {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  padding: 8px;
+/* Reserve a narrow gutter for pins even when a selected line fills the viewport. */
+.chat-thread:has(> openclaw-chat-comment-pins) .chat-thread-inner {
+  padding-inline-end: 28px;
 }
 
-.chat-selection-annotations__preview {
-  box-sizing: border-box;
-  width: min(440px, calc(100vw - 24px));
-  max-height: min(420px, var(--auto-size-available-height, calc(100dvh - 24px)));
-  overflow: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--chat-composer-surface, var(--popover));
-  box-shadow: var(--shadow-lg);
-  padding: 16px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
+openclaw-chat-comment-pins {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  z-index: 3;
+  pointer-events: none;
 }
 
-.chat-selection-annotations__preview h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
+.chat-comment-pin {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 4px;
+  pointer-events: auto;
 }
 
-.chat-selection-annotations__preview ol {
-  margin: 0;
-  padding-inline-start: 22px;
-}
-
-.chat-selection-annotations__preview li + li {
-  margin-block-start: 16px;
-  padding-block-start: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.chat-selection-annotations__item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.chat-selection-annotations__text {
-  min-width: 0;
-  flex: 1;
-}
-
-.chat-selection-annotations__text p {
-  margin: 4px 0 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.chat-selection-annotations__text p:last-child {
-  margin-bottom: 0;
+.chat-comment-pin[hidden] {
+  display: none;
 }

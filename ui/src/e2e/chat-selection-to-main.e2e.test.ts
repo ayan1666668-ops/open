@@ -1,8 +1,13 @@
 import type { Locator } from "playwright";
 import { expect, it } from "vitest";
 import { storedChatOutboxScopeKey } from "../lib/chat/outbox-store.ts";
-import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import {
+  defaultControlUiFeatureMethods,
+  installMockGateway,
+} from "../test-helpers/control-ui-e2e.ts";
+import { waitForChatScrollIdle } from "./chat-flow.test-support.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
+import { catalog, pluginModule } from "./native-plugin-ui.test-support.ts";
 import { waitForCommittedComposerDraft } from "./settle.test-support.ts";
 
 const suite = createControlUiE2eSuite({ name: "Control UI selected text destinations" });
@@ -48,10 +53,11 @@ suite.define(() => {
           const editor = page.getByRole("dialog", { name: "Comment", exact: true });
           const comment = editor.getByRole("textbox");
           const chip = (count: number) =>
-            page.getByRole("button", {
-              name: count === 1 ? "1 comment" : `${count} comments`,
-              exact: true,
-            });
+            page
+              .locator(".chat-selection-annotations__chip")
+              .filter({ hasText: count === 1 ? "1 comment" : `${count} comments` });
+          const pin = (number: number) =>
+            page.getByRole("button", { name: `Edit comment ${number}`, exact: true });
           const open = async () => {
             await selectText(text);
             await toolbar.getByRole("button", { name: "Add to chat", exact: true }).click();
@@ -99,43 +105,54 @@ suite.define(() => {
             .toBe(true);
           await open();
           await comment.press("Enter");
+          await pin(2).waitFor({ state: "visible" });
           await chip(2).click();
-          const preview = page.getByRole("region", { name: "Comments", exact: true });
-          await preview.waitFor({ state: "visible" });
-          expect(await preview.getByText(selectedText, { exact: true }).count()).toBe(2);
-          expect(await preview.getByText("Your comment:", { exact: true }).count()).toBe(1);
-          await bounded(preview);
+          expect(await editor.count()).toBe(0);
+          expect(await page.getByRole("region", { name: "Comments", exact: true }).count()).toBe(0);
           await capture("multiple");
 
-          await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
+          const pinBounds = (await pin(1).boundingBox())!;
+          const sourceBounds = (await text.boundingBox())!;
+          expect(Math.abs(pinBounds.y - sourceBounds.y)).toBeLessThan(30);
+          await pin(1).click();
           expect((await editor.boundingBox())!.height).toBeGreaterThan(compactHeight);
+          const editorBounds = (await editor.boundingBox())!;
+          expect(
+            Math.min(
+              Math.abs(editorBounds.y + editorBounds.height - pinBounds.y),
+              Math.abs(editorBounds.y - pinBounds.y - pinBounds.height),
+            ),
+          ).toBeLessThan(20);
           const deleteComment = editor.getByRole("button", { name: "Delete comment", exact: true });
           expect((await deleteComment.textContent())?.trim()).toBe("");
           expect(await deleteComment.locator("svg").count()).toBe(1);
           await bounded(editor);
           await capture("editor");
+          expect(await comment.inputValue()).toBe("Why is this step needed? 🦞");
           await comment.fill("An unsaved replacement");
           await comment.press("Escape");
-          await chip(2).click();
-          expect(await preview.textContent()).toContain("Why is this step needed? 🦞");
-          await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
+          await pin(1).click();
+          expect(await comment.inputValue()).toBe("Why is this step needed? 🦞");
           await comment.fill("Explain the rollback checks. 🦞\nKeep the existing draft.");
           await comment.press("Control+Enter");
-          await chip(2).click();
-          expect(await preview.textContent()).toContain("Explain the rollback checks. 🦞");
-          await preview.getByRole("button", { name: "Edit comment 2", exact: true }).click();
-          await editor.getByRole("button", { name: "Delete comment", exact: true }).click();
+          await pin(1).click();
+          expect(await comment.inputValue()).toContain("Explain the rollback checks. 🦞");
+          await comment.press("Escape");
+          await pin(2).click();
+          await deleteComment.click();
           await chip(1).waitFor({ state: "visible" });
-          await page.getByRole("button", { name: "Remove comments", exact: true }).click();
+          expect(await pin(2).count()).toBe(0);
+          await pin(1).click();
+          await deleteComment.click();
           expect(await chip(1).count()).toBe(0);
+          expect(await pin(1).count()).toBe(0);
           expect(await composer.inputValue()).toBe(draft);
 
           await open();
           await comment.fill("Explain the rollback checks. 🦞");
           await editor.getByRole("button", { name: "Save comment", exact: true }).click();
-          await chip(1).click();
-          await preview.waitFor({ state: "visible" });
-          await bounded(preview);
+          await pin(1).waitFor({ state: "visible" });
+          await bounded(pin(1));
           await capture("composer");
           expect(await gateway.getRequests("chat.send")).toHaveLength(0);
           await waitForCommittedComposerDraft(
@@ -147,8 +164,9 @@ suite.define(() => {
           await page.reload();
           await chip(1).waitFor({ state: "visible" });
           expect(await composer.inputValue()).toBe(draft);
-          await chip(1).click();
-          expect(await preview.textContent()).toContain("Explain the rollback checks. 🦞");
+          await pin(1).click();
+          expect(await comment.inputValue()).toBe("Explain the rollback checks. 🦞");
+          await comment.press("Escape");
           await composer.click();
           await open();
           await comment.press("Enter");
@@ -173,6 +191,7 @@ suite.define(() => {
           expect(contents[1]).not.toContain("Explain the rollback checks.");
           await expect.poll(() => composer.inputValue()).toBe("");
           expect(await chip(2).count()).toBe(0);
+          expect(await pin(1).count()).toBe(0);
           await gateway.emitChatFinal({
             runId: params.idempotencyKey,
             text: "The checks are ready.",
@@ -181,6 +200,184 @@ suite.define(() => {
       );
     },
   );
+
+  it.each(viewports)(
+    "keeps comment pins anchored through scrolling and reflow at $width px",
+    async (viewport) => {
+      await suite.withPage(
+        { viewport, locale: "en-US", reducedMotion: "reduce" },
+        async ({ page }) => {
+          const passage =
+            "Review the rollback checklist carefully before the deployment starts. Confirm every recovery step with the team.";
+          const filler = Array.from(
+            { length: 24 },
+            (_, index) => `Deployment context paragraph ${index + 1}.`,
+          ).join("\n\n");
+          await installMockGateway(page, {
+            historyMessages: [
+              { role: "assistant", content: `${filler}\n\n${passage}\n\n${filler}` },
+            ],
+          });
+          await page.goto(`${suite.server.baseUrl}chat`);
+          const text = page.locator(".chat-bubble .chat-text p").filter({ hasText: passage });
+          await waitForChatScrollIdle(page);
+          await page.locator(".chat-thread").hover();
+          await page.mouse.wheel(0, -32);
+          await waitForChatScrollIdle(page);
+          await text.scrollIntoViewIfNeeded();
+          await waitForChatScrollIdle(page);
+          await selectText(text);
+          await page
+            .getByRole("toolbar", { name: "Selection actions" })
+            .getByRole("button", { name: "Add to chat", exact: true })
+            .click();
+          const editor = page.getByRole("dialog", { name: "Comment", exact: true });
+          await editor.getByRole("textbox").fill("Keep this pin on its original passage.");
+          await editor.getByRole("textbox").press("Enter");
+          const pin = page.getByRole("button", { name: "Edit comment 1", exact: true });
+          const aligned = async () => {
+            await expect
+              .poll(async () => {
+                const lastLine = await text.evaluate((element) => {
+                  const range = document.createRange();
+                  range.selectNodeContents(element);
+                  const last = Array.from(range.getClientRects()).findLast(
+                    (rect) => rect.width && rect.height,
+                  )!;
+                  return { top: last.top, height: last.height, right: last.right };
+                });
+                const marker = await pin.boundingBox();
+                return marker
+                  ? Math.abs(marker.y + marker.height / 2 - lastLine.top - lastLine.height / 2)
+                  : 1000;
+              })
+              .toBeLessThan(3);
+          };
+          await aligned();
+          await pin.click();
+          await page.locator(".chat-thread").evaluate((element) => (element.scrollTop += 100));
+          await editor.waitFor({ state: "detached" });
+          await text.scrollIntoViewIfNeeded();
+          await aligned();
+          await page.setViewportSize({
+            width: viewport.width === 390 ? 560 : 390,
+            height: viewport.height,
+          });
+          await text.scrollIntoViewIfNeeded();
+          await aligned();
+          await pin.click();
+          expect(await editor.getByRole("textbox").inputValue()).toBe(
+            "Keep this pin on its original passage.",
+          );
+          await editor.getByRole("textbox").press("Escape");
+        },
+      );
+    },
+  );
+
+  it("keeps comments editable and removable with a replacement composer", async () => {
+    await suite.withPage({ viewport: viewports[0], locale: "en-US" }, async ({ page }) => {
+      const gateway = await installMockGateway(page, {
+        historyMessages: [{ role: "assistant", content: selectedText }],
+        featureMethods: [
+          ...defaultControlUiFeatureMethods,
+          "plugins.controlUi.list",
+          "plugins.controlUi.report",
+        ],
+        methodResponses: {
+          "plugins.controlUi.list": catalog("one"),
+          "plugins.controlUi.report": { ok: true },
+        },
+      });
+      await page.route("**/__openclaw__/plugins/control-ui/ui-fixture/*/index.js", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "text/javascript",
+          body: pluginModule("one").replace(
+            "let unregisterComposer = registerComposer();",
+            'let unregisterComposer = registerComposer(); host.ui.selectReplacement("composer", "composer");',
+          ),
+        }),
+      );
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const composer = page.getByRole("textbox", { name: "Fixture draft", exact: true });
+      await composer.fill(draft);
+      expect(await page.locator(".agent-chat__composer-shell textarea").count()).toBe(0);
+      const editor = page.getByRole("dialog", { name: "Comment", exact: true });
+      const pin = page.getByRole("button", { name: "Edit comment 1", exact: true });
+      const saveComment = async () => {
+        await selectText(
+          page.locator(".chat-bubble .chat-text p").filter({ hasText: selectedText }),
+        );
+        await page
+          .getByRole("toolbar", { name: "Selection actions" })
+          .getByRole("button", { name: "Add to chat", exact: true })
+          .click();
+        await editor.getByRole("textbox").fill("Review before deployment.");
+        await editor.getByRole("textbox").press("Enter");
+        await pin.waitFor({ state: "visible" });
+      };
+      await saveComment();
+      await pin.click();
+      await editor.getByRole("textbox").fill("Check rollback first.");
+      await editor.getByRole("button", { name: "Save", exact: true }).click();
+      await pin.click();
+      expect(await editor.getByRole("textbox").inputValue()).toBe("Check rollback first.");
+      await editor.getByRole("button", { name: "Delete comment", exact: true }).click();
+      expect(await pin.count()).toBe(0);
+      await saveComment();
+      expect(await composer.inputValue()).toBe(draft);
+      await page.getByRole("button", { name: "Fixture send", exact: true }).click();
+      const request = await gateway.waitForRequest("chat.send");
+      const params = request.params as { message: string; attachments: Array<{ content: string }> };
+      expect(params.message).toBe(draft);
+      expect(params.attachments).toHaveLength(1);
+      expect(Buffer.from(params.attachments[0]!.content, "base64").toString("utf8")).toContain(
+        "Review before deployment.",
+      );
+      await expect.poll(() => pin.count()).toBe(0);
+    });
+  });
+
+  it("repositions the open editor when its pinned passage wraps", async () => {
+    await suite.withPage(
+      { viewport: viewports[0], locale: "en-US", reducedMotion: "reduce" },
+      async ({ page }) => {
+        const passage =
+          "Review the rollback checklist carefully before the deployment starts. Confirm every recovery step with the team before proceeding.";
+        await installMockGateway(page, {
+          historyMessages: [{ role: "assistant", content: passage }],
+        });
+        await page.goto(`${suite.server.baseUrl}chat`);
+        const text = page.locator(".chat-bubble .chat-text p");
+        await text.waitFor({ state: "visible" });
+        await selectText(text);
+        await page
+          .getByRole("toolbar", { name: "Selection actions" })
+          .getByRole("button", { name: "Add to chat", exact: true })
+          .click();
+        const editor = page.getByRole("dialog", { name: "Comment", exact: true });
+        await editor.getByRole("textbox").fill("Review this passage.");
+        await editor.getByRole("textbox").press("Enter");
+        const pin = page.getByRole("button", { name: "Edit comment 1", exact: true });
+        await pin.click();
+        await page.setViewportSize({ width: 390, height: 900 });
+        await expect
+          .poll(async () => {
+            const marker = await pin.boundingBox();
+            const popup = await editor.boundingBox();
+            return marker && popup
+              ? Math.min(
+                  Math.abs(popup.y + popup.height - marker.y),
+                  Math.abs(popup.y - marker.y - marker.height),
+                )
+              : 1000;
+          })
+          .toBeLessThan(12);
+        expect(await editor.getByRole("textbox").inputValue()).toBe("Review this passage.");
+      },
+    );
+  });
 
   it("keeps formatted selection text and DOM source offsets consistent", async () => {
     await suite.withPage(

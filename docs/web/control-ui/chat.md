@@ -23,13 +23,13 @@ Highlight text and choose **Add to chat** to attach a comment to the main
 composer. The optional comment field stays compact while you type; confirm or
 press Enter to save it. Saving keeps your existing draft and does not send a message.
 
-The comment chip shows the number of selections. Open it to preview the numbered
-selected text and comments. Reopening a saved comment opens the larger editor,
-where **Save**, Command-Enter, or Ctrl-Enter saves changes; **Cancel** or Escape
-discards the edit; and the trash button deletes the comment. You can also remove
-the whole group. Saved comments follow the composer's existing draft and queue
-recovery behavior. When you send, each comment is attached as a text file
-containing the selection, comment, and source message reference.
+Saving leaves a small pin beside the selected passage. Click that pin to reopen
+its comment in the larger editor beside the pin. **Save**, Command-Enter, or
+Ctrl-Enter saves changes; **Cancel** or Escape discards the edit; and the trash
+button deletes the comment. The composer's comment count is a passive indicator.
+Saved comments and their source pins follow the composer's existing draft and
+queue recovery behavior. When you send, each comment is attached as a text file
+containing the selection, comment, and source message reference; its draft pin is removed.
 
 The headline owns that run's sidebar subtitle instead of heuristic live activity. It is shared with the official iOS and Android session lists. A final done or failed digest remains visible while the session is unread, then the row returns to its normal work subtitle.
 

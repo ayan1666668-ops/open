@@ -75,13 +75,19 @@ function positionPopup(popup: HTMLElement, anchor: DOMRect) {
   popup.style.top = `${Math.max(minTop, Math.min(top, bottom - bounds.height))}px`;
 }
 
-function mountPopup(popup: HTMLDivElement, anchor: DOMRect, onEscape?: () => void) {
+function mountPopup(
+  popup: HTMLDivElement,
+  anchor: DOMRect,
+  onEscape?: () => void,
+  anchorElement?: HTMLElement,
+) {
   removeChatSelectionPopup();
   document.body.appendChild(popup);
   const listeners = new AbortController();
   activeSelectionPopup = { element: popup, listeners };
   const { signal } = listeners;
-  positionPopup(popup, anchor);
+  const position = () => positionPopup(popup, anchorElement?.getBoundingClientRect() ?? anchor);
+  position();
   document.addEventListener(
     "pointerdown",
     (event) => {
@@ -94,6 +100,10 @@ function mountPopup(popup: HTMLDivElement, anchor: DOMRect, onEscape?: () => voi
   document.addEventListener(
     "keydown",
     (event) => {
+      // oxlint-disable-next-line unicorn/prefer-keyboard-event-key -- IME candidate dismissal can report 229 without isComposing.
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -112,8 +122,8 @@ function mountPopup(popup: HTMLDivElement, anchor: DOMRect, onEscape?: () => voi
     },
     { capture: true, passive: true, signal },
   );
-  window.addEventListener("resize", () => positionPopup(popup, anchor), { signal });
-  window.visualViewport?.addEventListener("resize", () => positionPopup(popup, anchor), { signal });
+  window.addEventListener("resize", position, { signal });
+  window.visualViewport?.addEventListener("resize", position, { signal });
   return signal;
 }
 
@@ -166,6 +176,7 @@ function showChatSelectionPopup(
 
 export function showChatAnnotationEditor(options: {
   anchorRect: DOMRect;
+  anchorElement?: HTMLElement;
   comment: string;
   expanded?: boolean;
   readSignal?: AbortSignal;
@@ -174,7 +185,7 @@ export function showChatAnnotationEditor(options: {
   onCancel?: () => void;
 }) {
   if (options.readSignal?.aborted) {
-    return;
+    return undefined;
   }
   const popup = document.createElement("div");
   popup.className = "exec-approval-card exec-approval-card--inline chat-annotation-editor";
@@ -251,7 +262,7 @@ export function showChatAnnotationEditor(options: {
       }
     }
   });
-  const signal = mountPopup(popup, options.anchorRect, options.onCancel);
+  const signal = mountPopup(popup, options.anchorRect, options.onCancel, options.anchorElement);
   const abort = () => removeChatSelectionPopup();
   options.readSignal?.addEventListener("abort", abort, { once: true });
   signal.addEventListener("abort", () => options.readSignal?.removeEventListener("abort", abort), {
@@ -259,6 +270,11 @@ export function showChatAnnotationEditor(options: {
   });
   input.focus({ preventScroll: true });
   input.setSelectionRange(input.value.length, input.value.length);
+  return () => {
+    if (activeSelectionPopup?.element === popup) {
+      positionPopup(popup, options.anchorElement?.getBoundingClientRect() ?? options.anchorRect);
+    }
+  };
 }
 
 export function handleChatSelectionPointerUp(

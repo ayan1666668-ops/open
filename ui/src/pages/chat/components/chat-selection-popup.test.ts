@@ -238,6 +238,29 @@ describe("chat annotation editor", () => {
     expect(onSave).toHaveBeenCalledWith("  Why this? 🦞\nKeep the next line.  ");
   });
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    "preserves unsaved comments when Escape dismisses IME candidates: %j",
+    (composition) => {
+      const { input, onSave, onCancel } = editor({ expanded: true });
+      input.value = "変換中のコメント";
+      const escape = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+        ...composition,
+      });
+      input.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+      expect(document.querySelector("[role=dialog]")).not.toBeNull();
+      expect(input.value).toBe("変換中のコメント");
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onCancel).not.toHaveBeenCalled();
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.querySelector("[role=dialog]")).toBeNull();
+      expect(onCancel).toHaveBeenCalledOnce();
+    },
+  );
+
   it("keeps rejected saves editable and retires a stale owner", () => {
     const controller = new AbortController();
     const onSave = vi.fn(() => false);
