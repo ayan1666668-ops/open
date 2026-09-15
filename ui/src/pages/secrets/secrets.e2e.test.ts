@@ -164,12 +164,14 @@ suite.define(() => {
         const nameStyle = await name.evaluate((element) => {
           const style = getComputedStyle(element);
           return {
+            overflowX: style.overflowX,
             textOverflow: style.textOverflow,
             whiteSpace: style.whiteSpace,
             overflows: element.scrollWidth > element.clientWidth,
           };
         });
         expect(nameStyle).toEqual({
+          overflowX: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           overflows: true,
