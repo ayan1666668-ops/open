@@ -21,7 +21,6 @@ import {
   isBrowserCopilotClient,
   isEphemeralGatewayClient,
 } from "../../../utils/message-channel.js";
-import { sleep } from "../../../utils/sleep.js";
 import { resolveRuntimeServiceBuildId, resolveRuntimeServiceVersion } from "../../../version.js";
 import { verifyAgentRuntimeIdentityToken } from "../../agent-runtime-identity-token.js";
 import { buildAuthenticatedPresenceUser } from "../../authenticated-presence-user.js";
@@ -60,6 +59,10 @@ import {
   resolveGatewayConnectUserProfile,
 } from "./connect-user-profile.js";
 import { resolveControlUiBuildMismatch } from "./control-ui-build-admission.js";
+import {
+  syncGitHubIdentityWithBackoff,
+  adoptTailscaleAvatarIfMissing,
+} from "./github-identity-sync.js";
 import type {
   DeviceAuthorizedGatewayConnect,
   GatewayConnectPhaseContext,
@@ -68,12 +71,6 @@ import { prepareGatewayReceiverHandoff } from "./request-start.js";
 
 /** Match production release versions (YYYY.M.PATCH or YYYY.M.PATCH-beta.N). */
 const RELEASED_VERSION_RE = /^\d{4}\.\d+\.\d+/;
-
-/**
- * Backoff between detached GitHub identity sync retries after the first
- * connect-time attempt fails; bounded so a wedged identity never loops (#141615).
- */
-const IDENTITY_SYNC_RETRY_DELAYS_MS = [2_000, 8_000, 30_000] as const;
 
 type AuthenticatedNodePairingAdmission = NonNullable<
   Awaited<ReturnType<typeof captureAuthenticatedNodePairingState>>
@@ -704,36 +701,19 @@ export async function attachAuthenticatedGatewayConnect(
         // behind UNAVAILABLE (#141615). A bounded backoff rides the same
         // detached work so short blinks self-heal without client action;
         // connection-work cancellation ends the loop without another retry.
-        let result: Awaited<
-          ReturnType<NonNullable<GatewayWsClient["authenticatedGitHubIdentitySync"]>>
-        >;
-        for (let attempt = 0; ; attempt++) {
-          signal.throwIfAborted();
-          try {
-            result = await nextClient.authenticatedGitHubIdentitySync!();
-            break;
-          } catch (error) {
-            const delay = IDENTITY_SYNC_RETRY_DELAYS_MS[attempt];
-            if (delay === undefined) {
-              throw error;
-            }
-            await sleep(delay, signal);
-          }
-        }
-        const profile = nextClient.authenticatedUserProfile;
-        const profilePic = authResult.tailscaleIdentity?.profilePic;
-        if (!profile?.hasAvatar && profilePic) {
-          try {
-            const updated = await adoptTailscaleProfileAvatar(result.profileId, profilePic);
-            if (updated.avatarMime) {
-              attachAuthenticatedProfile(updated.id, updated.updatedAt);
-            }
-          } catch (error) {
-            logGateway.warn(
-              `Tailscale avatar adoption failed conn=${connId}: ${formatForLog(error)}`,
-            );
-          }
-        }
+        const result = await syncGitHubIdentityWithBackoff(
+          () => nextClient.authenticatedGitHubIdentitySync!(),
+          signal,
+        );
+        await adoptTailscaleAvatarIfMissing({
+          profileId: result.profileId,
+          hasAvatar: nextClient.authenticatedUserProfile?.hasAvatar,
+          profilePic: authResult.tailscaleIdentity?.profilePic,
+          adoptTailscaleProfileAvatar,
+          onAdopted: attachAuthenticatedProfile,
+          warn: (message) =>
+            logGateway.warn(`Tailscale avatar adoption failed conn=${connId}: ${message}`),
+        });
       },
       (error) => {
         logGateway.warn(`GitHub identity sync failed conn=${connId}: ${formatForLog(error)}`);
@@ -751,11 +731,15 @@ export async function attachAuthenticatedGatewayConnect(
   ) {
     runDetachedConnectWork(
       async () => {
-        const updated = await adoptTailscaleProfileAvatar(tailscaleProfileId, tailscaleProfilePic);
-        if (!updated.avatarMime) {
-          return;
-        }
-        attachAuthenticatedProfile(updated.id, updated.updatedAt);
+        await adoptTailscaleAvatarIfMissing({
+          profileId: tailscaleProfileId,
+          hasAvatar: false,
+          profilePic: tailscaleProfilePic,
+          adoptTailscaleProfileAvatar,
+          onAdopted: attachAuthenticatedProfile,
+          warn: (message) =>
+            logGateway.warn(`Tailscale avatar adoption failed conn=${connId}: ${message}`),
+        });
       },
       (error) =>
         logGateway.warn(`Tailscale avatar adoption failed conn=${connId}: ${formatForLog(error)}`),
