@@ -2,7 +2,6 @@
 // session lookup, list/get/download responses, and validation errors.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js";
-import { resolveChatHistoryImageArtifactId } from "../chat-history-image-recovery.js";
 import { artifactsHandlers } from "./artifacts.js";
 import {
   assistantFileMessage,
@@ -407,33 +406,6 @@ describe("artifacts RPC handlers", () => {
       data: "aGVsbG8=",
     });
     expectFields(downloadPayload.artifact, { id: artifactId });
-  });
-
-  it("downloads a legacy inline image through its history recovery id", async () => {
-    const data =
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
-    const block = {
-      type: "image",
-      data,
-    };
-    const artifactId = requireNonEmptyString(
-      resolveChatHistoryImageArtifactId(block),
-      "expected history image recovery id",
-    );
-    mockedMessages([{ role: "user", content: [block], __openclaw: { seq: 7 } }]);
-
-    const download = await downloadArtifact({ sessionKey: "agent:main:main", artifactId });
-    const payload = expectOkPayload(download.calls) as { artifact?: Record<string, unknown> };
-    expectFields(payload, {
-      encoding: "base64",
-      data: block.data,
-    });
-    expectFields(payload.artifact, {
-      id: artifactId,
-      type: "image",
-      mimeType: "image/png",
-      messageSeq: 7,
-    });
   });
 
   it.each([

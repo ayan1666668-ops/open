@@ -3,8 +3,8 @@ import { sanitizeInlineImageBase64 } from "@openclaw/media-core/inline-image-dat
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 
-export const CHAT_HISTORY_IMAGE_ARTIFACT_PREFIX = "artifact_history_image_";
-export const CHAT_HISTORY_IMAGE_SESSION_PLACEHOLDER = "__history__";
+const CHAT_HISTORY_IMAGE_ARTIFACT_PREFIX = "artifact_history_image_";
+const CHAT_HISTORY_IMAGE_SESSION_PLACEHOLDER = "__history__";
 
 function readBase64Payload(value: unknown, dataUrlOnly = false): string | undefined {
   if (typeof value !== "string") {
@@ -88,10 +88,6 @@ export function resolveChatHistoryImageRecovery(
     artifactId: `${CHAT_HISTORY_IMAGE_ARTIFACT_PREFIX}${hash}`,
     mimeType: sanitized.mimeType,
   };
-}
-
-export function resolveChatHistoryImageArtifactId(block: unknown): string | undefined {
-  return resolveChatHistoryImageRecovery(block)?.artifactId;
 }
 
 export function buildChatHistoryImagePlaceholderUrl(artifactId: string): string {
