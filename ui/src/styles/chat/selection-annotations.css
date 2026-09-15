@@ -39,12 +39,14 @@ openclaw-chat-comment-pins {
   pointer-events: none;
 }
 
-.chat-comment-pin {
+.btn.chat-comment-pin {
   position: absolute;
   width: 24px;
   height: 24px;
   min-height: 0;
   padding: 4px;
+  border-radius: var(--radius-full);
+  corner-shape: round;
   pointer-events: auto;
 }
 

@@ -211,9 +211,9 @@ export function showChatAnnotationEditor(options: {
     }
   };
   const confirm = button(t("chat.messages.saveAnnotation"), save);
-  confirm.className = "btn primary btn--icon chat-annotation-editor__confirm";
+  confirm.className = "btn primary chat-annotation-editor__confirm";
   confirm.textContent = "";
-  render(icons.check, confirm);
+  render(icons.cornerDownLeft, confirm);
   const controls = document.createElement("div");
   controls.className = "chat-annotation-editor__controls";
   const remove = button(t("chat.messages.deleteAnnotation"), () => {

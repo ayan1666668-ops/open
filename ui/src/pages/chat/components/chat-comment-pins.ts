@@ -243,7 +243,7 @@ class ChatCommentPins extends OpenClawLightDomElement {
       (item) => item.id,
       (attachment, index) => html` <button
         type="button"
-        class="btn btn--ghost chat-comment-pin"
+        class="btn primary chat-comment-pin"
         data-attachment-id=${attachment.id}
         aria-label=${t("chat.messages.editAnnotation", { number: String(index + 1) })}
         title=${attachment.selectionAnnotation.comment || attachment.selectionAnnotation.text}
@@ -256,7 +256,7 @@ class ChatCommentPins extends OpenClawLightDomElement {
           }
         }}
       >
-        ${icons.pin}
+        ${icons.messageSquare}
       </button>`,
     );
   }
