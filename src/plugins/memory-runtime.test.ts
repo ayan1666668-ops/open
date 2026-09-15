@@ -239,11 +239,13 @@ describe("memory runtime handles", () => {
   it("preserves a reusable reader acquisition warning as a request-scoped outcome", async () => {
     const runtime = createRuntime();
     const warning = "Automatic memory index repair was requested.";
-    runtime.getReusableMemorySearchManager = vi.fn(async () => ({
-      manager: null,
-      error: "query failed after repair",
-      warning,
-    }));
+    Object.assign(runtime, {
+      getReusableMemorySearchManager: vi.fn(async () => ({
+        manager: null,
+        error: "query failed after repair",
+        warning,
+      })),
+    });
     const { registry } = createRegistry(runtime);
     mocks.loadPluginRegistryHandle.mockReturnValue(registry);
 

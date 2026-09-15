@@ -215,6 +215,36 @@ describe("read-only memory search manager", () => {
     expect(await reader.search("alpha", { minScore: 0 })).not.toEqual([]);
   });
 
+  it("preserves the rebuild notice when writer repair fails", async () => {
+    const cfg = createConfig({ provider: "none", vectorEnabled: false });
+    const writer = requireManager(await getMemorySearchManager({ cfg, agentId: "main" }));
+    trackManager(writer);
+    await writer.sync({ reason: "test", force: true });
+    const db = managerDb(writer);
+    const meta = readMeta(db);
+    db.prepare("UPDATE memory_index_meta SET value = ? WHERE key = 'memory_index_meta_v1'").run(
+      JSON.stringify({ ...meta, chunkingVersion: MEMORY_CHUNKING_VERSION - 1 }),
+    );
+    const reindexSpy = vi
+      .spyOn(
+        writer as unknown as { runInPlaceReindex(params: unknown): Promise<void> },
+        "runInPlaceReindex",
+      )
+      .mockRejectedValueOnce(new Error("synthetic writer reindex failure"));
+
+    try {
+      await expect(
+        getMemorySearchManager({ cfg, agentId: "main", purpose: "search" }),
+      ).resolves.toMatchObject({
+        manager: null,
+        error: expect.stringContaining("synthetic writer reindex failure"),
+        warning: expect.stringContaining("keyword indexing only"),
+      });
+    } finally {
+      reindexSpy.mockRestore();
+    }
+  });
+
   it.each([
     ["ordinary table", "CREATE TABLE memory_index_chunks_fts(wrong TEXT)"],
     ["wrong columns", "CREATE VIRTUAL TABLE memory_index_chunks_fts USING fts5(wrong)"],

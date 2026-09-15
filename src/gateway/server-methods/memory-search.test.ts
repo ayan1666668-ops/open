@@ -203,7 +203,7 @@ describe("memory.search gateway method", () => {
       }
       replacement.search.mockResolvedValueOnce([{ path: "memory/fresh.md" } as MemorySearchResult]);
       getActiveMemorySearchManagerCore
-        .mockResolvedValueOnce({ manager: retired })
+        .mockResolvedValueOnce({ manager: retired, warning: "repair warning before replacement" })
         .mockResolvedValueOnce({ manager: replacement });
 
       const respond = await invokeMemorySearch({ query: "lantern" }, cfg);
@@ -212,11 +212,39 @@ describe("memory.search gateway method", () => {
       expect(replacement.search).toHaveBeenCalledOnce();
       expect(respond).toHaveBeenCalledWith(
         true,
-        expect.objectContaining({ results: [{ path: "memory/fresh.md" }] }),
+        expect.objectContaining({
+          results: [{ path: "memory/fresh.md" }],
+          warning: "repair warning before replacement",
+        }),
         undefined,
       );
     },
   );
+
+  it("preserves all acquisition warnings when closed-reader reacquisition fails", async () => {
+    const cfg = createConfig(testState.workspaceDir);
+    const retired = createStubManager();
+    retired.search.mockRejectedValueOnce(new Error("Memory index manager is closed"));
+    getActiveMemorySearchManagerCore
+      .mockResolvedValueOnce({ manager: retired, warning: "initial repair warning" })
+      .mockResolvedValueOnce({
+        manager: null,
+        error: "replacement unavailable",
+        warning: "retry repair warning",
+      });
+
+    const respond = await invokeMemorySearch({ query: "lantern" }, cfg);
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: expect.stringMatching(
+          /replacement unavailable.*initial repair warning.*retry repair warning/iu,
+        ),
+      }),
+    );
+  });
 
   it("rejects an unknown agentId without acquiring a manager", async () => {
     const cfg = createConfig(testState.workspaceDir);
@@ -343,6 +371,7 @@ describe("memory.search gateway method", () => {
     getActiveMemorySearchManagerCore.mockResolvedValue({
       manager: null,
       error: "memory plugin unavailable",
+      warning: "repair warning before reader creation failed",
     });
 
     const respond = await invokeMemorySearch({ query: "lantern" }, cfg);
@@ -356,7 +385,7 @@ describe("memory.search gateway method", () => {
       undefined,
       expect.objectContaining({
         code: "UNAVAILABLE",
-        message: "memory plugin unavailable",
+        message: "memory plugin unavailable repair warning before reader creation failed",
       }),
     );
   });

@@ -156,16 +156,25 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
     }
     let { manager } = acquired;
     const transientManagers = new Set<MemorySearchManager>();
+    const acquisitionWarnings: string[] = [];
+    const recordAcquisitionWarning = (warning: string | undefined) => {
+      if (warning && !acquisitionWarnings.includes(warning)) {
+        acquisitionWarnings.push(warning);
+      }
+    };
+    recordAcquisitionWarning(acquired.warning);
     if (acquired.transient && manager) {
       transientManagers.add(manager);
     }
-    let acquisitionWarning = acquired.warning;
     const { error: acquireError } = acquired;
     if (!manager) {
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, acquireError ?? "memory search unavailable"),
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          [acquireError ?? "memory search unavailable", ...acquisitionWarnings].join(" "),
+        ),
       );
       return;
     }
@@ -197,18 +206,18 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
           agentId,
           purpose: "search",
         });
+        recordAcquisitionWarning(refreshed.warning);
         if (!refreshed.manager) {
           throw new Error(refreshed.error ?? "memory search unavailable", { cause: error });
         }
         manager = refreshed.manager;
-        acquisitionWarning = refreshed.warning;
         if (refreshed.transient) {
           transientManagers.add(manager);
         }
         searched = await searchOnce();
       }
       const staleness = resolveMemorySearchStaleness(searched.status, agentId);
-      const warning = [staleness?.warning, acquisitionWarning, readRebuildWarning()]
+      const warning = [staleness?.warning, ...acquisitionWarnings, readRebuildWarning()]
         .filter((message): message is string => typeof message === "string")
         .join(" ");
       const payload: MemorySearchResponse = {
@@ -228,7 +237,7 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
           ErrorCodes.UNAVAILABLE,
           [
             `memory search failed: ${formatErrorMessage(error)}`,
-            acquisitionWarning,
+            ...acquisitionWarnings,
             readRebuildWarning(),
           ]
             .filter(Boolean)

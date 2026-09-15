@@ -28,7 +28,7 @@ type AcquirableMemoryManager = {
   sync(params?: { reason?: string; force?: boolean }): Promise<void>;
 };
 
-export type MemoryManagerAcquisitionOutcome = { warning?: string };
+type MemoryManagerAcquisitionOutcome = { warning?: string };
 
 export type MemoryManagerGetParams<T> = {
   cfg: OpenClawConfig;
@@ -161,17 +161,29 @@ export async function acquireMemoryManagerWithSearchRecovery<
     }
     const beforeNotice = writer.status().custom?.automaticRebuildNotice;
     const beforeSequence = beforeNotice?.sequence;
-    await writer.sync({ reason: "search", force: true });
-    const afterNotice = writer.status().custom?.automaticRebuildNotice;
-    if (
-      afterNotice?.sequence !== beforeSequence &&
-      typeof afterNotice?.warning === "string" &&
-      afterNotice.warning
-    ) {
-      if (params.acquisitionOutcome) {
-        params.acquisitionOutcome.warning = afterNotice.warning;
+    const captureWriterNotice = () => {
+      const afterNotice = writer.status().custom?.automaticRebuildNotice;
+      if (
+        afterNotice?.sequence !== beforeSequence &&
+        typeof afterNotice?.warning === "string" &&
+        afterNotice.warning
+      ) {
+        if (params.acquisitionOutcome) {
+          params.acquisitionOutcome.warning = afterNotice.warning;
+        }
       }
+    };
+    try {
+      await writer.sync({ reason: "search", force: true });
+    } catch (error) {
+      try {
+        captureWriterNotice();
+      } catch {
+        // Preserve the writer failure when best-effort status capture is unavailable.
+      }
+      throw error;
     }
+    captureWriterNotice();
     return await acquire(purpose, { writerPrepared: true });
   } catch (recoveryError) {
     throw new Error(
