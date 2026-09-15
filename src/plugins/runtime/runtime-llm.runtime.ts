@@ -571,6 +571,10 @@ export function createRuntimeLlm(
           // an unbound call may fall back to the agent's configured selection.
           authProfileId:
             executionProfile ?? requestedModelProfile ?? preferredProfile ?? modelProfile,
+          // This branch returns before the deferred scope that bounds direct
+          // completions, so the captured run gate must bound isolated dispatch
+          // through the same assertion contract.
+          assertCurrent: options.authority?.assertCurrent,
         });
         return finalizePluginLlmCompletion({
           cfg,

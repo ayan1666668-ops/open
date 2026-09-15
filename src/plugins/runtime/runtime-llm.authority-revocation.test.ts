@@ -14,12 +14,17 @@ const hoisted = vi.hoisted(() => ({
     >(),
   completeWithPreparedSimpleCompletionModel: vi.fn(),
   resolveSimpleCompletionSelectionForAgent: vi.fn(),
+  runIsolatedCompletion: vi.fn(),
 }));
 
 vi.mock("../../agents/simple-completion-runtime.js", () => ({
   acquireSimpleCompletionModelForAgent: hoisted.acquireSimpleCompletionModelForAgent,
   completeWithPreparedSimpleCompletionModel: hoisted.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent: hoisted.resolveSimpleCompletionSelectionForAgent,
+}));
+
+vi.mock("../../agents/isolated-completion.js", () => ({
+  runIsolatedCompletion: hoisted.runIsolatedCompletion,
 }));
 
 const cfg = {
@@ -117,6 +122,12 @@ function primeCompletionMocks() {
       cost: { total: 0.0042 },
     },
   });
+  hoisted.runIsolatedCompletion.mockResolvedValue({
+    text: "done",
+    provider: "openai",
+    model: "gpt-5.5",
+    owner: { kind: "cli", id: "test" },
+  });
 }
 
 describe("context-engine completion authority revocation", () => {
@@ -136,6 +147,7 @@ describe("context-engine completion authority revocation", () => {
     hoisted.acquireSimpleCompletionModelForAgent.mockReset();
     hoisted.completeWithPreparedSimpleCompletionModel.mockReset();
     hoisted.resolveSimpleCompletionSelectionForAgent.mockReset();
+    hoisted.runIsolatedCompletion.mockReset();
     primeCompletionMocks();
   });
 
@@ -219,5 +231,72 @@ describe("context-engine completion authority revocation", () => {
       }),
     ).resolves.toMatchObject({ text: "done" });
     expect(assertRunAuthorityActive).toHaveBeenCalled();
+  });
+
+  it("carries the run-authority assertion into isolated completions", async () => {
+    const assertRunAuthorityActive = vi.fn<() => void>();
+    const runtimeContext = resolveContextEngineCapabilities({
+      config: cfg,
+      sessionKey: "agent:main:session:abc",
+      purpose: "context-engine.after-turn",
+      assertRunAuthorityActive,
+    });
+
+    await runtimeContext.llm!.complete({
+      execution: { mode: "isolated-agent-runtime" },
+      messages: [{ role: "user", content: "summarize" }],
+    });
+    // Isolated dispatch reaches provider I/O outside the deferred scope that
+    // bounds direct completions, so the forwarded contract must carry the
+    // exact captured gate for its own pre-dispatch revalidation.
+    const forwarded = expectSingleCallFirstArg(hoisted.runIsolatedCompletion, {});
+    expect(forwarded.assertCurrent).toBe(assertRunAuthorityActive);
+    expect(assertRunAuthorityActive).toHaveBeenCalled();
+  });
+
+  it("rejects an isolated completion whose run authority is revoked during preparation", async () => {
+    // The isolated contract awaits its own runtime lease after admission; a
+    // revocation landing inside that window must surface as an authority
+    // failure instead of a wrapped provider transport error, and the
+    // completion must never resolve a usable result.
+    let releaseIsolated: (() => void) | undefined;
+    hoisted.runIsolatedCompletion.mockImplementation(
+      (params: { assertCurrent?: () => void }) =>
+        new Promise((_resolve, reject) => {
+          releaseIsolated = () => {
+            try {
+              params.assertCurrent?.();
+            } catch (error) {
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          };
+        }),
+    );
+    let revoked = false;
+    const runtimeContext = resolveContextEngineCapabilities({
+      config: cfg,
+      sessionKey: "agent:main:session:abc",
+      purpose: "context-engine.after-turn",
+      assertRunAuthorityActive: () => {
+        if (revoked) {
+          throw new Error("admitted run authority is no longer active");
+        }
+      },
+    });
+
+    const pending = runtimeContext.llm!.complete({
+      execution: { mode: "isolated-agent-runtime" },
+      messages: [{ role: "user", content: "summarize" }],
+    });
+    await vi.waitFor(
+      () => {
+        expect(hoisted.runIsolatedCompletion).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 15_000 },
+    );
+
+    revoked = true;
+    releaseIsolated?.();
+    await expect(pending).rejects.toThrow("admitted run authority is no longer active");
   });
 });
