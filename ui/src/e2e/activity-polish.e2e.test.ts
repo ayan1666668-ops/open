@@ -58,7 +58,7 @@ suite.define(() => {
           ...fixture.list,
           sessions: fixture.list.sessions.map((session) =>
             session.key === activityPolishKeys.current
-              ? { ...session, label, updatedAt: Date.now() }
+              ? Object.assign({}, session, { label, updatedAt: Date.now() })
               : session,
           ),
         });
