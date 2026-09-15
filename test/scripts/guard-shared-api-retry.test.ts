@@ -1,4 +1,5 @@
 // Guard shared GitHub API helper tests cover transient-status retry behavior.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createGitHubApi } from "../../scripts/github/guard-shared.mjs";
 
@@ -78,5 +79,22 @@ describe("createGitHubApi transient status retries", () => {
 
     await expect(api.request("/repos/o/r/pulls/1/files")).rejects.toThrow("404 Not Found");
     expect(calls).toHaveLength(1);
+  });
+});
+
+// This suite is the only cover for the shared helper's retry statuses, so it has to
+// stay routed to the security owners and stay wired to the source it protects. Both
+// are registry entries that a later change could drop without any test noticing.
+describe("guard-shared retry coverage stays registered", () => {
+  it("routes this suite to the security owners", () => {
+    const codeowners = readFileSync(".github/CODEOWNERS", "utf8");
+    expect(codeowners).toContain(
+      "/test/scripts/guard-shared-api-retry.test.ts @openclaw/openclaw-secops",
+    );
+  });
+
+  it("maps this suite to the helper it covers, so a change there runs it", () => {
+    const targets = readFileSync("scripts/test-projects.test-support.mts", "utf8");
+    expect(targets).toContain('["test/scripts/guard-shared-api-retry.test.ts"]');
   });
 });
