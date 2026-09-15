@@ -51,6 +51,7 @@ export const en: TranslationMap & {
   login: TranslationMap;
   newSession: TranslationMap;
   skillWorkshop: TranslationMap;
+  systems: TranslationMap;
 } = {
   pluginUi: {
     sessionRecentMessages: "Recent messages",
@@ -279,25 +280,7 @@ export const en: TranslationMap & {
       invalidSandboxUrl: "MCP App sandbox URL is invalid",
     },
   },
-  githubPreview: {
-    coAuthors: "Co-authored by {logins}",
-    loading: "Loading GitHub details…",
-    unavailable: "GitHub preview unavailable",
-    states: {
-      merged: "Merged",
-      draft: "Draft",
-      open: "Open",
-      closed: "Closed",
-      notPlanned: "Not planned",
-    },
-    file: "{count} file",
-    files: "{count} files",
-    comment: "{count} comment",
-    comments: "{count} comments",
-    pullRequest: "pull request",
-    issue: "issue",
-    ariaLabel: "{state} {kind} {repo} #{number}: {title}, by {author}",
-  },
+  githubPreview: {},
   sessionHovercard: {
     ariaLabel: "Session information",
     agentNotepad: "Agent Notepad",
@@ -2341,6 +2324,7 @@ export const en: TranslationMap & {
     reconnect: "Reconnect",
     connecting: "Connecting to desktop…",
   },
+  systems: {},
   routeTitles: {
     modelProviders: "Models",
     notifications: "Notifications",
@@ -2361,6 +2345,7 @@ export const en: TranslationMap & {
     channels: "Channels",
     connection: "Gateway",
     sessions: "Sessions",
+    systems: "Systems",
     usage: "Usage",
     cron: "Automations",
     tasks: "Tasks",
@@ -2408,6 +2393,7 @@ export const en: TranslationMap & {
     channels: "Channels and settings.",
     connection: "Gateway endpoint, credentials, and handshake status.",
     sessions: "Active sessions and defaults.",
+    systems: "Machines and desktops.",
     usage: "API usage and costs.",
     cron: "Scheduled tasks and recurring agent runs.",
     tasks: "Background tasks: subagents, automation runs, CLI.",
@@ -2964,6 +2950,7 @@ export const en: TranslationMap & {
     recapUpdating: "Updating recap…",
     recapStale: "New activity since this recap",
     recapUnavailable: "Recap unavailable",
+    recapRefreshFailed: "Couldn’t refresh recap",
     recapRetry: "Retry recap",
     recapUpdated: "Recap updated {time}",
     backToSessions: "Back to sessions",
@@ -3293,6 +3280,19 @@ export const en: TranslationMap & {
     },
   },
   connection: {
+    browserSignIn: {
+      title: "Sign in to continue loading content",
+      description:
+        "Your website sign-in has expired. Images and files cannot load until you sign in again. Your conversation and draft will stay open.",
+      action: "Sign in",
+      dismiss: "Not now",
+      returnHint:
+        "Finish signing in in the new tab, then return here. Visible attachments will retry automatically.",
+      checkAgain: "Check again",
+      checking: "Checking access…",
+      stillRequired: "Sign-in is still required. Finish signing in, then check again.",
+      unavailable: "Could not verify access. Check your connection and try again.",
+    },
     disconnectedTitle: "Disconnected",
     connecting: "Connecting…",
     queuedCount: "{count} queued",
