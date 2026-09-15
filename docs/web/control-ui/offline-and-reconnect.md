@@ -70,6 +70,10 @@ keeps its last data and refreshes automatically once the Gateway accepts work ag
 failures remain visible inline with their message and are retried automatically when the Gateway
 becomes available again. These refresh callouts have no manual **Retry** button.
 
+When an Agent identity save is interrupted, its editor leaves the saving state on
+reconnect. If the same agent remains selected, the draft stays available to review
+and save again; a late result from the interrupted request cannot clear a newer edit.
+
 If chat history times out, its **Retry** action reloads the saved conversation and restores
 its live session subscription, including approval updates.
 
