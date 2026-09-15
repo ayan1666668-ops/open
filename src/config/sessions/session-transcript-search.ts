@@ -199,9 +199,9 @@ export function searchSessionTranscripts(params: {
                 "role",
                 "timestamp",
                 /* kysely-allow-raw: FTS5 snippet primitive. */
-                sql<unknown>`snippet(session_transcript_fts, 0, '', '', ' … ', 48)`.as("snippet"),
+                sql`snippet(session_transcript_fts, 0, '', '', ' … ', 48)`.as("snippet"),
                 /* kysely-allow-raw: FTS5 ranking primitive. */
-                sql<unknown>`bm25(session_transcript_fts)`.as("rank"),
+                sql`bm25(session_transcript_fts)`.as("rank"),
               ])
               .where(
                 /* kysely-allow-raw: FTS5 table MATCH with a bound search query. */
