@@ -11,7 +11,10 @@ import * as configRuntime from "../config/config.js";
 import { readConfigFileSnapshotForWrite, writeConfigFile } from "../config/config.js";
 import { defaultRuntime } from "../runtime.js";
 import { createDeferredCore } from "../shared/deferred.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../state/openclaw-state-db.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { setGatewayPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
@@ -45,13 +48,16 @@ import { createDiagnosticsFixture } from "./status.runtime-inspection.test-helpe
 import type { OpenClawPluginService } from "./types.js";
 
 describe("plugin runtime inspection", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     clearPluginMetadataLifecycleCaches();
     resetPluginLoaderTestStateForTest();
     closeOpenClawStateDatabaseForTest();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    // Retire async admission records before deleted fixture inodes can be reused.
+    await closeOpenClawStateDatabaseAsync();
     cleanupPluginLoaderFixturesForTest();
   });
 

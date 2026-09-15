@@ -156,7 +156,7 @@ export function* filterSessionEntries(
     const storeKey = target?.storeKey ?? key;
     if (
       isCronRunSessionKey(key) ||
-      (opts.excludeSubagents === true && isSubagentSessionKey(key)) ||
+      (opts.excludeSubagents === true && (isSubagentSessionKey(key) || entry.spawnedBy)) ||
       (!includeGlobal && storeKey === "global") ||
       (!includeUnknown && storeKey === "unknown")
     ) {
