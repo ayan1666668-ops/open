@@ -10,6 +10,7 @@ import {
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { normalizeUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { normalizeSecretInputString } from "../config/types.secrets.js";
 import {
   DEFAULT_OAUTH_REFRESH_MARGIN_MS,
   type AuthCredentialReasonCode,
@@ -269,7 +270,8 @@ function buildProfileHealth(params: {
   }
 
   const oauthWarnAfterMs = Math.max(
-    warnAfterMs ?? (effectiveCredential.refresh.trim() ? 0 : DEFAULT_OAUTH_WARN_MS),
+    warnAfterMs ??
+      (normalizeSecretInputString(effectiveCredential.refresh) ? 0 : DEFAULT_OAUTH_WARN_MS),
     DEFAULT_OAUTH_REFRESH_MARGIN_MS,
   );
   const {

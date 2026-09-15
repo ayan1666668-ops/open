@@ -5,6 +5,7 @@
  */
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseLegacyCredentialEntry } from "./auth-profiles/persisted.js";
 import type { OAuthCredential } from "./auth-profiles/types.js";
 import type { ProviderAuthAliasLookupParams } from "./provider-auth-aliases.js";
 
@@ -113,13 +114,13 @@ describe("buildAuthHealthSummary", () => {
           refresh: "refresh",
           expires: now + 60 * 60_000,
         },
-        "anthropic:manual-renewal": {
-          type: "oauth" as const,
+        "anthropic:manual-renewal": parseLegacyCredentialEntry({
+          type: "oauth",
           provider: "anthropic",
           access: "access",
           refresh: "",
           expires: now + 60 * 60_000,
-        },
+        })!,
         "anthropic:expired": {
           type: "oauth" as const,
           provider: "anthropic",
