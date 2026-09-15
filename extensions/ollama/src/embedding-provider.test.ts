@@ -16,10 +16,6 @@ const { fetchConfiguredLocalOriginWithSsrFGuardMock } = vi.hoisted(() => ({
 vi.mock("openclaw/plugin-sdk/ssrf-runtime", () => ({
   fetchWithSsrFGuard: vi.fn(),
   formatErrorMessage: coerceErrorMessage,
-  ssrfPolicyFromHttpBaseUrlAllowedOrigin: (baseUrl: string) => {
-    const parsed = new URL(baseUrl);
-    return { allowedOrigins: [parsed.origin] };
-  },
 }));
 
 // Import-resolution gating for this private helper is covered in sdk-alias.test.ts.
@@ -195,9 +191,31 @@ describe("ollama embedding provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
-      policy: { allowedOrigins: ["http://127.0.0.1:11434"] },
+      policy: { hostnameAllowlist: ["127.0.0.1"], allowPrivateNetwork: true },
       configuredLocalOriginBaseUrl: "http://127.0.0.1:11434",
       auditContext: "ollama-memory-embedding",
+    });
+  });
+
+  it("regression: allows a special-use-address Ollama host (e.g. Docker's host.docker.internal) the same way the chat-completion path already does", async () => {
+    // Prior to this fix, embeddings used ssrfPolicyFromHttpBaseUrlAllowedOrigin, which
+    // allowlists the hostname but does not set allowPrivateNetwork — so a request whose
+    // hostname resolves to a private/special-use address (as host.docker.internal does
+    // inside a container, e.g. an OrbStack synthetic gateway address) was blocked with
+    // "resolves to private/internal/special-use IP address" even though the identical
+    // origin already works for chat completions (buildOllamaBaseUrlSsrFPolicy, used by
+    // stream.runtime.ts/provider-models.ts/node-inference.ts/setup.runtime.ts/
+    // setup-pull.ts/web-search-provider.runtime.ts, always sets allowPrivateNetwork:
+    // true). Embeddings must use the same policy builder so local Ollama setups behind a
+    // Docker-internal hostname work for both.
+    const { fetchMock } = await embedTestQuery({
+      remote: { baseUrl: "http://host.docker.internal:11434" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(firstGuardedFetchCall()).toMatchObject({
+      policy: { hostnameAllowlist: ["host.docker.internal"], allowPrivateNetwork: true },
+      configuredLocalOriginBaseUrl: "http://host.docker.internal:11434",
     });
   });
 
@@ -207,7 +225,7 @@ describe("ollama embedding provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "https://ollama.com/api/embed",
-      policy: { allowedOrigins: ["https://ollama.com"] },
+      policy: { hostnameAllowlist: ["ollama.com"], allowPrivateNetwork: true },
       configuredLocalOriginBaseUrl: "https://ollama.com",
       auditContext: "ollama-memory-embedding",
     });
@@ -418,7 +436,7 @@ describe("ollama embedding provider", () => {
     expect(inputs).toEqual([["a", "bb", "ccc"]]);
     expect(firstGuardedFetchCall()).toMatchObject({
       url: "http://127.0.0.1:11434/api/embed",
-      policy: { allowedOrigins: ["http://127.0.0.1:11434"] },
+      policy: { hostnameAllowlist: ["127.0.0.1"], allowPrivateNetwork: true },
       configuredLocalOriginBaseUrl: "http://127.0.0.1:11434",
       auditContext: "ollama-memory-embedding",
     });

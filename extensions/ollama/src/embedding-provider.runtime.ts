@@ -18,16 +18,12 @@ import {
   normalizeResolvedSecretInputString,
   resolveConfiguredSecretInputString,
 } from "openclaw/plugin-sdk/secret-input-runtime";
-import {
-  formatErrorMessage,
-  ssrfPolicyFromHttpBaseUrlAllowedOrigin,
-  type SsrFPolicy,
-} from "openclaw/plugin-sdk/ssrf-runtime";
+import { formatErrorMessage, type SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
 import { fetchConfiguredLocalOriginWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime-internal";
 import { DEFAULT_OLLAMA_EMBEDDING_MODEL, OLLAMA_CLOUD_BASE_URL } from "./defaults.js";
 import { normalizeOllamaWireModelId } from "./model-id.js";
 import { readProviderBaseUrl } from "./provider-base-url.js";
-import { resolveOllamaApiBase } from "./provider-models.js";
+import { buildOllamaBaseUrlSsrFPolicy, resolveOllamaApiBase } from "./provider-models.js";
 
 export type OllamaEmbeddingProvider = EmbeddingProvider;
 
@@ -388,7 +384,14 @@ async function resolveOllamaEmbeddingClient(
   return {
     baseUrl,
     headers,
-    ssrfPolicy: ssrfPolicyFromHttpBaseUrlAllowedOrigin(baseUrl),
+    // Mirror the chat-completion path (stream.runtime.ts, provider-models.ts, etc.), all
+    // of which use buildOllamaBaseUrlSsrFPolicy for any Ollama-targeting fetch. This path
+    // was the one outlier still using the origin-only policy, which allowlists the
+    // hostname but does not exempt it from the separate unconditional private/
+    // special-use-IP block — so a local Ollama server (e.g. Docker's
+    // `host.docker.internal`, which can resolve to a special-use address) is reachable
+    // for chat but was never reachable for embeddings.
+    ssrfPolicy: buildOllamaBaseUrlSsrFPolicy(baseUrl),
     model,
     outputDimensionality: options.dimensions,
     ...(localService && baseUrlOrigin !== "remote-config"
