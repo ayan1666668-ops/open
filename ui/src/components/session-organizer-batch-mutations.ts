@@ -7,26 +7,25 @@ import {
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../src/shared/session-archive-timeout.ts";
 import { GatewayRequestError } from "../api/gateway.ts";
 import { formatUiError } from "../lib/format-error.ts";
+import { isGatewayMethodAdvertised } from "../lib/gateway-methods.ts";
 import { readSessionMethodAccess } from "../lib/session-method-access.ts";
-import { parseAgentSessionKey } from "../lib/sessions/session-key.ts";
+import { resolveUiSessionRowAgentId } from "../lib/sessions/session-key.ts";
 import type {
   SidebarRecentSession,
   SidebarSessionMutationResult,
   SidebarSessionMutationScope,
 } from "./app-sidebar-session-types.ts";
 import type { SessionOrganizerControllerHost } from "./session-organizer-controller.ts";
+import { formatBatchSessionRemovalError } from "./session-workspace-recovery.runtime.ts";
 
 export type SessionActionRow = Pick<
   SidebarRecentSession,
-  "key" | "label" | "pinned" | "archived" | "active"
->;
+  "key" | "agentId" | "sessionId" | "label" | "pinned" | "archived" | "active" | "category"
+> & { gatewayHasActiveRun?: boolean; hasActiveRun?: boolean };
 
 export type SessionActionHost = Pick<
   SessionOrganizerControllerHost,
-  | "pruneSidebarSessionEntry"
-  | "replaceCurrentSession"
-  | "selectSession"
-  | "sidebarSessionStatusFilter"
+  "pruneSidebarSessionEntry" | "selectSession" | "sidebarSessionStatusFilter"
 > & {
   readonly sessionData: Pick<
     SessionOrganizerControllerHost["sessionData"],
@@ -34,19 +33,33 @@ export type SessionActionHost = Pick<
   >;
 };
 
-function isLegacyPatchManyMethodRejection(error: unknown): boolean {
-  return (
-    error instanceof GatewayRequestError &&
-    error.gatewayCode === "INVALID_REQUEST" &&
-    error.message.includes("unknown method: sessions.patchMany")
-  );
+/**
+ * Gate a mutation on the connection's advertised method access, publishing the
+ * refusal so the caller never fails silently. Shared by every session-organizer
+ * runtime module, so it lives with the types they already import.
+ */
+export function requireSessionMutationAccess(
+  host: SessionActionHost,
+  scope: SidebarSessionMutationScope,
+  request: {
+    method: string;
+    params?: unknown;
+    requiredScope?: "operator.write" | "operator.admin";
+  },
+): boolean {
+  const access = readSessionMethodAccess(scope.gateway.snapshot, request);
+  if (access.allowed) {
+    return true;
+  }
+  host.sessionData.publishSessionMutationError(scope, access.reason);
+  return false;
 }
 
 export function sessionRowAgentId(
-  session: SessionActionRow,
+  session: Pick<SessionActionRow, "key" | "agentId">,
   scope: SidebarSessionMutationScope,
 ): string {
-  return parseAgentSessionKey(session.key)?.agentId ?? scope.selectedAgentId;
+  return resolveUiSessionRowAgentId(session, scope.selectedAgentId);
 }
 
 /**
@@ -93,6 +106,13 @@ export async function patchSessionRows(
     fallback?: () => Promise<SessionActionRow[] | null>;
   } = {},
 ): Promise<SessionActionRow[] | null> {
+  if (typeof patch.archived === "boolean" && rows.some((row) => !row.sessionId?.trim())) {
+    host.sessionData.publishSessionMutationError(
+      scope,
+      "Session lifecycle action requires a durable session identity.",
+    );
+    return null;
+  }
   const dispatched: Array<{
     rows: readonly SessionActionRow[];
     result: SessionsPatchManyResult;
@@ -107,6 +127,7 @@ export async function patchSessionRows(
       targets: chunkRows.map((row) => ({
         key: row.key,
         agentId: sessionRowAgentId(row, scope),
+        ...(row.sessionId ? { expectedSessionId: row.sessionId } : {}),
       })),
       patch,
     };
@@ -115,7 +136,12 @@ export async function patchSessionRows(
       params,
     });
     if (!access.allowed) {
-      if (dispatched.length === 0 && access.cause === "method-unavailable" && options.fallback) {
+      if (
+        dispatched.length === 0 &&
+        access.cause === "method-unavailable" &&
+        isGatewayMethodAdvertised(scope.gateway.snapshot, "sessions.patchMany") === false &&
+        options.fallback
+      ) {
         return options.fallback();
       }
       terminalError = access.reason;
@@ -138,11 +164,6 @@ export async function patchSessionRows(
       }
       dispatched.push({ rows: chunkRows, result });
     } catch (error) {
-      // Metadata-less legacy Gateways allow the optimistic request, then identify
-      // this one unsupported method through the canonical Gateway error contract.
-      if (dispatched.length === 0 && options.fallback && isLegacyPatchManyMethodRejection(error)) {
-        return options.fallback();
-      }
       terminalError = error;
       if (dispatched.length === 0) {
         host.sessionData.publishSessionMutationError(scope, error);
@@ -166,7 +187,9 @@ export async function patchSessionRows(
   const successful = dispatched.flatMap(({ rows: chunkRows, result }) =>
     result.outcomes.flatMap((outcome, index) => {
       if (!outcome.ok) {
-        errors.push(`${outcome.key}: ${outcome.error.message}`);
+        errors.push(
+          `${outcome.key}: ${formatBatchSessionRemovalError(new GatewayRequestError(outcome.error))}`,
+        );
         return [];
       }
       const row = chunkRows[index];

@@ -2,6 +2,7 @@
 import path from "node:path";
 import { BUNDLED_PLUGIN_ROOT_DIR } from "../../scripts/lib/bundled-plugin-paths.mjs";
 import { cliProcessTestFiles } from "./vitest.cli-process-paths.mjs";
+import { databaseWorkerCoreTestFiles } from "./vitest.database-worker-core-paths.mjs";
 
 export const unitTestIncludePatterns = [
   "src/**/*.test.ts",
@@ -21,7 +22,6 @@ export const boundaryTestFiles = [
   "test/extension-import-boundaries.test.ts",
   "test/extension-test-boundary.test.ts",
   "test/plugin-extension-import-boundary.test.ts",
-  "test/web-provider-boundary.test.ts",
 ];
 
 export const bundledPluginDependentUnitTestFiles = [
@@ -31,6 +31,8 @@ export const bundledPluginDependentUnitTestFiles = [
 ];
 
 export const unitTestAdditionalExcludePatterns = [
+  ...databaseWorkerCoreTestFiles,
+  ...cliProcessTestFiles,
   "src/gateway/**",
   "packages/gateway-client/**",
   "packages/gateway-protocol/**",
@@ -69,7 +71,6 @@ export const unitTestAdditionalExcludePatterns = [
   "src/infra/package-json.test.ts",
   "src/infra/path-env.test.ts",
   "src/infra/stable-node-path.test.ts",
-  ...cliProcessTestFiles,
   ...bundledPluginDependentUnitTestFiles,
   "src/config/doc-baseline.integration.test.ts",
   "src/config/schema.base.generated.test.ts",

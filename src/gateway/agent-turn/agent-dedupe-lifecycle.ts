@@ -11,7 +11,6 @@ import {
   sessionResetAckText,
 } from "../server-methods/agent-session-reset.js";
 import { emitSessionsChanged } from "../server-methods/session-change-event.js";
-import { resolveSessionStoreKey } from "../session-utils.js";
 import {
   isAcceptedAgentDedupePayload,
   isPreRegistrationAbortedAgentDedupeEntryForSession,
@@ -31,6 +30,7 @@ export function createAgentDedupeLifecycle(params: {
   lifecycleGeneration: string;
   agentDedupeKeys: string[];
   suppressVisibleSessionEffects: boolean;
+  privateCompletion?: true;
   ownerConnId?: string;
   ownerDeviceId?: string;
   context: AgentTurnContext;
@@ -45,9 +45,21 @@ export function createAgentDedupeLifecycle(params: {
     if (reserved) {
       return;
     }
-    const dedupeSessionResolvesGlobal = sessionKey
-      ? resolveSessionStoreKey({ cfg: params.cfg, sessionKey }) === "global"
-      : false;
+    // A private retry bypasses terminal cache replay to reconcile durable input.
+    // Preserve an exact intentional Stop for the resolved admission guard.
+    if (
+      isPreRegistrationAbortedAgentDedupeEntryForSession({
+        entry: readGatewayDedupeEntry({
+          dedupe: params.context.dedupe,
+          keys: params.agentDedupeKeys,
+        }),
+        runId: params.runId,
+        sessionKey,
+        agentId: dedupeAgentId,
+      })
+    ) {
+      return;
+    }
     const acceptedAt = Date.now();
     const pendingTimeoutMs = resolveAgentTimeoutMs({
       cfg: params.cfg,
@@ -57,6 +69,11 @@ export function createAgentDedupeLifecycle(params: {
     setGatewayDedupeEntries({
       dedupe: params.context.dedupe,
       keys: params.agentDedupeKeys,
+      // Durable private input decides replay after the prior controller ends.
+      // Its new reservation must retire stale sticky terminal projections.
+      ...(params.privateCompletion && !params.context.chatAbortControllers.has(params.runId)
+        ? { startNewAttempt: true as const }
+        : {}),
       entry: {
         ts: acceptedAt,
         ok: true,
@@ -65,9 +82,7 @@ export function createAgentDedupeLifecycle(params: {
           reservationId,
           status: "accepted" as const,
           ...(sessionKey ? { sessionKey } : {}),
-          ...(dedupeAgentId && (!sessionKey || dedupeSessionResolvesGlobal)
-            ? { agentId: dedupeAgentId }
-            : {}),
+          ...(dedupeAgentId ? { agentId: dedupeAgentId } : {}),
           controlUiVisible: !params.suppressVisibleSessionEffects,
           acceptedAt,
           dedupeKeys: params.agentDedupeKeys,
@@ -128,9 +143,7 @@ export function createAgentDedupeLifecycle(params: {
       params.io.emitAcceptance([true, responsePayload, undefined], { runId: params.runId });
       emitSessionsChanged(params.context, {
         sessionKey: completion.sessionKey,
-        ...(completion.sessionKey === "global" && completion.agentId
-          ? { agentId: completion.agentId }
-          : {}),
+        ...(completion.agentId ? { agentId: completion.agentId } : {}),
         reason: completion.reason,
       });
       return true;

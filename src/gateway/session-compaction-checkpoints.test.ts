@@ -8,6 +8,7 @@ import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import type { AssistantMessage } from "openclaw/plugin-sdk/llm";
 import { afterEach, describe, expect, test } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import type { SessionCompactionCheckpoint } from "../config/sessions.js";
 import { formatSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
 import {
@@ -16,7 +17,7 @@ import {
   loadSessionEntry,
   loadTranscriptEvents,
   updateSessionEntry,
-  upsertSessionEntry,
+  upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
 import {
   createFileBackedCompactionCheckpointStore,
@@ -89,8 +90,19 @@ describe("session-compaction-checkpoints", () => {
       sessionId,
       storePath,
     });
+    const sourceStamp = {
+      createdVia: "operator" as const,
+      createdActor: {
+        type: "human" as const,
+        source: "profile" as const,
+        id: "checkpoint-source-owner",
+      },
+      createdAt: 123,
+      sandbox: "required" as const,
+    };
 
-    await upsertSessionEntry(scope, {
+    await upsertSessionEntryCore(scope, {
+      ...sourceStamp,
       sessionId,
       sessionFile: marker,
       updatedAt: Date.now(),
@@ -137,7 +149,7 @@ describe("session-compaction-checkpoints", () => {
         entryId: sourceLeafId,
       },
     };
-    await upsertSessionEntry(scope, {
+    await upsertSessionEntryCore(scope, {
       sessionId,
       sessionFile: marker,
       updatedAt: Date.now(),
@@ -153,6 +165,11 @@ describe("session-compaction-checkpoints", () => {
       sourceStoreKey: sessionStoreKey,
       nextKey: branchKey,
       checkpointId: checkpoint.checkpointId,
+      creation: {
+        via: "operator",
+        actor: { type: "human", source: "profile", id: "checkpoint-branch-owner" },
+        sandbox: "required",
+      },
     });
     const restored = await store.restoreCheckpointSession({
       expectedState: checkpointExpectedState(sessionId),
@@ -165,6 +182,13 @@ describe("session-compaction-checkpoints", () => {
     if (branched.status !== "created" || restored.status !== "created") {
       throw new Error("expected SQLite checkpoint branch and restore");
     }
+    expect(branched.entry).toMatchObject({
+      createdVia: "operator",
+      createdActor: { type: "human", source: "profile", id: "checkpoint-branch-owner" },
+      sandbox: "required",
+    });
+    expect(branched.entry.createdAt).not.toBe(sourceStamp.createdAt);
+    expect(restored.entry).toMatchObject(sourceStamp);
     expect(branched.entry).not.toHaveProperty("sessionFile");
     expect(restored.entry).not.toHaveProperty("sessionFile");
     expect(fsSync.readdirSync(dir).some((file) => file.endsWith(".jsonl"))).toBe(false);
@@ -202,7 +226,7 @@ describe("session-compaction-checkpoints", () => {
         lifecycleRevision: "checkpoint-original-revision",
         sessionId,
       };
-      await upsertSessionEntry(scope, {
+      await upsertSessionEntryCore(scope, {
         ...expectedState,
         updatedAt: 10,
       });
@@ -234,16 +258,10 @@ describe("session-compaction-checkpoints", () => {
           entryId: sourceMessage.messageId,
         },
       };
-      await upsertSessionEntry(scope, { compactionCheckpoints: [checkpoint] });
+      await upsertSessionEntryCore(scope, { compactionCheckpoints: [checkpoint] });
 
-      let releaseOwnerChange = () => {};
-      const ownerChangeGate = new Promise<void>((resolve) => {
-        releaseOwnerChange = resolve;
-      });
-      let markOwnerChangeStarted = () => {};
-      const ownerChangeStarted = new Promise<void>((resolve) => {
-        markOwnerChangeStarted = resolve;
-      });
+      const { promise: ownerChangeGate, resolve: releaseOwnerChange } = createDeferred();
+      const { promise: ownerChangeStarted, resolve: markOwnerChangeStarted } = createDeferred();
       const ownerChange = updateSessionEntry(scope, async () => {
         markOwnerChangeStarted();
         await ownerChangeGate;
@@ -307,7 +325,7 @@ describe("session-compaction-checkpoints", () => {
     });
     const staleSessionFile = path.join(dir, "stale-transcript.jsonl");
 
-    await upsertSessionEntry(scope, {
+    await upsertSessionEntryCore(scope, {
       sessionId,
       sessionFile: staleSessionFile,
       updatedAt: Date.now(),
@@ -372,7 +390,7 @@ describe("session-compaction-checkpoints", () => {
         leafId: sourceEntryId,
       },
     };
-    await upsertSessionEntry(scope, {
+    await upsertSessionEntryCore(scope, {
       sessionId,
       sessionFile: staleSessionFile,
       updatedAt: Date.now(),
@@ -450,7 +468,7 @@ describe("session-compaction-checkpoints", () => {
         .join("\n") + "\n",
       "utf-8",
     );
-    await upsertSessionEntry(
+    await upsertSessionEntryCore(
       {
         agentId: MAIN_AGENT_ID,
         sessionKey,
@@ -611,7 +629,7 @@ describe("session-compaction-checkpoints", () => {
       sessionKey: "agent:main:structured-leaf-session",
       storePath: path.join(dir, "sessions.json"),
     };
-    await upsertSessionEntry(target, { sessionId: target.sessionId, updatedAt: 1 });
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
     await appendTranscriptEvent(target, {
       type: "session",
       version: CURRENT_SESSION_VERSION,

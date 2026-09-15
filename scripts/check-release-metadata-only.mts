@@ -4,7 +4,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { stableStringify } from "../packages/normalization-core/src/stable-stringify.ts";
 import { RELEASE_METADATA_PATHS } from "./changed-lanes.mts";
+import { isReleaseChangelogPath } from "./lib/release-changelog.mjs";
 
 const DEFAULT_GIT_TIMEOUT_MS = 60_000;
 const MAX_GIT_TIMEOUT_MS = 10 * 60_000;
@@ -14,6 +16,7 @@ const VERSION_ONLY_TEXT_PATHS = new Set([
   "apps/android/Config/Version.properties",
   "apps/android/version.json",
   "apps/macos/Sources/OpenClaw/Resources/Info.plist",
+  "apps/mobile/version.json",
 ]);
 
 function normalizePath(input: string) {
@@ -150,20 +153,7 @@ function stripPackageVersion(raw: string) {
     throw new Error("package.json must contain an object");
   }
   delete parsed.version;
-  return stableJson(parsed);
-}
-
-function stableJson(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .toSorted((left, right) => left.localeCompare(right))
-      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
+  return stableStringify(parsed);
 }
 
 function normalizeVersionText(raw: string) {
@@ -182,7 +172,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
   const paths = listChangedPaths(args);
 
   for (const filePath of paths) {
-    if (!RELEASE_METADATA_PATHS.has(filePath)) {
+    if (!RELEASE_METADATA_PATHS.has(filePath) && !isReleaseChangelogPath(filePath)) {
       fail(`${filePath}: not a release metadata path; run the normal changed gate`);
     }
   }

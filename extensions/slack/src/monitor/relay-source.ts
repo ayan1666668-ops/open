@@ -1,15 +1,19 @@
 // Slack plugin module implements relay-backed inbound event transport.
 import { Buffer } from "node:buffer";
 import { isIP } from "node:net";
+import { createNodeProxyAgent } from "openclaw/plugin-sdk/fetch-runtime";
 import {
   computeBackoff,
   sleepWithAbort,
   warn,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk/runtime-env";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import {
+  asOptionalRecord,
+  normalizeOptionalString,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
 import { rawDataToString } from "openclaw/plugin-sdk/webhook-ingress";
-import WebSocket, { type ClientOptions, type RawData } from "ws";
+import { type ClientOptions, type RawData, WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
 import type { SlackSendIdentity } from "../send.js";
 import type { SlackMessageEvent } from "../types.js";
 import type { SlackIdentityHealth } from "./enterprise-install.js";
@@ -101,7 +105,7 @@ function openRelayWebSocket(
   }
   return new Promise((resolve, reject) => {
     const url = buildRelayWebSocketUrl(config);
-    const ws = new WebSocket(url, buildRelayWebSocketOptions(config.authToken));
+    const ws = new WebSocket(url, buildRelayWebSocketOptions(config.authToken, url));
 
     const cleanup = () => {
       ws.off("open", onOpen);
@@ -123,7 +127,7 @@ function openRelayWebSocket(
       reject(new Error(formatRelayClose(code, reason)));
     };
     const onAbort = () => {
-      cleanup();
+      // Keep terminal listeners until ws emits the error from closing a connecting socket.
       closeRelayWebSocket(ws);
       reject(new Error("Slack relay websocket aborted during connect"));
     };
@@ -229,8 +233,13 @@ async function handleRelayFrame(params: {
   sendRelayAck(params.ws, event.deliveryId);
 }
 
-export function buildRelayWebSocketOptions(authToken: string): ClientOptions {
+export function buildRelayWebSocketOptions(authToken: string, url: string): ClientOptions {
+  // ws supplies createConnection, bypassing Node's global proxy agent.
+  const agent = url.startsWith("wss:")
+    ? createNodeProxyAgent({ mode: "env", targetUrl: url, protocol: "https" })
+    : undefined;
   return {
+    ...(agent ? { agent } : {}),
     headers: {
       Authorization: `Bearer ${authToken}`,
     },
@@ -292,16 +301,16 @@ export function parseRelayFrame(data: RawData): unknown {
 function extractRelaySlackMessageEvent(
   frame: unknown,
 ): { deliveryId: string; message: SlackMessageEvent; route: SlackRelayRoute } | undefined {
-  const record = asRecord(frame);
+  const record = asOptionalRecord(frame);
   if (!record || record.type !== "slack_event") {
     return undefined;
   }
   const deliveryId = stringValue(record.delivery_id);
-  const routeRecord = asRecord(record.route);
+  const routeRecord = asOptionalRecord(record.route);
   const routeKind = stringValue(routeRecord?.kind);
   const routeKey = stringValue(routeRecord?.key);
-  const payload = asRecord(record.payload);
-  const event = asRecord(payload?.event);
+  const payload = asOptionalRecord(record.payload);
+  const event = asOptionalRecord(payload?.event);
   if (event?.type !== "message" || typeof event.channel !== "string") {
     return undefined;
   }
@@ -321,7 +330,7 @@ function extractRelaySlackMessageEvent(
 function extractRelayHello(
   frame: unknown,
 ): { identity: SlackRelayIdentity | undefined } | undefined {
-  const record = asRecord(frame);
+  const record = asOptionalRecord(frame);
   if (!record || record.type !== "hello") {
     return undefined;
   }
@@ -331,7 +340,8 @@ function extractRelayHello(
 }
 
 function extractRelayIdentity(record: Record<string, unknown>): SlackRelayIdentity | undefined {
-  const identityRecord = asRecord(record.slack_identity) ?? asRecord(record.slackIdentity);
+  const identityRecord =
+    asOptionalRecord(record.slack_identity) ?? asOptionalRecord(record.slackIdentity);
   if (!identityRecord) {
     return undefined;
   }
@@ -376,12 +386,6 @@ function formatRelayClose(code: number, reason: Buffer): string {
   return text
     ? `Slack relay websocket closed (${code} ${text})`
     : `Slack relay websocket closed (${code})`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {
