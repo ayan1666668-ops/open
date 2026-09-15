@@ -634,8 +634,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // A failed removal can leave the card visible, so only a clean discard hands
         // the text to a post instead.
         if (closeNeedsPost && finalizationError === undefined) {
-          result = await (blockPostDeliveries.get(text)?.catch(() => sendPostReply(text)) ??
-            sendPostReply(text));
+          result = await sendPostReply(text, "final");
         }
         if (result.visibleReplySent) {
           markVisibleReplySent();
@@ -681,18 +680,21 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         ...(finalizationError === undefined ? {} : { error: finalizationError }),
       };
     } catch (error: unknown) {
-      if (disposition === "discarded") {
+      const result = isChannelPartialDeliveryError(error)
+        ? error.deliveryResult
+        : noVisibleFeishuReplyDelivery;
+      if (disposition === "discarded" || result.visibleReplySent) {
         rememberClosedStreamingSettlement(
           generationToClose,
           answerText,
-          noVisibleFeishuReplyDelivery,
+          result,
           error,
           disposition,
         );
       }
       return {
         ...outcome,
-        result: noVisibleFeishuReplyDelivery,
+        result,
         error,
       };
     } finally {
@@ -900,7 +902,14 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           }),
       });
     if (matchingBlock) {
-      return matchingBlock.catch(send);
+      return matchingBlock.catch((error: unknown) => {
+        // A partial failure still owns accepted chunks. Retrying the whole text
+        // would duplicate them, and the error does not identify a retryable suffix.
+        if (isChannelPartialDeliveryError(error)) {
+          throw error;
+        }
+        return send();
+      });
     }
     const delivery = send();
     if (infoKind === "block") {
@@ -915,8 +924,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         throw error;
       });
       blockPostDeliveries.set(text, retainedDelivery);
-      void retainedDelivery.catch(() => {
-        if (blockPostDeliveries.get(text) === retainedDelivery) {
+      void retainedDelivery.catch((error: unknown) => {
+        if (
+          !isChannelPartialDeliveryError(error) &&
+          blockPostDeliveries.get(text) === retainedDelivery
+        ) {
           blockPostDeliveries.delete(text);
         }
       });

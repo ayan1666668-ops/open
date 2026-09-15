@@ -4652,6 +4652,97 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
     });
 
+    it.each([
+      { waiter: "final", pending: false, receipt: true },
+      { waiter: "idle", pending: false, receipt: true },
+      { waiter: "final", pending: true, receipt: true },
+      { waiter: "idle", pending: true, receipt: true },
+      { waiter: "final", pending: true, receipt: false },
+      { waiter: "idle", pending: true, receipt: false },
+    ])(
+      "retains accepted off block chunks for $waiter with pending=$pending and receipt=$receipt",
+      async ({ waiter, pending, receipt }) => {
+        const { chunkMarkdownTextWithMode } = await vi.importActual<
+          typeof import("openclaw/plugin-sdk/reply-chunking")
+        >("openclaw/plugin-sdk/reply-chunking");
+        getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+          chunkMarkdownTextWithMode,
+        );
+        getFeishuRuntimeMock().channel.text.resolveTextChunkLimit.mockReturnValue(200);
+        const { result, options } = createBlockTableHarness();
+        const text = `${tableMarkdown}\n${"| Grace | Engineer |\n".repeat(30)}`.trim();
+        let rejectChunk!: (error: Error) => void;
+        sendMessageFeishuMock
+          .mockResolvedValueOnce(receipt ? { messageId: "om-accepted-prefix" } : {})
+          .mockReturnValueOnce(
+            new Promise((_, reject) => {
+              rejectChunk = reject;
+            }),
+          )
+          .mockResolvedValue({ messageId: "om-unwanted-retry" });
+        result.replyOptions.onPartialReply?.({ text });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+        const block = options.deliver({ text }, { kind: "block" }).catch((error: unknown) => error);
+        await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2));
+        if (!pending) {
+          rejectChunk(new Error("later chunk rejected"));
+          await block;
+        }
+        const idle =
+          waiter === "idle"
+            ? Promise.resolve(options.onIdle?.()).catch((error: unknown) => error)
+            : undefined;
+        const final =
+          waiter === "final"
+            ? options.deliver({ text }, { kind: "final" }).catch((error: unknown) => error)
+            : undefined;
+        await vi.waitFor(() =>
+          expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1),
+        );
+        if (pending) {
+          rejectChunk(new Error("later chunk rejected"));
+        }
+        const blockError: unknown = await block;
+        expect(isChannelPartialDeliveryError(blockError)).toBe(true);
+        if (!isChannelPartialDeliveryError(blockError)) {
+          throw new Error("expected partial block acceptance");
+        }
+        const prefix = sendMessageFeishuMock.mock.calls[0]?.[0]?.text;
+        expect(prefix).toBeTruthy();
+        expect(prefix).not.toBe(text);
+        expect(blockError.deliveryResult).toMatchObject({
+          ...(receipt ? { messageIds: ["om-accepted-prefix"] } : {}),
+          visibleReplySent: true,
+          content: prefix,
+        });
+
+        if (waiter === "idle") {
+          expect(await idle).toBeInstanceOf(Error);
+        }
+        const finalError: unknown = final
+          ? await final
+          : await options.deliver({ text }, { kind: "final" }).catch((error: unknown) => error);
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+        expect(isChannelPartialDeliveryError(finalError)).toBe(true);
+        if (!isChannelPartialDeliveryError(finalError)) {
+          throw new Error("expected retained partial acceptance");
+        }
+        expect(finalError.deliveryResult).toMatchObject({
+          ...(receipt ? { messageIds: ["om-accepted-prefix"] } : {}),
+          visibleReplySent: true,
+          content: prefix,
+        });
+        expect(finalError.deliveryResult.receipt?.parts).toEqual(
+          blockError.deliveryResult.receipt?.parts,
+        );
+        await Promise.resolve(options.onIdle?.()).catch(() => undefined);
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      },
+    );
+
     it("retries a rejected in-flight block when idle is the only remaining delivery", async () => {
       const { result, options } = createBlockTableHarness();
       let rejectPost!: (error: Error) => void;
