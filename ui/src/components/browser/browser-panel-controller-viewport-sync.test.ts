@@ -48,7 +48,7 @@ describe("BrowserPanelController viewport sync", () => {
     expect(actionRequests(request, "resize")).toHaveLength(0);
 
     // Turning fixed-viewport viewing back off resumes panel-driven resizing.
-    controller.setFixedViewportView(false);
+    controller.viewport.setFixedViewport(false);
     controller.view = {
       ...controller.view!,
       metrics: { cssWidth: 640, cssHeight: 480, title: "A", url: "https://example.test/a" },

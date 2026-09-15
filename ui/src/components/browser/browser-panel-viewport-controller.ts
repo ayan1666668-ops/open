@@ -10,11 +10,10 @@ import type { BrowserPanelStream } from "./browser-panel-stream.ts";
 import type { BrowserPanelView } from "./browser-panel-surface.ts";
 
 interface BrowserPanelViewportHost {
-  readonly host: { browserPanelIsOpen(): boolean };
+  readonly host: { browserPanelIsOpen(): boolean; requestUpdate(): void };
   readonly native: { readonly activeTab: NativeBrowserTab | undefined };
   readonly activeTargetId: string | null;
   readonly view: BrowserPanelView | null;
-  readonly fixedViewportView: boolean;
   readonly operations: Pick<BrowserPanelOperationOwnership, "captureClient">;
   readonly stream: Pick<BrowserPanelStream, "resize">;
   readonly pendingInput: Pick<BrowserPanelPendingInput, "scheduleViewportResize">;
@@ -50,9 +49,23 @@ export function writeFixedViewportPreference(value: boolean): void {
 /** Reconciles the visible screenshot stage with its remote page's CSS viewport. */
 export class BrowserPanelViewportController {
   observedViewportSize: { width: number; height: number } | null = null;
+  /** Fixed-viewport viewing (toolbar toggle); persisted in localStorage. */
+  fixedViewportView = readFixedViewportPreference();
   private lastRequestedViewport: { targetId: string; width: number; height: number } | null = null;
 
   constructor(private readonly controller: BrowserPanelViewportHost) {}
+
+  /** Toolbar toggle: the page owns its viewport while this is on. */
+  setFixedViewport(value: boolean): void {
+    if (this.fixedViewportView === value) {
+      return;
+    }
+    writeFixedViewportPreference(value);
+    this.fixedViewportView = value;
+    this.controller.host.requestUpdate();
+    this.invalidate();
+    this.schedule();
+  }
 
   invalidate(): void {
     // The agent may resize the same document between panel presentations.
@@ -100,7 +113,7 @@ export class BrowserPanelViewportController {
       return;
     }
     this.controller.stream.resize();
-    if (this.controller.fixedViewportView) {
+    if (this.fixedViewportView) {
       // Fixed-viewport viewing: the page owns its viewport and the panel scales
       // the live frame to fit, instead of resizing the remote page.
       return;
