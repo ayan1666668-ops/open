@@ -1355,7 +1355,7 @@ h3.settings-row__title {
   font: inherit;
 }
 .plugin-capability > button {
-  cursor: pointer;
+  cursor: var(--cursor-action);
 }
 .plugin-capability > button:hover {
   background: var(--bg-elevated);

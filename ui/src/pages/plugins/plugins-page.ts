@@ -393,6 +393,12 @@ class PluginsPage extends OpenClawLightDomElement {
     if (!this.routeDataConsumed || !this.gateway.connected || !this.gateway.client) {
       return;
     }
+    // Direct links and refreshes initialize Settings through the same route
+    // lifecycle as navigation; the click handler only selects the location.
+    if (this.activeRoutePluginId && this.installedDetailTab === "configuration") {
+      void this.context.runtimeConfig.ensureLoaded();
+      void this.context.runtimeConfig.ensureSchemaLoaded();
+    }
     if (!this.loading && !this.result && !this.error) {
       void this.refreshCatalog();
     }
@@ -716,10 +722,6 @@ class PluginsPage extends OpenClawLightDomElement {
             this.surface === "discovery" ? "plugins" : "plugin-settings",
             pluginDetailLocation(this.routeData?.location, tab === "configuration"),
           );
-          if (tab === "configuration") {
-            void this.context.runtimeConfig.ensureLoaded();
-            void this.context.runtimeConfig.ensureSchemaLoaded();
-          }
         },
         selectSettingsTab: (tab) => {
           this.settingsTab = tab;

@@ -19,6 +19,121 @@ describeControlUiE2e("Plugin overview", () => {
   beforeAll(setupPluginsE2e);
   afterAll(teardownPluginsE2e);
 
+  it.each(["fresh", "refresh"] as const)(
+    "initializes direct catalog Settings on %s entry with editable fields and permissions",
+    async (entry) => {
+      const context = await newContext();
+      const page = await context.newPage();
+      const plugin = { ...calendarPlugin, catalogId: "ch_Y2FsZW5kYXI" };
+      const config = {
+        plugins: {
+          entries: {
+            [plugin.id]: {
+              enabled: true,
+              config: { timeZone: "Europe/Paris" },
+              hooks: { allowPromptInjection: false },
+            },
+          },
+        },
+      };
+      const gateway = await installMockGateway(page, {
+        featureMethods: [...pluginMethods, "config.get", "config.schema", "config.set"],
+        operatorScopes: ["operator.read", "operator.admin"],
+        methodResponses: {
+          ...pluginMethodResponses(),
+          "plugins.list": inventory([plugin]),
+          "plugins.inspect": { ...calendarInspection, plugin },
+          "plugins.catalog.get": {
+            __mockError: { code: "UNAVAILABLE", message: "Optional catalog unavailable" },
+          },
+          "config.get": {
+            config,
+            raw: JSON.stringify(config),
+            hash: "calendar-config",
+            appliedConfigHash: "calendar-config",
+            valid: true,
+            issues: [],
+          },
+          "config.schema": {
+            schema: {
+              type: "object",
+              properties: {
+                plugins: {
+                  type: "object",
+                  properties: {
+                    entries: {
+                      type: "object",
+                      properties: {
+                        [plugin.id]: {
+                          type: "object",
+                          properties: {
+                            config: {
+                              type: "object",
+                              properties: { timeZone: { type: "string", title: "Time zone" } },
+                            },
+                            hooks: {
+                              type: "object",
+                              properties: {
+                                allowPromptInjection: {
+                                  type: "boolean",
+                                  title: "Allow prompt changes",
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            uiHints: {},
+            version: "calendar-schema",
+            generatedAt: "2026-09-15T00:00:00Z",
+          },
+        },
+      });
+      try {
+        const overviewUrl = `${server.baseUrl}plugins/${plugin.catalogId}`;
+        if (entry === "refresh") {
+          await page.goto(overviewUrl);
+          await page
+            .locator(".plugin-catalog-detail__actions")
+            .getByRole("link", { name: "Settings", exact: true })
+            .click();
+          await page.getByRole("textbox", { name: "Time zone", exact: true }).waitFor();
+          await page.reload();
+        } else {
+          await page.goto(`${overviewUrl}?view=settings`);
+        }
+        await page.getByRole("heading", { name: "Calendar Plus Settings", exact: true }).waitFor();
+        await page.getByRole("heading", { name: "Access", exact: true }).waitFor();
+        await captureScreenshot(page, `direct-settings-${entry}.png`, "viewport");
+        const timeZone = page.getByRole("textbox", { name: "Time zone", exact: true });
+        await timeZone.waitFor();
+        expect(await timeZone.inputValue()).toBe("Europe/Paris");
+        expect(await timeZone.isEnabled()).toBe(true);
+        await page.locator("summary").getByText("Hooks", { exact: true }).click();
+        const permission = page.getByRole("switch", { name: "Allow prompt changes", exact: true });
+        expect(await permission.isEnabled()).toBe(true);
+        expect(await gateway.getRequests("config.set")).toEqual([]);
+        await permission.press("Space");
+        await expect.poll(() => permission.getAttribute("aria-checked")).toBe("true");
+        await expect.poll(async () => (await gateway.getRequests("config.set")).length).toBe(1);
+        await page.reload();
+        await page.getByRole("textbox", { name: "Time zone", exact: true }).waitFor();
+        await page.locator("summary").getByText("Hooks", { exact: true }).click();
+        await expect.poll(() => permission.getAttribute("aria-checked")).toBe("true");
+        await captureScreenshot(page, `direct-settings-${entry}-permissions.png`, "viewport");
+        expect(new URL(page.url()).pathname).toBe(`/plugins/${plugin.catalogId}`);
+        expect(new URL(page.url()).search).toBe("?view=settings");
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
   it("keeps catalog identity while presenting installed controls, complete content, and a contained metadata rail", async () => {
     const context = await newContext();
     const page = await context.newPage();
