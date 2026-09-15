@@ -54,6 +54,7 @@ function collectModelProviderIds(value: unknown): ReadonlySet<string> {
 type ManifestModelProviderLookup = {
   modelApis: ReadonlyMap<string, string>;
   providerIds: ReadonlySet<string>;
+  cliBackendIds: ReadonlySet<string>;
 };
 
 function buildManifestModelProviderLookup(
@@ -79,6 +80,16 @@ function buildManifestModelProviderLookup(
     modelApis,
     providerIds: new Set(
       manifestRegistry.plugins.flatMap((plugin) => plugin.providers.map(normalizeProviderId)),
+    ),
+    // A CLI backend id may differ from the provider ids its plugin declares, so
+    // ownership of a CLI runtime needs its own set. Same union the manifest
+    // contribution and status projections already read.
+    cliBackendIds: new Set(
+      manifestRegistry.plugins.flatMap((plugin) =>
+        [...(plugin.cliBackends ?? []), ...(plugin.setup?.cliBackends ?? [])].map(
+          normalizeProviderId,
+        ),
+      ),
     ),
   };
 }
@@ -149,6 +160,14 @@ function configuredModelProviderNeedsRuntimePlugin(params: {
   providerId: string;
   modelId: string;
 }): boolean {
+  // A declared CLI backend has to register its runtime before a turn can
+  // dispatch, and it reuses a core built-in api name because the config schema
+  // has no cli transport value. Ownership therefore outranks that api hint;
+  // plain HTTP providers keep the existing lazy startup behavior.
+  const normalizedProviderId = normalizeProviderId(params.providerId);
+  if (params.manifestModelProviders.cliBackendIds.has(normalizedProviderId)) {
+    return true;
+  }
   const providerConfig = params.config.models?.providers?.[params.providerId];
   const configuredModel = providerConfig?.models?.find((model) => model.id === params.modelId);
   const modelApi =
@@ -160,7 +179,7 @@ function configuredModelProviderNeedsRuntimePlugin(params: {
   if (typeof modelApi === "string") {
     return !CORE_BUILT_IN_MODEL_APIS.has(modelApi);
   }
-  return params.manifestModelProviders.providerIds.has(params.providerId);
+  return params.manifestModelProviders.providerIds.has(normalizedProviderId);
 }
 
 export function manifestOwnsConfiguredModelProvider(params: {
@@ -170,7 +189,14 @@ export function manifestOwnsConfiguredModelProvider(params: {
   if (params.configuredModelProviderIds.size === 0) {
     return false;
   }
-  return (params.manifest?.providers ?? []).some((providerId) => {
+  // CLI backend ids are declared alongside provider ids and may differ from
+  // them, so a plugin can own the configured runtime through either list.
+  const ownedProviderIds = [
+    ...(params.manifest?.providers ?? []),
+    ...(params.manifest?.cliBackends ?? []),
+    ...(params.manifest?.setup?.cliBackends ?? []),
+  ];
+  return ownedProviderIds.some((providerId) => {
     return params.configuredModelProviderIds.has(normalizeProviderId(providerId));
   });
 }
