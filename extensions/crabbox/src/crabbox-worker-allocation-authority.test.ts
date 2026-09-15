@@ -8,12 +8,66 @@ import {
   captureWarmImage,
   checkpointResult,
   commandResult,
+  createProjectOptions,
   createWarmProvider,
   openWarmImageStore,
   provisionWarmProfile,
 } from "./crabbox-worker-warm-image.test-support.js";
 
 describe("Crabbox allocation source authority", () => {
+  it("stops the lease and deletes its unused session snapshot after source closure during enrollment setup", async () => {
+    const physical = new AbortController();
+    const closed = new Error("enrollment source closed");
+    let current = true;
+    let captured = false;
+    const { options, observe } = createProjectOptions([], physical, {
+      key: "a".repeat(64),
+      cacheKey: "b".repeat(64),
+      purpose: "session",
+      demandAtMs: Date.now(),
+    });
+    const { provider, calls } = createWarmProvider((call) => {
+      observe(call);
+      captured ||= call.argv[1] === "checkpoint" && call.argv[2] === "create";
+      if (
+        captured &&
+        call.argv[1] === "run" &&
+        call.options.input?.toString().includes("CRABBOX_NODE_ENROLLMENT_SCRIPT")
+      ) {
+        current = false;
+      }
+      return undefined;
+    });
+    const operationId = "closed-enrollment-session-snapshot";
+    const leaseId = operationLeaseId(operationId);
+    const error = await provider
+      .provision(PROFILE, operationId, {
+        ...options,
+        signal: physical.signal,
+        assertCurrent: () => {
+          if (!current) {
+            throw closed;
+          }
+        },
+      })
+      .catch((failure: unknown) => failure);
+    expect(captured).toBe(true);
+    expect(physical.signal.aborted).toBe(false);
+    expect(error).toMatchObject({ code: "cleanup_complete", leaseId, provisionError: closed });
+    expect(
+      calls
+        .filter(({ argv }) => argv[1] === "stop")
+        .map(({ argv }) => argv[argv.indexOf("--id") + 1]),
+    ).toEqual([leaseId]);
+    expect(
+      calls
+        .filter(({ argv }) => argv[1] === "checkpoint" && argv[2] === "delete")
+        .map(({ argv }) => argv[3]),
+    ).toEqual([CHECKPOINT_ID]);
+    expect(openWarmImageStore().entries()).toEqual([]);
+    expect(calls.some(({ argv }) => argv[1] === "heartbeat")).toBe(false);
+  });
+
   it.each([false, true])(
     "does not allocate after source closure during checkpoint selection (failure=%s)",
     async (failure) => {

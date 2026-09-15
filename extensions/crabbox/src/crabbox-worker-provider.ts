@@ -178,14 +178,12 @@ export function createCrabboxWorkerProvider(
     signal: maintenanceAbort.signal,
     resolveBinaries: resolveMaintenanceBinaries,
   });
-  const stopLease = async (context: LeaseCommandContext): Promise<void> => {
-    await heartbeats.stop(context.id);
-    // Cleanup has its own deadline. Only confirmed stop releases allocation/image ownership.
-    await stopCrabboxLease({
-      ...context,
-      runCommand,
-    });
-    await warmImages.release(context);
+  const stopLease = async ({ binary, id, provider }: LeaseCommandContext): Promise<void> => {
+    await heartbeats.stop(id);
+    // Cleanup owns its deadline and must not carry revoked provisioning guards
+    // into checkpoint release. Only confirmed stop releases allocation/image ownership.
+    await stopCrabboxLease({ binary, id, provider, runCommand });
+    await warmImages.release({ binary, id, provider });
   };
   const resolveLeaseContext = async (
     lease: Parameters<WorkerProvider["inspect"]>[0],
