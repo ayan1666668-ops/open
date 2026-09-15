@@ -407,7 +407,7 @@ it("retains adopted webhook delivery through restart while plugin cleanup owns i
         await new Promise<void>((resolve) => {
           lifecycle.abortSignal.addEventListener("abort", () => resolve(), { once: true });
         });
-        await lifecycle.onCancelled();
+        await lifecycle.onCancelled?.();
         cancelled.resolve();
       },
       (active) => activity.push(active),
