@@ -97,6 +97,51 @@ describe.skipIf(process.platform === "win32")("Signal UNIX transport", () => {
     ).rejects.toThrow(error);
   });
 
+  it.each([
+    [
+      "definitive quote rejection",
+      {
+        code: -32602,
+        message: 'quote rejected: Unrecognized field "quoteTimestamp" for +15550000001',
+      },
+    ],
+    [
+      "quote validation failure",
+      { code: -32602, message: "quote metadata invalid: unknown author" },
+    ],
+  ] as const)("classifies a %s without echoing its raw message", async (_name, errorBody) => {
+    const { baseUrl } = await serve((request, socket) =>
+      socket.end(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: errorBody })}\n`),
+    );
+    // The redacted message must keep the send-path fallback classifier working:
+    // Signal RPC -32602: + "quote" + a definitive rejection word.
+    await expect(signalRpcRequest("send", undefined, { baseUrl })).rejects.toThrow(
+      /^Signal RPC -32602: quote metadata rejected \(redacted\)$/,
+    );
+  });
+
+  it("keeps a non-quote -32602 error unclassified and redacted", async () => {
+    const { baseUrl } = await serve((request, socket) =>
+      socket.end(
+        `${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32602, message: "private +15550000001" } })}\n`,
+      ),
+    );
+    await expect(signalRpcRequest("send", undefined, { baseUrl })).rejects.toThrow(
+      /^Signal RPC -32602: remote error$/,
+    );
+  });
+
+  it("redacts an ambiguous quote-shaped failure from another code", async () => {
+    const { baseUrl } = await serve((request, socket) =>
+      socket.end(
+        `${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "quote metadata was rejected after an ambiguous send +15550000001" } })}\n`,
+      ),
+    );
+    await expect(signalRpcRequest("send", undefined, { baseUrl })).rejects.toThrow(
+      /^Signal RPC -32000: remote error$/,
+    );
+  });
+
   it("enforces a response deadline and closes the connection", async () => {
     let closed: Promise<unknown> | undefined;
     const { baseUrl } = await serve((_request, socket) => {
