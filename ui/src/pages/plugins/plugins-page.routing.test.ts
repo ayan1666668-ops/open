@@ -818,6 +818,7 @@ describe("PluginsPage routing", () => {
         expect(request).toHaveBeenCalledWith("plugins.inspect", { pluginId: plugin.id }),
       );
       expect(page.querySelector('[aria-label="Enable Workboard"]')).not.toBeNull();
+      expect(page.querySelector(".plugin-catalog-detail__install")).toBeNull();
       remote.resolve(discoveryDetail({ ...plugin, installed: false }));
       await remote.promise;
       await new Promise<void>((resolve) => {
@@ -825,6 +826,7 @@ describe("PluginsPage routing", () => {
       });
       await page.updateComplete;
       expect(page.querySelector('[aria-label="Enable Workboard"]')).not.toBeNull();
+      expect(page.querySelector(".plugin-catalog-detail__install")).toBeNull();
     },
   );
 
