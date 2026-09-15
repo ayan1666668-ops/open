@@ -123,7 +123,7 @@ export type SessionDeleteOutcome = Pick<SessionsDeleteResult, "deleted" | "workt
 
 export type SessionDeleteBatchResult = {
   deleted: string[];
-  errors: string[];
+  errors: { target: SessionDeleteTarget; error: unknown }[];
   preservedWorktrees: PreservedSessionWorktree[];
 };
 
