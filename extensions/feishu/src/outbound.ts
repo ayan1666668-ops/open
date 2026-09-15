@@ -519,7 +519,9 @@ async function sendFeishuTtsSupplementPayload(params: {
   return lastResult ?? { channel: "feishu", messageId: "" };
 }
 
-function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">) {
+// The direct-send action builds its presentation card before reaching
+// `sendPayload`, so it shares this resolver instead of repeating the rule.
+export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">) {
   const account = resolveFeishuAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
   const tableMode = resolveMarkdownTableMode({
     cfg: ctx.cfg,
