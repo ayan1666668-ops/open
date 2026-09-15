@@ -4816,6 +4816,69 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       },
     );
 
+    it("preserves a single accepted off block without message_id for its matching final", async () => {
+      const { sendMessageFeishu } = await vi.importActual<typeof import("./send.js")>("./send.js");
+      const { result, options } = createBlockTableHarness();
+      resolveFeishuAccountMock.mockReturnValue({
+        ...createReplyAccount("auto", "partial", "feishu"),
+        configured: true,
+      });
+      const createMessage = vi
+        .fn()
+        .mockResolvedValueOnce({ code: 0, data: {} })
+        .mockResolvedValue({ code: 0, data: { message_id: "om-unwanted-retry" } });
+      createFeishuClientMock.mockReturnValue({ im: { message: { create: createMessage } } });
+      sendMessageFeishuMock.mockImplementation(sendMessageFeishu);
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const blockError: unknown = await options
+        .deliver({ text: tableMarkdown }, { kind: "block" })
+        .catch((error: unknown) => error);
+      expect(isChannelPartialDeliveryError(blockError)).toBe(true);
+      expect(blockError).toMatchObject({
+        message: expect.stringContaining("Feishu send failed: no message_id returned"),
+        deliveryResult: { visibleReplySent: true, content: tableMarkdown },
+      });
+      if (!isChannelPartialDeliveryError(blockError)) {
+        throw new Error("expected acceptance without a message identifier");
+      }
+      expect(blockError.deliveryResult.messageIds ?? []).toEqual([]);
+      expect(createMessage).toHaveBeenCalledTimes(1);
+      expect(createMessage).toHaveBeenCalledWith({
+        params: { receive_id_type: "chat_id" },
+        data: {
+          receive_id: "oc_chat",
+          msg_type: "post",
+          content: buildFeishuPostMessageContent({ messageText: tableMarkdown }),
+        },
+      });
+
+      const finalError: unknown = await options
+        .deliver({ text: tableMarkdown }, { kind: "final" })
+        .catch((error: unknown) => error);
+      expect({
+        attempts: createMessage.mock.calls.length,
+        partialFailure: isChannelPartialDeliveryError(finalError),
+      }).toEqual({ attempts: 1, partialFailure: true });
+      expect(finalError).toMatchObject({
+        message: expect.stringContaining("Feishu send failed: no message_id returned"),
+        deliveryResult: { visibleReplySent: true, content: tableMarkdown },
+      });
+      if (!isChannelPartialDeliveryError(finalError)) {
+        throw new Error("expected the matching final to retain the failed outcome");
+      }
+      expect(finalError.deliveryResult.messageIds ?? []).toEqual([]);
+      await Promise.resolve(options.onIdle?.()).catch(() => undefined);
+      await expect(result.ensureNoVisibleReplyFallback("accepted-no-id-block")).resolves.toBe(
+        false,
+      );
+      expect(createMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+    });
+
     it("retries a rejected in-flight block when idle is the only remaining delivery", async () => {
       const { result, options } = createBlockTableHarness();
       let rejectPost!: (error: Error) => void;
