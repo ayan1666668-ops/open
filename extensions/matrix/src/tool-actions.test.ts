@@ -400,6 +400,42 @@ describe("Matrix public message actions", () => {
     });
   });
 
+  it("reads exactly the requested message id instead of room history", async () => {
+    mocks.readMatrixMessage.mockResolvedValueOnce({
+      eventId: "$older",
+      sender: "@alice:example.org",
+      body: "older",
+    });
+    const cfg = { channels: { matrix: { actions: { messages: true } } } } as CoreConfig;
+    const result = await runMatrixAction(
+      "read",
+      { roomId: "room:!room:example", messageId: "$older", limit: 5 },
+      cfg,
+      { accountId: "ops" },
+    );
+
+    expect(mocks.readMatrixMessage).toHaveBeenCalledWith("!room:example", "$older", {
+      cfg,
+      accountId: "ops",
+      client: mocks.matrixClient,
+    });
+    expect(mocks.readMatrixMessages).not.toHaveBeenCalled();
+    expect(result.details).toEqual({
+      ok: true,
+      roomId: "!room:example",
+      messages: [
+        {
+          eventId: "$older",
+          sender: "@alice:example.org",
+          body: "older",
+          id: "$older",
+          authorTag: "@alice:example.org",
+          content: "older",
+        },
+      ],
+    });
+  });
+
   it("projects Matrix message summaries for human-readable CLI output", async () => {
     mocks.readMatrixMessages.mockResolvedValueOnce({
       messages: [
