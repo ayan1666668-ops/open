@@ -382,7 +382,7 @@ describe("recoverEmbeddedRunOverflow", () => {
     ["intentional termination", "prompt"],
     ["intentional termination", "assistant"],
   ])(
-    "does not recover a side-effectful overflow with %s (%s)",
+    "honors settled overflow continuation policy with %s (%s)",
     async (guard, source = "prompt") => {
       const { input, recover, sessionPromptState, failoverRetryController } =
         makeSettledOverflowFixture("exec", source);
@@ -420,11 +420,19 @@ describe("recoverEmbeddedRunOverflow", () => {
         }
       }
 
-      expect(await recover()).toEqual({ action: "proceed" });
-      expect(mocks.compact).not.toHaveBeenCalled();
-      expect(mocks.truncateOversizedToolResults).not.toHaveBeenCalled();
-      expect(sessionPromptState.activePrompt.override).toBeUndefined();
-      expect(sessionPromptState.suppressNextUserMessagePersistence).toBe(false);
+      if (guard === "messaging delivery" || guard === "accepted session spawn") {
+        expect(await recover()).toMatchObject({ action: "retry" });
+        expect(mocks.compact).toHaveBeenCalledOnce();
+        expect(sessionPromptState.activePrompt).toMatchObject({ persisted: true, internal: true });
+        expect(sessionPromptState.activePrompt.override).not.toContain(input.runParams.prompt);
+        expect(sessionPromptState.suppressNextUserMessagePersistence).toBe(true);
+      } else {
+        expect(await recover()).toEqual({ action: "proceed" });
+        expect(mocks.compact).not.toHaveBeenCalled();
+        expect(mocks.truncateOversizedToolResults).not.toHaveBeenCalled();
+        expect(sessionPromptState.activePrompt.override).toBeUndefined();
+        expect(sessionPromptState.suppressNextUserMessagePersistence).toBe(false);
+      }
       expect(failoverRetryController.advanceAuthProfile).not.toHaveBeenCalled();
     },
   );
