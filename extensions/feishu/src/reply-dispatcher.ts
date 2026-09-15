@@ -1427,7 +1427,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         );
       const finalTextExceedsStreamingLimit =
         info?.kind === "final" && hasText && text.length > textChunkLimit;
-      const finalTableNeedsPost = info?.kind === "final" && hasText && tableNeedsPostPath(text);
+      // A block payload reaches a card of its own under block streaming, so the
+      // exclusion covers every card-capable payload and not only a final.
+      const tableNeedsPost = hasText && tableNeedsPostPath(text);
       // Feishu's table ceiling applies to static card elements, not CardKit's streamed markdown.
       // Keep the intents separate so an active preview cannot fork into an independent post.
       const cardRenderingRequested =
@@ -1435,12 +1437,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         (info?.kind === "block" && coreBlockStreamingEnabled && renderMode !== "raw") ||
         (renderMode === "auto" && shouldUseCard(text, nativeTables));
       const useStaticCard =
-        hasText && cardRenderingRequested && !finalTableNeedsPost && withinCardTableLimit(text);
+        hasText && cardRenderingRequested && !tableNeedsPost && withinCardTableLimit(text);
       const useStreamingCard =
         hasText &&
         streamingEnabled &&
         !finalTextExceedsStreamingLimit &&
-        !finalTableNeedsPost &&
+        !tableNeedsPost &&
         (info?.kind === "final" || cardRenderingRequested);
       const skipTextForDuplicateFinal =
         !hasIndependentPresentation &&
@@ -1456,7 +1458,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         !(hasIndependentPresentation && payload.isError === true && hasStreamingFinalText) &&
         (hasIndependentPresentation ||
           finalTextExceedsStreamingLimit ||
-          finalTableNeedsPost ||
+          tableNeedsPost ||
           (hasMedia &&
             ((hasVoiceMedia && !shouldDeliverText && !ttsTextAlreadyVisible) ||
               skipTextForDuplicateFinal)));

@@ -4648,6 +4648,50 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
     });
 
+    it.each([
+      { shape: "piped", text: tableMarkdown },
+      { shape: "pipeless", text: pipelessTableMarkdown },
+    ])("posts an off block carrying a $shape table under block streaming", async ({ text }) => {
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: {
+          renderMode: "auto",
+          streaming: { mode: "partial", block: { enabled: true } },
+        },
+      });
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("off") });
+
+      await options.deliver({ text }, { kind: "block" });
+      await options.onIdle?.();
+
+      expect(streamingInstances).toHaveLength(0);
+      expect(sendMessageFeishuMock).toHaveBeenCalled();
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps an off block without a table on the streaming card", async () => {
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: {
+          renderMode: "auto",
+          streaming: { mode: "partial", block: { enabled: true } },
+        },
+      });
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("off") });
+
+      await options.deliver({ text: "plain block" }, { kind: "block" });
+      await options.onIdle?.();
+
+      expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe("plain block");
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
     it("keeps an off final whose only table is inside a fence on the card path", async () => {
       await deliverFinal("off", "off", fencedTableSample);
 
