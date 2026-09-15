@@ -1,7 +1,7 @@
 import { render } from "lit";
 import { describe, expect, it } from "vitest";
 import type { PluginDiscoveryDetailResult } from "../../lib/plugins/index.ts";
-import { renderPluginCatalogDetail, renderPluginDetailReadme } from "./catalog-detail.ts";
+import { renderPluginCatalogDetail } from "./catalog-detail.ts";
 import { clawHubPackageUrl } from "./catalog-links.ts";
 
 describe("clawHubPackageUrl", () => {
@@ -16,7 +16,7 @@ describe("clawHubPackageUrl", () => {
   });
 });
 
-describe("renderPluginDetailReadme", () => {
+describe("catalog README", () => {
   it("keeps long README tails and wires fenced-code controls", () => {
     const tail = "README_TAIL";
     const result = {
@@ -51,7 +51,21 @@ describe("renderPluginDetailReadme", () => {
     } satisfies PluginDiscoveryDetailResult;
     const container = document.createElement("div");
 
-    render(renderPluginDetailReadme(result), container);
+    render(
+      renderPluginCatalogDetail({
+        connected: true,
+        result,
+        error: null,
+        backHref: "/plugins",
+        onBack: () => undefined,
+        onRetry: () => undefined,
+        canInstall: true,
+        installBlockedReason: null,
+        onInstall: () => undefined,
+        iconUrls: {},
+      }),
+      container,
+    );
 
     expect(container.querySelector(".code-block-copy")).not.toBeNull();
     expect(container.textContent).toContain(tail);
@@ -95,11 +109,9 @@ describe("renderPluginCatalogDetail", () => {
         connected: true,
         result,
         error: null,
-        tab: "readme",
         backHref: "/plugins",
         onBack: () => undefined,
         onRetry: () => undefined,
-        onTabChange: () => undefined,
         canInstall: false,
         installBlockedReason: null,
         onInstall: () => undefined,

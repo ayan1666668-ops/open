@@ -519,7 +519,11 @@ export function enabledWorkboardCapabilities() {
   };
 }
 
-async function captureScreenshot(page: Page, name: string): Promise<void> {
+async function captureScreenshot(
+  page: Page,
+  name: string,
+  target: "content" | "viewport" = "content",
+): Promise<void> {
   if (!updateScreenshots) {
     return;
   }
@@ -528,7 +532,7 @@ async function captureScreenshot(page: Page, name: string): Promise<void> {
     artifactDir = createControlUiE2eArtifactDir("plugins");
     artifacts.set(page, artifactDir);
   }
-  await page.locator(".content").screenshot({
+  await (target === "viewport" ? page : page.locator(".content")).screenshot({
     animations: "disabled",
     caret: "hide",
     path: path.join(artifactDir, name),
