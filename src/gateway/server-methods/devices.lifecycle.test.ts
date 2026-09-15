@@ -62,6 +62,7 @@ describe("device lifecycle", () => {
         client: createClient(["operator.pairing"], " device-1 ", { isDeviceTokenAuth: true }),
       },
     );
+    const updateSurface = vi.spyOn(opts.context.nodeRegistry, "updateSurface");
     vi.mocked(opts.context.logGateway.warn).mockImplementation(() => {
       order.push("warn");
     });
@@ -130,7 +131,7 @@ describe("device lifecycle", () => {
     expect(opts.context.broadcast).not.toHaveBeenCalled();
     expect(opts.context.invalidateClientsForDevice).not.toHaveBeenCalled();
     expect(opts.context.disconnectClientsForDevice).not.toHaveBeenCalled();
-    expect(opts.context.nodeRegistry.updateSurface).not.toHaveBeenCalled();
+    expect(updateSurface).not.toHaveBeenCalled();
   });
 
   it("clears and invalidates node runtime state after removing a full device pairing", async () => {
