@@ -213,6 +213,7 @@ describe("listGatewayMethods", () => {
       "controlUi.sessionPullRequests.checks",
       "diagnostics.cpuProfile",
       ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -252,6 +253,7 @@ describe("listGatewayMethods", () => {
       "controlUi.sessionPullRequests.checks",
       "diagnostics.cpuProfile",
       ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
     ]);
   });
 
@@ -420,6 +422,7 @@ describe("listGatewayMethods", () => {
       "controlUi.sessionPullRequests.checks",
       "diagnostics.cpuProfile",
       ...voiceSelectionMethods,
+      "plugins.credentials.inspect",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
