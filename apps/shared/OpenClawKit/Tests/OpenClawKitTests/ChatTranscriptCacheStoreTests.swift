@@ -103,74 +103,6 @@ private final class OutboxReadCounter: @unchecked Sendable {
     }
 }
 
-private func printOutboxSQLitePlans(_ db: Database) throws {
-    let queries: [(String, String, StatementArguments)] = [
-        ("command-counts", """
-        SELECT c.*, s.branch_epoch AS scope_branch_epoch,
-          (SELECT COUNT(*) FROM outbox_attachments a
-           WHERE a.gateway_id = c.gateway_id AND a.command_id = c.client_uuid) AS attachment_count
-        FROM outbox_commands c
-        LEFT JOIN outbox_branch_scopes s
-          ON s.gateway_id = c.gateway_id AND s.session_key = c.session_key
-            AND s.agent_id = c.agent_id
-        WHERE c.gateway_id = ?
-        ORDER BY c.created_at, c.enqueue_sequence
-        """, ["gw-a"]),
-        ("cross-join-attachments", """
-        SELECT a.type, a.mime_type, a.file_name, a.payload, a.duration_seconds
-        FROM outbox_commands c
-        CROSS JOIN outbox_attachments a
-          ON a.gateway_id = c.gateway_id AND a.command_id = c.client_uuid
-        WHERE c.gateway_id = ?
-        ORDER BY c.created_at, c.enqueue_sequence, a.position
-        """, ["gw-a"]),
-        ("original-exact-attachments", """
-        SELECT type, mime_type, file_name, payload, duration_seconds
-        FROM outbox_attachments
-        WHERE gateway_id = ? AND command_id = ? ORDER BY position
-        """, ["gw-a", "later"]),
-    ]
-    let schema = try Row.fetchAll(
-        db,
-        sql: """
-        SELECT name, sql FROM sqlite_schema
-        WHERE tbl_name IN ('outbox_commands', 'outbox_attachments', 'outbox_branch_scopes')
-        ORDER BY name
-        """).map { String(describing: $0) }
-    let fetchedVersion = try String.fetchOne(db, sql: "SELECT sqlite_version()")
-    let version = try #require(fetchedVersion)
-    let fetchedSourceID = try String.fetchOne(db, sql: "SELECT sqlite_source_id()")
-    let sourceID = try #require(fetchedSourceID)
-    for (name, sql, arguments) in queries {
-        let plan = try Row.fetchAll(
-            db, sql: "EXPLAIN QUERY PLAN " + sql, arguments: arguments).map { String(describing: $0) }
-        let opcodes = try Row.fetchAll(
-            db, sql: "EXPLAIN " + sql, arguments: arguments).map { String(describing: $0) }
-        let statement = try db.makeStatement(sql: sql)
-        let cursor = try Row.fetchCursor(statement, arguments: arguments)
-        var returnedRows = 0
-        while try cursor.next() != nil {
-            returnedRows += 1
-        }
-        let report: [String: Any] = [
-            "probe": "apple-outbox-sqlite-plan-v1",
-            "query": name,
-            "sql": sql,
-            "sqliteVersion": version,
-            "sqliteSourceID": sourceID,
-            "schema": schema,
-            "queryPlan": plan,
-            "opcodes": opcodes,
-            "returnedRows": returnedRows,
-            "sortOperations": sqlite3_stmt_status(statement.sqliteStatement, SQLITE_STMTSTATUS_SORT, 0),
-            "vmSteps": sqlite3_stmt_status(statement.sqliteStatement, SQLITE_STMTSTATUS_VM_STEP, 0),
-            "fullScanSteps": sqlite3_stmt_status(statement.sqliteStatement, SQLITE_STMTSTATUS_FULLSCAN_STEP, 0),
-        ]
-        let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-        print(String(decoding: data, as: UTF8.self))
-    }
-}
-
 private func outboxCommand(
     id: String = UUID().uuidString,
     sessionKey: String = "main",
@@ -1588,7 +1520,6 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         try await databases.stateQueue.writeWithoutTransaction { db in
             db.trace(options: [])
         }
-        print("[apple-outbox-owner-v1] loadCommandsIfAvailable SELECT executions: \(counter.count)")
         let commands = try #require(loaded)
         #expect(counter.count > 0)
         #expect(counter.count <= 2)
@@ -1611,9 +1542,6 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
                 WHERE gateway_id = 'gw-a' AND command_id = 'later' AND position = 0
                 """)
         } == attachment.data)
-        try await databases.stateQueue.read { db in
-            try printOutboxSQLitePlans(db)
-        }
     }
 
     @Test(arguments: [false, true])
