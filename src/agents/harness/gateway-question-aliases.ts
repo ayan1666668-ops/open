@@ -86,7 +86,7 @@ export const questionAliases = Object.freeze({
         if (aliases.get(lookupKey) !== aliased) {
           throw new Error("requester answer route is no longer current");
         }
-        if (caller.senderIsOwner !== true) {
+        if (!caller.senderIsOwner) {
           throw new Error("requester answer requires the owner of the requesting conversation");
         }
       },
