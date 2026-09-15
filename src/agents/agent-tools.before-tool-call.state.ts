@@ -4,7 +4,7 @@
  * normalized payload selected by hook processing.
  */
 export const adjustedParamsByToolCallId = new Map<string, unknown>();
-const preExecutionBlockedToolCallIds = new Set<string>();
+export const preExecutionBlockedToolCallIds = new Set<string>();
 export const structuredReplaySafeToolCallIds = new Set<string>();
 const startedToolCallIds = new Set<string>();
 const trackedToolCallIds = new Set<string>();
@@ -30,23 +30,6 @@ export function peekAdjustedParamsForToolCall(toolCallId: string, runId?: string
   const key = buildAdjustedParamsKey({ runId, toolCallId });
   const params = adjustedParamsByToolCallId.get(key);
   return params === undefined ? undefined : structuredClone(params);
-}
-
-const MAX_TRACKED_PRE_EXECUTION_BLOCKED = 1024;
-
-/** Record that policy prevented the target tool from starting. */
-export function recordPreExecutionBlockedToolCall(toolCallId?: string, runId?: string): void {
-  if (!toolCallId) {
-    return;
-  }
-  preExecutionBlockedToolCallIds.add(buildAdjustedParamsKey({ runId, toolCallId }));
-  while (preExecutionBlockedToolCallIds.size > MAX_TRACKED_PRE_EXECUTION_BLOCKED) {
-    const oldest = preExecutionBlockedToolCallIds.values().next().value;
-    if (!oldest) {
-      break;
-    }
-    preExecutionBlockedToolCallIds.delete(oldest);
-  }
 }
 
 /** Consume whether policy prevented the target tool from starting. */
