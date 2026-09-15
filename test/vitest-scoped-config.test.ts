@@ -1036,6 +1036,19 @@ describe("scoped vitest configs", () => {
     for (const file of databaseWorkerCoreTestFiles) {
       expect(matchingExcludePatterns(testConfig.exclude ?? [], file), file).toEqual([]);
     }
+    const fixture = "src/wizard/setup.inference-recovery.integration.test.ts";
+    expectForkedIsolatedRunner(defaultInfraConfig);
+    expect(
+      (testConfig.include ?? []).filter((pattern) => path.matchesGlob(fixture, pattern)),
+      fixture,
+    ).toHaveLength(1);
+    expect(matchingExcludePatterns(testConfig.exclude ?? [], fixture), fixture).toEqual([]);
+    expect(
+      matchingExcludePatterns(
+        requireTestConfig(defaultWizardConfig).exclude ?? [],
+        "wizard/setup.inference-recovery.integration.test.ts",
+      ),
+    ).not.toEqual([]);
   });
 
   it.each([

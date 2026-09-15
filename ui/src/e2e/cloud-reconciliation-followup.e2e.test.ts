@@ -1,6 +1,7 @@
 import path from "node:path";
 import { expect, it } from "vitest";
 import type { ApplicationContext } from "../app/context.ts";
+import type { ChatHost } from "../pages/chat/chat-send-contract.ts";
 import {
   captureUiProofEnabled,
   chatSessionListResponse,
@@ -10,6 +11,7 @@ import {
   requireRecord,
   requireString,
 } from "./chat-flow.test-support.ts";
+import { waitForCommittedState } from "./settle.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
 const sessionKey = "agent:main:cloud-reconciliation";
@@ -167,8 +169,18 @@ suite.define(() => {
             path: path.join(suite.artifactDir, "cloud-reconciliation", "01-slow-sync.png"),
           });
         }
+        await waitForCommittedState(
+          page,
+          ({ runId: expectedRunId }) => {
+            const state = document.querySelector<HTMLElement & { state: ChatHost }>(
+              "openclaw-chat-pane",
+            )?.state;
+            return state !== undefined && state.chatRunId === expectedRunId && !state.chatSending;
+          },
+          { runId },
+        );
 
-        const active = session("active");
+        const active = { ...session("active"), lastRunId: runId };
         // The persisted event and later history reads describe the same reply.
         const resumedReplyId = "automatic-follow-up-result";
         const resumedReply = {
@@ -195,10 +207,25 @@ suite.define(() => {
         await gateway.setMethodResponse("chat.startup", activeHistory);
         await gateway.setSessionsListResponse(chatSessionListResponse([active]));
         await gateway.emitGatewayEvent("sessions.changed", {
+          ...active,
           agentId: "main",
           reason: "placement",
           sessionKey,
         });
+        await waitForCommittedState(
+          page,
+          ({ sessionKey: expectedSessionKey }) => {
+            const state = document.querySelector<HTMLElement & { state: ChatHost }>(
+              "openclaw-chat-pane",
+            )?.state;
+            return (
+              state !== undefined &&
+              state.sessionKey === expectedSessionKey &&
+              state.chatRunId === null
+            );
+          },
+          { sessionKey },
+        );
         await gateway.emitGatewayEvent("session.message", {
           activeRunIds: [],
           hasActiveRun: false,
