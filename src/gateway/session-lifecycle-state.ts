@@ -16,6 +16,7 @@ import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js
 import { patchSessionEntryCore } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getAgentEventLifecycleGeneration, type AgentEventPayload } from "../infra/agent-events.js";
+import { hasLiveAgentRunContext, listAgentRunsForSession } from "../infra/agent-run-registry.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseCronRunScopeSuffix } from "../sessions/session-key-utils.js";
 import {
@@ -489,13 +490,11 @@ const STALE_RUNNING_RECONCILE_ERROR =
 
 /**
  * True when a durable `running` row is old enough that a missing live-run
- * registry entry means the run is dead rather than still starting up. Read
- * projections use this to avoid showing a just-started run as terminal.
+ * registry entry means the run is dead rather than still starting up. The age
+ * gate keeps the settlement from racing a just-started run whose
+ * controller/registry entry has not been published yet.
  */
-export function isStaleRunningSessionAge(
-  updatedAt: number | null | undefined,
-  now = Date.now(),
-): boolean {
+function isStaleRunningSessionAge(updatedAt: number | null | undefined, now = Date.now()): boolean {
   return (
     typeof updatedAt === "number" &&
     Number.isFinite(updatedAt) &&
@@ -538,10 +537,12 @@ function buildStaleRunningTerminalPatch(params: {
  * transaction through `assertCommitAllowed`. Read-only callers must never reach
  * this function, because the settlement clears lifecycle ownership.
  *
- * `hasLiveRun` must synchronously re-read every live-run registry. It is called
- * again inside the commit transaction, so a run that started after the initial
- * read is never settled. The age gate avoids racing a just-started run whose
- * controller/registry entry has not been published yet.
+ * Every "is this row still owned?" input is re-read inside the commit
+ * transaction — the caller's live-run view, the operational run registry (row
+ * writer ids, session-bound contexts, retained queue leases, pending recovery
+ * fences) and the yielded-main-session continuation — so work that appears after
+ * the patch callback yields is never marked failed. The age gate additionally
+ * avoids racing a just-started run whose registry entry is not published yet.
  */
 export async function reconcileStaleRunningSession(params: {
   sessionKey: string;
@@ -550,6 +551,13 @@ export async function reconcileStaleRunningSession(params: {
   hasLiveRun: () => boolean;
   now?: number;
   assertCommitAllowed?: () => void;
+  /** Test seam for the operational run-registry ownership check. */
+  isLiveRunContext?: (runId: string) => boolean;
+  /** Test seam for the session-bound registry lookup. */
+  listSessionRuns?: (params: {
+    sessionKey: string;
+    sessionId?: string;
+  }) => Array<{ runId: string }>;
 }): Promise<boolean> {
   const sessionEntry = loadSessionEntry(params.sessionKey, {
     ...(params.agentId ? { agentId: params.agentId } : {}),
@@ -566,17 +574,15 @@ export async function reconcileStaleRunningSession(params: {
   if (typeof startedAt === "number" && !isStaleRunningSessionAge(startedAt, now)) {
     return false;
   }
-  if (params.hasLiveRun()) {
+  const keepsRunning = (row: SessionEntry) =>
+    keepsRunningForStaleSettlement({ sessionEntry, entry: row, params });
+  if (keepsRunning(entry)) {
     return false;
   }
-  const settlement = captureYieldedContinuationProtection(sessionEntry, entry, params);
-  if (settlement.keepsRunning()) {
-    return false;
-  }
-  // Facts captured from the row the write is prepared against, re-asserted by
-  // the synchronous commit guard below.
-  let pendingLivenessRecheck: (() => boolean) | undefined;
-  let pendingYieldedRecheck: (() => boolean) | undefined;
+  // The row the write is prepared against. The commit guard re-evaluates
+  // ownership against it, because the registries can change while the accessor
+  // awaits before its transaction.
+  let fencedEntry: SessionEntry | undefined;
   let settled = false;
   let commitAborted = false;
   let persisted: SessionEntry | null;
@@ -589,7 +595,7 @@ export async function reconcileStaleRunningSession(params: {
       (storedEntry) => {
         // SAFETY: The lifecycle store returns the durable session row persisted under this storePath/sessionKey; its schema-version gate guarantees the SessionEntry shape.
         const current = storedEntry as SessionEntry;
-        if (current.status !== "running" || params.hasLiveRun()) {
+        if (current.status !== "running" || keepsRunning(current)) {
           return null;
         }
         const patch = buildStaleRunningTerminalPatch({ entry: current, now });
@@ -599,12 +605,7 @@ export async function reconcileStaleRunningSession(params: {
         if (!patch || !isTerminalSessionRunStatus(patch.status)) {
           return null;
         }
-        const yielded = captureYieldedContinuationProtection(sessionEntry, current, params);
-        if (yielded.keepsRunning()) {
-          return null;
-        }
-        pendingLivenessRecheck = params.hasLiveRun;
-        pendingYieldedRecheck = yielded.keepsRunning;
+        fencedEntry = current;
         settled = true;
         return patch;
       },
@@ -612,25 +613,18 @@ export async function reconcileStaleRunningSession(params: {
         skipMaintenance: true,
         takeCacheOwnership: true,
         requireWriteSuccess: true,
-        // Synchronous final guard: the patch callback yielded before BEGIN, so a run
-        // can acquire live ownership (or a yielded parent can regain its
-        // continuation) without changing this session row. Re-read those registries
-        // here, where the accessor already fenced the row itself.
+        // Synchronous final guard. Ownership is re-derived here from live
+        // registries against the row the accessor just fenced, so a continuation
+        // or owner that appeared after the callback yielded still blocks the write.
         assertCommitAllowed: () => {
           params.assertCommitAllowed?.();
-          if (!settled) {
+          if (!settled || !fencedEntry) {
             return;
           }
-          if (pendingLivenessRecheck?.()) {
+          if (keepsRunning(fencedEntry)) {
             commitAborted = true;
             throw new Error(
-              "The session run became live before the stale-running settlement committed.",
-            );
-          }
-          if (pendingYieldedRecheck?.()) {
-            commitAborted = true;
-            throw new Error(
-              "The session resumed a yielded continuation before the stale-running settlement committed.",
+              "Session work reappeared before the stale-running settlement committed.",
             );
           }
         },
@@ -661,11 +655,87 @@ export async function reconcileStaleRunningSession(params: {
   return true;
 }
 
+/** True when any live-run owner still claims this row. */
+function keepsRunningForStaleSettlement(params: {
+  sessionEntry: ReturnType<typeof loadSessionEntry>;
+  entry: SessionEntry;
+  params: {
+    agentId?: string;
+    cfg?: OpenClawConfig;
+    hasLiveRun: () => boolean;
+    isLiveRunContext?: (runId: string) => boolean;
+    listSessionRuns?: (params: {
+      sessionKey: string;
+      sessionId?: string;
+    }) => Array<{ runId: string }>;
+  };
+}): boolean {
+  if (params.params.hasLiveRun()) {
+    return true;
+  }
+  if (
+    hasOperationalSessionOwner({
+      entry: params.entry,
+      sessionKey: params.sessionEntry.canonicalKey,
+      generation: getAgentEventLifecycleGeneration(),
+      isLiveRunContext: params.params.isLiveRunContext ?? hasLiveAgentRunContext,
+      listSessionRuns: params.params.listSessionRuns ?? listAgentRunsForSession,
+    })
+  ) {
+    return true;
+  }
+  return captureYieldedContinuationProtection(
+    params.sessionEntry,
+    params.entry,
+    params.params,
+  ).keepsRunning();
+}
+
+/**
+ * Operational run ownership for a session row.
+ *
+ * The display projection (`resolveVisibleActiveSessionRunState`) is deliberately
+ * narrower than the registry: it omits contexts without active display
+ * projection, while `hasLiveAgentRunContext` also recognizes owner claims and
+ * retained queue leases. Settlement must use the operational view, including the
+ * row's own writer identities and any recovery fence pinned to the current
+ * lifecycle generation — otherwise admitted-but-unprojected work is marked
+ * failed.
+ */
+function hasOperationalSessionOwner(params: {
+  entry: SessionEntry;
+  sessionKey: string;
+  generation: string;
+  isLiveRunContext: (runId: string) => boolean;
+  listSessionRuns: (params: { sessionKey: string; sessionId?: string }) => Array<{ runId: string }>;
+}): boolean {
+  const rowWriterRunIds = [params.entry.activeWriterRunId, params.entry.lifecycleRunId];
+  for (const runId of rowWriterRunIds) {
+    if (runId && params.isLiveRunContext(runId)) {
+      return true;
+    }
+  }
+  const sessionRuns = params.listSessionRuns({
+    sessionKey: params.sessionKey,
+    ...(params.entry.sessionId ? { sessionId: params.entry.sessionId } : {}),
+  });
+  if (sessionRuns.some((run) => params.isLiveRunContext(run.runId))) {
+    return true;
+  }
+  return (params.entry.restartRecoveryRuns ?? []).some(
+    (run) => run.lifecycleGeneration === params.generation,
+  );
+}
+
 /**
  * A parent that yielded while its children run is intentionally still `running`
  * after its own execution registration ends. `captureYieldedMainSessionContinuation`
  * is the existing owner of that distinction (the orphan planner uses it too), so
- * reconciliation and projection must not treat such a row as abandoned.
+ * reconciliation must not treat such a row as abandoned.
+ *
+ * Callers re-capture at commit time instead of retaining the callback: a capture
+ * that found no continuation returns a constant `false`, which could not observe
+ * a child continuation established while the write waited.
  */
 function captureYieldedContinuationProtection(
   sessionEntry: ReturnType<typeof loadSessionEntry>,

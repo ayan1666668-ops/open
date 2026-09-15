@@ -203,6 +203,76 @@ it("preserves a parent that yielded to a running child continuation", async () =
   }
 });
 
+it("keeps a running row whose owner exists only in the operational registry", async () => {
+  const { tempDirs, target } = createTarget("reconcile-operational-owner");
+  resetRegistry();
+  try {
+    await replaceSessionEntry(target, {
+      sessionId: "reconcile-operational-session",
+      lifecycleRunId: "reconcile-operational-run",
+      status: "running",
+      startedAt: 1_000,
+      updatedAt: 1_000,
+    });
+    // The registry still owns this run (claim/lease) even though the display
+    // projection would report the session as inactive.
+    const reconciled = await reconcileStaleRunningSession({
+      sessionKey: target.sessionKey,
+      hasLiveRun: () => false,
+      now: 1_000_000,
+      isLiveRunContext: (runId) => runId === "reconcile-operational-run",
+      listSessionRuns: () => [],
+    });
+    expect(reconciled).toBe(false);
+    expect(readLatest(target)?.status).toBe("running");
+  } finally {
+    routing.loadSessionEntry.mockReset();
+    closeOpenClawAgentDatabasesForTest();
+    tempDirs.cleanup();
+  }
+});
+
+it("keeps a row whose child continuation appears after the patch was prepared", async () => {
+  const { tempDirs, target } = createTarget("reconcile-late-continuation");
+  try {
+    const owner = {
+      runId: "late-child-run",
+      collect: false,
+      expectsCompletionMessage: true,
+      requesterTurnRunId: undefined,
+      requesterSettleWake: {
+        requesterYieldBatch: true,
+        rearmGeneration: 11,
+        batchRunIds: ["late-child-run"],
+      },
+    };
+    // Preparation sees no continuation; the commit-time re-capture must see it.
+    subagents.listSubagentRunsForRequester.mockReset();
+    subagents.listSubagentRunsForRequester.mockReturnValueOnce([]).mockReturnValue([owner]);
+    await replaceSessionEntry(target, {
+      sessionId: "reconcile-late-continuation-session",
+      lifecycleRunId: "reconcile-late-continuation-run",
+      status: "running",
+      startedAt: 1_000,
+      updatedAt: 1_000,
+      endedAt: 1_000,
+    });
+    const reconciled = await reconcileStaleRunningSession({
+      sessionKey: target.sessionKey,
+      hasLiveRun: () => false,
+      now: 1_000_000,
+      listSessionRuns: () => [],
+    });
+    expect(reconciled).toBe(false);
+    expect(readLatest(target)?.status).toBe("running");
+  } finally {
+    routing.loadSessionEntry.mockReset();
+    resetRegistry();
+    closeOpenClawAgentDatabasesForTest();
+    tempDirs.cleanup();
+  }
+});
+
 it("re-asserts the caller's authority inside the commit transaction", async () => {
   const { tempDirs, target } = createTarget("reconcile-authority");
   resetRegistry();
