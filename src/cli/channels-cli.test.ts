@@ -16,7 +16,9 @@ const listBundledPackageChannelMetadataMock = vi.hoisted(() =>
 const listRawChannelPluginCatalogEntriesMock = vi.hoisted(() =>
   vi.fn<() => ChannelPluginCatalogEntry[]>(() => []),
 );
-const channelsAddCommandMock = vi.hoisted(() => vi.fn(async () => undefined));
+const channelsAddCommandMock = vi.hoisted(() =>
+  vi.fn<typeof import("../commands/channels.js").channelsAddCommand>(async () => undefined),
+);
 const channelsLogsCommandMock = vi.hoisted(() =>
   vi.fn(async (_options: { channel?: string }, _runtime: unknown) => undefined),
 );
