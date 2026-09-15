@@ -297,7 +297,7 @@ describe("ManagedWorktreeService failure diagnostics", () => {
     await fs.writeFile(path.join(created.path, "README.md"), "complete recoverable edit\n");
     const marker = path.join(root, "removal-child.pid");
     const release = path.join(root, "release-removal");
-    const removalAdmitted = createDeferredCore<void>();
+    const removalAdmitted = createDeferredCore();
     let removalStarted = false;
     vi.spyOn(commandExec, "runCommandWithTimeout").mockImplementation(async (argv, options) => {
       const args = gitCommandArgs(argv);
