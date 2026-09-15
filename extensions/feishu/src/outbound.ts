@@ -49,6 +49,7 @@ import {
   buildFeishuPayloadCard,
   consumeFeishuPresentationFallbackMarker,
   FEISHU_PRESENTATION_CAPABILITIES,
+  hasCardMarkdownTable,
   markRenderedFeishuCard,
   readNativeFeishuCard,
   renderFeishuPresentationPayload,
@@ -330,10 +331,11 @@ async function sendOutboundText(params: {
   const nativeTables = tableMode === "block";
   const tableText = nativeTables ? text : convertMarkdownTables(text, tableMode);
   // off has no card representation, since a card renderer parses the pipes, so a
-  // table that stays raw takes the post path even when cards were requested.
+  // table that stays raw takes the post path even when cards were requested. The
+  // card renderer's own parser answers what counts as a table here.
   const useCard =
     (renderMode === "card" || (renderMode === "auto" && shouldUseCard(tableText, nativeTables))) &&
-    !(tableMode === "off" && hasMarkdownTable(tableText)) &&
+    !(tableMode === "off" && hasCardMarkdownTable(tableText)) &&
     withinCardTableLimit(tableText);
 
   // Post rendering has no native tables, so block falls back to code there.

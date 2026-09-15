@@ -147,6 +147,16 @@ export function withinCardTableLimit(text: string): boolean {
   return countMarkdownTables(text) <= FEISHU_CARD_TABLE_LIMIT;
 }
 
+/**
+ * Whether a card renderer would draw a table for this text. The card limit above
+ * already counts tables with the renderer's own parser, so both answers come from
+ * one owner: pipe-less GFM counts, and a fenced sample that only looks like a
+ * table does not.
+ */
+export function hasCardMarkdownTable(text: string): boolean {
+  return countMarkdownTables(text) > 0;
+}
+
 export function feishuCardWithinTableLimit(card: Record<string, unknown>): boolean {
   let remaining = FEISHU_CARD_TABLE_LIMIT;
   const visit = (value: unknown): boolean => {

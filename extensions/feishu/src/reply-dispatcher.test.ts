@@ -4515,6 +4515,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
 
   describe("markdown table modes", () => {
     const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+    // GFM makes the outer pipes optional, and a fence hides rows that only look like a table.
+    const pipelessTableMarkdown = "Name | Role\n--- | ---\nAda | Lead";
+    const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
     const bulletsCard = "**Ada**\n• Role: Lead";
     const bulletsPost = "**Ada**  \n• Role: Lead";
     let codeText = "";
@@ -4565,10 +4568,11 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     async function deliverFinal(
       tables: MarkdownTableMode | undefined,
       streaming: "off" | "partial",
+      text = tableMarkdown,
     ) {
       resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", streaming, "feishu"));
       const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg(tables) });
-      const delivery = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      const delivery = await options.deliver({ text }, { kind: "final" });
       await options.onIdle?.();
       await delivery?.finalization;
     }
@@ -4634,6 +4638,23 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect.objectContaining({ text: tableMarkdown }),
       );
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("routes an off final with a pipeless GFM table to the post path", async () => {
+      await deliverFinal("off", "partial", pipelessTableMarkdown);
+
+      expect(streamingInstances).toHaveLength(0);
+      expect(sendMessageFeishuMock).toHaveBeenCalled();
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("keeps an off final whose only table is inside a fence on the card path", async () => {
+      await deliverFinal("off", "off", fencedTableSample);
+
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: fencedTableSample }),
+      );
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     });
 
     it("discards an open preview when an off final carries a table", async () => {

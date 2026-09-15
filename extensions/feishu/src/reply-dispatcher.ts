@@ -32,6 +32,7 @@ import { sendMediaFeishu, shouldSuppressFeishuTextForVoiceMedia } from "./media.
 import type { MentionTarget } from "./mention-target.types.js";
 import {
   consumeFeishuPresentationFallbackMarker,
+  hasCardMarkdownTable,
   renderFeishuReplyPayload,
   withinCardTableLimit,
 } from "./presentation-card.js";
@@ -302,6 +303,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const postTableMode = nativeTables ? "code" : tableMode;
   const renderTables = (value: string): string =>
     nativeTables ? value : core.channel.text.convertMarkdownTables(value, tableMode);
+  // off has no card representation, since a card renderer parses the pipes, so text
+  // that still carries a table takes the post path. The card renderer's own parser
+  // answers what counts as a table, so pipe-less GFM counts and a fenced sample that
+  // only looks like one does not.
+  const tableNeedsPostPath = (value: string): boolean =>
+    tableMode === "off" && hasCardMarkdownTable(value);
   const renderMode = account.config?.renderMode ?? "auto";
   // Streaming cards cannot attach native mention recipients. Bot-authored ingress
   // therefore uses normal cards/posts so every emitted unit reaches the peer bot.
@@ -1420,10 +1427,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         );
       const finalTextExceedsStreamingLimit =
         info?.kind === "final" && hasText && text.length > textChunkLimit;
-      // off has no card representation, since a card renderer parses the pipes, so a
-      // final that still carries a table takes the post path like an oversized final.
-      const finalTableNeedsPost =
-        info?.kind === "final" && hasText && tableMode === "off" && hasMarkdownTable(text);
+      const finalTableNeedsPost = info?.kind === "final" && hasText && tableNeedsPostPath(text);
       // Feishu's table ceiling applies to static card elements, not CardKit's streamed markdown.
       // Keep the intents separate so an active preview cannot fork into an independent post.
       const cardRenderingRequested =

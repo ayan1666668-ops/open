@@ -195,6 +195,9 @@ const cardRenderConfig: ClawdbotConfig = {
 };
 
 const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
+// GFM makes the outer pipes optional, and a fence hides rows that only look like a table.
+const pipelessTableMarkdown = "Name | Role\n--- | ---\nAda | Lead";
+const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
 // Root credentials make the implicit default account configured, so a send
 // without an account id resolves to it and reads the channel value.
 const tableModeConfig: ClawdbotConfig = {
@@ -3920,6 +3923,28 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
 
     expect(sendMessageCall()?.text).toBe(tableMarkdown);
     expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
+  it("off posts a pipeless GFM table the card renderer would draw", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: { feishu: { renderMode: "card", markdown: { tables: "off" } } },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: pipelessTableMarkdown, accountId: "main" });
+
+    expect(sendMessageFeishuMock).toHaveBeenCalled();
+    expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+  });
+
+  it("off keeps a fenced table sample on the card path", async () => {
+    const cfg: ClawdbotConfig = {
+      channels: { feishu: { renderMode: "card", markdown: { tables: "off" } } },
+    };
+
+    await sendText({ cfg, to: "chat_1", text: fencedTableSample, accountId: "main" });
+
+    expect(sendStructuredCardCall()?.text).toBe(fencedTableSample);
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
   });
 
   describe.each(["channel", "account"] as const)("configured at %s scope", (scope) => {
