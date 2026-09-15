@@ -130,6 +130,7 @@ const realGatewayFiles = [
   "model-catalog-partial-refresh.real-gateway",
   "model-picker-search.real-gateway",
   "profile-page.real-gateway",
+  "provider-browser-login.real-gateway",
   "quota-reset-status.real-gateway",
   "session-progress-hovercard.real-gateway",
   "usage-sessions-owner-attribution",
@@ -561,7 +562,7 @@ describe("Control UI E2E resource ownership", () => {
         },
       ]);
       const parallel = result.files.filter((entry) => entry.phase === 2);
-      expect(parallel).toHaveLength(26);
+      expect(parallel).toHaveLength(27);
       expect(parallel.every((entry) => entry.fileParallelism)).toBe(true);
       expect(parallel.every((entry) => entry.workers === result.rootWorkers)).toBe(true);
       for (const entry of parallel) {
