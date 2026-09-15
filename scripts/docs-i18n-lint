@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Regex safety net for the per-language register rules documented in
+# docs/.i18n/L10N_GUIDE.md. Cheap and dumb on purpose: it catches obvious
+# regressions (e.g. "您" leaking into zh-CN), not translation quality.
+set -euo pipefail
+
+usage() {
+  echo "Usage: scripts/docs-i18n-lint <lang> [docs-root]" >&2
+  echo "  lang: zh-CN | ja-JP (others have no rules yet, add to this script first)" >&2
+}
+
+lang="${1:-}"
+docs_root="${2:-docs}"
+
+if [[ -z "$lang" ]]; then
+  usage
+  exit 2
+fi
+
+target_dir="$docs_root/$lang"
+if [[ ! -d "$target_dir" ]]; then
+  echo "docs-i18n-lint: no such directory: $target_dir" >&2
+  exit 2
+fi
+
+fail=0
+
+check() {
+  local pattern="$1"
+  local message="$2"
+  local matches
+  matches=$(grep -rnP "$pattern" "$target_dir" --include='*.md' 2>/dev/null || true)
+  if [[ -n "$matches" ]]; then
+    echo "FAIL: $message"
+    echo "$matches" | sed 's/^/  /'
+    echo
+    fail=1
+  fi
+}
+
+case "$lang" in
+  zh-CN)
+    # 您/您的 should never appear; rule is 你/你的 only (see L10N_GUIDE.md).
+    check '您' 'zh-CN prose uses formal 您 instead of 你 (see docs/.i18n/L10N_GUIDE.md#zh-cn-simplified-chinese)'
+    ;;
+  ja-JP)
+    # Avoid heavy honorific forms the prompt is told to skip.
+    check 'でございます' 'ja-JP prose uses heavy honorific でございます (see docs/.i18n/L10N_GUIDE.md#ja-jp-japanese)'
+    ;;
+  *)
+    echo "docs-i18n-lint: no rules defined for lang '$lang' yet." >&2
+    echo "Add a case to scripts/docs-i18n-lint and a section to docs/.i18n/L10N_GUIDE.md first." >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$fail" -eq 0 ]]; then
+  echo "docs-i18n-lint: $lang OK (no register violations found)"
+fi
+
+exit "$fail"
