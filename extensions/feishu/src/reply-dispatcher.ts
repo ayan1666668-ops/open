@@ -597,9 +597,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       if (streamingToClose?.isActive()) {
         statusLine = "";
         const text = buildCombinedStreamText(finalizedReasoningText, answerText);
+        // Committing here would put the table in a card just as surely as delivering a
+        // final would, so this close owns the same routing decision: drop the card and
+        // own the post, which keeps one visible delivery for a final to inherit.
+        const closeNeedsPost = disposition === "closed" && tableNeedsPostPath(text);
         let closed;
         try {
-          if (disposition === "discarded") {
+          if (disposition === "discarded" || closeNeedsPost) {
             closed = await streamingToClose.discard();
           } else {
             const finalNote = resolveCardNote(agentId, identity, responsePrefixContextProvider());
@@ -618,6 +622,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           content: closed.content,
           kind: "card",
         });
+        // A failed removal can leave the card visible, so only a clean discard hands
+        // the text to a post instead.
+        if (closeNeedsPost && finalizationError === undefined) {
+          result = await sendPostReply(text);
+        }
         if (result.visibleReplySent) {
           markVisibleReplySent();
         }

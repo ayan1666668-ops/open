@@ -4723,6 +4723,56 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
     });
 
+    it.each([
+      { shape: "piped", text: tableMarkdown },
+      { shape: "pipeless", text: pipelessTableMarkdown },
+    ])(
+      "posts an idle-closed $shape table preview and assigns it to the matching final in off mode",
+      async ({ text }) => {
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+        const { result, options } = createDispatcherHarness({
+          accountId: "main",
+          cfg: tableCfg("off"),
+        });
+        result.replyOptions.onPartialReply?.({ text });
+        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+        const instance = requireStreamingInstance(0);
+        let resolveDiscard!: (closed: StreamingCloseResult) => void;
+        const discardPromise = new Promise<StreamingCloseResult>((resolve) => {
+          resolveDiscard = resolve;
+        });
+        let resolveClose!: (closed: StreamingCloseResult) => void;
+        const closePromise = new Promise<StreamingCloseResult>((resolve) => {
+          resolveClose = resolve;
+        });
+        instance.discard.mockReturnValueOnce(discardPromise);
+        instance.closeWithResult.mockReturnValueOnce(closePromise);
+        sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om-table-post" });
+        const idle = Promise.resolve(options.onIdle?.());
+        // Hold whichever way the close leaves the card so the final races it.
+        await vi.waitFor(() =>
+          expect(
+            instance.discard.mock.calls.length + instance.closeWithResult.mock.calls.length,
+          ).toBe(1),
+        );
+        instance.active = false;
+
+        const delivery = await options.deliver({ text }, { kind: "final" });
+        resolveDiscard({ visibleReplySent: false, content: "" });
+        resolveClose({ visibleReplySent: true, content: text, messageId: "om-table-card" });
+        await idle;
+
+        expect(instance.closeWithResult).not.toHaveBeenCalled();
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toContain("Ada");
+        await expect(delivery?.finalization).resolves.toMatchObject({
+          messageIds: ["om-table-post"],
+          visibleReplySent: true,
+        });
+      },
+    );
+
     it.each(["bullets", "code"] as const)(
       "assigns an idle-closed table preview to its matching final in %s mode",
       async (tables) => {
