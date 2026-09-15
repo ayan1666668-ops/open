@@ -41,6 +41,7 @@ async function mount(state: PluginCredentialInspection = { kind: "literal" }, wi
     gateway,
     canInspect: true,
     onCommit: vi.fn().mockResolvedValue(true),
+    onDiscard: vi.fn().mockResolvedValue(true),
   };
   const field = {
     path,
@@ -93,6 +94,34 @@ function editInput(element: HTMLInputElement, value: string) {
 }
 
 describe("plugin credential authoring controls", () => {
+  it.each(["button", "modal"])(
+    "keeps the dialog open for a pending Save via %s dismissal",
+    async (dismissal) => {
+      const { editor, context } = await mount({
+        kind: "reference",
+        ref: { source: "env", provider: "default", id: "ORIGINAL_KEY" },
+        unresolved: false,
+      });
+      const pending = Promise.withResolvers<boolean>();
+      vi.mocked(context.onCommit).mockReturnValue(pending.promise);
+      await open(editor);
+      button(editor, "Save").click();
+      await editor.updateComplete;
+      if (dismissal === "button") {
+        expect(button(editor, "Cancel").disabled).toBe(true);
+        button(editor, "Cancel").click();
+      } else {
+        const event = new CustomEvent("modal-cancel", { bubbles: true, cancelable: true });
+        editor.querySelector("openclaw-modal-dialog")!.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      }
+      await editor.updateComplete;
+      expect(editor.querySelector("openclaw-modal-dialog")).not.toBeNull();
+      pending.resolve(true);
+      await vi.waitFor(() => expect(editor.querySelector("openclaw-modal-dialog")).toBeNull());
+    },
+  );
+
   it("preserves an uncommitted literal while an unrelated configuration revision arrives", async () => {
     const { editor, context, scope, update } = await mount();
     const input = editor.querySelector<HTMLInputElement>("input")!;

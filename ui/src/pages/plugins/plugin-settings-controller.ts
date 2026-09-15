@@ -53,6 +53,7 @@ export class PluginSettingsController {
       gateway: this.options.gateway,
       canInspect: this.options.canInspect(),
       saveError: runtime.state.lastError,
+      onDiscard: () => runtime.discardFormValue(field.path),
       onCommit: async (path, value) => {
         const previous = this.write;
         const accepted = field.onPatch(path, value);

@@ -728,6 +728,56 @@ export function removeConfigFormValue(state: RuntimeConfigState, path: Array<str
   mutateConfigForm(state, (draft) => removePathValue(draft, path));
 }
 
+/** Rebase surviving edits onto the saved snapshot without replaying this field's intent. */
+export function discardConfigFormValue(state: RuntimeConfigState, path: Array<string | number>) {
+  const canonical = resolveEditableSnapshotConfig(state.configSnapshot);
+  const original = state.configFormOriginal;
+  if (
+    !canonical ||
+    !state.configSnapshot?.hash ||
+    state.configValid !== true ||
+    !original ||
+    !state.configForm ||
+    state.configFormMode !== "form"
+  ) {
+    return false;
+  }
+  let current = cloneConfigObject(state.configForm);
+  const previous = path.reduce<unknown>(
+    (value, segment) =>
+      Array.isArray(value) && typeof segment === "number"
+        ? value[segment]
+        : isRecord(value) && typeof segment === "string"
+          ? value[segment]
+          : undefined,
+    original,
+  );
+  if (previous === undefined) {
+    removePathValue(current, path);
+  } else {
+    setPathValue(current, path, cloneConfigObject(previous));
+  }
+  // Restore absence with the submission owner's existing empty-container rules;
+  // otherwise Cancel alone leaves a dirty draft and schedules a redundant write.
+  current = sanitizeRedactedFormForSubmit(current, original, original);
+  if (configFormContentConflicts(original, current, canonical)) {
+    state.configAutoSaveStatus = "conflict";
+    state.lastError = "config changed since last load; re-run config.get and retry";
+    return false;
+  }
+  const draft = replayConfigDraftEdits(original, current, canonical);
+  if (!draft) {
+    return false;
+  }
+  rebaseConfigDraft(state);
+  if (state.configAutoSaveStatus !== "paused") {
+    state.configAutoSaveStatus = "idle";
+  }
+  syncConfigDraft(state, draft);
+  state.lastError = null;
+  return true;
+}
+
 export function stageDefaultAgentConfigEntry(state: RuntimeConfigState, agentId: string): boolean {
   const source = state.configForm ?? resolveEditableSnapshotConfig(state.configSnapshot);
   const target = resolveAgentConfigEntryTarget(source, agentId);

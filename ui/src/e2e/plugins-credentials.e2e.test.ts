@@ -239,6 +239,11 @@ suite.define(() => {
           const request = await gateway.waitForRequest("config.set");
           expect(await dialog.isVisible()).toBe(true);
           expect(
+            await dialog.getByRole("button", { name: "Cancel", exact: true }).isDisabled(),
+          ).toBe(true);
+          await page.keyboard.press("Escape");
+          expect(await dialog.isVisible()).toBe(true);
+          expect(
             await dialog.getByRole("button", { name: "Saving…", exact: true }).isDisabled(),
           ).toBe(true);
           const changedRef = { ...originalRef, id: "/search/updated" };
@@ -274,7 +279,7 @@ suite.define(() => {
           await dialog.getByRole("button", { name: "Save", exact: true }).click();
           await gateway.waitForRequest("config.set");
           await gateway.rejectDeferred("config.set", {
-            code: "INVALID_REQUEST",
+            code: width === 390 ? "INVALID_REQUEST" : "UNAVAILABLE",
             message: "Fixture write rejected",
           });
           await expect
@@ -284,7 +289,46 @@ suite.define(() => {
           expect(
             await dialog.getByRole("button", { name: "Cancel", exact: true }).isEnabled(),
           ).toBe(true);
+          if (width === 1174) {
+            const readsBeforeCancel = (await gateway.getRequests("config.get")).length;
+            await gateway.deferNext("config.get");
+            await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+            await gateway.waitForRequest("config.get", { after: readsBeforeCancel });
+            await gateway.rejectDeferred("config.get", {
+              code: "UNAVAILABLE",
+              message: "Fixture config read unavailable",
+            });
+            await expect
+              .poll(() => dialog.getByRole("alert").textContent())
+              .toContain("Fixture config read unavailable");
+            expect(await dialog.isVisible()).toBe(true);
+            expect(await identifier.inputValue()).toBe("/search/failed");
+          }
           await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+          await dialog.waitFor({ state: "hidden" });
+          const writesBeforeSibling = (await gateway.getRequests("config.set")).length;
+          const mode = page.locator('input[aria-label$="Search mode"]');
+          await mode.fill("llm-context");
+          await mode.press("Tab");
+          const siblingWrite = await gateway.waitForRequest("config.set", {
+            after: writesBeforeSibling,
+          });
+          expect(JSON.parse(String(asRecord(siblingWrite.params).raw))).toEqual({
+            plugins: {
+              entries: {
+                workboard: {
+                  enabled: true,
+                  config: {
+                    search: {
+                      ...sourceConfig.plugins.entries.workboard.config.search,
+                      apiKey: changedRef,
+                      mode: "llm-context",
+                    },
+                  },
+                },
+              },
+            },
+          });
           expect(
             await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
           ).toBe(true);

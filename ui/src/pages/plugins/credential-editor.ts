@@ -34,6 +34,7 @@ export type PluginCredentialEditorContext = {
   saveError?: string | null;
   /** Adapter stages through field.onPatch and awaits that exact config-owner write. */
   onCommit: (path: Array<string | number>, value: unknown) => Promise<boolean>;
+  onDiscard: () => Promise<boolean>;
 };
 type CredentialField = Pick<ConfigNodeRenderParams, "path" | "value" | "disabled" | "onPatch"> & {
   descriptionId?: string;
@@ -51,6 +52,8 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
   @state() private literal = "";
   @state() private revealed = false;
   @state() private saving = false;
+  @state() private cancelling = false;
+  private referenceSubmitted = false;
   private generation = 0;
   private identity = "";
   private fieldIdentity = "";
@@ -88,6 +91,8 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
       this.literal = "";
       this.dialogOpen = false;
       this.saving = false;
+      this.cancelling = false;
+      this.referenceSubmitted = false;
       this.reference = { source: "env", provider: "default", id: "" };
     }
     this.inspection = null;
@@ -105,6 +110,7 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
     this.inspection = null;
     this.literal = "";
     this.reference = { source: "env", provider: "default", id: "" };
+    this.referenceSubmitted = false;
     super.disconnectedCallback();
   }
 
@@ -147,6 +153,7 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
   }
 
   private openReference() {
+    this.referenceSubmitted = false;
     const value = this.inspection;
     if (value?.kind === "reference") {
       this.reference = { ...value.ref };
@@ -175,6 +182,7 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
       gateway.isCurrent(connection) &&
       JSON.stringify([this.context.pluginId, this.field.path]) === owner;
     this.saving = true;
+    this.referenceSubmitted ||= this.dialogOpen;
     this.error = "";
     try {
       const acknowledged = await this.context.onCommit(this.field.path, value);
@@ -182,6 +190,7 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
         return;
       }
       if (acknowledged) {
+        this.referenceSubmitted = false;
         this.dialogOpen = false;
         this.literal = "";
         await this.inspect();
@@ -199,17 +208,60 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
     }
   }
 
+  private async cancelReference() {
+    if (this.saving || this.cancelling) {
+      return;
+    }
+    if (!this.referenceSubmitted) {
+      this.dialogOpen = false;
+      return;
+    }
+    const gateway = this.context.gateway;
+    const connection = this.connection;
+    const owner = this.fieldIdentity;
+    const current = () =>
+      this.isConnected &&
+      this.context.gateway === gateway &&
+      connection !== null &&
+      gateway.isCurrent(connection) &&
+      this.fieldIdentity === owner;
+    this.cancelling = true;
+    try {
+      const discarded = await this.context.onDiscard();
+      if (!current()) {
+        return;
+      }
+      if (discarded) {
+        this.referenceSubmitted = false;
+        this.dialogOpen = false;
+        await this.inspect();
+      } else {
+        this.error = this.context.saveError || t("configView.discardUnconfirmed");
+      }
+    } catch (error) {
+      if (current()) {
+        this.error = formatUiError(error);
+      }
+    } finally {
+      if (current()) {
+        this.cancelling = false;
+      }
+    }
+  }
+
   private renderDialog() {
     if (!this.dialogOpen) {
       return nothing;
     }
     const environment = this.inspection?.kind === "environment" ? this.inspection.envVar : null;
-    const blocked = this.field.disabled || this.loading || this.saving || !this.inspection;
+    const blocked =
+      this.field.disabled || this.loading || this.saving || this.cancelling || !this.inspection;
     const failure = this.error || this.context.saveError;
     return html`<openclaw-modal-dialog
       .label=${t("pluginsPage.credentials.referenceTitle")}
-      @modal-cancel=${() => {
-        this.dialogOpen = false;
+      @modal-cancel=${(event: Event) => {
+        event.preventDefault();
+        void this.cancelReference();
       }}
     >
       <section class="plugin-credential__dialog">
@@ -269,9 +321,8 @@ export class PluginCredentialEditor extends OpenClawLightDomElement {
         <footer>
           <button
             class="btn"
-            @click=${() => {
-              this.dialogOpen = false;
-            }}
+            ?disabled=${this.saving || this.cancelling}
+            @click=${() => this.cancelReference()}
           >
             ${t("common.cancel")}
           </button>

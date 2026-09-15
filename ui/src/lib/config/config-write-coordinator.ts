@@ -10,6 +10,7 @@ import {
   updateConfigFormValue,
   updateConfigRawValue,
 } from "./config-draft-model.ts";
+import { createConfigFieldDiscard } from "./config-field-discard.ts";
 import {
   executeConfigExternalMutation,
   loadConfig,
@@ -76,6 +77,7 @@ export function createConfigWriteCoordinator({
 }: ConfigWriteCoordinatorContext): ConfigWriteCoordinator {
   let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: ConfigWriteFlight | null = null;
+  let lastSubmission: ConfigSubmission | null = null;
   let autoSaveTrailing = false;
   let autoSaveDraftConnection: { client: GatewayBrowserClient; epoch: number } | null = null;
   let autoSaveRequiresExplicitSubmit = false;
@@ -86,7 +88,7 @@ export function createConfigWriteCoordinator({
   let interruptedWriteRaw: string | null = null;
   // Blocks trailing autosaves while a discard drains pending writes; the
   // drained draft is about to be thrown away, not re-written.
-  let suppressAutoSave = false;
+  let suppressAutoSave = 0;
   // Wakes drains awaiting a request a connection change just orphaned — that
   // request may never settle, and a drain stuck on it would wedge the app
   // updater barrier, applies, and discards until then.
@@ -190,8 +192,13 @@ export function createConfigWriteCoordinator({
     auto = false,
   ): Promise<T> => {
     const flight: ConfigWriteFlight = { promise: Promise.resolve(), submission: null };
+    const client = state.client;
+    const epoch = currentConfigConnectionEpoch(state);
     const submit = task((submission) => {
       flight.submission = submission;
+      if (client && !isDisposed() && isCurrentConfigConnection(state, client, epoch)) {
+        lastSubmission = submission;
+      }
       // Keep the ack for teardown, but only a live flight may retire older loads.
       if (submission.ack && !isDisposed() && inFlight === flight) {
         invalidateConfigLoad();
@@ -327,11 +334,11 @@ export function createConfigWriteCoordinator({
   const drainWritesForDiscard = async (): Promise<void> => {
     cancelScheduledAutoSave();
     if (inFlight) {
-      suppressAutoSave = true;
+      suppressAutoSave++;
       try {
         await drainPendingWrites();
       } finally {
-        suppressAutoSave = false;
+        suppressAutoSave--;
       }
     }
     patches.clear();
@@ -399,6 +406,24 @@ export function createConfigWriteCoordinator({
     explicitOpQueue = tail;
     return queued;
   };
+  const fieldDiscard = createConfigFieldDiscard({
+    state,
+    serialize: (task) => afterPendingWritesSettled(task, () => false),
+    holdAutoSave: () => {
+      suppressAutoSave++;
+      cancelScheduledAutoSave();
+      return (resume) => {
+        suppressAutoSave--;
+        if (resume) {
+          scheduleAutoSave();
+        }
+      };
+    },
+    lastSubmission: () => lastSubmission,
+    isDisposed,
+    publish,
+    reconcileDraft: reconcileAutoSaveDraftConnection,
+  });
   const stopGateway = gateway.subscribe((snapshot) => {
     const clientChanged = state.client !== snapshot.client;
     const connectionChanged = state.connected !== (snapshot.phase === "connected");
@@ -406,6 +431,8 @@ export function createConfigWriteCoordinator({
     state.connected = snapshot.phase === "connected";
     state.applySessionKey = snapshot.sessionKey;
     if (clientChanged || connectionChanged) {
+      fieldDiscard.invalidate();
+      lastSubmission = null;
       patches.clear();
       const draftBelongsToPreviousConnection = state.configFormDirty || inFlight !== null;
       resetLoads();
@@ -529,16 +556,19 @@ export function createConfigWriteCoordinator({
     reconcileAppliedRefresh,
     scheduleAutoSave,
   });
-  const mutateDraft = (mutation: () => void) => {
+  const mutateDraft = (mutation: () => void, path?: Array<string | number>) => {
+    fieldDiscard.invalidate(path);
     mutate(mutation);
     reconcileAutoSaveDraftConnection();
     scheduleAutoSave();
   };
   const writes: ConfigWriteCoordinator = {
-    patchForm: (path, value) => mutateDraft(() => updateConfigFormValue(state, path, value)),
-    removeFormValue: (path) => mutateDraft(() => removeConfigFormValue(state, path)),
+    patchForm: (path, value) => mutateDraft(() => updateConfigFormValue(state, path, value), path),
+    removeFormValue: (path) => mutateDraft(() => removeConfigFormValue(state, path), path),
     setRaw: (value) => mutateDraft(() => updateConfigRawValue(state, value)),
+    discardFormValue: fieldDiscard.discard,
     discardDraft: async (options) => {
+      fieldDiscard.invalidate();
       // Settle pending writes first (with trailing saves suppressed — the
       // draft is being thrown away, not re-written) so a late ack cannot
       // re-dirty or trail-write over the discard.
@@ -682,6 +712,7 @@ export function createConfigWriteCoordinator({
       if (!canDispatchConfigMutation("config.set")) {
         return false;
       }
+      fieldDiscard.invalidate(["agents"]);
       const changed = stageDefaultAgentConfigEntry(state, agentId);
       publish();
       reconcileAutoSaveDraftConnection();
@@ -764,6 +795,7 @@ export function createConfigWriteCoordinator({
       }
     },
     dispose() {
+      fieldDiscard.invalidate();
       patches.clear();
       writesResumed?.();
       writesResumed = null;
