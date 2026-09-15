@@ -337,18 +337,19 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   ownership. Test-only files and unrelated runtime changes omit this lane;
   manual runs, unknown paths and older planners retain coverage. Preserve the
   target's existing performance-script capability checks.
-- Eligible Control UI E2E rows request the 32-vCPU class with unchanged live
-  backend/event/contributor routing and two/one-worker project limits. Targets
-  with the named-project contract use six shards on non-frozen Blacksmith and
-  hybrid first attempts; other fresh plans retain twelve. Historical targets without
-  that contract retain four total rows on Blacksmith or fourteen on GitHub/hybrid,
-  including the browser-extension row. Failed-job-only PR and hybrid push retries
-  retain the six-shard width on hosted Ubuntu with the existing 25-minute timeout.
-  The browser-extension row stays on 8 unless the bounded hybrid plan admits
-  it to hosted Ubuntu. Twelve rows finished by 4:38 in run
-  33695337496; the reduced width needs native timing proof and does not refresh
-  stale timing weights.
-- Eligible real-Gateway jobs request the existing 32-class for the private artifact
+- Eligible Control UI E2E rows request the 16-vCPU class with unchanged live
+  backend/event/contributor routing and two/one-worker project limits. Every fresh
+  plan for a target with the named-project contract uses twelve Control UI shards
+  plus one browser-extension row, across backend profiles, attempts and frozen
+  targets. Historical targets without that contract retain four total rows on
+  Blacksmith or fourteen on GitHub/hybrid. Failed-job-only retries retain their
+  previously emitted matrix, including older six-shard Control UI plans; PR and
+  hybrid push retries use hosted Ubuntu. The 25-minute timeout, max-parallel 14
+  and conservative registration ceiling stay unchanged. The browser-extension row
+  stays on 8 unless the bounded hybrid plan admits it to hosted Ubuntu. The twelve-row 4:38 result in historical run 33695337496 used the
+  32-class with eight reported CPUs; it does not prove timing on the current
+  16-class route or refresh stale timing weights.
+- Eligible real-Gateway jobs request the existing 16-class for the private artifact
   build's two canonical SDK cache misses. Overlap requires at least two available
   CPUs and 25.5 GiB of observed remaining memory for unchanged 12-GiB heaps plus
   768 MiB native headroom each. Unknown finite-cgroup usage or insufficient capacity

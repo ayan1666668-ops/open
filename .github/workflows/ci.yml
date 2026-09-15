@@ -1431,14 +1431,11 @@ jobs:
             existsSync("test/vitest/vitest.ui-e2e.config.ts") &&
             readFileSync("test/vitest/vitest.ui-e2e.config.ts", "utf8")
               .includes("ui-e2e-projects-contract-v1");
-          // Six shards share setup on Blacksmith first attempts, including hybrid.
-          // Failed-job reruns retain this matrix and its existing live routing;
-          // frozen targets and fresh hosted plans retain their established widths.
-          const compactUiE2e = !frozenTarget &&
-            (runnerProfile === "blacksmith" || runnerProfile === "hybrid") &&
-            process.env.GITHUB_RUN_ATTEMPT === "1";
+          // Keep the existing twelve-shard split on 16-class capacity; the compact
+          // six-shard plan can exceed the unchanged job deadline. Earlier failed-job
+          // reruns retain their emitted matrix and existing live routing.
           const uiE2eJobCount = supportsUiE2eProjects
-            ? (compactUiE2e ? 7 : 13)
+            ? 13
             : usesHostedRunnerProfile ? 14 : 4;
           // The logical profile already owns contributor routing. Reuse the
           // four-part plan only for normal hybrid first attempts on Blacksmith.
