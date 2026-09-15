@@ -126,7 +126,7 @@ function buildProfileHealth(params: {
   store: AuthProfileStore;
   cfg?: OpenClawConfig;
   now: number;
-  warnAfterMs: number;
+  warnAfterMs?: number;
   allowKeychainPrompt?: boolean;
 }): AuthProfileHealth {
   const {
@@ -216,7 +216,7 @@ function buildProfileHealth(params: {
       status,
       expiresAt: normalizedExpiresAt,
       remainingMs,
-    } = resolveOAuthStatus(expiresAt, now, warnAfterMs);
+    } = resolveOAuthStatus(expiresAt, now, warnAfterMs ?? DEFAULT_OAUTH_WARN_MS);
     return {
       profileId,
       provider,
@@ -268,7 +268,10 @@ function buildProfileHealth(params: {
     };
   }
 
-  const oauthWarnAfterMs = Math.max(warnAfterMs, DEFAULT_OAUTH_REFRESH_MARGIN_MS);
+  const oauthWarnAfterMs = Math.max(
+    warnAfterMs ?? (effectiveCredential.refresh.trim() ? 0 : DEFAULT_OAUTH_WARN_MS),
+    DEFAULT_OAUTH_REFRESH_MARGIN_MS,
+  );
   const {
     status: rawStatus,
     expiresAt,
@@ -317,7 +320,7 @@ export function buildAuthHealthSummary(params: {
         store: params.store,
         cfg: params.cfg,
         now,
-        warnAfterMs,
+        warnAfterMs: params.warnAfterMs,
         allowKeychainPrompt: params.allowKeychainPrompt,
       }),
     )
