@@ -5075,9 +5075,9 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
         // Changing the answer representation must not erase reasoning formatting.
         for (const kind of ["block", "final"] as const) {
-          const { options } = createBlockTableHarness(tableCfg(tables));
-          await options.deliver({ text: tableMarkdown, isReasoning: true }, { kind });
-          await options.onIdle?.();
+          const { options: reasoningOptions } = createBlockTableHarness(tableCfg(tables));
+          await reasoningOptions.deliver({ text: tableMarkdown, isReasoning: true }, { kind });
+          await reasoningOptions.onIdle?.();
           const instance = requireStreamingInstance(kind === "block" ? 1 : 2);
           const expected =
             "Thinking\n\n" +
