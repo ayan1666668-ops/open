@@ -645,11 +645,8 @@ export async function executeQueuedCronRun(params: {
     executeAdmitted,
     params.admissionRelease,
   ).catch(async (error: unknown) => {
-    // Admission or queued-phase setup failures never activated this run, so
-    // the durable marker, open receipt, and local reservation all still
-    // belong to it. Batch callers release unclaimed rows as a safety net, but
-    // this reservation is the producer's own lifecycle: leaving it behind
-    // wedges the job behind its own queuedAtMs marker until restart (#139215).
+    // Release this producer's exact reservation even when admission or activation
+    // failed before execution; callers' batch cleanup is only a safety net.
     await cleanupQueuedCronRunReservations({
       state,
       reservations: [{ jobId: params.jobId, reservationIdentity: params.reservationIdentity }],

@@ -1,23 +1,18 @@
-// A queued run whose activation fails before the run starts must release its
-// own reservation. #139215: a transient store failure in that window left the
-// durable queuedAtMs marker, the open receipt, and the process-local
-// reservation in place, and every later tick skipped the job behind its own
-// marker until restart.
+// Producer cleanup after a pre-activation failure, adapted from holny's PR #141008.
+// The injected SQLite fault and mock execution are not proof of receipt-free missing ticks.
 import { expect, it, vi } from "vitest";
 import {
   createCronRegressionState,
   createDueIsolatedJob,
   setupCronRegressionFixtures,
 } from "../../../test/helpers/cron/service-regression-fixtures.js";
-import {
-  openOpenClawStateDatabase,
-  runOpenClawStateWriteTransaction,
-} from "../../state/openclaw-state-db.js";
+import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { loadCronStore, saveCronStore } from "../store.js";
 import { cronStoreKey } from "../store/key.js";
 import { stop } from "./ops-lifecycle.js";
 import { list } from "./ops-read.js";
 import {
+  cleanupQueuedCronRunReservations,
   executeQueuedCronRun,
   persistQueuedCronRunReservations,
   reserveQueuedCronRun,
@@ -26,81 +21,230 @@ import { onTimer } from "./timer.test-support.js";
 
 const fixtures = setupCronRegressionFixtures({ prefix: "cron-admission-lost-queued-" });
 
-it("releases a reservation whose activation failed, so later ticks still run the job (#139215)", async () => {
+async function withQueuedReservations(
+  run: (context: Awaited<ReturnType<typeof createQueuedReservations>>) => Promise<void>,
+) {
+  const context = await createQueuedReservations();
+  try {
+    await run(context);
+  } finally {
+    await releaseFixtureReservations(context.state);
+  }
+}
+
+async function releaseFixtureReservations(state: ReturnType<typeof createCronRegressionState>) {
+  try {
+    await cleanupQueuedCronRunReservations({
+      state,
+      reservations: [...state.queuedRunReservationsByJobId].map(([jobId, reservation]) => ({
+        jobId,
+        reservationIdentity: reservation.identity,
+      })),
+    });
+  } finally {
+    stop(state);
+  }
+}
+
+async function createQueuedReservations() {
   const store = fixtures.makeStorePath();
-  const now = Date.parse("2026-08-13T18:15:00.000Z");
+  const now = Date.now();
   const job = createDueIsolatedJob({
     id: "activation-write-failure",
     nowMs: now,
     nextRunAtMs: now,
   });
-  await saveCronStore(store.storePath, { version: 1, jobs: [job] });
+  const sibling = createDueIsolatedJob({
+    id: "untouched-sibling",
+    nowMs: now,
+    nextRunAtMs: now + 60_000,
+  });
+  await saveCronStore(store.storePath, { version: 1, jobs: [job, sibling] });
   const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" as const }));
   const state = createCronRegressionState({
     storePath: store.storePath,
     nowMs: () => now,
+    defaultAgentId: "main",
     runIsolatedAgentJob,
   });
-  await list(state);
-
-  const [reserved] = await persistQueuedCronRunReservations({
-    state,
-    candidates: [job],
-    reservedAtMs: now,
-  });
-  if (!reserved) {
-    throw new Error("expected durable reservation");
-  }
-  const reservationIdentity = reserveQueuedCronRun(state, job.id, now, {
-    runReceipt: reserved.runReceipt,
-  });
-
-  // Inject the queued-phase fault: the activation UPDATE that moves the queued
-  // marker to runningAtMs aborts, while cleanup writes still go through. The
-  // trigger is scoped to this job's rows so parallel tests stay unaffected.
-  const storeKey = cronStoreKey(store.storePath);
-  const database = openOpenClawStateDatabase().db;
-  database.exec(`
-    CREATE TEMP TRIGGER fail_cron_activation_before_start
-    AFTER UPDATE OF state_json ON cron_jobs
-    WHEN NEW.store_key = '${storeKey}'
-      AND NEW.job_id = '${job.id}'
-      AND json_extract(OLD.state_json, '$.queuedAtMs') IS NOT NULL
-      AND json_extract(NEW.state_json, '$.runningAtMs') IS NOT NULL
-    BEGIN
-      SELECT RAISE(ABORT, 'injected activation write failure');
-    END;
-  `);
-
-  await expect(
-    executeQueuedCronRun({
+  try {
+    await list(state);
+    const reserved = await persistQueuedCronRunReservations({
       state,
-      jobId: job.id,
+      candidates: [job, sibling],
       reservedAtMs: now,
-      reservationIdentity,
-      onNotRunnable: vi.fn(),
-    }),
-  ).rejects.toThrow();
+    });
+    for (const item of reserved) {
+      reserveQueuedCronRun(state, item.job.id, now, { runReceipt: item.runReceipt });
+    }
+    const ownership = state.queuedRunReservationsByJobId.get(job.id);
+    const siblingOwnership = state.queuedRunReservationsByJobId.get(sibling.id);
+    if (!ownership || !siblingOwnership) {
+      throw new Error("expected both durable reservations");
+    }
+    const database = openOpenClawStateDatabase().db;
+    const receipt = (receiptId: string) =>
+      database
+        .prepare(
+          "SELECT receipt_id, status, started_at_ms, finished_at_ms FROM cron_run_receipts WHERE receipt_id = ?",
+        )
+        .get(receiptId);
+    return {
+      store,
+      now,
+      job,
+      sibling,
+      state,
+      ownership,
+      siblingOwnership,
+      database,
+      receipt,
+      runIsolatedAgentJob,
+    };
+  } catch (error) {
+    await releaseFixtureReservations(state);
+    throw error;
+  }
+}
 
-  // The producer owns its reservation: with the run never activated, the
-  // marker, receipt, and local claim must be released instead of wedging the
-  // job behind its own queued marker.
-  const persisted = (await loadCronStore(store.storePath)).jobs[0];
-  expect(persisted?.state.queuedAtMs).toBeUndefined();
-  const receipt = runOpenClawStateWriteTransaction(({ db }) =>
-    db
-      .prepare("SELECT status FROM cron_run_receipts WHERE receipt_id = ?")
-      .get(reserved.runReceipt.receiptId),
-  ) as { status: string } | undefined;
-  expect(receipt?.status).toBe("skipped");
-  database.exec("DROP TRIGGER IF EXISTS fail_cron_activation_before_start");
+it("releases the exact failed activation before another tick without releasing its sibling", async () => {
+  await withQueuedReservations(async (context) => {
+    const {
+      store,
+      now,
+      job,
+      sibling,
+      state,
+      ownership,
+      siblingOwnership,
+      database,
+      receipt,
+      runIsolatedAgentJob,
+    } = context;
+    const siblingBefore = (await loadCronStore(store.storePath)).jobs.find(
+      (entry) => entry.id === sibling.id,
+    );
+    const siblingReceiptBefore = receipt(siblingOwnership.runReceipt.receiptId);
+    // Only activation of this partition/job fails; cleanup writes remain usable.
+    database.exec(`
+      CREATE TEMP TRIGGER fail_cron_activation_before_start
+      AFTER UPDATE OF state_json ON cron_jobs
+      WHEN NEW.store_key = '${cronStoreKey(store.storePath).replaceAll("'", "''")}'
+        AND NEW.job_id = '${job.id}'
+        AND json_extract(OLD.state_json, '$.queuedAtMs') IS NOT NULL
+        AND json_extract(NEW.state_json, '$.runningAtMs') IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'injected activation write failure');
+      END;
+    `);
+    try {
+      await expect(
+        executeQueuedCronRun({
+          state,
+          jobId: job.id,
+          reservedAtMs: now,
+          reservationIdentity: ownership.identity,
+          onNotRunnable: async () => {
+            throw new Error("expected runnable job");
+          },
+        }),
+      ).rejects.toThrow("injected activation write failure");
 
-  // User-visible boundary: the next timer tick re-queues and runs the job
-  // instead of silently swallowing every slot until restart.
-  await onTimer(state);
-  expect(runIsolatedAgentJob).toHaveBeenCalledOnce();
-  const afterTick = (await loadCronStore(store.storePath)).jobs[0];
-  expect(afterTick?.state).toMatchObject({ lastRunStatus: "ok" });
-  expect(afterTick?.state.queuedAtMs).toBeUndefined();
-  stop(state);
+      // This is before onTimer's batch-tail/recovery safety net can run.
+      const persisted = (await loadCronStore(store.storePath)).jobs.find(
+        (entry) => entry.id === job.id,
+      );
+      expect(persisted?.state.queuedAtMs).toBeUndefined();
+      expect(persisted?.state.runningAtMs).toBeUndefined();
+      expect(state.queuedRunReservationsByJobId.has(job.id)).toBe(false);
+      expect(state.runAdmission.active).toBe(0);
+      expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+      expect(receipt(ownership.runReceipt.receiptId)).toMatchObject({
+        receipt_id: ownership.runReceipt.receiptId,
+        status: "skipped",
+        started_at_ms: now,
+        finished_at_ms: now,
+      });
+      expect(state.queuedRunReservationsByJobId.get(sibling.id)).toBe(siblingOwnership);
+      const siblingAfter = (await loadCronStore(store.storePath)).jobs.find(
+        (entry) => entry.id === sibling.id,
+      );
+      expect(siblingAfter).toEqual(siblingBefore);
+      expect(receipt(siblingOwnership.runReceipt.receiptId)).toEqual(siblingReceiptBefore);
+    } finally {
+      database.exec("DROP TRIGGER IF EXISTS fail_cron_activation_before_start");
+    }
+
+    // Exercise the real timer scheduler after the producer has already cleaned up.
+    await onTimer(state);
+    expect(runIsolatedAgentJob).toHaveBeenCalledOnce();
+    const afterTick = (await loadCronStore(store.storePath)).jobs.find(
+      (entry) => entry.id === job.id,
+    );
+    expect(afterTick?.state).toMatchObject({ lastRunStatus: "ok" });
+    expect(afterTick?.state.queuedAtMs).toBeUndefined();
+    expect(afterTick?.state.runningAtMs).toBeUndefined();
+    expect(receipt(ownership.runReceipt.receiptId)).toMatchObject({ status: "skipped" });
+  });
+});
+
+it("releases its reservation and preserves a pre-activation admission error", async () => {
+  await withQueuedReservations(async (context) => {
+    const { state, job, now, ownership, receipt, runIsolatedAgentJob } = context;
+    const error = new Error("admission callback failed");
+    await expect(
+      executeQueuedCronRun({
+        state,
+        jobId: job.id,
+        reservedAtMs: now,
+        reservationIdentity: ownership.identity,
+        isUnavailable: () => {
+          throw error;
+        },
+        onNotRunnable: async () => {
+          throw new Error("unexpected runnable check");
+        },
+      }),
+    ).rejects.toBe(error);
+    expect(state.queuedRunReservationsByJobId.has(job.id)).toBe(false);
+    expect(state.runAdmission.active).toBe(0);
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+    expect(receipt(ownership.runReceipt.receiptId)).toMatchObject({ status: "skipped" });
+  });
+});
+
+it("does not release a replacement identity when the old admission callback fails", async () => {
+  await withQueuedReservations(async (context) => {
+    const { store, state, job, now, ownership, receipt, runIsolatedAgentJob } = context;
+    const error = new Error("old admission callback failed");
+    let replacementIdentity: object | undefined;
+    const receiptBefore = receipt(ownership.runReceipt.receiptId);
+    await expect(
+      executeQueuedCronRun({
+        state,
+        jobId: job.id,
+        reservedAtMs: now,
+        reservationIdentity: ownership.identity,
+        isUnavailable: () => {
+          // Keep the timestamp and receipt equal: only the local identity distinguishes owners.
+          replacementIdentity = reserveQueuedCronRun(state, job.id, now, {
+            runReceipt: ownership.runReceipt,
+          });
+          throw error;
+        },
+        onNotRunnable: async () => {
+          throw new Error("unexpected runnable check");
+        },
+      }),
+    ).rejects.toBe(error);
+    expect(replacementIdentity).toBeDefined();
+    expect(state.queuedRunReservationsByJobId.get(job.id)?.identity).toBe(replacementIdentity);
+    const persisted = (await loadCronStore(store.storePath)).jobs.find(
+      (entry) => entry.id === job.id,
+    );
+    expect(persisted?.state.queuedAtMs).toBe(now);
+    expect(receipt(ownership.runReceipt.receiptId)).toEqual(receiptBefore);
+    expect(state.runAdmission.active).toBe(0);
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+  });
 });
