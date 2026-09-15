@@ -5160,6 +5160,71 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0]).toBe(tableMarkdown);
     });
 
+    function quoteReasoning(text: string): string {
+      return `> \u{1f4ad} **Thinking**\n${text
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}`;
+    }
+
+    // Streamed reasoning shares the card with the answer, so one card must not
+    // show a native table beside a converted one.
+    it("commits a converted reasoning table through the streaming card", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("code"), true);
+      result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
+      result.replyOptions.onPartialReply?.({ text: "Roster ready." });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0];
+      expect(committed).toContain(quoteReasoning(codeText));
+      expect(committed).not.toContain(quoteReasoning(tableMarkdown));
+    });
+
+    it("commits a bullets reasoning table through the streaming card", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("bullets"), true);
+      result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
+      result.replyOptions.onPartialReply?.({ text: "Roster ready." });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0];
+      expect(committed).toContain(quoteReasoning(bulletsCard));
+      expect(committed).not.toContain(quoteReasoning(tableMarkdown));
+    });
+
+    // off has no card representation at all, so a reasoning-only table still diverts
+    // the whole close to a post rather than being converted.
+    it("posts an off close whose only table is in streamed reasoning", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("off"), true);
+      result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
+      result.replyOptions.onPartialReply?.({ text: "Roster ready." });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1);
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toContain(
+        quoteReasoning(tableMarkdown),
+      );
+    });
+
+    // block keeps native tables, and the reasoning half must not diverge from it.
+    it("keeps a native reasoning table on the streaming card in block mode", async () => {
+      const { result, options } = createBlockTableHarness(tableCfg("block"), true);
+      result.replyOptions.onReasoningStream?.({ text: tableMarkdown });
+      result.replyOptions.onPartialReply?.({ text: "Roster ready." });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.onIdle?.();
+
+      const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0];
+      expect(committed).toContain(quoteReasoning(tableMarkdown));
+    });
+
     it("routes an off final with a table to the post path instead of a streaming card", async () => {
       await deliverFinal("off", "partial");
 

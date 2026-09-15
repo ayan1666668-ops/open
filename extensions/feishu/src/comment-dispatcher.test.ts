@@ -493,45 +493,55 @@ describe("createFeishuCommentReplyDispatcher", () => {
     );
 
     // A converted table is one fenced block, so the chunker that splits it has to
-    // close and reopen the fence instead of cutting the block in half.
-    it("keeps every chunk of an oversized converted table balanced", async () => {
-      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
-        "openclaw/plugin-sdk/reply-chunking",
-      );
-      const limit = 200;
-      const wideTable = [
-        "| Name | Role |",
-        "| --- | --- |",
-        ...Array.from({ length: 14 }, (_value, index) => `| Member ${index} | Engineer ${index} |`),
-      ].join("\n");
-      const runtime = getFeishuRuntimeMock();
-      getFeishuRuntimeMock.mockReturnValue({
-        ...runtime,
-        channel: {
-          ...runtime.channel,
-          text: {
-            ...runtime.channel.text,
-            resolveTextChunkLimit: vi.fn(() => limit),
-            chunkTextWithMode: chunking.chunkTextWithMode,
-            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+    // close and reopen the fence instead of cutting the block in half. This covers an
+    // ordinary table at a workable limit, in both real chunk modes. A limit too small to
+    // hold a marker pair, or a marker grown long by backticks inside a cell, still falls
+    // back to a raw boundary in the core chunker and is not repaired here.
+    it.each(["length", "newline"] as const)(
+      "balances the fences of an oversized converted table in %s mode",
+      async (chunkMode) => {
+        const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+          "openclaw/plugin-sdk/reply-chunking",
+        );
+        const limit = 200;
+        const wideTable = [
+          "| Name | Role |",
+          "| --- | --- |",
+          ...Array.from(
+            { length: 14 },
+            (_value, index) => `| Member ${index} | Engineer ${index} |`,
+          ),
+        ].join("\n");
+        const runtime = getFeishuRuntimeMock();
+        getFeishuRuntimeMock.mockReturnValue({
+          ...runtime,
+          channel: {
+            ...runtime.channel,
+            text: {
+              ...runtime.channel.text,
+              resolveTextChunkLimit: vi.fn(() => limit),
+              resolveChunkMode: vi.fn(() => chunkMode),
+              chunkTextWithMode: chunking.chunkTextWithMode,
+              chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+            },
           },
-        },
-      });
-      const created = createTestCommentReplyDispatcher();
+        });
+        const created = createTestCommentReplyDispatcher();
 
-      await replyDispatcherOptions(created).deliver({ text: wideTable }, { kind: "final" });
+        await replyDispatcherOptions(created).deliver({ text: wideTable }, { kind: "final" });
 
-      const contents = deliverCommentThreadTextMock.mock.calls.map(
-        (call) => call[1].content as string,
-      );
-      expect(actual.convertMarkdownTables(wideTable, "code").length).toBeGreaterThan(limit);
-      // Keeping the block whole by widening the limit would hide the split, not repair it.
-      expect(contents.length).toBeGreaterThan(1);
-      for (const content of contents) {
-        expect(content.length).toBeLessThanOrEqual(limit);
-        expect((content.match(/^`{3,}/gm)?.length ?? 0) % 2).toBe(0);
-      }
-    });
+        const contents = deliverCommentThreadTextMock.mock.calls.map(
+          (call) => call[1].content as string,
+        );
+        expect(actual.convertMarkdownTables(wideTable, "code").length).toBeGreaterThan(limit);
+        // Keeping the block whole by widening the limit would hide the split, not repair it.
+        expect(contents.length).toBeGreaterThan(1);
+        for (const content of contents) {
+          expect(content.length).toBeLessThanOrEqual(limit);
+          expect((content.match(/^`{3,}/gm)?.length ?? 0) % 2).toBe(0);
+        }
+      },
+    );
   });
 
   it("retains the accepted comment reply id and text when a later chunk fails", async () => {

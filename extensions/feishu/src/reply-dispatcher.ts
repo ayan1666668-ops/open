@@ -285,10 +285,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // Post rendering has no native tables, so block falls back to code there. An
   // explicit off, bullets or code converts before each card path that commits it, so the
   // mode applies in auto mode, to a presentation card's own markdown, and to the text a
-  // streaming card commits. Partial previews stream raw text, so the preview dedupe
-  // compares payload text, while streamed content enters the ownership state (closing
-  // record, settlement, delivered finals) and every comparison against a final in this
-  // one rendered form.
+  // streaming card commits. Streamed reasoning shares that card, so it converts on
+  // arrival and carries one representation to every flush and to the close. Partial
+  // answer previews stream raw text, so the preview dedupe compares payload text, while
+  // streamed content enters the ownership state (closing record, settlement, delivered
+  // finals) and every comparison against a final in this one rendered form. The closing
+  // record and the settlement lookup take the answer rather than the reasoning preview.
+  // An unmatched off close is the exception, since it posts reasoning and answer
+  // combined and records that combined body as a delivered final. Off conversion returns
+  // its input, so that key holds the value it held before this change.
   const nativeTables = tableMode === "block";
   const postTableMode = nativeTables ? "code" : tableMode;
   const renderTables = (value: string): string =>
@@ -1786,7 +1791,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               return false;
             }
             startStreaming();
-            queueReasoningUpdate(formatReasoningMessage(payload.text));
+            // Convert before the italic line wrapping, the same order the delivered
+            // reasoning path uses, so the table is still parseable when the mode runs.
+            queueReasoningUpdate(formatReasoningMessage(renderTables(payload.text)));
             return false;
           }
         : undefined,
