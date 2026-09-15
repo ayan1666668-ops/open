@@ -131,16 +131,16 @@ suite.define(() => {
   it("keeps the legacy Mac app's lowered web controls clear of intro text", async () => {
     // Older apps stamp only openclaw-native-macos and keep the in-page
     // cluster, which drops below the drag region instead of into a titlebar.
-    const page = await openPage("agents", (target) =>
-      target.addInitScript(() => {
+    const page = await openPage("agents", async (target) => {
+      await target.addInitScript(() => {
         const stamp = () => document.documentElement.classList.add("openclaw-native-macos");
         if (document.documentElement) {
           stamp();
         } else {
           document.addEventListener("DOMContentLoaded", stamp);
         }
-      }),
-    );
+      });
+    });
     await page.locator(".sidebar-brand__collapse").click();
     await expect
       .poll(() => page.locator(".shell").getAttribute("class"))
