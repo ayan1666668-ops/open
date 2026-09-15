@@ -19,15 +19,16 @@ Side chat answers questions about the selected session and its project without e
 
 The question box wraps and grows like the main composer; Enter (or your configured send shortcut) asks the question, and Shift+Enter adds a line. Highlighting text in a chat message offers **Ask in side chat**, which opens the rail with a quoted draft ready to edit.
 
-Highlight text and choose **Add to chat** to attach an annotation to the main
-composer. Add an optional comment, then confirm or choose **Save**. Typing opens
-the larger editor; Command-Enter or Ctrl-Enter saves, and **Cancel** or Escape
-discards the edit. Saving keeps your existing draft and does not send a message.
+Highlight text and choose **Add to chat** to attach a comment to the main
+composer. The optional comment field stays compact while you type; confirm or
+press Enter to save it. Saving keeps your existing draft and does not send a message.
 
-The annotation chip shows the number of selections. Open it to preview the
-numbered selected text and comments, edit or delete an annotation, or remove the
-whole group. Saved annotations follow the composer's existing draft and queue
-recovery behavior. When you send, each annotation is attached as a text file
+The comment chip shows the number of selections. Open it to preview the numbered
+selected text and comments. Reopening a saved comment opens the larger editor,
+where **Save**, Command-Enter, or Ctrl-Enter saves changes; **Cancel** or Escape
+discards the edit; and the trash button deletes the comment. You can also remove
+the whole group. Saved comments follow the composer's existing draft and queue
+recovery behavior. When you send, each comment is attached as a text file
 containing the selection, comment, and source message reference.
 
 The headline owns that run's sidebar subtitle instead of heuristic live activity. It is shared with the official iOS and Android session lists. A final done or failed digest remains visible while the session is unread, then the row returns to its normal work subtitle.

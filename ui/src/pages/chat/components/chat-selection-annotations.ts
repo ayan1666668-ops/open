@@ -37,7 +37,7 @@ export function createChatSelectionAttachment(
       `DOM text UTF-16 range: [${annotation.start}, ${annotation.end})`,
     ].join("\n"),
   ].join("\n\n");
-  const file = new File([text], "selection-annotation.txt", { type: "text/plain" });
+  const file = new File([text], "selection-comment.txt", { type: "text/plain" });
   if (admitAttachmentFiles([file], limits).length === 0) {
     return null;
   }

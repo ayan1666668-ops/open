@@ -1,5 +1,7 @@
 // Document-owned selection toolbar and annotation editor. The transcript owner
 // tears both down together when its session or presentation changes.
+import { render } from "lit";
+import { icons } from "../../../components/icons.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import type { ChatSelectionSource } from "../../../lib/chat/chat-types.ts";
@@ -175,10 +177,11 @@ export function showChatAnnotationEditor(options: {
     return;
   }
   const popup = document.createElement("div");
-  popup.className = "chat-annotation-editor";
+  popup.className = "exec-approval-card exec-approval-card--inline chat-annotation-editor";
   popup.setAttribute("role", "dialog");
   popup.setAttribute("aria-label", t("chat.messages.annotationEditor"));
   const input = document.createElement("textarea");
+  input.className = "input";
   input.value = options.comment;
   input.rows = 1;
   input.placeholder = t("chat.messages.annotationComment");
@@ -197,8 +200,9 @@ export function showChatAnnotationEditor(options: {
     }
   };
   const confirm = button(t("chat.messages.saveAnnotation"), save);
-  confirm.className = "chat-annotation-editor__confirm";
-  confirm.textContent = "✓";
+  confirm.className = "btn primary btn--icon chat-annotation-editor__confirm";
+  confirm.textContent = "";
+  render(icons.check, confirm);
   const controls = document.createElement("div");
   controls.className = "chat-annotation-editor__controls";
   const remove = button(t("chat.messages.deleteAnnotation"), () => {
@@ -207,21 +211,20 @@ export function showChatAnnotationEditor(options: {
       (options.onDelete ?? options.onCancel)?.();
     }
   });
-  remove.className = "chat-annotation-editor__delete";
+  remove.className = "btn btn--icon btn--ghost chat-annotation-editor__delete";
+  remove.title = t("chat.messages.deleteAnnotation");
+  remove.textContent = "";
+  render(icons.trash, remove);
   const cancelButton = button(t("common.cancel"), cancel);
+  cancelButton.className = "btn";
   const saveButton = button(t("common.save"), save);
-  saveButton.className = "chat-annotation-editor__save";
+  saveButton.className = "btn primary";
   controls.append(remove, cancelButton, saveButton);
   popup.append(input, confirm, controls);
-  const expand = () => {
+  if (options.expanded) {
     popup.classList.add("chat-annotation-editor--expanded");
     input.rows = 4;
-    positionPopup(popup, options.anchorRect);
-  };
-  if (options.expanded) {
-    expand();
   }
-  input.addEventListener("input", expand);
   popup.addEventListener("keydown", (event) => {
     if (
       event.key === "Enter" &&

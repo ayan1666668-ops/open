@@ -8,7 +8,7 @@ openclaw-chat-selection-annotations {
   display: flex;
   align-items: center;
   border: 1px solid var(--border);
-  border-radius: calc(12px * var(--openclaw-corner-radius-scale));
+  border-radius: var(--radius-md);
   background: var(--chat-composer-surface, var(--popover));
   color: var(--text);
 }
@@ -18,7 +18,7 @@ openclaw-chat-selection-annotations {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: calc(10px * var(--openclaw-corner-radius-scale));
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -65,7 +65,7 @@ openclaw-chat-selection-annotations {
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
-  border-radius: calc(16px * var(--openclaw-corner-radius-scale));
+  border-radius: var(--radius-lg);
   background: var(--chat-composer-surface, var(--popover));
   box-shadow: var(--shadow-lg);
   padding: 16px;

@@ -45,11 +45,11 @@ suite.define(() => {
           await composer.waitFor({ state: "visible" });
           const text = page.locator(".chat-bubble .chat-text p").filter({ hasText: selectedText });
           const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
-          const editor = page.getByRole("dialog", { name: "Annotation", exact: true });
+          const editor = page.getByRole("dialog", { name: "Comment", exact: true });
           const comment = editor.getByRole("textbox");
           const chip = (count: number) =>
             page.getByRole("button", {
-              name: count === 1 ? "1 annotation" : `${count} annotations`,
+              name: count === 1 ? "1 comment" : `${count} comments`,
               exact: true,
             });
           const open = async () => {
@@ -77,15 +77,21 @@ suite.define(() => {
           await bounded(editor);
           await capture("inline-comment");
           await comment.fill("Discard this comment.");
-          await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+          await comment.press("Escape");
           expect(await chip(1).count()).toBe(0);
           expect(await gateway.getRequests("chat.send")).toHaveLength(0);
 
           await open();
+          const compactHeight = (await editor.boundingBox())!.height;
           await comment.fill("Why is this step needed? 🦞");
+          expect((await editor.boundingBox())!.height).toBe(compactHeight);
+          expect(await editor.getByRole("button", { name: "Cancel", exact: true }).count()).toBe(0);
+          expect(
+            await editor.getByRole("button", { name: "Delete comment", exact: true }).count(),
+          ).toBe(0);
           await bounded(editor);
-          await capture("editor");
-          await editor.getByRole("button", { name: "Save", exact: true }).click();
+          await capture("inline-typed");
+          await editor.getByRole("button", { name: "Save comment", exact: true }).click();
           await chip(1).waitFor({ state: "visible" });
           expect(await composer.inputValue()).toBe(draft);
           await expect
@@ -94,33 +100,39 @@ suite.define(() => {
           await open();
           await comment.press("Enter");
           await chip(2).click();
-          const preview = page.getByRole("region", { name: "Conversation notes", exact: true });
+          const preview = page.getByRole("region", { name: "Comments", exact: true });
           await preview.waitFor({ state: "visible" });
           expect(await preview.getByText(selectedText, { exact: true }).count()).toBe(2);
-          expect(await preview.getByText("Your note:", { exact: true }).count()).toBe(1);
+          expect(await preview.getByText("Your comment:", { exact: true }).count()).toBe(1);
           await bounded(preview);
           await capture("multiple");
 
-          await preview.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+          await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
+          expect((await editor.boundingBox())!.height).toBeGreaterThan(compactHeight);
+          const deleteComment = editor.getByRole("button", { name: "Delete comment", exact: true });
+          expect((await deleteComment.textContent())?.trim()).toBe("");
+          expect(await deleteComment.locator("svg").count()).toBe(1);
+          await bounded(editor);
+          await capture("editor");
           await comment.fill("An unsaved replacement");
           await comment.press("Escape");
           await chip(2).click();
           expect(await preview.textContent()).toContain("Why is this step needed? 🦞");
-          await preview.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+          await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
           await comment.fill("Explain the rollback checks. 🦞\nKeep the existing draft.");
           await comment.press("Control+Enter");
           await chip(2).click();
           expect(await preview.textContent()).toContain("Explain the rollback checks. 🦞");
-          await preview.getByRole("button", { name: "Edit annotation 2", exact: true }).click();
-          await editor.getByRole("button", { name: "Delete annotation", exact: true }).click();
+          await preview.getByRole("button", { name: "Edit comment 2", exact: true }).click();
+          await editor.getByRole("button", { name: "Delete comment", exact: true }).click();
           await chip(1).waitFor({ state: "visible" });
-          await page.getByRole("button", { name: "Remove annotations", exact: true }).click();
+          await page.getByRole("button", { name: "Remove comments", exact: true }).click();
           expect(await chip(1).count()).toBe(0);
           expect(await composer.inputValue()).toBe(draft);
 
           await open();
           await comment.fill("Explain the rollback checks. 🦞");
-          await editor.getByRole("button", { name: "Save", exact: true }).click();
+          await editor.getByRole("button", { name: "Save comment", exact: true }).click();
           await chip(1).click();
           await preview.waitFor({ state: "visible" });
           await bounded(preview);
@@ -188,8 +200,8 @@ suite.define(() => {
           .getByRole("button", { name: "Add to chat", exact: true })
           .click();
         await page
-          .getByRole("dialog", { name: "Annotation", exact: true })
-          .getByRole("button", { name: "Save annotation", exact: true })
+          .getByRole("dialog", { name: "Comment", exact: true })
+          .getByRole("button", { name: "Save comment", exact: true })
           .click();
         await page.getByRole("button", { name: "Send message", exact: true }).click();
         const request = await gateway.waitForRequest("chat.send");
