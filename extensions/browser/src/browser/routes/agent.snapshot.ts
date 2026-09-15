@@ -723,6 +723,7 @@ export function registerBrowserAgentSnapshotRoutes(
               const flattened = flattenChromeMcpRouteSnapshot(snapshot, plan.limit);
               return res.json({
                 ok: true,
+                captured: true,
                 format: "aria",
                 targetId: tab.targetId,
                 url: tab.url,
@@ -821,6 +822,9 @@ export function registerBrowserAgentSnapshotRoutes(
           if (hasPendingDialogs(observedBrowserState)) {
             return res.json({
               ok: true,
+              // Deliberately not a capture: the dialog blocks the page, and the caller is
+              // meant to dismiss it using the details below rather than read a snapshot.
+              captured: false,
               format: plan.format,
               targetId: tab.targetId,
               url: tab.url,

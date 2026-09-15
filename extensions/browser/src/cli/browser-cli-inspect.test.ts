@@ -421,7 +421,10 @@ describe("browser cli snapshot defaults", () => {
     { label: "empty", snapshot: "" },
     { label: "whitespace-only", snapshot: " \n\t " },
   ])("fails on an $label AI snapshot that carried no capture", async ({ snapshot }) => {
-    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(snapshot));
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ...emptyAiSnapshot(snapshot),
+      captured: false,
+    });
 
     await expect(runSnapshot([])).rejects.toThrow("__exit__:1");
 
@@ -430,12 +433,28 @@ describe("browser cli snapshot defaults", () => {
   });
 
   it("fails on an uncaptured empty AI snapshot in JSON mode too", async () => {
-    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+      ...emptyAiSnapshot(""),
+      captured: false,
+    });
 
     await expect(runBrowserInspect(["snapshot"], true)).rejects.toThrow("__exit__:1");
 
     expect(allErrorText()).toContain("no capture");
     expect(runtime.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the Gateway does not report capture state", async () => {
+    // A Gateway older than the captured marker sends neither value. Absence must keep
+    // meaning "this Gateway does not say", or an updated CLI pointed at a published
+    // Gateway would reject every blank page it captures.
+    sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
+
+    await runSnapshot([]);
+
+    expect(runtime.error).not.toHaveBeenCalled();
+    expect(runtime.exit).not.toHaveBeenCalled();
+    expect(runtime.log).toHaveBeenCalledWith("");
   });
 
   it("does not write an empty AI snapshot over an existing file", async () => {
@@ -444,7 +463,10 @@ describe("browser cli snapshot defaults", () => {
       const outputPath = path.join(tempDir, "snapshot.txt");
       fsSync.writeFileSync(outputPath, "previous snapshot\n");
       const priorBytes = fsSync.readFileSync(outputPath);
-      sharedMocks.callBrowserRequest.mockResolvedValueOnce(emptyAiSnapshot(""));
+      sharedMocks.callBrowserRequest.mockResolvedValueOnce({
+        ...emptyAiSnapshot(""),
+        captured: false,
+      });
 
       await expect(runSnapshot(["--out", outputPath])).rejects.toThrow("__exit__:1");
 

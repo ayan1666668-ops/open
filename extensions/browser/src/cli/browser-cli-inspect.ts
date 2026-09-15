@@ -206,10 +206,15 @@ export function registerBrowserInspectCommands(
         // A pending dialog is the one empty response that is deliberately not a capture:
         // the route answers with blockedByDialog and the dialog details in browserState
         // so the caller can dismiss it. That is a recovery contract - let it through.
+        //
+        // The test is `captured === false`, never a missing field. A Gateway older than
+        // this change sends neither value, and absence has to keep meaning "this Gateway
+        // does not say" - otherwise an updated CLI pointed at a published Gateway through
+        // --url would reject every blank page it captures.
         if (
           result.format === "ai" &&
           !result.snapshot.trim() &&
-          !result.captured &&
+          result.captured === false &&
           !result.blockedByDialog
         ) {
           defaultRuntime.error(

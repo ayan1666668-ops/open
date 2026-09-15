@@ -171,11 +171,15 @@ export type SnapshotResult =
       imagePath?: string;
       imageType?: "png" | "jpeg";
       /**
-       * True when a capture actually ran, whatever it produced. `snapshot` alone
+       * True when a capture actually ran, whatever it produced; false when the response
+       * was assembled without one (a pending dialog, for example). `snapshot` alone
        * cannot carry that: Playwright serializes a genuinely blank page as an empty
        * string, so empty text is ambiguous between "captured an empty page" and
        * "no capture happened". Callers that need to tell those apart must read this
        * flag rather than measure the text.
+       *
+       * Absent means the Gateway predates this field, NOT that a capture failed. Test
+       * for `=== false`; treating absence as failure breaks against published Gateways.
        */
       captured?: boolean;
       blockedByDialog?: boolean;
