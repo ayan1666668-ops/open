@@ -386,5 +386,6 @@ function toDisplayRelative(params: {
 }
 
 function normalizePosixInput(value: string): string {
-  return value.replace(/\\/g, "/");
+  // Convert native separators, not literal backslashes in POSIX filenames.
+  return value.split(path.sep).join(path.posix.sep);
 }

@@ -42,7 +42,14 @@ export function normalizeSandboxHostPath(raw: string): string {
   if (!input) {
     return "/";
   }
-  let normalizedInput = input.replaceAll("\\", "/");
+  // POSIX backslashes are filename bytes. Only native or explicitly Windows
+  // paths use them as separators, including the existing namespace/UNC forms.
+  const windows =
+    process.platform === "win32" ||
+    isWindowsDriveAbsolutePath(input) ||
+    raw.startsWith("\\\\") ||
+    raw.startsWith("//?/");
+  let normalizedInput = windows ? input.replaceAll("\\", "/") : input;
   if (isWindowsDriveAbsolutePath(normalizedInput)) {
     normalizedInput = normalizedInput.charAt(0).toUpperCase() + normalizedInput.slice(1);
   }

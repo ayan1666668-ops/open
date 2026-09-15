@@ -3,7 +3,8 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { withEnv } from "../../test-utils/env.js";
 import { resolveSandboxHostPathViaExistingAncestor } from "./host-paths.js";
 import {
@@ -13,6 +14,8 @@ import {
 } from "./validate-sandbox-security.js";
 
 type SandboxSecurityConfig = Parameters<typeof validateSandboxSecurity>[0];
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 function validateBindMounts(
   binds: string[] | undefined,
@@ -123,6 +126,30 @@ describe("getBlockedBindReason", () => {
 });
 
 describe("validateBindMounts", () => {
+  it.runIf(process.platform !== "win32")(
+    "distinguishes literal backslash roots and symlink escapes",
+    () => {
+      const root = tempDirs.make("openclaw-literal-bind-");
+      const literal = join(root, "a\\b");
+      const slash = join(root, "a/b");
+      mkdirSync(literal);
+      mkdirSync(slash, { recursive: true });
+      symlinkSync(slash, join(literal, "escape"));
+      expect(() =>
+        validateBindMounts([`${literal}:/data:ro`], {
+          allowedSourceRoots: [literal],
+        }),
+      ).not.toThrow();
+      for (const source of [slash, join(literal, "escape/missing")]) {
+        expect(() =>
+          validateBindMounts([`${source}:/data:ro`], {
+            allowedSourceRoots: [literal],
+          }),
+        ).toThrow("outside allowed roots");
+      }
+    },
+  );
+
   it("allows legitimate project directory mounts", () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "openclaw-sbx-safe-"));
     expect(

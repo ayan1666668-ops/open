@@ -267,6 +267,35 @@ describe("managed mount plan", () => {
 });
 
 describe("retained mount identity", () => {
+  it.runIf(process.platform !== "win32").each(["/host/a\\b", "/host/a/b"])(
+    "compares literal POSIX source bytes for retained %s",
+    async (source) => {
+      const plan = await prepareSandboxMountPlan({
+        ...params("none"),
+        workspaceDir: path.join(root, "empty"),
+        binds: ["/host/a\\b:/data:ro"],
+      });
+      vi.mocked(execContainer).mockResolvedValue({
+        stdout: JSON.stringify({
+          Mounts: [
+            { Type: "bind", Source: "/host/state/empty", Destination: "/workspace", RW: true },
+            { Type: "bind", Source: source, Destination: "/data", RW: false },
+          ],
+          Tmpfs: null,
+        }),
+        stderr: "",
+        code: 0,
+      });
+      expect(
+        await sandboxMountPlanMatchesContainer({
+          engine: DOCKER_SANDBOX_ENGINE,
+          containerName: "retained",
+          plan,
+        }),
+      ).toBe(source === "/host/a\\b");
+    },
+  );
+
   it.each(["tmpfs", "volume", "image"])(
     "distinguishes configured tmpfs removal from implicit %s below a bind",
     async (type) => {

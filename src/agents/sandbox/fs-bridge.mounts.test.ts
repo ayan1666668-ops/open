@@ -208,33 +208,59 @@ describe("sandbox effective filesystem mounts", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "closes the pinned descriptor if host backing changes after container resolution",
-    async () => {
+  it.runIf(process.platform !== "win32").each([
+    { target: "value", other: "other" },
+    { target: "a\\b", other: "a/b" },
+  ])(
+    "closes the pinned descriptor if $target changes backing after container resolution",
+    async ({ target, other }) => {
       await withTempDir("openclaw-effective-mounts-", async (workspaceDir) => {
-        await fs.writeFile(path.join(workspaceDir, "value"), "VISIBLE");
-        await fs.writeFile(path.join(workspaceDir, "other"), "HIDDEN");
+        await fs.mkdir(path.dirname(path.join(workspaceDir, other)), { recursive: true });
+        await fs.writeFile(path.join(workspaceDir, target), "VISIBLE");
+        await fs.writeFile(path.join(workspaceDir, other), "HIDDEN");
         const bridge = createSandboxFsBridge({
           sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
         });
         const open = mockedOpenRootFile.getMockImplementation()!;
         let fd: number | undefined;
         mockedOpenRootFile.mockImplementationOnce(async (request) => {
-          await fs.unlink(path.join(workspaceDir, "value"));
-          await fs.symlink("other", path.join(workspaceDir, "value"));
+          await fs.unlink(path.join(workspaceDir, target));
+          await fs.symlink(other, path.join(workspaceDir, target));
           const result = await open(request);
           if (result.ok) {
             fd = result.fd;
           }
           return result;
         });
-        await expect(bridge.readFile({ filePath: "value" })).rejects.toThrow(
-          "hidden by another mount",
-        );
+        await expect(
+          bridge.readFile({ filePath: path.join(workspaceDir, target) }),
+        ).rejects.toThrow("hidden by another mount");
         expect(fd).toBeDefined();
         expect(() => fsSync.fstatSync(fd!)).toThrow(expect.objectContaining({ code: "EBADF" }));
-        expect(await fs.readFile(path.join(workspaceDir, "other"), "utf8")).toBe("HIDDEN");
+        expect(await fs.readFile(path.join(workspaceDir, other), "utf8")).toBe("HIDDEN");
         expectOnlyCanonicalPathCommands();
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reads a workspace whose root contains a literal backslash",
+    async () => {
+      await withTempDir("openclaw-effective-mounts-", async (root) => {
+        const workspaceDir = path.join(root, "workspace\\part");
+        const decoy = path.join(root, "workspace/part");
+        await fs.mkdir(workspaceDir);
+        await fs.mkdir(decoy, { recursive: true });
+        await fs.writeFile(path.join(workspaceDir, "marker"), "LITERAL_ROOT");
+        await fs.writeFile(path.join(decoy, "marker"), "SLASH_ROOT_DECOY");
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+        });
+        expect((await bridge.readFile({ filePath: "marker" })).toString()).toBe("LITERAL_ROOT");
+        expect(await resolveSandboxFileIdentity({ bridge, filePath: "marker" })).toBe(
+          path.join(workspaceDir, "marker"),
+        );
+        expect(await fs.readFile(path.join(decoy, "marker"), "utf8")).toBe("SLASH_ROOT_DECOY");
       });
     },
   );

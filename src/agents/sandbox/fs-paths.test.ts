@@ -80,6 +80,30 @@ describe("sandbox bind mounts", () => {
 });
 
 describe("resolveSandboxFsPathWithMounts", () => {
+  it("converts only native separators when mapping workspace-relative paths", () => {
+    const sandbox = createSandbox();
+    const relativePath = process.platform === "win32" ? "a/b" : "a\\b";
+    for (const filePath of [
+      "a\\b",
+      `/workspace/${relativePath}`,
+      path.resolve(sandbox.workspaceDir, "a\\b"),
+    ]) {
+      expect(
+        resolveSandboxFsPathWithMounts({
+          filePath,
+          cwd: sandbox.workspaceDir,
+          defaultWorkspaceRoot: sandbox.workspaceDir,
+          defaultContainerRoot: sandbox.containerWorkdir,
+          mounts: buildSandboxFsMounts(sandbox),
+        }),
+      ).toMatchObject({
+        hostPath: path.resolve(sandbox.workspaceDir, "a\\b"),
+        containerPath: `/workspace/${relativePath}`,
+        relativePath,
+      });
+    }
+  });
+
   it("maps mounted container absolute paths to host paths", () => {
     const sandbox = createSandbox({
       docker: {

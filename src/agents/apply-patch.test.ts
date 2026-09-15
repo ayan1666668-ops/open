@@ -13,6 +13,7 @@ import {
 } from "../test-utils/symlink-rebind-race.js";
 import { createApplyPatchTool } from "./apply-patch.js";
 import { applyPatch, createMemoryPatchSandbox } from "./apply-patch.test-support.js";
+import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import { createSandboxFsBridgeFromResolver } from "./test-helpers/host-sandbox-fs-bridge.js";
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
@@ -414,6 +415,60 @@ describe("applyPatch", () => {
       expect(result.summary.modified).toEqual(["source.txt"]);
     },
   );
+
+  it.each([
+    { containerRoot: "C:\\work", movePath: "C:\\work\\.\\source.txt" },
+    { containerRoot: "C:\\work", movePath: "c:\\WORK\\SOURCE.txt" },
+    { containerRoot: "\\\\server\\share", movePath: "\\\\SERVER\\share\\.\\source.txt" },
+  ])(
+    "updates and no-ops native Windows legacy same-file moves to $movePath",
+    async ({ containerRoot, movePath }) => {
+      const memory = createMemoryPatchSandbox({ "source.txt": "before\n" }, { containerRoot });
+      memory.bridge.resolvePath = ({ filePath }) => ({
+        relativePath: path.win32.isAbsolute(filePath)
+          ? path.win32.relative(containerRoot, filePath)
+          : filePath,
+        containerPath: path.win32.isAbsolute(filePath) ? filePath : `${containerRoot}\\${filePath}`,
+      });
+      const move = (before: string, after: string) =>
+        [
+          "*** Begin Patch",
+          "*** Update File: source.txt",
+          `*** Move to: ${movePath}`,
+          "@@",
+          `-${before}`,
+          `+${after}`,
+          "*** End Patch",
+        ].join("\n");
+      await expect(applyPatch(move("before", "after"), memory.options)).resolves.toMatchObject({
+        summary: { modified: ["source.txt"] },
+      });
+      await expect(applyPatch(move("after", "after"), memory.options)).resolves.toMatchObject({
+        noOp: true,
+      });
+      expect([...memory.files.values()]).toEqual(["after\n"]);
+      expect(memory.writeFile).toHaveBeenCalledTimes(1);
+      expect(memory.createFileExclusive).not.toHaveBeenCalled();
+      expect(memory.remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { first: "C:\\work\\source.txt", second: "\\\\?\\c:\\WORK\\.\\source.txt", same: true },
+    {
+      first: "\\\\server\\share\\source.txt",
+      second: "\\\\?\\UNC\\SERVER\\share\\.\\source.txt",
+      same: true,
+    },
+    { first: "/workspace/a\\b", second: "/workspace/a/b", same: false },
+    { first: "/workspace/C:\\name", second: "/workspace/C:/name", same: false },
+  ])("compares legacy queue identity for $first and $second", async ({ first, second, same }) => {
+    const { bridge } = createMemoryPatchSandbox();
+    bridge.resolvePath = ({ filePath }) => ({ containerPath: filePath, relativePath: filePath });
+    const key = (filePath: string) =>
+      resolveSandboxFileMutationQueueKey({ bridge, root: "/queue", filePath });
+    expect((await key(first)) === (await key(second))).toBe(same);
+  });
 
   it("returns a non-terminal no-op without rewriting unchanged update hunks", async () => {
     const memory = createMemoryPatchSandbox({

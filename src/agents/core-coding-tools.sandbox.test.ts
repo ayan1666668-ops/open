@@ -44,6 +44,65 @@ describe("workspace-only coding tools with effective sandbox mounts", () => {
   installFsBridgeTestHarness();
 
   it.runIf(process.platform !== "win32").each([true, false])(
+    "keeps literal backslash read/write/edit/patch targets distinct with workspaceOnly=%s",
+    async (workspaceOnly) => {
+      await withTempDir("openclaw-coding-mounts-", async (workspaceDir) => {
+        await fs.mkdir(path.join(workspaceDir, "a"));
+        await fs.writeFile(path.join(workspaceDir, "a\\b"), "LITERAL_ORIGINAL\n");
+        await fs.writeFile(path.join(workspaceDir, "a/b"), "SLASH_DECOY\n");
+        const sandbox = createSandbox({
+          workspaceDir,
+          agentWorkspaceDir: workspaceDir,
+          workspaceAccess: "rw",
+        });
+        const bridge = createSandboxFsBridge({ sandbox });
+        sandbox.fsBridge = bridge;
+        installLocalTransport(bridge);
+        const tools = createCoreCodingTools({
+          codingRoot: workspaceDir,
+          containmentRoot: workspaceDir,
+          includeBaseCodingTools: true,
+          includeShellTools: true,
+          workspaceOnly,
+          readOnly: false,
+          sandbox,
+          applyPatchEnabled: true,
+          applyPatchWorkspaceOnly: workspaceOnly,
+          execDefaults: {},
+          processDefaults: {},
+        });
+        const tool = (name: string) => tools.find((entry) => entry.name === name)!;
+        for (const filePath of ["a\\b", "/workspace/a\\b"]) {
+          const text = getTextContent(
+            await tool("read").execute("read-literal", { path: filePath }),
+          );
+          expect(text).toContain("LITERAL_ORIGINAL");
+          expect(text).not.toContain("SLASH_DECOY");
+        }
+        await tool("write").execute("write-literal", {
+          path: "a\\b",
+          content: "LITERAL_WRITTEN\n",
+        });
+        await tool("edit").execute("edit-literal", {
+          path: "a\\b",
+          edits: [{ oldText: "LITERAL_WRITTEN", newText: "LITERAL_EDITED" }],
+        });
+        await tool("apply_patch").execute("patch-literal", {
+          input:
+            "*** Begin Patch\n*** Update File: a\\b\n@@\n-LITERAL_EDITED\n+LITERAL_PATCHED\n*** End Patch",
+        });
+        expect(await fs.readFile(path.join(workspaceDir, "a\\b"), "utf8")).toBe(
+          "LITERAL_PATCHED\n",
+        );
+        expect(await fs.readFile(path.join(workspaceDir, "a/b"), "utf8")).toBe("SLASH_DECOY\n");
+        expect(await resolveSandboxFileIdentity({ bridge, filePath: "a\\b" })).not.toBe(
+          await resolveSandboxFileIdentity({ bridge, filePath: "a/b" }),
+        );
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32").each([true, false])(
     "reads mapped aliases through real access and queue checks with workspaceOnly=%s",
     async (workspaceOnly) => {
       await withTempDir("openclaw-coding-mounts-", async (root) => {

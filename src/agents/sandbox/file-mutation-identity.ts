@@ -1,5 +1,6 @@
 import path from "node:path";
 import { resolveIdentityPathViaExistingAncestorSync } from "../../infra/boundary-path.js";
+import { normalizeWindowsPathForComparison } from "../../infra/path-guards.js";
 import type { SandboxFsBridge } from "./fs-bridge.types.js";
 
 type SandboxFileIdentityParams = {
@@ -36,9 +37,12 @@ export async function resolveSandboxFileIdentity(params: {
     // equivalent lexical spellings without claiming to resolve remote aliases;
     // current bridges supply their own physical identity above.
     const resolved = params.bridge.resolvePath({ filePath: params.filePath, cwd: params.cwd });
+    const containerPath = resolved.containerPath;
     identity = resolved.hostPath
       ? resolveIdentityPathViaExistingAncestorSync(resolved.hostPath)
-      : path.posix.normalize(resolved.containerPath);
+      : !containerPath.startsWith("/") && path.win32.isAbsolute(containerPath)
+        ? normalizeWindowsPathForComparison(containerPath)
+        : path.posix.normalize(containerPath);
   }
   return identity;
 }

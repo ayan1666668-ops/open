@@ -40,9 +40,14 @@ export async function applyPatch(
 
 export function createMemoryPatchSandbox(
   initialFiles: Record<string, string | Buffer> = {},
-  options: { supportsExclusiveCreate?: boolean } = {},
+  options: { supportsExclusiveCreate?: boolean; containerRoot?: string } = {},
 ) {
-  const resolvePath = (filePath: string) => path.posix.resolve("/sandbox", filePath);
+  const containerRoot = options.containerRoot ?? "/sandbox";
+  const syntax = containerRoot.startsWith("/") ? path.posix : path.win32;
+  const resolvePath = (filePath: string) => {
+    const resolved = syntax.resolve(containerRoot, filePath);
+    return syntax === path.win32 ? resolved.toLowerCase() : resolved;
+  };
   const files = new Map<string, string | Buffer>(
     Object.entries(initialFiles).map(([filePath, contents]) => [resolvePath(filePath), contents]),
   );
@@ -63,7 +68,7 @@ export function createMemoryPatchSandbox(
   const mkdirp = vi.fn(async () => {});
   const bridge: SandboxFsBridge = {
     resolvePath: ({ filePath }) => ({
-      relativePath: path.posix.relative("/sandbox", resolvePath(filePath)),
+      relativePath: syntax.relative(containerRoot, resolvePath(filePath)),
       containerPath: resolvePath(filePath),
     }),
     readFile: async ({ filePath }) => {
