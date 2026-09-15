@@ -14,8 +14,8 @@ import {
   releaseDisplacedChatAttachmentPayloads,
 } from "../attachment-payload-store.ts";
 import { admitAttachmentFiles } from "./chat-attachment-admission.ts";
+import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
 import { encodeTextAsDataUrl } from "./chat-attachment-text.ts";
-import type { ChatAttachmentControlsProps } from "./chat-attachments.ts";
 import { showChatAnnotationEditor } from "./chat-selection-popup.ts";
 import "../../../styles/chat/selection-annotations.css";
 

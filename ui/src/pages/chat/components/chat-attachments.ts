@@ -2,7 +2,6 @@
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { html, nothing } from "lit";
 import { icons } from "../../../components/icons.ts";
-import type { ImageLightboxItem } from "../../../components/image-lightbox.ts";
 import { scrollState } from "../../../components/scroll-state.ts";
 import "../../../components/tooltip.ts";
 import "../../../components/web-awesome.ts";
@@ -17,6 +16,7 @@ import {
   releaseChatAttachmentPayload,
 } from "../attachment-payload-store.ts";
 import { admitAttachmentFiles } from "./chat-attachment-admission.ts";
+import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
 import { renderCompactAttachmentFile } from "./chat-attachment-file.ts";
 import { encodeTextAsDataUrl } from "./chat-attachment-text.ts";
 import { renderChatSelectionAnnotations } from "./chat-selection-annotations.ts";
@@ -30,23 +30,6 @@ const LARGE_PASTE_TEXT_FILE_PREFIX = "pasted-text-";
 const PASTED_TEXT_PREVIEW_MAX_LENGTH = 20;
 const largePastedTextAttachments = new WeakSet<ChatAttachment>();
 const pastedTextPreviews = new WeakMap<ChatAttachment, string>();
-
-export type ChatAttachmentControlsProps = {
-  /** Decoded-size ceilings from hello policy; absent means no client-side cap. */
-  attachmentLimits?: { maxBytes: number; maxImageBytes: number };
-  attachments?: ChatAttachment[];
-  disabled?: boolean;
-  getAttachments?: () => ChatAttachment[];
-  draft?: string;
-  getDraft?: () => string;
-  onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
-  onRemoveAttachment?: (attachment: ChatAttachment) => void;
-  onDraftChange?: (next: string) => void;
-  onPendingReadsChange?: (delta: 1 | -1) => void;
-  onOpenImage?: (item: ImageLightboxItem) => void;
-  onRequestUpdate?: () => void;
-  readSignal?: AbortSignal;
-};
 
 export class ChatAttachmentReadLifecycle {
   pendingReads = 0;
