@@ -187,7 +187,7 @@ export function releaseMarkdownTables(owner: HTMLElement): void {
   // Queue and frame handle are module-level, so a released owner must drop its
   // own shells. Otherwise the handle stays non-null forever and `??=` never
   // schedules another frame for any later owner.
-  for (const shell of [...queuedOverflowShells]) {
+  for (const shell of queuedOverflowShells) {
     if (owner === shell || owner.contains(shell)) {
       queuedOverflowShells.delete(shell);
     }
