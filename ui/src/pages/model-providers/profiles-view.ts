@@ -121,16 +121,19 @@ function profileInitials(identity: string): string {
   return initials.toLocaleUpperCase() || "?";
 }
 
-function profileStatus(profile: ProviderProfile) {
-  if (
-    profile.externallyManaged &&
-    (profile.status === "expired" || profile.status === "expiring")
-  ) {
-    return renderSettingsStatus({ kind: "ok", label: t("modelProviders.status.ok") });
-  }
-  switch (profile.status) {
+function profileStatus(profile: ProviderProfile, providerAuthRejected: boolean) {
+  const status =
+    profile.externallyManaged && (profile.status === "expired" || profile.status === "expiring")
+      ? "ok"
+      : profile.status;
+  switch (status) {
     case "ok":
-      return renderSettingsStatus({ kind: "ok", label: t("modelProviders.status.ok") });
+      return renderSettingsStatus({
+        kind: providerAuthRejected ? "muted" : "ok",
+        label: t(
+          providerAuthRejected ? "modelProviders.status.configured" : "modelProviders.status.ok",
+        ),
+      });
     case "static":
       return renderSettingsStatus({ kind: "ok", label: t("modelProviders.status.configured") });
     case "expiring":
@@ -524,7 +527,9 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
                       ></openclaw-model-account-usage>`
                     : nothing
                 }
-                <span class="model-providers__profile-status">${profileStatus(profile)}</span>
+                <span class="model-providers__profile-status"
+                  >${profileStatus(profile, card.catalogStatus === "auth-rejected")}</span
+                >
                 <span class="model-providers__profile-actions">
                   ${
                     profile.logoutSupported === true && logoutProvider

@@ -292,6 +292,7 @@ suite.define(() => {
                         provider: "openai",
                         displayName: "OpenAI",
                         status: "ok",
+                        apiKey: { source: "env", envVar: "OPENAI_API_KEY" },
                         profiles: [
                           { profileId: "openai:rejected", type: "oauth", status: "ok" },
                           { profileId: "openai:ready", type: "oauth", status: "ok" },
@@ -357,6 +358,16 @@ suite.define(() => {
             )?.trim(),
           )
           .toBe(status);
+        if (!available) {
+          await openaiCard.screenshot({
+            path: path.join(suite.artifactDir, "provider-auth-rejected.png"),
+          });
+        }
+        expect(
+          await openaiCard
+            .locator('[data-profile-id="openai:ready"] .model-providers__profile-status')
+            .textContent(),
+        ).toContain(available ? "Signed in" : "Credentials configured");
       },
     );
   });
