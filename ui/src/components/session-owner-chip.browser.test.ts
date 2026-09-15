@@ -18,11 +18,33 @@ function renderedLuminance(...backgrounds: string[]): number {
   }
   const channels = context.getImageData(0, 0, 1, 1).data;
   expect(channels[3]).toBe(255);
+  return pixelLuminance(channels);
+}
+
+function pixelLuminance(channels: Uint8ClampedArray): number {
   return [0.2126, 0.7152, 0.0722].reduce((sum, weight, index) => {
     const value = channels[index]! / 255;
     const linear = value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
     return sum + linear * weight;
   }, 0);
+}
+
+async function paintedCounterLuminance(face: HTMLElement): Promise<number> {
+  const base64 = await page.elementLocator(face).screenshot({ save: false });
+  const image = new Image();
+  image.src = `data:image/png;base64,${base64}`;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d")!;
+  context.drawImage(image, 0, 0);
+  // Sample below the text, clear of the unread badge and circular border.
+  const scale = image.height / face.getBoundingClientRect().height;
+  return pixelLuminance(
+    context.getImageData(Math.floor(image.width / 2), Math.floor(image.height - 3 * scale), 1, 1)
+      .data,
+  );
 }
 
 function contrastRatio(first: number, second: number): number {
@@ -136,18 +158,30 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
       .flatMap((theme) =>
         (["light", "dark"] as const).flatMap((mode) =>
           (theme === "claw" ? [2, 3, 5, 12, 13] : [12]).flatMap((ownerCount) =>
-            (theme === "claw" ? ["present", "running", "away", "unread"] : ["present"]).map(
-              (presence) => ({ theme, mode, ownerCount, presence }),
+            (theme === "claw"
+              ? ["present", "running", "away", "unread"]
+              : ["present", "away"]
+            ).flatMap((presence) =>
+              (presence === "present" && ownerCount === 12 ? [false, true] : [false]).map(
+                (pinned) => ({ theme, mode, ownerCount, presence, pinned }),
+              ),
             ),
           ),
         ),
       ),
   )(
-    "keeps $ownerCount owners in an equal pair in $theme $mode while $presence",
-    async ({ theme, mode, ownerCount, presence }) => {
+    "keeps $ownerCount owners in an equal pair in $theme $mode while $presence (pinned=$pinned)",
+    async ({ theme, mode, ownerCount, presence, pinned }) => {
       await applyTheme(theme, mode);
       const sidebar = document.createElement("aside");
-      sidebar.className = "sidebar sidebar-recent-sessions";
+      sidebar.className = "sidebar";
+      const shell = document.createElement("div");
+      shell.className = "sidebar-shell";
+      const sessions = document.createElement("section");
+      sessions.className = "sidebar-sessions sidebar-recent-sessions";
+      sessions.classList.toggle("sidebar-zone-entry", pinned);
+      shell.append(sessions);
+      sidebar.append(shell);
       document.body.append(sidebar);
       render(
         html`<div class="sidebar-recent-session">
@@ -195,7 +229,7 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
             <span class="sidebar-recent-session__title">Shared session</span>
           </a>
         </div>`,
-        sidebar,
+        sessions,
       );
       const row = sidebar.querySelector<HTMLElement>(".sidebar-recent-session")!;
       // Contrast is measured at each interaction endpoint, outside its transition.
@@ -205,6 +239,13 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
       await Promise.all(
         [...chip.querySelectorAll("openclaw-viewer-avatar")].map((avatar) => avatar.updateComplete),
       );
+      await expect
+        .poll(() =>
+          [...chip.querySelectorAll(".viewer-avatar")].map((avatar) =>
+            avatar.getAttribute("data-avatar-state"),
+          ),
+        )
+        .not.toContain("pending");
       const stack = chip.querySelector<HTMLElement>(".session-owner-stack")!;
       const primary = chip.querySelector<HTMLElement>(".session-owner-stack__front")!;
       const peer = chip.querySelector<HTMLElement>(
@@ -245,7 +286,12 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
         const paintedPrimary = primaryFace.getBoundingClientRect();
         expect([paintedPrimary.width, paintedPrimary.height]).toEqual([16, 16]);
         expect(getComputedStyle(primary).opacity).toBe(presence === "away" ? "0.45" : "1");
-        expect(getComputedStyle(peer).opacity).toBe("1");
+        expect(getComputedStyle(peer).opacity).toBe(
+          ownerCount > 2 && presence === "away" ? getComputedStyle(primary).opacity : "1",
+        );
+        if (ownerCount > 2) {
+          expect(getComputedStyle(peer).filter).toBe(getComputedStyle(primary).filter);
+        }
         if (presence === "running") {
           const traceBounds = row.querySelector(".session-glyph__trace")!.getBoundingClientRect();
           expect(traceBounds.left).toBe(stackBounds.left - 2);
@@ -292,12 +338,11 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
           getComputedStyle(row).backgroundColor,
         ];
         const rowLuminance = renderedLuminance(...rowBackground);
-        const counterLuminance = renderedLuminance(...rowBackground, style.backgroundColor);
-        const textLuminance = renderedLuminance(
-          ...rowBackground,
-          style.backgroundColor,
-          style.color,
-        );
+        if (presence === "away") {
+          continue;
+        }
+        const counterLuminance = await paintedCounterLuminance(peer);
+        const textLuminance = renderedLuminance(style.color);
         expect(
           contrastRatio(counterLuminance, rowLuminance),
           `${theme} ${state} surface`,
@@ -306,6 +351,21 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
           contrastRatio(textLuminance, counterLuminance),
           `${theme} ${state} text`,
         ).toBeGreaterThanOrEqual(4.5);
+      }
+      if (theme === "claw" && presence === "away" && ownerCount === 3) {
+        chip.viewingNow = true;
+        await chip.updateComplete;
+        await expect
+          .poll(() =>
+            [primary, peer].map((face) => ({
+              opacity: getComputedStyle(face).opacity,
+              filter: getComputedStyle(face).filter,
+            })),
+          )
+          .toEqual([
+            { opacity: "1", filter: "none" },
+            { opacity: "1", filter: "none" },
+          ]);
       }
       if (presence === "present") {
         row.classList.remove("sidebar-recent-session--selected");

@@ -150,12 +150,17 @@ openclaw-session-owner-chip {
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+}
+
+.session-owner-chip,
+.session-owner-stack__overflow {
   transition:
     filter var(--duration-fast) ease,
     opacity var(--duration-fast) ease;
 }
 
-.session-owner-chip--away {
+.session-owner-chip--away,
+.session-owner-stack:has(.session-owner-chip--away) .session-owner-stack__overflow {
   filter: grayscale(0.8);
   opacity: 0.45;
 }
@@ -207,7 +212,10 @@ openclaw-session-owner-chip .viewer-avatar__initials {
 .session-owner-stack__overflow {
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--text-strong) 26%, var(--sidebar-bg, var(--bg)));
+  /* Follow the row fill while keeping the overlapping primary behind an opaque face. */
+  background:
+    linear-gradient(color-mix(in srgb, var(--text-strong) 16%, transparent) 0 0),
+    linear-gradient(var(--session-row-bg, transparent) 0 0), var(--sidebar-bg, var(--bg));
   color: var(--text-strong);
   font-weight: 700;
   line-height: 1;
