@@ -171,10 +171,9 @@ async function executeJobCoreWithTimeoutUnfinalized(
     if (settled) {
       return settled;
     }
-    const cleanupConfirmed =
-      interruption !== "cancelled"
-        ? await cleanupTimedOutCronAgentRun(state, job, interruption.timeoutMs, execution)
-        : true;
+    if (interruption !== "cancelled") {
+      await cleanupTimedOutCronAgentRun(state, job, interruption.timeoutMs, execution);
+    }
     const isolatedAgentSetupTimeout =
       interruption !== "cancelled" &&
       job.sessionTarget === "isolated" &&
@@ -192,9 +191,6 @@ async function executeJobCoreWithTimeoutUnfinalized(
         sessionId: execution.sessionId,
         sessionKey: execution.sessionKey,
       }),
-      // #137215: when cleanup cannot confirm the original execution stopped,
-      // hold the retry instead of overlapping the still-running work.
-      ...(cleanupConfirmed ? {} : { timeoutCleanupUnconfirmed: true }),
       ...(isolatedAgentSetupTimeout ? { isolatedAgentSetupTimeout } : {}),
       diagnostics: createCronRunDiagnosticsFromError("cron-setup", error, {
         nowMs: state.deps.nowMs,

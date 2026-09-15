@@ -299,7 +299,6 @@ export function applyJobResult(
           lastErrorReason: job.state.lastErrorReason,
           executionStarted: result.executionStarted,
           consecutiveErrors: job.state.consecutiveErrors,
-          timeoutCleanupUnconfirmed: result.timeoutCleanupUnconfirmed,
         });
         if (retryDecision.retryable && retryDecision.backoffMs !== undefined) {
           // Schedule retry with backoff (#24355).
@@ -379,7 +378,6 @@ export function applyJobResult(
         lastErrorReason: job.state.lastErrorReason,
         executionStarted: result.executionStarted,
         consecutiveErrors: job.state.consecutiveErrors,
-        timeoutCleanupUnconfirmed: result.timeoutCleanupUnconfirmed,
       });
       let normalNext: number | undefined;
       let normalNextComputed = false;
