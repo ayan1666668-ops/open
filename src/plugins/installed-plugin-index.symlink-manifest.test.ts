@@ -39,7 +39,11 @@ describe("installed plugin index manifest hashing across symlinked roots", () =>
       const realParent = makeTempDir();
       const realRoot = path.join(realParent, "example-plugin");
       fs.mkdirSync(realRoot, { recursive: true });
-      fs.writeFileSync(path.join(realRoot, "openclaw.plugin.json"), JSON.stringify({ id: "demo" }), "utf-8");
+      fs.writeFileSync(
+        path.join(realRoot, "openclaw.plugin.json"),
+        JSON.stringify({ id: "demo" }),
+        "utf-8",
+      );
       fs.writeFileSync(
         path.join(realRoot, "index.ts"),
         "throw new Error('runtime entry should not load while building the installed plugin index');\n",

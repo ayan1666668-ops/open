@@ -195,7 +195,10 @@ function readRecordFile(params: {
     // genuinely outside the root keeps its escaping relative path and is
     // rejected exactly as before.
     try {
-      const realRelative = path.relative(fs.realpathSync(rootDir), fs.realpathSync(params.filePath));
+      const realRelative = path.relative(
+        fs.realpathSync(rootDir),
+        fs.realpathSync(params.filePath),
+      );
       if (!realRelative.startsWith("..") && !path.isAbsolute(realRelative)) {
         relativePath = realRelative;
       }
