@@ -2,8 +2,31 @@ import { normalizeAgentRunTerminalReplySnapshot } from "../../agent-run-terminal
 import type {
   SubagentCompletionDeliveryState,
   SubagentCompletionState,
+  SubagentRunMaintenanceRecord,
   SubagentRunRecord,
 } from "./subagent-registry.types.js";
+
+/** Copy only protection facts; live memory retains its existing, unnormalized semantics. */
+export function projectSubagentRunForMaintenance(
+  entry: SubagentRunRecord,
+): SubagentRunMaintenanceRecord {
+  return {
+    runId: entry.runId,
+    childSessionKey: entry.childSessionKey,
+    requesterSessionKey: entry.requesterSessionKey,
+    createdAt: entry.createdAt,
+    cleanupCompletedAt: entry.cleanupCompletedAt,
+    expectsCompletionMessage: entry.expectsCompletionMessage,
+    killIntent: entry.killIntent ? { ...entry.killIntent } : entry.killIntent,
+    killReconciliation: entry.killReconciliation
+      ? { ...entry.killReconciliation }
+      : entry.killReconciliation,
+    execution: { status: entry.execution.status, endedAt: entry.execution.endedAt },
+    delivery: entry.delivery
+      ? { status: entry.delivery.status, suspendedAt: entry.delivery.suspendedAt }
+      : undefined,
+  };
+}
 
 export function normalizeSubagentRunState(entry: SubagentRunRecord): SubagentRunRecord {
   const taskRunId = typeof entry.taskRunId === "string" ? entry.taskRunId.trim() : "";
@@ -48,6 +71,8 @@ export function normalizeSubagentRunState(entry: SubagentRunRecord): SubagentRun
   } else {
     entry.killReconciliation = {
       killedAt: killReconciliation.killedAt,
+      taskCancellationAccepted:
+        killReconciliation.taskCancellationAccepted === true ? true : undefined,
       suppressTaskDelivery: killReconciliation.suppressTaskDelivery === true ? true : undefined,
       supersededAt: Number.isFinite(killReconciliation.supersededAt)
         ? killReconciliation.supersededAt
@@ -121,6 +146,37 @@ export function clearDeliveryState(entry: SubagentRunRecord): void {
 /** Returns true when delivery is suspended with a durable timestamp. */
 export function isDeliverySuspended(entry: Pick<SubagentRunRecord, "delivery">): boolean {
   return entry.delivery?.status === "suspended" && typeof entry.delivery.suspendedAt === "number";
+}
+
+/** Returns true when required delivery still owns the row after its child session is gone. */
+export function hasRetainedRequiredCompletionDelivery(
+  entry: Pick<
+    SubagentRunRecord,
+    "completion" | "delivery" | "expectsCompletionMessage" | "suppressCompletionDelivery"
+  >,
+): boolean {
+  const delivery = entry.delivery;
+  if (
+    entry.expectsCompletionMessage !== true ||
+    entry.suppressCompletionDelivery === true ||
+    entry.completion?.required !== true ||
+    !delivery?.payload
+  ) {
+    return false;
+  }
+  if (isDeliverySuspended(entry)) {
+    return true;
+  }
+  if (delivery.status === "in_progress") {
+    // The correlated session queue owns this delivery and resumes it separately.
+    return true;
+  }
+  return (
+    delivery.status === "pending" &&
+    delivery.disposition !== "ambiguous" &&
+    delivery.disposition !== "intentional_non_delivery" &&
+    delivery.disposition !== "permanent_failure"
+  );
 }
 
 /** Reads the current delivery attempt count. */

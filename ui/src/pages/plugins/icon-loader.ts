@@ -1,10 +1,6 @@
-import { normalizeRouteBasePath } from "@openclaw/uirouter";
-import {
-  CONTROL_UI_CATALOG_ICON_PATH_PREFIX,
-  CONTROL_UI_LINK_FAVICON_PATH_PREFIX,
-  CONTROL_UI_PLUGIN_ICON_PATH_PREFIX,
-} from "../../../../src/gateway/control-ui-contract.js";
+import { buildControlUiResourcePath } from "../../../../src/gateway/control-ui-resource-routes.js";
 import { resolveControlUiAuthCandidates } from "../../app/control-ui-auth.ts";
+import { hasSameOriginGatewayTransport } from "../../dev-gateway.ts";
 
 const ALLOWED_PLUGIN_ICON_MIME_TYPES = new Set(["image/png", "image/svg+xml", "image/x-icon"]);
 const PLUGIN_ICON_RASTER_SIZE = 256;
@@ -70,35 +66,6 @@ type PluginIconAuthSource = Parameters<typeof resolveControlUiAuthCandidates>[0]
 
 function normalizeMimeType(contentType: string | null): string {
   return contentType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-}
-
-function gatewayIsSameOrigin(gatewayUrl: string): boolean {
-  try {
-    const url = new URL(gatewayUrl, window.location.href);
-    if (url.protocol === "ws:") {
-      url.protocol = "http:";
-    } else if (url.protocol === "wss:") {
-      url.protocol = "https:";
-    }
-    return url.origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-function pluginIconRouteUrl(resourceBasePath: string, pluginId: string): string {
-  const normalizedBasePath = normalizeRouteBasePath(resourceBasePath);
-  return `${normalizedBasePath}${CONTROL_UI_PLUGIN_ICON_PATH_PREFIX}/${encodeURIComponent(pluginId)}`;
-}
-
-function catalogIconRouteUrl(resourceBasePath: string, iconUrl: string): string {
-  const normalizedBasePath = normalizeRouteBasePath(resourceBasePath);
-  return `${normalizedBasePath}${CONTROL_UI_CATALOG_ICON_PATH_PREFIX}/${encodeURIComponent(iconUrl)}`;
-}
-
-function linkFaviconRouteUrl(resourceBasePath: string, hostname: string): string {
-  const normalizedBasePath = normalizeRouteBasePath(resourceBasePath);
-  return `${normalizedBasePath}${CONTROL_UI_LINK_FAVICON_PATH_PREFIX}/${encodeURIComponent(hostname)}`;
 }
 
 function parseSvgNumber(value: string): number | null {
@@ -337,6 +304,8 @@ type FetchProxiedIconParams = {
   signal: AbortSignal;
 };
 
+export type PluginIconFetchContext = Omit<FetchProxiedIconParams, "signal">;
+
 function cancelUnreadResponseBody(response: Response): void {
   if (!response.bodyUsed) {
     // Cancellation is best-effort cleanup; a stalled stream must not block
@@ -348,8 +317,9 @@ function cancelUnreadResponseBody(response: Response): void {
 async function fetchProxiedIconBlobUrl(
   params: FetchProxiedIconParams,
   routeUrl: string,
+  svgOnly = false,
 ): Promise<string | null> {
-  if (!gatewayIsSameOrigin(params.gatewayUrl)) {
+  if (!hasSameOriginGatewayTransport(params.gatewayUrl)) {
     return null;
   }
   const authCandidates = resolveControlUiAuthCandidates(params.auth);
@@ -377,7 +347,10 @@ async function fetchProxiedIconBlobUrl(
       return null;
     }
     const contentType = normalizeMimeType(response.headers.get("content-type"));
-    if (!ALLOWED_PLUGIN_ICON_MIME_TYPES.has(contentType)) {
+    if (
+      !ALLOWED_PLUGIN_ICON_MIME_TYPES.has(contentType) ||
+      (svgOnly && contentType !== "image/svg+xml")
+    ) {
       cancelUnreadResponseBody(response);
       return null;
     }
@@ -391,20 +364,44 @@ async function fetchProxiedIconBlobUrl(
 export function fetchPluginIconBlobUrl(
   params: FetchProxiedIconParams & { pluginId: string },
 ): Promise<string | null> {
-  const routeUrl = pluginIconRouteUrl(params.resourceBasePath, params.pluginId);
+  const routeUrl = buildControlUiResourcePath(
+    "pluginIcon",
+    params.resourceBasePath,
+    params.pluginId,
+  );
   return fetchProxiedIconBlobUrl(params, routeUrl);
+}
+
+export function fetchPluginActivityIconBlobUrl(
+  params: FetchProxiedIconParams & { pluginId: string; tool?: string },
+): Promise<string | null> {
+  const path = buildControlUiResourcePath(
+    "pluginActivityIcon",
+    params.resourceBasePath,
+    params.pluginId,
+  );
+  const routeUrl = params.tool ? `${path}?tool=${encodeURIComponent(params.tool)}` : path;
+  return fetchProxiedIconBlobUrl(params, routeUrl, true);
 }
 
 export function fetchCatalogIconBlobUrl(
   params: FetchProxiedIconParams & { iconUrl: string },
 ): Promise<string | null> {
-  const routeUrl = catalogIconRouteUrl(params.resourceBasePath, params.iconUrl);
+  const routeUrl = buildControlUiResourcePath(
+    "catalogIcon",
+    params.resourceBasePath,
+    params.iconUrl,
+  );
   return fetchProxiedIconBlobUrl(params, routeUrl);
 }
 
 export function fetchLinkFaviconBlobUrl(
   params: FetchProxiedIconParams & { hostname: string },
 ): Promise<string | null> {
-  const routeUrl = linkFaviconRouteUrl(params.resourceBasePath, params.hostname);
+  const routeUrl = buildControlUiResourcePath(
+    "linkFavicon",
+    params.resourceBasePath,
+    params.hostname,
+  );
   return fetchProxiedIconBlobUrl(params, routeUrl);
 }

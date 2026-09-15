@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 344429,
-  "reason": "Channel conversation avatars (PR #125668): lead-slot render branch + row plumbing on top of the 344395 B main baseline; avatar element itself is code-split out of startup",
-  "updatedAt": "2026-08-18"
+  "startupJsGzipBytes": 362012,
+  "reason": "Maintainer-approved 354 KiB cap after integrated scoped catalog invalidation (#147845), remote workspaces (#147773), and update-status feedback (#147883). Controlled build measured 362012 B; deferring the new workspace labels saved only 64 B and still failed the previous limit. Existing 512 B growth and 64 B build variance allowances remain unchanged.",
+  "updatedAt": "2026-09-14"
 }

@@ -379,6 +379,7 @@ async function createQaLabSuiteResultFixture(params?: {
     writeFile(
       summaryPath,
       JSON.stringify({
+        run: { status: "completed" },
         counts: {
           total: scenarios.length,
           passed: scenarios.filter((scenario) => scenario.status === "pass").length,
@@ -402,6 +403,17 @@ async function createQaLabSuiteResultFixture(params?: {
 }
 
 describe("qa-lab server", () => {
+  it("returns reachable IPv6 listen and advertised URLs", async () => {
+    const lab = await startQaLabServerForTest({ host: "::1", port: 0 });
+    cleanups.push(async () => await lab.stop());
+
+    for (const baseUrl of [lab.listenUrl, lab.baseUrl]) {
+      const response = await fetch(`${baseUrl}/healthz`);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ ok: true, status: "live" });
+    }
+  });
+
   it("returns a 500 JSON response when a shared bus route rejects", async () => {
     const lab = await startQaLabServerForTest();
     cleanups.push(async () => await lab.stop());
@@ -571,6 +583,7 @@ describe("qa-lab server", () => {
     {
       label: "empty",
       summary: JSON.stringify({
+        run: { status: "completed" },
         counts: { total: 0, passed: 0, failed: 0, skipped: 0 },
         scenarios: [],
       }),
@@ -1184,7 +1197,7 @@ describe("qa-lab server", () => {
                   model: { name: "mock-openai/gpt-5.6-luna", ref: "mock-openai/gpt-5.6-luna" },
                 },
                 packageSource: { kind: "source-checkout" },
-                artifacts: [{ kind: "log", path: "artifact.log", source: "vitest" }],
+                artifacts: [{ kind: "gif-log", path: "artifact.log", source: "vitest" }],
               },
               result: { status: "pass" },
             },
@@ -1214,7 +1227,12 @@ describe("qa-lab server", () => {
         counts: {
           pass: 1,
         },
-        entries: [{ id: "qa-lab.server-artifact" }],
+        entries: [
+          {
+            id: "qa-lab.server-artifact",
+            artifacts: [{ kind: "gif-log", mediaKind: "text", preview: "streamed body\n" }],
+          },
+        ],
       },
     });
 

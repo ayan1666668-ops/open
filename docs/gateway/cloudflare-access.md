@@ -92,14 +92,32 @@ the only path for external traffic.
 
 ## Step 4: Decide how nodes and workers get in
 
-Access protects every route on the hostname, including the ones nodes use. Pick one:
+Access protects every route on the hostname, including the ones nodes use. A node can
+authenticate to Access on every leg it needs — the join request, the main Gateway
+WebSocket, the worker socket, and worker transfers — so the recommended path exposes
+nothing publicly.
 
-- **Exempt the self-authenticating routes.** Allow `/j/*` and `/__openclaw__/worker`
-  without Access identity, and keep WebSocket upgrade enabled on the worker route. Both
-  enforce their own short-lived credentials, so they do not depend on Access. See
-  [Nodes](/nodes#gateway-deployments-that-cannot-host-nodes).
-- **Use an Access service token.** Add a Service Auth policy and give the node
-  `gateway.cloudflareAccess.clientId` / `clientSecret`. See [Node CLI](/cli/node).
+**Recommended: give the node an Access service token.** Add a Service Auth policy to the
+application, then on the node host:
+
+```bash
+export CF_ACCESS_CLIENT_ID="<client-id>"
+export CF_ACCESS_CLIENT_SECRET="<client-secret>"
+openclaw connect https://gateway.example/j/<code> --service
+```
+
+`openclaw connect` persists these as env SecretRefs under
+`gateway.cloudflareAccess.clientId` / `clientSecret`; see [Node CLI](/cli/node). The only
+cost is that the node needs those two values before the join command, so a join link is no
+longer paste-and-go on its own.
+
+**Alternative: exempt the self-authenticating routes.** Allow `/j/*` and
+`/__openclaw__/worker` without Access identity, keeping WebSocket upgrade enabled on the
+worker route. Both enforce their own short-lived credentials — a join code is single-use
+with a TTL, rate-limited per IP, and answers failures with an opaque 404; worker admission
+carries its own expiring credential. This keeps join links paste-and-go, at the cost of
+making those two routes publicly reachable. Prefer the service token unless you need that
+onboarding flow. See [Nodes](/nodes/node-host#gateway-deployments-that-cannot-host-nodes).
 
 If you do neither, `openclaw connect` fails against the tunnel even though the browser
 works, because the join request is redirected to the Access login page.
@@ -108,6 +126,15 @@ works, because the join request is redirected to the Access login page.
 
 **Control UI.** Open `https://gateway.example` and sign in through Access. With
 trusted-proxy auth the Gateway maps your Access identity to an operator session.
+
+If Access expires while a chat is open, the chat connection can remain active
+while new image and file requests require sign-in. The Control UI detects the
+sign-in redirect and opens one **Sign in to continue loading content** dialog.
+Choose **Sign in**, finish authentication in the new tab, and return to the
+conversation. Visible failed attachments retry after access is verified; the
+original conversation and unsent draft stay open. **Check again** repeats the
+access check, and **Not now** dismisses the prompt without interrupting the chat.
+Ordinary network failures and missing files do not trigger this dialog.
 
 **CLI and TUI.** These do not carry browser cookies, so they present an Access token on
 the WebSocket upgrade. Configure `gateway.remote.edgeAuth` as described in
@@ -124,7 +151,8 @@ openclaw tui
 
 Expect the TUI to reach `wss://gateway.example` and show `connected`. A first
 connection may report `device pairing required`; approve it in the Control UI under
-Settings → Devices, or run `openclaw devices approve --latest` on the Gateway host.
+Settings → Devices, or run `openclaw devices approve --latest` on the Gateway host
+to preview the request, then rerun the approval command it prints.
 
 Reaching the Gateway's own pairing prompt is itself the proof that Access was
 satisfied — an unauthenticated request never gets that far.
