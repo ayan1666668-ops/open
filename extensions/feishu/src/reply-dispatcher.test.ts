@@ -5118,6 +5118,70 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
       },
     );
+
+    function presentationCardMarkdown(index = 0): string[] {
+      const card = requireRecord(presentationCardBodies()[index], "presentation card");
+      const body = requireRecord(card.body, "presentation card body");
+      const elements = Array.isArray(body.elements) ? body.elements : [];
+      return elements
+        .filter((element): element is Record<string, unknown> => isRecord(element))
+        .filter((element) => element.tag === "markdown")
+        .map((element) => String(element.content));
+    }
+
+    async function deliverPresentationTable(tables: MarkdownTableMode | undefined) {
+      resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "off", "feishu"));
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg(tables) });
+      return await options.deliver(
+        { text: tableMarkdown, presentation: approvalPresentation },
+        { kind: "final" },
+      );
+    }
+
+    it.each(convertingModes)(
+      "converts the table a $tables presentation card carries",
+      async ({ tables, converted }) => {
+        const delivery = await deliverPresentationTable(tables);
+
+        expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+        const markdown = presentationCardMarkdown();
+        expect(markdown[0]).toBe(converted());
+        expect(markdown.join("\n")).not.toContain("| --- |");
+        // The card's prose, the fallback the peer keeps and the reported content agree.
+        expect(delivery?.content).toContain(converted());
+        expect(delivery?.content).not.toContain("| --- |");
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["block", undefined] as const)(
+      "keeps the native table a %s presentation card carries",
+      async (tables) => {
+        const delivery = await deliverPresentationTable(tables);
+
+        expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+        expect(presentationCardMarkdown()[0]).toBe(tableMarkdown);
+        expect(delivery?.content).toContain(tableMarkdown);
+      },
+    );
+
+    // off disables table parsing rather than choosing a card-safe shape, so it has no
+    // converted form to put in a card. A presentation card exists to carry its controls,
+    // and those cannot move to a post, so the peer still sees one card whose markdown
+    // element holds the authored pipes and whose buttons remain usable.
+    it("keeps the authored table on an off presentation card", async () => {
+      const delivery = await deliverPresentationTable("off");
+
+      expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+      expect(presentationCardMarkdown()[0]).toBe(tableMarkdown);
+      const serialized = JSON.stringify(presentationCardBodies()[0]);
+      expect(serialized).toContain("Allow once");
+      expect(serialized).toContain("Deny");
+      expect(delivery?.content).toContain(tableMarkdown);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

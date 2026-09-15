@@ -294,11 +294,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     supportsBlockTables: true,
   });
   // Post rendering has no native tables, so block falls back to code there. An
-  // explicit off, bullets or code converts before any card decision, so the mode
-  // applies in auto mode and to the text a streaming card commits. Partial previews
-  // stream raw text, so the preview dedupe compares payload text, while streamed
-  // content enters the ownership state (closing record, settlement, delivered finals)
-  // and every comparison against a final in this one rendered form.
+  // explicit off, bullets or code converts before any card is built or chosen, so the
+  // mode applies in auto mode, to a presentation card's own markdown, and to the text a
+  // streaming card commits. Partial previews stream raw text, so the preview dedupe
+  // compares payload text, while streamed content enters the ownership state (closing
+  // record, settlement, delivered finals) and every comparison against a final in this
+  // one rendered form.
   const nativeTables = tableMode === "block";
   const postTableMode = nativeTables ? "code" : tableMode;
   const renderTables = (value: string): string =>
@@ -1434,12 +1435,19 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       // Delivery runs after modifying hooks. Render here so native cards carry the
       // accepted prose, and a canceled payload never creates a card.
       const sourceText = inputPayload.text ?? "";
-      const prepared = await renderFeishuReplyPayload(inputPayload, {
-        to: sendTarget,
-        identity,
-        // Cards notify only required bot recipients; incoming user mentions remain context.
-        mentions: requiredMentionTargets,
-      });
+      // Convert before the presentation renderer reads the prose: it feeds one text into
+      // the card's markdown element, the presentation fallback and the payload the text
+      // path sends, and a card built from unconverted prose draws a native table whatever
+      // the mode says. The pass below covers stream text instead of repeating this one.
+      const prepared = await renderFeishuReplyPayload(
+        sourceText ? { ...inputPayload, text: renderTables(sourceText) } : inputPayload,
+        {
+          to: sendTarget,
+          identity,
+          // Cards notify only required bot recipients; incoming user mentions remain context.
+          mentions: requiredMentionTargets,
+        },
+      );
       const rendered = consumeFeishuPresentationFallbackMarker(prepared.payload);
       const payload = rendered.payload;
       const presentationCard = prepared.card;
@@ -1449,15 +1457,17 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const payloadText =
         payload.isReasoning && resolvedText ? formatReasoningMessage(resolvedText) : resolvedText;
       const reply = resolveSendableOutboundReplyParts({ ...payload, text: payloadText });
-      const text = renderTables(
+      // reply.text already carries the conversion, so only the stream text this merge
+      // reads still needs it, in the form the closing card, the closing record and the
+      // delivered-final set hold.
+      const text =
         info?.kind === "final" && !hasIndependentPresentation
           ? mergeStreamingFinalText(
-              streamText,
+              renderTables(streamText),
               reply.text,
               payload.isError === true && hasStreamingFinalText,
             )
-          : reply.text,
-      );
+          : reply.text;
       const hasText = reply.hasText;
       const hasMedia = reply.hasMedia;
       const ttsSupplement = getReplyPayloadTtsSupplement(payload);
