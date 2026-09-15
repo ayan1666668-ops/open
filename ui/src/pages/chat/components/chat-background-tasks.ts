@@ -27,7 +27,7 @@ import {
   withLookupFields,
 } from "../../../lib/tasks/data.ts";
 import type { TaskSummary } from "../../../lib/tasks/task-summary.ts";
-import { newestTaskSnapshot } from "./chat-background-tasks-shared.ts";
+import { mergeCachedTaskDetail, newestTaskSnapshot } from "./chat-background-tasks-shared.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
 import { deriveSubagentActivity } from "./chat-subagent-activity.ts";
 import { observeTaskDetailEvent } from "./chat-task-detail-state.ts";
@@ -512,19 +512,7 @@ export function handleBackgroundTasksEvent(
   observeTaskTerminal(state, newest, "event");
   state.tasks = sortTasks([newest, ...state.tasks.filter((task) => task.id !== event.task.id)]);
   if (detail) {
-    const detailWasActive = detail.status === "queued" || detail.status === "running";
-    const nowTerminal = newest.status !== "queued" && newest.status !== "running";
-    if (detailWasActive && nowTerminal) {
-      // The cached lookup predates completion and therefore cannot carry
-      // terminal-only fields (e.g. the bounded exec output tail). Drop it so the
-      // inspector refetches the finished record.
-      state.taskDetails.delete(event.task.id);
-    } else {
-      state.taskDetails = new Map(state.taskDetails).set(
-        event.task.id,
-        withLookupFields(newest, { prompt: detail.prompt, result: detail.result }),
-      );
-    }
+    state.taskDetails = mergeCachedTaskDetail(state.taskDetails, newest, detail);
   }
   host.requestUpdate?.();
 }

@@ -1,6 +1,6 @@
 import { t } from "../../../i18n/index.ts";
 import { registerBackgroundTasksEnglish } from "../../../i18n/locales/en-background-tasks.ts";
-import { isActiveTask, taskStatusLabel } from "../../../lib/tasks/data.ts";
+import { isActiveTask, taskStatusLabel, withLookupFields } from "../../../lib/tasks/data.ts";
 import type { TaskSummary } from "../../../lib/tasks/task-summary.ts";
 
 registerBackgroundTasksEnglish();
@@ -51,6 +51,29 @@ export function backgroundTaskIsExecuting(task: TaskSummary): boolean {
   return (
     task.status === "running" &&
     (task.execution === undefined || task.execution.state === "running")
+  );
+}
+
+/**
+ * Folds one `tasks.get` lookup into the cached detail map.
+ *
+ * A lookup taken while the task was still active cannot carry terminal-only
+ * fields (such as the bounded exec output tail), so completion drops the cached
+ * entry and lets the inspector refetch the finished record.
+ */
+export function mergeCachedTaskDetail(
+  taskDetails: ReadonlyMap<string, TaskSummary>,
+  task: TaskSummary,
+  detail: TaskSummary,
+): Map<string, TaskSummary> {
+  if (isActiveTask(detail) && !isActiveTask(task)) {
+    const dropped = new Map(taskDetails);
+    dropped.delete(task.id);
+    return dropped;
+  }
+  return new Map(taskDetails).set(
+    task.id,
+    withLookupFields(task, { prompt: detail.prompt, result: detail.result }),
   );
 }
 
