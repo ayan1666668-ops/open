@@ -30,7 +30,7 @@ const FIXED_VIEWPORT_PREF_KEY = "openclaw.browserPanel.fixedViewport";
  * Fixed-viewport viewing: the panel scales the live frame instead of resizing
  * the remote page, so the page keeps the viewport its agent or document chose.
  */
-export function readFixedViewportPreference(): boolean {
+function readFixedViewportPreference(): boolean {
   try {
     return globalThis.localStorage?.getItem(FIXED_VIEWPORT_PREF_KEY) === "1";
   } catch {
@@ -38,7 +38,7 @@ export function readFixedViewportPreference(): boolean {
   }
 }
 
-export function writeFixedViewportPreference(value: boolean): void {
+function writeFixedViewportPreference(value: boolean): void {
   try {
     globalThis.localStorage?.setItem(FIXED_VIEWPORT_PREF_KEY, value ? "1" : "0");
   } catch {
