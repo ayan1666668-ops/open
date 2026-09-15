@@ -171,7 +171,12 @@ suite.define(() => {
             session: { ...cfg.session, dmScope: "per-channel-peer" },
             plugins: { ...cfg.plugins, slots: { ...cfg.plugins?.slots, memory: "none" } },
             memory: { ...cfg.memory, search: { ...cfg.memory?.search, enabled: false } },
-            tools: { profile: "full", allow: ["automations"], codeMode: false, toolSearch: false },
+            tools: {
+              profile: "full",
+              allow: ["automations", "session_status"],
+              codeMode: false,
+              toolSearch: false,
+            },
             agents: {
               ...cfg.agents,
               entries: {
@@ -179,7 +184,7 @@ suite.define(() => {
                 qa: {
                   ...cfg.agents?.entries?.qa,
                   identity: { name: "Automation proof" },
-                  tools: { profile: "full", allow: ["automations"] },
+                  tools: { profile: "full", allow: ["automations", "session_status"] },
                 },
               },
             },
