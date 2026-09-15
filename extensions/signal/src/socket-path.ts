@@ -1,6 +1,11 @@
-import { lstat, mkdir, unlink } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, rmdir, unlink } from "node:fs/promises";
 import { createConnection } from "node:net";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 function socketOwner(socketPath: string): number {
   if (process.platform === "win32" || !process.getuid) {
@@ -20,7 +25,41 @@ function socketOwner(socketPath: string): number {
   return process.getuid();
 }
 
-async function validateDirectories(directory: string, uid: number, privateParent: boolean) {
+async function assertDarwinAclSafe(
+  entryPath: string,
+  ownerUid: number,
+  rejectInheritedAllow: boolean,
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("/bin/ls", ["-lde", entryPath], { encoding: "utf8" }));
+  } catch {
+    throw new Error("Signal socketPath ACLs could not be inspected safely");
+  }
+  const ownerName = ownerUid === 0 ? "root" : os.userInfo().username;
+  for (const line of stdout.split("\n").slice(1)) {
+    if (!/^\s*\d+:\s+/.test(line) || !/\ballow\b/.test(line)) {
+      continue;
+    }
+    const ownerAllow = line.includes(`user:${ownerName} `);
+    const inheritable = /\b(file_inherit|directory_inherit|limit_inherit|only_inherit)\b/.test(
+      line,
+    );
+    if (!ownerAllow || (rejectInheritedAllow && inheritable)) {
+      throw new Error("Signal socketPath must not grant ACL access to other users");
+    }
+  }
+}
+
+async function validateDirectories(
+  directory: string,
+  uid: number,
+  privateParent: boolean,
+  inspectAcl: boolean,
+) {
   const parts = path.resolve(directory).split(path.sep).filter(Boolean);
   let current = path.parse(directory).root;
   for (const part of parts) {
@@ -42,6 +81,9 @@ async function validateDirectories(directory: string, uid: number, privateParent
         throw new Error("Signal socketPath parent must belong to the current user with mode 0700");
       }
     }
+    if (inspectAcl) {
+      await assertDarwinAclSafe(current, stat.uid, true);
+    }
   }
   if (privateParent && parts.length === 0) {
     throw new Error("Signal socketPath requires a private parent directory");
@@ -51,7 +93,7 @@ async function validateDirectories(directory: string, uid: number, privateParent
 /** Validate the OS-user boundary before every connection, not only at startup. */
 async function validateSignalSocketPath(socketPath: string): Promise<void> {
   const uid = socketOwner(socketPath);
-  await validateDirectories(path.dirname(socketPath), uid, true);
+  await validateDirectories(path.dirname(socketPath), uid, true, true);
 }
 
 export async function assertSignalSocketEndpoint(socketPath: string): Promise<void> {
@@ -60,6 +102,7 @@ export async function assertSignalSocketEndpoint(socketPath: string): Promise<vo
   if (!stat.isSocket() || stat.uid !== socketOwner(socketPath)) {
     throw new Error("Signal socketPath must name a socket owned by the current user");
   }
+  await assertDarwinAclSafe(socketPath, stat.uid, false);
 }
 
 async function isStaleSocket(socketPath: string, abortSignal?: AbortSignal): Promise<boolean> {
@@ -101,46 +144,62 @@ export async function prepareSignalSocketPath(
   const uid = socketOwner(socketPath);
   abortSignal?.throwIfAborted();
   const parent = path.dirname(socketPath);
-  await validateDirectories(path.dirname(parent), uid, false);
+  await validateDirectories(path.dirname(parent), uid, false, false);
+  let createdParent = false;
   try {
     await mkdir(parent, { mode: 0o700 });
+    createdParent = true;
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
       throw error;
     }
   }
-  await validateSignalSocketPath(socketPath);
-  let existing;
   try {
-    existing = await lstat(socketPath);
+    await validateSignalSocketPath(socketPath);
+    let existing;
+    try {
+      existing = await lstat(socketPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+    if (
+      existing.isSocket() &&
+      existing.uid === uid &&
+      (await isStaleSocket(socketPath, abortSignal))
+    ) {
+      // The private directory excludes other OS users. Revalidate after the awaited probe
+      // so a concurrent same-owner daemon replacement is never deliberately removed.
+      await validateSignalSocketPath(socketPath);
+      const current = await lstat(socketPath);
+      abortSignal?.throwIfAborted();
+      if (
+        current.isSocket() &&
+        current.uid === uid &&
+        current.dev === existing.dev &&
+        current.ino === existing.ino
+      ) {
+        await unlink(socketPath);
+        return;
+      }
+      throw new Error("Signal socketPath changed during its ownership probe; retry startup");
+    }
+    throw new Error(
+      "Signal socketPath already exists; stop its owner or choose a different socket path before starting",
+    );
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return;
+    if (createdParent) {
+      try {
+        const stat = await lstat(parent);
+        if (stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === uid) {
+          await rmdir(parent);
+        }
+      } catch {
+        // Only remove the newly created directory when it is still empty and owned by this user.
+      }
     }
     throw error;
   }
-  if (
-    existing.isSocket() &&
-    existing.uid === uid &&
-    (await isStaleSocket(socketPath, abortSignal))
-  ) {
-    // The private directory excludes other OS users. Revalidate after the awaited probe
-    // so a concurrent same-owner daemon replacement is never deliberately removed.
-    await validateSignalSocketPath(socketPath);
-    const current = await lstat(socketPath);
-    abortSignal?.throwIfAborted();
-    if (
-      current.isSocket() &&
-      current.uid === uid &&
-      current.dev === existing.dev &&
-      current.ino === existing.ino
-    ) {
-      await unlink(socketPath);
-      return;
-    }
-    throw new Error("Signal socketPath changed during its ownership probe; retry startup");
-  }
-  throw new Error(
-    "Signal socketPath already exists; stop its owner or choose a different socket path before starting",
-  );
 }

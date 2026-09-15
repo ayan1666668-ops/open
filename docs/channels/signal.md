@@ -271,8 +271,12 @@ path (at most 103 UTF-8 bytes, without `.` or `..` path segments):
 The socket's immediate directory must belong to the Gateway OS user and have
 mode `0700` (no group or other access). OpenClaw creates that directory if it
 is missing and its parent already exists; it does not repair permissions on
-existing directories. Symlink paths are rejected. Use a distinct socket path
-for each account. Windows is not supported for this opt-in.
+existing directories. Symlink paths are rejected. On macOS, OpenClaw also
+inspects ACLs beyond the BSD mode bits and rejects access-granting ACL entries
+for non-owners, including inheritable entries. On Linux, POSIX ACLs are not
+inspected; operators should select a parent hierarchy with no access-granting
+ACLs. Use a distinct socket path for each account. Windows is not supported for
+this opt-in.
 
 `socketPath` is only valid with `kind: "managed-native"` and cannot be combined
 with `url`, `httpHost`, or `httpPort`. Omit `receiveMode` or set it to `"manual"`;
@@ -283,8 +287,10 @@ Existing managed HTTP defaults, external native daemons, and container setups
 are unchanged. **Opting out leaves the existing HTTP exposure unchanged:** a
 loopback bind does not prevent another local OS user from reaching an
 unauthenticated daemon. The private directory separates OS users, not processes
-running as the same user or administrators. Signal sender pairing and allowlists
-remain separate message-access controls.
+running as the same user or administrators. `signal-cli` does not authorize a
+connecting peer's UID, so this isolation guarantee depends on filesystem
+authorization. Signal sender pairing and allowlists remain separate
+message-access controls.
 
 ## Access control (DMs + groups)
 

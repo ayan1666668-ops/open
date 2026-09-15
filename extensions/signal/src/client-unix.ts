@@ -85,7 +85,12 @@ async function* messages(socket: net.Socket, maxBytes = MAX_FRAME_BYTES) {
       const text = new TextDecoder("utf-8", { fatal: true }).decode(pending);
       pending = Buffer.alloc(0);
       offset = newline + 1;
-      const parsed: unknown = JSON.parse(text);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("Signal UNIX RPC returned malformed JSON");
+      }
       if (!isRecord(parsed)) {
         throw new Error("Signal UNIX RPC returned invalid response envelope");
       }
@@ -104,8 +109,7 @@ function result(message: RpcMessage): unknown {
   if (message.error) {
     const error = isRecord(message.error) ? message.error : {};
     const code = typeof error.code === "number" ? error.code : "unknown";
-    const errorMessage = typeof error.message === "string" ? error.message : "Signal RPC error";
-    throw new Error(`Signal RPC ${code}: ${errorMessage}`);
+    throw new Error(`Signal RPC ${code}: remote error`);
   }
   return message.result;
 }

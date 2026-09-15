@@ -1,13 +1,15 @@
 import { once } from "node:events";
-import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { chmod, realpath } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { signalCheck, signalRpcRequest, streamSignalEvents } from "./client.js";
 import { runSignalSseLoop } from "./sse-reconnect.js";
 
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) {
@@ -16,7 +18,7 @@ afterEach(async () => {
 });
 
 async function serve(onRequest: (request: Record<string, unknown>, socket: net.Socket) => void) {
-  const dir = await mkdtemp(path.join(await realpath(os.tmpdir()), "signal-unix-"));
+  const dir = tempDirs.make("signal-unix-", await realpath(os.tmpdir()));
   await chmod(dir, 0o700);
   const socketPath = path.join(dir, "rpc socket");
   const sockets = new Set<net.Socket>();
@@ -43,7 +45,6 @@ async function serve(onRequest: (request: Record<string, unknown>, socket: net.S
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    await rm(dir, { recursive: true, force: true });
   });
   return { baseUrl: pathToFileURL(socketPath).href.replace(/^file:/, "unix:"), dir };
 }
@@ -83,10 +84,10 @@ describe.skipIf(process.platform === "win32")("Signal UNIX transport", () => {
     [
       "RPC error",
       (id: unknown) =>
-        `${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -1, message: "denied" } })}\n`,
-      /Signal RPC -1: denied/,
+        `${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -1, message: "private +15550000001" } })}\n`,
+      /^Signal RPC -1: remote error$/,
     ],
-    ["malformed JSON", () => "bad json\n", /JSON/],
+    ["malformed JSON", () => "private +15550000001\n", /^Signal UNIX RPC returned malformed JSON$/],
     ["incomplete frame", () => '{"jsonrpc":', /incomplete frame/],
     ["oversized frame", () => "x".repeat(129), /size limit/],
   ] as const)("rejects %s without falling back to HTTP", async (_name, reply, error) => {

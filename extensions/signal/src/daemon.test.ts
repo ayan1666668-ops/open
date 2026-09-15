@@ -19,7 +19,10 @@ vi.mock("openclaw/plugin-sdk/security-runtime", async (importOriginal) => {
   };
 });
 
-vi.mock("node:child_process", () => ({ spawn: spawnMock }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: spawnMock };
+});
 
 function createMockChild() {
   const child = new EventEmitter() as EventEmitter & {
