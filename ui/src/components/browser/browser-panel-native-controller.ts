@@ -361,10 +361,17 @@ export class BrowserPanelNativeController {
       view?.kind !== "native" ||
       view.targetId !== tab.id ||
       view.url !== tab.url ||
-      !point ||
       !normalized ||
       this.controller.mode !== "inspect"
     ) {
+      return;
+    }
+    if (!point) {
+      // The pointer is in the letterbox margin outside the native snapshot:
+      // clear the highlight and invalidate queued/in-flight native replies.
+      this.inspectionGeneration += 1;
+      this.controller.setState("inspected", null);
+      this.controller.paintOverlay();
       return;
     }
     const generation = ++this.inspectionGeneration;
