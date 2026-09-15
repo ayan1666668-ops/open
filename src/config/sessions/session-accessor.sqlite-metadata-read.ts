@@ -19,7 +19,7 @@ function createTranscriptPresenceQuery(database: Pick<OpenClawAgentDatabase, "db
   return prepareSqliteQueryTakeFirstSync<string, { session_id: string }>(
     database.db,
     (parameter) => {
-      const sessionId = parameter((sessionId) => sessionId);
+      const sessionId = parameter((value) => value);
       return db
         .selectFrom("transcript_events")
         .select("session_id")
