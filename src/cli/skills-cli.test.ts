@@ -209,6 +209,31 @@ describe("skills-cli", () => {
   });
 
   describe("formatSkillInfo", () => {
+    it.each([
+      ["weather", "skills.entries.weather.apiKey"],
+      ["acme.weather", `'skills.entries["acme.weather"].apiKey'`],
+      ["weather[home]", `'skills.entries["weather[home]"].apiKey'`],
+      ["123", `'skills.entries["123"].apiKey'`],
+    ])("prints a copyable API-key setup path for %s", (skillKey, path) => {
+      const report = createMockReport([
+        createMockSkill({
+          skillKey,
+          primaryEnv: "FIXTURE_WEATHER_API_KEY",
+          eligible: false,
+          missing: {
+            bins: [],
+            anyBins: [],
+            env: ["FIXTURE_WEATHER_API_KEY"],
+            config: [],
+            os: [],
+          },
+        }),
+      ]);
+
+      const output = formatSkillInfo(report, "test-skill", {});
+      expect(output).toContain(`Save via CLI: openclaw config set ${path} YOUR_KEY`);
+    });
+
     it("returns not found message for unknown skill", () => {
       const report = createMockReport([]);
       const output = formatSkillInfo(report, "unknown-skill", {});
