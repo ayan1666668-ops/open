@@ -89,10 +89,10 @@ suite.define(() => {
         });
         await expectStatusColor(page, "--info");
         await page.screenshot({ path: `${suite.artifactDir}/working.png` });
-        await page.evaluate((eventName) => {
-          const observation = window as Window & { faviconRunActivityChanges: number };
-          observation.faviconRunActivityChanges = 0;
-          document.addEventListener(eventName, () => observation.faviconRunActivityChanges++);
+        const activity = await page.evaluateHandle((eventName) => {
+          const observation = { changes: 0 };
+          document.addEventListener(eventName, () => observation.changes++);
+          return observation;
         }, CHAT_RUN_ACTIVITY_CHANGED_EVENT);
         await gateway.emitGatewayEvent("chat", {
           state: "delta",
@@ -106,12 +106,7 @@ suite.define(() => {
         await page
           .getByText("Preparing the draft report. Checking the details.", { exact: true })
           .waitFor();
-        expect(
-          await page.evaluate(
-            () =>
-              (window as Window & { faviconRunActivityChanges: number }).faviconRunActivityChanges,
-          ),
-        ).toBe(0);
+        expect(await activity.evaluate((observation) => observation.changes)).toBe(0);
         await page.evaluate(() => {
           document.documentElement.style.setProperty("--info", "rgb(10, 100, 200)");
         });
