@@ -36,7 +36,7 @@ import { deriveSessionTitle, buildStoreChildSessionIndexWork } from "./session-u
 import { getSessionDefaults } from "./session-utils-model.js";
 import {
   buildSessionListRowMetadataContext,
-  populateSessionListAcpMetadata,
+  populateSessionListAcpMetadataWork,
 } from "./session-utils-projection.js";
 import { buildGatewaySessionRow } from "./session-utils-row.js";
 import type {
@@ -212,7 +212,7 @@ function* prepareSessionList(params: ListSessionsFromStoreParams, shouldYield: (
     },
     shouldYield,
   );
-  populateSessionListAcpMetadata({
+  yield* populateSessionListAcpMetadataWork({
     cfg,
     entries: selection.entries,
     targetsBySessionKey: params.targetsBySessionKey,

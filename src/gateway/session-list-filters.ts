@@ -249,7 +249,7 @@ export function* filterSessionEntries(
       yield;
     }
     const [key, entry] = pair;
-    if (matchesSearch && !matchesSearch(key, entry)) {
+    if (matchesSearch && !(yield* matchesSearch(key, entry))) {
       continue;
     }
     if (
