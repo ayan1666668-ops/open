@@ -24,10 +24,13 @@ import {
   normalizeTasksListResult,
   sortTasks,
   taskTimestampMs,
-  withLookupFields,
 } from "../../../lib/tasks/data.ts";
 import type { TaskSummary } from "../../../lib/tasks/task-summary.ts";
-import { mergeCachedTaskDetail, newestTaskSnapshot } from "./chat-background-tasks-shared.ts";
+import {
+  mergeCachedTaskDetail,
+  newestTaskSnapshot,
+  reconcileCachedTaskDetails,
+} from "./chat-background-tasks-shared.ts";
 import type { BackgroundTasksProps } from "./chat-background-tasks.types.ts";
 import { deriveSubagentActivity } from "./chat-subagent-activity.ts";
 import { observeTaskDetailEvent } from "./chat-task-detail-state.ts";
@@ -345,6 +348,11 @@ function loadBackgroundTasks(
       current.tasks = sortTasks(
         merged.map((task) => newestTaskSnapshot(task, current.taskDetails.get(task.id))),
       );
+      // A completion-only refresh can arrive when its event never did. The
+      // merged snapshot is then the only proof that a cached running lookup is
+      // stale, and an invalidated entry is what lets the inspector refetch the
+      // finished record (and its output tail).
+      current.taskDetails = reconcileCachedTaskDetails(current.taskDetails, current.tasks);
       for (const task of current.tasks) {
         observeTaskTerminal(current, task, "snapshot");
       }
@@ -556,10 +564,11 @@ async function loadBackgroundTaskDetail(
     }
     const newest = newestTaskSnapshot(current, detail);
     observeTaskTerminal(state, newest, "snapshot");
-    state.taskDetails = new Map(state.taskDetails).set(
-      rowId,
-      withLookupFields(newest, { prompt: detail.prompt, result: detail.result }),
-    );
+    // A lookup issued while the task ran can land after its terminal event or a
+    // completed list refresh. Caching that running detail would hide the
+    // finished record behind `taskDetails.has(rowId)`, so reject the mismatch
+    // and let the next render fetch the completed row.
+    state.taskDetails = mergeCachedTaskDetail(state.taskDetails, newest, detail);
     if (state.tasks) {
       state.tasks = sortTasks([
         newest,

@@ -77,6 +77,31 @@ export function mergeCachedTaskDetail(
   );
 }
 
+/**
+ * Drops cached lookups that a list snapshot has since finished.
+ *
+ * Completion events normally invalidate the running entry, but a refresh can be
+ * the first thing that reports the finished row (for example when its event was
+ * missed or the rail stayed closed). The cached running lookup cannot carry
+ * terminal-only fields such as the bounded output tail, and `taskDetails.has`
+ * then blocks the refetch, so reconcile snapshots exactly like events do.
+ */
+export function reconcileCachedTaskDetails(
+  taskDetails: Map<string, TaskSummary>,
+  tasks: readonly TaskSummary[],
+): Map<string, TaskSummary> {
+  let next: Map<string, TaskSummary> | null = null;
+  for (const task of tasks) {
+    const detail = taskDetails.get(task.id);
+    if (!detail || !isActiveTask(detail) || isActiveTask(task)) {
+      continue;
+    }
+    next ??= new Map(taskDetails);
+    next.delete(task.id);
+  }
+  return next ?? taskDetails;
+}
+
 export function backgroundTaskDeliveryLabel(task: TaskSummary): string | undefined {
   if (isActiveTask(task) || task.runtime !== "subagent" || !task.deliveryStatus) {
     return undefined;
