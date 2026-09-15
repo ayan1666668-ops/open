@@ -12,6 +12,7 @@ import {
   createQuestionPromptLifetime,
   type GatewayQuestionCall,
 } from "../tools/gateway-question-lifecycle.js";
+import { registerQuestionAliases, releaseQuestionAliases } from "./gateway-question-aliases.js";
 import {
   QuestionAnswerUnconfirmedError,
   QuestionDispatchRefusedError,
@@ -175,6 +176,12 @@ function reserveQuestionInput(state: PendingAgentQuestion, authority?: QuestionI
 export function registerPendingAgentQuestion(params: {
   questionId: string;
   sessionKey: string;
+  /**
+   * Other conversations whose plain-text replies may answer this question, such
+   * as the chat that requested a voice consult. A key that already has its own
+   * pending question is skipped rather than shadowed.
+   */
+  answerSessionKeys?: readonly string[];
   questions: readonly AgentHarnessUserInputQuestion[];
   gatewayCall?: AgentHarnessQuestionGatewayCall | AgentQuestionDispatcher;
   answer?: Promise<QuestionWaitAnswerResult>;
@@ -187,6 +194,7 @@ export function registerPendingAgentQuestion(params: {
   isResolving: () => boolean;
   dispose: () => void;
 } {
+  const { answerSessionKeys, ...questionParams } = params;
   const sessionKey = params.sessionKey.trim();
   const answerAuthority = captureAgentQuestionAnswerAuthority(sessionKey);
   const existing = pendingAgentQuestions.get(sessionKey);
@@ -203,7 +211,7 @@ export function registerPendingAgentQuestion(params: {
   let registrationAttached = false;
   const state: PendingAgentQuestion = {
     kind: "gateway",
-    ...params,
+    ...questionParams,
     sessionKey,
     answerAuthority,
     gatewayCall: resolveAgentQuestionGatewayCall(params.gatewayCall),
@@ -221,6 +229,8 @@ export function registerPendingAgentQuestion(params: {
     resolving: false,
   };
   pendingAgentQuestions.set(sessionKey, state);
+  // Aliases share the creator's authority; current-state checks keep the owning key.
+  const aliasSessionKeys = registerQuestionAliases(pendingAgentQuestions, state, answerSessionKeys);
   return {
     attachRegistration: state.attachRegistration,
     setAnswer: (answer) => {
@@ -240,6 +250,7 @@ export function registerPendingAgentQuestion(params: {
       if (pendingAgentQuestions.get(sessionKey) === state) {
         pendingAgentQuestions.delete(sessionKey);
       }
+      releaseQuestionAliases(pendingAgentQuestions, state, aliasSessionKeys);
       if (!registrationAttached) {
         rejectRegistration(new Error("gateway question registration disposed before attachment"));
       }
@@ -517,6 +528,7 @@ type RunAgentHarnessGatewayQuestionParams = {
   promptOptions?: AgentHarnessUserInputPromptOptions;
   signal?: AbortSignal;
   questionId?: string;
+  answerSessionKeys?: readonly string[];
 };
 
 /** Registers, presents, and waits for one harness-owned gateway question record. */
@@ -567,6 +579,7 @@ async function runScopedAgentHarnessQuestion(
   const claim = registerPendingAgentQuestion({
     questionId,
     sessionKey: params.sessionKey,
+    answerSessionKeys: params.answerSessionKeys,
     questions: params.questions,
     gatewayCall: params.gatewayCall,
     onCancel: prompt.close,

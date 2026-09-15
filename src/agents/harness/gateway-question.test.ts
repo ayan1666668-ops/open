@@ -582,6 +582,87 @@ describe("gateway harness questions", () => {
     expect(onBlockReply).not.toHaveBeenCalled();
   });
 
+  it("accepts a plain-text reply from a registered answer alias session", async () => {
+    const registration = createDeferred<{ id: string }>();
+    const answer = createDeferred<{
+      status: "answered";
+      answers: { answers: Record<string, string[]> };
+    }>();
+    const gatewayCall: AgentHarnessQuestionGatewayCall = async (method, _opts, params) => {
+      if (method === "question.request") {
+        return await registration.promise;
+      }
+      if (method === "question.waitAnswer") {
+        return await answer.promise;
+      }
+      if (method === "question.resolve") {
+        const resolvedAnswers = (params as { answers?: { answers: Record<string, string[]> } })
+          .answers;
+        if (!resolvedAnswers) {
+          return { status: "cancelled" };
+        }
+        const result = { status: "answered" as const, answers: resolvedAnswers };
+        answer.resolve(result);
+        return result;
+      }
+      throw new Error(`unexpected gateway method: ${method}`);
+    };
+    const run = runAgentHarnessGatewayQuestion({
+      questions,
+      sessionKey: "agent:main:voice:15550001234",
+      answerSessionKeys: ["agent:main:telegram:direct:42"],
+      timeoutMs: 60_000,
+      gatewayCall,
+      delivery: { onBlockReply: vi.fn() },
+      questionId: "ask_44444444444444444444444444444444",
+    });
+
+    // The chat that requested the voice consult answers with plain text.
+    const claim = claimPendingAgentQuestionAnswer({
+      sessionKey: "agent:main:telegram:direct:42",
+      text: "Production",
+    });
+    registration.resolve({ id: "ask_44444444444444444444444444444444" });
+    await expect(claim).resolves.toBe(true);
+    await expect(run).resolves.toEqual({
+      status: "answered",
+      answers: { answers: { answer: ["Production"] } },
+    });
+    // The alias is released with the question.
+    await expect(
+      claimPendingAgentQuestionAnswer({
+        sessionKey: "agent:main:telegram:direct:42",
+        text: "Late",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("does not shadow an alias session's own pending question", async () => {
+    const gatewayCall = vi.fn<AgentHarnessQuestionGatewayCall>();
+    const own = registerPendingAgentQuestion({
+      questionId: "ask_55555555555555555555555555555555",
+      sessionKey: "agent:main:telegram:direct:43",
+      questions,
+      gatewayCall,
+    });
+    const aliased = registerPendingAgentQuestion({
+      questionId: "ask_66666666666666666666666666666666",
+      sessionKey: "agent:main:voice:15550001235",
+      answerSessionKeys: ["agent:main:telegram:direct:43"],
+      questions,
+      gatewayCall,
+    });
+
+    aliased.dispose();
+    // The chat keeps its own question after the aliased one is gone.
+    const late = claimPendingAgentQuestionAnswer({
+      sessionKey: "agent:main:telegram:direct:43",
+      text: "Still mine",
+    });
+    own.dispose();
+    await expect(late).resolves.toBe(false);
+  });
+
   it("releases a claimed reply when gateway registration fails", async () => {
     const registration = createDeferred<{ id: string }>();
     const gatewayCall: AgentHarnessQuestionGatewayCall = async (method) => {

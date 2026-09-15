@@ -26,7 +26,7 @@ import type { PreparedProviderFailoverOwner } from "./failover/provider-patterns
 import type { AgentInternalEvent } from "./internal-events.js";
 import type { AgentMessage } from "./runtime/index.js";
 import type { AgentSession } from "./sessions/index.js";
-import type { QuestionPromptDelivery } from "./tools/question-prompt-send.js";
+import type { QuestionPromptDelivery } from "./tools/question-prompt-delivery.types.js";
 import type { NormalizedUsage } from "./usage.js";
 export type { BlockReplyChunking } from "./embedded-agent-subscribe.shared-types.js";
 

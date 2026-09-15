@@ -960,8 +960,10 @@ describe("realtime voice agent consult runtime", () => {
     expect(call.agentAccountId).toBe("default");
     expect(call.messageTo).toBe("channel:123");
     expect(call.currentChannelId).toBe("channel:123");
-    // A blocking question from the consult must show up where the call was requested.
+    // A blocking question from the consult must show up where the call was
+    // requested, and that chat must be able to answer it by plain text.
     expect(call.questionPrompt?.messageChannel).toBe("discord");
+    expect(call.questionPrompt?.answerSessionKey).toBe("agent:main:discord:channel:123");
     const voiceEntry = sessionStore["voice:google-meet:meet-1"];
     if (!voiceEntry) {
       throw new Error("Expected voice consult session entry");
