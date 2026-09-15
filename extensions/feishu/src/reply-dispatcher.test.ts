@@ -5073,6 +5073,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
         expect(firstStreamingCloseText()).toBe(`${converted()}\n\nInventory complete.`);
         expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledTimes(1);
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+        // Changing the answer representation must not erase reasoning formatting.
+        for (const kind of ["block", "final"] as const) {
+          const { options } = createBlockTableHarness(tableCfg(tables));
+          await options.deliver({ text: tableMarkdown, isReasoning: true }, { kind });
+          await options.onIdle?.();
+          const instance = requireStreamingInstance(kind === "block" ? 1 : 2);
+          const expected =
+            "Thinking\n\n" +
+            converted()
+              .split("\n")
+              .map((line) => (line ? `_${line}_` : line))
+              .join("\n");
+          expect(instance.closeWithResult).toHaveBeenCalledWith(expected, expect.anything());
+        }
       },
     );
 

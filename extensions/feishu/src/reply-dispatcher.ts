@@ -445,7 +445,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     if (!nextText) {
       return;
     }
-    // Snapshots and mirrored blocks share authored text until display. Both arrival
+    // Answer snapshots and mirrored blocks share authored text until display. Both arrival
     // orders must compare and merge that representation, never a rendered table.
     if (options?.dedupeWithLastPartial && nextText === lastPartial) {
       return;
@@ -1452,6 +1452,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const payloadText =
         payload.isReasoning && resolvedText ? formatReasoningMessage(resolvedText) : resolvedText;
       const reply = resolveSendableOutboundReplyParts({ ...payload, text: payloadText });
+      // Reasoning retains its established formatted delivery. Answer snapshots
+      // and mirrored blocks instead share unconverted prose.
+      const streamSourceText = payload.isReasoning ? reply.text : sourceText;
       // reply.text already carries the conversion, so only the stream text this merge
       // reads still needs it, in the form the closing card, the closing record and the
       // delivered-final set hold.
@@ -1633,7 +1636,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               // Mirror block text into streamText so onIdle close still sends content.
               // A block repeating what the preview already streamed is compared on the
               // payload text both sides started from, so only new text is appended.
-              queueStreamingUpdate(sourceText, {
+              queueStreamingUpdate(streamSourceText, {
                 mode: "delta",
                 dedupeWithLastPartial: true,
               });
@@ -1643,7 +1646,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               // notices. Preserve both when the latter arrives after an answer.
               streamText = mergeStreamingFinalText(
                 streamText,
-                payload.isReasoning && sourceText ? formatReasoningMessage(sourceText) : sourceText,
+                streamSourceText,
                 payload.isError === true && hasStreamingFinalText,
               );
               streamTextIsPreview = false;
