@@ -314,6 +314,61 @@ describe("subagent registry recovery scheduling", () => {
       });
   });
 
+  it("canonically completes a stale orphan instead of pruning its task owner", async () => {
+    recoverRow.mockResolvedValue({ status: "ignored" });
+    const { entry, runs, completeSubagentRunWithRecovery, sweeper } = createHarness({
+      current: {} as GatewayRecoveryRuntime,
+    });
+    entry.childSessionKey = "";
+    entry.taskRunId = entry.runId;
+    killSessionEntry.current = undefined;
+
+    await sweeper.sweepOnce();
+
+    expect(completeSubagentRunWithRecovery).toHaveBeenCalledWith(
+      {
+        runId: entry.runId,
+        expectedEntry: entry,
+        endedAt: expect.any(Number),
+        outcome: {
+          status: "error",
+          error: "subagent run orphaned: missing-session-entry",
+        },
+        reason: "subagent-error",
+        sendFarewell: true,
+        accountId: undefined,
+        triggerCleanup: true,
+      },
+      "sweeper-lost-context",
+    );
+    expect(runs.get(entry.runId)).toBe(entry);
+  });
+
+  it("retries stale-orphan completion after task persistence rejects", async () => {
+    recoverRow.mockResolvedValue({ status: "ignored" });
+    const { entry, runs, completeSubagentRunWithRecovery, sweeper } = createHarness({
+      current: {} as GatewayRecoveryRuntime,
+    });
+    entry.childSessionKey = "";
+    entry.taskRunId = entry.runId;
+    killSessionEntry.current = undefined;
+    completeSubagentRunWithRecovery
+      .mockRejectedValueOnce(new Error("task persistence rejected"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(sweeper.sweepOnce()).rejects.toThrow("task persistence rejected");
+    expect(runs.get(entry.runId)).toBe(entry);
+
+    await expect(sweeper.sweepOnce()).resolves.toBeUndefined();
+    expect(completeSubagentRunWithRecovery).toHaveBeenCalledTimes(2);
+    expect(
+      completeSubagentRunWithRecovery.mock.calls.every(
+        ([params]) => params.expectedEntry === entry,
+      ),
+    ).toBe(true);
+    expect(runs.get(entry.runId)).toBe(entry);
+  });
+
   it("makes four dispatch attempts and three separate terminal attempts", async () => {
     const runtime = { current: {} as GatewayRecoveryRuntime };
     recoverRow.mockResolvedValue({ status: "retry", error: "gateway unavailable" });

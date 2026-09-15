@@ -41,7 +41,7 @@ export function createContinuationOwnerSessionLoader(
   const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId });
   return {
     agentId,
-    load: () => loadSessionEntry({ storePath, sessionKey: ownerSessionKey }),
+    load: () => loadSessionEntry({ agentId, storePath, sessionKey: ownerSessionKey }),
   };
 }
 

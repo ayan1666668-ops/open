@@ -9,7 +9,7 @@ import { createLazyImportLoader } from "../../../shared/lazy-promise.js";
 import { createSubagentSweepSessionCleanup } from "../../subagent-registry-sweeper-session.js";
 import { SUBAGENT_ENDED_REASON_ERROR } from "./subagent-lifecycle-events.js";
 import { shouldSuppressSubagentRecoverySessionEffects } from "./subagent-recovery-state.js";
-import { reconcileOrphanedRun, safeRemoveAttachmentsDir } from "./subagent-registry-helpers.js";
+import { safeRemoveAttachmentsDir } from "./subagent-registry-helpers.js";
 import { createInterruptedRecoveryCoordinator } from "./subagent-registry-restart-recovery-coordinator.js";
 import { isRestoredQueuedFailureSettlementClaimed } from "./subagent-registry-restore.js";
 import {
@@ -333,22 +333,6 @@ export function createSubagentRegistrySweeper(params: SubagentRegistrySweeperPar
           const activeAgeMs = now - (entry.execution.startedAt ?? entry.createdAt);
           if (!notStale && activeAgeMs >= STALE_ACTIVE_SUBAGENT_GRACE_MS) {
             const orphanReason = resolveSubagentRunOrphanReason({ entry });
-            if (orphanReason) {
-              if (
-                reconcileOrphanedRun({
-                  runId,
-                  entry,
-                  reason: orphanReason,
-                  source: "resume",
-                  runs,
-                  resumedRuns,
-                })
-              ) {
-                mutatedRunIds.add(runId);
-              }
-              continue;
-            }
-
             const sessionEntry = loadSubagentSessionEntry({
               childSessionKey: entry.childSessionKey,
               storeCache,
@@ -376,10 +360,13 @@ export function createSubagentRegistrySweeper(params: SubagentRegistrySweeperPar
             await params.completeSubagentRunWithRecovery(
               {
                 runId,
+                expectedEntry: entry,
                 endedAt: now,
                 outcome: {
                   status: "error",
-                  error: "subagent run lost active execution context",
+                  error: orphanReason
+                    ? `subagent run orphaned: ${orphanReason}`
+                    : "subagent run lost active execution context",
                 },
                 reason: SUBAGENT_ENDED_REASON_ERROR,
                 sendFarewell: true,
