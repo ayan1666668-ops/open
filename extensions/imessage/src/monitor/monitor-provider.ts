@@ -979,6 +979,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         cliPath,
         dbPath,
         remoteHost,
+        ...(message.guid ? { messageGuid: message.guid } : {}),
       }).then(
         () => true,
         (err: unknown) => {
@@ -1009,6 +1010,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
               cliPath,
               dbPath,
               remoteHost,
+              ...(message.guid ? { messageGuid: message.guid } : {}),
             });
           })
           .catch((err: unknown) => {
@@ -1138,6 +1140,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
                   cliPath,
                   dbPath,
                   remoteHost,
+                  ...(ctxPayload.MessageSidFull ? { messageGuid: ctxPayload.MessageSidFull } : {}),
                 });
               },
               stop: async () => {
@@ -1148,6 +1151,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
                   cliPath,
                   dbPath,
                   remoteHost,
+                  ...(ctxPayload.MessageSidFull ? { messageGuid: ctxPayload.MessageSidFull } : {}),
                 });
               },
               // Keep the native typing bubble alive through long tool chains.
@@ -1203,6 +1207,10 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
             suppression: { reason: "no_visible_result" },
           } as const;
         }
+        // When the durable path returns "not_applicable" (e.g. new top-level
+        // message with no ReplyToIdFull), the fallback deliver callback fires
+        // with payload.replyToId undefined. Pass the inbound message GUID as
+        // a typed parameter so deliverIMessageReply can thread the reply.
         return await deliverIMessageReply({
           cfg,
           payload,
@@ -1212,6 +1220,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
           maxBytes: mediaMaxBytes,
           textLimit,
           sentMessageCache,
+          inboundMessageGuid: ctxPayload.MessageSidFull,
         });
       },
       onError: (err, info) => {
