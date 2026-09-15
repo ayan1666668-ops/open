@@ -165,7 +165,8 @@ async function runDoctorHealthFlowWithResult(
 
       if (maintenance) {
         // Config and plugin preparation read state before the general migration graph runs.
-        const { repairOpenClawStateDatabaseSchema } = await import("../state/openclaw-state-db.js");
+        const { repairOpenClawStateDatabaseSchema } =
+          await import("../state/openclaw-state-db-doctor.js");
         const catalog = repairOpenClawStateDatabaseSchema({ env: process.env }, "catalog");
         for (const change of catalog.changes) {
           effectiveRuntime.log(change);
