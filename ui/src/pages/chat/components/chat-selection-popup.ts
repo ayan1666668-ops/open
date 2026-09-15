@@ -177,6 +177,7 @@ function showChatSelectionPopup(
 export function showChatAnnotationEditor(options: {
   anchorRect: DOMRect;
   anchorElement?: HTMLElement;
+  sourceRange?: Range;
   comment: string;
   expanded?: boolean;
   readSignal?: AbortSignal;
@@ -263,6 +264,13 @@ export function showChatAnnotationEditor(options: {
     }
   });
   const signal = mountPopup(popup, options.anchorRect, options.onCancel, options.anchorElement);
+  if (options.sourceRange && typeof Highlight !== "undefined") {
+    // Keep the passage visible as a selection after focus moves into the textarea.
+    CSS.highlights.set("openclaw-comment", new Highlight(options.sourceRange));
+    signal.addEventListener("abort", () => CSS.highlights.delete("openclaw-comment"), {
+      once: true,
+    });
+  }
   const abort = () => removeChatSelectionPopup();
   options.readSignal?.addEventListener("abort", abort, { once: true });
   signal.addEventListener("abort", () => options.readSignal?.removeEventListener("abort", abort), {

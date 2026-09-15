@@ -52,6 +52,12 @@ suite.define(() => {
           const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
           const editor = page.getByRole("dialog", { name: "Comment", exact: true });
           const comment = editor.getByRole("textbox");
+          const highlightedText = () =>
+            page.evaluate(() =>
+              Array.from(CSS.highlights.get("openclaw-comment") ?? [])
+                .map((range) => (range instanceof Range ? range.toString() : ""))
+                .join(""),
+            );
           const chip = (count: number) =>
             page
               .locator(".chat-attachments-preview .chat-selection-annotations__chip")
@@ -80,16 +86,19 @@ suite.define(() => {
           await open();
           expect(await comment.inputValue()).toBe("");
           expect(await composer.inputValue()).toBe(draft);
+          expect(await highlightedText()).toBe(selectedText);
           await bounded(editor);
           await capture("inline-comment");
           await comment.fill("Discard this comment.");
           await comment.press("Escape");
+          expect(await highlightedText()).toBe("");
           expect(await chip(1).count()).toBe(0);
           expect(await gateway.getRequests("chat.send")).toHaveLength(0);
 
           await open();
           const compactHeight = (await editor.boundingBox())!.height;
           await comment.fill("Why is this step needed? 🦞");
+          expect(await highlightedText()).toBe(selectedText);
           expect((await editor.boundingBox())!.height).toBe(compactHeight);
           expect(await editor.getByRole("button", { name: "Cancel", exact: true }).count()).toBe(0);
           expect(
@@ -99,6 +108,7 @@ suite.define(() => {
           await capture("inline-typed");
           await editor.getByRole("button", { name: "Save comment", exact: true }).click();
           await chip(1).waitFor({ state: "visible" });
+          expect(await highlightedText()).toBe("");
           expect(await composer.inputValue()).toBe(draft);
           await expect
             .poll(() => composer.evaluate((element) => element === document.activeElement))
@@ -115,6 +125,7 @@ suite.define(() => {
           const sourceBounds = (await text.boundingBox())!;
           expect(Math.abs(pinBounds.y - sourceBounds.y)).toBeLessThan(30);
           await pin(1).click();
+          expect(await highlightedText()).toBe(selectedText);
           expect((await editor.boundingBox())!.height).toBeGreaterThan(compactHeight);
           const editorBounds = (await editor.boundingBox())!;
           expect(

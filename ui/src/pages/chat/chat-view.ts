@@ -37,6 +37,7 @@ import {
   renderChatTopbarNotices,
 } from "./chat-view-notices.ts";
 import { createChatAttachmentDropHandlers } from "./components/chat-attachments.ts";
+import { resolveChatCommentAnchor } from "./components/chat-comment-anchor.ts";
 import { getChatComposerState } from "./components/chat-composer-state.ts";
 import type { ChatComposerProps } from "./components/chat-composer-types.ts";
 import { isChatRunWorking, renderChatComposer } from "./components/chat-composer.ts";
@@ -218,6 +219,9 @@ export function renderChat(props: ChatProps) {
                     ?.focus({ preventScroll: true });
                 showChatAnnotationEditor({
                   anchorRect,
+                  sourceRange: props.transcript.scrollElement
+                    ? resolveChatCommentAnchor(props.transcript.scrollElement, selection)?.range
+                    : undefined,
                   comment: "",
                   readSignal: props.readSignal,
                   onCancel: focusComposer,

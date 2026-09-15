@@ -233,6 +233,9 @@ class ChatCommentPins extends OpenClawLightDomElement {
     this.positionEditor = showChatAnnotationEditor({
       anchorRect: pin.getBoundingClientRect(),
       anchorElement: pin,
+      sourceRange: this.root
+        ? resolveChatCommentAnchor(this.root, attachment.selectionAnnotation)?.range
+        : undefined,
       comment: attachment.selectionAnnotation.comment,
       expanded: true,
       readSignal: this.editorOwner.signal,

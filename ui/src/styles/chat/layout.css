@@ -3117,6 +3117,11 @@ openclaw-chat-ci-details {
   }
 }
 
+::highlight(openclaw-comment) {
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
 .chat-annotation-editor {
   position: fixed;
   z-index: 10000;

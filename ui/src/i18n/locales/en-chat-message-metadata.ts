@@ -21,7 +21,7 @@ const enChatMessageMetadata = {
       askInSideChat: "Ask in side chat",
       addToChat: "Add to chat",
       annotationEditor: "Comment",
-      annotationComment: "Add an optional comment…",
+      annotationComment: "Add a comment",
       saveAnnotation: "Save comment",
       deleteAnnotation: "Delete comment",
       annotationCount: "{count} comment",

@@ -29,7 +29,6 @@ export function renderChatSelectionAnnotations(props: ChatAttachmentControlsProp
               attachment.selectionAnnotation!,
               html`<span class="chat-comment-preview__actions">
                 <button
-                  class="btn btn--sm btn--icon"
                   type="button"
                   aria-label=${t("chat.messages.editAnnotation", { number: String(index + 1) })}
                   ?disabled=${props.disabled || props.readSignal?.aborted}
@@ -38,7 +37,6 @@ export function renderChatSelectionAnnotations(props: ChatAttachmentControlsProp
                   ${icons.pencil}
                 </button>
                 <button
-                  class="btn btn--sm btn--icon"
                   type="button"
                   aria-label=${t("chat.messages.deleteAnnotation")}
                   ?disabled=${props.disabled || props.readSignal?.aborted}
