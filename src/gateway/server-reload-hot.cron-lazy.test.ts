@@ -71,7 +71,10 @@ async function createFixture() {
     stopChannel: vi.fn(async () => {}),
     releaseChannelRouteHandoffs: vi.fn(),
     pruneInactiveChannelAccountState: vi.fn(),
-    reloadPlugins: vi.fn(async () => ({ activeChannels: new Set() })),
+    reloadPlugins: vi.fn<GatewayReloadHandlerParams["reloadPlugins"]>(async () => ({
+      runtime: { operationId: "test-reload", generation: 1, pluginIds: [] },
+      activeChannels: new Set(),
+    })),
     logHooks: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     logChannels: { info: vi.fn(), error: vi.fn() },
     logCron: { error: vi.fn() },
@@ -95,6 +98,7 @@ async function createFixture() {
     plan,
     setState,
     requestRecoveryRestart,
+    reloadPlugins: vi.mocked(params.reloadPlugins),
     replace: () => createGatewayReloadHandlers(params),
   };
 }
@@ -125,95 +129,121 @@ describe("cron reload loading", { concurrent: false }, () => {
     }
   });
 
-  it.each(
-    (["load", "handoff", "publication"] as const).flatMap((phase) =>
-      (["stop", "replace", "supersede"] as const).map((action) => ({ phase, action })),
+  it.each([
+    ...(["load", "handoff", "publication"] as const).flatMap((phase) =>
+      (["stop", "replace", "supersede"] as const).map((action) => ({
+        phase,
+        action,
+        plugins: false,
+      })),
     ),
-  )("rejects cron publication after $action during $phase", async ({ phase, action }) => {
-    const fixture = await createFixture();
-    const entered = createDeferredCore();
-    const release = createDeferredCore();
-    const hold = async () => {
-      entered.resolve();
-      await release.promise;
-    };
-    const previousHandoff: GatewayCronExitWatcherHandoff = {
-      current: vi.fn(),
-      adopt: vi.fn(),
-      stopOwner: vi.fn(async () => {}),
-    };
-    const nextHandoff: GatewayCronExitWatcherHandoff = {
-      current: vi.fn(),
-      adopt: vi.fn(),
-      stopOwner: vi.fn(async () => {}),
-    };
-    if (phase === "load") {
-      vi.doMock("./server-cron.js", async () => {
-        await hold();
-        return { buildGatewayCronService };
-      });
-    } else if (phase === "handoff") {
-      fixture.previous.prepareExitWatcherHandoff = async () => {
-        await hold();
-        return previousHandoff;
+    { phase: "publication", action: "supersede", plugins: true } as const,
+  ])(
+    "rejects cron publication after $action during $phase (plugins: $plugins)",
+    async ({ phase, action, plugins }) => {
+      const fixture = await createFixture();
+      const entered = createDeferredCore();
+      const release = createDeferredCore();
+      const hold = async () => {
+        entered.resolve();
+        await release.promise;
       };
-      fixture.next.prepareExitWatcherHandoff = async () => nextHandoff;
-    }
-    let current = true;
-    const publication: GatewayHotReloadPublication = {
-      sourceConfig: fixture.nextConfig,
-      isCurrent: () => current,
-      publish: async (commit) => {
-        if (phase === "publication") {
-          await hold();
-        }
-        await commit();
-      },
-    };
-    let replacement: ReturnType<typeof fixture.replace> | undefined;
-    const reload = fixture.handlers.applyHotReload(fixture.plan, fixture.nextConfig, publication);
-    const settled = reload.then(
-      () => ({ status: "applied" as const }),
-      (error: unknown) => ({ status: "rejected" as const, error }),
-    );
-    try {
-      // Observe the owning await, not a timer or an assumed import microtask count.
-      expect(
-        await Promise.race([entered.promise.then(() => "entered"), settled.then(() => "settled")]),
-      ).toBe("entered");
-      if (action === "stop") {
-        fixture.handlers.stopRestartRetries();
-      } else if (action === "replace") {
-        replacement = fixture.replace();
-      } else {
-        current = false;
-      }
-      release.resolve();
-      const result = await settled;
-      expect(result.status).toBe("rejected");
-      if (result.status === "rejected") {
-        expect(result.error).toMatchObject({
-          name:
-            action === "supersede"
-              ? "GatewayConfigReloadSupersededError"
-              : "GatewayHotReloadCancelledError",
+      const previousHandoff: GatewayCronExitWatcherHandoff = {
+        current: vi.fn(),
+        adopt: vi.fn(),
+        stopOwner: vi.fn(async () => {}),
+      };
+      const nextHandoff: GatewayCronExitWatcherHandoff = {
+        current: vi.fn(),
+        adopt: vi.fn(),
+        stopOwner: vi.fn(async () => {}),
+      };
+      const publishPluginRuntime = vi.fn();
+      if (plugins) {
+        fixture.reloadPlugins.mockImplementationOnce(async ({ commitRuntime }) => {
+          await commitRuntime({ publish: publishPluginRuntime });
+          return {
+            runtime: { operationId: "test-reload", generation: 1, pluginIds: [] },
+            activeChannels: new Set(),
+          };
         });
       }
-      expect(buildGatewayCronService).toHaveBeenCalledTimes(phase === "load" ? 0 : 1);
-      expect(fixture.setState).not.toHaveBeenCalled();
-      expect(fixture.previousCron.stop).not.toHaveBeenCalled();
-      expect(fixture.previous.stopStreamWatchers).not.toHaveBeenCalled();
-      expect(fixture.nextCron.start).not.toHaveBeenCalled();
-      expect(nextHandoff.adopt).not.toHaveBeenCalled();
-      expect(previousHandoff.stopOwner).not.toHaveBeenCalled();
-      expect(fixture.requestRecoveryRestart).not.toHaveBeenCalled();
-    } finally {
-      release.resolve();
-      await settled;
-      fixture.handlers.stopRestartRetries();
-      replacement?.stopRestartRetries();
-    }
-  });
+      if (phase === "load") {
+        vi.doMock("./server-cron.js", async () => {
+          await hold();
+          return { buildGatewayCronService };
+        });
+      } else if (phase === "handoff") {
+        fixture.previous.prepareExitWatcherHandoff = async () => {
+          await hold();
+          return previousHandoff;
+        };
+        fixture.next.prepareExitWatcherHandoff = async () => nextHandoff;
+      }
+      let current = true;
+      const publication: GatewayHotReloadPublication = {
+        sourceConfig: fixture.nextConfig,
+        isCurrent: () => current,
+        publish: async (commit) => {
+          if (phase === "publication") {
+            await hold();
+          }
+          await commit();
+        },
+      };
+      let replacement: ReturnType<typeof fixture.replace> | undefined;
+      const reload = fixture.handlers.applyHotReload(
+        { ...fixture.plan, reloadPlugins: plugins },
+        fixture.nextConfig,
+        publication,
+      );
+      const settled = reload.then(
+        () => ({ status: "applied" as const }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
+      try {
+        // Observe the owning await, not a timer or an assumed import microtask count.
+        expect(
+          await Promise.race([
+            entered.promise.then(() => "entered"),
+            settled.then(() => "settled"),
+          ]),
+        ).toBe("entered");
+        if (action === "stop") {
+          fixture.handlers.stopRestartRetries();
+        } else if (action === "replace") {
+          replacement = fixture.replace();
+        } else {
+          current = false;
+        }
+        release.resolve();
+        const result = await settled;
+        expect(result.status).toBe("rejected");
+        if (result.status === "rejected") {
+          expect(result.error).toMatchObject({
+            name:
+              action === "supersede"
+                ? "GatewayConfigReloadSupersededError"
+                : "GatewayHotReloadCancelledError",
+          });
+        }
+        expect(buildGatewayCronService).toHaveBeenCalledTimes(phase === "load" ? 0 : 1);
+        expect(fixture.setState).not.toHaveBeenCalled();
+        expect(publishPluginRuntime).not.toHaveBeenCalled();
+        expect(fixture.previousCron.stop).not.toHaveBeenCalled();
+        expect(fixture.previous.stopStreamWatchers).not.toHaveBeenCalled();
+        expect(fixture.nextCron.start).not.toHaveBeenCalled();
+        expect(nextHandoff.adopt).not.toHaveBeenCalled();
+        expect(previousHandoff.stopOwner).not.toHaveBeenCalled();
+        expect(fixture.requestRecoveryRestart).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        await settled;
+        fixture.handlers.stopRestartRetries();
+        replacement?.stopRestartRetries();
+      }
+    },
+  );
 
   it("returns the loader failure without publishing or retiring the current cron", async () => {
     const fixture = await createFixture();

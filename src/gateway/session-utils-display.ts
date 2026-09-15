@@ -1,7 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
-  countActiveDescendantRuns,
-  getSessionDisplaySubagentRunByChildSessionKey,
+  buildSubagentSessionListReadIndex,
   getSubagentSessionRuntimeMs,
   getSubagentSessionStartedAt,
   isSubagentRunLive,
@@ -29,6 +28,7 @@ export function resolveGatewaySessionDisplayName(key: string, entry?: SessionEnt
   const parsedAgent = parseAgentSessionKey(key);
   const channel = sessionDeliveryChannel(entry) ?? parsed?.channel;
   const subject = entry?.subject;
+  const topicName = entry?.topicName;
   const groupChannel = entry?.groupChannel;
   const space = entry?.space;
   const id = parsed?.id;
@@ -37,13 +37,14 @@ export function resolveGatewaySessionDisplayName(key: string, entry?: SessionEnt
   const isDashboardSession = parsedAgent?.rest.startsWith("dashboard:") === true;
   const isGroupSession = isGroupOrChannelDisplaySession(entry, parsed);
   const groupTitle = isGroupSession
-    ? buildGroupDisplayTitle({ subject, groupChannel, space })
+    ? buildGroupDisplayTitle({ subject, topicName, groupChannel, space })
     : undefined;
   const compactGroupFallback =
     isGroupSession && channel
       ? buildGroupDisplayName({
           provider: channel,
           subject,
+          topicName,
           groupChannel,
           space,
           id,
@@ -78,10 +79,12 @@ export function resolveGatewaySessionDisplayName(key: string, entry?: SessionEnt
   // channel-derived display names or renames silently vanish on refresh.
   // Group sessions prefer the human chat title (subject/#channel) over the
   // stored compact token displayName (e.g. "slack:g-general").
+  const explicitLabel = normalizeOptionalString(entry?.label);
   const displayName =
-    entry?.label ??
+    explicitLabel ??
     groupTitle ??
     storedDisplayName ??
+    entry?.autoLabel ??
     (channel === "imessage" ? undefined : compactGroupFallback) ??
     // Dashboard origin labels identify the authenticated sender. Using them as
     // titles leaks account names into the sidebar while the generated title is pending.
@@ -104,16 +107,14 @@ export function projectGatewaySessionRunState(params: {
   rowContext?: SessionListRowContext;
 }) {
   const { key, entry, now, rowContext } = params;
-  const subagentRun = rowContext
-    ? rowContext.subagentRuns.getDisplaySubagentRun(key)
-    : getSessionDisplaySubagentRunByChildSessionKey(key);
+  const subagentRuns = rowContext?.subagentRuns ?? buildSubagentSessionListReadIndex(now);
+  const subagentRun = subagentRuns.getDisplaySubagentRun(key);
   const subagentOwner =
     normalizeOptionalString(subagentRun?.controllerSessionKey) ||
     normalizeOptionalString(subagentRun?.requesterSessionKey);
   const liveSubagentRunActive = isSubagentRunLive(subagentRun) || isSubagentRunQueued(subagentRun);
   const hasActiveSubagentRun =
-    liveSubagentRunActive ||
-    (rowContext?.subagentRuns.countActiveDescendantRuns(key) ?? countActiveDescendantRuns(key)) > 0;
+    liveSubagentRunActive || subagentRuns.countActiveDescendantRuns(key) > 0;
   const persistedSessionStatus = entry?.status;
   const persistedSessionEndedAt = entry?.endedAt;
   const persistedSessionStartedAt = entry?.startedAt;
