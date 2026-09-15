@@ -5011,6 +5011,17 @@ html.openclaw-native-macos:not(.openclaw-native-nav):not(.openclaw-native-web-ch
   flex-basis: var(--sidebar-lead);
 }
 
+.sidebar-session-indicator:has(.session-owner-stack--overflow) {
+  width: auto;
+  flex-basis: auto;
+}
+
+.sidebar-session-indicator:has(.session-owner-stack--overflow)
+  > .session-row-draft-indicator:not(:only-child) {
+  left: 11px;
+  right: auto;
+}
+
 .sidebar-session-indicator > .session-row-draft-indicator:not(:only-child) {
   position: absolute;
   right: 0;

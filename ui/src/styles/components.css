@@ -249,6 +249,28 @@ openclaw-session-owner-chip {
   right: 0;
 }
 
+.session-owner-stack--overflow {
+  width: max-content;
+  gap: 10px;
+}
+
+.session-owner-stack--overflow .session-owner-stack__back {
+  position: static;
+  order: 1;
+}
+
+.session-owner-stack--overflow .session-owner-stack__overflow {
+  width: auto;
+  min-width: 24px;
+  padding-inline: 2px;
+  color: var(--text-strong);
+  font-size: 10px;
+}
+
+.sidebar-recent-session .session-owner-stack--overflow::after {
+  width: calc(100% - 28px);
+}
+
 /* Leading slot shared by every sidebar row: the row's own artwork plus a run
    ring and corner badge, so run state always reads at the row's left edge. */
 .session-glyph {
@@ -273,6 +295,14 @@ openclaw-session-owner-chip {
   width: 16px;
   height: 16px;
   transition: transform var(--duration-fast) ease;
+}
+
+/* Reserve the counter's width while keeping the existing run trace at the
+   leading avatar. The overflow gap clears the trace's right edge. */
+.session-glyph:has(.session-owner-stack--overflow),
+.session-glyph__content:has(.session-owner-stack--overflow) {
+  width: auto;
+  flex-basis: auto;
 }
 
 .channel-avatar {
@@ -323,6 +353,16 @@ openclaw-session-owner-chip {
   border-top-color: var(--accent);
   border-radius: var(--radius-full);
   pointer-events: none;
+}
+
+.session-glyph:has(.session-owner-stack--overflow) > .session-glyph__ring {
+  right: auto;
+  width: 24px;
+}
+
+.session-glyph:has(.session-owner-stack--overflow) > .session-glyph__badge {
+  left: 15px;
+  right: auto;
 }
 
 /* With no artwork to wrap, the ring collapses to the 12px spinner the trailing
