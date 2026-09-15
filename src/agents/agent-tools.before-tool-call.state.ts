@@ -32,6 +32,23 @@ export function peekAdjustedParamsForToolCall(toolCallId: string, runId?: string
   return params === undefined ? undefined : structuredClone(params);
 }
 
+const MAX_TRACKED_PRE_EXECUTION_BLOCKED = 1024;
+
+/** Record that policy prevented the target tool from starting. */
+export function recordPreExecutionBlockedToolCall(toolCallId?: string, runId?: string): void {
+  if (!toolCallId) {
+    return;
+  }
+  preExecutionBlockedToolCallIds.add(buildAdjustedParamsKey({ runId, toolCallId }));
+  while (preExecutionBlockedToolCallIds.size > MAX_TRACKED_PRE_EXECUTION_BLOCKED) {
+    const oldest = preExecutionBlockedToolCallIds.values().next().value;
+    if (!oldest) {
+      break;
+    }
+    preExecutionBlockedToolCallIds.delete(oldest);
+  }
+}
+
 /** Consume whether policy prevented the target tool from starting. */
 export function consumePreExecutionBlockedToolCall(toolCallId: string, runId?: string): boolean {
   const key = buildAdjustedParamsKey({ runId, toolCallId });
