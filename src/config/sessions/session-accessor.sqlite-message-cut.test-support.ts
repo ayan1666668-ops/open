@@ -1,5 +1,7 @@
 import { afterEach } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import {
   appendTranscriptEvent,
@@ -17,7 +19,12 @@ export const sourceExpectedState = {
 };
 
 export function useSessionMessageCutFixtures() {
-  const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+  const tempDirs = createTempDirTracker();
+  afterEach(async () => {
+    await closeOpenClawAgentDatabasesAsync();
+    await closeOpenClawStateDatabaseAsync();
+    tempDirs.cleanup();
+  });
   async function createSiblingSession(params: {
     env: NodeJS.ProcessEnv;
     headline: string;
