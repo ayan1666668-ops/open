@@ -30,18 +30,30 @@ export const msteamsMeta = {
   order: 60,
 } as const;
 
+function resolveMSTeamsSecurityWarningAccount(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+}) {
+  const accountId = normalizeAccountId(
+    params.accountId ?? resolveDefaultMSTeamsAccountId(params.cfg),
+  );
+  return {
+    accountId,
+    config: resolveMSTeamsAccountConfig(params.cfg, accountId),
+  };
+}
+
 export const collectMSTeamsSecurityWarnings = createAllowlistProviderGroupPolicyWarningCollector<{
   cfg: OpenClawConfig;
   accountId?: string | null;
 }>({
   providerConfigPresent: (cfg) => cfg.channels?.msteams !== undefined,
-  resolveGroupPolicy: ({ cfg, accountId }) =>
-    resolveMSTeamsAccount({ cfg, accountId }).config.groupPolicy,
+  resolveGroupPolicy: (params) => resolveMSTeamsSecurityWarningAccount(params).config.groupPolicy,
   collect: ({ cfg, accountId, groupPolicy }) => {
     if (groupPolicy !== "open") {
       return [];
     }
-    const account = resolveMSTeamsAccount({ cfg, accountId });
+    const account = resolveMSTeamsSecurityWarningAccount({ cfg, accountId });
     const accounts = cfg.channels?.msteams?.accounts;
     const rawAccountKey = accounts
       ? Object.keys(accounts).find((key) => normalizeAccountId(key) === account.accountId)

@@ -13,6 +13,7 @@ import {
 } from "./accounts.js";
 import { msTeamsApprovalAuth } from "./approval-auth.js";
 import { msTeamsApprovalCapability } from "./approval-native.js";
+import { collectMSTeamsSecurityWarnings } from "./channel-config.js";
 import { msteamsPlugin } from "./channel.js";
 import { msteamsSetupPlugin } from "./channel.setup.js";
 
@@ -64,6 +65,32 @@ describe("msteamsPlugin.security.collectWarnings", () => {
         detail:
           'MS Teams groups: groupPolicy="open" allows any member to trigger (mention-gated). Set channels.msteams.groupPolicy="allowlist" + channels.msteams.groupAllowFrom to restrict senders.',
       },
+    ]);
+  });
+
+  it("does not resolve named-account SecretRefs while collecting group-policy warnings", () => {
+    const cfg = {
+      channels: {
+        msteams: {
+          groupPolicy: "allowlist",
+          tenantId: "tenant-id",
+          accounts: {
+            support: {
+              appId: "support-app-id",
+              appPassword: {
+                source: "env",
+                provider: "default",
+                id: "SUPPORT_MSTEAMS_SECRET",
+              },
+              groupPolicy: "open",
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(collectMSTeamsSecurityWarnings({ cfg, accountId: "support" })).toEqual([
+      '- MS Teams[support] groups: groupPolicy="open" allows any member to trigger (mention-gated). Set channels.msteams.accounts.support.groupPolicy="allowlist" + channels.msteams.accounts.support.groupAllowFrom to restrict senders.',
     ]);
   });
 });
