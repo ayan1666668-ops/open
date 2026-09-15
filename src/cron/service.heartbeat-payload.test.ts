@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
-  requestHeartbeatAndWait,
+  requestHeartbeatAndWait as requestQueuedHeartbeatAndWait,
   setHeartbeatWakeHandler,
   type HeartbeatRunResult,
   type HeartbeatWakeHandler,
@@ -182,7 +182,7 @@ describe("heartbeat payload execution", () => {
         storePath,
         logger: noopLogger,
         requestHeartbeatAndWait: (wake, lifecycle) =>
-          requestHeartbeatAndWait({ ...wake, coalesceMs: 0 }, lifecycle),
+          requestQueuedHeartbeatAndWait({ ...wake, coalesceMs: 0 }, lifecycle),
         resolveHeartbeatTimeoutMs: () => 100,
         onEvent: (event) => events.push(structuredClone(event)),
       });
