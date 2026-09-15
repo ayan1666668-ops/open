@@ -72,9 +72,11 @@ export function canUsePrecomputedRootHelpWithoutLiveConfig(
     return false;
   }
   if (
-    resolveConfigReadDotEnvPaths({ env, cwd: options.cwd, homedir: options.homedir }).some(
-      (filePath) => fs.existsSync(filePath),
-    )
+    resolveConfigReadDotEnvPaths({
+      env,
+      homedir: options.homedir,
+      ...(Object.hasOwn(options, "cwd") ? { cwd: options.cwd } : {}),
+    }).some((filePath) => fs.existsSync(filePath))
   ) {
     return false;
   }

@@ -1,10 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveWorkspaceDotEnvPath } from "../infra/dotenv-paths.js";
 import { canUsePrecomputedRootHelpWithoutLiveConfig } from "./root-help-preflight.js";
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  }),
+);
 
 function createFixture(raw: string): {
   configPath: string;
@@ -146,6 +152,23 @@ describe("root help config preflight", () => {
         homedir: () => legacy.home,
       }),
     ).toBe(false);
+  });
+
+  it("checks the ambient cwd dotenv when no cwd override is provided", () => {
+    const fixture = createFixture('{"plugins":{}}');
+    fs.writeFileSync(path.join(fixture.cwd, ".env"), "SAFE=value\n", "utf8");
+    vi.spyOn(process, "cwd").mockReturnValue(fixture.cwd);
+
+    expect(
+      canUsePrecomputedRootHelpWithoutLiveConfig(fixture.env, {
+        homedir: () => fixture.home,
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves an explicit no-cwd selection for async config preparation", () => {
+    vi.spyOn(process, "cwd").mockReturnValue("/ambient/workspace");
+    expect(resolveWorkspaceDotEnvPath({ cwd: undefined })).toBeNull();
   });
 
   it("falls back for plugin-sensitive process environment", () => {

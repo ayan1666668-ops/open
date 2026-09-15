@@ -1,6 +1,14 @@
 // Loads dotenv files while blocking unsafe workspace env keys.
-import { listKnownProviderAuthEnvVarNames } from "../secrets/provider-env-vars.js";
-import { loadGlobalRuntimeDotEnvFiles, readDotEnvFile } from "./dotenv-global.js";
+import {
+  listKnownProviderAuthEnvVarNames,
+  listKnownProviderAuthEnvVarNamesAsync,
+} from "../secrets/provider-env-vars.js";
+import {
+  loadGlobalRuntimeDotEnvFiles,
+  loadGlobalRuntimeDotEnvFilesAsync,
+  readDotEnvFile,
+  readDotEnvFileAsync,
+} from "./dotenv-global.js";
 import { resolveWorkspaceDotEnvPath } from "./dotenv-paths.js";
 import {
   isDangerousHostEnvOverrideVarName,
@@ -252,11 +260,11 @@ function hasBlockedWorkspaceDotEnvTokenSequence(key: string): boolean {
   });
 }
 
-function buildProviderAuthWorkspaceDotEnvBlocklist(): ReadonlySet<string> {
+function buildProviderAuthWorkspaceDotEnvBlocklist(
+  providerEnvNames: readonly string[],
+): ReadonlySet<string> {
   const keys = new Set<string>(BLOCKED_PROVIDER_AUTH_WORKSPACE_DOTENV_KEYS);
-  for (const rawKey of listKnownProviderAuthEnvVarNames({
-    includeUntrustedWorkspacePlugins: false,
-  })) {
+  for (const rawKey of providerEnvNames) {
     const key = normalizeEnvVarKey(rawKey, { portable: true });
     if (key) {
       keys.add(key.toUpperCase());
@@ -265,41 +273,83 @@ function buildProviderAuthWorkspaceDotEnvBlocklist(): ReadonlySet<string> {
   return keys;
 }
 
-function shouldBlockWorkspaceDotEnvKey(
-  key: string,
-  getProviderAuthBlockedKeys: () => ReadonlySet<string>,
-): boolean {
+function shouldBlockWorkspaceStaticDotEnvKey(key: string): boolean {
   const upper = key.toUpperCase();
   return (
     shouldBlockWorkspaceRuntimeDotEnvKey(upper) ||
     BLOCKED_WORKSPACE_DOTENV_KEYS.has(upper) ||
     BLOCKED_WORKSPACE_DOTENV_PREFIXES.some((prefix) => upper.startsWith(prefix)) ||
     BLOCKED_WORKSPACE_DOTENV_SUFFIXES.some((suffix) => upper.endsWith(suffix)) ||
-    hasBlockedWorkspaceDotEnvTokenSequence(upper) ||
-    getProviderAuthBlockedKeys().has(upper)
+    hasBlockedWorkspaceDotEnvTokenSequence(upper)
   );
 }
 
-export function loadWorkspaceDotEnvFile(filePath: string, opts?: { quiet?: boolean }) {
+export function loadWorkspaceDotEnvFile(
+  filePath: string,
+  opts?: { quiet?: boolean; env?: NodeJS.ProcessEnv },
+) {
+  const env = opts?.env ?? process.env;
   let providerAuthBlockedKeys: ReadonlySet<string> | undefined;
   const getProviderAuthBlockedKeys = () => {
-    providerAuthBlockedKeys ??= buildProviderAuthWorkspaceDotEnvBlocklist();
+    providerAuthBlockedKeys ??= buildProviderAuthWorkspaceDotEnvBlocklist(
+      listKnownProviderAuthEnvVarNames({ env, includeUntrustedWorkspacePlugins: false }),
+    );
     return providerAuthBlockedKeys;
   };
   const parsed = readDotEnvFile({
     filePath,
-    entryFilter: (key) => !shouldBlockWorkspaceDotEnvKey(key, getProviderAuthBlockedKeys),
+    entryFilter: (key) =>
+      !shouldBlockWorkspaceStaticDotEnvKey(key) &&
+      !getProviderAuthBlockedKeys().has(key.toUpperCase()),
     quiet: opts?.quiet ?? true,
   });
   if (!parsed) {
     return;
   }
   for (const { key, value } of parsed.entries) {
-    if (process.env[key] !== undefined) {
+    if (env[key] !== undefined) {
       continue;
     }
-    process.env[key] = value;
+    env[key] = value;
   }
+}
+
+async function loadWorkspaceDotEnvFileAsync(
+  filePath: string,
+  opts: { env: NodeJS.ProcessEnv; quiet?: boolean },
+): Promise<void> {
+  const parsed = await readDotEnvFileAsync({
+    filePath,
+    entryFilter: (key) => !shouldBlockWorkspaceStaticDotEnvKey(key),
+    quiet: opts.quiet ?? true,
+  });
+  if (!parsed?.entries.length) {
+    return;
+  }
+  const blocked = buildProviderAuthWorkspaceDotEnvBlocklist(
+    await listKnownProviderAuthEnvVarNamesAsync({
+      env: opts.env,
+      includeUntrustedWorkspacePlugins: false,
+    }),
+  );
+  for (const { key, value } of parsed.entries) {
+    if (!blocked.has(key.toUpperCase()) && opts.env[key] === undefined) {
+      opts.env[key] = value;
+    }
+  }
+}
+
+export async function loadDotEnvAsync(opts: {
+  env: NodeJS.ProcessEnv;
+  quiet?: boolean;
+  cwd?: string;
+}): Promise<void> {
+  const quiet = opts.quiet ?? true;
+  const workspaceEnvPath = resolveWorkspaceDotEnvPath(opts);
+  if (workspaceEnvPath) {
+    await loadWorkspaceDotEnvFileAsync(workspaceEnvPath, { env: opts.env, quiet });
+  }
+  await loadGlobalRuntimeDotEnvFilesAsync({ env: opts.env, quiet });
 }
 
 export { loadGlobalRuntimeDotEnvFiles };

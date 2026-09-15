@@ -13,9 +13,8 @@ type DotEnvPathOptions = {
   stateEnvPath?: string;
 };
 
-export function resolveWorkspaceDotEnvPath(
-  cwd: string | undefined = tryProcessCwd(),
-): string | null {
+export function resolveWorkspaceDotEnvPath(options: { cwd?: string } = {}): string | null {
+  const cwd = Object.hasOwn(options, "cwd") ? options.cwd : tryProcessCwd();
   return cwd ? path.join(cwd, ".env") : null;
 }
 
@@ -41,7 +40,7 @@ export function resolveGlobalRuntimeDotEnvPaths(options: DotEnvPathOptions = {})
 
 /** Lists every dotenv file the normal config read could consult. */
 export function resolveConfigReadDotEnvPaths(options: DotEnvPathOptions = {}): string[] {
-  const workspaceEnvPath = resolveWorkspaceDotEnvPath(options.cwd);
+  const workspaceEnvPath = resolveWorkspaceDotEnvPath(options);
   const { gatewayEnvPath, globalEnvPaths } = resolveGlobalRuntimeDotEnvPaths(options);
   return [workspaceEnvPath, ...globalEnvPaths, gatewayEnvPath].filter(
     (filePath): filePath is string => filePath !== null,
