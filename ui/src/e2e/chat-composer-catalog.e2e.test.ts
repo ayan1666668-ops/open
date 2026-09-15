@@ -7,6 +7,7 @@ import {
   controlUiSessionUrl,
   installMockGateway,
   navigateToControlUiSession,
+  type ControlUiMockGateway,
 } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
@@ -142,32 +143,39 @@ suite.define(() => {
         await page.getByRole("button", { name: "Stop generating" }).waitFor();
         await page.screenshot({ path: `${artifactDir}/pending-executing-model.png` });
         await expect.poll(() => trigger.textContent()).toContain("Model pending");
+        const startedAt = Date.now();
         for (const [index, model] of [selectedModel, activeModel].entries()) {
           const running = {
             ...session,
             status: "running" as const,
             hasActiveRun: true,
-            activeRunIds: [runId],
             activeModel: model.id,
             activeModelProvider: model.provider,
-            updatedAt: session.updatedAt + index + 1,
+            updatedAt: startedAt + index + 1,
           };
-          await gateway.setMethodResponse("sessions.list", {
+          await gateway.setSessionsListResponse({
             count: 1,
             defaults: { model: selectedModel.id, modelProvider: selectedModel.provider },
             sessions: [running],
             path: "",
             ts: running.updatedAt,
           });
+          await gateway.setMethodResponse("chat.history", {
+            messages: [],
+            sessionId: session.sessionId,
+            sessionInfo: running,
+            inFlightRun: { runId, text: "", startedAt },
+          });
           await gateway.emitGatewayEvent("sessions.changed", {
             sessionKey: session.key,
             agentId: "main",
-            reason: "runtime",
+            phase: "model",
+            runId,
             ...buildGatewaySessionSnapshot({
               sessionRow: running,
               agentId: "main",
               includeSession: true,
-              activeRunState: { active: true, runIds: [runId] },
+              activeRunState: { active: true },
             }),
           });
           await expect.poll(() => trigger.textContent()).toContain(model.name);
@@ -180,11 +188,21 @@ suite.define(() => {
             path: `${artifactDir}/running-${index === 0 ? "primary" : "fallback"}-model.png`,
           });
         }
+        await page.reload();
+        await gateway.waitForRequest("chat.startup");
+        await expect.poll(() => trigger.textContent()).toContain(activeModel.name);
+        expect(
+          await composer
+            .locator('[data-chat-model-option="codex/gpt-5.5"]')
+            .getAttribute("aria-selected"),
+        ).toBe("true");
+        await page.screenshot({ path: `${artifactDir}/refreshed-fallback-model.png` });
         const recovered = {
           ...session,
           hasActiveRun: false,
           activeRunIds: [],
-          updatedAt: session.updatedAt + 3,
+          lastRunId: runId,
+          updatedAt: Date.now() + 3,
         };
         const message = {
           role: "assistant",
@@ -197,44 +215,81 @@ suite.define(() => {
           sessionId: session.sessionId,
           sessionInfo: recovered,
         });
-        await gateway.setSessionsListResponse({
-          count: 1,
-          defaults: { model: selectedModel.id, modelProvider: selectedModel.provider },
-          sessions: [recovered],
-          path: "",
-          ts: recovered.updatedAt,
-        });
-        const historyBefore = (await gateway.getRequests("chat.history")).length;
-        const listsBefore = (await gateway.getRequests("sessions.list")).length;
-        await gateway.emitGatewayEvent("chat", {
-          runId,
-          sessionKey: session.key,
-          state: "final",
-        });
-        await gateway.emitGatewayEvent("session.message", {
-          sessionKey: session.key,
-          agentId: "main",
-          message,
-          messageId: "model-recovered",
-          messageSeq: 1,
-          ...buildGatewaySessionSnapshot({
-            sessionRow: recovered,
+        // Swarm child hydration shares sessions.list with the primary roster.
+        // Hold all later replies so only the event/history can repair this label.
+        const releaseLists = await page.evaluateHandle((row) => {
+          const fixture = (
+            window as Window & {
+              openclawControlUiE2eGateway?: ControlUiMockGateway;
+            }
+          ).openclawControlUiE2eGateway;
+          if (!fixture) {
+            throw new Error("Mock Gateway is not installed");
+          }
+          const waiting: Array<() => void> = [];
+          let released = false;
+          const snapshot = {
+            count: 1,
+            defaults: { model: row.model, modelProvider: row.modelProvider },
+            sessions: [row],
+            path: "",
+            ts: row.updatedAt,
+          };
+          fixture.setRequestHandler("sessions.list", ({ respond }) => {
+            if (released) {
+              respond(snapshot);
+            } else {
+              waiting.push(() => respond(snapshot));
+            }
+          });
+          return () => {
+            released = true;
+            for (const respond of waiting.splice(0)) {
+              respond();
+            }
+          };
+        }, recovered);
+        try {
+          await gateway.setSessionsListResponse({
+            count: 1,
+            defaults: { model: selectedModel.id, modelProvider: selectedModel.provider },
+            sessions: [recovered],
+            path: "",
+            ts: recovered.updatedAt,
+          });
+          const historyBefore = (await gateway.getRequests("chat.history")).length;
+          await gateway.emitGatewayEvent("chat", {
+            runId,
+            sessionKey: session.key,
+            state: "final",
+          });
+          await gateway.emitGatewayEvent("session.message", {
+            sessionKey: session.key,
             agentId: "main",
-            includeSession: true,
-            activeRunState: { active: false, runIds: [] },
-          }),
-        });
-        await gateway.waitForRequest("chat.history", { after: historyBefore });
-        await gateway.waitForRequest("sessions.list", { after: listsBefore });
-        await page.getByRole("button", { name: "Stop generating" }).waitFor({ state: "hidden" });
-        await page.locator(".chat-text").getByText(message.content, { exact: true }).waitFor();
-        await expect.poll(() => trigger.textContent()).toContain(selectedModel.name);
-        expect(
-          await composer
-            .locator('[data-chat-model-option="codex/gpt-5.5"]')
-            .getAttribute("aria-selected"),
-        ).toBe("true");
-        await page.screenshot({ path: `${artifactDir}/recovered-model.png` });
+            message,
+            messageId: "model-recovered",
+            messageSeq: 1,
+            ...buildGatewaySessionSnapshot({
+              sessionRow: recovered,
+              agentId: "main",
+              includeSession: true,
+              activeRunState: { active: false, runIds: [] },
+            }),
+          });
+          await gateway.waitForRequest("chat.history", { after: historyBefore });
+          await page.getByRole("button", { name: "Stop generating" }).waitFor({ state: "hidden" });
+          await page.locator(".chat-text").getByText(message.content, { exact: true }).waitFor();
+          await expect.poll(() => trigger.textContent()).toContain(selectedModel.name);
+          expect(
+            await composer
+              .locator('[data-chat-model-option="codex/gpt-5.5"]')
+              .getAttribute("aria-selected"),
+          ).toBe("true");
+          await page.screenshot({ path: `${artifactDir}/recovered-model.png` });
+        } finally {
+          await releaseLists.evaluate((release) => release());
+          await releaseLists.dispose();
+        }
       },
     );
   });

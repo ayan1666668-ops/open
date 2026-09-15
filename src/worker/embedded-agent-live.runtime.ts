@@ -1,5 +1,4 @@
 import type { WorkerLiveEvent } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
-import type { WorkerInferenceModelRef } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
 import {
   mergeAgentRunAttemptTerminal,
   normalizeAgentRunAttemptTerminal,
@@ -7,8 +6,10 @@ import {
   type AgentRunAttemptTerminal,
 } from "../agents/agent-run-terminal-outcome.js";
 import { redactAgentDiagnosticPayload } from "../agents/diagnostic-redaction.js";
+import { hasModelFallbackStop } from "../agents/failover-error.js";
 import type { AgentMessage } from "../agents/runtime/index.js";
 import type { AgentSessionEvent } from "../agents/sessions/agent-session.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import {
   resolveAssistantMessagePhase,
   type AssistantPhase,
@@ -157,10 +158,7 @@ type WorkerLiveRuntime = {
   emitTerminal: () => Promise<void>;
 };
 
-export function createWorkerLiveRuntime(
-  client: WorkerLiveClient,
-  modelRef: WorkerInferenceModelRef,
-): WorkerLiveRuntime {
+export function createWorkerLiveRuntime(client: WorkerLiveClient): WorkerLiveRuntime {
   let previewEnabled = true;
   const enqueueLive = (event: WorkerLiveEvent) => {
     if (previewEnabled) {
@@ -172,6 +170,7 @@ export function createWorkerLiveRuntime(
   // gateway never sees an end/error before the authoritative transcript commit.
   let terminalLiveEvent: WorkerLiveEvent | undefined;
   let terminalOutcome: AgentRunAttemptTerminal = { kind: "ok" };
+  let replayInvalid = false;
   const enqueueTerminal = (input: { aborted?: boolean; error?: string; stopReason?: string }) => {
     // Cleanup can fail after agent_end. Merge through the attempt owner so it
     // promotes success to failure without replacing an earlier cancellation.
@@ -189,6 +188,7 @@ export function createWorkerLiveRuntime(
         endedAt: Date.now(),
         ...(stopReason ? { stopReason } : {}),
         ...(terminal.aborted ? { aborted: true } : {}),
+        ...(replayInvalid ? { replayInvalid: true } : {}),
         ...(!terminal.aborted && typeof terminal.promptError === "string"
           ? { error: redactLiveText(terminal.promptError) }
           : {}),
@@ -199,23 +199,6 @@ export function createWorkerLiveRuntime(
   let streamedPhase: AssistantPhase | undefined;
   let assistantMessageIndex = 0;
   let streamedThinking = "";
-  let publishedMessageModel: string | undefined;
-  const publishMessageModel = (message: AgentMessage, reset: boolean) => {
-    if (reset) {
-      publishedMessageModel = undefined;
-    }
-    if (message.role !== "assistant") {
-      return;
-    }
-    const provider = message.provider?.trim();
-    const model = message.responseModel?.trim() || message.model?.trim();
-    const identity = provider && model ? `${provider}\0${model}` : undefined;
-    if (!identity || identity === publishedMessageModel) {
-      return;
-    }
-    enqueueLive({ kind: "lifecycle", payload: { phase: "model", provider, model } });
-    publishedMessageModel = identity;
-  };
   const emitAssistantSnapshot = (message: AgentMessage) => {
     const { text, phase } = readAssistantSnapshot(message);
     if (text === streamedText && phase === streamedPhase) {
@@ -248,14 +231,9 @@ export function createWorkerLiveRuntime(
     }
     if (event.type === "agent_start") {
       enqueueLive({ kind: "lifecycle", payload: { phase: "start", startedAt } });
-      enqueueLive({
-        kind: "lifecycle",
-        payload: { phase: "model", provider: modelRef.provider, model: modelRef.model },
-      });
       return;
     }
     if (event.type === "message_start" && event.message.role === "assistant") {
-      publishMessageModel(event.message, true);
       assistantMessageIndex += 1;
       streamedText = "";
       streamedPhase = undefined;
@@ -263,7 +241,6 @@ export function createWorkerLiveRuntime(
       return;
     }
     if (event.type === "message_update") {
-      publishMessageModel(event.message, false);
       if (
         event.assistantMessageEvent.type === "text_delta" ||
         event.assistantMessageEvent.type === "text_end"
@@ -279,7 +256,6 @@ export function createWorkerLiveRuntime(
       return;
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
-      publishMessageModel(event.message, false);
       emitAssistantSnapshot(event.message);
       const finalThinking = readAssistantThinking(event.message);
       if (finalThinking !== streamedThinking) {
@@ -342,7 +318,9 @@ export function createWorkerLiveRuntime(
     }
   };
   const enqueueRunFailure = (failure: { aborted: boolean; error: Error }) => {
-    enqueueTerminal({ aborted: failure.aborted, error: failure.error.message });
+    // Later terminal merges cannot reopen replay after an owned cleanup failure.
+    replayInvalid ||= hasModelFallbackStop(failure.error);
+    enqueueTerminal({ aborted: failure.aborted, error: formatErrorMessage(failure.error) });
   };
   // Emits directly (not via the degradable preview queue): finishing is the durable
   // result fence that must reach the Gateway before post-worker reconciliation.

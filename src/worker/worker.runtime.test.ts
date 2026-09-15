@@ -58,7 +58,10 @@ import {
   waitForExecScope,
 } from "../agents/bash-process-registry.js";
 import { runExecProcess } from "../agents/bash-tools.exec-runtime.js";
+import { hasModelFallbackStop } from "../agents/failover-error.js";
+import * as agentSessionSdk from "../agents/sessions/sdk.js";
 import * as boundaryFileRead from "../infra/boundary-file-read.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { saveExecApprovals, type ExecApprovalsFile } from "../infra/exec-approvals.js";
 import { runExec } from "../process/exec.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
@@ -536,8 +539,6 @@ class FakeWorkerGateway {
     }
     if (
       this.options.liveResyncAckedSeq !== undefined &&
-      frame.params.event.kind === "lifecycle" &&
-      frame.params.event.payload.phase === "start" &&
       this.sentLiveResync < (this.options.liveResyncResponses ?? 1)
     ) {
       this.sentLiveResync += 1;
@@ -1155,8 +1156,11 @@ describe("worker runtime", () => {
     expect(gateway.inferenceRequests[0]?.context.tools ?? []).toEqual([]);
   });
 
-  it("materializes exactly the Browser tool for a browser-only assignment", async () => {
+  it("materializes exactly the Browser tool and disposes it before finishing", async () => {
     const { gateway, launch } = await setup();
+    browserRuntimeMocks.dispose.mockImplementationOnce(async () => {
+      gateway.applicationOrder.push("browser:dispose");
+    });
     launch.assignment.toolAuthority.allowedToolNames = ["browser"];
     launch.assignment.browser = {
       cdpUrl: "http://127.0.0.1:9222",
@@ -1175,15 +1179,73 @@ describe("worker runtime", () => {
       workspaceDir: await realpath(launch.assignment.workspaceDir),
     });
     expect(browserRuntimeMocks.dispose).toHaveBeenCalledOnce();
+    expect(gateway.applicationOrder.indexOf("browser:dispose")).toBeLessThan(
+      gateway.applicationOrder.indexOf("live:lifecycle:finishing"),
+    );
   });
 
-  it.each([false, true])(
-    "keeps desktop images through RPC, transcript, and inference before closing (cleanup failure: %s)",
-    async (computerCleanupFailure) => {
+  it.each(["text", "error", "setup"] as const)(
+    "retains browser disposal failure together with the %s outcome",
+    async (outcome) => {
+      const { gateway, launch } = await setup({
+        inferencePlans: [outcome === "error" ? "error" : "text"],
+      });
+      launch.assignment.toolAuthority.allowedToolNames = ["browser"];
+      launch.assignment.browser = {
+        cdpUrl: "http://127.0.0.1:9222",
+        launcherPath: "/usr/local/bin/openclaw-worker-browser",
+      };
+      const createSession =
+        outcome === "setup"
+          ? vi
+              .spyOn(agentSessionSdk, "createAgentSession")
+              .mockRejectedValueOnce(new Error("fixture setup failed"))
+          : undefined;
+      browserRuntimeMocks.dispose.mockRejectedValueOnce(
+        new Error("fixture browser cleanup failed"),
+      );
+      try {
+        if (outcome === "setup") {
+          const error = await runWorkerDescriptor(launch).catch((cause: unknown) => cause);
+          expect(formatErrorMessage(error)).toContain("fixture setup failed");
+          expect(formatErrorMessage(error)).toContain("fixture browser cleanup failed");
+          expect(hasModelFallbackStop(error)).toBe(true);
+          expect(gateway.liveEventRequests).toHaveLength(0);
+        } else {
+          await expect(runWorkerDescriptor(launch)).resolves.toMatchObject({ status: "failed" });
+          expect(gateway.liveEventRequests.at(-1)?.event.payload).toMatchObject({
+            phase: "finishing",
+            stopReason: "error",
+            error: expect.stringContaining("fixture browser cleanup failed"),
+            replayInvalid: true,
+          });
+          if (outcome === "error") {
+            expect(gateway.liveEventRequests.at(-1)?.event.payload).toMatchObject({
+              error: expect.stringContaining("fixture provider failed"),
+            });
+          }
+        }
+        expect(browserRuntimeMocks.dispose).toHaveBeenCalledOnce();
+      } finally {
+        createSession?.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    { computerCleanupFailure: false, terminal: "text" },
+    { computerCleanupFailure: false, terminal: "error" },
+    { computerCleanupFailure: false, terminal: "cancelled" },
+    { computerCleanupFailure: true, terminal: "text" },
+    { computerCleanupFailure: true, terminal: "error" },
+    { computerCleanupFailure: true, terminal: "cancelled" },
+  ] as const)(
+    "keeps desktop images through RPC, transcript, and inference before closing (cleanup failure: $computerCleanupFailure, terminal: $terminal)",
+    async ({ computerCleanupFailure, terminal }) => {
       const computerSnapshot = createNoisyPngBuffer(512, 512).toString("base64");
       expect(computerSnapshot.length).toBeGreaterThan(64 * 1024);
       const { gateway, launch } = await setup({
-        inferencePlans: ["computer", "text"],
+        inferencePlans: ["computer", terminal],
         computerSnapshot,
         computerCleanupFailure,
       });
@@ -1202,7 +1264,7 @@ describe("worker runtime", () => {
       };
 
       await expect(runWorkerDescriptor(launch)).resolves.toMatchObject({
-        status: computerCleanupFailure ? "failed" : "completed",
+        status: computerCleanupFailure || terminal !== "text" ? "failed" : "completed",
       });
 
       expect(gateway.computerRequests.map((request) => request.command)).toEqual([
@@ -1231,14 +1293,35 @@ describe("worker runtime", () => {
         gateway.applicationOrder.indexOf("live:lifecycle:finishing"),
       );
       if (computerCleanupFailure) {
+        expect(gateway.liveEventRequests.at(-1)?.event.payload).toHaveProperty(
+          "replayInvalid",
+          true,
+        );
+      } else {
+        expect(gateway.liveEventRequests.at(-1)?.event.payload).not.toHaveProperty("replayInvalid");
+      }
+      if (terminal === "cancelled") {
+        expect(gateway.liveEventRequests.at(-1)?.event).toMatchObject({
+          kind: "lifecycle",
+          payload: { phase: "finishing", stopReason: "aborted" },
+        });
+        expect(gateway.liveEventRequests.at(-1)?.event.payload).not.toHaveProperty("error");
+      } else if (computerCleanupFailure) {
         expect(gateway.liveEventRequests.at(-1)?.event).toMatchObject({
           kind: "lifecycle",
           payload: {
             phase: "finishing",
             stopReason: "error",
-            error: "computer: session desktop cleanup failed",
+            error: expect.stringContaining(
+              "computer: session desktop cleanup failed | fixture desktop cleanup failed",
+            ),
           },
         });
+        if (terminal === "error") {
+          expect(gateway.liveEventRequests.at(-1)?.event.payload).toMatchObject({
+            error: expect.stringContaining("fixture provider failed"),
+          });
+        }
       }
     },
   );
@@ -1401,14 +1484,11 @@ describe("worker runtime", () => {
 
     expect(gateway.inferenceRequests).toHaveLength(1);
     expect(gateway.acceptedTranscriptRequests).toHaveLength(2);
-    const starts = gateway.liveEventRequests.filter(
-      (request) => request.event.kind === "lifecycle" && request.event.payload.phase === "start",
-    );
-    expect(starts).toEqual([
+    expect(gateway.liveEventRequests.slice(0, 2)).toEqual([
       expect.objectContaining({ seq: 6, lastAckedSeq: 5 }),
       expect.objectContaining({ seq: 1, lastAckedSeq: 0 }),
     ]);
-    expect(starts[1]?.event).toEqual(starts[0]?.event);
+    expect(gateway.liveEventRequests[1]?.event).toEqual(gateway.liveEventRequests[0]?.event);
   });
 
   it("requires authoritative terminal delivery after degrading preview live events", async () => {
@@ -1440,19 +1520,7 @@ describe("worker runtime", () => {
 
     expect(gateway.inferenceRequests).toHaveLength(1);
     expect(gateway.acceptedTranscriptRequests).toHaveLength(2);
-    const starts = gateway.liveEventRequests.filter(
-      (request) => request.event.kind === "lifecycle" && request.event.payload.phase === "start",
-    );
-    expect(starts).toEqual([
-      expect.objectContaining({ seq: 6, lastAckedSeq: 5 }),
-      expect.objectContaining({ seq: 1, lastAckedSeq: 0 }),
-    ]);
-    expect(starts[1]?.event).toEqual(starts[0]?.event);
-    const terminals = gateway.liveEventRequests.filter(
-      (request) =>
-        request.event.kind === "lifecycle" && request.event.payload.phase === "finishing",
-    );
-    expect(terminals).toEqual([gateway.liveEventRequests.at(-1)]);
+    expect(gateway.liveEventRequests).toHaveLength(3);
     expect(gateway.liveEventRequests.at(-1)?.event).toMatchObject({
       kind: "lifecycle",
       payload: { phase: "finishing" },
@@ -1610,6 +1678,7 @@ describe("worker runtime", () => {
       expect(lifecycle).toMatchObject({
         payload: { phase: lifecyclePhase, stopReason },
       });
+      expect(lifecycle?.payload).not.toHaveProperty("replayInvalid");
     },
   );
 

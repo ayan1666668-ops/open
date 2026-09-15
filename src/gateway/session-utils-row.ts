@@ -41,6 +41,7 @@ import { projectSessionDeliveryFields } from "../utils/delivery-context.shared.j
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel-constants.js";
 import { buildControlUiChannelAvatarUrl } from "./control-ui-contract.js";
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
+import { readPreparedGatewayModelCatalogMetadata } from "./server-model-catalog-view.js";
 import { sessionHasAutomation } from "./session-automation-index.js";
 import { sessionClassificationForRow } from "./session-classification.js";
 import {
@@ -110,7 +111,9 @@ export function buildGatewaySessionRow(params: {
   const { cfg, storePath, store, key, entry } = params;
   const lightweight = params.lightweightListRow === true;
   const now = params.now ?? Date.now();
-  const rowContext = params.rowContext ?? buildSessionListRowMetadataContext({ now });
+  const rowContext =
+    params.rowContext ??
+    buildSessionListRowMetadataContext({ now, sessionKeys: [key, ...Object.keys(store)] });
   const agentStatus = resolveActiveSessionAgentStatus(entry?.agentStatus, now);
   const owner = projectSessionOwner(
     entry,
@@ -148,6 +151,9 @@ export function buildGatewaySessionRow(params: {
     : undefined;
   const displayName = resolveGatewaySessionDisplayName(key, entry);
   const sessionAgentId = params.agentId;
+  const preparedCatalog =
+    params.modelCatalog instanceof Map ? params.modelCatalog.get(sessionAgentId) : undefined;
+  const metadataSnapshot = readPreparedGatewayModelCatalogMetadata(preparedCatalog);
   const skipTranscriptUsage = params.skipTranscriptUsageFallback === true;
   const {
     subagentRun,
@@ -161,6 +167,7 @@ export function buildGatewaySessionRow(params: {
     agentId: sessionAgentId,
     rowContext,
     allowPluginNormalization: !lightweight,
+    manifestPlugins: metadataSnapshot,
   });
   const freshSessionTotalTokens = asNonNegativeFiniteNumber(resolveFreshSessionTotalTokens(entry));
   const transcriptUsage = !skipTranscriptUsage
@@ -212,21 +219,14 @@ export function buildGatewaySessionRow(params: {
     model: rowModel,
     rowContext,
   });
-  const liveModel = resolveProjectedAgentRunModel({
-    agentId: sessionAgentId,
-    sessionId: entry?.sessionId,
-    index: rowContext
-      ? (rowContext.projectedAgentRuns ??= buildProjectedAgentRunIndex())
-      : undefined,
-  });
-  const liveRun = liveModel !== undefined || entry?.status === "running";
   // Display aliases do not change the selected route's catalog or runtime policy.
-  const completedFallbackModel = resolveGatewaySessionFallbackModel({
+  const activeModel = resolveGatewaySessionActiveModel({
     cfg,
-    selectedProvider: rowModelProvider,
-    selectedModel: rowModel,
+    selectedModel,
+    projectedAgentRuns: (rowContext.projectedAgentRuns ??= buildProjectedAgentRunIndex()),
     entry,
     agentId: sessionAgentId,
+    sessionId: entry?.sessionId,
     sessionKey: key,
     storePath,
   });
@@ -266,8 +266,6 @@ export function buildGatewaySessionRow(params: {
   const thinkingModel = rowModel ?? DEFAULT_MODEL;
   // Entries and provider policy must stay bound to the same prepared agent owner;
   // the Gateway startup registry can contain a different set of plugins.
-  const preparedCatalog =
-    params.modelCatalog instanceof Map ? params.modelCatalog.get(sessionAgentId) : undefined;
   const rowModelCatalog =
     params.modelCatalog instanceof Map ? preparedCatalog?.entries : params.modelCatalog;
   // Event/list rows must not rediscover plugin-backed configured catalog metadata.
@@ -283,6 +281,7 @@ export function buildGatewaySessionRow(params: {
     entry,
     modelCatalog: thinkingModelCatalog,
     modelCatalogRouteVariants: preparedCatalog?.routeVariants,
+    metadataSnapshot,
     rowContext,
     providerPolicySource: preparedCatalog?.pluginRegistry ?? (lightweight ? "active" : undefined),
   });
@@ -486,8 +485,8 @@ export function buildGatewaySessionRow(params: {
     }).mode,
     modelProvider: rowModelIdentity.provider,
     model: rowModelIdentity.model,
-    activeModelProvider: liveRun ? liveModel?.provider : completedFallbackModel?.provider,
-    activeModel: liveRun ? liveModel?.model : completedFallbackModel?.model,
+    activeModelProvider: activeModel?.provider,
+    activeModel: activeModel?.model,
     modelOverrideSource:
       selectedModel.storedOverrideSource === "parent"
         ? "inherited"
@@ -513,18 +512,48 @@ export function buildGatewaySessionRow(params: {
   };
 }
 
-function resolveGatewaySessionFallbackModel(params: {
+export function resolveGatewaySessionActiveModel(params: {
   cfg: OpenClawConfig;
-  selectedProvider: string;
-  selectedModel: string;
-  entry?: InternalSessionEntry;
-  agentId: string;
+  active?: boolean;
+  agentId?: string;
+  sessionId?: string;
   sessionKey: string;
-  storePath: string;
+  projectedAgentRuns: ProjectedAgentRunIndex;
+  selectedModel?: { provider: string; model: string };
+  modelSource?: GatewaySessionModelSource;
+  entry?: InternalSessionEntry;
+  storePath?: string;
 }): { provider: string; model: string } | undefined {
+  if (!params.agentId) {
+    return undefined;
+  }
+  const liveModel = resolveProjectedAgentRunModel({
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    index: params.projectedAgentRuns,
+  });
+  if (params.active ?? (liveModel !== undefined || params.entry?.status === "running")) {
+    return liveModel ?? undefined;
+  }
+  if (!params.entry?.fallbackNotice || params.storePath === undefined) {
+    return undefined;
+  }
+  const selectedModel =
+    params.selectedModel ??
+    (params.modelSource
+      ? resolveSessionSelectedModelRef({
+          cfg: params.cfg,
+          source: params.modelSource,
+          agentId: params.agentId,
+          sessionKey: params.sessionKey,
+        })
+      : undefined);
+  if (!selectedModel) {
+    return undefined;
+  }
   const completedModel = readSessionFallbackModel({
-    selectedProvider: params.selectedProvider,
-    selectedModel: params.selectedModel,
+    selectedProvider: selectedModel.provider,
+    selectedModel: selectedModel.model,
     sessionEntry: params.entry,
     config: params.cfg,
     sessionScope: {
@@ -534,60 +563,16 @@ function resolveGatewaySessionFallbackModel(params: {
     },
   });
   const runtimeModels = resolveSelectedAndActiveModel({
-    selectedProvider: params.selectedProvider,
-    selectedModel: params.selectedModel,
+    selectedProvider: selectedModel.provider,
+    selectedModel: selectedModel.model,
     sessionEntry: completedModel ?? params.entry,
   });
-  const activeFallback = resolveActiveFallbackState({
+  return resolveActiveFallbackState({
     selectedModelRef: runtimeModels.selected.label,
     activeModelRef: runtimeModels.active.label,
     config: params.cfg,
     state: params.entry,
-  });
-  return activeFallback.active
+  }).active
     ? { provider: runtimeModels.active.provider, model: runtimeModels.active.model }
     : undefined;
-}
-
-export function resolveGatewaySessionListActiveModel(params: {
-  cfg: OpenClawConfig;
-  active: boolean;
-  agentId?: string;
-  sessionId?: string;
-  sessionKey: string;
-  projectedAgentRuns: ProjectedAgentRunIndex;
-  modelSource?: GatewaySessionModelSource;
-  entry?: InternalSessionEntry;
-  storePath?: string;
-}): { provider: string; model: string } | undefined {
-  if (!params.agentId) {
-    return undefined;
-  }
-  if (params.active) {
-    return (
-      resolveProjectedAgentRunModel({
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        index: params.projectedAgentRuns,
-      }) ?? undefined
-    );
-  }
-  if (!params.modelSource || !params.entry?.fallbackNotice || !params.storePath) {
-    return undefined;
-  }
-  const selectedModel = resolveSessionSelectedModelRef({
-    cfg: params.cfg,
-    source: params.modelSource,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-  });
-  return resolveGatewaySessionFallbackModel({
-    cfg: params.cfg,
-    selectedProvider: selectedModel.provider,
-    selectedModel: selectedModel.model,
-    entry: params.entry,
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    storePath: params.storePath,
-  });
 }

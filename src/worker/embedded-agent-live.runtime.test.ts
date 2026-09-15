@@ -1,85 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerLiveEvent } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { recordModelFallbackStop } from "../agents/failover-error.js";
 import type { AgentSessionEvent } from "../agents/sessions/agent-session.js";
 import { makeAgentAssistantMessage } from "../agents/test-helpers/agent-message-fixtures.js";
 import { createWorkerLiveRuntime } from "./embedded-agent-live.runtime.js";
 
 describe("createWorkerLiveRuntime", () => {
-  it("publishes the candidate before refining it with the executing assistant model", () => {
-    const emitted: WorkerLiveEvent[] = [];
-    const runtime = createWorkerLiveRuntime(
-      {
-        enqueuePreview: (event) => {
-          emitted.push(event);
-          return true;
-        },
-        emitTerminal: async (event) => void emitted.push(event),
-      },
-      { provider: "candidate", model: "candidate-model" },
-    );
-
-    runtime.handleSessionEvent({ type: "agent_start" });
-    expect(emitted).toEqual([
-      { kind: "lifecycle", payload: { phase: "start", startedAt: expect.any(Number) } },
-      {
-        kind: "lifecycle",
-        payload: { phase: "model", provider: "candidate", model: "candidate-model" },
-      },
-    ]);
-    runtime.handleSessionEvent({
-      type: "message_start",
-      message: makeAgentAssistantMessage({
-        content: [],
-        provider: "fallback",
-        model: "fallback-model",
-      }),
-    });
-    expect(emitted.at(-1)).toEqual({
-      kind: "lifecycle",
-      payload: { phase: "model", provider: "fallback", model: "fallback-model" },
-    });
-
-    const rerouted = makeAgentAssistantMessage({
-      content: [],
-      provider: "fallback",
-      model: "fallback-model",
-      responseModel: "executing-model",
-    });
-    runtime.handleSessionEvent({
-      type: "message_update",
-      message: rerouted,
-      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "done" },
-    });
-    runtime.handleSessionEvent({ type: "message_end", message: rerouted });
-    expect(emitted.filter((event) => event.kind === "lifecycle")).toEqual([
-      { kind: "lifecycle", payload: { phase: "start", startedAt: expect.any(Number) } },
-      {
-        kind: "lifecycle",
-        payload: { phase: "model", provider: "candidate", model: "candidate-model" },
-      },
-      {
-        kind: "lifecycle",
-        payload: { phase: "model", provider: "fallback", model: "fallback-model" },
-      },
-      {
-        kind: "lifecycle",
-        payload: { phase: "model", provider: "fallback", model: "executing-model" },
-      },
-    ]);
-  });
-
   it("redacts media payloads from tool diagnostics before cloud egress", () => {
     const emitted: WorkerLiveEvent[] = [];
-    const runtime = createWorkerLiveRuntime(
-      {
-        enqueuePreview: (event) => {
-          emitted.push(event);
-          return true;
-        },
-        emitTerminal: async (event) => void emitted.push(event),
+    const runtime = createWorkerLiveRuntime({
+      enqueuePreview: (event) => {
+        emitted.push(event);
+        return true;
       },
-      { provider: "candidate", model: "candidate-model" },
-    );
+      emitTerminal: async (event) => void emitted.push(event),
+    });
     const events: AgentSessionEvent[] = [
       {
         type: "tool_execution_start",
@@ -113,16 +48,13 @@ describe("createWorkerLiveRuntime", () => {
 
   it("stops preparing previews after the client degrades", () => {
     let previewCalls = 0;
-    const runtime = createWorkerLiveRuntime(
-      {
-        enqueuePreview: () => {
-          previewCalls += 1;
-          return false;
-        },
-        emitTerminal: async () => {},
+    const runtime = createWorkerLiveRuntime({
+      enqueuePreview: () => {
+        previewCalls += 1;
+        return false;
       },
-      { provider: "candidate", model: "candidate-model" },
-    );
+      emitTerminal: async () => {},
+    });
 
     const readPayload = vi.fn(() => ({ mimeType: "image/png", data: "QUJDRA==" }));
     const message = makeAgentAssistantMessage({
@@ -211,13 +143,10 @@ describe("createWorkerLiveRuntime", () => {
     "preserves deferred $stopReason terminal after preview loss (cleanup failure: $cleanupFailed)",
     async ({ stopReason, cleanupFailed, expectedStopReason }) => {
       const emitted: WorkerLiveEvent[] = [];
-      const runtime = createWorkerLiveRuntime(
-        {
-          enqueuePreview: () => false,
-          emitTerminal: async (event) => void emitted.push(event),
-        },
-        { provider: "candidate", model: "candidate-model" },
-      );
+      const runtime = createWorkerLiveRuntime({
+        enqueuePreview: () => false,
+        emitTerminal: async (event) => void emitted.push(event),
+      });
       runtime.handleSessionEvent({ type: "agent_start" });
       runtime.handleSessionEvent({
         type: "agent_end",
@@ -261,23 +190,80 @@ describe("createWorkerLiveRuntime", () => {
     },
   );
 
-  it("redacts lifecycle errors before terminal cloud egress", async () => {
-    const emitted: WorkerLiveEvent[] = [];
-    const runtime = createWorkerLiveRuntime(
-      {
+  it.each([
+    { recordedStop: false, aborted: false },
+    { recordedStop: true, aborted: false },
+    { recordedStop: false, aborted: true },
+    { recordedStop: true, aborted: true },
+  ])(
+    "retains only recorded replay stops across terminal merges ($recordedStop, $aborted)",
+    async ({ recordedStop, aborted }) => {
+      const emitted: WorkerLiveEvent[] = [];
+      const runtime = createWorkerLiveRuntime({
         enqueuePreview: () => false,
         emitTerminal: async (event) => void emitted.push(event),
-      },
-      { provider: "candidate", model: "candidate-model" },
-    );
+      });
+      const failure = Object.freeze(new Error("request timed out"));
+      if (recordedStop) {
+        recordModelFallbackStop(failure);
+      }
+      runtime.enqueueRunFailure({
+        aborted: false,
+        error: new AggregateError([failure], "wrapper"),
+      });
+      runtime.handleSessionEvent({
+        type: "agent_end",
+        messages: [
+          makeAgentAssistantMessage({ content: [], stopReason: aborted ? "aborted" : "stop" }),
+        ],
+        willRetry: false,
+      });
+      runtime.enqueueRunFailure({ aborted: false, error: new Error("later provider failure") });
+      await runtime.emitTerminal();
+
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]?.payload).toMatchObject({
+        phase: "finishing",
+        stopReason: aborted ? "aborted" : "error",
+      });
+      if (recordedStop) {
+        expect(emitted[0]?.payload).toHaveProperty("replayInvalid", true);
+      } else {
+        expect(emitted[0]?.payload).not.toHaveProperty("replayInvalid");
+      }
+      if (aborted) {
+        expect(emitted[0]?.payload).not.toHaveProperty("error");
+      }
+    },
+  );
+
+  it("redacts lifecycle errors before terminal cloud egress", async () => {
+    const emitted: WorkerLiveEvent[] = [];
+    const runtime = createWorkerLiveRuntime({
+      enqueuePreview: () => false,
+      emitTerminal: async (event) => void emitted.push(event),
+    });
 
     runtime.enqueueRunFailure({
       aborted: false,
-      error: new Error("failed data:video/mp4;base64,QUJDRA=="),
+      error: new AggregateError(
+        [new Error(`native close failed data:video/mp4;base64,QUJDRA== ${"x".repeat(8_000)}`)],
+        "cleanup failed",
+      ),
     });
     await runtime.emitTerminal();
 
     expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.payload).toMatchObject({
+      phase: "finishing",
+      stopReason: "error",
+      error: expect.stringContaining("cleanup failed | native close failed"),
+    });
     expect(JSON.stringify(emitted)).not.toContain("QUJDRA==");
+    const event = emitted[0];
+    if (event?.kind !== "lifecycle" || event.payload.phase !== "finishing") {
+      throw new Error("expected a finishing event");
+    }
+    expect(Buffer.byteLength(event.payload.error ?? "", "utf8")).toBeLessThanOrEqual(4 * 1024);
   });
 });

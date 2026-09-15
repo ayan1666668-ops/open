@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { onAgentEvent } from "../../infra/agent-events.js";
 import {
   clearAgentRunContext,
   getAgentRunContext,
+  recordAgentRunModel,
   resolveProjectedAgentRunModel,
   registerAgentRunContext,
 } from "../../infra/agent-run-registry.js";
@@ -212,17 +212,6 @@ describe("runEmbeddedAgentEntry", () => {
         sessionKey: "agent:main:chat",
       });
       onTestFinished(() => clearAgentRunContext("run-shared-fallback"));
-      const models: unknown[] = [];
-      const unsubscribe = onAgentEvent((event) => {
-        if (
-          event.runId === "run-shared-fallback" &&
-          event.stream === "lifecycle" &&
-          event.data.phase === "model"
-        ) {
-          models.push(event.data);
-        }
-      });
-      onTestFinished(unsubscribe);
       const candidateCalls: Array<{
         provider: string;
         model: string;
@@ -264,10 +253,8 @@ describe("runEmbeddedAgentEntry", () => {
               agentId: "main",
               sessionId: "session-1",
             }),
-          ).toEqual({
-            provider,
-            model,
-          });
+          ).toBeNull();
+          recordAgentRunModel("run-shared-fallback", { provider, model });
           candidateCalls.push({ provider, model, isFallbackRetry: options.isFallbackRetry });
           candidateLeases.push(options.contextEngineLogicalTurnLease);
           return makeResult({
@@ -313,13 +300,6 @@ describe("runEmbeddedAgentEntry", () => {
         },
       });
       expect(getAgentRunContext("run-shared-fallback")?.activeModel).toBeUndefined();
-      expect(models).toEqual([
-        { phase: "model", provider: "primary-provider", model: "primary-model" },
-        { phase: "model", provider: null, model: null },
-        { phase: "model", provider: "fallback-provider", model: "fallback-model" },
-        { phase: "model", provider: null, model: null },
-      ]);
-      unsubscribe();
       await result.settleSessionOverride();
       await result.settleSessionOverride();
       return { result, candidateCalls, candidateLeases, reconciled };

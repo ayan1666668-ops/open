@@ -423,6 +423,8 @@ function buildCoreDistEntries(): Record<string, string> {
     "agents/code-mode.worker": "src/agents/code-mode.worker.ts",
     "agents/compaction-planning.worker": "src/agents/compaction-planning.worker.ts",
     "config/sessions/disk-budget.worker": "src/config/sessions/disk-budget.worker.ts",
+    "config/sessions/session-transcript-reconcile":
+      "src/config/sessions/session-transcript-reconcile.ts",
     ...runtimeProcessBuildEntries,
     ...runtimeProcessDeclarationEntries,
     "acp/control-plane/manager": "src/acp/control-plane/manager.ts",
@@ -676,6 +678,7 @@ function buildUnifiedDistEntries(): Record<string, string> {
     ),
     ...(shouldBuildPrivateQaEntries
       ? {
+          "plugin-sdk/qa-channel-protocol": "src/plugin-sdk/qa-channel-protocol.ts",
           "plugin-sdk/qa-lab": "src/plugin-sdk/qa-lab.ts",
           "plugin-sdk/qa-runtime": "src/plugin-sdk/qa-runtime.ts",
         }
