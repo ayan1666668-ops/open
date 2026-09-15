@@ -157,7 +157,10 @@ describe("Doctor canonical completion receipt repair", () => {
       rotateAgentEventLifecycleGeneration();
       closeOpenClawAgentDatabasesForTest();
       await repairCanonicalSessionKeys({ apply: true, cfg: f.cfg, env: f.env });
-      expect(f.rows(true)).toEqual(before.map((row) => ({ ...row, session_key: f.canonicalKey })));
+      for (const row of before) {
+        row.session_key = f.canonicalKey;
+      }
+      expect(f.rows(true)).toEqual(before);
       expect((await f.stage(true)).completion).toEqual(stopped);
     });
   });
