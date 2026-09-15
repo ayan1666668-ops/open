@@ -18,6 +18,7 @@ import { resolveUserPath } from "../utils.js";
 import { registerResolvedAgentDir } from "./agent-dir-registry.js";
 import {
   hasAgentRosterProperty,
+  listAgentEntries,
   listAgentEntriesWithSource,
   listAgentIds,
   readAgentRosterProperty,
@@ -68,6 +69,8 @@ export class AgentSelectionRequiredError extends Error {
 /** Per-agent config after applying agent defaults and normalizing scalar fields. */
 export type ResolvedAgentConfig = {
   name?: string;
+  /** Optional human-authored description, entry-scoped like name. */
+  description?: string;
   workspace?: string;
   agentDir?: string;
   model?: AgentEntry["model"];
@@ -140,6 +143,37 @@ function readAgentRosterFacts(cfg: OpenClawConfig): AgentRosterFacts | undefined
   return activeAgentRosterFactsBatch?.config === cfg
     ? activeAgentRosterFactsBatch.facts
     : undefined;
+}
+
+/** Normalized id/name/description projection of one configured agent entry. */
+export type AgentEntrySummary = {
+  id: string;
+  name?: string;
+  description?: string;
+};
+
+/**
+ * Normalized id/name/description for each configured entry (both `entries` and legacy `list`
+ * shapes). Data-plane only: values are trimmed, not sanitized or truncated.
+ */
+export function listAgentEntrySummaries(cfg: OpenClawConfig): AgentEntrySummary[] {
+  const summaries: AgentEntrySummary[] = [];
+  for (const entry of listAgentEntries(cfg)) {
+    // normalizeAgentId falls back to the implicit "main" id for unrepresentable
+    // input, so entries without an authored id are skipped on the raw value.
+    if (!normalizeOptionalString(entry?.id)) {
+      continue;
+    }
+    const id = normalizeAgentId(entry.id);
+    const name = normalizeOptionalString(entry?.name);
+    const description = normalizeOptionalString(entry?.description);
+    summaries.push({
+      id,
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {}),
+    });
+  }
+  return summaries;
 }
 
 /** Converts either supported roster representation into the canonical keyed shape. */
@@ -352,6 +386,7 @@ export function resolveAgentConfig(
   const agentDefaults = cfg.agents?.defaults;
   return {
     name: readStringValue(entry.name),
+    description: normalizeOptionalString(entry.description),
     workspace: readStringValue(entry.workspace),
     agentDir: readStringValue(entry.agentDir),
     model:

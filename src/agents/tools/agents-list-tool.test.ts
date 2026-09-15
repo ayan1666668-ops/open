@@ -2,6 +2,7 @@
 // runtime override handling.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveAgentConfig } from "../agent-scope-config.js";
 import { compactToolOutputHint } from "../tool-schema-hints.js";
 import { createAgentsListTool } from "./agents-list-tool.js";
 
@@ -13,6 +14,7 @@ type AgentListDetails = {
   agents?: Array<{
     id?: string;
     name?: string;
+    description?: string;
     configured?: boolean;
     model?: string;
     agentRuntime?: { id?: string; source?: string };
@@ -63,7 +65,7 @@ describe("agents_list tool", () => {
       required: ["requester", "allowAny", "agents"],
     });
     expect(compactToolOutputHint(tool.outputSchema)).toBe(
-      '{ agents: Array<{ configured: boolean; id: string; agentRuntime?: { id: string; source: "env" | "agent" | "defaults" | "model" | "provider" | "implicit" | "session" | "session-key" }; model?: string; name?: string }>; allowAny: boolean; requester: string }',
+      '{ agents: Array<{ configured: boolean; id: string; agentRuntime?: { id: string; source: "env" | "agent" | "defaults" | "model" | "provider" | "implicit" | "session" | "session-key" }; description?: string; model?: string; name?: string }>; allowAny: boolean; requester: string }',
     );
     const result = await tool.execute("call", {});
     const details = result.details as AgentListDetails;
@@ -267,5 +269,99 @@ describe("agents_list tool", () => {
       requester: "ops",
       agents: [{ id: "ops", configured: true }],
     });
+  });
+
+  it("returns the authored description for allowed targets, trimmed like the resolved config", async () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          model: "anthropic/claude-opus-4.5",
+          agentRuntime: { id: "openclaw" },
+          subagents: { allowAgents: ["codex"] },
+        },
+        list: [
+          { id: "main", default: true },
+          {
+            id: "codex",
+            name: "Codex",
+            description: "  Runs Codex harness tasks in isolation.  ",
+            model: "openai/gpt-5.5",
+            agentRuntime: { id: "openclaw" },
+            models: {
+              "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
+            },
+          },
+        ],
+      },
+    } as unknown as OpenClawConfig;
+    loadConfigMock.mockReturnValue(cfg);
+
+    const result = await createAgentsListTool({ agentSessionKey: "agent:main:main" }).execute(
+      "call",
+      {},
+    );
+    const details = result.details as AgentListDetails;
+
+    expect(details).toStrictEqual({
+      requester: "main",
+      allowAny: false,
+      agents: [
+        {
+          id: "codex",
+          name: "Codex",
+          description: "Runs Codex harness tasks in isolation.",
+          configured: true,
+          model: "openai/gpt-5.5",
+          agentRuntime: { id: "codex", source: "model" },
+        },
+      ],
+    });
+    expect(details.agents?.[0]?.description).toBe(resolveAgentConfig(cfg, "codex")?.description);
+  });
+
+  it("omits the description field when authored blank", async () => {
+    loadConfigMock.mockReturnValue({
+      agents: {
+        defaults: {
+          model: "anthropic/claude-opus-4.5",
+          agentRuntime: { id: "openclaw" },
+          subagents: { allowAgents: ["codex"] },
+        },
+        list: [
+          { id: "main", default: true },
+          {
+            id: "codex",
+            name: "Codex",
+            description: "   ",
+            model: "openai/gpt-5.5",
+            agentRuntime: { id: "openclaw" },
+            models: {
+              "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
+            },
+          },
+        ],
+      },
+    } as unknown as OpenClawConfig);
+
+    const result = await createAgentsListTool({ agentSessionKey: "agent:main:main" }).execute(
+      "call",
+      {},
+    );
+    const details = result.details as AgentListDetails;
+
+    expect(details).toStrictEqual({
+      requester: "main",
+      allowAny: false,
+      agents: [
+        {
+          id: "codex",
+          name: "Codex",
+          configured: true,
+          model: "openai/gpt-5.5",
+          agentRuntime: { id: "codex", source: "model" },
+        },
+      ],
+    });
+    expect(Object.hasOwn(details.agents?.[0] ?? {}, "description")).toBe(false);
   });
 });

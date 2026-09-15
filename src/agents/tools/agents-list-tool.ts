@@ -5,9 +5,12 @@
  */
 import { Type, type Static } from "typebox";
 import { getRuntimeConfig } from "../../config/config.js";
-import { normalizeAgentId } from "../../routing/session-key.js";
 import { resolveModelAgentRuntimeMetadata } from "../agent-runtime-metadata.js";
-import { listAgentEntries, listAgentIds } from "../agent-scope-config.js";
+import {
+  listAgentEntrySummaries,
+  listAgentIds,
+  type AgentEntrySummary,
+} from "../agent-scope-config.js";
 import { resolveAgentConfig, resolveSessionAgentIds } from "../agent-scope.js";
 import { resolveDefaultModelForAgent } from "../model-selection.js";
 import { resolveSubagentAllowedTargetIds } from "../subagents/spawn/subagent-target-policy.js";
@@ -47,6 +50,7 @@ const AgentsListOutputSchema = Type.Object(
               { additionalProperties: false },
             ),
           ),
+          description: Type.Optional(Type.String()),
         },
         { additionalProperties: false },
       ),
@@ -89,15 +93,14 @@ export function createAgentsListTool(opts?: {
         resolveAgentConfig(cfg, requesterAgentId)?.subagents?.allowAgents ??
         cfg?.agents?.defaults?.subagents?.allowAgents;
 
-      const configuredAgents = listAgentEntries(cfg);
       const configuredIds = listAgentIds(cfg);
-      const configuredNameMap = new Map<string, string>();
-      for (const entry of configuredAgents) {
-        const name = entry?.name?.trim() ?? "";
-        if (!name) {
-          continue;
+      // First match wins so duplicate normalized ids stay deterministic per config,
+      // matching the roster's data-plane projection.
+      const summaryById = new Map<string, AgentEntrySummary>();
+      for (const summary of listAgentEntrySummaries(cfg)) {
+        if (!summaryById.has(summary.id)) {
+          summaryById.set(summary.id, summary);
         }
-        configuredNameMap.set(normalizeAgentId(entry.id), name);
       }
 
       const allowed = resolveSubagentAllowedTargetIds({
@@ -121,13 +124,18 @@ export function createAgentsListTool(opts?: {
           provider: resolvedModel.provider,
           model: resolvedModel.model,
         });
-        return {
+        const summary = summaryById.get(id);
+        const agent: AgentListEntry = {
           id,
-          name: configuredNameMap.get(id),
+          name: summary?.name,
           configured: configuredIds.includes(id),
           model,
           agentRuntime,
         };
+        if (summary?.description) {
+          agent.description = summary.description;
+        }
+        return agent;
       });
 
       return jsonResult({

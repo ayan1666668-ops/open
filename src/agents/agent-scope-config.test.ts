@@ -5,7 +5,9 @@ import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   AgentSelectionRequiredError,
+  listAgentEntries,
   listAgentEntriesWithSource,
+  listAgentEntrySummaries,
   listAgentIds,
   resolveConfiguredAgentId,
   resolveAgentConfig,
@@ -412,5 +414,124 @@ describe("resolveAgentConfig model policy", () => {
     expect(resolveAgentConfig(cfg, "main")?.modelPolicy).toEqual({
       allow: ["openai/gpt-5.6-sol"],
     });
+  });
+});
+
+describe("agent description config resolution", () => {
+  it("resolves the authored description from an agents.entries entry", () => {
+    const cfg = {
+      agents: {
+        entries: { codex: { description: "Runs Codex harness tasks in isolation" } },
+      },
+    };
+
+    expect(resolveAgentConfig(cfg, "codex")?.description).toBe(
+      "Runs Codex harness tasks in isolation",
+    );
+  });
+
+  it("resolves the authored description from a legacy agents.list entry", () => {
+    const cfg = {
+      agents: { list: [{ id: "codex", description: "Runs Codex harness tasks in isolation" }] },
+    };
+
+    expect(resolveAgentConfig(cfg, "codex")?.description).toBe(
+      "Runs Codex harness tasks in isolation",
+    );
+  });
+
+  it("omits description (never blank) when absent or whitespace-only", () => {
+    const cfg = {
+      agents: {
+        list: [
+          { id: "blank", description: "" },
+          { id: "spaces", description: "   " },
+        ],
+      },
+    };
+
+    expect(resolveAgentConfig(cfg, "blank")?.description).toBeUndefined();
+    expect(resolveAgentConfig(cfg, "spaces")?.description).toBeUndefined();
+  });
+
+  it("trims a description that carries surrounding whitespace", () => {
+    const cfg = {
+      agents: { list: [{ id: "codex", description: "  Runs harness tasks.  " }] },
+    };
+
+    expect(resolveAgentConfig(cfg, "codex")?.description).toBe("Runs harness tasks.");
+  });
+
+  it("does not fabricate a description from agents.defaults", () => {
+    const cfg = {
+      agents: { defaults: {}, entries: { codex: {} } },
+    };
+
+    expect(resolveAgentConfig(cfg, "codex")?.description).toBeUndefined();
+  });
+
+  it("keeps description entry-scoped (no cross-agent inheritance)", () => {
+    const cfg = {
+      agents: {
+        entries: {
+          codex: { description: "Runs harness tasks." },
+          ops: {},
+        },
+      },
+    };
+
+    expect(resolveAgentConfig(cfg, "codex")?.description).toBe("Runs harness tasks.");
+    expect(resolveAgentConfig(cfg, "ops")?.description).toBeUndefined();
+  });
+
+  it("preserves description through the projected entries/list read", () => {
+    const cfg = {
+      agents: {
+        entries: {
+          codex: { description: "Runs Codex harness tasks in isolation" },
+          ops: { name: "Ops" },
+        },
+      },
+    };
+
+    const entries = listAgentEntries(cfg);
+    expect(entries).toHaveLength(2);
+    const codex = entries.find((entry) => entry.id === "codex");
+    expect(codex?.description).toBe("Runs Codex harness tasks in isolation");
+    expect(codex?.name).toBeUndefined();
+  });
+
+  it("lists normalized summaries from both roster shapes", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: { subagents: { allowAgents: ["*"] } },
+        list: [
+          { id: "alpha", name: "Alpha", description: "First." },
+          { id: " BETA ", description: "  Second.  " },
+          { id: "   " },
+        ],
+      },
+    };
+
+    expect(listAgentEntrySummaries(cfg)).toEqual([
+      { id: "alpha", name: "Alpha", description: "First." },
+      { id: "beta", description: "Second." },
+    ]);
+  });
+
+  it("summarizes keyed entries with normalized ids and dropped blank fields", () => {
+    const cfg = {
+      agents: {
+        entries: {
+          " Writer ": { name: "Writer", description: "Drafts." },
+          Research: { name: "  ", description: "   " },
+        },
+      },
+    };
+
+    expect(listAgentEntrySummaries(cfg)).toEqual([
+      { id: "writer", name: "Writer", description: "Drafts." },
+      { id: "research" },
+    ]);
   });
 });
