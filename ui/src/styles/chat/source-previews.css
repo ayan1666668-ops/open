@@ -66,10 +66,17 @@ openclaw-chat-sources {
   gap: 6px;
   overflow-wrap: anywhere;
 }
-.chat-source-card__domain svg {
-  width: 12px;
-  height: 12px;
+.chat-source-card__icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
+}
+.chat-source-card__icon img,
+.chat-source-card__icon svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .chat-source-popover {
   --max-width: min(340px, calc(100vw - 24px));

@@ -12,7 +12,7 @@ export const sourcePreviewFixture = {
     "Check the [wind and rain forecast](https://weather.example.org/weekend) before leaving.",
 };
 
-export function sourcePreviewHistory() {
+export function sourcePreviewHistory(sessionUrl?: string) {
   const fixture = sourcePreviewFixture;
   const start = Date.UTC(2026, 8, 14, 12, 0);
   const metadata = (seq: number) => ({
@@ -23,7 +23,7 @@ export function sourcePreviewHistory() {
     kind: "results",
     provider: "fixture",
     query: "weekend cycling checklist and weather",
-    count: 3,
+    count: sessionUrl ? 5 : 3,
     results: [
       { title: wrapWebContent(fixture.checklistTitle, "web_search"), url: fixture.checklistUrl },
       {
@@ -38,6 +38,15 @@ export function sourcePreviewHistory() {
         title: wrapWebContent("City bike rentals", "web_search"),
         url: "https://rentals.example.com/",
       },
+      ...(sessionUrl
+        ? [
+            { title: wrapWebContent("Trip planning session", "web_search"), url: sessionUrl },
+            {
+              title: wrapWebContent("Route planner issue", "web_search"),
+              url: "https://github.com/example/route-planner/issues/42",
+            },
+          ]
+        : []),
     ],
     externalContent: { untrusted: true, source: "web_search", wrapped: true, provider: "fixture" },
   };
@@ -106,7 +115,16 @@ export function sourcePreviewHistory() {
       role: "assistant",
       phase: "final_answer",
       stopReason: "stop",
-      content: [{ type: "text", text: fixture.answer }],
+      content: [
+        {
+          type: "text",
+          text:
+            fixture.answer +
+            (sessionUrl
+              ? `\n\nRelated: [trip planning session](${sessionUrl}) · [route planner issue](https://github.com/example/route-planner/issues/42).`
+              : ""),
+        },
+      ],
     },
   ];
 }

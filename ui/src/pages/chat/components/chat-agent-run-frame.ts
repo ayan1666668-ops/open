@@ -22,6 +22,8 @@ import { renderBrowserTabPreviews } from "./chat-tool-cards.ts";
 type MessageGroupRenderOptions = Parameters<typeof renderMessageGroup>[1];
 
 type AgentRunFrameOptions = {
+  basePath?: string;
+  sessionPublicOrigin?: string;
   streamOptions: StreamGroupOptions;
   renderGroupOptions: (group: MessageGroup) => MessageGroupRenderOptions;
   isWorkExpanded: (key: string) => boolean;
@@ -88,7 +90,10 @@ export function renderAgentRunFrame(frame: AgentRunFrameRenderItem, opts: AgentR
           groups,
           answer: actionOwner.message,
           runId: frame.runId,
+          basePath: opts.basePath,
+          sessionPublicOrigin: opts.sessionPublicOrigin,
         }),
+        opts.streamOptions.fetchLinkFavicon,
       ),
     );
   }

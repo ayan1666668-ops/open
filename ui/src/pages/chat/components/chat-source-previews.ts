@@ -8,6 +8,8 @@ import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-cha
 import type { ChatSourcePreview } from "../../../lib/chat/source-previews.ts";
 import { generateUUID } from "../../../lib/uuid.ts";
 import { OpenClawLightDomElement } from "../../../lit/openclaw-element.ts";
+import { readLinkFavicon } from "../link-favicon-cache.ts";
+import type { LinkFaviconFetcher } from "../link-favicon-loader.ts";
 
 registerChatMessageMetadataEnglish();
 
@@ -40,8 +42,34 @@ function closeSourcePreview(event: Event) {
 }
 
 class ChatSourcePreviews extends OpenClawLightDomElement {
-  static override properties = { sources: { attribute: false } };
+  static override properties = {
+    sources: { attribute: false },
+    fetchFavicon: { attribute: false },
+  };
   sources: readonly ChatSourcePreview[] = [];
+  fetchFavicon?: LinkFaviconFetcher;
+  private readonly failedFavicons = new Set<string>();
+  private readonly refreshFavicons = () => {
+    if (this.isConnected) {
+      this.requestUpdate();
+    }
+  };
+
+  private renderFavicon(source: ChatSourcePreview) {
+    const url = this.fetchFavicon
+      ? readLinkFavicon(new URL(source.url).hostname, this.fetchFavicon, this.refreshFavicons)
+      : null;
+    return url && !this.failedFavicons.has(url)
+      ? html`<img
+          src=${url}
+          alt=""
+          @error=${() => {
+            this.failedFavicons.add(url);
+            this.requestUpdate();
+          }}
+        />`
+      : icons.globe;
+  }
 
   override disconnectedCallback() {
     // Retire the library's open-popover registration when a transcript row leaves.
@@ -81,7 +109,9 @@ class ChatSourcePreviews extends OpenClawLightDomElement {
               >
                 <span class="chat-source-card__title">${source.title}</span>
                 <span class="chat-source-card__domain"
-                  ><span aria-hidden="true">${icons.globe}</span>${source.domain}</span
+                  ><span class="chat-source-card__icon" aria-hidden="true"
+                    >${this.renderFavicon(source)}</span
+                  >${source.domain}</span
                 >
               </button>
               <wa-popover
@@ -140,8 +170,14 @@ if (!customElements.get("openclaw-chat-sources")) {
   customElements.define("openclaw-chat-sources", ChatSourcePreviews);
 }
 
-export function renderChatSourcePreviews(sources: readonly ChatSourcePreview[]) {
+export function renderChatSourcePreviews(
+  sources: readonly ChatSourcePreview[],
+  fetchFavicon?: LinkFaviconFetcher,
+) {
   return sources.length > 0
-    ? html`<openclaw-chat-sources .sources=${sources}></openclaw-chat-sources>`
+    ? html`<openclaw-chat-sources
+        .sources=${sources}
+        .fetchFavicon=${fetchFavicon}
+      ></openclaw-chat-sources>`
     : nothing;
 }

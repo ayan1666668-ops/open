@@ -12,11 +12,11 @@ const suite = createControlUiE2eSuite({
 
 suite.define(() => {
   it.each([
-    { name: "desktop", width: 1200, height: 900, colorScheme: "dark" as const },
-    { name: "mobile", width: 390, height: 844, colorScheme: "light" as const },
+    { name: "desktop", width: 1200, height: 900, colorScheme: "dark" as const, favicons: true },
+    { name: "mobile", width: 390, height: 844, colorScheme: "light" as const, favicons: false },
   ])(
     "previews recorded sources and opens the original page ($name)",
-    async ({ name, width, height, colorScheme }) => {
+    async ({ name, width, height, colorScheme, favicons }) => {
       const artifactDir = createControlUiE2eArtifactDir(`source-previews-${name}`);
       await suite.withPage(
         { viewport: { width, height }, colorScheme },
@@ -30,7 +30,27 @@ suite.define(() => {
               await route.fulfill({ contentType: "text/html", body: "<h1>Recorded source</h1>" });
             },
           );
-          await installMockGateway(page, { historyMessages: sourcePreviewHistory() });
+          const faviconRequests: string[] = [];
+          await page.route("**/__openclaw__/link-favicon/**", async (route) => {
+            faviconRequests.push(route.request().url());
+            expect(route.request().headers()["authorization"]).toBe("Bearer e2e-device-token");
+            await route.fulfill(
+              route.request().url().endsWith("/cycling.example.com")
+                ? {
+                    contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#3879db"/><path d="M9 10h10a6 6 0 0 1 0 12H9z" fill="none" stroke="#fff" stroke-width="3"/></svg>',
+                  }
+                : { contentType: "image/png", body: "unavailable image" },
+            );
+          });
+          const sessionUrl = controlUiSessionUrl(
+            suite.server.baseUrl,
+            "agent:main:dashboard:trip-planning",
+          );
+          await installMockGateway(page, {
+            automaticallyFetchFavicons: favicons,
+            historyMessages: sourcePreviewHistory(sessionUrl),
+          });
           await page.goto(controlUiSessionUrl(suite.server.baseUrl, fixture.sessionKey));
           const cards = page.locator(".chat-source-card");
           await expect.poll(() => cards.count()).toBe(2);
@@ -44,6 +64,28 @@ suite.define(() => {
           ).toBe(true);
           expect(await checklist.textContent()).toContain("cycling.example.com");
           expect(await forecast.textContent()).toContain("weather.example.org");
+          await page
+            .locator(`a.markdown-session-link[data-session-href="${sessionUrl}"]`)
+            .waitFor();
+          await page
+            .locator(
+              'a.markdown-github-link[href="https://github.com/example/route-planner/issues/42"]',
+            )
+            .waitFor();
+          const checklistIcon = checklist.locator("img");
+          if (favicons) {
+            await expect
+              .poll(() => checklistIcon.evaluate((icon: HTMLImageElement) => icon.naturalWidth))
+              .toBeGreaterThan(0);
+            await expect.poll(() => forecast.locator("img").count()).toBe(0);
+            expect(await forecast.locator(".chat-source-card__domain svg").count()).toBe(1);
+            expect(faviconRequests.some((url) => url.endsWith("/cycling.example.com"))).toBe(true);
+            expect(faviconRequests.some((url) => url.endsWith("/weather.example.org"))).toBe(true);
+          } else {
+            expect(await cards.locator("img").count()).toBe(0);
+            expect(await cards.locator(".chat-source-card__domain svg").count()).toBe(2);
+            expect(faviconRequests).toEqual([]);
+          }
           expect(await page.locator(".chat-source-strip").textContent()).not.toContain(
             "City bike rentals",
           );

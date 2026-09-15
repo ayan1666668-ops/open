@@ -8,7 +8,10 @@ import {
   isToolResultContentType,
   resolveToolUseId,
 } from "../../../../src/chat/tool-content.js";
+import { resolveControlUiPaths } from "../../app/browser.ts";
+import { parseGitHubLinkTarget } from "../../components/github-link-target.ts";
 import { createMarkdownParser } from "../../components/markdown-parser.ts";
+import { parseLocalMarkdownSessionUrl } from "../../components/markdown-session-links.ts";
 import { normalizeMarkdownLineBreaks } from "../../components/markdown-text.ts";
 import { transcriptRunId } from "../../pages/chat/chat-thread-run-identity.ts";
 import { buildToolStreamIdentity } from "../../pages/chat/tool-stream-identity.ts";
@@ -237,6 +240,8 @@ export function extractChatSourcePreviews(params: {
   groups: readonly MessageGroup[];
   answer: unknown;
   runId: string;
+  basePath?: string;
+  sessionPublicOrigin?: string;
 }): ChatSourcePreview[] {
   const answer = asNullableRecord(params.answer);
   if (!answer || transcriptRunId(answer) !== params.runId) {
@@ -264,7 +269,13 @@ export function extractChatSourcePreviews(params: {
   }
   // Message/text caches treat messages as immutable. Tool cards can receive
   // projected outcomes, so snapshot their display fields as well as identity.
-  const inputs: unknown[] = [params.runId];
+  const basePath = params.basePath ?? resolveControlUiPaths(globalThis.location.pathname)[0];
+  const inputs: unknown[] = [
+    params.runId,
+    basePath,
+    params.sessionPublicOrigin,
+    globalThis.location.origin,
+  ];
   const messages: Record<string, unknown>[] = [];
   let inFrame = false;
   frameInputs: for (const group of params.groups) {
@@ -392,13 +403,20 @@ export function extractChatSourcePreviews(params: {
     }
   }
   const previews = new Map<string, ChatSourcePreview>();
+  const hasDedicatedCard = (href: string) =>
+    parseGitHubLinkTarget(href) !== null ||
+    parseLocalMarkdownSessionUrl(href, { basePath, publicOrigin: params.sessionPublicOrigin }) !==
+      null;
   for (const link of links) {
+    if (hasDedicatedCard(link)) {
+      continue;
+    }
     let canonicalKey = link;
     for (let next = redirects.get(canonicalKey); next; next = redirects.get(canonicalKey)) {
       canonicalKey = next;
     }
     const source = sources.get(canonicalKey);
-    if (source && !previews.has(canonicalKey)) {
+    if (source && !previews.has(canonicalKey) && !hasDedicatedCard(canonicalKey)) {
       previews.set(canonicalKey, renderSourcePreview(source));
     }
     if (previews.size >= MAX_SOURCES) {

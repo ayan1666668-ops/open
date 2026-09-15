@@ -60,8 +60,17 @@ function group(messages: unknown[], owner = runId): MessageGroup {
   };
 }
 
-function previews(messages: unknown[], final: unknown = answer()) {
-  return extractChatSourcePreviews({ groups: [group([...messages, final])], answer: final, runId });
+function previews(
+  messages: unknown[],
+  final: unknown = answer(),
+  options: { basePath?: string; sessionPublicOrigin?: string } = {},
+) {
+  return extractChatSourcePreviews({
+    groups: [group([...messages, final])],
+    answer: final,
+    runId,
+    ...options,
+  });
 }
 
 function fetched() {
@@ -79,6 +88,68 @@ function fetched() {
 }
 
 describe("chat source previews", () => {
+  it("omits dedicated-card links before the cap without hiding ordinary GitHub or external pages", () => {
+    const excluded = [
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `https://github.com/example/repo/issues/${index + 1}`,
+      ),
+      "https://github.com/example/repo/pull/9#discussion",
+      `${location.origin}/control/chat/main/research`,
+      "https://gateway.example/control/chat/main/research",
+    ];
+    const retained = [
+      "https://github.com/example/repo",
+      "https://github.com/example/repo/blob/main/README.md",
+      "https://github.example/example/repo/issues/1",
+      "https://docs.example/control/chat/main/research",
+      `${location.origin}/control/docs/guide`,
+      pageUrl,
+    ];
+    const links = [...excluded, ...retained];
+    expect(
+      previews(
+        [tool(search(links.map((url) => result(url))))],
+        answer(links.map((url) => `[source](${url})`).join(" ")),
+        { basePath: "/control", sessionPublicOrigin: "https://gateway.example" },
+      ).map((source) => source.url),
+    ).toEqual(retained);
+  });
+
+  it.each(["https://github.com/example/repo/pull/12", `${location.origin}/chat/main/research`])(
+    "omits a redirect to a dedicated-card destination: %s",
+    (url) => {
+      expect(previews([tool({ ...fetched(), finalUrl: url }, "web_fetch")])).toEqual([]);
+      expect(
+        previews(
+          [tool({ ...fetched(), url, finalUrl: pageUrl }, "web_fetch")],
+          answer(`[source](${url})`),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("invalidates source classification when the Gateway origin or base path changes", () => {
+    const url = "https://gateway.example/control/chat/main/research";
+    const message = tool(search([result(url)]));
+    const final = answer(`[source](${url})`);
+    const original = previews([message], final, { basePath: "/control" });
+    expect(original).toHaveLength(1);
+    expect(previews([message], final, { basePath: "/control" })).toBe(original);
+    expect(
+      previews([message], final, {
+        basePath: "/control",
+        sessionPublicOrigin: "https://gateway.example",
+      }),
+    ).toEqual([]);
+    expect(
+      previews([message], final, {
+        basePath: "/different",
+        sessionPublicOrigin: "https://gateway.example",
+      }),
+    ).toHaveLength(1);
+  });
+
   it("selects cited results in answer order using Markdown links and labels search descriptions", () => {
     const final = answer(
       `[Second][ref]\n\n[First](${pageUrl}#section) and [again](${pageUrl})\n\n[ref]: ${secondUrl}`,
