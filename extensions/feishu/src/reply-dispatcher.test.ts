@@ -4517,6 +4517,24 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
     // GFM makes the outer pipes optional, and a fence hides rows that only look like a table.
     const pipelessTableMarkdown = "Name | Role\n--- | ---\nAda | Lead";
+    const nativeTableShapes = [
+      { shape: "pipeless", text: pipelessTableMarkdown },
+      { shape: "leading-pipe-only", text: "| Name | Role\n| --- | ---\n| Ada | Lead" },
+      { shape: "trailing-pipe-only", text: "Name | Role |\n--- | --- |\nAda | Lead |" },
+      { shape: "blockquote", text: "> Name | Role\n> --- | ---\n> Ada | Lead" },
+      { shape: "list-item", text: "- Name | Role\n  --- | ---\n  Ada | Lead" },
+      { shape: "CRLF pipeless", text: pipelessTableMarkdown.replaceAll("\n", "\r\n") },
+      { shape: "aligned-delimiter", text: "Name | Role\n:--- | ---:\nAda | Lead" },
+    ] as const;
+    const nonTableShapes = [
+      { shape: "header wider than delimiter", text: "| Name | Role |\n| --- |\n| Ada | Lead |" },
+      { shape: "delimiter wider than header", text: "| Name |\n| --- | --- |\n| Ada | Lead |" },
+      { shape: "dashless delimiter", text: "| Name | Role |\n| : | : |\n| Ada | Lead |" },
+      {
+        shape: "blank line before delimiter",
+        text: "| Name | Role |\n\n| --- | --- |\n| Ada | Lead |",
+      },
+    ] as const;
     const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
     const bulletsCard = "**Ada**\n• Role: Lead";
     const bulletsPost = "**Ada**  \n• Role: Lead";
@@ -4584,59 +4602,54 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     }
 
     it.each([
-      { waiter: "idle", pending: false },
-      { waiter: "idle", pending: true },
-      // The final-first order is a control for the answer-only lookup already in use.
-      { waiter: "final", pending: false },
-      { waiter: "final", pending: true },
-    ])(
-      "reuses the off answer receipt with reasoning for $waiter and pending=$pending",
-      async ({ waiter, pending }) => {
-        const { result, options } = createBlockTableHarness(tableCfg("off"), true);
-        let acceptPost!: (value: { messageId: string }) => void;
-        sendMessageFeishuMock.mockReturnValueOnce(
-          new Promise((resolve) => {
-            acceptPost = resolve;
-          }),
-        );
-        result.replyOptions.onReasoningStream?.({ text: "Check the team roster." });
-        result.replyOptions.onPartialReply?.({ text: tableMarkdown });
-        await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
-        const block = options.deliver({ text: tableMarkdown }, { kind: "block" });
-        await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
-        if (!pending) {
-          acceptPost({ messageId: "om-reasoned-answer" });
-          await block;
-        }
-        const idle = waiter === "idle" ? Promise.resolve(options.onIdle?.()) : undefined;
-        const final =
-          waiter === "final"
-            ? options.deliver({ text: tableMarkdown }, { kind: "final" })
-            : undefined;
-        await vi.waitFor(() =>
-          expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1),
-        );
-        if (pending) {
-          acceptPost({ messageId: "om-reasoned-answer" });
-        }
-        const acceptedBlock = await block;
-        await idle;
-        const acceptedFinal = final
-          ? await final
-          : await options.deliver({ text: tableMarkdown }, { kind: "final" });
-        await options.onIdle?.();
+      { waiter: "idle", phase: "with reasoning for idle", pending: false },
+      { waiter: "idle", phase: "with reasoning for idle", pending: true },
+      // Final-first compatibility controls reach the lookup after close clears reasoning.
+      { waiter: "final", phase: "after final clears reasoning", pending: false },
+      { waiter: "final", phase: "after final clears reasoning", pending: true },
+    ])("reuses the off answer receipt $phase and pending=$pending", async ({ waiter, pending }) => {
+      const { result, options } = createBlockTableHarness(tableCfg("off"), true);
+      let acceptPost!: (value: { messageId: string }) => void;
+      sendMessageFeishuMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          acceptPost = resolve;
+        }),
+      );
+      result.replyOptions.onReasoningStream?.({ text: "Check the team roster." });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      const block = options.deliver({ text: tableMarkdown }, { kind: "block" });
+      await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
+      if (!pending) {
+        acceptPost({ messageId: "om-reasoned-answer" });
+        await block;
+      }
+      const idle = waiter === "idle" ? Promise.resolve(options.onIdle?.()) : undefined;
+      const final =
+        waiter === "final"
+          ? options.deliver({ text: tableMarkdown }, { kind: "final" })
+          : undefined;
+      await vi.waitFor(() => expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1));
+      if (pending) {
+        acceptPost({ messageId: "om-reasoned-answer" });
+      }
+      const acceptedBlock = await block;
+      await idle;
+      const acceptedFinal = final
+        ? await final
+        : await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      await options.onIdle?.();
 
-        expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
-        expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toBe(tableMarkdown);
-        expect(acceptedFinal).toMatchObject({
-          messageIds: ["om-reasoned-answer"],
-          visibleReplySent: true,
-        });
-        expect(acceptedFinal?.receipt?.parts).toEqual(acceptedBlock?.receipt?.parts);
-        expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
-        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
-      },
-    );
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock.mock.calls[0]?.[0]?.text).toBe(tableMarkdown);
+      expect(acceptedFinal).toMatchObject({
+        messageIds: ["om-reasoned-answer"],
+        visibleReplySent: true,
+      });
+      expect(acceptedFinal?.receipt?.parts).toEqual(acceptedBlock?.receipt?.parts);
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
 
     // With no accepted block to reuse, the close still delivers reasoning and answer.
     it("preserves reasoning when idle alone posts an off answer", async () => {
@@ -5076,15 +5089,49 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     });
 
-    it.each(["block", undefined] as const)(
-      "%s promotes a pipeless native table to a static card",
-      async (tables) => {
-        await deliverFinal(tables, "off", pipelessTableMarkdown);
+    it.each(
+      nativeTableShapes.flatMap(({ shape, text }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
+      ),
+    )("$tables promotes a $shape native table to a static card", async ({ tables, text }) => {
+      await deliverFinal(tables, "off", text);
 
-        expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(
-          expect.objectContaining({ text: pipelessTableMarkdown }),
-        );
+      expect(sendStructuredCardFeishuMock).toHaveBeenCalledWith(expect.objectContaining({ text }));
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      nonTableShapes.flatMap(({ shape, text }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
+      ),
+    )("$tables posts literal rows with $shape", async ({ tables, text }) => {
+      await deliverFinal(tables, "off", text);
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      // Posts encode soft line breaks, but retain the literal non-table prose.
+      expect(sendMessageFeishuMock).toHaveBeenCalledWith(
+        expect.objectContaining({ text: text.replace(/(?<!\n)\n(?!\n)/g, "  \n") }),
+      );
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["block", undefined] as const)(
+      "%s opens a preview for a pipeless block without core block streaming",
+      async (tables) => {
+        resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+        const { options } = createDispatcherHarness({ cfg: tableCfg(tables), accountId: "main" });
+
+        await options.deliver({ text: pipelessTableMarkdown }, { kind: "block" });
+
+        expect(streamingInstances).toHaveLength(1);
+        expect(requireStreamingInstance(0).start).toHaveBeenCalledTimes(1);
         expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+        await options.onIdle?.();
+        expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledWith(
+          pipelessTableMarkdown,
+          expect.any(Object),
+        );
+        expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
       },
     );
 

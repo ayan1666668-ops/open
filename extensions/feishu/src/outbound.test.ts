@@ -197,6 +197,24 @@ const cardRenderConfig: ClawdbotConfig = {
 const tableMarkdown = "| Name | Role |\n| --- | --- |\n| Ada | Lead |";
 // GFM makes the outer pipes optional, and a fence hides rows that only look like a table.
 const pipelessTableMarkdown = "Name | Role\n--- | ---\nAda | Lead";
+const nativeTableShapes = [
+  { shape: "pipeless", text: pipelessTableMarkdown },
+  { shape: "leading-pipe-only", text: "| Name | Role\n| --- | ---\n| Ada | Lead" },
+  { shape: "trailing-pipe-only", text: "Name | Role |\n--- | --- |\nAda | Lead |" },
+  { shape: "blockquote", text: "> Name | Role\n> --- | ---\n> Ada | Lead" },
+  { shape: "list-item", text: "- Name | Role\n  --- | ---\n  Ada | Lead" },
+  { shape: "CRLF pipeless", text: pipelessTableMarkdown.replaceAll("\n", "\r\n") },
+  { shape: "aligned-delimiter", text: "Name | Role\n:--- | ---:\nAda | Lead" },
+] as const;
+const nonTableShapes = [
+  { shape: "header wider than delimiter", text: "| Name | Role |\n| --- |\n| Ada | Lead |" },
+  { shape: "delimiter wider than header", text: "| Name |\n| --- | --- |\n| Ada | Lead |" },
+  { shape: "dashless delimiter", text: "| Name | Role |\n| : | : |\n| Ada | Lead |" },
+  {
+    shape: "blank line before delimiter",
+    text: "| Name | Role |\n\n| --- | --- |\n| Ada | Lead |",
+  },
+] as const;
 const fencedTableSample = "```\n| Name | Role |\n| --- | --- |\n| Ada | Lead |\n```";
 // Root credentials make the implicit default account configured, so a send
 // without an account id resolves to it and reads the channel value.
@@ -4051,20 +4069,34 @@ describe("feishuOutbound.sendText markdown table modes in auto mode", () => {
       expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     });
 
-    it.each(["block", undefined] as const)(
-      "%s promotes a pipeless native table to a card",
-      async (tables) => {
-        await sendText({
-          cfg: tableCfg(scope, tables),
-          to: "chat_1",
-          text: pipelessTableMarkdown,
-          accountId,
-        });
+    it.each(
+      nativeTableShapes.flatMap(({ shape, text }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
+      ),
+    )("$tables promotes a $shape native table to a card", async ({ tables, text }) => {
+      await sendText({
+        cfg: tableCfg(scope, tables),
+        to: "chat_1",
+        text,
+        accountId,
+      });
 
-        expect(sendStructuredCardCall()?.text).toBe(pipelessTableMarkdown);
-        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
-      },
-    );
+      expect(sendStructuredCardCall()?.text).toBe(text);
+      expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it.each(
+      nonTableShapes.flatMap(({ shape, text }) =>
+        (["block", undefined] as const).map((tables) => ({ shape, text, tables })),
+      ),
+    )("$tables posts literal rows with $shape", async ({ tables, text }) => {
+      await sendText({ cfg: tableCfg(scope, tables), to: "chat_1", text, accountId });
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      // Posts encode soft line breaks, but retain the literal non-table prose.
+      expect(sendMessageCall()?.text).toBe(text.replace(/(?<!\n)\n(?!\n)/g, "  \n"));
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
 
     it.each(["block", undefined] as const)(
       "%s keeps the native table on a card",
