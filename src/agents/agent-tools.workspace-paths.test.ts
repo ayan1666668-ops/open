@@ -5,6 +5,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createReadTool } from "openclaw/plugin-sdk/agent-sessions";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
@@ -203,6 +204,44 @@ describe("workspace path resolution", () => {
       ).rejects.toThrow(/Path escapes sandbox root/i);
     });
   });
+
+  it.each([false, true])(
+    "guards decoded file URLs with normalized forwarding=%s",
+    async (normalizeGuardedPathParams) => {
+      await withTempDir("openclaw-guard-url-", async (stateDir) => {
+        const stateRoot = await fs.realpath(stateDir);
+        const root = path.join(stateRoot, "workspace");
+        const inside = path.join(root, "note.txt");
+        const outside = path.join(stateRoot, "outside.txt");
+        await fs.mkdir(root);
+        await fs.writeFile(inside, "URL_INSIDE_MARKER");
+        await fs.writeFile(outside, "URL_OUTSIDE_MARKER");
+        const base = createReadTool(root) as unknown as AnyAgentTool;
+        const execute = vi.spyOn(base, "execute");
+        const read = wrapToolWorkspaceRootGuardWithOptions(base, root, {
+          containerWorkdir: "/workspace",
+          normalizeGuardedPathParams,
+        });
+        const insideUrl = pathToFileURL(inside).href;
+
+        expect(getTextContent(await read.execute("inside-url", { path: insideUrl }))).toContain(
+          "URL_INSIDE_MARKER",
+        );
+        expect(execute).toHaveBeenCalledWith(
+          "inside-url",
+          { path: normalizeGuardedPathParams ? inside : insideUrl },
+          undefined,
+          undefined,
+        );
+        await expect(
+          read.execute("outside-url", { path: pathToFileURL(outside).href }),
+        ).rejects.toThrow(/Path escapes sandbox root/i);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(await fs.readFile(inside, "utf8")).toBe("URL_INSIDE_MARKER");
+        expect(await fs.readFile(outside, "utf8")).toBe("URL_OUTSIDE_MARKER");
+      });
+    },
+  );
 
   it("rejects hardlinked file aliases when workspaceOnly is enabled", async () => {
     if (process.platform === "win32") {
@@ -452,6 +491,45 @@ describe("workspace path resolution", () => {
 });
 
 describe("sandboxed workspace paths", () => {
+  it("guards file URLs before registered legacy bridge reads", async () => {
+    await withUnsafeMountedSandboxHarness(async ({ sandboxRoot, agentRoot, sandbox }) => {
+      // Older external bridges omit descriptors but may expose additional roots.
+      // Workspace admission must inspect the same decoded URL as the reader.
+      const { pathMappings, ...legacyBridge } = sandbox.fsBridge!;
+      expect(pathMappings).toBeDefined();
+      sandbox.fsBridge = legacyBridge;
+      const readFile = vi.spyOn(legacyBridge, "readFile");
+      const stat = vi.spyOn(legacyBridge, "stat");
+      const inside = path.join(sandboxRoot, "note.txt");
+      const outside = path.join(agentRoot, "outside.txt");
+      await fs.writeFile(inside, "LEGACY_URL_INSIDE_MARKER");
+      await fs.writeFile(outside, "LEGACY_URL_OUTSIDE_MARKER");
+      const tools = createOpenClawCodingTools({
+        workspaceDir: sandboxRoot,
+        sandbox,
+        config: { tools: { fs: { workspaceOnly: true } } },
+      });
+      const { readTool } = expectReadWriteEditTools(tools);
+
+      expect(
+        getTextContent(
+          await readTool.execute("legacy-inside-url", { path: pathToFileURL(inside).href }),
+        ),
+      ).toContain("LEGACY_URL_INSIDE_MARKER");
+      const readsBefore = readFile.mock.calls.length;
+      const statsBefore = stat.mock.calls.length;
+      expect(readsBefore).toBeGreaterThan(0);
+      expect(statsBefore).toBeGreaterThan(0);
+      await expect(
+        readTool.execute("legacy-outside-url", { path: pathToFileURL(outside).href }),
+      ).rejects.toThrow(/Path escapes sandbox root/i);
+      expect(readFile).toHaveBeenCalledTimes(readsBefore);
+      expect(stat).toHaveBeenCalledTimes(statsBefore);
+      expect(await fs.readFile(inside, "utf8")).toBe("LEGACY_URL_INSIDE_MARKER");
+      expect(await fs.readFile(outside, "utf8")).toBe("LEGACY_URL_OUTSIDE_MARKER");
+    });
+  });
+
   it("uses sandbox workspace for relative read/write/edit", async () => {
     await withTempDir("openclaw-sandbox-", async (sandboxDir) => {
       await withTempDir("openclaw-workspace-", async (workspaceDir) => {

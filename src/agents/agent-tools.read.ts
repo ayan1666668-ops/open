@@ -944,12 +944,10 @@ export function wrapToolWorkspaceRootGuardWithOptions(
                 cwd: options.resolutionCwd ?? root,
               }).containerPath
             : filePath;
-        const workspaceMapping = resolveSandboxPathMapping(
-          mounts,
-          resolveContainerPathCandidate(guardPath) ?? guardPath,
-        );
+        const candidate = resolveContainerPathCandidate(guardPath) ?? guardPath;
+        const workspaceMapping = resolveSandboxPathMapping(mounts, candidate);
         const guardedRoot = workspaceMapping?.mapping.hostRoot ?? root;
-        const sandboxPath = workspaceMapping?.hostPath ?? guardPath;
+        const sandboxPath = workspaceMapping?.hostPath ?? candidate;
         const additionalRoots = workspaceMapping ? [] : (options?.additionalRoots ?? []);
         let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>> | undefined;
         try {
