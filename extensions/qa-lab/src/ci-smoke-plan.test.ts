@@ -169,6 +169,24 @@ describe("createQaSmokeCiPart", () => {
     expect(hostedScenario.coverage?.primary).toContain(coverageId);
   });
 
+  it("keeps credentialed Telegram Test Server proof outside the Crabline smoke profile", () => {
+    const smokeSelection = resolveQaProfileScenarios({
+      profile: "smoke-ci",
+      providerMode: "mock-openai",
+      eligibleChannels: ["telegram", "matrix"],
+    });
+    const scenario = expectDefined(
+      readQaScenarioPack().scenarios.find(
+        (candidate) => candidate.id === "telegram-workboard-dispatch-capacity-skip",
+      ),
+      "Telegram Workboard dispatch proof scenario",
+    );
+
+    expect(smokeSelection.profile.channelDriver).toBe("crabline");
+    expect(smokeSelection.scenarios.map((candidate) => candidate.id)).not.toContain(scenario.id);
+    expect(scenario.execution.config).toMatchObject({ requiredChannelDriver: "live" });
+  });
+
   it("rejects undeclared profile parts", () => {
     expect(() => createQaSmokeCiPart("profile-5")).toThrow(
       "unknown QA smoke CI profile part: profile-5",

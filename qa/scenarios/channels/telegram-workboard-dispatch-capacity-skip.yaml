@@ -31,6 +31,7 @@ scenario:
     isolationReason: Seeds synthetic Workboard cards and sends a native Telegram command through the leased Test Server account.
     summary: Seed a synthetic Workboard capacity conflict, send `/workboard dispatch` through Telegram, and verify the skipped count and explanation in the delivered reply.
     config:
+      requiredChannelDriver: live
       ownerId: workboard-dispatcher
       expectedSkipped: skipped=1
       expectedReason: Owner workboard-dispatcher already has active Workboard work
