@@ -21,6 +21,7 @@ import { removeLegacyMantisWorktrees, removeMantisWorktree } from "./run-cleanup
 import {
   assertMantisCommandNotAborted,
   defaultMantisCommandRunner,
+  MantisCommandCleanupError,
   resolveMantisCommandTimeouts,
   runMantisCommand,
   type MantisCommandExecution,
@@ -212,6 +213,13 @@ async function runLane(params: {
     execution: worktreeAddExecution,
     lane: params.lane,
   });
+  // The launcher's interrupt timer starts before command settlement or artifact
+  // staging finishes. Charge that transition to the same cleanup budget.
+  let interruptedCleanupDeadline: number | undefined;
+  const onAbort = () => {
+    interruptedCleanupDeadline ??= Date.now() + params.commandTimeouts["worktree-cleanup"];
+  };
+  params.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     await fs.mkdir(worktreeDir, { mode: 0o700 });
     worktreeOwnership = await captureMantisDirectoryOwnership({
@@ -304,22 +312,42 @@ async function runLane(params: {
   } catch (error) {
     workloadFailed = true;
     workloadError = error;
-  } finally {
+  }
+  // Both failures are collected before either is rethrown, so cleanup cannot
+  // overwrite the workload failure or lose its diagnostic cause.
+  try {
     if (worktreePrepared) {
-      try {
-        await removeMantisWorktree({
-          commandTimeouts: params.commandTimeouts,
-          lane: params.lane,
-          repoRoot: params.repoRoot,
-          runner: params.runner,
-          worktreeDir,
-          ownership: worktreeOwnership,
-        });
-      } catch (error) {
-        cleanupFailed = true;
-        cleanupError = error;
+      if (workloadError instanceof MantisCommandCleanupError) {
+        throw new Error(
+          `Mantis preserved ${worktreeDir}: command descendants may still be running`,
+          {
+            cause: workloadError,
+          },
+        );
       }
+      const cleanupMs =
+        interruptedCleanupDeadline === undefined
+          ? params.commandTimeouts["worktree-cleanup"]
+          : interruptedCleanupDeadline - Date.now();
+      if (cleanupMs <= 0) {
+        throw new Error(`Mantis preserved ${worktreeDir}: interrupt cleanup budget exhausted`, {
+          cause: params.signal?.reason,
+        });
+      }
+      await removeMantisWorktree({
+        commandTimeouts: { ...params.commandTimeouts, "worktree-cleanup": cleanupMs },
+        lane: params.lane,
+        repoRoot: params.repoRoot,
+        runner: params.runner,
+        worktreeDir,
+        ownership: worktreeOwnership,
+      });
     }
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+  } finally {
+    params.signal?.removeEventListener("abort", onAbort);
   }
 
   if (workloadFailed && cleanupFailed) {
@@ -506,7 +534,7 @@ export async function runMantisBeforeAfter(
         2,
       )}\n`,
     );
-    await publishMantisRunOutput({ outputRoot, runId, staging });
+    await publishMantisRunOutput({ outputRoot, runId, signal: opts.signal, staging });
     return {
       comparisonPath,
       manifestPath,

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { assertNoSymlinkParents } from "openclaw/plugin-sdk/security-runtime";
 import {
+  MantisCommandCleanupError,
   runMantisCommand,
   type MantisCommandExecution,
   type MantisCommandResult,
@@ -77,8 +78,8 @@ async function runBeforeMantisCleanupDeadline<T>(
   }
 }
 
-function rethrowMantisCleanupDeadline(error: unknown): void {
-  if (error instanceof MantisCleanupDeadlineError) {
+function rethrowMantisCleanupBoundaryError(error: unknown): void {
+  if (error instanceof MantisCleanupDeadlineError || error instanceof MantisCommandCleanupError) {
     throw error;
   }
 }
@@ -235,7 +236,7 @@ async function listRegisteredWorktreePaths(params: {
       runner: params.runner,
     });
   } catch (nulListError) {
-    rethrowMantisCleanupDeadline(nulListError);
+    rethrowMantisCleanupBoundaryError(nulListError);
     // Git gained `worktree list -z` in 2.36. Older porcelain is safe for the
     // generated path unless an ancestor contains a newline.
     if (params.worktreeDir.includes("\n")) {
@@ -385,7 +386,7 @@ async function removeMantisWorktreeBeforeDeadline(
       throw new Error(`Mantis registered worktree path disappeared: ${params.worktreeDir}`);
     }
   } catch (ownershipError) {
-    rethrowMantisCleanupDeadline(ownershipError);
+    rethrowMantisCleanupBoundaryError(ownershipError);
     throw new Error(`Mantis worktree cleanup refused a replaced path: ${params.worktreeDir}`, {
       cause: ownershipError,
     });
@@ -411,7 +412,7 @@ async function removeMantisWorktreeBeforeDeadline(
       runner: params.runner,
     });
   } catch (error) {
-    rethrowMantisCleanupDeadline(error);
+    rethrowMantisCleanupBoundaryError(error);
     removeError = error;
   }
 
@@ -426,7 +427,7 @@ async function removeMantisWorktreeBeforeDeadline(
       worktreeDir: params.worktreeDir,
     });
   } catch (listError) {
-    rethrowMantisCleanupDeadline(listError);
+    rethrowMantisCleanupBoundaryError(listError);
     throw createCleanupVerificationAggregate({
       errors: [removeError ?? new Error("Git worktree removal completed"), listError],
       lane: params.lane,

@@ -163,10 +163,12 @@ function createMantisStableRollbackError(
 export async function publishMantisRunOutput(params: {
   outputRoot: MantisOutputRoot;
   runId: string;
+  signal?: AbortSignal;
   staging: MantisRunStaging;
 }): Promise<void> {
   // Concurrent writers to one output directory are intentionally unsupported.
   // The run id isolates rollback state; callers use distinct output directories.
+  params.signal?.throwIfAborted();
   const backupRelative = `.mantis-previous-${params.runId}`;
   const backedUp: string[] = [];
   const installed: string[] = [];
@@ -174,8 +176,10 @@ export async function publishMantisRunOutput(params: {
     // Validate the complete evidence set before moving any stable path. A failed
     // lane or renderer must leave the preceding run internally consistent.
     await validateMantisStagedOutput(params);
+    params.signal?.throwIfAborted();
     await params.outputRoot.mkdir(backupRelative);
     for (const entry of MANTIS_STABLE_ENTRIES) {
+      params.signal?.throwIfAborted();
       if (await params.outputRoot.exists(entry.path)) {
         await params.outputRoot.move(entry.path, path.posix.join(backupRelative, entry.path), {
           overwrite: true,
@@ -192,8 +196,14 @@ export async function publishMantisRunOutput(params: {
       installed.push(entry.path);
     }
     if (await params.outputRoot.exists("error.txt")) {
-      await params.outputRoot.remove("error.txt");
+      await params.outputRoot.move("error.txt", path.posix.join(backupRelative, "error.txt"), {
+        overwrite: true,
+      });
+      backedUp.push("error.txt");
     }
+    // No awaited work separates this last abort check from committing the set.
+    // Before this boundary, both stable evidence and any stale error roll back.
+    params.signal?.throwIfAborted();
   } catch (error) {
     const rollback = await rollbackMantisStableOutput({
       backedUp,

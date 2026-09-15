@@ -564,6 +564,77 @@ describe("mantis before/after runtime", () => {
     ).toEqual([]);
   });
 
+  it.each(["before", "baseline", "mantis-evidence.json", "error.txt"])(
+    "restores prior evidence when publication is interrupted at %s",
+    async (abortAt) => {
+      const outputDir = path.join(repoRoot, ".artifacts", "publication-abort");
+      const staging = {
+        dir: path.join(outputDir, ".mantis-staged-abort"),
+        relative: ".mantis-staged-abort",
+      };
+      const files = ["comparison.json", "mantis-report.md", "mantis-evidence.json"];
+      for (const lane of ["baseline", "candidate"]) {
+        await fs.mkdir(path.join(outputDir, lane), { recursive: true });
+        await fs.writeFile(path.join(outputDir, lane, "old.txt"), `old ${lane}`);
+        await fs.mkdir(path.join(staging.dir, lane), { recursive: true });
+        await fs.writeFile(path.join(staging.dir, lane, "new.txt"), `new ${lane}`);
+      }
+      for (const name of files) {
+        await fs.writeFile(path.join(outputDir, name), `old ${name}`);
+        await fs.writeFile(path.join(staging.dir, name), `new ${name}`);
+      }
+      await fs.writeFile(path.join(outputDir, "error.txt"), "prior failure");
+      const outputRoot = await root(outputDir);
+      const controller = new AbortController();
+      const reason = new Error("publication interrupted");
+      if (abortAt === "before") {
+        controller.abort(reason);
+      }
+      await expect(
+        publishMantisRunOutput({
+          outputRoot: {
+            exists: outputRoot.exists.bind(outputRoot),
+            list: outputRoot.list.bind(outputRoot),
+            mkdir: outputRoot.mkdir.bind(outputRoot),
+            stat: outputRoot.stat.bind(outputRoot),
+            async move(from, to, options) {
+              await outputRoot.move(from, to, options);
+              if (
+                from === `${staging.relative}/${abortAt}` ||
+                (abortAt === "error.txt" && from === "error.txt")
+              ) {
+                controller.abort(reason);
+              }
+            },
+            async remove(relative) {
+              await outputRoot.remove(relative);
+              if (abortAt === "error.txt" && relative === "error.txt") {
+                controller.abort(reason);
+              }
+            },
+          },
+          runId: "abort",
+          signal: controller.signal,
+          staging,
+        }),
+      ).rejects.toBe(reason);
+      for (const lane of ["baseline", "candidate"]) {
+        await expect(fs.readFile(path.join(outputDir, lane, "old.txt"), "utf8")).resolves.toBe(
+          `old ${lane}`,
+        );
+        await expect(fs.stat(path.join(outputDir, lane, "new.txt"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+      for (const name of files) {
+        await expect(fs.readFile(path.join(outputDir, name), "utf8")).resolves.toBe(`old ${name}`);
+      }
+      await expect(fs.readFile(path.join(outputDir, "error.txt"), "utf8")).resolves.toBe(
+        "prior failure",
+      );
+    },
+  );
+
   it("rolls the complete stable artifact set back when publication fails", async () => {
     const outputDir = path.join(repoRoot, ".artifacts", "qa-e2e", "mantis", "rollback");
     const staging = {

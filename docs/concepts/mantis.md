@@ -293,6 +293,12 @@ For `qa mantis run`, the stable output container has this layout:
 
 The worktree root is normally empty after a completed run. Lane directories
 appear while active or when cleanup deliberately preserves one for diagnosis.
+On interruption, command settlement and artifact staging consume the same
+cleanup budget as Git removal. If that budget expires, or command descendants
+cannot be confirmed stopped, Mantis retains the worktree for inspection.
+The default local command runner requires Linux or macOS process-tree ownership.
+It refuses Windows stages before spawning a command because descendant
+extinction cannot currently be verified there; any prepared directory is retained.
 If `git worktree add` fails before registration, Mantis can leave its empty,
 uniquely named prepared directory instead of deleting through a pathname that
 could have been replaced.

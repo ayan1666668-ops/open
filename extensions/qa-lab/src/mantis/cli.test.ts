@@ -20,7 +20,7 @@ vi.mock("../live-transports/shared/live-transport-cli.js", () => ({
 
 import { registerMantisCli } from "./cli.js";
 
-const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM"] as const;
+const INTERRUPT_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 it("declares the Mantis cleanup grace to a run-node IPC parent", async () => {
   const program = new Command();
@@ -66,6 +66,7 @@ it("declares the Mantis cleanup grace to a run-node IPC parent", async () => {
 it.each([
   { exitCode: 130, signal: "SIGINT" },
   { exitCode: 143, signal: "SIGTERM" },
+  { exitCode: 129, signal: "SIGHUP" },
 ] as const)(
   "aborts a Mantis run and preserves the $signal exit outcome",
   async ({ exitCode, signal }) => {
@@ -141,6 +142,7 @@ it.each([
 it.each([
   { exitCode: 130, signal: "SIGINT" },
   { exitCode: 143, signal: "SIGTERM" },
+  { exitCode: 129, signal: "SIGHUP" },
 ] as const)(
   "reports cleanup failure details after $signal while preserving the interrupt exit code",
   async ({ exitCode, signal }) => {

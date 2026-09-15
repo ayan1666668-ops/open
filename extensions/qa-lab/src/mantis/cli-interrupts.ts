@@ -2,11 +2,12 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { MANTIS_WORKTREE_CLEANUP_TIMEOUT_MS } from "./run-command.constants.js";
 import { findMantisFailureArtifactPath } from "./run-failure.runtime.js";
 
-type MantisCliInterrupt = "SIGINT" | "SIGTERM";
+type MantisCliInterrupt = "SIGINT" | "SIGTERM" | "SIGHUP";
 
 const INTERRUPT_EXIT_CODES: Record<MantisCliInterrupt, number> = {
   SIGINT: 130,
   SIGTERM: 143,
+  SIGHUP: 129,
 };
 
 const MANTIS_INTERRUPT_REPORTING_GRACE_MS = 5_000;
@@ -25,7 +26,8 @@ function requestMantisShutdownGrace(): void {
   }
   try {
     // scripts/run-node.mts owns the matching bounded launcher contract. The
-    // extra reporting grace lets error.txt and stderr settle after cleanup.
+    // lane charges interruption-to-cleanup time to that same cleanup budget;
+    // the extra grace leaves time for error.txt and stderr after cleanup.
     process.send({
       graceMs: MANTIS_WORKTREE_CLEANUP_TIMEOUT_MS + MANTIS_INTERRUPT_REPORTING_GRACE_MS,
       type: RUN_NODE_SHUTDOWN_GRACE_MESSAGE_TYPE,
@@ -98,11 +100,13 @@ export async function runWithMantisCliInterrupts(
   };
   const onSigint = () => interrupt("SIGINT");
   const onSigterm = () => interrupt("SIGTERM");
+  const onSighup = () => interrupt("SIGHUP");
 
   // Mantis commands own detached POSIX process groups, so retain repeated
   // signal ownership until AbortSignal cleanup finishes.
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
+  process.on("SIGHUP", onSighup);
   try {
     await run(abortController.signal);
   } catch (error) {
@@ -122,6 +126,7 @@ export async function runWithMantisCliInterrupts(
   } finally {
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
+    process.off("SIGHUP", onSighup);
     if (interruptedBy) {
       process.exitCode = INTERRUPT_EXIT_CODES[interruptedBy];
     }

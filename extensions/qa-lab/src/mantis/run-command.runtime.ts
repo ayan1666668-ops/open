@@ -26,6 +26,13 @@ export type MantisCommandRunner = (
 export type MantisCommandTimeoutOverrides = Partial<Record<MantisCommandStage, number>>;
 export type MantisCommandTimeouts = Record<MantisCommandStage, number>;
 
+export class MantisCommandCleanupError extends Error {
+  constructor(label: string, cause: unknown) {
+    super(`${label}: command process cleanup is uncertain`, { cause });
+    this.name = "MantisCommandCleanupError";
+  }
+}
+
 const DEFAULT_WORKTREE_ADD_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_BUILD_TIMEOUT_MS = 30 * 60_000;
@@ -107,6 +114,14 @@ export async function defaultMantisCommandRunner(
   args: readonly string[],
   execution: MantisCommandExecution,
 ): Promise<MantisCommandResult> {
+  if (process.platform === "win32") {
+    // taskkill cannot attest descendants after their root exits. Do not start
+    // a stage whose ownership this default runner cannot later settle.
+    throw new MantisCommandCleanupError(
+      "Mantis default commands require POSIX process-tree ownership; run on Linux or macOS",
+      undefined,
+    );
+  }
   const capturesWorktreeList = isWorktreeListCommand(command, args);
   const commandArgv = execution.expectedCwdIdentity
     ? [
@@ -124,6 +139,8 @@ export async function defaultMantisCommandRunner(
     cwd: execution.cwd,
     env: execution.env,
     killProcessTree: true,
+    // Worktree cleanup must not race descendants after a successful launcher exits.
+    requireProcessTreeExtinction: true,
     outputCapture: capturesWorktreeList ? { stdout: "head", stderr: "tail" } : "discard",
     signal: execution.signal,
     timeoutMs: execution.timeoutMs,
@@ -165,6 +182,12 @@ export async function runMantisCommand(params: {
   try {
     result = await params.runner(params.command, params.args, params.execution);
   } catch (error) {
+    if (error instanceof MantisCommandCleanupError) {
+      throw error;
+    }
+    if (error && typeof error === "object" && "cleanup" in error && error.cleanup === "uncertain") {
+      throw new MantisCommandCleanupError(`${params.lane} ${params.execution.stage}`, error);
+    }
     if (params.execution.signal?.aborted) {
       throw new Error(`${params.lane} ${params.execution.stage} aborted: ${label}`, {
         cause: error,
@@ -174,6 +197,9 @@ export async function runMantisCommand(params: {
       `${params.lane} ${params.execution.stage} failed to run ${label}: ${formatErrorMessage(error)}`,
       { cause: error },
     );
+  }
+  if (result.cleanup === "uncertain") {
+    throw new MantisCommandCleanupError(`${params.lane} ${params.execution.stage}`, result);
   }
   if (result.termination === "timeout") {
     throw new Error(

@@ -37,9 +37,13 @@ async function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> 
   }
 }
 
-it.skipIf(process.platform === "win32")(
-  "keeps repeated SIGINT ownership until Mantis cleanup completes",
-  async () => {
+it.skipIf(process.platform === "win32").each([
+  { signal: "SIGINT", code: 130 },
+  { signal: "SIGTERM", code: 143 },
+  { signal: "SIGHUP", code: 129 },
+] as const)(
+  "keeps repeated $signal ownership until Mantis cleanup completes",
+  async ({ signal, code }) => {
     const script = `
       import { writeSync } from "node:fs";
       import { runWithMantisCliInterrupts } from ${JSON.stringify(interruptsModuleUrl)};
@@ -78,20 +82,22 @@ it.skipIf(process.platform === "win32")(
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
       (resolve, reject) => {
         child.once("error", reject);
-        child.once("exit", (code, signal) => resolve({ code, signal }));
+        child.once("exit", (exitCode, exitSignal) =>
+          resolve({ code: exitCode, signal: exitSignal }),
+        );
       },
     );
 
     try {
       await waitForMarker(() => stdout, "ready\n");
-      expect(child.kill("SIGINT")).toBe(true);
+      expect(child.kill(signal)).toBe(true);
       await waitForMarker(() => stdout, "cleanup-started\n");
-      expect(child.kill("SIGINT")).toBe(true);
+      expect(child.kill(signal)).toBe(true);
       const outcome = await withTimeout(exited, "timeout waiting for Mantis signal child");
       const diagnostics = JSON.stringify({ outcome, stderr, stdout }, null, 2);
 
       expect(stdout, diagnostics).toContain("cleanup-complete\n");
-      expect(outcome.code, diagnostics).toBe(130);
+      expect(outcome.code, diagnostics).toBe(code);
       expect(outcome.signal, diagnostics).toBeNull();
     } finally {
       if (child.exitCode === null && child.signalCode === null) {
