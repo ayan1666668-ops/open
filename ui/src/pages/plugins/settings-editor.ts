@@ -24,31 +24,10 @@ import { t } from "../../i18n/index.ts";
 import { registerPluginManagementEnglish } from "../../i18n/locales/en-plugin-management.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { renderPluginDetailBreadcrumb } from "./detail-shell.ts";
-import { pluginEntryValue } from "./settings-model.ts";
-import type { DetailProps } from "./settings-view.ts";
+import { pluginEntryValue, type PluginSettingsEditorModel } from "./settings-model.ts";
 import "./settings-editor.css";
 
 registerPluginManagementEnglish();
-export type PluginSettingsEditorModel = Pick<
-  DetailProps,
-  | "pluginId"
-  | "result"
-  | "connected"
-  | "configValue"
-  | "configSchema"
-  | "configHints"
-  | "configUnsupportedPaths"
-  | "canEditConfig"
-  | "configBusy"
-  | "configSchemaLoading"
-  | "configError"
-  | "onConfigPatch"
-  | "onConfigRemove"
-  | "onConfigReadRetry"
-  | "onConfigWriteRetry"
-  | "backHref"
-  | "onBack"
->;
 export type PluginSettingsField = ConfigNodeRenderParams & {
   label: string;
   help?: string;

@@ -1,6 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { repeat } from "lit/directives/repeat.js";
-import type { ConfigUiHints } from "../../api/types.ts";
 import { renderNode } from "../../components/config-form.ts";
 import { renderHubTabs } from "../../components/hub-tabs.ts";
 import { icons } from "../../components/icons.ts";
@@ -17,7 +16,7 @@ import { t } from "../../i18n/index.ts";
 import type { JsonSchema } from "../../lib/config-form-utils.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { shouldHandleNavigationClick } from "../../lib/navigation-click.ts";
-import type { PluginListResult, PluginsInspectResult } from "../../lib/plugins/index.ts";
+import type { PluginsInspectResult } from "../../lib/plugins/index.ts";
 import { renderPluginReadme } from "./catalog-detail.ts";
 import {
   renderArtTile,
@@ -39,16 +38,17 @@ import {
 } from "./plugin-row-message.ts";
 import { matchesPluginQuery } from "./plugin-state-presentation.ts";
 import { renderPluginLifecycle } from "./settings-lifecycle.ts";
-import { pluginEntryValue } from "./settings-model.ts";
+import { pluginEntryValue, type PluginSettingsEditorModel } from "./settings-model.ts";
 import type { PluginToolPreview } from "./tool-preview.ts";
 import "./settings-editor.ts";
 
 export type PluginSettingsTab = "installed" | "advanced";
 
-type SharedProps = {
-  connected: boolean;
+type SharedProps = Omit<
+  PluginSettingsEditorModel,
+  "pluginId" | "configSchema" | "backHref" | "onBack"
+> & {
   loading: boolean;
-  result: PluginListResult | null;
   error: string | null;
   busy: Readonly<Record<string, boolean>>;
   messages: Readonly<Record<string, PluginRowMessage>>;
@@ -56,22 +56,11 @@ type SharedProps = {
   canMutate: boolean;
   reloadBlockedReason: string | null;
   mutationBlockedReason: string | null;
-  configBusy: boolean;
-  configSchemaLoading: boolean;
-  configError: string | null;
-  canEditConfig: boolean;
-  configValue: Record<string, unknown> | null;
-  configHints: ConfigUiHints;
-  configUnsupportedPaths: readonly string[];
   onIconError: (pluginId: string) => void;
   onSetEnabled: (pluginId: string, enabled: boolean, rowKey: string) => void;
   onUninstall: (pluginId: string, rowKey: string) => void;
   onReload: (pluginId: string, rowKey: string) => void;
-  onConfigPatch: (path: Array<string | number>, value: unknown) => boolean | void;
-  onConfigRemove: (path: Array<string | number>) => boolean | void;
   onConfigReload: () => void;
-  onConfigReadRetry: () => void;
-  onConfigWriteRetry: () => void;
   onRefresh: () => void;
 };
 
@@ -85,24 +74,21 @@ type InventoryProps = SharedProps & {
   onOpenPlugin: (pluginId: string) => void;
 };
 
-export type DetailProps = SharedProps & {
-  skillsSection?: TemplateResult;
-  tools?: PluginToolPreview[];
-  onOpenTool?: (name: string) => void;
-  settingsHref?: string;
+export type DetailProps = SharedProps &
+  PluginSettingsEditorModel & {
+    skillsSection?: TemplateResult;
+    tools?: PluginToolPreview[];
+    onOpenTool?: (name: string) => void;
+    settingsHref?: string;
 
-  pluginId: string;
-  inspection: PluginsInspectResult | null;
-  inspectionError: string | null;
-  configSchema: JsonSchema | null;
-  hostControlsSchema: JsonSchema | null;
-  backHref: string;
-  backLabel: string;
-  tab: InstalledPluginDetailTab;
-  onBack: () => void;
-  onRetryInspection: () => void;
-  onTabChange: (tab: InstalledPluginDetailTab) => void;
-};
+    inspection: PluginsInspectResult | null;
+    inspectionError: string | null;
+    hostControlsSchema: JsonSchema | null;
+    backLabel: string;
+    tab: InstalledPluginDetailTab;
+    onRetryInspection: () => void;
+    onTabChange: (tab: InstalledPluginDetailTab) => void;
+  };
 
 function renderRetryError(error: string, onRetry: () => void): TemplateResult {
   return html`<div

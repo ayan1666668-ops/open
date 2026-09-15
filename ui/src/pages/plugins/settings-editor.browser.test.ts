@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PluginSettingsEditor, type PluginSettingsEditorModel } from "./settings-editor.ts";
+import { PluginSettingsEditor } from "./settings-editor.ts";
+import type { PluginSettingsEditorModel } from "./settings-model.ts";
 
 const prefix = "plugins.entries.fixture.config";
 async function mount(overrides: Partial<PluginSettingsEditorModel> = {}) {
