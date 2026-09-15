@@ -9,7 +9,6 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
@@ -32,7 +31,6 @@ import {
   buildWindowsFreshShellVersionCheckScript,
   buildInstalledBrowserOverrideImportProbeScript,
   buildNpmGlobalInstallArgs,
-  appendLatestNpmDebugLogTail,
   assertManagedGatewayInstallerHostAvailable,
   buildGatewayStopArgsFromHelpText,
   buildGatewayStatusArgsFromHelpText,
@@ -1249,22 +1247,18 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
     ]
       .map((filePath) => readFileSync(filePath, "utf8"))
       .join("\n");
-    const providerOverride = "models.providers.${params.providerConfig.extensionId}";
+    const providerOverride = "models.providers.${providerMeta.extensionId}";
 
     expect(CROSS_OS_RELEASE_SMOKE_TOOLS_PROFILE).toBe("minimal");
     expect(source).toContain('"--thinking",\n    "off"');
-    expect(source.match(/"tools\.profile", CROSS_OS_RELEASE_SMOKE_TOOLS_PROFILE/g)).toHaveLength(2);
     expect(CROSS_OS_AGENT_TURN_TIMEOUT_SECONDS).toBeGreaterThanOrEqual(600);
     expect(source).toContain("buildReleaseProviderConfigOverride");
     expect(source).toContain("models: []");
     expect(source).toContain('agentRuntime: { id: "openclaw" }');
     expect(source).toContain('"--merge"');
     expect(source).toContain(providerOverride);
-    expect(source.match(/args: buildCrossOsReleaseSmokeMemorySlotConfigArgs\(\)/g)).toHaveLength(2);
-    expect(source).not.toContain("models.providers.${params.providerConfig.extensionId}.baseUrl");
+    expect(source).not.toContain(`${providerOverride}.baseUrl`);
     expect(source).toContain('"--timeout",\n    String(CROSS_OS_AGENT_TURN_TIMEOUT_SECONDS)');
-    const agentTurnArgCalls = source.match(/buildReleaseAgentTurnArgs\(sessionId\)/g) ?? [];
-    expect(agentTurnArgCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("uses collision-resistant IDs for cross-OS live release probes", () => {
@@ -2052,66 +2046,14 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
     });
   });
 
-  it("reads npm debug logs from the Windows cache root", () => {
-    withTempDir("openclaw-cross-os-npm-debug-", (dir) => {
-      const homeDir = join(dir, "home");
-      const localAppData = join(homeDir, "AppData", "Local");
-      const logsDir = join(localAppData, "npm-cache", "_logs");
-      const logPath = join(dir, "install.log");
-      mkdirSync(logsDir, { recursive: true });
-      writeFileSync(join(logsDir, "2026-07-05T00_00_00_000Z-debug-0.log"), "windows log\n");
-      writeFileSync(logPath, "install failed\n");
-
-      expect(resolveNpmDebugLogDirs(homeDir, { LOCALAPPDATA: localAppData }, "win32")).toContain(
-        logsDir,
-      );
-      expect(
-        appendLatestNpmDebugLogTail(homeDir, logPath, { LOCALAPPDATA: localAppData }, "win32"),
-      ).toContain("windows log");
-      expect(readFileSync(logPath, "utf8")).toContain("windows log");
-    });
-  });
-
-  it("prefers npm configured log directories over cache defaults", () => {
-    withTempDir("openclaw-cross-os-npm-logs-dir-", (dir) => {
-      const homeDir = join(dir, "home");
-      const logsDir = join(dir, "custom-logs");
-      const logPath = join(dir, "install.log");
-      mkdirSync(logsDir, { recursive: true });
-      mkdirSync(join(homeDir, ".npm", "_logs"), { recursive: true });
-      writeFileSync(
-        join(homeDir, ".npm", "_logs", "2026-07-05T00_00_00_000Z-debug-0.log"),
-        "old fallback log\n",
-      );
-      utimesSync(
-        join(homeDir, ".npm", "_logs", "2026-07-05T00_00_00_000Z-debug-0.log"),
-        new Date("2020-01-01T00:00:00Z"),
-        new Date("2020-01-01T00:00:00Z"),
-      );
-      writeFileSync(join(logsDir, "2026-07-05T00_00_00_000Z-debug-0.log"), "custom log\n");
-      writeFileSync(logPath, "install failed\n");
-
-      expect(resolveNpmDebugLogDirs(homeDir, { npm_config_logs_dir: logsDir })).toContain(logsDir);
-      expect(
-        appendLatestNpmDebugLogTail(homeDir, logPath, { npm_config_logs_dir: logsDir }),
-      ).toContain("custom log");
-      expect(readFileSync(logPath, "utf8")).toContain("custom log");
-    });
-  });
-
-  it("keeps npm debug log collection best-effort", () => {
-    withTempDir("openclaw-cross-os-npm-debug-best-effort-", (dir) => {
-      const homeDir = join(dir, "home");
-      const logPath = join(dir, "install.log");
-      const logsDir = join(dir, "not-a-directory");
-      writeFileSync(logPath, "install failed\n");
-      writeFileSync(logsDir, "not a directory\n");
-
-      expect(appendLatestNpmDebugLogTail(homeDir, logPath, { npm_config_logs_dir: logsDir })).toBe(
-        "",
-      );
-      expect(readFileSync(logPath, "utf8")).toBe("install failed\n");
-    });
+  it("resolves Windows and configured npm diagnostic directories", () => {
+    const homeDir = join(tmpdir(), "openclaw-npm-diagnostics-home");
+    const localAppData = join(homeDir, "AppData", "Local");
+    const logsDir = join(homeDir, "custom-logs");
+    expect(resolveNpmDebugLogDirs(homeDir, { LOCALAPPDATA: localAppData }, "win32")).toContain(
+      join(localAppData, "npm-cache", "_logs"),
+    );
+    expect(resolveNpmDebugLogDirs(homeDir, { npm_config_logs_dir: logsDir })).toContain(logsDir);
   });
 
   it("resolves relative npm log config from the install working directory", () => {

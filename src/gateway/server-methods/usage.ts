@@ -36,12 +36,7 @@ import {
   type DateInterpretation,
   type DateRange,
 } from "./usage-date-range.js";
-import {
-  costUsageCache,
-  sessionsUsageCache,
-  loadCostUsageSummaryCached,
-  loadSessionsUsageResultCached,
-} from "./usage-result-cache.js";
+import { loadCostUsageSummaryCached, loadSessionsUsageResultCached } from "./usage-result-cache.js";
 import { loadUsageSessionSummaries } from "./usage-session-loading.js";
 import {
   resolveSessionUsageTarget,
@@ -52,11 +47,25 @@ import {
 import { assertValidParams } from "./validation.js";
 
 function resolveSessionUsageFileOrRespond(
-  key: string,
+  params: { key?: unknown; agentId?: unknown } | undefined,
+  detail: "timeseries" | "logs",
   respond: RespondFn,
   config: OpenClawConfig,
-): (NonNullable<ReturnType<typeof resolveSessionUsageTarget>> & { config: OpenClawConfig }) | null {
-  const sessionOwner = resolveRequestedSessionAgentId(config, key);
+) {
+  const key = normalizeOptionalString(params?.key);
+  if (!key) {
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, `key is required for ${detail}`),
+    );
+    return null;
+  }
+  const sessionOwner = resolveRequestedSessionAgentId(
+    config,
+    key,
+    normalizeOptionalString(params?.agentId),
+  );
   if (!sessionOwner.ok) {
     respond(false, undefined, sessionOwner.error);
     return null;
@@ -75,7 +84,7 @@ function resolveSessionUsageFileOrRespond(
     );
     return null;
   }
-  return { config, ...resolved };
+  return { config, key, ...resolved };
 }
 
 function resolveUsageDateRangeOrRespond(
@@ -95,14 +104,6 @@ function resolveUsageDateRangeOrRespond(
   }
   return { interpretation: interpretation.value, range: range.value };
 }
-
-// Exposed for unit tests (kept as a single export to avoid widening the public API surface).
-export const testApi = {
-  resolveDateRange,
-  loadCostUsageSummaryCached,
-  costUsageCache,
-  sessionsUsageCache,
-};
 
 export type { SessionUsageEntry, SessionsUsageAggregates, SessionsUsageResult };
 
@@ -145,7 +146,15 @@ export const usageHandlers: GatewayRequestHandlers = {
     }
     const { startMs, endMs } = range;
     const agentId = normalizeOptionalString(params?.agentId);
-    const agentScope = params?.agentScope === "all" && !agentId ? "all" : undefined;
+    if (params?.agentScope === "all" && agentId) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "agentScope=all cannot be combined with agentId"),
+      );
+      return;
+    }
+    const agentScope = params?.agentScope === "all" ? "all" : undefined;
     let effectiveAgentId = agentId;
     if (!agentScope && !effectiveAgentId) {
       const requestedAgent = resolveRequestedSessionAgentId(config, "main");
@@ -292,6 +301,7 @@ export const usageHandlers: GatewayRequestHandlers = {
                 modelProvider: merged.storeEntry?.modelProvider,
                 model: merged.storeEntry?.model,
                 usage,
+                hasContextWeight: Boolean(merged.storeEntry?.systemPromptReport),
                 contextWeight: includeContextWeight
                   ? (merged.storeEntry?.systemPromptReport ?? null)
                   : undefined,
@@ -320,21 +330,16 @@ export const usageHandlers: GatewayRequestHandlers = {
     respond(true, result, undefined);
   },
   "sessions.usage.timeseries": async ({ respond, params, context }) => {
-    const key = normalizeOptionalString(params?.key) ?? null;
-    if (!key) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "key is required for timeseries"),
-      );
-      return;
-    }
-
-    const resolved = resolveSessionUsageFileOrRespond(key, respond, context.getRuntimeConfig());
+    const resolved = resolveSessionUsageFileOrRespond(
+      params,
+      "timeseries",
+      respond,
+      context.getRuntimeConfig(),
+    );
     if (!resolved) {
       return;
     }
-    const { config, entry, agentId, sessionId, sessionFile } = resolved;
+    const { config, key, entry, agentId, sessionId, sessionFile } = resolved;
 
     const timeseries = await loadSessionUsageTimeSeries({
       sessionId,
@@ -357,18 +362,17 @@ export const usageHandlers: GatewayRequestHandlers = {
     respond(true, timeseries, undefined);
   },
   "sessions.usage.logs": async ({ respond, params, context }) => {
-    const key = normalizeOptionalString(params?.key) ?? null;
-    if (!key) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "key is required for logs"));
-      return;
-    }
-
     const limit =
       typeof params?.limit === "number" && Number.isFinite(params.limit)
         ? Math.min(params.limit, 1000)
         : 200;
 
-    const resolved = resolveSessionUsageFileOrRespond(key, respond, context.getRuntimeConfig());
+    const resolved = resolveSessionUsageFileOrRespond(
+      params,
+      "logs",
+      respond,
+      context.getRuntimeConfig(),
+    );
     if (!resolved) {
       return;
     }

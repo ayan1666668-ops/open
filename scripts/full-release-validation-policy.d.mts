@@ -1,3 +1,33 @@
+export const MAX_RELEASE_ARTIFACT_BYTES: number;
+export const SPLIT_CHANGELOG_EVIDENCE_REUSE_POLICY: "split-changelog-release-v1";
+export function isSplitChangelogEvidenceDelta(paths: unknown, version: unknown): boolean;
+export function classifyReleaseChangelogEvidenceComparison(
+  comparison: unknown,
+  identity: { baseSha: string; version?: unknown },
+): { changedPaths: string[]; policy: string };
+export function serializeReleaseArtifact(payload: unknown): string;
+export function buildReleaseValidationManifest(input: {
+  plan: ReleaseRecord;
+  drain?: ReleaseRecord;
+  context: ReleaseRecord;
+}): ReleaseRecord;
+export function assertReleasePublicationKnownBudget(
+  plan: ReleaseRecord,
+  context: ReleaseRecord,
+): void;
+export function normalizeReleaseCoveragePolicy(
+  input: ReleaseRecord,
+): "npm-beta-v1" | "npm-stable-v1" | undefined;
+export function validateReleaseCoveragePolicyBinding(
+  plan: ReleaseRecord | undefined,
+  validationInputs?: ReleaseRecord,
+): void;
+export function normalizeReleaseTelegramWaiver(input: ReleaseRecord): string;
+export function validateReleaseTelegramWaiverBinding(
+  plan: ReleaseRecord | undefined,
+  validationInputs?: ReleaseRecord,
+): void;
+
 export interface ReleaseRecord {
   [key: string]: unknown;
 }
@@ -7,6 +37,12 @@ export interface ReleaseChild extends ReleaseRecord {
   runId: string;
 }
 export interface ReleaseExecutionPlan extends ReleaseRecord {
+  sourceAdmissionContract?: "1";
+  sourceAdmission?: import("./full-release-publication-contract.mjs").PublicationSourceFact | null;
+  publicationAdmissionContract?: "1";
+  publicationAdmission?:
+    | import("./full-release-publication-contract.mjs").PublicationAdmission
+    | null;
   children: ReleaseChild[];
   evidenceReuse: ReleaseRecord;
   gates: ReleaseRecord[];
@@ -53,6 +89,7 @@ export function validateReleaseExecutionPlanArtifact(
 ): ReleaseExecutionPlan;
 export function releaseExecutionPlanSha256(plan: ReleaseRecord): string;
 export function releaseCompositeJobsSha256(value: ReleaseRecord): string;
+export function compareReleaseJobsByName(left: { name: string }, right: { name: string }): number;
 export function composeReleaseAttemptJobs(
   attempts: Array<{ jobs: ReleaseRecord[]; runAttempt: number }>,
   expected: { effectiveRunAttempt: number; plannedRunAttempt: number },

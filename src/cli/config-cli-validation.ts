@@ -2,6 +2,7 @@ import { isRecord as isPlainRecord } from "@openclaw/normalization-core/record-c
 import { uniqueValues } from "@openclaw/normalization-core/string-normalization";
 import type { ConfigFileSnapshot } from "../config/config.js";
 import { readConfigFileSnapshotForWrite } from "../config/config.js";
+import { visitConfigValueTree } from "../config/io.read-helpers.js";
 import { formatConfigIssueLines, normalizeConfigIssues } from "../config/issue-format.js";
 import { renderConfigValidationIssueLines } from "../config/issue-location.js";
 import { isPluginPackagingRuntimeOutputInvalidConfigSnapshot } from "../config/recovery-policy.js";
@@ -31,13 +32,11 @@ import {
   isValidExecSecretRefId,
   secretRefKey,
 } from "../secrets/ref-contract.js";
-import { resolveSecretRefValue } from "../secrets/resolve.js";
 import { discoverConfigSecretTargets } from "../secrets/target-registry.js";
 import { shortenHomePath } from "../utils.js";
 import { formatCliCommand } from "./command-format.js";
 import type { ConfigMutationOptions, ConfigSetOperation } from "./config-cli-input.js";
 import { getAtPath } from "./config-cli-path.js";
-import { checkTouchedTextModelRefs } from "./config-model-validation.js";
 import { formatPluginPackagingRuntimeOutputRecoveryHint } from "./config-recovery-hints.js";
 import type { ConfigSetDryRunError, ConfigSetDryRunResult } from "./config-set-dryrun.js";
 import { formatCliJsonFailure } from "./failure-output.js";
@@ -168,18 +167,22 @@ function selectConfigMutationSecrets(
 
   // Inspect only surviving values, never discarded batch assignments. Registry-owned
   // fields above also preserve explicit sibling-ref precedence over inline fallbacks.
-  const visit = (value: unknown, path: string[]): void => {
-    if (ownedPaths.some((ownedPath) => pathContains(ownedPath, path))) {
-      return;
-    }
-    const ref = coerceSecretRef(value, defaults);
-    if (ref) {
-      record(ref);
-    } else if (Array.isArray(value) || isPlainRecord(value)) {
-      for (const [key, child] of Object.entries(value)) {
-        visit(child, [...path, key]);
-      }
-    }
+  const visit = (value: unknown, rootPath: string[]): void => {
+    visitConfigValueTree(
+      value,
+      (candidate, path) => {
+        if (ownedPaths.some((ownedPath) => pathContains(ownedPath, path))) {
+          return false;
+        }
+        const ref = coerceSecretRef(candidate, defaults);
+        if (ref) {
+          record(ref);
+          return false;
+        }
+        return true;
+      },
+      rootPath,
+    );
   };
   for (const path of paths) {
     visit(getAtPath(config, path).value, path);
@@ -197,6 +200,7 @@ async function collectDryRunResolvabilityErrors(params: {
   refs: SecretRef[];
   config: OpenClawConfig;
 }): Promise<ConfigSetDryRunError[]> {
+  const { resolveSecretRefValue } = await import("../secrets/resolve.js");
   const failures: ConfigSetDryRunError[] = [];
   for (const ref of params.refs) {
     try {
@@ -406,6 +410,7 @@ export async function validateConfigMutation(params: {
     }
   }
 
+  const { checkTouchedTextModelRefs } = await import("./config-model-validation.js");
   const modelCheck = await checkTouchedTextModelRefs({
     config,
     previousConfig: params.previousConfig,

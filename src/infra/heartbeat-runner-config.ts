@@ -57,8 +57,7 @@ export function resolveHeartbeatTimeoutOverrideSeconds(
       ? 0
       : Math.max(1, Math.floor(agentDefaultTimeoutSeconds));
   }
-  // The wake dispatcher awaits heartbeat turns serially. Keep unset heartbeat
-  // timeouts tied to the cadence instead of the 48h built-in agent default.
+  // Monitor turns use their cadence budget instead of the 48h built-in agent default.
   const intervalMs = resolveHeartbeatIntervalMs(cfg, undefined, heartbeat);
   if (!intervalMs) {
     return DEFAULT_HEARTBEAT_TIMEOUT_SECONDS;
@@ -82,13 +81,12 @@ export function resolveHeartbeatForWake(params: {
   configuredHeartbeat?: HeartbeatConfig;
   requestedHeartbeat?: HeartbeatConfig;
   source?: HeartbeatWakeSource;
-  mergeRequestedHeartbeat: boolean;
 }): HeartbeatConfig | undefined {
-  const base = params.configuredHeartbeat ?? resolveHeartbeatConfig(params.cfg, params.agentId);
-  const heartbeat =
-    params.requestedHeartbeat && params.mergeRequestedHeartbeat
-      ? { ...base, ...params.requestedHeartbeat }
-      : (params.requestedHeartbeat ?? base);
+  const configuredHeartbeat =
+    params.configuredHeartbeat ?? resolveHeartbeatConfig(params.cfg, params.agentId);
+  const heartbeat = params.requestedHeartbeat
+    ? { ...configuredHeartbeat, ...params.requestedHeartbeat }
+    : configuredHeartbeat;
   return params.source === "cron" && params.requestedHeartbeat?.target === "last"
     ? omitExplicitHeartbeatDestination(heartbeat)
     : heartbeat;

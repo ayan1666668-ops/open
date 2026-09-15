@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 346461,
-  "reason": "standing-grant scope line + grants ledger (#131602); recorded at the CI e2e-lane build (346461 B) — checks-ui and local builds of the same tree measure ~600 B less, beyond the 64 B variance allowance",
-  "updatedAt": "2026-08-28"
+  "startupJsGzipBytes": 362012,
+  "reason": "Maintainer-approved 354 KiB cap after integrated scoped catalog invalidation (#147845), remote workspaces (#147773), and update-status feedback (#147883). Controlled build measured 362012 B; deferring the new workspace labels saved only 64 B and still failed the previous limit. Existing 512 B growth and 64 B build variance allowances remain unchanged.",
+  "updatedAt": "2026-09-14"
 }

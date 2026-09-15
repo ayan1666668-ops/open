@@ -4,12 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { coerceConfig, resolveConfigForRead } from "../config/io.read-helpers.js";
+import { setConfigResolutionFacts } from "../config/resolution-facts.js";
 import { writeStateDirDotEnv } from "../config/test-helpers.js";
 import type { OpenClawConfig } from "../config/types.js";
+import type { SecretInput } from "../config/types.secrets.js";
 import {
   buildLaunchAgentPlist,
   readLaunchAgentProgramArgumentsFromFile,
 } from "../daemon/launchd-plist.js";
+import { decodeLaunchAgentPlistFixture } from "../daemon/launchd-plist.test-support.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { createPluginManifestRecordFixture } from "../plugins/plugin-metadata.test-support.js";
 
@@ -35,6 +39,14 @@ const mocks = vi.hoisted(() => ({
     diagnostics: [],
     plugins: [],
   })),
+}));
+
+vi.mock("../process/exec.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../process/exec.js")>()),
+  runExec: vi.fn(
+    async (_command: string, _args: string[], options: { input: string | Uint8Array }) =>
+      decodeLaunchAgentPlistFixture(options.input),
+  ),
 }));
 
 vi.mock("./daemon-install-auth-profiles-source.runtime.js", () => ({
@@ -169,7 +181,7 @@ function mockNodeGatewayPlanFixture(
   mocks.resolveSystemNodeInfo.mockResolvedValue({
     path: "/opt/node",
     version,
-    supported,
+    status: supported ? "supported" : "unsupported",
   });
   mocks.renderSystemNodeWarning.mockReturnValue(warning);
   mocks.buildServiceEnvironment.mockReturnValue(serviceEnvironment);
@@ -391,6 +403,7 @@ describe("buildGatewayInstallPlan", () => {
     expect(mocks.resolvePreferredNodePath).not.toHaveBeenCalled();
     expect(mocks.resolveGatewayProgramArguments).toHaveBeenCalledWith({
       port: 3000,
+      allowUnconfigured: false,
       dev: false,
       runtime: "bun",
       runtimePath: bunPath,
@@ -402,36 +415,51 @@ describe("buildGatewayInstallPlan", () => {
     );
   });
 
-  it("passes override ownership to heap resolution without persisting operator options", async () => {
-    mockNodeGatewayPlanFixture();
-    const managedDefinition = {
-      programArguments: ["node", "--max-heap-size=24576", "cli.js", "gateway"],
-      environment: { NODE_OPTIONS: "--max-old-space-size=6144" },
-    };
-    const existingCommand = {
-      ...managedDefinition,
-      environment: { NODE_OPTIONS: "--max-old-space-size=512 --require=/operator/preload.js" },
-      managedDefinition,
-      managedOverrides: { environment: { keys: ["NODE_OPTIONS"] } },
-    };
+  it.each([
+    { mode: "remote" as const, allowUnconfigured: undefined, expectedOverride: true },
+    { mode: "local" as const, allowUnconfigured: undefined, expectedOverride: false },
+    { mode: "remote" as const, allowUnconfigured: false, expectedOverride: false },
+  ])(
+    "preserves managed launch options through repair: $mode $allowUnconfigured",
+    async ({ mode, allowUnconfigured, expectedOverride }) => {
+      mockNodeGatewayPlanFixture();
+      const managedDefinition = {
+        programArguments: [
+          "node",
+          "--max-heap-size=24576",
+          "cli.js",
+          "gateway",
+          "--allow-unconfigured",
+        ],
+        environment: { NODE_OPTIONS: "--max-old-space-size=6144" },
+      };
+      const existingCommand = {
+        ...managedDefinition,
+        environment: { NODE_OPTIONS: "--max-old-space-size=512 --require=/operator/preload.js" },
+        managedDefinition,
+        managedOverrides: { environment: { keys: ["NODE_OPTIONS"] } },
+      };
 
-    await buildGatewayInstallPlan({
-      env: {
-        HOME: isolatedHome,
-        NODE_OPTIONS: "--max-old-space-size=16384",
-      },
-      port: 3000,
-      runtime: "node",
-      existingCommand,
-    });
+      await buildGatewayInstallPlan({
+        env: {
+          HOME: isolatedHome,
+          NODE_OPTIONS: "--max-old-space-size=16384",
+        },
+        port: 3000,
+        runtime: "node",
+        existingCommand,
+        config: { gateway: { mode } },
+        allowUnconfigured,
+      });
 
-    expect(
-      firstMockArg(mocks.buildServiceEnvironment, "buildServiceEnvironment").existingNodeOptions,
-    ).toBe("--max-old-space-size=6144");
-    expect(mocks.resolveGatewayProgramArguments).toHaveBeenCalledWith(
-      expect.objectContaining({ existingCommand }),
-    );
-  });
+      expect(
+        firstMockArg(mocks.buildServiceEnvironment, "buildServiceEnvironment").existingNodeOptions,
+      ).toBe("--max-old-space-size=6144");
+      expect(mocks.resolveGatewayProgramArguments).toHaveBeenCalledWith(
+        expect.objectContaining({ existingCommand, allowUnconfigured: expectedOverride }),
+      );
+    },
+  );
 
   it("adds the active openclaw command bin directory to the managed service PATH", async () => {
     mockNodeGatewayPlanFixture();
@@ -583,6 +611,9 @@ describe("buildGatewayInstallPlan", () => {
       firstMockArg(mocks.resolveGatewayProgramArguments, "resolveGatewayProgramArguments")
         .wrapperPath,
     ).toBeUndefined();
+    expect(mocks.resolveGatewayProgramArguments).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimePath: "/opt/node" }),
+    );
     expect(mocks.buildServiceEnvironment).toHaveBeenCalledOnce();
     expect(
       firstMockArg(mocks.buildServiceEnvironment, "buildServiceEnvironment").env?.OPENCLAW_WRAPPER,
@@ -834,32 +865,44 @@ describe("buildGatewayInstallPlan", () => {
     },
   );
 
-  it("renders config env SecretRefs as file-backed managed values on Linux", async () => {
+  it.each<{ name: string; token: SecretInput; resolved: boolean; managed: boolean }>([
+    {
+      name: "structured reference",
+      token: { source: "env", provider: "default", id: "DISCORD_BOT_TOKEN" },
+      resolved: false,
+      managed: true,
+    },
+    { name: "raw shorthand", token: "${DISCORD_BOT_TOKEN}", resolved: false, managed: true },
+    { name: "resolved shorthand", token: "${DISCORD_BOT_TOKEN}", resolved: true, managed: true },
+    { name: "pending shorthand", token: "$DISCORD_BOT_TOKEN", resolved: true, managed: true },
+    { name: "escaped literal", token: "$${DISCORD_BOT_TOKEN}", resolved: true, managed: false },
+  ])("renders Linux service env for $name", async ({ token, resolved, managed }) => {
     mockNodeGatewayPlanFixture({
       serviceEnvironment: {
         OPENCLAW_PORT: "3000",
       },
     });
 
+    const env = isolatedPlanEnv({ DISCORD_BOT_TOKEN: "discord-test-token" });
+    let config: OpenClawConfig = { channels: { discord: { token } } };
+    if (resolved) {
+      const read = resolveConfigForRead(config, env);
+      config = coerceConfig(read.resolvedConfigRaw);
+      setConfigResolutionFacts(config, read.resolutionFacts);
+    }
     const plan = await buildGatewayInstallPlan({
-      env: isolatedPlanEnv({
-        DISCORD_BOT_TOKEN: "discord-test-token",
-      }),
+      env,
       port: 3000,
       runtime: "node",
       platform: "linux",
-      config: {
-        channels: {
-          discord: {
-            token: { source: "env", provider: "default", id: "DISCORD_BOT_TOKEN" },
-          },
-        },
-      },
+      config,
     });
 
-    expect(plan.environment.DISCORD_BOT_TOKEN).toBe("discord-test-token");
-    expect(plan.environmentValueSources?.DISCORD_BOT_TOKEN).toBe("file");
-    expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBe("DISCORD_BOT_TOKEN");
+    expect(plan.environment.DISCORD_BOT_TOKEN).toBe(managed ? "discord-test-token" : undefined);
+    expect(plan.environmentValueSources?.DISCORD_BOT_TOKEN).toBe(managed ? "file" : undefined);
+    expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBe(
+      managed ? "DISCORD_BOT_TOKEN" : undefined,
+    );
   });
 
   it("retains config env SecretRefs for Windows task scripts", async () => {
@@ -967,7 +1010,6 @@ describe("buildGatewayInstallPlan", () => {
     expect(plan.environment.OP_CONNECT_TOKEN).toBe("op-connect-token");
     expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBeUndefined();
   });
-
   it("includes passEnv values for plugin-managed exec SecretRef providers", async () => {
     mockNodeGatewayPlanFixture({
       serviceEnvironment: {
@@ -1149,16 +1191,13 @@ describe("buildGatewayInstallPlan", () => {
     expect(plan.environment.OPENCLAW_SERVICE_MANAGED_ENV_KEYS).toBeUndefined();
   });
 
-  it("allows safe inherited passEnv names while blocking dangerous exec SecretRef env", async () => {
-    mockNodeGatewayPlanFixture({
-      serviceEnvironment: {
-        OPENCLAW_PORT: "3000",
-      },
-    });
-
-    const warn = vi.fn();
-    const plan = await buildGatewayInstallPlan({
-      env: isolatedPlanEnv({
+  it.each(["linux", "win32"] as const)(
+    "ignores missing passEnv values while blocking populated dangerous values on %s",
+    async (platform) => {
+      mockNodeGatewayPlanFixture({ serviceEnvironment: { OPENCLAW_PORT: "3000" } });
+      const env = isolatedPlanEnv({
+        SYSTEMROOT: " ",
+        SAFE_PASS_ENV: " safe-value ",
         BASH_ENV: "/tmp/openclaw-test-bashenv",
         XDG_CONFIG_HOME: "/tmp/openclaw-test-xdg-home",
         XDG_CONFIG_DIRS: "/etc/xdg:/opt/xdg",
@@ -1166,64 +1205,84 @@ describe("buildGatewayInstallPlan", () => {
         AWS_ACCESS_KEY_ID: "aws-access-key",
         DOCKER_HOST: "tcp://docker.example.test:2376",
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
-      }),
-      port: 3000,
-      runtime: "node",
-      warn,
-      config: {
-        secrets: {
-          providers: {
-            onepassword: {
-              source: "exec",
-              command: "/usr/bin/op",
-              args: ["read", "op://Private/Discord/password"],
-              passEnv: [
-                "HOME",
-                "BASH_ENV",
-                "XDG_CONFIG_HOME",
-                "XDG_CONFIG_DIRS",
-                "GH_TOKEN",
-                "AWS_ACCESS_KEY_ID",
-                "DOCKER_HOST",
-                "NODE_TLS_REJECT_UNAUTHORIZED",
-              ],
+      });
+      Object.setPrototypeOf(env, { WINDIR: "C:/Inherited" });
+      const warn = vi.fn();
+      const plan = await buildGatewayInstallPlan({
+        env,
+        port: 3000,
+        runtime: "node",
+        platform,
+        warn,
+        config: {
+          secrets: {
+            providers: {
+              onepassword: {
+                source: "exec",
+                command: "/usr/bin/op",
+                args: ["read", "op://Private/Discord/password"],
+                passEnv: [
+                  "HOME",
+                  "NODE_OPTIONS",
+                  "SYSTEMROOT",
+                  "WINDIR",
+                  "SAFE_PASS_ENV",
+                  "BASH_ENV",
+                  "XDG_CONFIG_HOME",
+                  "XDG_CONFIG_DIRS",
+                  "GH_TOKEN",
+                  "AWS_ACCESS_KEY_ID",
+                  "DOCKER_HOST",
+                  "NODE_TLS_REJECT_UNAUTHORIZED",
+                ],
+              },
+            },
+          },
+          channels: {
+            discord: {
+              token: { source: "exec", provider: "onepassword", id: "value" },
             },
           },
         },
-        channels: {
-          discord: {
-            token: { source: "exec", provider: "onepassword", id: "value" },
-          },
-        },
-      },
-    });
+      });
 
-    expect(plan.environment.HOME).toBe(isolatedHome);
-    expect(plan.environment.BASH_ENV).toBeUndefined();
-    expect(plan.environment.XDG_CONFIG_HOME).toBeUndefined();
-    expect(plan.environment.XDG_CONFIG_DIRS).toBeUndefined();
-    expect(plan.environment.GH_TOKEN).toBeUndefined();
-    expect(plan.environment.AWS_ACCESS_KEY_ID).toBeUndefined();
-    expect(plan.environment.DOCKER_HOST).toBeUndefined();
-    expect(plan.environment.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
-    expect(warn).not.toHaveBeenCalledWith(
-      'Exec SecretRef passEnv ref "HOME" blocked by host-env security policy',
-      "Config SecretRef",
-    );
-    const warningOutput = warn.mock.calls.map(([message]) => message).join("\n");
-    for (const blockedName of [
-      "XDG_CONFIG_HOME",
-      "XDG_CONFIG_DIRS",
-      "BASH_ENV",
-      "GH_TOKEN",
-      "AWS_ACCESS_KEY_ID",
-      "DOCKER_HOST",
-      "NODE_TLS_REJECT_UNAUTHORIZED",
-    ]) {
-      expect(warningOutput).toContain(blockedName);
-    }
-    expect(warn.mock.calls.every(([, title]) => title === "Config SecretRef")).toBe(true);
-  });
+      expect(plan.environment.HOME).toBe(isolatedHome);
+      expect(plan.environment.SAFE_PASS_ENV).toBe("safe-value");
+      for (const blockedName of [
+        "NODE_OPTIONS",
+        "SYSTEMROOT",
+        "WINDIR",
+        "BASH_ENV",
+        "XDG_CONFIG_HOME",
+        "XDG_CONFIG_DIRS",
+        "GH_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "DOCKER_HOST",
+        "NODE_TLS_REJECT_UNAUTHORIZED",
+      ]) {
+        expect(plan.environment[blockedName]).toBeUndefined();
+      }
+      const warningOutput = warn.mock.calls.map(([message]) => message).join("\n");
+      for (const silentName of ["HOME", "NODE_OPTIONS", "SYSTEMROOT", "WINDIR"]) {
+        expect(warn).not.toHaveBeenCalledWith(
+          `Exec SecretRef passEnv ref "${silentName}" blocked by host-env security policy`,
+          "Config SecretRef",
+        );
+      }
+      for (const blockedName of [
+        "XDG_CONFIG_HOME",
+        "XDG_CONFIG_DIRS",
+        "BASH_ENV",
+        "GH_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "DOCKER_HOST",
+        "NODE_TLS_REJECT_UNAUTHORIZED",
+      ]) {
+        expect(warningOutput).toContain(blockedName);
+      }
+      expect(warn.mock.calls.every(([, title]) => title === "Config SecretRef")).toBe(true);
+    },
+  );
 
   it("blocks dangerous passEnv values for auth-profile exec SecretRef providers", async () => {
     mockNodeGatewayPlanFixture({
@@ -2444,11 +2503,22 @@ describe("gatewayInstallErrorHint", () => {
 });
 
 describe("collectPreservedExistingServiceEnvVars — operator opt-in allowlist", () => {
-  async function buildEnvironment(existingEnvironment: Record<string, string>) {
-    mockNodeGatewayPlanFixture();
+  async function buildEnvironment(
+    existingEnvironment: Record<string, string>,
+    env: Record<string, string> = { HOME: "/tmp" },
+  ) {
+    mockNodeGatewayPlanFixture({
+      serviceEnvironment: {
+        OPENCLAW_PORT: "3000",
+        ...(env.HOMEBREW_PREFIX !== undefined ? { HOMEBREW_PREFIX: env.HOMEBREW_PREFIX } : {}),
+        ...(env.OPENCLAW_CONFIG_READONLY !== undefined
+          ? { OPENCLAW_CONFIG_READONLY: env.OPENCLAW_CONFIG_READONLY }
+          : {}),
+      },
+    });
     return (
       await buildGatewayInstallPlan({
-        env: { HOME: "/tmp" },
+        env,
         port: 3000,
         runtime: "node",
         existingEnvironment,
@@ -2461,6 +2531,17 @@ describe("collectPreservedExistingServiceEnvVars — operator opt-in allowlist",
     expect(result.OPENCLAW_ALLOW_ROOT).toBeUndefined();
   });
 
+  it("uses only the current install's HOMEBREW_PREFIX", async () => {
+    const existingEnvironment = { HOMEBREW_PREFIX: "/opt/homebrew" };
+    const result = await buildEnvironment(existingEnvironment);
+    expect(result.HOMEBREW_PREFIX).toBeUndefined();
+    const current = await buildEnvironment(existingEnvironment, {
+      HOME: "/tmp",
+      HOMEBREW_PREFIX: "/usr/local",
+    });
+    expect(current.HOMEBREW_PREFIX).toBe("/usr/local");
+  });
+
   it("preserves OPENCLAW_CLI_CONTAINER_BYPASS and OPENCLAW_CONTAINER_HINT", async () => {
     const result = await buildEnvironment({
       OPENCLAW_CLI_CONTAINER_BYPASS: "1",
@@ -2468,6 +2549,18 @@ describe("collectPreservedExistingServiceEnvVars — operator opt-in allowlist",
     });
     expect(result.OPENCLAW_CLI_CONTAINER_BYPASS).toBe("1");
     expect(result.OPENCLAW_CONTAINER_HINT).toBe("ci");
+  });
+
+  it("preserves config read-only mode unless the current install overrides it", async () => {
+    const existingEnvironment = { OPENCLAW_CONFIG_READONLY: "1" };
+    const preserved = await buildEnvironment(existingEnvironment);
+    const overridden = await buildEnvironment(existingEnvironment, {
+      HOME: "/tmp",
+      OPENCLAW_CONFIG_READONLY: "0",
+    });
+
+    expect(preserved.OPENCLAW_CONFIG_READONLY).toBe("1");
+    expect(overridden.OPENCLAW_CONFIG_READONLY).toBe("0");
   });
 
   it("still drops arbitrary OPENCLAW_FOO", async () => {

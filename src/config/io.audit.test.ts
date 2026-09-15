@@ -1,14 +1,17 @@
 // Covers config audit reporting for files, paths, and values.
 import fs, { promises as fsPromises } from "node:fs";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { DatabaseSync, StatementSync } from "node:sqlite";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { resetPluginStateStoreForTests } from "../plugin-state/plugin-state-store.js";
+import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db.js";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import {
   appendConfigAuditRecord,
   createConfigWriteAuditRecordBase,
   finalizeConfigWriteAuditRecord,
   formatConfigOverwriteLogMessage,
+  readRecentConfigAuditRecords,
   resolveLegacyConfigAuditLogPath,
   sanitizeConfigAuditRecord,
   scrubConfigAuditLog,
@@ -113,7 +116,8 @@ describe("config io audit helpers", () => {
     await suiteRootTracker.cleanup();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeOpenClawStateDatabaseAsync();
     resetPluginStateStoreForTests();
   });
 
@@ -220,15 +224,28 @@ describe("config io audit helpers", () => {
     expect(record.errorMessage).toBe("disk full");
   });
 
-  it("appends audit entries to shared SQLite state", async () => {
+  it("appends audit entries off-thread and retains them after canonical close", async () => {
     const home = await suiteRootTracker.make("append");
     const record = createRenameAuditRecord(home);
 
-    await appendConfigAuditRecord({
-      env: {} as NodeJS.ProcessEnv,
-      homedir: () => home,
-      record,
-    });
+    const nativeCalls = [
+      vi.spyOn(DatabaseSync.prototype, "prepare"),
+      vi.spyOn(DatabaseSync.prototype, "exec"),
+      ...(["get", "all", "run", "iterate"] as const).map((method) =>
+        vi.spyOn(StatementSync.prototype, method),
+      ),
+    ];
+    try {
+      await appendConfigAuditRecord({ env: {}, homedir: () => home, record });
+      await closeOpenClawStateDatabaseAsync();
+      for (const nativeCall of nativeCalls) {
+        expect(nativeCall).not.toHaveBeenCalled();
+      }
+    } finally {
+      for (const nativeCall of nativeCalls) {
+        nativeCall.mockRestore();
+      }
+    }
 
     const records = listConfigAuditRecordsForTests({
       env: {} as NodeJS.ProcessEnv,
@@ -239,6 +256,24 @@ describe("config io audit helpers", () => {
     expect(written.event).toBe("config.write");
     expect(written.result).toBe("rename");
     expect(written.nextHash).toBe("next-hash");
+  });
+
+  it("reads a bounded newest-first audit window for Doctor provenance", async () => {
+    const home = await suiteRootTracker.make("recent");
+    const first = createRenameAuditRecord(home);
+    const second = {
+      ...first,
+      ts: "2026-04-07T08:01:00.000Z",
+      previousHash: first.nextHash,
+      nextHash: "newest-hash",
+    };
+    await appendConfigAuditRecord({ env: {}, homedir: () => home, record: first });
+    await appendConfigAuditRecord({ env: {}, homedir: () => home, record: second });
+
+    const recent = readRecentConfigAuditRecords({ env: {}, homedir: () => home, limit: 1 });
+
+    expect(recent).toHaveLength(1);
+    expect(recent[0]).toMatchObject({ nextHash: "newest-hash" });
   });
 
   it("redacts structured audit records before persistence", async () => {

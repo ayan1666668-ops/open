@@ -16,7 +16,6 @@ import {
 } from "./app-host.test-support.ts";
 import "./app-host.ts";
 import {
-  DEBUG_OVERLAY_ELEMENT,
   KEYBOARD_SHORTCUTS_ELEMENT,
   type LazyCustomElementRequestController,
 } from "./lazy-custom-element.ts";
@@ -56,7 +55,8 @@ async function withConnectedShell(shell: ShellLifecycle, run: () => void | Promi
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await vi.dynamicImportSettled();
   resetAppHostTestGlobals();
   vi.restoreAllMocks();
   recovery.reload.mockClear();
@@ -244,10 +244,13 @@ describe("shell lazy events", () => {
 
     try {
       await withConnectedShell(shell, async () => {
+        input.focus();
+        expect(document.activeElement).toBe(input);
         input.dispatchEvent(shortcut);
 
         expect(shortcut.defaultPrevented).toBe(true);
         expect(requested).toHaveBeenCalledOnce();
+        await vi.dynamicImportSettled();
         await vi.waitFor(() => expect(toggled).toHaveBeenCalledOnce());
 
         input.dispatchEvent(
@@ -272,7 +275,7 @@ describe("shell lazy events", () => {
     const shell = document.createElement("openclaw-app-shell") as unknown as ShellKeyboardState &
       ShellLifecycle &
       HTMLElement;
-    const overlay = document.createElement(DEBUG_OVERLAY_ELEMENT.tagName) as HTMLElement & {
+    const overlay = document.createElement("openclaw-debug-overlay") as HTMLElement & {
       toggle: () => void;
     };
     overlay.toggle = toggled;
@@ -289,6 +292,7 @@ describe("shell lazy events", () => {
     await withConnectedShell(shell, async () => {
       shell.handleDocumentKeydown(shortcut);
       expect(shortcut.defaultPrevented).toBe(true);
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(toggled).toHaveBeenCalledOnce());
 
       const input = document.body.appendChild(document.createElement("input"));

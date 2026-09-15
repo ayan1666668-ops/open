@@ -4,7 +4,7 @@
  * Sends requests to either an absolute HTTP browser-control URL or the local
  * in-process dispatcher, adding loopback auth and operator-facing diagnostics.
  */
-import { parseBrowserHttpUrl } from "openclaw/plugin-sdk/browser-config";
+import { parseBrowserHttpUrl } from "openclaw/plugin-sdk/browser-cdp";
 import {
   extractErrorCode,
   formatErrorMessage,
@@ -12,14 +12,13 @@ import {
 } from "openclaw/plugin-sdk/error-runtime";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
+import { formatCliCommand } from "openclaw/plugin-sdk/setup-tools";
+import { fetchWithSsrFGuard, isLoopbackHost } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   normalizeOptionalString,
   normalizeLowercaseStringOrEmpty,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { formatCliCommand } from "../cli/command-format.js";
 import { getRuntimeConfig } from "../config/config.js";
-import { isLoopbackHost } from "../gateway/net.js";
 import { getBridgeAuthForPort } from "./bridge-auth-registry.js";
 import { resolveBrowserConfig, resolveProfile } from "./config.js";
 import { resolveBrowserControlAuth } from "./control-auth.js";
@@ -27,10 +26,11 @@ import {
   parseBrowserErrorPayload,
   type BrowserActErrorCode,
   type BrowserErrorPayload,
-  type BrowserNoDisplayErrorMetadata,
+  type BrowserErrorMetadata,
   type BrowserNoDisplayErrorDetails,
 } from "./errors.js";
 import { resolveBrowserRateLimitMessage } from "./rate-limit-message.js";
+import { getBrowserRequestScope } from "./request-scope.js";
 
 // Application-level error from the browser control service (service is reachable
 // but returned an error response). Must NOT be wrapped with "Can't reach ..." messaging.
@@ -38,7 +38,7 @@ export class BrowserServiceError extends Error {
   readonly status?: number;
   readonly code?: BrowserActErrorCode;
   readonly unrecognizedCode?: true;
-  readonly reason?: BrowserNoDisplayErrorMetadata["reason"];
+  readonly reason?: BrowserErrorMetadata["reason"];
   readonly details?: BrowserNoDisplayErrorDetails;
 
   constructor(message: string, metadata?: BrowserErrorPayload, status?: number) {
@@ -429,9 +429,13 @@ export async function fetchBrowserJson<T>(
   init?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
   const timeoutMs = resolveBrowserFetchTimeoutMs(init?.timeoutMs);
+  const scope = getBrowserRequestScope();
   let isDispatcherPath = false;
   try {
     if (isAbsoluteHttp(url)) {
+      if (scope) {
+        throw new Error("Dashboard browser requests must stay on the local managed browser");
+      }
       const httpInit = withLoopbackBrowserAuth(url, init);
       return await fetchHttpJson<T>(url, { ...httpInit, timeoutMs });
     }
@@ -441,6 +445,9 @@ export async function fetchBrowserJson<T>(
     const query: Record<string, unknown> = {};
     for (const [key, value] of parsed.searchParams.entries()) {
       query[key] = value;
+    }
+    if (scope) {
+      query.managedOnly = true;
     }
     let body = init?.body;
     if (typeof body === "string") {
@@ -492,6 +499,7 @@ export async function fetchBrowserJson<T>(
       query,
       body,
       signal: abortCtrl.signal,
+      ...(scope ? { assertCurrent: scope.assertCurrent } : {}),
     });
 
     const result = await Promise.race([dispatchPromise, abortPromise]).finally(() => {

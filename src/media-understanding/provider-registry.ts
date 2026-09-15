@@ -1,51 +1,8 @@
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeMediaProviderId } from "../../packages/media-understanding-common/src/provider-id.js";
-import { providerSupportsCapability } from "../../packages/media-understanding-common/src/provider-supports.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolvePluginCapabilityProviders } from "../plugins/capability-provider-runtime.js";
 import { resolveImageCapableConfigProviderIds } from "./config-provider-models.js";
-import { describeImageWithModel, describeImagesWithModel } from "./image-runtime.js";
-import type { MediaUnderstandingCapability, MediaUnderstandingProvider } from "./types.js";
-
-export function resolveDefaultMediaModelFromRegistry(params: {
-  providerId: string;
-  capability: MediaUnderstandingCapability;
-  providerRegistry: Map<string, MediaUnderstandingProvider>;
-}): string | undefined {
-  const provider = params.providerRegistry.get(normalizeMediaProviderId(params.providerId));
-  return normalizeOptionalString(provider?.defaultModels?.[params.capability]);
-}
-
-export function resolveAutoMediaKeyProvidersFromRegistry(params: {
-  capability: MediaUnderstandingCapability;
-  providerRegistry: Map<string, MediaUnderstandingProvider>;
-}): string[] {
-  type AutoProviderEntry = {
-    provider: MediaUnderstandingProvider;
-    priority: number;
-  };
-  return [...params.providerRegistry.values()]
-    .filter(
-      (provider) =>
-        provider.capabilities?.includes(params.capability) ??
-        providerSupportsCapability(provider, params.capability),
-    )
-    .map((provider): AutoProviderEntry | null => {
-      const priority = provider.autoPriority?.[params.capability];
-      return typeof priority === "number" && Number.isFinite(priority)
-        ? { provider, priority }
-        : null;
-    })
-    .filter((entry): entry is AutoProviderEntry => entry !== null)
-    .toSorted((left, right) => {
-      if (left.priority !== right.priority) {
-        return left.priority - right.priority;
-      }
-      return left.provider.id.localeCompare(right.provider.id);
-    })
-    .map((entry) => normalizeMediaProviderId(entry.provider.id))
-    .filter(Boolean);
-}
+import type { MediaUnderstandingProvider } from "./types.js";
 
 function mergeProviderIntoRegistry(
   registry: Map<string, MediaUnderstandingProvider>,
@@ -65,31 +22,12 @@ function mergeProviderIntoRegistry(
         documentModels: provider.documentModels ?? existing.documentModels,
       }
     : provider;
-  registry.set(normalizedKey, hydrateModelBackedMediaProvider(merged));
+  // Own undefined hooks reset earlier owners; absent hooks inherit. Dispatch
+  // supplies model-backed fallbacks without hiding the provider's native hooks.
+  registry.set(normalizedKey, merged);
 }
 
-function hydrateModelBackedMediaProvider(
-  provider: MediaUnderstandingProvider,
-): MediaUnderstandingProvider {
-  // Manifest-only image providers can still route through the generic model
-  // runtime when they declare image capability but no plugin hook.
-  if (!provider.capabilities?.includes("image")) {
-    return provider;
-  }
-  if (provider.describeImage && provider.describeImages) {
-    return provider;
-  }
-  return {
-    ...provider,
-    describeImage: provider.describeImage ?? describeImageWithModel,
-    describeImages: provider.describeImages ?? describeImagesWithModel,
-  };
-}
-
-export {
-  normalizeMediaExecutionProviderId,
-  normalizeMediaProviderId,
-} from "../../packages/media-understanding-common/src/provider-id.js";
+export { normalizeMediaProviderId } from "../../packages/media-understanding-common/src/provider-id.js";
 
 /** Builds the media-understanding provider registry from plugin capabilities and config providers. */
 export function buildMediaUnderstandingRegistry(
@@ -113,8 +51,6 @@ export function buildMediaUnderstandingRegistry(
       mergeProviderIntoRegistry(registry, {
         id: normalizedKey,
         capabilities: ["image"],
-        describeImage: describeImageWithModel,
-        describeImages: describeImagesWithModel,
       });
     }
   }

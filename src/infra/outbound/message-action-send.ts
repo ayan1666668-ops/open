@@ -1,16 +1,16 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { stripPlainTextToolCallBlocks } from "../../../packages/tool-call-repair/src/index.js";
+import { projectPluginMessageDeliveryFact } from "../../agents/embedded-agent-message-delivery.js";
 import { resolveAgentIdentity, resolveResponsePrefix } from "../../agents/identity.js";
 import { readStringArrayParam, readToolStringParam } from "../../agents/tools/common.js";
 import {
   copyReplyPayloadMetadata,
   setReplyPayloadMetadata,
+  type ReplyMediaAttachment,
   type ReplyPayload,
 } from "../../auto-reply/reply-payload.js";
 import { resolveResponsePrefixTemplate } from "../../auto-reply/reply/response-prefix-template.js";
 import { normalizeOutboundLocation } from "../../channels/location.js";
-import { normalizeConversationReadInvocationOrigin } from "../../channels/plugins/conversation-read-origin.js";
 import type { ChannelId, ChannelMessageActionName } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
@@ -31,7 +31,6 @@ import { parseInlineDirectives } from "../../utils/directive-tags.js";
 import { throwIfAborted } from "./abort.js";
 import type {
   MessageActionInput,
-  MessageActionNormalization,
   MessageActionResult,
   ResolvedActionContext,
 } from "./message-action-contracts.js";
@@ -40,11 +39,15 @@ import {
   applyMessageCrossContextMarker,
   executeGatewayAction,
 } from "./message-action-execution.js";
+import { stageGatewayWorkspaceMedia } from "./message-action-gateway-media.js";
+import { collectAttachmentSources, normalizeSandboxMediaSource } from "./message-action-params.js";
 import {
-  collectActionMediaSourceHints,
-  collectAttachmentSources,
-  normalizeSandboxMediaList,
-} from "./message-action-params.js";
+  applySendLocationToActionParams,
+  applySendPayloadPartsToActionParams,
+  type SendPayloadParts,
+  updateSendPayloadPartsFromReplyPayload,
+  withSendNormalization,
+} from "./message-action-send-payload.js";
 import {
   prepareOutboundMirrorRoute,
   resolveAndApplyOutboundReplyToId,
@@ -57,71 +60,10 @@ import {
 } from "./outbound-send-service.js";
 import { ensureOutboundSessionEntry, resolveOutboundSessionRoute } from "./outbound-session.js";
 
-type SendPayloadParts = {
-  message: string;
-  payload: ReplyPayload;
-  mediaUrl?: string;
-  mediaUrls?: string[];
-  asVoice: boolean;
-  gifPlayback: boolean;
-  forceDocument: boolean;
-  bestEffort?: boolean;
-  silent?: boolean;
-  normalization?: MessageActionNormalization;
-};
-
-function updateSendPayloadPartsFromReplyPayload(
-  parts: SendPayloadParts,
-  payload: ReplyPayload,
-): SendPayloadParts {
-  const sendable = resolveSendableOutboundReplyParts(payload);
-  const mediaUrls = sendable.mediaUrls.length > 0 ? sendable.mediaUrls : undefined;
-  return {
-    ...parts,
-    message: payload.text ?? "",
-    payload,
-    mediaUrl: mediaUrls?.[0],
-    mediaUrls,
-    asVoice: payload.audioAsVoice === true,
-  };
-}
-
-function applySendLocationToActionParams(
-  actionParams: Record<string, unknown>,
-  location: ReplyPayload["location"],
-) {
-  if (location) {
-    actionParams.location = location;
-  } else {
-    delete actionParams.location;
-  }
-}
-
-function applySendPayloadPartsToActionParams(
-  actionParams: Record<string, unknown>,
-  parts: SendPayloadParts,
-) {
-  if (parts.message || !parts.payload.presentation) {
-    actionParams.message = parts.message;
-  } else {
-    // Presentation-only gateway handlers distinguish an omitted body from an
-    // explicit empty body when deciding whether to render semantic fallback.
-    delete actionParams.message;
-  }
-  actionParams.media = parts.mediaUrl;
-  actionParams.mediaUrl = parts.mediaUrl;
-  actionParams.mediaUrls = parts.mediaUrls;
-  actionParams.asVoice = parts.asVoice || undefined;
-  actionParams.audioAsVoice = parts.asVoice || undefined;
-  actionParams.asVideoNote = parts.payload.videoAsNote || undefined;
-  applySendLocationToActionParams(actionParams, parts.payload.location);
-}
-
-function withSendNormalization(
-  result: MessageActionResult,
-  normalization?: MessageActionNormalization,
-): MessageActionResult {
-  return normalization && result.kind === "send" ? { ...result, normalization } : result;
+function resolveReplyMediaAttachmentType(value: unknown): ReplyMediaAttachment["type"] {
+  return value === "image" || value === "audio" || value === "video" || value === "file"
+    ? value
+    : undefined;
 }
 
 export async function buildMessagePayload(params: {
@@ -169,7 +111,7 @@ export async function buildMessagePayload(params: {
     typeof rawLocation === "string" && normalizeOptionalString(rawLocation) === undefined
       ? undefined
       : normalizeOutboundLocation(rawLocation);
-  const caption = readToolStringParam(actionParams, "caption", { allowEmpty: true }) ?? "";
+  const caption = readToolStringParam(actionParams, "caption", { trim: false }) ?? "";
   const voiceText = readToolStringParam(actionParams, "voiceText");
   const voiceProvider = readToolStringParam(actionParams, "voiceProvider");
   const voiceId = readToolStringParam(actionParams, "voiceId");
@@ -177,12 +119,13 @@ export async function buildMessagePayload(params: {
     readToolStringParam(actionParams, "message", {
       required: !hasMediaHint && !hasPresentation && !hasInteractive && !location && !voiceText,
       allowEmpty: true,
+      trim: false,
     }) ?? "";
   if (message.includes("\\n")) {
     message = message.replaceAll("\\n", "\n");
   }
-  if (!message.trim() && caption.trim()) {
-    message = caption;
+  if (!message.trim()) {
+    message = caption.trim() ? caption : "";
   }
 
   const parsed = parseInlineDirectives(message, {
@@ -194,13 +137,22 @@ export async function buildMessagePayload(params: {
   const attachmentByUrl = new Map(
     attachmentSources.map((source) => [
       normalizeOptionalString(source.value),
-      { filename: source.filename, mimeType: source.contentType },
+      {
+        filename: source.filename,
+        mimeType: source.contentType,
+        type: resolveReplyMediaAttachmentType(source.attachment.type),
+      },
     ]),
   );
-  const mediaEntries: Array<{ url: string; filename?: string; mimeType?: string }> = [];
+  const mediaEntries: Array<{
+    url: string;
+    filename?: string;
+    mimeType?: string;
+    type?: ReplyMediaAttachment["type"];
+  }> = [];
   const pushMedia = (
     value?: string | null,
-    metadata?: { filename?: string; mimeType?: string },
+    metadata?: { filename?: string; mimeType?: string; type?: ReplyMediaAttachment["type"] },
   ) => {
     const trimmed = normalizeOptionalString(value);
     if (!trimmed) {
@@ -220,19 +172,17 @@ export async function buildMessagePayload(params: {
     pushMedia(attachmentSource.value, {
       filename: attachmentSource.filename,
       mimeType: attachmentSource.contentType,
+      type: resolveReplyMediaAttachmentType(attachmentSource.attachment.type),
     });
   }
 
   const normalizedMedia = await Promise.all(
     mediaEntries.map(async (entry) => {
-      const normalizedUrl = (
-        await normalizeSandboxMediaList({
-          values: [entry.url],
-          sandboxRoot: input.sandboxRoot,
-          sandboxContainerWorkdir: input.sandboxContainerWorkdir,
-        })
-      )[0];
-      entry.url = normalizedUrl ?? entry.url;
+      entry.url = await normalizeSandboxMediaSource({
+        value: entry.url,
+        sandboxRoot: input.sandboxRoot,
+        sandboxContainerWorkdir: input.sandboxContainerWorkdir,
+      });
       return entry;
     }),
   );
@@ -248,6 +198,7 @@ export async function buildMessagePayload(params: {
   const mediaAttachments = preparedMedia.map((entry) =>
     Object.assign(
       { path: entry.url },
+      entry.type ? { type: entry.type } : {},
       entry.filename ? { name: entry.filename } : {},
       entry.mimeType ? { mimeType: entry.mimeType } : {},
     ),
@@ -531,14 +482,15 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
   delete params.voiceProvider;
   delete params.voiceId;
   throwIfAborted(abortSignal);
+  // Send payload construction performs the final media-list normalization, so
+  // bind access to those canonical sources instead of the earlier action hints.
   const mediaAccess =
     input.mediaAccess ??
     resolveAgentScopedOutboundMediaAccess({
       cfg,
       agentId,
-      mediaSources: collectActionMediaSourceHints(params, ctx.extraActionMediaSourceParamKeys, {
-        structuredAttachments: "all",
-      }),
+      mediaSources: sendPayload.mediaUrls,
+      workspaceMediaAccess: input.workspaceMediaAccess,
       sessionKey: input.sessionKey,
       messageProvider: input.sessionKey ? undefined : channel,
       accountId: input.sessionKey ? (input.requesterAccountId ?? accountId) : accountId,
@@ -552,23 +504,32 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
   // remote gateway action nor a provider-native action may bypass core queueing.
   const requiresCoreDelivery =
     input.forceCoreDelivery === true || input.requireQueuePersistence === true;
+  const usesGatewayAction =
+    !requiresCoreDelivery &&
+    Boolean(gateway) &&
+    (channelPlugin?.actions?.resolveExecutionMode?.({ action }) === "gateway" ||
+      channelPlugin?.outbound?.deliveryMode === "gateway");
+  if (usesGatewayAction && !dryRun) {
+    const stagedPayload = await stageGatewayWorkspaceMedia({
+      cfg,
+      channel,
+      accountId,
+      payload: sendPayload.payload,
+      mediaUrls: sendPayload.mediaUrls,
+      mediaAccess,
+      workspaceMediaAccess: input.workspaceMediaAccess,
+    });
+    sendPayload = updateSendPayloadPartsFromReplyPayload(sendPayload, stagedPayload);
+    applySendPayloadPartsToActionParams(params, sendPayload);
+  }
 
   // Gateway action ownership wins even when this process has a render-capable
   // outbound adapter; credentials and account selection may exist only remotely.
   const gatewayPluginAction = requiresCoreDelivery
     ? null
-    : await executeGatewayAction({
-        cfg,
-        params,
-        channel,
-        channelPlugin,
+    : await executeGatewayAction(ctx, {
         action,
         reply,
-        accountId,
-        dryRun,
-        gateway,
-        input,
-        agentId,
         result: (payload) => ({
           kind: "send",
           channel,
@@ -580,18 +541,13 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
         }),
       });
   if (gatewayPluginAction) {
-    await commitOutboundSessionRoute();
+    if (projectPluginMessageDeliveryFact(gatewayPluginAction.payload)?.status !== "suppressed") {
+      await commitOutboundSessionRoute();
+    }
     return annotateSourceDelivery(
       withSendNormalization(gatewayPluginAction, sendPayload.normalization),
-      {
-        cfg,
-        actionParams: params,
-        channel,
-        accountId,
-        input,
-        agentId,
-        replyToIsExplicit: reply?.source === "explicit",
-      },
+      ctx,
+      reply?.source === "explicit",
     );
   }
 
@@ -613,54 +569,14 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
 
   const send = await executeSendAction({
     ctx: {
-      cfg,
-      channel,
-      plugin: channelPlugin,
-      params,
-      idempotencyKey: ctx.idempotencyKey,
-      agentId,
-      sessionKey: input.sessionKey,
-      requesterAccountId: input.requesterAccountId ?? undefined,
-      requesterSenderId: input.requesterSenderId ?? undefined,
-      requesterSenderName: input.requesterSenderName ?? undefined,
-      requesterSenderUsername: input.requesterSenderUsername ?? undefined,
-      requesterSenderE164: input.requesterSenderE164 ?? undefined,
-      senderIsOwner: input.senderIsOwner,
-      conversationReadOrigin: normalizeConversationReadInvocationOrigin(
-        input.conversationReadOrigin,
-      ),
+      ...ctx,
       mediaAccess,
-      accountId: accountId ?? undefined,
       conversationType: outboundRoute?.chatType,
-      sessionId: input.sessionId,
-      runId: input.runId,
-      executionIdentityToken: input.executionIdentityToken,
-      inboundEventKind: input.inboundEventKind,
-      gateway,
-      toolContext: input.toolContext,
-      deps: input.deps,
-      dryRun,
-      preparedMessageId: input.preparedMessageId,
-      gatewayOwnedDelivery: input.gatewayOwnedDelivery,
-      forceCoreDelivery: requiresCoreDelivery,
-      requireQueuePersistence: input.requireQueuePersistence,
-      deliveryIntentId: input.deliveryIntentId,
-      deliveryCompletion: input.deliveryCompletion,
       // Model-authored sends get the failure back and resend it themselves; every
       // other caller only reports the error, so recovery keeps its replay right.
       deliveryRetryOwner: input.actionOrigin === "message-tool" ? "caller" : undefined,
-      onDeliveryIntent: input.onDeliveryIntent,
-      onPlatformSendDispatch: input.onPlatformSendDispatch,
-      skipQueue: input.skipQueue,
-      onDeliveryAttempt: input.onDeliveryAttempt,
-      // Identified platform evidence is the first success proof on the core
-      // path; commit the route here so the transcript mirror (which runs later
-      // in the same delivery) can resolve a just-created session entry.
-      onDeliveryResult: async (result) => {
-        await commitOutboundSessionRoute();
-        await input.onDeliveryResult?.(result);
-      },
-      onPluginSendAccepted: commitOutboundSessionRoute,
+      // Both delivery paths must commit a first-contact route before mirroring.
+      onSendAccepted: commitOutboundSessionRoute,
       mirror:
         !dryRun && input.transcriptMirror
           ? {
@@ -677,7 +593,6 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
                 idempotencyKey: normalizeOptionalString(params.idempotencyKey) ?? undefined,
               }
             : undefined,
-      abortSignal,
       silent: sendPayload.silent ?? undefined,
     },
     to,
@@ -700,7 +615,11 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
   // a non-failed, non-suppressed return is their success proof. Failed and
   // suppressed sends leave the durable route untouched.
   const coreDeliveryStatus = send.sendResult?.deliveryStatus;
-  if (coreDeliveryStatus !== "failed" && coreDeliveryStatus !== "suppressed") {
+  if (
+    coreDeliveryStatus !== "failed" &&
+    coreDeliveryStatus !== "suppressed" &&
+    projectPluginMessageDeliveryFact(send.payload)?.status !== "suppressed"
+  ) {
     await commitOutboundSessionRoute();
   }
 
@@ -716,13 +635,9 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
     sendResult: send.sendResult,
     dryRun,
   };
-  return annotateSourceDelivery(withSendNormalization(result, sendPayload.normalization), {
-    cfg,
-    actionParams: params,
-    channel,
-    accountId,
-    input,
-    agentId,
-    replyToIsExplicit: reply?.source === "explicit",
-  });
+  return annotateSourceDelivery(
+    withSendNormalization(result, sendPayload.normalization),
+    ctx,
+    reply?.source === "explicit",
+  );
 }

@@ -82,7 +82,14 @@ function normalizeCrablineSignalGatewayConfig(config: OpenClawConfig): OpenClawC
   } as OpenClawConfig;
 }
 
-function formatLogicalQaTarget({ conversation, threadId }: QaBusInboundMessageInput) {
+function resolveLogicalQaTarget(
+  { conversation, threadId }: QaBusInboundMessageInput,
+  providerQaTarget: string,
+  providerPreservesConversationId: boolean,
+) {
+  if (conversation.kind !== "channel" && providerPreservesConversationId) {
+    return providerQaTarget;
+  }
   const prefix = conversation.kind === "direct" ? "dm" : conversation.kind;
   return threadId ? `thread:${conversation.id}/${threadId}` : `${prefix}:${conversation.id}`;
 }
@@ -96,6 +103,10 @@ function readTelegramLifecycleEvent(params: {
   pendingByChat: Map<string, QaBusMessage[]>;
 }): QaTransportOutboundEvent | null {
   if (!isRecord(params.event) || params.event.type !== "api") {
+    return null;
+  }
+  // Rejected API calls are recorded too; they must not consume pending IDs or cursors.
+  if (params.event.accepted !== true) {
     return null;
   }
   const pathValue = readStringValue(params.event.path);
@@ -255,9 +266,16 @@ function createCrablineState(params: {
       const providerInbound = params.adapter.createInbound({
         input: createCrablineProviderInboundInput(params.adapter, input),
       });
-      // Providers may coerce channel conversations to groups; preserve the scenario's logical
-      // target so outbound waits and assertions still match the original input.
-      targetByProviderTarget.set(providerInbound.providerTargetKey, formatLogicalQaTarget(input));
+      // Provider targets carry typed thread identity. Synthetic channels and Matrix's
+      // provider-native room ids still need their scenario-owned logical target restored.
+      targetByProviderTarget.set(
+        providerInbound.providerTargetKey,
+        resolveLogicalQaTarget(
+          input,
+          providerInbound.qaTarget,
+          params.adapter.channel !== "matrix",
+        ),
+      );
       const providerMessageId = await postCrablineInbound({
         adapter: params.adapter,
         providerInbound,
@@ -401,7 +419,7 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     "No live channel service or external credential lease is required.",
   ];
 
-  async cleanup() {
+  async cleanupAfterGatewayStop() {
     await this.#state.cleanup();
   }
 }

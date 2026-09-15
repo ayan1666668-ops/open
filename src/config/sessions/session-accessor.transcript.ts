@@ -1,9 +1,11 @@
 import { safeParseJsonRecord } from "@openclaw/normalization-core";
+import { persistCompactionBoundaryWithSessionEntrySync } from "./session-accessor.sqlite-compaction.js";
 import { readTranscriptRawDelta } from "./session-accessor.sqlite-delta.js";
 import { resolveSessionKeyBySessionId as resolveTranscriptSessionKeyBySessionId } from "./session-accessor.sqlite-entry.js";
 import { publishTranscriptUpdate } from "./session-accessor.sqlite-events.js";
 import {
   findTranscriptEvent,
+  hasSessionTranscriptMessage,
   inspectTranscriptEventsSync,
   loadLatestAssistantText as readLatestTranscriptAssistantText,
   loadTranscriptEventRowsAfterSeqSync,
@@ -11,10 +13,22 @@ import {
   loadTranscriptEventsSync,
   loadTranscriptHeaderSync,
   loadTranscriptTailEventsSync,
+  readTranscriptMutationAtSync,
+  readTranscriptExportSnapshotReadOnlySync,
+  readTranscriptStatsBatchReadOnlySync,
   readTranscriptStatsSync,
+  validatePreparedAssistantAppendSync,
   readTranscriptEventAtSeqSync,
+  readTranscriptIdentityByEventId,
 } from "./session-accessor.sqlite-read.js";
-import { rewriteTranscriptMessageAtAnchor } from "./session-accessor.sqlite-transcript-message-rewrite.js";
+import {
+  loadTranscriptSuffixEventsBoundedSync,
+  readPreviousIndexedTranscriptEventSync,
+} from "./session-accessor.sqlite-suffix-read.js";
+import {
+  rewriteAssistantTranscriptMessageForRun,
+  rewriteTranscriptMessageAtAnchor,
+} from "./session-accessor.sqlite-transcript-message-rewrite.js";
 import {
   appendTranscriptEvent,
   appendTranscriptEventSync,
@@ -22,6 +36,8 @@ import {
   appendTranscriptMessageSync,
   replaceTranscriptEvents,
   replaceTranscriptEventsSync,
+  replaceSessionWithBranchedTranscript,
+  replaceTranscriptSuffixEventsSync,
   rewriteTranscriptEventRowsExact,
   trimTranscriptForManualCompact,
   withTranscriptWriteLock,
@@ -44,21 +60,33 @@ export {
   appendTranscriptMessage,
   appendTranscriptMessageSync,
   findTranscriptEvent,
+  hasSessionTranscriptMessage,
   inspectTranscriptEventsSync,
   loadTranscriptEventRowsAfterSeqSync,
   loadTranscriptEvents,
   loadTranscriptEventsSync,
   loadTranscriptHeaderSync,
   loadTranscriptTailEventsSync,
+  loadTranscriptSuffixEventsBoundedSync,
+  persistCompactionBoundaryWithSessionEntrySync,
   publishTranscriptUpdate,
   readLatestTranscriptAssistantText,
   readTranscriptEventAtSeqSync,
+  readPreviousIndexedTranscriptEventSync,
+  readTranscriptIdentityByEventId,
   readTranscriptRawDelta,
+  readTranscriptMutationAtSync,
+  readTranscriptExportSnapshotReadOnlySync,
+  readTranscriptStatsBatchReadOnlySync,
   readTranscriptStatsSync,
+  validatePreparedAssistantAppendSync,
   replaceTranscriptEvents,
   replaceTranscriptEventsSync,
+  replaceSessionWithBranchedTranscript,
+  replaceTranscriptSuffixEventsSync,
   rewriteTranscriptEventRowsExact,
   rewriteTranscriptMessageAtAnchor,
+  rewriteAssistantTranscriptMessageForRun,
   resolveTranscriptSessionKeyBySessionId,
   withTranscriptWriteLock,
   withTranscriptWriteTransaction,

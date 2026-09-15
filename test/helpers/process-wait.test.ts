@@ -1,12 +1,81 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fsSync from "node:fs";
-import { afterEach, expect, it, vi } from "vitest";
-import { isProcessAlive, waitForChildClose, waitForDead } from "./process-wait.js";
-import { withTestTimeout } from "./promise.js";
+import path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { killPidIfAlive } from "../../src/test-utils/process-tree.js";
+import {
+  isProcessAlive,
+  waitForChildClose,
+  waitForDead,
+  waitForFile,
+  waitForFixtureFile,
+  waitForPidFile,
+} from "./process-wait.js";
+import { createDeferred, withTestTimeout } from "./promise.js";
+import { useAutoCleanupTempDirTracker } from "./temp-dir.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe.each([
+  { name: "file", wait: waitForFile, expected: undefined },
+  { name: "PID", wait: waitForPidFile, expected: 42 },
+])("$name readiness", ({ wait, expected }) => {
+  it("observes readiness after a delayed wake crosses the deadline", async () => {
+    vi.useFakeTimers();
+    const file = path.join(tempDirs.make("openclaw-process-wait-"), "ready");
+    const result = wait(file, 20).catch((error: unknown) => error);
+
+    // The producer finishes while the waiting worker cannot run its pending poll.
+    fsSync.writeFileSync(file, "42\n");
+    vi.setSystemTime(Date.now() + 25);
+    await vi.advanceTimersByTimeAsync(5);
+    expect(await result).toBe(expected);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects a file still missing when the deadline passes", async () => {
+    vi.useFakeTimers();
+    const file = path.join(tempDirs.make("openclaw-process-wait-"), "missing");
+    const result = wait(file, 20).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(await result).toMatchObject({ message: expect.stringContaining("timeout waiting for") });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+it.each(["", "invalid", "0", "-1"])("rejects PID contents %j at the deadline", async (contents) => {
+  vi.useFakeTimers();
+  const file = path.join(tempDirs.make("openclaw-process-wait-"), "pid");
+  fsSync.writeFileSync(file, contents);
+  const result = waitForPidFile(file, 20).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(20);
+  expect(await result).toEqual(new Error(`timeout waiting for pid in ${file}`));
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("waits through an open-truncate window for valid PID contents", async () => {
+  vi.useFakeTimers();
+  const file = path.join(tempDirs.make("openclaw-process-wait-"), "pid");
+  fsSync.writeFileSync(file, "");
+  let settled = false;
+  const result = waitForPidFile(file, 20)
+    .finally(() => {
+      settled = true;
+    })
+    .catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(5);
+  expect(settled).toBe(false);
+  fsSync.writeFileSync(file, "42\n");
+  await vi.advanceTimersByTimeAsync(5);
+  expect(await result).toBe(42);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("stops waiting when a Linux process is a zombie", async () => {
@@ -14,7 +83,7 @@ it("stops waiting when a Linux process is a zombie", async () => {
   vi.spyOn(process, "kill").mockImplementation(() => true);
   vi.spyOn(fsSync, "readFileSync").mockImplementation((filePath) => {
     if (String(filePath) === "/proc/42/status") {
-      return "Name:\tworker\nState:\tZ (zombie)\nPid:\t42\n";
+      return "Name:\tworker\nState:\tZ (zombie)\nPid:\t42\nThreads:\t1\n";
     }
     throw new Error(`unexpected read: ${String(filePath)}`);
   });
@@ -92,11 +161,49 @@ child.once('close', (_code, signal) => {
           await waitForDead(controller.pid, 2_000);
         }
       } finally {
-        if (childPid !== undefined && isProcessAlive(childPid)) {
-          process.kill(childPid, "SIGKILL");
+        if (childPid !== undefined) {
+          killPidIfAlive(childPid);
           await waitForDead(childPid, 2_000);
         }
       }
     }
   }
 });
+
+it.each(["borrower completion", "persistent file"] as const)(
+  "observes readiness from %s without a file-watch event",
+  async (observation) => {
+    const filename = path.join(tempDirs.make("openclaw-process-receipt-"), "ready");
+    const { promise: completion, resolve: finish } = createDeferred();
+    const watchFile = fsSync.watchFile;
+    // A successful initial stat establishes a baseline without notifying Node's
+    // watchFile listener. A receipt created during that stat must still be seen.
+    const watcher = vi
+      .spyOn(fsSync, "watchFile")
+      .mockImplementation((target, ...args) =>
+        target === filename
+          ? watchFile(filename, { interval: 50 }, () => {})
+          : watchFile(target, ...args),
+      );
+    let ready = false;
+    const waiting = waitForFixtureFile(filename, completion).then(() => {
+      ready = true;
+    });
+    try {
+      fsSync.writeFileSync(filename, "ready");
+      if (observation === "borrower completion") {
+        finish();
+        await nextTurn();
+        expect(ready).toBe(true);
+      }
+      await withTestTimeout(waiting, 10_000, "Persistent readiness was not observed");
+      expect(ready).toBe(true);
+    } finally {
+      finish();
+      await waiting.finally(() => {
+        fsSync.unwatchFile(filename);
+        watcher.mockRestore();
+      });
+    }
+  },
+);

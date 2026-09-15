@@ -1,20 +1,30 @@
+import type { PublicationObservation } from "./frv-publication-status.mts";
+
+export type FrvPublicationStatus = Partial<FrvContinuationStatus> & {
+  publication: PublicationObservation;
+};
+
 export interface FrvChildStatus extends Record<string, unknown> {
-  effectiveRunAttempt: number;
+  effectiveRunAttempt: number | null;
   key: string;
-  plannedRunAttempt: number;
+  plannedRunAttempt: number | null;
   runId: string;
-  status: string;
+  status: "active" | "failed" | "missing" | "passed";
 }
 
 export interface FrvContinuationStatus {
   active: FrvChildStatus[];
   children: FrvChildStatus[];
   failed: FrvChildStatus[];
+  missing: FrvChildStatus[];
   passed: FrvChildStatus[];
 }
 
 export interface FrvClient {
   repository?: string;
+  getReleaseEvidenceClient: () => ReturnType<
+    typeof import("./release-ci-summary.mjs").createReleaseEvidenceClient
+  >;
   getAttemptJobs: (runId: string, runAttempt: number) => Promise<Record<string, unknown>[]>;
   getJobLog: (jobId: number) => Promise<string>;
   getParentJobs: (runId: string) => Promise<Record<string, unknown>[]>;
@@ -26,11 +36,18 @@ export interface FrvClient {
     runId: string,
     plan: Record<string, unknown>,
     operationDeadline?: number,
+    expectedRunAttempts?: Record<string, number>,
   ) => Promise<unknown>;
+  verifySeal?: (
+    runId: string,
+    plan: Record<string, unknown>,
+    operationDeadline: number,
+    expectedRunAttempts: Record<string, number>,
+  ) => Promise<boolean>;
 }
 
 export type FrvConcreteClient = FrvClient &
-  Required<Pick<FrvClient, "rerunFailed" | "rerunParent" | "verify">>;
+  Required<Pick<FrvClient, "rerunFailed" | "rerunParent" | "verify" | "verifySeal">>;
 
 export function inspectContinuation(
   plan: Record<string, unknown>,
@@ -43,7 +60,10 @@ export function createClient(
 export function preflightContinuation(
   plan: Record<string, unknown>,
   rootRunId: string,
-  client: Pick<FrvClient, "getJobLog" | "getParentJobs" | "getRunAttempt">,
+  client: Pick<
+    FrvClient,
+    "getJobLog" | "getParentJobs" | "getRunAttempt" | "getReleaseEvidenceClient"
+  >,
   repository?: string,
 ): Promise<Record<string, unknown>>;
 export function loadPlan(

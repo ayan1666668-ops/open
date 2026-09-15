@@ -10,6 +10,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";
 import { findModelInCatalog } from "./model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
+import type { ModelFallbackRouteResolution } from "./model-fallback.types.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
   type ModelManifestNormalizationContext,
@@ -43,7 +44,7 @@ export { resolveAllowedModelRefCore as resolveAllowedModelRef } from "./model-se
 export { buildAllowedModelSet } from "./model-selection-shared.js";
 export {
   resolveThinkingDefault,
-  resolveThinkingDefaultWithRuntimeCatalog,
+  resolveThinkingDefaultWithRuntimeCatalogCore,
 } from "./model-thinking-default.js";
 
 export type { ModelAliasIndex, ModelManifestNormalizationContext, ModelRef };
@@ -136,6 +137,7 @@ export function resolvePersistedSelectedModelRef(params: {
   runtimeModel?: unknown;
   overrideProvider?: unknown;
   overrideModel?: unknown;
+  overrideRouteResolution?: ModelFallbackRouteResolution;
   allowManifestNormalization?: boolean;
   allowPluginNormalization?: boolean;
 }): ModelRef | null {
@@ -143,6 +145,7 @@ export function resolvePersistedSelectedModelRef(params: {
     defaultProvider: params.defaultProvider,
     overrideProvider: params.overrideProvider,
     overrideModel: params.overrideModel,
+    routeResolution: params.overrideRouteResolution,
     allowManifestNormalization: params.allowManifestNormalization,
     allowPluginNormalization: params.allowPluginNormalization,
   });
@@ -228,18 +231,19 @@ function appendAuthProfileSuffix(modelRef: string, profile: string | undefined):
  * or not a known alias, returns it unchanged.
  */
 function resolveModelThroughAliases(value: string, aliasIndex: ModelAliasIndex): string {
+  const { model, profile } = splitTrailingAuthProfile(value);
   // Already a provider/model ref — no alias resolution needed.
-  if (value.includes("/")) {
-    return value;
+  if (model.includes("/")) {
+    return appendAuthProfileSuffix(model, profile);
   }
   // Check if the value is a known alias; if so, resolve to provider/model.
   // Unknown bare strings are returned as-is (don't guess the provider).
-  const aliasKey = normalizeLowercaseStringOrEmpty(value);
+  const aliasKey = normalizeLowercaseStringOrEmpty(model);
   const aliasMatch = aliasIndex.byAlias.get(aliasKey);
   if (aliasMatch) {
-    return `${aliasMatch.ref.provider}/${aliasMatch.ref.model}`;
+    return appendAuthProfileSuffix(`${aliasMatch.ref.provider}/${aliasMatch.ref.model}`, profile);
   }
-  return value;
+  return appendAuthProfileSuffix(model, profile);
 }
 
 export function resolveSubagentSpawnModelSelection(params: {

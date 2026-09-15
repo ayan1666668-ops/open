@@ -26,6 +26,12 @@ import {
 } from "./discovery.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-record-reader.js";
+import { resolveInstalledPluginIndexStorePath } from "./installed-plugin-index-store-path.js";
+import {
+  matchesInstalledPluginRecord,
+  resolvePluginTrust,
+} from "./installed-plugin-record-match.js";
+import { PLUGIN_MANIFEST_CONTRACT_KEYS } from "./manifest-contract-keys.js";
 import { recordPluginManifestInstallOwner } from "./manifest-install-owner.js";
 import type {
   BundledChannelConfigCollector,
@@ -45,23 +51,30 @@ import {
   normalizeManifestChannelCommandDefaults,
 } from "./manifest.js";
 import { checkMinHostVersion } from "./min-host-version.js";
-import { resolveTrustedSourceLinkedOfficialClawHubInstall } from "./official-external-install-records.js";
 import {
   getOfficialExternalPluginCatalogEntryForPackage,
   getOfficialExternalPluginCatalogManifest,
-  resolveOfficialExternalPluginId,
-  resolveOfficialExternalPluginInstall,
 } from "./official-external-plugin-catalog.js";
 import { satisfiesPluginApiRange, resolvePackagePluginApiRange } from "./package-compat.js";
 import { isPathInside } from "./path-safety.js";
 import {
   pluginCacheExistsSync,
+  pluginCacheLstatSync,
   pluginCacheRealpathSync,
   pluginCacheStatSync,
   readPluginCacheFile,
+  readPluginCacheDirectory,
 } from "./plugin-cache-files.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { normalizePluginPolicyId } from "./plugin-policy-id.js";
+import type { PluginTrust } from "./plugin-trust.js";
+import {
+  isPluginActivityToolName,
+  MAX_PLUGIN_ACTIVITY_TOOL_ICONS,
+  PLUGIN_ACTIVITY_ICON_PATH,
+  PLUGIN_TOOL_ACTIVITY_ICON_DIR,
+  PORTABLE_PLUGIN_ICON_PATH,
+} from "./portable-icon-paths.js";
 
 export type {
   BundledChannelConfigCollector,
@@ -115,7 +128,7 @@ function resolveManifestPluginSourcePath(params: {
   rootDir: string;
   manifestPath: string;
   pluginId: string;
-  entryName: "providerCatalogEntry";
+  entryName: "providerCatalogEntry" | "capabilityCatalogEntry";
   entry: string;
   rejectHardlinks: boolean;
   diagnostics: PluginDiagnostic[];
@@ -129,7 +142,7 @@ function resolveManifestPluginSourcePath(params: {
     });
   };
 
-  if (path.isAbsolute(params.entry)) {
+  if (!params.entry || path.isAbsolute(params.entry)) {
     pushDiagnostic();
     return undefined;
   }
@@ -168,8 +181,80 @@ function resolveManifestPluginSourcePath(params: {
 
 type SeenIdEntry = {
   candidate: PluginCandidate;
-  recordIndex: number;
+  record: PluginManifestRecord;
 };
+
+function resolvePortablePluginIconPath(params: {
+  rootDir: string;
+  rejectHardlinks: boolean;
+  relativePath?: string;
+}): string | undefined {
+  const iconPath = path.resolve(params.rootDir, params.relativePath ?? PORTABLE_PLUGIN_ICON_PATH);
+  const iconStat = pluginCacheLstatSync(iconPath);
+  if (!iconStat?.isFile() || (params.rejectHardlinks && iconStat.nlink > 1)) {
+    return undefined;
+  }
+  const rootPath = path.resolve(params.rootDir);
+  const rootRealPath = pluginCacheRealpathSync(rootPath) ?? rootPath;
+  return isPluginRootPath({
+    rootPath,
+    targetPath: iconPath,
+    rootRealPath,
+    rejectHardlinks: params.rejectHardlinks,
+    targetMustExist: true,
+  })
+    ? iconPath
+    : undefined;
+}
+
+function resolvePortableActivityIcons(params: {
+  rootDir: string;
+  rejectHardlinks: boolean;
+}): Pick<PluginManifestRecord, "activityIconPath" | "toolActivityIconPaths"> {
+  const activityIconPath = resolvePortablePluginIconPath({
+    ...params,
+    relativePath: PLUGIN_ACTIVITY_ICON_PATH,
+  });
+  const directory = path.resolve(params.rootDir, PLUGIN_TOOL_ACTIVITY_ICON_DIR);
+  if (
+    !isPluginRootPath({
+      rootPath: params.rootDir,
+      rootRealPath: pluginCacheRealpathSync(params.rootDir) ?? params.rootDir,
+      targetPath: directory,
+      targetMustExist: true,
+    })
+  ) {
+    return { activityIconPath };
+  }
+  let entries: ReturnType<typeof readPluginCacheDirectory>;
+  try {
+    entries = readPluginCacheDirectory(directory);
+  } catch {
+    return { activityIconPath };
+  }
+  // Ignore an overflowing directory as a whole; filesystem order never picks winners.
+  if (entries.length > MAX_PLUGIN_ACTIVITY_TOOL_ICONS) {
+    return { activityIconPath };
+  }
+  const paths: Array<[string, string]> = [];
+  for (const name of entries.map((entry) => entry.name).toSorted()) {
+    const toolName = name.endsWith(".svg") ? name.slice(0, -4) : "";
+    if (!isPluginActivityToolName(toolName)) {
+      continue;
+    }
+    const iconPath = resolvePortablePluginIconPath({
+      ...params,
+      relativePath: `${PLUGIN_TOOL_ACTIVITY_ICON_DIR}/${name}`,
+    });
+    if (iconPath) {
+      paths.push([toolName, iconPath]);
+    }
+  }
+  return {
+    activityIconPath,
+    ...(paths.length ? { toolActivityIconPaths: Object.fromEntries(paths) } : {}),
+  };
+}
 
 // Canonicalize identical physical plugin roots with the most explicit source.
 // This only applies when multiple candidates resolve to the same on-disk plugin.
@@ -278,30 +363,7 @@ function mergeManifestContracts(
     return manifestContracts;
   }
   const contracts: PluginManifestContracts = {};
-  for (const key of [
-    "embeddedExtensionFactories",
-    "agentToolResultMiddleware",
-    "trustedToolPolicies",
-    "externalAuthProviders",
-    "embeddingProviders",
-    "speechProviders",
-    "realtimeTranscriptionProviders",
-    "realtimeVoiceProviders",
-    "mediaUnderstandingProviders",
-    "transcriptSourceProviders",
-    "documentExtractors",
-    "imageGenerationProviders",
-    "videoGenerationProviders",
-    "musicGenerationProviders",
-    "webContentExtractors",
-    "webFetchProviders",
-    "webSearchProviders",
-    "workerProviders",
-    "usageProviders",
-    "migrationProviders",
-    "gatewayMethodDispatch",
-    "tools",
-  ] as const) {
+  for (const key of PLUGIN_MANIFEST_CONTRACT_KEYS) {
     const merged = mergeContractLists(manifestContracts?.[key], catalogContracts[key]);
     if (merged) {
       contracts[key] = merged;
@@ -390,7 +452,7 @@ function buildRecord(params: {
   schemaCacheKey?: string;
   configSchema?: Record<string, unknown>;
   bundledChannelConfigCollector?: BundledChannelConfigCollector;
-  trustedOfficialInstall?: boolean;
+  trust: PluginTrust;
 }): PluginManifestRecord {
   const pluginId = params.candidate.effectivePluginId ?? params.manifest.id;
   const providerSourceEntry =
@@ -426,14 +488,23 @@ function buildRecord(params: {
   );
   return {
     id: pluginId,
+    categories: params.manifest.categories,
     backupResources: params.manifest.backupResources,
     doctorContract: params.manifest.doctorContract,
+    doctorHealthChecks: params.manifest.doctorHealthChecks,
     sessionRouteStateOwners: params.manifest.sessionRouteStateOwners,
     name: normalizeOptionalString(params.manifest.name) ?? params.candidate.packageName,
     description:
       normalizeOptionalString(params.manifest.description) ?? params.candidate.packageDescription,
     catalog: mergeManifestCatalog(params.manifest.catalog, officialCatalogManifest?.catalog),
-    icon: normalizeOptionalString(params.manifest.icon),
+    iconPath: resolvePortablePluginIconPath({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+    }),
+    ...resolvePortableActivityIcons({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+    }),
     version: normalizeOptionalString(params.manifest.version) ?? params.candidate.packageVersion,
     packageName: params.candidate.packageName,
     packageVersion: params.candidate.packageVersion,
@@ -446,6 +517,7 @@ function buildRecord(params: {
     bundleFormat: params.candidate.bundleFormat,
     kind: params.manifest.kind,
     channels: params.manifest.channels ?? [],
+    channelAccountKeyPolicies: params.manifest.channelAccountKeyPolicies,
     providers: params.manifest.providers ?? [],
     providerDiscoverySource: providerSourceEntry
       ? resolveManifestPluginSourcePath({
@@ -458,6 +530,18 @@ function buildRecord(params: {
           diagnostics: params.diagnostics,
         })
       : undefined,
+    capabilityCatalogSource:
+      params.manifest.capabilityCatalogEntry === undefined
+        ? undefined
+        : (resolveManifestPluginSourcePath({
+            rootDir: params.candidate.rootDir,
+            manifestPath: params.manifestPath,
+            pluginId,
+            entryName: "capabilityCatalogEntry",
+            entry: params.manifest.capabilityCatalogEntry,
+            rejectHardlinks: params.rejectHardlinks,
+            diagnostics: params.diagnostics,
+          }) ?? null),
     modelSupport: params.manifest.modelSupport,
     modelCatalog: params.manifest.modelCatalog,
     modelPricing: params.manifest.modelPricing,
@@ -480,9 +564,11 @@ function buildRecord(params: {
     packageOptionalDependencies: params.candidate.packageOptionalDependencies,
     packageChannel: params.candidate.packageManifest?.channel,
     packageInstall: params.candidate.packageManifest?.install,
-    trustedOfficialInstall: params.trustedOfficialInstall === true ? true : undefined,
+    trustedOfficialInstall: params.trust.reason === "trusted-official" ? true : undefined,
+    trust: params.trust,
     qaRunners: params.manifest.qaRunners,
     dashboard: params.manifest.dashboard,
+    controlUi: params.manifest.controlUi,
     mcpServers: params.manifest.mcpServers,
     skills: params.manifest.skills ?? [],
     settingsFiles: [],
@@ -500,6 +586,7 @@ function buildRecord(params: {
       params.manifest.contracts,
       officialCatalogManifest?.contracts,
     ),
+    transcriptSources: params.manifest.transcriptSources,
     mediaUnderstandingProviderMetadata: params.manifest.mediaUnderstandingProviderMetadata,
     imageGenerationProviderMetadata: params.manifest.imageGenerationProviderMetadata,
     videoGenerationProviderMetadata: params.manifest.videoGenerationProviderMetadata,
@@ -541,11 +628,20 @@ function buildBundleRecord(params: {
   };
   candidate: PluginCandidate;
   manifestPath: string;
+  rejectHardlinks: boolean;
 }): PluginManifestRecord {
   return {
     id: params.manifest.id,
     name: normalizeOptionalString(params.manifest.name) ?? params.candidate.idHint,
     description: normalizeOptionalString(params.manifest.description),
+    iconPath: resolvePortablePluginIconPath({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+    }),
+    ...resolvePortableActivityIcons({
+      rootDir: params.candidate.rootDir,
+      rejectHardlinks: params.rejectHardlinks,
+    }),
     version: normalizeOptionalString(params.manifest.version),
     packageName: params.candidate.packageName,
     packageVersion: params.candidate.packageVersion,
@@ -627,16 +723,21 @@ function pushManifestCompatibilityDiagnostics(params: {
   pushNonBundledChannelConfigDescriptorDiagnostic(params);
 }
 
-function dedupePluginDiagnostics(diagnostics: PluginDiagnostic[]): PluginDiagnostic[] {
+function dedupePluginDiagnostics(
+  diagnostics: PluginDiagnostic[],
+  discoveryDiagnostics: ReadonlySet<PluginDiagnostic>,
+): PluginDiagnostic[] {
   const seen = new Set<string>();
   const deduped: PluginDiagnostic[] = [];
   for (const diagnostic of diagnostics) {
-    // Errors belong to their failed source; equivalent compatibility warnings remain owner-deduped.
+    // Discovery diagnostics belong to package roots; generated compatibility warnings belong to ids.
     const key = JSON.stringify([
       diagnostic.level,
       diagnostic.pluginId ?? "",
       diagnostic.message,
-      diagnostic.level === "error" ? (diagnostic.source ?? "") : "",
+      diagnostic.level === "error" || discoveryDiagnostics.has(diagnostic)
+        ? (diagnostic.source ?? "")
+        : "",
     ]);
     if (seen.has(key)) {
       continue;
@@ -647,144 +748,6 @@ function dedupePluginDiagnostics(diagnostics: PluginDiagnostic[]): PluginDiagnos
   return deduped;
 }
 
-function resolveCandidateInstallOwner(params: {
-  pluginId: string;
-  candidate: PluginCandidate;
-  installRecords: Record<string, PluginInstallRecord>;
-}): string | undefined {
-  if (isPluginCandidateInstallOwnerAmbiguous(params.candidate)) {
-    return undefined;
-  }
-  const installOwner = resolvePluginCandidateInstallOwner(params.candidate);
-  if (installOwner) {
-    return Object.hasOwn(params.installRecords, installOwner) ? installOwner : undefined;
-  }
-  return undefined;
-}
-
-function matchesInstalledPluginRecord(params: {
-  pluginId: string;
-  candidate: PluginCandidate;
-  config?: OpenClawConfig;
-  env: NodeJS.ProcessEnv;
-  installRecords: Record<string, PluginInstallRecord>;
-  installPathOnly?: boolean;
-}): boolean {
-  if (params.candidate.origin !== "global" && params.candidate.origin !== "config") {
-    return false;
-  }
-  const installOwner = resolveCandidateInstallOwner(params);
-  const record = installOwner ? params.installRecords[installOwner] : undefined;
-  if (!record) {
-    return false;
-  }
-  const candidatePaths = [
-    params.candidate.rootDir,
-    params.candidate.packageDir,
-    params.candidate.source,
-    params.candidate.setupSource,
-  ]
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    .map((entry) => {
-      const resolved = resolveUserPath(entry, params.env);
-      return pluginCacheRealpathSync(resolved) ?? resolved;
-    });
-  // Security decisions must bind to the current install output. sourcePath can
-  // legitimately identify path installs, but it can also survive a source switch.
-  const trackedPaths = (
-    params.installPathOnly ? [record.installPath] : [record.installPath, record.sourcePath]
-  )
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    .map((entry) => {
-      const resolved = resolveUserPath(entry, params.env);
-      return pluginCacheRealpathSync(resolved) ?? resolved;
-    });
-  if (candidatePaths.length === 0 || trackedPaths.length === 0) {
-    return false;
-  }
-  return trackedPaths.some((trackedPath) =>
-    candidatePaths.some(
-      (candidatePath) =>
-        candidatePath === trackedPath ||
-        isPathInside(trackedPath, candidatePath) ||
-        isPathInside(candidatePath, trackedPath),
-    ),
-  );
-}
-
-function npmSpecMatchesPackage(value: string | undefined, packageName: string): boolean {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized === packageName) {
-    return true;
-  }
-  return normalized.startsWith(`${packageName}@`);
-}
-
-function isTrustedOfficialPluginInstall(params: {
-  pluginId: string;
-  candidate: PluginCandidate;
-  env: NodeJS.ProcessEnv;
-  installRecords: Record<string, PluginInstallRecord>;
-}): boolean {
-  const installOwner = resolveCandidateInstallOwner(params);
-  if (
-    !installOwner ||
-    (params.candidate.origin !== "global" && params.candidate.origin !== "config") ||
-    !matchesInstalledPluginRecord({
-      pluginId: params.pluginId,
-      candidate: params.candidate,
-      env: params.env,
-      installRecords: params.installRecords,
-      installPathOnly: true,
-    })
-  ) {
-    return false;
-  }
-  const packageName = params.candidate.packageName?.trim();
-  if (!packageName) {
-    return false;
-  }
-  const catalogEntry = getOfficialExternalPluginCatalogEntryForPackage(packageName);
-  if (!catalogEntry || resolveOfficialExternalPluginId(catalogEntry) !== installOwner) {
-    return false;
-  }
-  const officialInstall = resolveOfficialExternalPluginInstall(catalogEntry);
-  const installRecord = params.installRecords[installOwner];
-  if (!installRecord) {
-    return false;
-  }
-  const officialClawHubInstall =
-    installRecord.source === "clawhub"
-      ? resolveTrustedSourceLinkedOfficialClawHubInstall({
-          pluginId: installOwner,
-          record: installRecord,
-        })
-      : undefined;
-  // Local npm-pack archives also persist source="npm". Only registry installs
-  // may inherit catalog trust; local artifacts and source links stay untrusted.
-  if (
-    installRecord.source === "npm" &&
-    installRecord.artifactKind === undefined &&
-    installRecord.sourcePath === undefined &&
-    officialInstall?.npmSpec === packageName &&
-    [
-      installRecord.resolvedName,
-      installRecord.spec,
-      installRecord.resolvedSpec,
-      params.candidate.packageName,
-    ].some((value) => npmSpecMatchesPackage(value, packageName))
-  ) {
-    return true;
-  }
-  if (installRecord.source === "clawhub" && officialClawHubInstall) {
-    return true;
-  }
-  return false;
-}
-
 function resolveDuplicatePrecedenceRank(params: {
   pluginId: string;
   candidate: PluginCandidate;
@@ -792,7 +755,7 @@ function resolveDuplicatePrecedenceRank(params: {
   env: NodeJS.ProcessEnv;
   installRecords: Record<string, PluginInstallRecord>;
 }): number {
-  if (params.candidate.origin === "config") {
+  if (params.candidate.origin === "config" || params.candidate.configSelected) {
     return 0;
   }
   if (
@@ -876,6 +839,7 @@ function isSameGlobalPackageDuplicate(left: PluginCandidate, right: PluginCandid
 
 export function loadPluginManifestRegistryCore(
   params: {
+    registryPath?: string;
     config?: OpenClawConfig;
     workspaceDir?: string;
     env?: NodeJS.ProcessEnv;
@@ -897,6 +861,7 @@ export function loadPluginManifestRegistryCore(
   const config = params.config ?? {};
   const normalized = normalizePluginsConfigWithResolver(config.plugins);
   const env = params.env ?? process.env;
+  const registryPath = params.registryPath ?? resolveInstalledPluginIndexStorePath({ env });
   let installRecords = params.installRecords;
   let installRecordsLoaded = Boolean(params.installRecords);
   const getInstallRecords = (): Record<string, PluginInstallRecord> => {
@@ -919,9 +884,9 @@ export function loadPluginManifestRegistryCore(
         env,
         installRecords: getInstallRecords(),
       }));
-  const diagnostics: PluginDiagnostic[] = [...discovery.diagnostics];
+  const discovered = new Set(discovery.diagnostics);
+  const diagnostics: PluginDiagnostic[] = [...discovered];
   const candidates: PluginCandidate[] = discovery.candidates;
-  const records: PluginManifestRecord[] = [];
   const seenIds = new Map<string, SeenIdEntry>();
   const currentHostVersion = resolveCompatibilityHostVersion(env);
   const explicitConfiguredFileSources = new Set(
@@ -1068,6 +1033,7 @@ export function loadPluginManifestRegistryCore(
           manifest: manifest as Parameters<typeof buildBundleRecord>[0]["manifest"],
           candidate,
           manifestPath: manifestRes.manifestPath,
+          rejectHardlinks,
         })
       : buildRecord({
           manifest: manifest as PluginManifest,
@@ -1077,7 +1043,8 @@ export function loadPluginManifestRegistryCore(
           rejectHardlinks,
           schemaCacheKey,
           configSchema,
-          trustedOfficialInstall: isTrustedOfficialPluginInstall({
+          trust: resolvePluginTrust({
+            registryPath,
             pluginId: effectivePluginId,
             candidate,
             env,
@@ -1087,6 +1054,9 @@ export function loadPluginManifestRegistryCore(
             ? { bundledChannelConfigCollector: params.bundledChannelConfigCollector }
             : {}),
         });
+    if (candidate.sourcePreferred || (candidate.origin === "bundled" && candidate.configSelected)) {
+      record.sourcePreferred = true;
+    }
     recordPluginManifestInstallOwner(
       record,
       resolvePluginCandidateInstallOwner(candidate),
@@ -1107,11 +1077,14 @@ export function loadPluginManifestRegistryCore(
         return Boolean(existingReal && candidateReal && existingReal === candidateReal);
       })();
       if (samePlugin) {
+        if (record.sourcePreferred || existing.record.sourcePreferred) {
+          record.sourcePreferred = true;
+          existing.record.sourcePreferred = true;
+        }
         // Prefer higher-precedence origins even if candidates are passed in
         // an unexpected order (config > workspace > global > bundled).
         if (PLUGIN_ORIGIN_RANK[candidate.origin] < PLUGIN_ORIGIN_RANK[existing.candidate.origin]) {
-          records[existing.recordIndex] = record;
-          seenIds.set(effectivePluginId, { candidate, recordIndex: existing.recordIndex });
+          seenIds.set(effectivePluginId, { candidate, record });
           pushManifestCompatibilityDiagnostics({ record, diagnostics, normalized });
         }
         continue;
@@ -1135,8 +1108,7 @@ export function loadPluginManifestRegistryCore(
       const winnerCandidate = candidateWins ? candidate : existing.candidate;
       const overriddenCandidate = candidateWins ? existing.candidate : candidate;
       if (candidateWins) {
-        records[existing.recordIndex] = record;
-        seenIds.set(effectivePluginId, { candidate, recordIndex: existing.recordIndex });
+        seenIds.set(effectivePluginId, { candidate, record });
         pushManifestCompatibilityDiagnostics({ record, diagnostics, normalized });
       }
       if (
@@ -1166,19 +1138,19 @@ export function loadPluginManifestRegistryCore(
       continue;
     }
 
-    seenIds.set(effectivePluginId, { candidate, recordIndex: records.length });
-    records.push(record);
+    seenIds.set(effectivePluginId, { candidate, record });
     pushManifestCompatibilityDiagnostics({ record, diagnostics, normalized });
   }
 
+  const records = [...seenIds.values()].map(({ record }) => record);
   const plugins = rejectCaseFoldedIdCollisions(records, diagnostics);
-  const registry = { plugins, diagnostics: dedupePluginDiagnostics(diagnostics) };
+  const registry = { plugins, diagnostics: dedupePluginDiagnostics(diagnostics, discovered) };
   return registry;
 }
 
 /** Load manifest metadata from the bundled/source plugin tree without consulting operator state. */
 export function loadBundledPluginManifestRegistry(
-  params: { env?: NodeJS.ProcessEnv } = {},
+  params: { env?: NodeJS.ProcessEnv; bundledRoot?: string } = {},
 ): PluginManifestRegistry {
   const env = params.env ?? process.env;
   const installRecords: Record<string, PluginInstallRecord> = {};
@@ -1189,6 +1161,7 @@ export function loadBundledPluginManifestRegistry(
       env,
       installRecords,
       rootScope: "bundled",
+      ...(params.bundledRoot ? { bundledRoot: params.bundledRoot } : {}),
     }),
   });
 }
