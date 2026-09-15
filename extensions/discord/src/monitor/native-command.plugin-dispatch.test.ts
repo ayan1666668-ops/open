@@ -1590,6 +1590,96 @@ describe("Discord native plugin command dispatch", () => {
     expect(interaction.reply).not.toHaveBeenCalled();
   });
 
+  it("edits the deferred native interaction with live progress before the final reply", async () => {
+    const cfg = {
+      ...createConfig(),
+      channels: {
+        discord: {
+          ...createConfig().channels?.discord,
+          streaming: { mode: "progress", progress: { toolProgress: true, label: "Working" } },
+        },
+      },
+    } as OpenClawConfig;
+    const interaction = createInteraction();
+    interaction.responseState = "deferred";
+    nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
+      const replyOptions = plan.replyOptions;
+      if (!replyOptions) {
+        throw new Error("expected native dispatch reply options");
+      }
+      expect(replyOptions.disableBlockStreaming).toBe(true);
+      expect(replyOptions.suppressDefaultToolProgressMessages).toBe(true);
+      expect(replyOptions.progressPreambleEnabled).toBe(true);
+      expect(replyOptions.onToolStart).toBeTypeOf("function");
+      expect(replyOptions.onReasoningStream).toBeTypeOf("function");
+      expect(replyOptions.onCommandOutput).toBeTypeOf("function");
+
+      const toolStartAccepted = await replyOptions.onToolStart?.({
+        name: "exec",
+        phase: "start",
+      });
+      expect(toolStartAccepted).toBe(true);
+      const progressAccepted = await replyOptions.onReasoningStream?.({
+        text: "checking session output",
+        isReasoningSnapshot: true,
+      });
+      expect(progressAccepted).toBe(true);
+      if (!("deliver" in plan.delivery) || !plan.delivery.deliver) {
+        throw new Error("expected direct delivery adapter");
+      }
+      const finalPayload = { text: "final native reply" };
+      const finalInfo = { kind: "final" as const };
+      const deliveryResult = await plan.delivery.deliver(finalPayload, finalInfo);
+      await plan.delivery.onDelivered?.(finalPayload, finalInfo, deliveryResult);
+      return {
+        admission: { kind: "dispatch" },
+        dispatched: true,
+        ctxPayload: plan.ctxPayload,
+        routeSessionKey: plan.route.sessionKey,
+        dispatchResult: {
+          counts: { final: 1, block: 0, tool: 0 },
+          queuedFinal: true,
+          settledReceipt: visibleFinalReceipt,
+        },
+      };
+    };
+
+    const result = await dispatchDiscordNativeAgentReply({
+      cfg,
+      discordConfig: cfg.channels?.discord ?? {},
+      accountId: "default",
+      interaction: interaction as never,
+      ctxPayload: { SessionKey: "agent:main:discord:dm:owner" } as never,
+      effectiveRoute: {
+        accountId: "default",
+        agentId: "main",
+        sessionKey: "agent:main:discord:dm:owner",
+      },
+      channelConfig: null,
+      mediaLocalRoots: [],
+      preferFollowUp: true,
+      pluginCommandDispatch: { kind: "non-plugin" },
+      log: { error: vi.fn() } as never,
+    });
+
+    expect(result).toEqual({ dispatched: true });
+    expect(interaction.editReply).toHaveBeenCalledTimes(2);
+    const editPayload = requireRecord(
+      (interaction.editReply as unknown as MockCalls).mock.calls.at(-1)?.[0],
+      "editReply",
+    );
+    expect(editPayload.content).toContain("Working");
+    expect(editPayload.content).toContain("checking session output");
+    expectFollowUpFields(interaction, { content: "final native reply" });
+    const firstEditOrder = interaction.editReply.mock.invocationCallOrder[0];
+    const finalFollowUpOrder = interaction.followUp.mock.invocationCallOrder[0];
+    expect(firstEditOrder).toBeDefined();
+    expect(finalFollowUpOrder).toBeDefined();
+    expect(firstEditOrder!).toBeLessThan(finalFollowUpOrder!);
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.deleteReply).not.toHaveBeenCalled();
+  });
+
   it("returns an explicit warning when a direct plugin command has no visible reply", async () => {
     const cfg = createConfig();
     const commandSpec: NativeCommandSpec = {

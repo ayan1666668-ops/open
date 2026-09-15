@@ -15,6 +15,7 @@ export type MockCommandInteraction = {
   responseState: "unacknowledged" | "deferred" | "deferred-update" | "replied";
   defer: ReturnType<typeof vi.fn>;
   deleteReply: ReturnType<typeof vi.fn>;
+  editReply: ReturnType<typeof vi.fn>;
   reply: ReturnType<typeof vi.fn>;
   followUp: ReturnType<typeof vi.fn>;
   client: object;
@@ -65,6 +66,10 @@ export function createMockCommandInteraction(
     }),
     deleteReply: vi.fn(async () => {
       interaction.responseState = "replied";
+    }),
+    editReply: vi.fn(async () => {
+      interaction.responseState = "replied";
+      return { ok: true };
     }),
     reply: vi.fn().mockResolvedValue({ ok: true }),
     followUp: vi.fn().mockResolvedValue({ ok: true }),
