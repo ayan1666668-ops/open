@@ -17,8 +17,13 @@ import {
 } from "../routing/session-key.js";
 import { SESSIONS_LIST_OWNER_LIMIT } from "../shared/session-list-limits.js";
 import { runSynchronousWork, type SynchronousWork } from "../shared/synchronous-work.js";
+import { readPreparedGatewayModelCatalogMetadata } from "./server-model-catalog-view.js";
 import { projectActivitySummaryList } from "./session-activity-summary-list.js";
-import { filterSessionEntries, type SessionListFilteredEntries } from "./session-list-filters.js";
+import {
+  filterSessionEntries,
+  type SessionListFilteredEntries,
+  type SessionListFilterParams,
+} from "./session-list-filters.js";
 import { sortAndLimitSessionEntries } from "./session-list-order.js";
 import { readSessionTitleFieldsFromTranscriptBatch as readScopedSessionTitleFieldsFromTranscriptBatch } from "./session-transcript-title-reader.js";
 import type {
@@ -109,23 +114,9 @@ function resolveSessionsListWindowLimit(limit: number | undefined, offset: numbe
   return Number.isFinite(windowLimit) ? Math.min(windowLimit, Number.MAX_SAFE_INTEGER) : undefined;
 }
 
-function* selectSessionEntries(params: {
-  cfg: OpenClawConfig;
-  store: Record<string, SessionEntry>;
-  targetsBySessionKey?: GatewayStoredSessionTargets;
-  opts: SessionsListParams;
-  now: number;
-  getRowContext?: SessionListRowContextProvider;
-  defaultLimit?: number;
-  userProfileIdentityById?: Map<string, SessionActorProfileIdentity | undefined>;
-  configuredAgentIds?: ReadonlySet<string>;
-  entryFilter?: (key: string, entry: SessionEntry) => boolean;
-  restrictProfileReferences?: boolean;
-  involvingActorId?: string;
-  ownerFirstActorId?: string;
-  projectActiveRun?: SessionListActiveRunProjector;
-  shouldYield?: () => boolean;
-}): SynchronousWork<SessionEntrySelection> {
+function* selectSessionEntries(
+  params: SessionListFilterParams & { defaultLimit?: number },
+): SynchronousWork<SessionEntrySelection> {
   const { ownerEntries, entries: filtered, ...facets } = yield* filterSessionEntries(params);
   const limit = resolveSessionsListLimit(params.opts, params.defaultLimit);
   const offset = resolveSessionsListOffset(params.opts);
@@ -186,6 +177,7 @@ function* prepareSessionList(params: ListSessionsFromStoreParams, shouldYield: (
   };
   const selection = yield* selectSessionEntries({
     cfg,
+    modelCatalog: params.modelCatalog,
     store,
     targetsBySessionKey: params.targetsBySessionKey,
     opts,
@@ -195,9 +187,7 @@ function* prepareSessionList(params: ListSessionsFromStoreParams, shouldYield: (
     restrictProfileReferences: params.entryFilter !== undefined,
     defaultLimit: SESSIONS_LIST_DEFAULT_LIMIT,
     getRowContext:
-      hasSpawnedByFilter || Boolean(normalizeOptionalString(opts.search))
-        ? getRowContext
-        : undefined,
+      hasSpawnedByFilter || normalizeOptionalString(opts.search) ? getRowContext : undefined,
     userProfileIdentityById,
     configuredAgentIds,
     involvingActorId: params.involvingActorId,
@@ -281,6 +271,7 @@ function buildSessionsListResult(
       ...(opts.agentId ? { agentId: opts.agentId } : {}),
       allowPluginNormalization: false,
       providerPolicySource: preparedDefaultsCatalog?.pluginRegistry,
+      metadataSnapshot: readPreparedGatewayModelCatalogMetadata(preparedDefaultsCatalog),
     }),
     sessions,
   };
@@ -371,10 +362,11 @@ export async function listSessionsFromStoreAsync(
       }
       const list = step.value;
       const sessions: GatewaySessionRow[] = [];
+      const includeTranscriptFields = list.includeDerivedTitles || list.includeLastMessage;
       const transcriptScopes = list.entries
         .slice(0, list.transcriptFieldRows)
         .flatMap(([key, entry]) => {
-          if (!entry.sessionId || (!list.includeDerivedTitles && !list.includeLastMessage)) {
+          if (!entry.sessionId || !includeTranscriptFields) {
             return [];
           }
           const target = expectDefined(targetsBySessionKey.get(key), "transcript row target");
@@ -400,52 +392,52 @@ export async function listSessionsFromStoreAsync(
         await preparationPause;
       }
       let transcriptFieldIndex = 0;
-      for (let i = 0; i < list.entries.length; i++) {
-        const [key, entry] = expectDefined(list.entries[i], "entries entry at i");
-        const target = expectDefined(targetsBySessionKey.get(key), "session row owner");
-        const includeTranscriptFields = i < list.transcriptFieldRows;
-        const row = buildGatewaySessionRow({
-          cfg,
-          storePath: target.storeTarget.storePath, // Aggregate paths are display-only.
-          store,
-          modelSource: target.modelSource,
-          key: target.storeKey ?? key,
-          entry,
-          agentId: target.agentId,
-          modelCatalog: params.modelCatalog,
-          now: list.now,
-          includeDerivedTitles: false,
-          includeLastMessage: false,
-          storeChildSessionsByKey: list.storeChildSessionsByKey,
-          rowContext: list.rowContext,
-          configuredAgentIds: list.configuredAgentIds,
-          skipTranscriptUsageFallback: true,
-          lightweightListRow: true,
+      for (let nextRowIndex = 0; nextRowIndex < list.entries.length;) {
+        // Release roster facts before a pause so resumed rows observe current entries.
+        const pause = withAgentRosterFactsBatch(cfg, () => {
+          while (nextRowIndex < list.entries.length) {
+            const i = nextRowIndex++;
+            const [key, entry] = expectDefined(list.entries[i], "entries entry at i");
+            const target = expectDefined(targetsBySessionKey.get(key), "session row owner");
+            const row = buildGatewaySessionRow({
+              cfg,
+              storePath: target.storeTarget.storePath, // Aggregate paths are display-only.
+              store,
+              modelSource: target.modelSource,
+              key: target.storeKey ?? key,
+              entry,
+              agentId: target.agentId,
+              modelCatalog: params.modelCatalog,
+              now: list.now,
+              storeChildSessionsByKey: list.storeChildSessionsByKey,
+              rowContext: list.rowContext,
+              configuredAgentIds: list.configuredAgentIds,
+              skipTranscriptUsageFallback: true,
+              lightweightListRow: true,
+            });
+            row.key = key;
+            if (entry?.sessionId && i < list.transcriptFieldRows && includeTranscriptFields) {
+              const { firstUserMessage, lastMessagePreview } = expectDefined(
+                transcriptFields[transcriptFieldIndex++],
+                "batched transcript fields at transcriptFieldIndex",
+              );
+              if (list.includeDerivedTitles) {
+                row.derivedTitle = deriveSessionTitle(entry, firstUserMessage, row.displayName);
+              }
+              if (list.includeLastMessage && lastMessagePreview) {
+                row.lastMessagePreview = lastMessagePreview;
+              }
+            }
+            sessions.push(row);
+            const rowPause = nextRowIndex < list.entries.length ? yieldIfNeeded() : undefined;
+            if (rowPause) {
+              return rowPause;
+            }
+          }
+          return undefined;
         });
-        row.key = key;
-        if (
-          entry?.sessionId &&
-          includeTranscriptFields &&
-          (list.includeDerivedTitles || list.includeLastMessage)
-        ) {
-          const fields = expectDefined(
-            transcriptFields[transcriptFieldIndex],
-            "batched transcript fields at transcriptFieldIndex",
-          );
-          transcriptFieldIndex += 1;
-          if (list.includeDerivedTitles) {
-            row.derivedTitle = deriveSessionTitle(entry, fields.firstUserMessage, row.displayName);
-          }
-          if (list.includeLastMessage && fields.lastMessagePreview) {
-            row.lastMessagePreview = fields.lastMessagePreview;
-          }
-        }
-        sessions.push(row);
-        if (i + 1 < list.entries.length) {
-          const pause = yieldIfNeeded();
-          if (pause) {
-            await pause;
-          }
+        if (pause) {
+          await pause;
         }
       }
 

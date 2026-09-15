@@ -59,11 +59,11 @@ Use the filters together to narrow the inventory before paging:
 - `kinds`, `label`, `agentId`, and `search`: the existing classification, exact label/agent, and metadata-text filters. Kinds are `main`, `group`, `cron`, `hook`, `node`, and `other`.
 - `archived`: false or omitted selects unarchived sessions; true selects archived sessions; `"all"` includes both.
 
-`limit` defaults to 100 and is capped at 200. `count` is the number of returned rows, not the inventory total. While `hasMore` is true, pass `nextOffset` as `offset` with the same filters. An empty page can still have a continuation. Each call is bounded to five internal pages and a 64 KiB serialized result; `truncationReason` identifies a `scan-limit` or `byte-limit` partial result. A byte-limited continuation resumes at the first omitted row.
+`limit` defaults to 100. Larger positive requests accepted by earlier versions remain valid, but each response applies at most 200 rows and reports that bound in `limitApplied`. `count` is the number of returned rows, not the inventory total. While `hasMore` is true, pass `nextOffset` as `offset` with the same filters. An empty page can still have a continuation. Each call is bounded to five internal pages and a 64 KiB serialized result; `truncationReason` identifies a `scan-limit` or `byte-limit` partial result. A byte-limited continuation resumes at the first omitted row.
 
 Pages are a live view, not a frozen snapshot. Concurrent updates, pinning, reassignment, or archiving can move rows between pages. Deduplicate by agent/key/session ID; restart from offset zero when a fresh complete inventory is required. Every call reapplies access checks. A continuation is not an access grant, and the tool does not expose a global count of hidden sessions.
 
-Transcript-derived fields are opt-in: `includeDerivedTitles`, `includeLastMessage`, or `messageLimit` (at most 20 messages per selected row). Metadata-only calls do not read transcripts or start sessions. Previews are hydrated only after session visibility filtering; disable them if a single enriched row exceeds the result budget.
+Transcript-derived fields are opt-in: `includeDerivedTitles`, `includeLastMessage`, or `messageLimit` (at most 20 messages per selected row). Metadata-only calls do not read transcripts or start sessions. Previews are hydrated only after session visibility filtering. If the first enriched row cannot fit the result budget, the call returns metadata without inline messages or transcript-derived previews and sets `enrichmentOmitted: true`; use `sessions_history` for the full conversation. A metadata row that still exceeds 64 KiB fails explicitly rather than silently losing identity or associations.
 
 Use the returned `sessionId` as `expectedSessionId` when the `sessions` tool archives, restores, or deletes a session, so a stale key cannot target a replacement. Delivery routing, detailed runtime settings, cost estimates, and transcript paths remain omitted. Restricted inventories include `visibility` metadata explaining the effective session-tool scope.
 
@@ -171,6 +171,9 @@ During healthy worker provisioning or workspace preparation, accepted input stay
 
 `timeoutSeconds` limits the sending tool's wait, not the receiver's execution
 budget. For nonblocking coordination, use `sessions_send` with `timeoutSeconds: 0`.
+When that wait expires, pending announcements continue observing the accepted
+run until it finishes; a wait interval does not discard a late reply. Nested
+agent-to-agent replies use the same completion observation.
 The low-level Gateway `sessions.send` RPC has a different contract: its JSON
 `timeoutMs` limits **receiver execution**, just like `chat.send`. Omit that field
 to keep the receiver's configured budget; bound the CLI wait separately with

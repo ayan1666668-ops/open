@@ -592,6 +592,7 @@ export async function executeMutableUpdate(
         installTarget: params.packageInstallTarget,
         validateCandidate,
         beforeActivate,
+        assertCurrent: assertExecutionCurrent,
         managedServiceEnv: preManagedServiceStop?.serviceEnv,
         onTransaction: (transaction) => {
           packageTransaction = transaction;
@@ -614,6 +615,7 @@ export async function executeMutableUpdate(
         channel: params.channel,
         tag: params.tag,
         devTarget: params.devTarget,
+        assertCurrent: assertExecutionCurrent,
         inspectGitTarget: async (target) => {
           if (target.metadataUnreadable) {
             throw new UpdatePreMutationError(
@@ -636,6 +638,13 @@ export async function executeMutableUpdate(
         getDoctorContext,
         // Foreign inspection metadata cannot authorize backup or Doctor writes.
         getManagedServiceEnv: () => ownedManagedUpdateContext?.env,
+        getSnapshotSource: async () => {
+          const env =
+            ownedManagedUpdateContext?.env ?? admission?.managedEnv ?? opts.run?.env ?? process.env;
+          const source = await readUpdateCandidateSource(env, params.legacyConfigPlan);
+          return { config: source.config, env };
+        },
+        jsonMode: Boolean(opts.json),
         invocationCwd: params.invocationCwd,
         nodeRunner: params.packageUpdateNodeRunner,
         validateCandidate: async (candidateRoot) => {

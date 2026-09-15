@@ -1,8 +1,9 @@
 // Vitest ui e2e config wires the ui e2e test shard.
 import { defineConfig, type TestUserConfig } from "vitest/config";
+import { intersectIncludePatterns } from "./vitest.include-patterns.ts";
 import {
-  intersectIncludePatterns,
   loadPatternListFromEnv,
+  matchesVitestGlob,
   narrowIncludePatternsForCli,
 } from "./vitest.pattern-file.ts";
 import { sharedVitestConfig } from "./vitest.shared.config.ts";
@@ -27,6 +28,7 @@ const uiE2eIncludePatterns = [
 export const uiE2eRealGatewayTestFiles = [
   "ui/src/e2e/quota-reset-status.real-gateway.e2e.test.ts",
   "ui/src/e2e/model-api-keys.real-gateway.e2e.test.ts",
+  "ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts",
   "ui/src/e2e/model-catalog-partial-refresh.real-gateway.e2e.test.ts",
   "ui/src/e2e/chat-flow.catalog-bootstrap.e2e.test.ts",
   "ui/src/e2e/worker-initial-setup.real-gateway.e2e.test.ts",
@@ -61,6 +63,7 @@ export const uiE2eRealGatewayTestFiles = [
 export const uiE2ePrivateServerTestFiles = [
   "ui/src/e2e/agent-file-lifecycle.real-gateway.e2e.test.ts",
   "ui/src/e2e/approval-bootstrap.e2e.test.ts",
+  "ui/src/e2e/browser-auth-recovery.e2e.test.ts",
   "ui/src/e2e/build-info-unicode.e2e.test.ts",
   "ui/src/e2e/chat-agent-avatar.real-gateway.e2e.test.ts",
   "ui/src/e2e/chat-code-block-fences.e2e.test.ts",
@@ -82,6 +85,7 @@ export const uiE2ePrivateServerTestFiles = [
   "ui/src/e2e/cron-loading.e2e.test.ts",
   "ui/src/e2e/desktop-resize.real-gateway.e2e.test.ts",
   "ui/src/e2e/device-platform-family.real-gateway.e2e.test.ts",
+  "ui/src/e2e/favicon-status.e2e.test.ts",
   "ui/src/e2e/gateway-foreground-recovery.e2e.test.ts",
   "ui/src/e2e/initial-connect-splash.e2e.test.ts",
   "ui/src/e2e/locale-offline-retry.e2e.test.ts",
@@ -94,6 +98,7 @@ export const uiE2ePrivateServerTestFiles = [
   "ui/src/e2e/mount-recovery.e2e.test.ts",
   "ui/src/e2e/native-notifications-loading.e2e.test.ts",
   "ui/src/e2e/new-session-page.cloud-startup.runtime-load.e2e.test.ts",
+  "ui/src/e2e/provider-browser-login.real-gateway.e2e.test.ts",
   "ui/src/e2e/quota-reset-status.real-gateway.e2e.test.ts",
   "ui/src/e2e/session-management.delete.e2e.test.ts",
   "ui/src/e2e/settings-loading-skeletons.e2e.test.ts",
@@ -139,7 +144,9 @@ export function createUiE2eVitestConfig(
     includeFromEnv ??
     narrowIncludePatternsForCli(uiE2eIncludePatterns, argv) ??
     uiE2eIncludePatterns;
-  const serialInclude = (intersectIncludePatterns(uiE2eSerialTestFiles, include) ?? []).toSorted();
+  const serialInclude = (
+    intersectIncludePatterns(uiE2eSerialTestFiles, include, matchesVitestGlob) ?? []
+  ).toSorted();
   const chromiumSetup = "test/vitest/vitest.ui-e2e.global-setup.ts";
   // Vitest resolves dependency directories per project even though ProjectConfig
   // narrows that type. Keep the shared cached dependency roots intact.
@@ -202,7 +209,8 @@ export function createUiE2eVitestConfig(
           test: {
             ...projectTest,
             exclude,
-            include: intersectIncludePatterns(uiE2eStandaloneTestFiles, include) ?? [],
+            include:
+              intersectIncludePatterns(uiE2eStandaloneTestFiles, include, matchesVitestGlob) ?? [],
             name: "ui-e2e-standalone",
             sequence: { ...baseSequence, groupOrder: 0 },
           },

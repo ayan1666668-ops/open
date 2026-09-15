@@ -5,6 +5,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import type { SessionsListParams } from "../../packages/gateway-protocol/src/index.js";
 import { listAgentIds } from "../agents/agent-scope-config.js";
+import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { GatewayStoredSessionTargets } from "../config/sessions/combined-store-gateway.js";
 import {
@@ -15,6 +16,7 @@ import { isPinnableSessionEntry } from "../config/sessions/session-pin-policy.js
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { isCronRunSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
+import { sessionActivityTimestamp } from "../shared/session-activity-timestamp.js";
 import type { SessionOwnerFacetIdentity } from "../shared/session-types.js";
 import type { SynchronousWork } from "../shared/synchronous-work.js";
 import {
@@ -37,7 +39,7 @@ import type {
 import { isFinitePositiveTimestamp, resolveSessionChildOwners } from "./session-utils-core.js";
 import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
 import { createSessionListSearchMatcher } from "./session-utils-search.js";
-import type { SessionsListResult } from "./session-utils.types.js";
+import type { SessionListModelCatalog, SessionsListResult } from "./session-utils.types.js";
 
 export type SessionListFilteredEntries = {
   entries: SessionEntryPair[];
@@ -49,10 +51,11 @@ export type SessionListFilteredEntries = {
   involvingProfileId?: string;
 };
 
-export function* filterSessionEntries(params: {
+export type SessionListFilterParams = {
   cfg: OpenClawConfig;
   store: Record<string, SessionEntry>;
   targetsBySessionKey?: GatewayStoredSessionTargets;
+  modelCatalog?: SessionListModelCatalog | ModelCatalogEntry[];
   opts: SessionsListParams;
   now: number;
   userProfileIdentityById?: Map<string, SessionActorProfileIdentity | undefined>;
@@ -64,7 +67,11 @@ export function* filterSessionEntries(params: {
   ownerFirstActorId?: string;
   projectActiveRun?: SessionListActiveRunProjector;
   shouldYield?: () => boolean;
-}): SynchronousWork<SessionListFilteredEntries> {
+};
+
+export function* filterSessionEntries(
+  params: SessionListFilterParams,
+): SynchronousWork<SessionListFilteredEntries> {
   const { cfg, store, opts, now, shouldYield } = params;
   let rowContext: SessionListRowContext | undefined;
   const getRowContext = () =>
@@ -231,6 +238,7 @@ export function* filterSessionEntries(params: {
         now,
         visibleEntries: candidateEntries,
         targetsBySessionKey: expectDefined(params.targetsBySessionKey, "search row owners"),
+        modelCatalog: params.modelCatalog instanceof Map ? params.modelCatalog : undefined,
         getRowContext,
         projectActiveRun: params.projectActiveRun,
       })
@@ -244,7 +252,11 @@ export function* filterSessionEntries(params: {
     if (matchesSearch && !matchesSearch(key, entry)) {
       continue;
     }
-    if (activeCutoff !== undefined && (entry.updatedAt ?? 0) < activeCutoff) {
+    if (
+      activeCutoff !== undefined &&
+      (opts.sortBy === "activity" ? sessionActivityTimestamp(entry) : (entry.updatedAt ?? 0)) <
+        activeCutoff
+    ) {
       continue;
     }
     const effectiveOwner = projectSessionOwner(entry, identities, cfg, configuredAgentIds)?.actor;

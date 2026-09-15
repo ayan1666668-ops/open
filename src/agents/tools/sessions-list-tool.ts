@@ -59,7 +59,7 @@ import {
 
 const SessionsListToolSchema = Type.Object({
   kinds: Type.Optional(Type.Array(stringEnum(SESSION_LIST_KINDS))),
-  limit: optionalPositiveIntegerSchema({ maximum: 200 }),
+  limit: optionalPositiveIntegerSchema(),
   offset: optionalNonNegativeIntegerSchema({ maximum: Number.MAX_SAFE_INTEGER }),
   activeMinutes: optionalPositiveIntegerSchema(),
   activeOnly: Type.Optional(Type.Boolean()),
@@ -144,6 +144,12 @@ const SessionsListOutputSchema = Type.Object(
     nextOffset: Type.Optional(Type.Integer({ minimum: 0 })),
     limitApplied: Type.Integer({ minimum: 1, maximum: 200 }),
     truncationReason: Type.Optional(stringEnum(["scan-limit", "byte-limit"])),
+    enrichmentOmitted: Type.Optional(
+      Type.Boolean({
+        description:
+          "Inline messages and transcript previews were omitted to fit the byte budget; read session history separately.",
+      }),
+    ),
     sessionLinkRule: Type.Optional(
       Type.String({
         description: "How to build Control UI URLs for sessionKey values in this result.",
@@ -228,9 +234,6 @@ export function createSessionsListTool(opts?: {
           : undefined;
 
       const limit = readPositiveIntegerParam(params, "limit");
-      if (limit !== undefined && limit > 200) {
-        throw new Error("limit must be at most 200; use nextOffset to continue the inventory");
-      }
       const initialOffset = readNonNegativeIntegerParam(params, "offset") ?? 0;
       const activeMinutes = readPositiveIntegerParam(params, "activeMinutes");
       const messageLimitRaw = readNonNegativeIntegerParam(params, "messageLimit") ?? 0;
@@ -298,7 +301,7 @@ export function createSessionsListTool(opts?: {
       };
       const sessions: Array<{ entry: GatewaySessionListRow; agentId: string; offset: number }> = [];
       const seenSessions = new Set<string>();
-      const outputLimit = limit ?? 100;
+      const outputLimit = Math.min(limit ?? 100, 200);
       let offset = initialOffset;
       let nextOffset: number | undefined;
       let hasMore = false;
@@ -640,6 +643,7 @@ export function createSessionsListTool(opts?: {
               warning: `Session visibility is restricted (effective tools.sessions.visibility=${visibility}: ${describeSessionVisibilityScope(visibility, { spawnRestricted: restrictToSpawned })}). Sessions outside that scope are omitted from results and count.`,
             };
 
+      let enrichmentOmitted = false;
       const resultFor = (count: number) => ({
         count,
         sessions: rows.slice(0, count),
@@ -650,6 +654,7 @@ export function createSessionsListTool(opts?: {
             ? { nextOffset }
             : {}),
         limitApplied: outputLimit,
+        ...(enrichmentOmitted ? { enrichmentOmitted: true } : {}),
         ...(count < rows.length
           ? { truncationReason: "byte-limit" as const }
           : truncationReason
@@ -663,6 +668,19 @@ export function createSessionsListTool(opts?: {
       const fits = (count: number) =>
         Buffer.byteLength(JSON.stringify(resultFor(count), null, 2), "utf8") <=
         SESSIONS_LIST_MAX_RESULT_BYTES;
+      // A large optional preview must not make an otherwise usable inventory fail.
+      // Keep identity/metadata intact and report the enrichment downgrade explicitly.
+      if (rows.length > 0 && !fits(1)) {
+        for (const row of rows) {
+          enrichmentOmitted ||=
+            row.messages !== undefined ||
+            row.derivedTitle !== undefined ||
+            row.lastMessagePreview !== undefined;
+          delete row.messages;
+          delete row.derivedTitle;
+          delete row.lastMessagePreview;
+        }
+      }
       let count = rows.length;
       if (!fits(count)) {
         let lower = 0;
@@ -678,7 +696,7 @@ export function createSessionsListTool(opts?: {
         count = lower;
         if (count === 0) {
           throw new Error(
-            "A session row exceeds the 64 KiB result budget; disable messageLimit and previews, or use a narrower inventory query",
+            "Session metadata exceeds the 64 KiB result budget even without previews; use a narrower inventory query",
           );
         }
       }

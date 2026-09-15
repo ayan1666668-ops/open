@@ -568,7 +568,6 @@ describe("sessions-list-tool", () => {
 
   it.each([
     [{ limit: 1.5 }, "limit must be a positive integer"],
-    [{ limit: 201 }, "limit must be at most 200"],
     [{ offset: -1 }, "offset must be a non-negative integer"],
     [{ offset: 1.5 }, "offset must be a non-negative integer"],
     [{ offset: Number.MAX_SAFE_INTEGER + 1 }, "offset must be a non-negative integer"],

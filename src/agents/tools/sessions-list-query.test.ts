@@ -224,6 +224,8 @@ describe("sessions-list inventory queries", () => {
   it.each([
     { name: "default", limit: undefined, expectedLimit: 100 },
     { name: "maximum", limit: 200, expectedLimit: 200 },
+    { name: "legacy larger request", limit: 201, expectedLimit: 200 },
+    { name: "legacy bulk request", limit: 1000, expectedLimit: 200 },
   ])(
     "returns a bounded $name page and resumes at the next unread Gateway row",
     async ({ limit, expectedLimit }) => {
@@ -241,7 +243,7 @@ describe("sessions-list inventory queries", () => {
       const tool = createSessionsListTool({ config: VALID_CONFIG });
 
       expect(Value.Check(tool.parameters, { limit: 200, offset: 0 })).toBe(true);
-      expect(Value.Check(tool.parameters, { limit: 201 })).toBe(false);
+      expect(Value.Check(tool.parameters, { limit: 201 })).toBe(true);
       expect(Value.Check(tool.parameters, { offset: -1 })).toBe(false);
       const first = getSessionsListDetails(await tool.execute("first-inventory", { limit }));
 
@@ -258,7 +260,10 @@ describe("sessions-list inventory queries", () => {
       expect(mocks.gatewayCall).toHaveBeenCalledTimes(1);
 
       const second = getSessionsListDetails(
-        await tool.execute("continued-inventory", { offset: first.nextOffset, limit: 200 }),
+        await tool.execute("continued-inventory", {
+          offset: first.nextOffset,
+          limit: limit ?? 200,
+        }),
       );
 
       expect(second).toMatchObject({
@@ -427,6 +432,44 @@ describe("sessions-list inventory queries", () => {
     expect(resumed).toMatchObject({ count: 2, hasMore: false });
     expect(resumed).not.toHaveProperty("nextOffset");
     expect(resumed).not.toHaveProperty("truncationReason");
+  });
+
+  it("returns metadata instead of failing an oversized inline-preview request", async () => {
+    const entry = {
+      ...sessionRow("agent:main:main", "main"),
+      derivedTitle: "title",
+      lastMessagePreview: "preview",
+    };
+    mocks.gatewayCall.mockImplementation(async ({ method }: { method: string }) =>
+      method === "sessions.list"
+        ? { sessions: [entry] }
+        : {
+            messages: [
+              { role: "assistant", content: [{ type: "text", text: "界".repeat(30_000) }] },
+            ],
+          },
+    );
+    const tool = createSessionsListTool({ config: VALID_CONFIG });
+    const result = await tool.execute("oversized-preview", { messageLimit: 1 });
+    expect(result.details).toMatchObject({ count: 1, hasMore: false, enrichmentOmitted: true });
+    const rows = getSessionsListDetails(result).sessions;
+    expect(rows?.[0]?.key).toBe(entry.key);
+    expect(rows?.[0]).not.toHaveProperty("messages");
+    expect(rows?.[0]).not.toHaveProperty("derivedTitle");
+    expect(rows?.[0]).not.toHaveProperty("lastMessagePreview");
+    expect(Value.Check(tool.outputSchema!, result.details)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result.details, null, 2), "utf8")).toBeLessThanOrEqual(
+      64 * 1024,
+    );
+  });
+
+  it("fails explicitly when metadata alone cannot fit without losing associations", async () => {
+    mocks.gatewayCall.mockResolvedValue({
+      sessions: [{ ...sessionRow("agent:main:main", "main"), label: "界".repeat(30_000) }],
+    });
+    await expect(
+      createSessionsListTool({ config: VALID_CONFIG }).execute("oversized-metadata", {}),
+    ).rejects.toThrow("Session metadata exceeds the 64 KiB result budget");
   });
 
   it.each([
