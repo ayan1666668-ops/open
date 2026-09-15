@@ -5059,6 +5059,24 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     ];
 
     it.each(convertingModes)(
+      "keeps one $tables table when a cumulative partial follows a block",
+      async ({ tables, converted }) => {
+        const { result, options } = createBlockTableHarness(tableCfg(tables));
+        const delivery = await options.deliver({ text: tableMarkdown }, { kind: "block" });
+
+        result.replyOptions.onPartialReply?.({
+          text: `${tableMarkdown}\n\nInventory complete.`,
+        });
+        await options.onIdle?.();
+        await delivery?.finalization;
+
+        expect(firstStreamingCloseText()).toBe(`${converted()}\n\nInventory complete.`);
+        expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledTimes(1);
+        expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(convertingModes)(
       "commits one table when a $tables block repeats its streamed preview",
       async ({ tables, converted }) => {
         const { result, options } = createBlockTableHarness(tableCfg(tables));

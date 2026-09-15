@@ -330,6 +330,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   let streaming: FeishuStreamingSession | null = null;
   let streamText = "";
+  let streamTextIsPreview = true;
   let lastPartial = "";
   let reasoningText = "";
   let statusLine = "";
@@ -432,29 +433,28 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     });
   };
 
+  const streamDisplayText = () => (streamTextIsPreview ? streamText : renderTables(streamText));
+
   const queueStreamingUpdate = (
     nextText: string,
     options?: {
       dedupeWithLastPartial?: boolean;
-      /** Payload text behind nextText, compared instead of it when the two differ. */
-      dedupeSource?: string;
       mode?: StreamTextUpdateMode;
     },
   ) => {
     if (!nextText) {
       return;
     }
-    // Previews queue the payload text as it arrived, so the comparison has to run on
-    // that same unconverted text. A block whose table was converted cannot equal the raw
-    // preview under bullets or code, and the delta then repeats the table.
-    const dedupeSource = options?.dedupeSource || nextText;
-    if (options?.dedupeWithLastPartial && dedupeSource === lastPartial) {
+    // Snapshots and mirrored blocks share authored text until display. Both arrival
+    // orders must compare and merge that representation, never a rendered table.
+    if (options?.dedupeWithLastPartial && nextText === lastPartial) {
       return;
     }
     if (options?.dedupeWithLastPartial) {
-      lastPartial = dedupeSource;
+      lastPartial = nextText;
     }
     const mode = options?.mode ?? "snapshot";
+    streamTextIsPreview = mode === "snapshot";
     if (mode === "delta") {
       streamText = `${streamText}${nextText}`;
     } else {
@@ -473,7 +473,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       }
       lastSnapshotTextLength = nextText.length;
     }
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamText));
+    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
   };
 
   const queueReasoningUpdate = (nextThinking: string) => {
@@ -481,7 +481,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return;
     }
     reasoningText = nextThinking;
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamText));
+    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
   };
 
   const startStreaming = () => {
@@ -550,6 +550,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     activeStreamingGeneration = undefined;
     partialUpdateQueue = Promise.resolve();
     streamText = "";
+    streamTextIsPreview = true;
     lastPartial = "";
     reasoningText = "";
     statusLine = "";
@@ -784,7 +785,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return false;
     }
     startStreaming();
-    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamText));
+    flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
     return false;
   };
 
@@ -1632,20 +1633,24 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               // Mirror block text into streamText so onIdle close still sends content.
               // A block repeating what the preview already streamed is compared on the
               // payload text both sides started from, so only new text is appended.
-              queueStreamingUpdate(text, {
+              queueStreamingUpdate(sourceText, {
                 mode: "delta",
                 dedupeWithLastPartial: true,
-                dedupeSource: sourceText,
               });
             }
             if (info?.kind === "final") {
               // Final payloads can be cumulative snapshots or independent
               // notices. Preserve both when the latter arrives after an answer.
-              streamText = text;
+              streamText = mergeStreamingFinalText(
+                streamText,
+                payload.isReasoning && sourceText ? formatReasoningMessage(sourceText) : sourceText,
+                payload.isError === true && hasStreamingFinalText,
+              );
+              streamTextIsPreview = false;
               hasStreamingFinalText = true;
               snapshotBaseText = "";
-              lastSnapshotTextLength = text.length;
-              flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamText));
+              lastSnapshotTextLength = streamText.length;
+              flushStreamingCardUpdate(buildCombinedStreamText(reasoningText, streamDisplayText()));
             }
           }
           // Send media even when streaming handled the text
