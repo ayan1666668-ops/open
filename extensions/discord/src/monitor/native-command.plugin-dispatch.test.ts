@@ -20,7 +20,7 @@ import {
   clearRuntimeConfigSnapshot,
   setRuntimeConfigSnapshot,
 } from "openclaw/plugin-sdk/runtime-config-snapshot";
-import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
+import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineThrowingDiscordChannelGetter } from "../test-support/partial-channel.js";
 import { dispatchDiscordNativeAgentReply } from "./native-command-agent-reply.js";
@@ -65,6 +65,7 @@ const runtimeModuleMocks = vi.hoisted(() => ({
   dispatchReplyWithDispatcher: vi.fn(),
   resolveDirectStatusReplyForSession: vi.fn(),
   getSessionEntry: vi.fn(),
+  resolveStorePath: vi.fn(),
 }));
 let observedNativeTurnDispatcher: unknown;
 
@@ -505,6 +506,7 @@ describe("Discord native plugin command dispatch", () => {
     nativeCommandRuntime.resolveDiscordNativeInteractionRouteState =
       resolveDiscordNativeInteractionRouteState;
     nativeCommandRuntime.getSessionEntry = getSessionEntry;
+    nativeCommandRuntime.resolveStorePath = resolveStorePath;
   });
 
   beforeEach(() => {
@@ -531,6 +533,10 @@ describe("Discord native plugin command dispatch", () => {
     });
     runtimeModuleMocks.getSessionEntry.mockReset();
     runtimeModuleMocks.getSessionEntry.mockReturnValue(undefined);
+    runtimeModuleMocks.resolveStorePath.mockReset();
+    runtimeModuleMocks.resolveStorePath.mockReturnValue(
+      "/tmp/openclaw-discord-native-command-test-sessions.json",
+    );
     nativeCommandRuntime.dispatchChannelInboundTurn = dispatchChannelInboundTurnForTest;
     nativeCommandRuntime.resolveDirectStatusReplyForSession =
       runtimeModuleMocks.resolveDirectStatusReplyForSession as typeof resolveDirectStatusReplyForSession;
@@ -543,6 +549,8 @@ describe("Discord native plugin command dispatch", () => {
       });
     nativeCommandRuntime.getSessionEntry =
       runtimeModuleMocks.getSessionEntry as typeof import("openclaw/plugin-sdk/session-store-runtime").getSessionEntry;
+    nativeCommandRuntime.resolveStorePath =
+      runtimeModuleMocks.resolveStorePath as typeof import("openclaw/plugin-sdk/session-store-runtime").resolveStorePath;
   });
 
   afterEach(() => {
@@ -1602,6 +1610,7 @@ describe("Discord native plugin command dispatch", () => {
     } as OpenClawConfig;
     const interaction = createInteraction();
     interaction.responseState = "deferred";
+    runtimeModuleMocks.getSessionEntry.mockReturnValue({ reasoningLevel: "stream" });
     nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
       const replyOptions = plan.replyOptions;
       if (!replyOptions) {
@@ -1613,6 +1622,7 @@ describe("Discord native plugin command dispatch", () => {
       expect(replyOptions.onToolStart).toBeTypeOf("function");
       expect(replyOptions.onReasoningStream).toBeTypeOf("function");
       expect(replyOptions.onCommandOutput).toBeTypeOf("function");
+      expect(replyOptions.streamReasoningInNonStreamModes).toBe(true);
 
       const toolStartAccepted = await replyOptions.onToolStart?.({
         name: "exec",
@@ -1622,6 +1632,7 @@ describe("Discord native plugin command dispatch", () => {
       const progressAccepted = await replyOptions.onReasoningStream?.({
         text: "checking session output",
         isReasoningSnapshot: true,
+        requiresReasoningProgressOptIn: true,
       });
       expect(progressAccepted).toBe(true);
       if (!("deliver" in plan.delivery) || !plan.delivery.deliver) {
@@ -1678,6 +1689,62 @@ describe("Discord native plugin command dispatch", () => {
     expect(firstEditOrder!).toBeLessThan(finalFollowUpOrder!);
     expect(interaction.reply).not.toHaveBeenCalled();
     expect(interaction.deleteReply).not.toHaveBeenCalled();
+  });
+
+  it("does not edit native progress with opt-in-only reasoning unless reasoning stream is enabled", async () => {
+    const cfg = {
+      ...createConfig(),
+      channels: {
+        discord: {
+          ...createConfig().channels?.discord,
+          streaming: { mode: "progress", progress: { label: "Working" } },
+        },
+      },
+    } as OpenClawConfig;
+    const interaction = createInteraction();
+    interaction.responseState = "deferred";
+    nativeCommandRuntime.dispatchChannelInboundTurn = async (plan) => {
+      const accepted = await plan.replyOptions?.onReasoningStream?.({
+        text: "private reasoning",
+        requiresReasoningProgressOptIn: true,
+      });
+      expect(accepted).toBe(false);
+      expect(plan.replyOptions?.streamReasoningInNonStreamModes).toBeUndefined();
+      return {
+        admission: { kind: "dispatch" },
+        dispatched: true,
+        ctxPayload: plan.ctxPayload,
+        routeSessionKey: plan.route.sessionKey,
+        dispatchResult: {
+          counts: { final: 0, block: 0, tool: 0 },
+          queuedFinal: true,
+          settledReceipt: visibleFinalReceipt,
+        },
+      };
+    };
+
+    const result = await dispatchDiscordNativeAgentReply({
+      cfg,
+      discordConfig: cfg.channels?.discord ?? {},
+      accountId: "default",
+      interaction: interaction as never,
+      ctxPayload: { SessionKey: "agent:main:discord:dm:owner" } as never,
+      effectiveRoute: {
+        accountId: "default",
+        agentId: "main",
+        sessionKey: "agent:main:discord:dm:owner",
+      },
+      channelConfig: null,
+      mediaLocalRoots: [],
+      preferFollowUp: true,
+      pluginCommandDispatch: { kind: "non-plugin" },
+      log: { error: vi.fn() } as never,
+    });
+
+    expect(result).toEqual({ dispatched: true });
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.reply).not.toHaveBeenCalled();
   });
 
   it("returns an explicit warning when a direct plugin command has no visible reply", async () => {

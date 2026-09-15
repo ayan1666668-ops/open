@@ -1,5 +1,6 @@
-// Discord plugin module implements native command agent reply behavior.
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
+// Discord plugin module implements native command agent reply behavior.
+import { resolveAgentConfig } from "openclaw/plugin-sdk/agent-scope-runtime";
 import {
   hasVisibleInboundReplyDispatch,
   isChannelPartialDeliveryError,
@@ -47,6 +48,32 @@ type DispatchDiscordNativeAgentReplyResult = {
   hiddenFinalReply?: ReplyPayload;
 };
 
+function resolveNativeCommandReasoningWindowEnabled(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  sessionKey: string;
+}): boolean {
+  const agentEntryDefault = resolveAgentConfig(params.cfg, params.agentId)?.reasoningDefault;
+  const cfgDefault = agentEntryDefault ?? params.cfg.agents?.defaults?.reasoningDefault;
+  const configDefault = cfgDefault === "on" || cfgDefault === "stream" ? cfgDefault : "off";
+  try {
+    const entry = nativeCommandRuntime.getSessionEntry({
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      storePath: nativeCommandRuntime.resolveStorePath(params.cfg.session?.store, {
+        agentId: params.agentId,
+      }),
+    });
+    const level = entry?.reasoningLevel;
+    if (level === "on" || level === "stream" || level === "off") {
+      return level === "stream";
+    }
+  } catch {
+    return false;
+  }
+  return configDefault === "stream";
+}
+
 export async function dispatchDiscordNativeAgentReply(params: {
   cfg: OpenClawConfig;
   discordConfig: DiscordConfig;
@@ -65,6 +92,12 @@ export async function dispatchDiscordNativeAgentReply(params: {
 }): Promise<DispatchDiscordNativeAgentReplyResult> {
   const blockStreamingEnabled = resolveChannelStreamingBlockEnabled(params.discordConfig);
   const streamMode = resolveDiscordPreviewStreamMode(params.discordConfig);
+  const routeSessionKey = params.ctxPayload.SessionKey ?? params.effectiveRoute.sessionKey;
+  const reasoningWindowEnabled = resolveNativeCommandReasoningWindowEnabled({
+    cfg: params.cfg,
+    agentId: params.effectiveRoute.agentId,
+    sessionKey: routeSessionKey,
+  });
 
   let didReply = false;
   let finalReplyOutcome: "accepted" | "failed" | "suppressed" | undefined;
@@ -98,7 +131,7 @@ export async function dispatchDiscordNativeAgentReply(params: {
     accountId: params.effectiveRoute.accountId,
     route: {
       agentId: params.effectiveRoute.agentId,
-      sessionKey: params.ctxPayload.SessionKey ?? params.effectiveRoute.sessionKey,
+      sessionKey: routeSessionKey,
     },
     ctxPayload: params.ctxPayload,
     dispatchReplyFromConfig: params.dispatchReplyFromConfig,
@@ -209,11 +242,16 @@ export async function dispatchDiscordNativeAgentReply(params: {
           }
         : undefined,
       onReasoningStream: progressDraft
-        ? async (payload) =>
-            await progressDraft.pushReasoningProgress(payload?.text, {
+        ? async (payload) => {
+            if (payload?.requiresReasoningProgressOptIn === true && !reasoningWindowEnabled) {
+              return false;
+            }
+            return await progressDraft.pushReasoningProgress(payload?.text, {
               snapshot: payload?.isReasoningSnapshot === true,
-            })
+            });
+          }
         : undefined,
+      streamReasoningInNonStreamModes: progressDraft && reasoningWindowEnabled ? true : undefined,
       onToolStart: progressDraft
         ? async (payload) => {
             const visible = await progressDraft.pushToolEvent(payload);
