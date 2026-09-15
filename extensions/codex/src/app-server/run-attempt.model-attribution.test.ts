@@ -155,7 +155,11 @@ describe("registered Codex harness model attribution", () => {
       }),
     );
     expect(registerAgentHarness).toHaveBeenCalledOnce();
-    const registered = registerAgentHarness.mock.calls[0][0];
+    const registration = registerAgentHarness.mock.calls[0];
+    if (!registration) {
+      throw new Error("Expected the Codex plugin to register its harness");
+    }
+    const registered = registration[0];
     const events: Array<Parameters<NonNullable<EmbeddedRunAttemptParamsV2["onAgentEvent"]>>[0]> =
       [];
     params.onAgentEvent = (event) => {
@@ -215,7 +219,7 @@ describe("registered Codex harness model attribution", () => {
         },
       });
       const result = await run;
-      expect(result.terminal).toEqual({ kind: "ok" });
+      expect(result).toHaveProperty("terminal", { kind: "ok" });
       expect(result.runtimeModelSelection).toEqual({
         provider: "openai",
         model: "ready-native-model",
@@ -227,8 +231,12 @@ describe("registered Codex harness model attribution", () => {
       for (const method of ["thread/resume", "turn/start"]) {
         const matching = requests.filter((request) => request.method === method);
         expect(matching).toHaveLength(1);
-        expect(matching[0].params).not.toHaveProperty("model");
-        expect(matching[0].params).not.toHaveProperty("modelProvider");
+        const request = matching[0];
+        if (!request) {
+          throw new Error(`Expected a ${method} request`);
+        }
+        expect(request.params).not.toHaveProperty("model");
+        expect(request.params).not.toHaveProperty("modelProvider");
       }
     } finally {
       abort.abort("test cleanup");

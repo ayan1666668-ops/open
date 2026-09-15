@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import { type WorkerInferenceStartParams } from "../../../packages/gateway-protocol/src/schema/worker-inference.js";
+import type { WorkerInferenceStartParams } from "../../../packages/gateway-protocol/src/schema/worker-inference.js";
 import type { resolveSessionAuthSelection } from "../../agents/auth-profiles/session-override.js";
 import type { applyExtraParamsToAgent } from "../../agents/embedded-agent-runner/extra-params.js";
 import type { resolveModelAsync } from "../../agents/embedded-agent-runner/model.js";
