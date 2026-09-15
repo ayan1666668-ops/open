@@ -184,8 +184,9 @@ export async function collectStagedWorkerArtifacts(
       })),
   ].toSorted((left, right) => left.path.localeCompare(right.path));
   const selected = snapshot.changedEntries.find((entry) => entry.path === input.previewPath);
+  const maxPreviewBytes = input.maxPreviewBytes ?? WORKSPACE_PREVIEW_MAX_BYTES;
   const preview =
-    selected?.type === "file" && selected.size <= WORKSPACE_PREVIEW_MAX_BYTES
+    selected?.type === "file" && selected.size <= maxPreviewBytes
       ? await readStagedWorkerWorkspaceEntry(
           { root: input.root, objectsByPath: snapshot.objectsByPath },
           selected,
