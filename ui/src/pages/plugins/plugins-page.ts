@@ -322,19 +322,17 @@ class PluginsPage extends OpenClawLightDomElement {
           ? "configuration"
           : installedPluginDetailTabFromHash(data.location.hash);
     }
-    if (!this.gateway.isRouteDataCurrent(data)) {
-      this.ensureInitialData();
-      return;
-    }
-    // Route loading can complete after publication on the same connection.
-    if (
-      this.pluginGeneration !== undefined &&
-      (data.result?.generation ?? -1) < this.pluginGeneration
-    ) {
-      void this.refreshCatalog();
-    } else {
-      this.replaceResult(data.result);
-      this.error = data.error;
+    if (this.gateway.isRouteDataCurrent(data)) {
+      // Route loading can complete after publication on the same connection.
+      if (
+        this.pluginGeneration !== undefined &&
+        (data.result?.generation ?? -1) < this.pluginGeneration
+      ) {
+        void this.refreshCatalog();
+      } else {
+        this.replaceResult(data.result);
+        this.error = data.error;
+      }
     }
     if (this.surface === "settings" && detailPluginId !== this.detail?.pluginId) {
       void this.showDetails(detailPluginId);
@@ -401,16 +399,6 @@ class PluginsPage extends OpenClawLightDomElement {
     }
     if (!this.loading && !this.result && !this.error) {
       void this.refreshCatalog();
-    }
-    if (this.surface === "discovery") {
-      const catalogId = this.activeRoutePluginId;
-      if (catalogId) {
-        if (catalogId !== this.catalogDetail?.id) {
-          void this.showCatalogDetail(catalogId);
-        }
-      } else {
-        this.discovery.ensureInitial();
-      }
     }
   }
 

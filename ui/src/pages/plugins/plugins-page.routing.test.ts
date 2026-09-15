@@ -729,42 +729,56 @@ describe("PluginsPage routing", () => {
     },
   );
 
-  it("keeps installed controls on a failed catalog URL and clears them on another catalog route", async () => {
-    const plugin = createPlugin({ catalogId: "ch_d29ya2JvYXJk" });
-    const result = createResult(plugin);
-    const { client, request } = createClient(async (method) => {
-      if (method === "plugins.inspect") {
-        return createInspectResult();
+  it.each([false, true])(
+    "clears installed controls on another catalog route (stale snapshot: %s)",
+    async (staleSnapshot) => {
+      const plugin = createPlugin({ catalogId: "ch_d29ya2JvYXJk" });
+      const result = createResult(plugin);
+      const { client, request } = createClient(async (method) => {
+        if (method === "plugins.inspect") {
+          return createInspectResult();
+        }
+        if (method === "plugins.catalog.get") {
+          throw new Error("ClawHub unavailable");
+        }
+        return result;
+      });
+      const harness = createGateway(client);
+      const context = createContext(harness.gateway);
+      const route = `/plugins/${plugin.catalogId}`;
+      const { page } = await mountPage(
+        context,
+        createPluginsRouteData(harness.gateway, result, createPluginsRouteLocation(route)),
+      );
+      await vi.waitFor(() =>
+        expect(request).toHaveBeenCalledWith("plugins.inspect", {
+          pluginId: plugin.id,
+        }),
+      );
+      expect(page.querySelector('[aria-label="Enable Workboard"]')).not.toBeNull();
+      expect(context.replace).not.toHaveBeenCalled();
+      expect(context.navigate).not.toHaveBeenCalled();
+      const nextRoute = createPluginsRouteData(
+        harness.gateway,
+        result,
+        createPluginsRouteLocation("/plugins/ch_b3RoZXI"),
+      );
+      if (staleSnapshot) {
+        harness.emit(client, false);
+        harness.emit(client, true, {
+          hello: gatewayHelloForMethods(["plugins.list", "plugins.inspect"]),
+        });
+        await vi.waitFor(() => expect(page.loading).toBe(false));
+        await vi.waitFor(() =>
+          expect(page.querySelector('[aria-label="Enable Workboard"]')).not.toBeNull(),
+        );
       }
-      if (method === "plugins.catalog.get") {
-        throw new Error("ClawHub unavailable");
-      }
-      return result;
-    });
-    const harness = createGateway(client);
-    const context = createContext(harness.gateway);
-    const route = `/plugins/${plugin.catalogId}`;
-    const { page } = await mountPage(
-      context,
-      createPluginsRouteData(harness.gateway, result, createPluginsRouteLocation(route)),
-    );
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith("plugins.inspect", {
-        pluginId: plugin.id,
-      }),
-    );
-    expect(page.querySelector('[aria-label="Enable Workboard"]')).not.toBeNull();
-    expect(context.replace).not.toHaveBeenCalled();
-    expect(context.navigate).not.toHaveBeenCalled();
-    page.routeData = createPluginsRouteData(
-      harness.gateway,
-      result,
-      createPluginsRouteLocation("/plugins/ch_b3RoZXI"),
-    );
-    await page.updateComplete;
-    await vi.waitFor(() => expect(page.textContent).toContain("ClawHub unavailable"));
-    expect(page.querySelector('[aria-label="Enable Workboard"]')).toBeNull();
-  });
+      page.routeData = nextRoute;
+      await page.updateComplete;
+      await vi.waitFor(() => expect(page.textContent).toContain("ClawHub unavailable"));
+      expect(page.querySelector('[aria-label="Enable Workboard"]')).toBeNull();
+    },
+  );
 
   it.each([
     ["failed", "task"],
