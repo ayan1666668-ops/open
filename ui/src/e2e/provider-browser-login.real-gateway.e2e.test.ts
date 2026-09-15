@@ -64,6 +64,22 @@ suite.define(() => {
         .flatMap((provider) => provider.profiles)
         .find((entry) => entry.profileId === `${loginProvider}:default`);
     };
+    const initialAuthStatus: ModelAuthStatusResult = await call("models.authStatus", {
+      agentId: "main",
+    });
+    await fs.writeFile(
+      path.join(suite.artifactDir, "initial-auth-status.json"),
+      JSON.stringify(initialAuthStatus, null, 2),
+    );
+    expect(
+      initialAuthStatus.providerCapabilities?.flatMap((provider) => provider.loginOptions ?? []),
+    ).toEqual([
+      expect.objectContaining({
+        id: `${loginProvider}/browser`,
+        label: "Fixture browser sign-in",
+        kind: "oauth",
+      }),
+    ]);
     const callbacks: Array<{ url: string; status: number }> = [];
     let finalHistory: unknown;
     const sessionKey = loginSessionKey;
@@ -95,11 +111,9 @@ suite.define(() => {
         await waitForControlUiGatewayReady(page);
         const begin = async () => {
           await page.locator("[data-models-connect]").click();
-          await page.locator("[data-models-login-choice]").selectOption(`${loginProvider}/browser`);
-          await page.locator("[data-models-login-start]").click();
           await page
             .locator("openclaw-modal-dialog")
-            .getByRole("button", { name: "Continue", exact: true })
+            .getByRole("button", { name: "Fixture browser sign-in", exact: true })
             .click();
           const link = page.locator(".wizard-step__external-link");
           await link.waitFor();
@@ -115,10 +129,7 @@ suite.define(() => {
           .locator("openclaw-modal-dialog")
           .getByRole("button", { name: "Cancel", exact: true })
           .click();
-        await page
-          .locator("openclaw-modal-dialog")
-          .getByRole("button", { name: "Close", exact: true })
-          .waitFor();
+        await expect.poll(() => page.locator("openclaw-modal-dialog").count()).toBe(0);
         const cancelledCallback = cancelledPage.waitForResponse(
           (response) => new URL(response.url()).pathname === "/oauth/provider/callback",
         );
@@ -131,15 +142,12 @@ suite.define(() => {
         await cancelledPage.waitForURL(cancelledResponse.url());
         const staleUrl = cancelledResponse.url();
         expect(new URL(staleUrl).origin).toBe(loginOrigin);
-        await page
-          .locator("openclaw-modal-dialog")
-          .getByRole("button", { name: "Close", exact: true })
-          .click();
         const freshPage = await begin();
         const replay = expectDefined(await cancelledPage.goto(staleUrl), "callback response");
         callbacks.push({ url: replay.url(), status: replay.status() });
         expect(replay.status()).toBe(410);
         expect(await profile()).toBeUndefined();
+        expect(fixture.requests).not.toContain("/token");
         const freshCallback = freshPage.waitForResponse(
           (response) => new URL(response.url()).pathname === "/oauth/provider/callback",
         );
