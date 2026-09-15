@@ -1,0 +1,15 @@
+{
+  "name": "@openclaw/growth-attribution",
+  "version": "2026.3.2",
+  "private": true,
+  "description": "OpenClaw growth-marketing link/image attribution tooling",
+  "type": "module",
+  "dependencies": {
+    "sharp": "^0.34.5"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

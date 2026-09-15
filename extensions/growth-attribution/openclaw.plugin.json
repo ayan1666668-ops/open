@@ -1,0 +1,13 @@
+{
+  "id": "growth-attribution",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "secret": {
+        "type": "string",
+        "description": "HMAC secret used to sign tracking links. Falls back to $GROWTH_ATTRIBUTION_SECRET."
+      }
+    }
+  }
+}
