@@ -151,7 +151,7 @@ html:is(.openclaw-native-macos, .openclaw-native-desktop) .new-session-page__inc
   box-sizing: border-box;
   width: calc(100% - 36px);
   max-height: 0;
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin: -8px auto 0;
   padding-inline: var(--chat-composer-editor-inset-inline, 14px);
   overflow: hidden;
@@ -1319,7 +1319,7 @@ wa-popover.new-session-page__where-popover::part(body) {
     align-items: flex-start;
     width: calc(100% - 8px);
     max-height: 0;
-    max-width: var(--chat-thread-max-width, 48rem);
+    max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
     margin-inline: 4px;
     padding-inline: 0;
     white-space: normal;

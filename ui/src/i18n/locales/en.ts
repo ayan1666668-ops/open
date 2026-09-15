@@ -4738,6 +4738,8 @@ export const en: TranslationMap & {
       fallbackReason: "Reason: {reason}",
       fallbackAttempts: "Attempts: {attempts}",
       cancelReply: "Cancel reply",
+      resizeInputHeight: "Message box height",
+      resizeInputWidth: "Chat column width",
       attachmentPreview: "Attachment preview",
       browserAnnotation: "Browser annotation",
       browserAnnotationPreview: "Browser annotation preview",

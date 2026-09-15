@@ -3,6 +3,7 @@ import { guard } from "lit/directives/guard.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { live } from "lit/directives/live.js";
 import { ref } from "lit/directives/ref.js";
+import { styleMap } from "lit/directives/style-map.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { icons } from "../../components/icons.ts";
 import type { ImageLightboxItem } from "../../components/image-lightbox.ts";
@@ -22,7 +23,7 @@ import {
 import {
   adjustTextareaHeight,
   disconnectTextareaOverflowObserver,
-  observeTextareaOverflow,
+  replaceComposerTextarea,
   paneDomId,
   scheduleTextareaHeightAdjustment,
 } from "../chat/components/chat-composer-dom.ts";
@@ -34,6 +35,7 @@ import {
 } from "../chat/components/chat-composer-mention-menu.ts";
 import { resolveComposerMenus } from "../chat/components/chat-composer-menus.ts";
 import type { ChatComposerPlusMenuView } from "../chat/components/chat-composer-plus-menu.ts";
+import { rebindComposerResizeInput } from "../chat/components/chat-composer-resize.ts";
 import {
   createSkillMenuState,
   handleSkillMenuKeydown,
@@ -88,6 +90,9 @@ export type NewSessionComposerOptions = {
   onUnsupportedAttachment?: () => void;
   submitting: boolean;
   textareaController: NewSessionComposerTextareaController;
+  // Owned Message width from the page's live settings snapshot. Renders never
+  // read storage; a cross-tab Settings change re-renders through this.
+  columnWidth?: string;
   voiceControl?: TemplateResult | typeof nothing;
   messageLocked?: boolean;
   visibility?: NewSessionVisibility;
@@ -141,6 +146,7 @@ function renderStartControl(options: NewSessionComposerOptions) {
 export class NewSessionComposerTextareaController {
   // An opening gets one cast; typing and async picker updates never reroll it.
   readonly critterVisit = Math.random();
+  private composerInput: HTMLElement | null = null;
   private textarea: HTMLTextAreaElement | null = null;
   private placeholderFrame: number | null = null;
   private placeholderStartedAt: number | null = null;
@@ -159,16 +165,9 @@ export class NewSessionComposerTextareaController {
   capabilityMenuView: ChatComposerPlusMenuView = "root";
 
   readonly ref = (element?: Element) => {
-    const nextTextarea = element instanceof HTMLTextAreaElement ? element : null;
-    if (this.textarea && this.textarea !== nextTextarea) {
-      disconnectTextareaOverflowObserver(this.textarea);
-    }
-    if (this.textarea && !nextTextarea) {
-      this.resetPlaceholder();
-    }
+    const nextTextarea = replaceComposerTextarea(this.textarea, element);
     this.textarea = nextTextarea;
     if (nextTextarea) {
-      observeTextareaOverflow(nextTextarea);
       scheduleTextareaHeightAdjustment(nextTextarea);
     }
   };
@@ -338,7 +337,14 @@ export class NewSessionComposerTextareaController {
     );
   }
 
+  readonly composerInputRef = (element?: Element) => {
+    const next = element instanceof HTMLElement ? element : null;
+    rebindComposerResizeInput(this.composerInput, next, { heightEnabled: false });
+    this.composerInput = next;
+  };
+
   disconnect() {
+    this.composerInputRef();
     this.mentionMenu.dispose();
     this.resetPlaceholder();
     this.skillCommandClient = null;
@@ -553,6 +559,7 @@ export function renderNewSessionComposer(options: NewSessionComposerOptions) {
   return html`
     <div
       class="agent-chat__composer-shell new-session-page__composer"
+      style=${styleMap({ "--chat-thread-max-width": options.columnWidth })}
       @drop=${(event: DragEvent) => {
         if (options.nativeTerminal && event.dataTransfer?.files.length) {
           event.preventDefault();
@@ -566,6 +573,7 @@ export function renderNewSessionComposer(options: NewSessionComposerOptions) {
       @dragover=${attachmentDropHandlers.onDragover}
     >
       <div
+        ${ref(options.textareaController.composerInputRef)}
         class="agent-chat__input agent-chat__input--mobile-toolbar${
           options.dictationActive ? " agent-chat__input--dictating" : ""
         }"

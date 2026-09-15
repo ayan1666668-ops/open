@@ -606,7 +606,7 @@ describe("new-session composer sizing lifecycle", () => {
     expect(textarea.style.height).toBe("150px");
   });
 
-  it("keeps one observer across controlled updates and remeasures programmatic drafts", async () => {
+  it("keeps each sizing observer across controlled updates and remeasures programmatic drafts", async () => {
     const observe = vi.fn();
     const disconnect = vi.fn();
     const resizeObserverConstructed = vi.fn();
@@ -663,7 +663,11 @@ describe("new-session composer sizing lifecycle", () => {
     await Promise.resolve();
 
     expect(first.container.querySelector("textarea")).toBe(textarea);
-    expect(resizeObserverConstructed).toHaveBeenCalledOnce();
+    // One observer owns textarea overflow; one owns the resize-handle values.
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe).toHaveBeenCalledWith(textarea);
+    expect(observe).toHaveBeenCalledWith(first.composer.querySelector(".agent-chat__input"));
+    expect(resizeObserverConstructed).toHaveBeenCalledTimes(2);
     expect(disconnect).not.toHaveBeenCalled();
     expect(scrollHeightReads).toBe(readsAfterInput);
 
@@ -690,10 +694,10 @@ describe("new-session composer sizing lifecycle", () => {
 
     expect(scrollHeightReads).toBeGreaterThan(readsAfterInput);
     expect(readsAfterAttach).toBeGreaterThan(0);
-    expect(resizeObserverConstructed).toHaveBeenCalledOnce();
+    expect(resizeObserverConstructed).toHaveBeenCalledTimes(2);
     expect(disconnect).not.toHaveBeenCalled();
     textareaController.disconnect();
-    expect(disconnect).toHaveBeenCalledOnce();
+    expect(disconnect).toHaveBeenCalledTimes(2);
     first.container.remove();
   });
 });

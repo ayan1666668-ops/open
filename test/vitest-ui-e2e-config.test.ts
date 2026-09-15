@@ -111,6 +111,7 @@ const qaLabFiles = [
 const realGatewayFiles = [
   "agent-file-lifecycle.real-gateway",
   "chat-agent-avatar.real-gateway",
+  "chat-composer-resize.real-gateway",
   "chat-composer-websearch-kill-switch.real-gateway",
   "chat-flow.catalog-bootstrap",
   "chat-loading-performance.real-gateway",
@@ -538,6 +539,13 @@ describe("Control UI E2E resource ownership", () => {
         expect(result.rootWorkers).toBe(workers);
       }
       expect(result.files.filter((entry) => entry.phase === 1)).toEqual([
+        {
+          file: "ui/src/e2e/chat-composer-resize.real-gateway.e2e.test.ts",
+          project: "ui-e2e-serial-standalone",
+          phase: 1,
+          workers: 1,
+          fileParallelism: false,
+        },
         {
           file: "ui/src/e2e/desktop-resize.real-gateway.e2e.test.ts",
           project: "ui-e2e-serial-standalone",

@@ -293,6 +293,7 @@ export function renderNewSessionDraftComposer(options: {
     options.draftOwnerKey,
   );
   return renderNewSessionComposer({
+    columnWidth: options.context?.theme.settings.chatMessageMaxWidth,
     renderCritters: (floorEnabled) => html`<openclaw-lobster-pet
       .seed=${lobsterPetSeed(`${options.textareaController.critterVisit}:${options.draftOwnerKey}`)}
       .mode=${resolveLobsterPetMode(!gateway?.snapshot.offlineStable, options.context?.sessions.state.result?.sessions)}

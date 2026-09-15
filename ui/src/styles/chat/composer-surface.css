@@ -17,7 +17,7 @@
   /* The new-session page reuses this shell outside .chat, where the tokens are
      not defined; the fallbacks keep its geometry identical there. */
   width: calc(100% - var(--chat-composer-side-inset, 36px));
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin: var(--chat-composer-top-margin, 8px) auto var(--chat-composer-bottom-gap, 14px);
 }
 /* Input-affecting notices belong to the composer owner but not its layout.
@@ -320,6 +320,88 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The height grip follows draft length. The width grip stays visible for
+   a custom width and otherwise reveals only at its own hit area. */
+.agent-chat__composer-resize-top,
+.agent-chat__composer-resize-side {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.agent-chat__composer-resize-top[hidden] {
+  display: none;
+}
+
+.agent-chat__composer-resize-top {
+  top: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 14px;
+  cursor: ns-resize;
+}
+
+.agent-chat__composer-resize-side {
+  top: 50%;
+  left: -7.5px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 72px;
+  cursor: ew-resize;
+}
+
+.agent-chat__composer-resize-top::before,
+.agent-chat__composer-resize-side::before {
+  content: "";
+  border-radius: var(--radius-full);
+  background: var(--chat-composer-tertiary);
+}
+
+.agent-chat__composer-resize-top::before {
+  width: 64px;
+  height: 3px;
+}
+
+.agent-chat__composer-resize-top:not(.is-fixed-height)::before,
+.agent-chat__composer-resize-side::before {
+  box-sizing: border-box;
+  border: 1px solid var(--chat-composer-tertiary);
+  background: transparent;
+}
+
+.agent-chat__composer-resize-side::before {
+  width: 3px;
+  height: 48px;
+}
+
+.agent-chat__composer-resize-top.is-dragging,
+.agent-chat__composer-resize-side.is-dragging,
+.agent-chat__composer-resize-top.is-persistent,
+.agent-chat__composer-resize-top:hover,
+.agent-chat__composer-resize-side.is-custom-width,
+.agent-chat__composer-resize-side:hover,
+.agent-chat__composer-resize-top:focus-visible,
+.agent-chat__composer-resize-side:focus-visible {
+  opacity: 1;
+}
+
+.agent-chat__composer-resize-side[data-reset-hidden]:not(:focus-visible) {
+  opacity: 0;
+}
+
+.agent-chat__composer-resize-top:focus-visible,
+.agent-chat__composer-resize-side:focus-visible {
+  outline: 2px solid var(--chat-composer-tertiary);
+  outline-offset: 2px;
 }
 
 .agent-chat__composer-input-row {
@@ -933,7 +1015,7 @@
      .chat-thread's horizontal padding (moved off the scroll container so
      overlay scrollbars sit flush at the pane edge). */
   width: calc(100% - 2 * var(--chat-thread-gutter) - 2 * var(--chat-thread-side-inset));
-  max-width: var(--chat-thread-max-width);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width));
   margin-inline: auto;
   /* Commit width with the virtual rows, even under the global reduced-motion
      duration; gutter and row measurements must not sample a transition. */

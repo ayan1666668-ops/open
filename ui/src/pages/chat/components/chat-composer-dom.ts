@@ -12,6 +12,7 @@ const COMPOSER_CHROME_INTERACTIVE_SELECTOR = [
   "[role='button']",
   "[role='listbox']",
   "[role='option']",
+  "[data-composer-resize-handle]",
 ].join(",");
 
 type ComposerTextareaResizeObserverState = {
@@ -190,6 +191,11 @@ export function observeTextareaOverflow(el: HTMLTextAreaElement) {
           const nextWidth = el.getBoundingClientRect().width;
           if (nextWidth !== width) {
             width = nextWidth;
+            // The active grip already measures synchronously with its width write.
+            if (el.closest(".agent-chat__composer-resizing")) {
+              updateTextareaOverflow(el);
+              return;
+            }
             if (
               composerTextareaResizeObservers.get(el) === state &&
               state.adjustmentFrame === null
@@ -315,4 +321,19 @@ export function restoreHistoryCaret(target: HTMLTextAreaElement, direction: "up"
 
 export function paneDomId(paneId: string, suffix: string): string {
   return `chat-${encodeURIComponent(paneId)}-${suffix}`;
+}
+
+/** Refs share one overflow-observer lifecycle across both composer surfaces. */
+export function replaceComposerTextarea(
+  previous: HTMLTextAreaElement | null,
+  element?: Element,
+): HTMLTextAreaElement | null {
+  const next = element instanceof HTMLTextAreaElement ? element : null;
+  if (previous && previous !== next) {
+    disconnectTextareaOverflowObserver(previous);
+  }
+  if (next) {
+    observeTextareaOverflow(next);
+  }
+  return next;
 }

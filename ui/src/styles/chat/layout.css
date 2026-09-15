@@ -325,7 +325,7 @@ openclaw-chat-page {
   align-items: center;
   gap: 10px;
   width: calc(100% - 36px);
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   min-height: 52px;
   margin: 8px auto 0;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
@@ -398,7 +398,7 @@ openclaw-chat-page {
 .chat-composer-neighbor-card.chat-cloud-disk-space-notice,
 .chat-composer-neighbor-card.chat-workspace-conflict-notice {
   width: calc(100% - 36px);
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin: 8px auto 0;
   background: var(--chat-composer-surface, var(--popover));
   box-shadow: none;
@@ -613,7 +613,7 @@ openclaw-chat-page {
 .chat-inline-approval {
   flex: 0 0 auto;
   width: calc(100% - 2 * var(--chat-thread-gutter) - 2 * var(--chat-thread-side-inset));
-  max-width: var(--chat-thread-max-width);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width));
   margin: 8px auto;
 }
 
@@ -1531,7 +1531,7 @@ openclaw-chat-video-player {
   flex-direction: column;
   gap: 6px;
   width: calc(100% - 36px);
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin-inline: auto;
   padding: 0 0 8px;
 }
@@ -1918,7 +1918,7 @@ openclaw-chat-video-player {
 
 .chat-swarm {
   width: calc(100% - 36px);
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin: 0 auto;
 }
 
@@ -2101,7 +2101,7 @@ openclaw-chat-video-player {
   /* Mirror .agent-chat__composer-shell sizing: the rows belong to the input
      stack and must not read as a full-pane banner above a narrower composer. */
   width: calc(100% - 36px);
-  max-width: var(--chat-thread-max-width, 48rem);
+  max-width: var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem));
   margin: 0 auto;
 }
 

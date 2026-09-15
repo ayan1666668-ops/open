@@ -15,7 +15,7 @@ openclaw-custodian-page {
 }
 
 .custodian__column {
-  width: min(100%, var(--chat-thread-max-width, 48rem));
+  width: min(100%, var(--chat-thread-drag-width, var(--chat-thread-max-width, 48rem)));
   min-width: 0;
   margin-inline: auto;
 }
