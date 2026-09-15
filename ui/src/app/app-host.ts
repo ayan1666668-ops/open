@@ -345,6 +345,10 @@ class OpenClawShell
         (selection, notify) => selection.subscribe(notify),
       )
       .watch(
+        () => this.context?.settingsAgentSelection,
+        (selection, notify) => selection.subscribe(notify),
+      )
+      .watch(
         () => this.context?.gateway,
         (gateway, notify) => gateway.subscribe(notify),
         (gateway) => this.shellGateway.synchronizeGateway(gateway.snapshot),

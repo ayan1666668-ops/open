@@ -306,6 +306,11 @@ export function renderApplicationShell(host: ShellViewHost) {
           presentation: nativeEmbed ? (embedSettingsRoot ? "embed-list" : "embed-page") : "sidebar",
           basePath: context.basePath,
           activeRouteId: activeRoute,
+          agents: context.agents.state.agentsList?.agents ?? [],
+          defaultAgentId: context.agents.state.agentsList?.selectionRequired
+            ? null
+            : context.agents.state.agentsList?.defaultId,
+          settingsAgentSelection: context.settingsAgentSelection,
           activePathname: host.routeState.location?.pathname ?? "",
           activeSearch: host.routeState.location?.search ?? "",
           activeHash: host.routeState.location?.hash ?? "",

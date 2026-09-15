@@ -430,6 +430,27 @@ html:is(.openclaw-native-macos, .openclaw-native-nav, .openclaw-native-web-chrom
   color: var(--text-strong);
 }
 
+.settings-sidebar__agent {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 8px 12px 0;
+}
+
+.settings-sidebar__agent openclaw-agent-select {
+  display: block;
+  min-width: 0;
+}
+
+.settings-sidebar__agent .agent-select__trigger {
+  min-width: 0;
+}
+
+.settings-sidebar__loading-agent {
+  display: block;
+  height: 36px;
+  border-radius: var(--radius-md);
+}
+
 .settings-sidebar__search {
   position: relative;
   z-index: 1;
