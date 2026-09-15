@@ -19,7 +19,10 @@ import {
 } from "./allow-list.js";
 import { resolveDiscordDmCommandAccess } from "./dm-command-auth.js";
 import type { DiscordConfig } from "./native-command.types.js";
-import { resolveDiscordNativeInteractionChannelContext } from "./native-interaction-channel-context.js";
+import {
+  resolveDiscordNativeInteractionChannelContext,
+  resolveDiscordNativeInteractionChannelIdFallback,
+} from "./native-interaction-channel-context.js";
 import { resolveDiscordSenderIdentity } from "./sender-identity.js";
 
 function resolveDiscordNativeCommandAllowlistAccess(params: {
@@ -232,7 +235,7 @@ export async function resolveDiscordNativeAutocompleteAuthorized(params: {
     channel: interaction.channel,
     client: interaction.client,
     hasGuild: Boolean(interaction.guild),
-    channelIdFallback: "",
+    channelIdFallback: resolveDiscordNativeInteractionChannelIdFallback(interaction.rawData),
   });
   if (params.isPolicyCurrent?.() === false) {
     return false;

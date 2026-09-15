@@ -97,7 +97,10 @@ import type {
   DiscordConfig,
   DiscordDispatchReplyFromConfig,
 } from "./native-command.types.js";
-import { resolveDiscordNativeInteractionChannelContext } from "./native-interaction-channel-context.js";
+import {
+  resolveDiscordNativeInteractionChannelContext,
+  resolveDiscordNativeInteractionChannelIdFallback,
+} from "./native-interaction-channel-context.js";
 import { resolveDiscordSenderIdentity } from "./sender-identity.js";
 import type { ThreadBindingManager } from "./thread-bindings.js";
 
@@ -320,7 +323,7 @@ async function dispatchDiscordCommandInteraction(params: {
     channel,
     client: interaction.client,
     hasGuild: Boolean(interaction.guild),
-    channelIdFallback: "",
+    channelIdFallback: resolveDiscordNativeInteractionChannelIdFallback(interaction.rawData),
   });
   if (policy?.isCurrent() === false) {
     await respond("Access policy changed. Try this interaction again.", { ephemeral: true });
