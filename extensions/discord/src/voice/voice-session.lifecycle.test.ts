@@ -725,14 +725,15 @@ defineDiscordVoiceTests(
           await closing.promise;
           const second = manager.join({ guildId: "g1", channelId: "1002" });
           const third = manager.join({ guildId: "g1", channelId: "1003" });
-          joins = Promise.all([first, second, third]);
-          void joins.catch(() => undefined);
+          const joined = Promise.all([first, second, third]);
+          joins = joined;
+          void joined.catch(() => undefined);
           await new Promise<void>((resolve) => {
             setImmediate(resolve);
           });
           expect(joinVoiceChannelMock).toHaveBeenCalledTimes(1);
           stopped.resolve();
-          const [firstResult, secondResult, thirdResult] = await joins;
+          const [firstResult, secondResult, thirdResult] = await joined;
           await leaving;
           expect(firstResult.ok).toBe(reason === "occupancy-loss");
           expect(secondResult.ok).toBe(true);
