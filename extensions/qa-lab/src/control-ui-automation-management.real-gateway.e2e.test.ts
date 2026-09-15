@@ -171,6 +171,7 @@ suite.define(() => {
             session: { ...cfg.session, dmScope: "per-channel-peer" },
             plugins: { ...cfg.plugins, slots: { ...cfg.plugins?.slots, memory: "none" } },
             memory: { ...cfg.memory, search: { ...cfg.memory?.search, enabled: false } },
+            // Keep a regular tool available so non-owner turns reach the provider.
             tools: {
               profile: "full",
               allow: ["automations", "session_status"],
