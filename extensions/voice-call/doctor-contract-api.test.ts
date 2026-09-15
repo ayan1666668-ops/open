@@ -789,6 +789,7 @@ describe("voice-call doctor state migration", () => {
       "voice-call state migration",
     ).migrateLegacyState(retentionMigrationParams());
     expect(result).toEqual({
+      warningDisposition: "recoverable",
       changes: [],
       warnings: [
         "Skipped Voice Call call-log migration for 1 record because metadata capacity is unavailable",
@@ -799,7 +800,60 @@ describe("voice-call doctor state migration", () => {
     await expect(fs.access(`${sourcePath}.migrated`)).rejects.toThrow();
     expect(rows()).toEqual(retained);
     await expect(getCallHistoryFromStore(storePath, 1001)).resolves.toEqual(calls);
+    // The updater can now finish without deleting live rows from Doctor. A real
+    // runtime start reclaims interruption debris, and a later repair imports it.
+    await loadActiveCallsFromStore(storePath);
+    const completed = await expectDefined(
+      stateMigrations[0],
+      "voice-call state migration",
+    ).migrateLegacyState(retentionMigrationParams());
+    expect(completed.warnings).toEqual([]);
+    expect(await fs.readFile(`${sourcePath}.migrated`)).toEqual(source);
+    await expect(fs.access(sourcePath)).rejects.toThrow();
+    expect(await getCallHistoryFromStore(storePath, 1001)).toHaveLength(1000);
   });
+
+  it.each(["unknown", "malformed", "unreadable"] as const)(
+    "keeps metadata capacity blocking when %s owners cannot be recovered by runtime",
+    async (kind) => {
+      const { events, rows } = await seedRetentionFixture(0);
+      const chunks = createDoctorContext(env).openPluginStateKeyedStore({
+        namespace: CALL_RECORD_EVENT_CHUNKS_NAMESPACE,
+        maxEntries: CALL_RECORD_CHUNK_MAX_ENTRIES,
+        overflowPolicy: "reject-new",
+        env: { ...env, OPENCLAW_STATE_DIR: storePath },
+      });
+      const invalidPayload = Buffer.from("not-json");
+      for (let index = 0; index < CALL_RECORD_EVENT_META_MAX_ENTRIES; index++) {
+        const key = `${kind === "unknown" ? "unknown" : "event"}:blocked:${index}:fixture`;
+        await events.register(key, {
+          chunkCount: kind === "malformed" ? 0 : 1,
+          byteLength: kind === "malformed" ? 0 : invalidPayload.length,
+        });
+        if (kind === "unreadable") {
+          await chunks.register(`${key}:chunk:0000`, {
+            index: 0,
+            dataBase64: invalidPayload.toString("base64"),
+          });
+        }
+      }
+      writeLegacyCallsJsonl(storePath, [makePersistedCall({ callId: "not-recoverable" })]);
+      const sourcePath = path.join(storePath, "calls.jsonl");
+      const source = await fs.readFile(sourcePath);
+      const retained = rows();
+      const result = await expectDefined(
+        stateMigrations[0],
+        "voice-call state migration",
+      ).migrateLegacyState(retentionMigrationParams());
+      expect(result.warningDisposition).toBeUndefined();
+      expect(result.warnings).toContain(
+        "Skipped Voice Call call-log migration for 1 record because metadata capacity is unavailable",
+      );
+      expect(rows()).toEqual(retained);
+      expect(await fs.readFile(sourcePath)).toEqual(source);
+      await expect(fs.access(`${sourcePath}.migrated`)).rejects.toThrow();
+    },
+  );
 
   it("does not treat an unreadable existing deterministic owner as an imported source record", async () => {
     const { events, rows } = await seedRetentionFixture(0);

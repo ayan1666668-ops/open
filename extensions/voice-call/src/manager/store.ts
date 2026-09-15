@@ -322,10 +322,15 @@ async function pruneCallRecordEvents(stores: CallRecordStateStores): Promise<voi
   if (rows.length <= MAX_CALL_RECORD_EVENTS) {
     return;
   }
+  // Snapshot eligibility before any chunk read: a live write that finishes during
+  // the scan must not count as a replacement for an already retained snapshot.
+  const eligible = rows.filter(
+    (row) => !pendingCallRecordEvents.has(row.key) && isValidCallRecordEventMeta(row.value),
+  );
   const complete: typeof rows = [];
-  for (const row of rows) {
-    if (await hasCompleteCallRecordEvent(stores, row.key, row.value)) {
-      complete.push(row);
+  for await (const { entry, call } of readCallRecordEventEntries(stores, eligible)) {
+    if (call && !pendingCallRecordEvents.has(entry.key)) {
+      complete.push(entry);
     }
   }
   const sorted = complete.toSorted(
@@ -367,6 +372,27 @@ function isValidCallRecordEventMeta(meta: unknown): meta is CallRecordEventMeta 
   );
 }
 
+/** Identify rows startup can reclaim; unknown owners and complete payloads stay protected. */
+export function isInterruptedCallRecordEvent(
+  eventKey: string,
+  meta: unknown,
+  storedChunkKeys: ReadonlySet<string>,
+): boolean {
+  if (
+    !eventKey.startsWith("event:") ||
+    pendingCallRecordEvents.has(eventKey) ||
+    !isValidCallRecordEventMeta(meta)
+  ) {
+    return false;
+  }
+  for (let index = 0; index < meta.chunkCount; index++) {
+    if (!storedChunkKeys.has(buildChunkKey(eventKey, index))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Reclaim only interrupted runtime events. Doctor owns jsonl: prefixes and may
  * replay them from retained source; history/status must never invoke this work.
@@ -383,19 +409,12 @@ async function reconcileCallRecordEventRows(stores: CallRecordStateStores): Prom
   const storedChunkKeys = new Set((await stores.chunks.entries()).map((entry) => entry.key));
   for (const entry of events) {
     if (
-      !entry.key.startsWith("event:") ||
       liveAtInventory.has(entry.key) ||
-      pendingCallRecordEvents.has(entry.key) ||
-      !isValidCallRecordEventMeta(entry.value)
+      !isInterruptedCallRecordEvent(entry.key, entry.value, storedChunkKeys)
     ) {
       continue;
     }
-    const complete = Array.from({ length: entry.value.chunkCount }, (_, index) =>
-      storedChunkKeys.has(buildChunkKey(entry.key, index)),
-    ).every(Boolean);
-    if (!complete) {
-      await deleteCallRecordEventRows(stores, entry.key);
-    }
+    await deleteCallRecordEventRows(stores, entry.key);
   }
   for (const chunkKey of storedChunkKeys) {
     const eventKey = /^(event:[^:]+:[0-9]+:[^:]+):chunk:[0-9]{4}$/.exec(chunkKey)?.[1];
@@ -450,12 +469,11 @@ async function readCallRecordEvent(
   return parseVoiceCallRecordLine(serialized)?.call ?? null;
 }
 
-/** Read all persisted call records in stable persisted order. */
-async function readCallRecordEvents(stores: CallRecordStateStores): Promise<CallRecord[]> {
-  const entries = (await stores.events.entries()).toSorted(
-    (a, b) => a.createdAt - b.createdAt || a.key.localeCompare(b.key),
-  );
-  const sqliteCalls: PersistedCallRecord[] = [];
+/** Decode bounded batches in entry order without letting a later error overtake an earlier row. */
+async function* readCallRecordEventEntries(
+  stores: CallRecordStateStores,
+  entries: Awaited<ReturnType<CallRecordStateStores["events"]["entries"]>>,
+) {
   let batchEnd = 0;
   let chunkOffset = 0;
   let chunkRecords: CallRecordChunkResults | undefined;
@@ -489,6 +507,17 @@ async function readCallRecordEvents(stores: CallRecordStateStores): Promise<Call
     if (chunkRecords) {
       chunkOffset += entry.value.chunkCount;
     }
+    yield { entry, call };
+  }
+}
+
+/** Read all persisted call records in stable persisted order. */
+async function readCallRecordEvents(stores: CallRecordStateStores): Promise<CallRecord[]> {
+  const entries = (await stores.events.entries()).toSorted(
+    (a, b) => a.createdAt - b.createdAt || a.key.localeCompare(b.key),
+  );
+  const sqliteCalls: PersistedCallRecord[] = [];
+  for await (const { entry, call } of readCallRecordEventEntries(stores, entries)) {
     if (call) {
       sqliteCalls.push({
         call,
