@@ -53,3 +53,61 @@ openclaw-chat-comment-pins {
 .chat-comment-pin[hidden] {
   display: none;
 }
+
+.chat-comment-preview {
+  --openclaw-tooltip-max-width: min(440px, calc(100vw - 32px));
+  --openclaw-tooltip-padding: 16px;
+}
+
+.chat-comment-preview__scroll {
+  width: min(408px, calc(100vw - 64px));
+  max-height: min(320px, 50dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.chat-comment-preview__list {
+  margin: 0;
+  padding-inline-start: 24px;
+}
+
+.chat-comment-preview__item {
+  position: relative;
+  padding-inline-start: 4px;
+}
+
+.chat-comment-preview__item + .chat-comment-preview__item {
+  margin-top: 16px;
+}
+
+.chat-comment-preview__item::marker {
+  color: var(--muted);
+}
+
+.chat-comment-preview__body {
+  display: grid;
+  gap: 4px;
+}
+
+.chat-comment-preview__item:has(.chat-comment-preview__actions) .chat-comment-preview__body {
+  padding-inline-end: 64px;
+}
+
+.chat-comment-preview__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-comment-preview__text + .muted {
+  margin-top: 8px;
+}
+
+.chat-comment-preview__actions {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  display: flex;
+}

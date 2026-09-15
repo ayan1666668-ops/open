@@ -3,18 +3,53 @@ import { icons } from "../../../components/icons.ts";
 import { t } from "../../../i18n/index.ts";
 import { registerChatMessageMetadataEnglish } from "../../../i18n/locales/en-chat-message-metadata.ts";
 import type { ChatAttachmentControlsProps } from "./chat-attachment-controls.types.ts";
+import { renderCommentPreviewChip, renderCommentPreviewRow } from "./chat-comment-preview.ts";
 import "../../../styles/chat/selection-annotations.css";
 
 registerChatMessageMetadataEnglish();
 
-/** The composer reports staged comments; their source pins own editing. */
+/** The existing transcript owner handles edits from either preview or source marker. */
 export function renderChatSelectionAnnotations(props: ChatAttachmentControlsProps) {
-  const count =
-    props.attachments?.filter((attachment) => attachment.selectionAnnotation).length ?? 0;
-  return count
-    ? html`<span class="chat-selection-annotations__chip">
-        <span aria-hidden="true">${icons.messageSquare}</span>
-        ${t(count === 1 ? "chat.messages.annotationCount" : "chat.messages.annotationsCount", { count: String(count) })}
-      </span>`
+  const comments = props.attachments?.filter((attachment) => attachment.selectionAnnotation) ?? [];
+  const request = (event: Event, id: string, action: "edit" | "delete") => {
+    event.currentTarget?.dispatchEvent(
+      new CustomEvent("openclaw-comment-action", {
+        bubbles: true,
+        composed: true,
+        detail: { id, action },
+      }),
+    );
+  };
+  return comments.length
+    ? renderCommentPreviewChip(
+        comments.length,
+        html`<ol class="chat-comment-preview__list">
+          ${comments.map((attachment, index) =>
+            renderCommentPreviewRow(
+              attachment.selectionAnnotation!,
+              html`<span class="chat-comment-preview__actions">
+                <button
+                  class="btn btn--sm btn--icon"
+                  type="button"
+                  aria-label=${t("chat.messages.editAnnotation", { number: String(index + 1) })}
+                  ?disabled=${props.disabled || props.readSignal?.aborted}
+                  @click=${(event: Event) => request(event, attachment.id, "edit")}
+                >
+                  ${icons.pencil}
+                </button>
+                <button
+                  class="btn btn--sm btn--icon"
+                  type="button"
+                  aria-label=${t("chat.messages.deleteAnnotation")}
+                  ?disabled=${props.disabled || props.readSignal?.aborted}
+                  @click=${(event: Event) => request(event, attachment.id, "delete")}
+                >
+                  ${icons.trash}
+                </button>
+              </span>`,
+            ),
+          )}
+        </ol>`,
+      )
     : nothing;
 }

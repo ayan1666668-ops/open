@@ -54,7 +54,7 @@ suite.define(() => {
           const comment = editor.getByRole("textbox");
           const chip = (count: number) =>
             page
-              .locator(".chat-selection-annotations__chip")
+              .locator(".chat-attachments-preview .chat-selection-annotations__chip")
               .filter({ hasText: count === 1 ? "1 comment" : `${count} comments` });
           const pin = (number: number) =>
             page.getByRole("button", { name: `Edit comment ${number}`, exact: true });
@@ -164,7 +164,11 @@ suite.define(() => {
           await page.reload();
           await chip(1).waitFor({ state: "visible" });
           expect(await composer.inputValue()).toBe(draft);
-          await pin(1).click();
+          await chip(1).hover();
+          const preview = page.getByRole("region", { name: "Comments", exact: true });
+          await preview.waitFor({ state: "visible" });
+          expect(await preview.textContent()).toContain("Explain the rollback checks. 🦞");
+          await preview.getByRole("button", { name: "Edit comment 1", exact: true }).click();
           expect(await comment.inputValue()).toBe("Explain the rollback checks. 🦞");
           await comment.press("Escape");
           await composer.click();
@@ -196,6 +200,36 @@ suite.define(() => {
             runId: params.idempotencyKey,
             text: "The checks are ready.",
           });
+          const sentChip = page.locator(
+            "openclaw-chat-sent-comments .chat-selection-annotations__chip",
+          );
+          await sentChip.waitFor({ state: "visible" });
+          expect(await sentChip.textContent()).toContain("2 comments");
+          await sentChip.hover();
+          await preview.waitFor({ state: "visible" });
+          await expect
+            .poll(() => preview.textContent())
+            .toContain("Explain the rollback checks. 🦞");
+          expect(await preview.locator("li").count()).toBe(2);
+          expect(await preview.locator("button").count()).toBe(0);
+          await bounded(preview);
+          await capture("sent-hover");
+          await page.keyboard.press("Escape");
+          await preview.waitFor({ state: "hidden" });
+          await page.reload();
+          await sentChip.waitFor({ state: "visible" });
+          await sentChip.focus();
+          await preview.waitFor({ state: "visible" });
+          await expect
+            .poll(() => preview.textContent())
+            .toContain("Explain the rollback checks. 🦞");
+          expect(
+            await page
+              .locator(".chat-assistant-attachment-card__title")
+              .filter({ hasText: "selection-comment.txt" })
+              .count(),
+          ).toBe(0);
+          await capture("sent-reloaded");
         },
       );
     },

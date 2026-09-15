@@ -30,6 +30,7 @@ class ChatCommentPins extends OpenClawLightDomElement {
   private observedInner?: Element;
   private focusCommentId?: string;
   private positionEditor?: () => void;
+  private actionRoot: Element | null = null;
 
   private currentAttachments() {
     return this.props.getAttachments?.() ?? this.props.attachments ?? [];
@@ -68,6 +69,10 @@ class ChatCommentPins extends OpenClawLightDomElement {
   }
 
   protected override updated() {
+    if (!this.actionRoot) {
+      this.actionRoot = this.closest(".card.chat");
+      this.actionRoot?.addEventListener("openclaw-comment-action", this.handleCommentAction);
+    }
     if (!this.root) {
       this.root = this.closest(".chat-thread");
       if (this.root) {
@@ -91,6 +96,8 @@ class ChatCommentPins extends OpenClawLightDomElement {
   }
 
   override disconnectedCallback() {
+    this.actionRoot?.removeEventListener("openclaw-comment-action", this.handleCommentAction);
+    this.actionRoot = null;
     this.retireEditor();
     this.props.readSignal?.removeEventListener("abort", this.retireEditor);
     this.resizeObserver?.disconnect();
@@ -184,6 +191,37 @@ class ChatCommentPins extends OpenClawLightDomElement {
     this.props.onRequestUpdate?.();
   }
 
+  private readonly handleCommentAction = (event: Event) => {
+    if (!(event instanceof CustomEvent) || !this.canChange(this.props.readSignal)) {
+      return;
+    }
+    const attachment = this.comments().find((item) => item.id === event.detail?.id);
+    if (!attachment) {
+      return;
+    }
+    event.stopPropagation();
+    if (event.detail.action === "delete") {
+      this.deleteComment(attachment.id);
+    } else if (event.detail.action === "edit" && event.target instanceof HTMLElement) {
+      const pin = Array.from(this.querySelectorAll<HTMLButtonElement>("button")).find(
+        (item) => item.dataset.attachmentId === attachment.id && !item.hidden,
+      );
+      pin?.scrollIntoView({ block: "nearest" });
+      this.editComment(attachment, pin ?? event.target);
+    }
+  };
+
+  private deleteComment(id: string) {
+    const current = this.currentAttachments();
+    this.changeAttachments(
+      current,
+      current.filter((item) => item.id !== id),
+    );
+    this.closest(".card.chat")
+      ?.querySelector<HTMLElement>(".agent-chat__composer-combobox > textarea")
+      ?.focus({ preventScroll: true });
+  }
+
   private editComment(attachment: CommentAttachment, pin: HTMLElement) {
     const signal = this.props.readSignal;
     if (!this.canChange(signal)) {
@@ -223,14 +261,7 @@ class ChatCommentPins extends OpenClawLightDomElement {
       },
       onDelete: () => {
         if (this.canChange(signal)) {
-          const current = this.currentAttachments();
-          this.changeAttachments(
-            current,
-            current.filter((item) => item.id !== attachment.id),
-          );
-          this.closest(".card.chat")
-            ?.querySelector<HTMLElement>(".agent-chat__composer-combobox > textarea")
-            ?.focus({ preventScroll: true });
+          this.deleteComment(attachment.id);
         }
       },
       onCancel: () => pin.focus({ preventScroll: true }),
