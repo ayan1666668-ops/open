@@ -54,6 +54,7 @@ function collectModelProviderIds(value: unknown): ReadonlySet<string> {
 type ManifestModelProviderLookup = {
   modelApis: ReadonlyMap<string, string>;
   providerIds: ReadonlySet<string>;
+  cliBackendIds: ReadonlySet<string>;
 };
 
 function buildManifestModelProviderLookup(
@@ -79,6 +80,13 @@ function buildManifestModelProviderLookup(
     modelApis,
     providerIds: new Set(
       manifestRegistry.plugins.flatMap((plugin) => plugin.providers.map(normalizeProviderId)),
+    ),
+    cliBackendIds: new Set(
+      manifestRegistry.plugins.flatMap((plugin) =>
+        [...(plugin.cliBackends ?? []), ...(plugin.setup?.cliBackends ?? [])].map(
+          normalizeProviderId,
+        ),
+      ),
     ),
   };
 }
@@ -149,6 +157,10 @@ function configuredModelProviderNeedsRuntimePlugin(params: {
   providerId: string;
   modelId: string;
 }): boolean {
+  const normalizedProviderId = normalizeProviderId(params.providerId);
+  if (params.manifestModelProviders.cliBackendIds.has(normalizedProviderId)) {
+    return true;
+  }
   const providerConfig = params.config.models?.providers?.[params.providerId];
   const configuredModel = providerConfig?.models?.find((model) => model.id === params.modelId);
   const modelApi =
@@ -160,7 +172,7 @@ function configuredModelProviderNeedsRuntimePlugin(params: {
   if (typeof modelApi === "string") {
     return !CORE_BUILT_IN_MODEL_APIS.has(modelApi);
   }
-  return params.manifestModelProviders.providerIds.has(params.providerId);
+  return params.manifestModelProviders.providerIds.has(normalizedProviderId);
 }
 
 export function manifestOwnsConfiguredModelProvider(params: {
@@ -170,7 +182,12 @@ export function manifestOwnsConfiguredModelProvider(params: {
   if (params.configuredModelProviderIds.size === 0) {
     return false;
   }
-  return (params.manifest?.providers ?? []).some((providerId) => {
+  const ownedProviderIds = [
+    ...(params.manifest?.providers ?? []),
+    ...(params.manifest?.cliBackends ?? []),
+    ...(params.manifest?.setup?.cliBackends ?? []),
+  ];
+  return ownedProviderIds.some((providerId) => {
     return params.configuredModelProviderIds.has(normalizeProviderId(providerId));
   });
 }
