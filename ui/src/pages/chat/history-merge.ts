@@ -261,12 +261,11 @@ export function publishChatSessionProjection(
 ): void {
   const current = chatSessionProjections.get(owner);
   const runId = current?.runId;
-  const scopeChanged =
-    current?.projection && chatProjectionScopeChanged(current.projection.scope, projection.scope);
+  const previousScope = current?.projection?.scope;
+  const scopeChanged = previousScope && chatProjectionScopeChanged(previousScope, projection.scope);
   if (scopeChanged) {
     const status = owner.compactionStatus;
     const sessionKeys = ["sessionKey", "sessionId", "agentId"] as const;
-    const previousScope = current.projection.scope;
     const sessionChanged = sessionKeys.some(
       (key) =>
         Object.hasOwn(projection.scope, key) &&
