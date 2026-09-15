@@ -330,6 +330,17 @@ export async function authorizeGatewayRequestPreDispatch(params: {
     (!params.client.connId ||
       !(await params.context.nodeRegistry.isConnectionCurrentPairingState(params.client.connId)))
   ) {
+    // A stale pairing must not linger as a connected node: retire the node's
+    // projections and mark the transport invalidated so the WS loop closes it
+    // and the client's reconnect lifecycle takes over, instead of answering
+    // every dispatch with a retryable error while presence still shows
+    // Connected (#148693).
+    if (params.client.connId) {
+      params.context.nodeRegistry.invalidateConnectionForPairingChange(
+        params.client.connId,
+        "node pairing changed before request dispatch",
+      );
+    }
     return {
       error: errorShape(ErrorCodes.UNAVAILABLE, "node pairing changed before request dispatch", {
         retryable: true,
