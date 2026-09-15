@@ -542,7 +542,10 @@ export function renderNumberInput(params: ConfigNodeRenderParams): TemplateResul
       .value=${renderedValue}
       ?disabled=${disabled}
       @keydown=${(event: KeyboardEvent) => {
+        // Compact inputs display the default as their value, so native stepping
+        // owns the current draft; only placeholder defaults need manual stepping.
         if (
+          !params.compact &&
           value === undefined &&
           effectiveValue !== undefined &&
           (event.key === "ArrowUp" || event.key === "ArrowDown")
