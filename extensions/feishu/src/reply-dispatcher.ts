@@ -1068,7 +1068,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     }
     const cardHeader = resolveCardHeader(agentId, identity);
     const cardNote = resolveCardNote(agentId, identity, responsePrefixContextProvider());
-    const useRecoveryCard = withinCardTableLimit(content);
+    const useRecoveryCard = !tableNeedsPostPath(content) && withinCardTableLimit(content);
     return await sendChunkedTextReply({
       text: content,
       useCard: useRecoveryCard,

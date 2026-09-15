@@ -4781,6 +4781,46 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       await delivery?.finalization;
     }
 
+    it.each([
+      { shape: "piped", text: tableMarkdown },
+      { shape: "pipeless", text: pipelessTableMarkdown },
+    ])("recovers a failed idle post as a post for an off $shape table", async ({ text }) => {
+      resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "partial", "feishu"));
+      const { result, options } = createDispatcherHarness({
+        accountId: "main",
+        cfg: tableCfg("off"),
+      });
+      result.replyOptions.onPartialReply?.({ text });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      const instance = requireStreamingInstance(0);
+      let release!: (closed: StreamingCloseResult) => void;
+      instance.discard.mockReturnValueOnce(
+        new Promise<StreamingCloseResult>((resolve) => {
+          release = resolve;
+        }),
+      );
+      sendMessageFeishuMock
+        .mockRejectedValueOnce(new Error("post unavailable"))
+        .mockResolvedValue({ messageId: "om-recovery-post" });
+      const idle = Promise.resolve(options.onIdle?.()).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(instance.discard).toHaveBeenCalledTimes(1));
+      instance.active = false;
+      const delivery = await options.deliver({ text }, { kind: "final" });
+      const finalization = delivery?.finalization;
+      release({ visibleReplySent: false, content: "" });
+
+      expect(await idle).toBeInstanceOf(Error);
+      const accepted = await finalization;
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(instance.closeWithResult).not.toHaveBeenCalled();
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      expect(sendMessageFeishuMock.mock.calls[1]?.[0]?.text).toContain("Ada");
+      expect(accepted).toMatchObject({
+        messageIds: ["om-recovery-post"],
+        visibleReplySent: true,
+      });
+    });
+
     it("off keeps the raw table on the post path", async () => {
       await deliverFinal("off", "off");
 
