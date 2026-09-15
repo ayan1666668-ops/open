@@ -47,7 +47,7 @@ export const AUTH_MARKER = ["gateway", "profile", "value"].join("-");
 export const SESSION_ID = "session-runtime-test";
 export const SESSION_KEY = "agent:runtime-agent:main";
 export const TOOL_CALL = { type: "toolCall" as const, id: "call-1", name: "lookup", arguments: {} };
-export const WORKSPACE_BASE = "/gateway-workspace";
+const WORKSPACE_BASE = "/gateway-workspace";
 export const WORKSPACE = `${WORKSPACE_BASE}/runtime-agent`;
 
 export const config = {
@@ -75,7 +75,7 @@ export const sessionEntry: SessionEntry = {
   authProfileOverride: PROFILE,
   authProfileOverrideSource: "user",
 };
-export const identity: WorkerConnectionIdentity = {
+const identity: WorkerConnectionIdentity = {
   environmentId: "environment-runtime-test",
   credentialHash: ["credential", "hash", "runtime", "test"].join("-"),
   bundleHash: "bundle-hash-runtime-test",

@@ -3,11 +3,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EmbeddedRunAttemptParamsV2 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import type { OpenKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
+import {
+  createPluginStateSyncKeyedStoreForTests,
+  resetPluginStateStoreForTests,
+} from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { createTestPluginApi, type TestPluginApiInput } from "openclaw/plugin-sdk/plugin-test-api";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { ensureAuthProfileStore, resolveAuthProfileOrder } from "openclaw/plugin-sdk/provider-auth";
 import { resolveProviderIdForAuth } from "openclaw/plugin-sdk/provider-auth-aliases";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "../../index.js";
 import { CodexAppServerClient } from "./client.js";
 import { resolveCodexSupervisionAppServerRuntimeOptions } from "./config.js";
@@ -22,13 +27,19 @@ import {
   threadStartResult,
   turnStartResult,
 } from "./run-attempt-test-harness.js";
-import { createCodexAppServerBindingStore, sessionBindingIdentity } from "./session-binding.js";
-import { createCodexTestBindingStateStore } from "./session-binding.test-helpers.js";
+import {
+  CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
+  CODEX_APP_SERVER_BINDING_NAMESPACE,
+  createCodexAppServerBindingStore,
+  sessionBindingIdentity,
+  type StoredCodexAppServerBinding,
+} from "./session-binding.js";
 import { attachSqliteSessionTarget } from "./sqlite-session.test-helpers.js";
 import { createClientHarness } from "./test-support.js";
 import { codexDynamicToolsFingerprint } from "./thread-fingerprints.js";
 
 setupRunAttemptTestHooks();
+afterEach(() => resetPluginStateStoreForTests());
 
 describe("registered Codex harness model attribution", () => {
   it("reports the ready native model and current-turn reroutes before settlement", async () => {
@@ -59,8 +70,18 @@ describe("registered Codex harness model attribution", () => {
       supervision: { enabled: true },
       sessionCatalog: { enabled: false },
     };
-    const bindingState = createCodexTestBindingStateStore();
-    const bindingStore = createCodexAppServerBindingStore(bindingState);
+    const openSyncKeyedStore = <T>(options: OpenKeyedStoreOptions) =>
+      createPluginStateSyncKeyedStoreForTests<T>("codex", {
+        ...options,
+        env: { ...process.env, OPENCLAW_STATE_DIR: path.join(tempDir, "plugin-state") },
+      });
+    const bindingStore = createCodexAppServerBindingStore(
+      openSyncKeyedStore<StoredCodexAppServerBinding>({
+        namespace: CODEX_APP_SERVER_BINDING_NAMESPACE,
+        maxEntries: CODEX_APP_SERVER_BINDING_MAX_ENTRIES,
+        overflowPolicy: "reject-new",
+      }),
+    );
     await bindingStore.mutate(sessionBindingIdentity(params), {
       kind: "set",
       binding: {
@@ -142,8 +163,8 @@ describe("registered Codex harness model attribution", () => {
     const runtime = createPluginRuntimeMock({
       modelAuth: { ensureAuthProfileStore, resolveAuthProfileOrder, resolveProviderIdForAuth },
       config: { current: () => ({ plugins: { entries: { codex: { config: pluginConfig } } } }) },
+      state: { openSyncKeyedStore },
     });
-    vi.spyOn(runtime.state, "openSyncKeyedStore").mockReturnValue(bindingState);
     const registerAgentHarness = vi.fn<NonNullable<TestPluginApiInput["registerAgentHarness"]>>();
     plugin.register(
       createTestPluginApi({
