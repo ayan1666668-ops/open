@@ -7,7 +7,6 @@ import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveMainSessionKeyFromConfig } from "../config/sessions.js";
 import { DEFAULT_WEBHOOK_MAX_BODY_BYTES } from "../infra/http-body.js";
 import { drainSystemEvents, peekSystemEventEntries } from "../infra/system-events.js";
-import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import {
   connectWebchatClient,
@@ -58,59 +57,6 @@ async function waitForDuplicateRequest(): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, 25);
   });
-}
-
-type PausedHookRequest = {
-  complete: () => Promise<{ status: number; body: string }>;
-};
-
-function startPausedHookRequest(params: {
-  port: number;
-  path: string;
-  token: string;
-  body: string;
-}): PausedHookRequest {
-  const split = Math.max(1, Math.floor(params.body.length / 2));
-  let complete!: () => void;
-  const releaseBody = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  const response = new Promise<{ status: number; body: string }>((resolve, reject) => {
-    const req = httpRequest(
-      {
-        host: "127.0.0.1",
-        port: params.port,
-        path: params.path,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${params.token}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(params.body),
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("error", reject);
-        res.on("end", () =>
-          resolve({
-            status: res.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
-        );
-      },
-    );
-    req.on("error", reject);
-    req.setTimeout(15_000, () => req.destroy(new Error("paused hook request timed out")));
-    req.write(params.body.slice(0, split));
-    void releaseBody.then(() => req.end(params.body.slice(split)));
-  });
-  return {
-    complete: async () => {
-      complete();
-      return await response;
-    },
-  };
 }
 
 async function writeReloadableHooksConfig(hooks: Record<string, unknown>): Promise<void> {
@@ -228,6 +174,55 @@ async function writeHookTransformModule(moduleName: string, source: string): Pro
   await fs.writeFile(path.join(transformsDir, moduleName), source, "utf8");
 }
 
+async function createBlockedHookTransform(moduleName: string): Promise<{
+  waitUntilEntered: () => Promise<void>;
+  release: () => Promise<void>;
+}> {
+  const configPath = process.env.OPENCLAW_CONFIG_PATH;
+  if (!configPath) {
+    throw new Error("expected OPENCLAW_CONFIG_PATH");
+  }
+  const markerPath = path.join(path.dirname(configPath), `${moduleName}.entered`);
+  const releasePath = path.join(path.dirname(configPath), `${moduleName}.release`);
+  await writeHookTransformModule(
+    moduleName,
+    `import fs from "node:fs/promises";
+const markerPath = ${JSON.stringify(markerPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+export default async function transform() {
+  await fs.writeFile(markerPath, "entered", "utf8");
+  while (true) {
+    try {
+      await fs.access(releasePath);
+      return {};
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}`,
+  );
+  return {
+    waitUntilEntered: async () => {
+      await expect
+        .poll(
+          async () => {
+            try {
+              await fs.access(markerPath);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          { timeout: 2_000, interval: 10 },
+        )
+        .toBe(true);
+    },
+    release: async () => {
+      await fs.writeFile(releasePath, "released", "utf8");
+    },
+  };
+}
+
 function readExecutionIdentityCall(index: number): unknown {
   const call = cronIsolatedRun.mock.calls[index]?.[0];
   if (!call || typeof call !== "object" || !("executionIdentity" in call)) {
@@ -252,7 +247,19 @@ describe("gateway hook admission", () => {
   });
 
   test("revokes in-flight hook authority when startup-enabled hooks are disabled", async () => {
-    await writeReloadableHooksConfig({ enabled: true, token: HOOK_TOKEN });
+    const transform = await createBlockedHookTransform("disable-reload.mjs");
+    await writeReloadableHooksConfig({
+      enabled: true,
+      token: HOOK_TOKEN,
+      mappings: [
+        {
+          match: { path: "revoke-disable" },
+          action: "wake",
+          textTemplate: "{{payload.text}}",
+          transform: { module: "disable-reload.mjs" },
+        },
+      ],
+    });
     await withEnvAsync({ OPENCLAW_TEST_MINIMAL_GATEWAY: "0" }, () =>
       withGatewayServer(async ({ port, server }) => {
         await server.startupSettled;
@@ -277,19 +284,15 @@ describe("gateway hook admission", () => {
             .toBe(true);
           drainSystemEvents(mainSessionKey);
 
-          const workBaseline = getActiveGatewayRootWorkCount();
-          const revoked = startPausedHookRequest({
+          const revoked = postHook(
             port,
-            path: "/hooks/wake",
-            token: HOOK_TOKEN,
-            body: JSON.stringify({ text: "revoked-after-disable" }),
-          });
-          await expect
-            .poll(() => getActiveGatewayRootWorkCount(), { timeout: 2_000, interval: 10 })
-            .toBeGreaterThan(workBaseline);
-
-          let disabled: Awaited<ReturnType<PausedHookRequest["complete"]>> | undefined;
+            "/hooks/revoke-disable",
+            { text: "revoked-after-disable" },
+            "revoked-after-disable",
+          );
+          let disabled: Response | undefined;
           try {
+            await transform.waitUntilEntered();
             await patchHooksConfig(socket, { enabled: false });
             await waitForHookStatus({
               port,
@@ -299,11 +302,13 @@ describe("gateway hook admission", () => {
               status: 404,
             });
           } finally {
-            disabled = await revoked.complete();
+            await transform.release();
+            disabled = await revoked;
           }
-          expect(disabled).toEqual({
-            status: 409,
-            body: JSON.stringify({ ok: false, error: "hook configuration changed; retry request" }),
+          expect(disabled.status).toBe(409);
+          await expect(disabled.json()).resolves.toEqual({
+            ok: false,
+            error: "hook configuration changed; retry request",
           });
           expect(
             peekSystemEventEntries(mainSessionKey).some((event) =>
@@ -318,7 +323,19 @@ describe("gateway hook admission", () => {
   });
 
   test("rotates hook credentials and preserves replay across production hot reloads", async () => {
-    await writeReloadableHooksConfig({ enabled: true, token: HOOK_TOKEN });
+    const transform = await createBlockedHookTransform("token-reload.mjs");
+    await writeReloadableHooksConfig({
+      enabled: true,
+      token: HOOK_TOKEN,
+      mappings: [
+        {
+          match: { path: "revoke-token" },
+          action: "wake",
+          textTemplate: "{{payload.text}}",
+          transform: { module: "token-reload.mjs" },
+        },
+      ],
+    });
     await withEnvAsync({ OPENCLAW_TEST_MINIMAL_GATEWAY: "0" }, () =>
       withGatewayServer(async ({ port, server }) => {
         await server.startupSettled;
@@ -343,40 +360,39 @@ describe("gateway hook admission", () => {
             .toBe(true);
           drainSystemEvents(mainSessionKey);
 
-          const rotationWorkBaseline = getActiveGatewayRootWorkCount();
-          const revokedByRotation = startPausedHookRequest({
+          const revokedByRotation = postHook(
             port,
-            path: "/hooks/wake",
-            token: HOOK_TOKEN,
-            body: JSON.stringify({ text: "revoked-after-rotation" }),
-          });
-          await expect
-            .poll(() => getActiveGatewayRootWorkCount(), { timeout: 2_000, interval: 10 })
-            .toBeGreaterThan(rotationWorkBaseline);
-
-          let rotated: Awaited<ReturnType<PausedHookRequest["complete"]>> | undefined;
+            "/hooks/revoke-token",
+            { text: "revoked-after-rotation" },
+            "revoked-after-rotation",
+          );
+          let rotated: Response | undefined;
           try {
+            await transform.waitUntilEntered();
             await patchHooksConfig(socket, { enabled: true, token: ROTATED_HOOK_TOKEN });
             await waitForHookStatus({
               port,
               path: "/hooks/wake",
-              token: ROTATED_HOOK_TOKEN,
+              token: HOOK_TOKEN,
               body: "{}",
-              status: 400,
+              status: 401,
             });
-            const staleToken = await postHook(
+            const currentToken = await postHook(
               port,
               "/hooks/wake",
-              { text: "stale-token" },
-              "stale-token",
+              {},
+              "current-token-control",
+              ROTATED_HOOK_TOKEN,
             );
-            expect(staleToken.status).toBe(401);
+            expect(currentToken.status).toBe(400);
           } finally {
-            rotated = await revokedByRotation.complete();
+            await transform.release();
+            rotated = await revokedByRotation;
           }
-          expect(rotated).toEqual({
-            status: 409,
-            body: JSON.stringify({ ok: false, error: "hook configuration changed; retry request" }),
+          expect(rotated.status).toBe(409);
+          await expect(rotated.json()).resolves.toEqual({
+            ok: false,
+            error: "hook configuration changed; retry request",
           });
           expect(
             peekSystemEventEntries(mainSessionKey).some((event) =>
