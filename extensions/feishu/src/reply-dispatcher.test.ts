@@ -5180,6 +5180,10 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       const committed = requireStreamingInstance(0).closeWithResult.mock.calls[0]?.[0];
       expect(committed).toContain(quoteReasoning(codeText));
       expect(committed).not.toContain(quoteReasoning(tableMarkdown));
+      // The italic line wrapper runs after conversion and would wrap the fence
+      // markers too, but formatReasoningPrefix strips those markers again, so the
+      // fence reaches the card whole rather than as literal underscored text.
+      expect(committed).not.toContain("_```_");
     });
 
     it("commits a bullets reasoning table through the streaming card", async () => {
