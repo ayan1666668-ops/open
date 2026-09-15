@@ -1,0 +1,109 @@
+title: Telegram Workboard dispatch reports capacity skips
+
+scenario:
+  id: telegram-workboard-dispatch-capacity-skip
+  surface: channels
+  category: channels.channel-actions-commands-and-approvals
+  coverage:
+    primary:
+      - telegram.built-in-commands
+      - workboard.dispatch-capacity-skips
+  regressionRefs:
+    - openclaw/openclaw#148348
+  objective: Verify Telegram renders the Workboard dispatch skipped count and owner-capacity explanation.
+  successCriteria:
+    - Synthetic Workboard state contains one running claimed card and one ready card for the same dispatch owner.
+    - Telegram Test Server delivery of `/workboard dispatch` reports `skipped=1`.
+    - The reply includes the owner-capacity reason.
+  codeRefs:
+    - extensions/workboard/src/command.ts
+    - extensions/workboard/src/dispatcher.ts
+    - extensions/qa-lab/src/live-transports/telegram/adapter.runtime.ts
+  execution:
+    kind: flow
+    channel: telegram
+    providerMode: mock-openai
+    retryCount: 0
+    timeoutMs: 180000
+    suiteIsolation: isolated
+    isolationReason: Seeds synthetic Workboard cards and sends a native Telegram command through the leased Test Server account.
+    summary: Seed a synthetic Workboard capacity conflict, send `/workboard dispatch` through Telegram, and verify the skipped count and explanation in the delivered reply.
+    config:
+      ownerId: workboard-dispatcher
+      expectedSkipped: skipped=1
+      expectedReason: Owner workboard-dispatcher already has active Workboard work
+
+flow:
+  steps:
+    - name: verifies Telegram Test Server credentials
+      actions:
+        - set: credentialDoctor
+          value:
+            expr: |-
+              (async () => {
+                const scripts = path.join(env.repoRoot, '.agents/skills/telegram-e2e-userbot/scripts');
+                const { runTelegramTestDoctor } = await qaImport(path.join(scripts, 'telegram-test-doctor.mjs'));
+                const { runCommand } = await qaImport(path.join(scripts, 'run-mock-sut-user-e2e.mjs'));
+                return runTelegramTestDoctor({
+                  runCommandImpl: (_command, args, options) => runCommand('python3', args.slice(1), options),
+                });
+              })()
+        - assert:
+            expr: credentialDoctor.ok === true
+            message: the Telegram credential doctor must pass before sending test messages
+      detailsExpr: JSON.stringify(credentialDoctor)
+
+    - name: Telegram dispatch reply includes skipped capacity explanation
+      actions:
+        - assert:
+            expr: "transport.id === 'telegram'"
+            message: this proof requires the Telegram Test Server userbot
+        - call: waitForGatewayHealthy
+          args: [{ ref: env }, 60000]
+        - call: waitForTransportReady
+          args: [{ ref: env }, 60000]
+        - resetTransport: true
+        - set: boardId
+          value:
+            expr: "`pr148348-${randomUUID().slice(0, 8).toLowerCase()}`"
+        - set: activeCard
+          value:
+            expr: "await env.gateway.call('workboard.cards.create', { title: 'Telegram proof active owner slot', status: 'ready', boardId })"
+        - set: activeClaim
+          value:
+            expr: "await env.gateway.call('workboard.cards.claim', { id: activeCard.card.id, ownerId: config.ownerId, ttlSeconds: 600 })"
+        - set: queuedCard
+          value:
+            expr: "await env.gateway.call('workboard.cards.create', { title: 'Telegram proof queued capacity skip', status: 'ready', boardId })"
+        - set: startIndex
+          value:
+            expr: "state.getSnapshot().messages.filter((message) => message.direction === 'outbound').length"
+        - sendInbound:
+            conversation: { id: telegram-workboard-dispatch-proof, kind: channel }
+            senderId: qa-workboard-operator
+            senderName: QA Workboard Operator
+            text: /workboard dispatch
+            nativeCommand: { name: workboard }
+        - waitForOutbound:
+            conversation: { id: telegram-workboard-dispatch-proof, kind: channel }
+            sinceIndex: { ref: startIndex }
+            textIncludes: { ref: config.expectedSkipped }
+            timeoutMs:
+              expr: liveTurnTimeoutMs(env, 60000)
+          saveAs: reply
+        - assert:
+            expr: "reply.text.includes(config.expectedReason)"
+            message:
+              expr: "`workboard dispatch reply omitted capacity reason: ${reply.text}`"
+        - assert:
+            expr: "reply.text.includes(queuedCard.card.id.slice(0, 8))"
+            message:
+              expr: "`workboard dispatch reply omitted queued card prefix: ${reply.text}`"
+      detailsExpr: |-
+        JSON.stringify({
+          verdict: 'PASS',
+          scenario: scenario.id,
+          activeCard: activeCard.card.id.slice(0, 8),
+          queuedCard: queuedCard.card.id.slice(0, 8),
+          reply: reply.text
+        })
