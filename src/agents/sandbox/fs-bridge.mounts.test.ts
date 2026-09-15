@@ -257,7 +257,7 @@ describe("sandbox effective filesystem mounts", () => {
       for (const [filePath, canonical] of [
         ["alias", "/workspace/cache/value"],
         ["outside", "/outside/value"],
-      ]) {
+      ] as const) {
         expect(await resolveSandboxFileIdentity({ bridge, filePath })).toBe(
           `container:${canonical}`,
         );
