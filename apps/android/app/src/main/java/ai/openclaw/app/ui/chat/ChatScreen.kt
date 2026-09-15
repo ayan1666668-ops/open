@@ -7,6 +7,7 @@ import ai.openclaw.app.GatewayModelSummary
 import ai.openclaw.app.GatewayModelUnavailableReason
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.PendingAssistantAutoSend
+import ai.openclaw.app.ProviderAuthController
 import ai.openclaw.app.R
 import ai.openclaw.app.SHARED_AUDIO_DOCUMENT_MIME_TYPES
 import ai.openclaw.app.SHARED_VIDEO_MIME_TYPES
@@ -48,6 +49,7 @@ import ai.openclaw.app.currentAppLanguage
 import ai.openclaw.app.gateway.GatewayLoadedImage
 import ai.openclaw.app.gateway.GatewayLoadedMedia
 import ai.openclaw.app.gateway.GatewayMediaKind
+import ai.openclaw.app.gateway.GatewaySourcePreviewConfig
 import ai.openclaw.app.i18n.NativeText
 import ai.openclaw.app.i18n.joinedNativeText
 import ai.openclaw.app.i18n.nativeString
@@ -56,9 +58,11 @@ import ai.openclaw.app.i18n.resolveNativeTextResource
 import ai.openclaw.app.i18n.verbatimText
 import ai.openclaw.app.operatorScopesAllowAdmin
 import ai.openclaw.app.operatorScopesAllowWrite
+import ai.openclaw.app.providerDisplayName
 import ai.openclaw.app.resolveAgentIdFromMainSessionKey
 import ai.openclaw.app.ui.FoldAwareDropdownMenu
 import ai.openclaw.app.ui.FoldAwareMenuItem
+import ai.openclaw.app.ui.ProviderSignInDialog
 import ai.openclaw.app.ui.TabletopPaneBounds
 import ai.openclaw.app.ui.copyGatewayDiagnosticsReport
 import ai.openclaw.app.ui.design.ClawAgentAvatar
@@ -344,6 +348,7 @@ internal fun ChatScreen(
   features: List<DisplayFeature> = emptyList(),
 ) {
   val messages by viewModel.chatMessages.collectAsState()
+  val sourcePreviewConfig by viewModel.gatewaySourcePreviewConfig.collectAsState()
   val transcriptAnchor by viewModel.chatTranscriptAnchor.collectAsState()
   val historyLoading by viewModel.chatHistoryLoading.collectAsState()
   val sessionCreating by viewModel.chatSessionCreating.collectAsState()
@@ -415,19 +420,20 @@ internal fun ChatScreen(
         mainSessionKey = mainSessionKey,
       )
     }
-  val fastMode = (activeSession?.effectiveFastMode ?: activeSession?.fastMode ?: ChatFastMode.Off).isEnabled
+  val selectedCatalogModel = modelCatalog.firstOrNull { it.providerQualifiedRef() == selectedModelRef }
+  val fastMode = (activeSession?.effectiveFastMode ?: activeSession?.fastMode ?: selectedCatalogModel?.effectiveFastMode ?: ChatFastMode.Off).isEnabled
   val modelSelectionLocked = activeSession?.modelSelectionLocked == true
   val permissionModePending = activeSession?.permissionModePending == true
   val sessionSettingsPending = sessionKey in pendingSessionSettingsKeys
-  val fastModeProviderSupported =
-    fastModeProviderSupportedForSelection(
+  val fastModeRequestSupported =
+    fastModeRequestSupportedForSelection(
       selectedModelRef = selectedModelRef,
       sessionModelProvider = activeSession?.modelProvider,
       catalog = modelCatalog,
     )
   val fastModeSupported =
     fastModeSupportedForSelection(
-      providerSupported = fastModeProviderSupported,
+      requestSupported = fastModeRequestSupported,
       hasConfiguredFastModeOverride = activeSession?.fastMode != null,
     )
   val gatewayAddress = gatewayDiagnosticsEndpoint(remoteAddress = remoteAddress, manualHost = manualHost, manualPort = manualPort, manualTls = manualTls)
@@ -453,6 +459,22 @@ internal fun ChatScreen(
       ownerAgentId = composerOwner.agentId,
       messages = messages,
     )
+  var providerSignIn by remember { mutableStateOf<ProviderAuthController?>(null) }
+
+  fun openProviderSignIn() {
+    val controller = viewModel.createProviderAuthController(composerOwner)
+    if (controller != null) providerSignIn = controller else onOpenProvidersModels()
+  }
+  LaunchedEffect(composerOwner, selectionGeneration, gatewayConnectionDisplay.isConnected) {
+    providerSignIn?.close()
+    providerSignIn = null
+  }
+  providerSignIn?.let { controller ->
+    ProviderSignInDialog(controller) {
+      controller.close()
+      providerSignIn = null
+    }
+  }
   val activeAgentId = sessionAgentId
   val activeAgent = gatewayAgents.firstOrNull { it.id == activeAgentId }
   val headerCatalogState by viewModel.sessionCatalogState.collectAsState()
@@ -499,8 +521,8 @@ internal fun ChatScreen(
       isActiveSessionChoice(it.key, viewModel.chatSessionKey.value, viewModel.mainSessionKey.value)
     }
 
-  fun currentFastModeProviderSupported() =
-    fastModeProviderSupportedForSelection(
+  fun currentFastModeRequestSupported() =
+    fastModeRequestSupportedForSelection(
       selectedModelRef = viewModel.chatSelectedModelRef.value,
       sessionModelProvider = currentEffortSession()?.modelProvider,
       catalog = viewModel.chatModelCatalog.value,
@@ -517,7 +539,7 @@ internal fun ChatScreen(
     chatFastModeControlEnabled(
       supported =
         fastModeSupportedForSelection(
-          providerSupported = currentFastModeProviderSupported(),
+          requestSupported = currentFastModeRequestSupported(),
           hasConfiguredFastModeOverride = currentEffortSession()?.fastMode != null,
         ),
       adminAuthorized = operatorScopesAllowAdmin(viewModel.operatorScopes.value),
@@ -566,7 +588,7 @@ internal fun ChatScreen(
 
   fun isCurrentBranchOpening(opening: ChatBranchOpening): Boolean {
     if (branchPicker.visible !== opening.session || opening.session.geometry.revoked) return false
-    if (!viewModel.isCurrentChatBranchTarget(opening.session.composerOwner, opening.selectionGeneration)) {
+    if (!viewModel.isCurrentChatSelection(opening.session.composerOwner, opening.selectionGeneration)) {
       branchPicker.retire(opening.session)
       return false
     }
@@ -889,7 +911,7 @@ internal fun ChatScreen(
       workspaceGit = workspaceGit,
       sessionDiffAvailable = sessionDiffAvailable,
       branches = sessionBranches,
-      branchSwitchEnabled = viewModel.isCurrentChatBranchTarget(composerOwner, selectionGeneration),
+      branchSwitchEnabled = viewModel.isCurrentChatSelection(composerOwner, selectionGeneration),
       onNewChatInWorktree = {
         dismissDetails()
         startNewChat(true)
@@ -912,7 +934,7 @@ internal fun ChatScreen(
       },
       onOpenBranchSwitcher = {
         dismissDetails()
-        if (viewModel.isCurrentChatBranchTarget(composerOwner, selectionGeneration)) {
+        if (viewModel.isCurrentChatSelection(composerOwner, selectionGeneration)) {
           val previous = branchPicker.visible
           branchPicker.open(composerOwner, sessionKey)
           branchPicker.visible?.takeIf { it !== previous && !it.geometry.revoked }?.let { session ->
@@ -938,6 +960,7 @@ internal fun ChatScreen(
   }
   ChatMessageList(
     sessionKey = sessionKey,
+    mainSessionKey = mainSessionKey,
     fullMessageOwner = composerOwner,
     selectionGeneration = selectionGeneration,
     gatewayCatalogRevision = gatewayCatalogRevision,
@@ -1011,6 +1034,8 @@ internal fun ChatScreen(
     onToggleListen = viewModel::toggleChatMessageSpeech,
     inlineMediaPlaybackBlocked = inlineMediaPlaybackBlocked,
     resolveInlineWidgetResource = viewModel::resolveInlineWidgetResource,
+    sourcePreviewConfig = sourcePreviewConfig,
+    loadSourceFavicon = viewModel::loadChatSourceFavicon,
     loadImageArtifact = viewModel::loadChatImageArtifact,
     loadMediaArtifact = viewModel::loadChatMediaArtifact,
     modifier = Modifier.fillMaxSize().imePadding(),
@@ -1160,7 +1185,7 @@ internal fun ChatScreen(
       talkActive = talkActive,
       onToggleTalk = onToggleTalk,
       onFixConnection = onOpenGatewaySettings,
-      onOpenProvidersModels = onOpenProvidersModels,
+      onOpenProvidersModels = ::openProviderSignIn,
       onCopyDiagnostics = {
         copyGatewayDiagnosticsReport(
           context = context,
@@ -1209,7 +1234,7 @@ internal fun ChatScreen(
             viewModel.setChatSessionFastMode(
               sessionKey = opening.sessionKey,
               enabled = enabled,
-              clearOverride = !currentFastModeProviderSupported(),
+              clearOverride = !currentFastModeRequestSupported(),
             )
           }
         },
@@ -1278,13 +1303,22 @@ internal fun ChatScreen(
         },
         onOpenProviders = { ref ->
           val model = viewModel.chatModelCatalog.value.firstOrNull { it.providerQualifiedRef() == ref }
-          if (modelPicker.admit(opening) && currentSession()?.modelSelectionLocked != true &&
+          if (modelPicker.admit(opening) &&
             model?.let(::chatModelPickerAction) == ChatModelPickerAction.OpenProviders
           ) {
             modelPicker.retire(opening)
-            onOpenProvidersModels()
+            openProviderSignIn()
           }
         },
+        onSignIn =
+          if (canAdminSessionSettings) {
+            {
+              modelPicker.retire(opening)
+              openProviderSignIn()
+            }
+          } else {
+            null
+          },
         onToggleFavorite = { ref ->
           val model = viewModel.chatModelCatalog.value.firstOrNull { it.providerQualifiedRef() == ref }
           if (modelPicker.admit(opening) && currentSession()?.modelSelectionLocked != true &&
@@ -1578,6 +1612,7 @@ private fun HeaderIcon(
 @Composable
 private fun ChatMessageList(
   sessionKey: String,
+  mainSessionKey: String,
   fullMessageOwner: ChatComposerOwner,
   selectionGeneration: Long,
   gatewayCatalogRevision: Long,
@@ -1612,6 +1647,8 @@ private fun ChatMessageList(
   onToggleListen: (String, String) -> Unit,
   inlineMediaPlaybackBlocked: Boolean,
   resolveInlineWidgetResource: suspend (String, ChatWidgetResource?) -> ChatWidgetResource?,
+  sourcePreviewConfig: GatewaySourcePreviewConfig?,
+  loadSourceFavicon: suspend (GatewaySourcePreviewConfig, String) -> GatewayLoadedImage?,
   loadImageArtifact: suspend (String) -> GatewayLoadedImage?,
   loadMediaArtifact: suspend (String, GatewayMediaKind, Boolean) -> GatewayLoadedMedia?,
   modifier: Modifier = Modifier,
@@ -1621,19 +1658,7 @@ private fun ChatMessageList(
   header: @Composable ((() -> Unit)?, Boolean, Boolean) -> Unit,
   composer: @Composable ((() -> Unit)?, Boolean, Boolean) -> Unit,
 ) {
-  val baseTimeline =
-    remember(messages, activeRunCount, pendingToolCalls, subagentActivities, questions, streamingAssistantText, outboxItems, recoveryOutboxItems) {
-      buildChatTimeline(
-        messages = messages,
-        pendingRunCount = activeRunCount,
-        pendingToolCalls = pendingToolCalls,
-        streamingAssistantText = streamingAssistantText,
-        subagentActivities = subagentActivities,
-        outboxItems = outboxItems,
-        recoveryOutboxItems = recoveryOutboxItems,
-        questions = questions,
-      )
-    }
+  val history = remember(messages, sessionKey, mainSessionKey) { prepareChatHistory(messages, sessionKey, mainSessionKey) }
   val indicatorVisible = activeRunCount > 0
   val workingRunTracker = remember(sessionKey) { ChatWorkingRunTracker(sessionKey) }
   val workingRun =
@@ -1660,8 +1685,19 @@ private fun ChatMessageList(
     )
   var expandedWorkKeys by remember(sessionKey) { mutableStateOf(emptySet<String>()) }
   val timeline =
-    remember(baseTimeline, turnRecap, expandedWorkKeys, activeRunCount, sessionKey) {
-      baseTimeline.withCompletedWorkGroups(messages, activeRunCount > 0, expandedWorkKeys, sessionKey).withTurnRecap(turnRecap)
+    remember(history, turnRecap, expandedWorkKeys, activeRunCount, activeRunId, pendingToolCalls, subagentActivities, questions, streamingAssistantText, outboxItems, recoveryOutboxItems) {
+      history
+        .buildTimeline(
+          pendingRunCount = activeRunCount,
+          pendingToolCalls = pendingToolCalls,
+          streamingAssistantText = streamingAssistantText,
+          subagentActivities = subagentActivities,
+          outboxItems = outboxItems,
+          recoveryOutboxItems = recoveryOutboxItems,
+          questions = questions,
+          expandedWorkKeys = expandedWorkKeys,
+          activeRunId = activeRunId,
+        ).withTurnRecap(turnRecap)
     }
   val readerScroll =
     rememberChatReaderScrollController(
@@ -1735,6 +1771,20 @@ private fun ChatMessageList(
                         resolveInlineWidgetResource = resolveInlineWidgetResource,
                         loadImageArtifact = loadImageArtifact,
                         loadMediaArtifact = loadMediaArtifact,
+                        sourcePreviews =
+                          remember(messages, item.message, sourcePreviewConfig, activeRunId) {
+                            if (item.message.runId == activeRunId || item.hasUnresolvedTools) {
+                              emptyList()
+                            } else {
+                              extractChatSourcePreviews(
+                                messages,
+                                item.message,
+                                ChatSourceLinkContext(sourcePreviewConfig?.gatewayUrl, sourcePreviewConfig?.basePath.orEmpty(), sourcePreviewConfig?.publicOrigin),
+                              )
+                            }
+                          },
+                        sourcePreviewConfig = sourcePreviewConfig,
+                        loadSourceFavicon = loadSourceFavicon,
                         senderLabel = item.message.senderLabel,
                         disclosure = { disclosure(item.message) },
                       )
@@ -2063,6 +2113,9 @@ internal fun ChatBubble(
   resolveInlineWidgetResource: suspend (String, ChatWidgetResource?) -> ChatWidgetResource?,
   loadImageArtifact: suspend (String) -> GatewayLoadedImage?,
   loadMediaArtifact: suspend (String, GatewayMediaKind, Boolean) -> GatewayLoadedMedia?,
+  sourcePreviews: List<ChatSourcePreview> = emptyList(),
+  sourcePreviewConfig: GatewaySourcePreviewConfig? = null,
+  loadSourceFavicon: suspend (GatewaySourcePreviewConfig, String) -> GatewayLoadedImage? = { _, _ -> null },
   senderLabel: String? = null,
   disclosure: @Composable () -> Unit = {},
 ) {
@@ -2233,7 +2286,8 @@ internal fun ChatBubble(
             )
           }
           if (messageId != null) {
-            ChatMessageLinkPreview(messageId = messageId, role = normalizedRole, content = displayableContent)
+            ChatSourcePreviews(sourcePreviews, sourcePreviewConfig, loadSourceFavicon)
+            ChatMessageLinkPreview(messageId = messageId, role = normalizedRole, content = displayableContent, excludedUrls = sourcePreviews.flatMap { it.aliases }.toSet())
           }
           disclosure()
           messageSpeech?.let { speech ->
@@ -3768,6 +3822,7 @@ private fun ChatModelPickerSheet(
   onDismiss: () -> Unit,
   onSelect: (String?) -> Unit,
   onOpenProviders: (String) -> Unit,
+  onSignIn: (() -> Unit)?,
   onToggleFavorite: (String) -> Unit,
 ) {
   var showPermissionPicker by rememberSaveable { mutableStateOf(false) }
@@ -3910,6 +3965,13 @@ private fun ChatModelPickerSheet(
                 Text(reason, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
               }
             }
+            if (onSignIn != null) {
+              item {
+                TextButton(modifier = Modifier.padding(horizontal = 12.dp), onClick = { if (admit()) onSignIn() }) {
+                  Text(nativeString("Sign in"))
+                }
+              }
+            }
             if (modelSelectionLocked) return@LazyColumn
             item {
               HorizontalDivider(color = ClawTheme.colors.border)
@@ -4019,12 +4081,25 @@ private fun ChatModelPickerRow(
           overflow = TextOverflow.Ellipsis,
         )
         Text(
-          text = listOfNotNull(model.provider, availabilityLabel).joinToString(" · "),
+          text = listOfNotNull(providerDisplayName(model.provider), model.runtimeName, availabilityLabel).joinToString(" · "),
           style = ClawTheme.type.caption.copy(fontWeight = FontWeight.Normal),
           color = if (unavailable) ClawTheme.colors.warning else ClawTheme.colors.textMuted,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
+        if (model.supportsTools == false) {
+          Text(nativeString("Chat only. This model cannot use tools."), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+        }
+        val capabilities =
+          listOfNotNull(
+            nativeString("Images").takeIf { model.supportsVision },
+            nativeString("Audio").takeIf { model.supportsAudio },
+            nativeString("Video").takeIf { model.supportsVideo },
+            nativeString("Documents").takeIf { model.supportsDocuments },
+          )
+        if (capabilities.isNotEmpty()) {
+          Text(capabilities.joinToString(" · "), style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted)
+        }
       }
       IconButton(onClick = onToggleFavorite, enabled = !unavailable) {
         Icon(
