@@ -9,6 +9,46 @@ import {
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
 
 describe("memory index FTS lifecycle", () => {
+  it("keeps a canonical existing SQLite schema and rows unchanged on upgrade", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      ensureMemoryIndexSchema({ db, cacheEnabled: false, ftsEnabled: true });
+      db.exec("PRAGMA user_version = 17");
+      db.prepare(
+        "INSERT INTO memory_index_sources (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)",
+      ).run("existing.md", "memory", "existing-hash", 1, 1);
+      const schemaBefore = db
+        .prepare(
+          "SELECT type, name, sql FROM sqlite_schema WHERE name LIKE 'memory_index_%' ORDER BY type, name",
+        )
+        .all();
+      const rowsBefore = db
+        .prepare("SELECT path, source, hash, mtime, size FROM memory_index_sources ORDER BY path")
+        .all();
+
+      ensureMemoryIndexSchema({ db, cacheEnabled: false, ftsEnabled: true });
+
+      expect(db.prepare("PRAGMA user_version").get()).toEqual({ user_version: 17 });
+      expect(
+        db
+          .prepare(
+            "SELECT type, name, sql FROM sqlite_schema WHERE name LIKE 'memory_index_%' ORDER BY type, name",
+          )
+          .all(),
+      ).toEqual(schemaBefore);
+      expect(
+        db
+          .prepare("SELECT path, source, hash, mtime, size FROM memory_index_sources ORDER BY path")
+          .all(),
+      ).toEqual(rowsBefore);
+      expect(db.prepare("SELECT path, source FROM memory_index_paths_fts").all()).toEqual([
+        { path: "existing.md", source: "memory" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   it.each([
     { name: "missing", definition: undefined, expected: "missing" },
     {

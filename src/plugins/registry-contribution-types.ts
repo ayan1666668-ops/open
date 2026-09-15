@@ -225,6 +225,7 @@ export type MemoryPluginRuntime = {
     inspectSources?: boolean;
   }): Promise<{
     manager: RegisteredMemorySearchManager | null;
+    warning?: string;
     debug?: {
       backend?: "builtin";
       purpose?: "default" | "status" | "cli";
@@ -239,6 +240,7 @@ export type MemoryPluginRuntime = {
     inspectSources?: boolean;
   }): Promise<{
     manager: RegisteredMemorySearchManager | null;
+    warning?: string;
     debug?: {
       backend?: "builtin";
       purpose?: "default" | "status" | "cli";

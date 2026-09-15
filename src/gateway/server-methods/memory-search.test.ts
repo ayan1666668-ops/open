@@ -517,10 +517,16 @@ describe("memory.search gateway method", () => {
           )
           .run();
       };
-      const expectRecall = (respond: Awaited<ReturnType<typeof invokeMemorySearch>>) => {
+      const expectRecall = (
+        respond: Awaited<ReturnType<typeof invokeMemorySearch>>,
+        options?: { warning?: boolean },
+      ) => {
         expect(respond).toHaveBeenCalledWith(
           true,
           expect.objectContaining({
+            ...(options?.warning === false
+              ? {}
+              : { warning: expect.stringContaining("does not call an embedding provider") }),
             results: [
               expect.objectContaining({
                 path: "memory/orchard.md",
@@ -565,15 +571,48 @@ describe("memory.search gateway method", () => {
       ]);
       expect(acquired).toHaveLength(2);
       expect(acquired[0]).toBe(acquired[1]);
-      responses.forEach(expectRecall);
+      responses.forEach((response) => expectRecall(response, { warning: false }));
+      expect(
+        responses.some((response) =>
+          response.mock.calls.some(([, payload]) =>
+            String(payload?.warning ?? "").includes("does not call an embedding provider"),
+          ),
+        ),
+      ).toBe(true);
       expect(readRevision() - beforeConcurrent).toBe(singleRepairWrites);
       const beforeReadOnlyReuse = await fs.stat(dbPath);
-      expectRecall(await invokeMemorySearch({ query: "Juniper", agentId: "main" }, cfg));
+      const reused = await invokeMemorySearch({ query: "Juniper", agentId: "main" }, cfg);
+      expectRecall(reused, { warning: false });
+      expect(reused).toHaveBeenCalledWith(
+        true,
+        expect.not.objectContaining({ warning: expect.anything() }),
+        undefined,
+      );
       const afterReadOnlyReuse = await fs.stat(dbPath);
       expect(afterReadOnlyReuse.size).toBe(beforeReadOnlyReuse.size);
       expect(afterReadOnlyReuse.mtimeMs).toBe(beforeReadOnlyReuse.mtimeMs);
       expect(acquired).toHaveLength(3);
       expect(new Set(acquired).size).toBe(1);
+
+      markOldProvenance();
+      getActiveMemorySearchManagerCore.mockImplementationOnce(async (params) => {
+        const result = await acquireReusable({ cfg: params.cfg, agentId: params.agentId });
+        assert(result.manager, result.error ?? "Expected repaired query-only reader");
+        vi.spyOn(result.manager, "search").mockRejectedValueOnce(
+          new Error("synthetic query failure after writer repair"),
+        );
+        return result;
+      });
+      const failed = await invokeMemorySearch({ query: "Juniper", agentId: "main" }, cfg);
+      expect(failed).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          message: expect.stringMatching(
+            /synthetic query failure after writer repair.*does not call an embedding provider/iu,
+          ),
+        }),
+      );
     } finally {
       await memoryRuntime.closeAllMemorySearchManagers?.();
       db?.close();

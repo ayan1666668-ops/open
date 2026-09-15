@@ -159,6 +159,7 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
     if (acquired.transient && manager) {
       transientManagers.add(manager);
     }
+    let acquisitionWarning = acquired.warning;
     const { error: acquireError } = acquired;
     if (!manager) {
       respond(
@@ -200,13 +201,14 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
           throw new Error(refreshed.error ?? "memory search unavailable", { cause: error });
         }
         manager = refreshed.manager;
+        acquisitionWarning = refreshed.warning;
         if (refreshed.transient) {
           transientManagers.add(manager);
         }
         searched = await searchOnce();
       }
       const staleness = resolveMemorySearchStaleness(searched.status, agentId);
-      const warning = [staleness?.warning, readRebuildWarning()]
+      const warning = [staleness?.warning, acquisitionWarning, readRebuildWarning()]
         .filter((message): message is string => typeof message === "string")
         .join(" ");
       const payload: MemorySearchResponse = {
@@ -224,7 +226,11 @@ export const memorySearchHandlers: GatewayRequestHandlers = {
         undefined,
         errorShape(
           ErrorCodes.UNAVAILABLE,
-          [`memory search failed: ${formatErrorMessage(error)}`, readRebuildWarning()]
+          [
+            `memory search failed: ${formatErrorMessage(error)}`,
+            acquisitionWarning,
+            readRebuildWarning(),
+          ]
             .filter(Boolean)
             .join(" "),
         ),

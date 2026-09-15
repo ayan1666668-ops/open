@@ -236,6 +236,26 @@ describe("memory runtime handles", () => {
     },
   );
 
+  it("preserves a reusable reader acquisition warning as a request-scoped outcome", async () => {
+    const runtime = createRuntime();
+    const warning = "Automatic memory index repair was requested.";
+    runtime.getReusableMemorySearchManager = vi.fn(async () => ({
+      manager: null,
+      error: "query failed after repair",
+      warning,
+    }));
+    const { registry } = createRegistry(runtime);
+    mocks.loadPluginRegistryHandle.mockReturnValue(registry);
+
+    await expect(
+      getActiveMemorySearchManagerCore({
+        cfg: memoryConfig,
+        agentId: "main",
+        purpose: "search",
+      }),
+    ).resolves.toMatchObject({ error: "query failed after repair", warning });
+  });
+
   it("loads only the selected memory plugin into a non-activating handle", async () => {
     const { registry, runtime } = createRegistry();
     runtime.getMemorySearchManager.mockImplementationOnce(async () => {

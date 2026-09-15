@@ -94,6 +94,41 @@ describe("read-only memory search manager", () => {
     }
   });
 
+  it("bootstraps a valid empty index through the writer after the first note arrives", async () => {
+    const file = path.join(fixture.paths.memory, "2026-01-12.md");
+    await fs.writeFile(file, "");
+    const cfg = createConfig({ provider: "none", vectorEnabled: false });
+    const writer = requireManager(await getMemorySearchManager({ cfg, agentId: "main" }));
+    trackManager(writer);
+    await writer.sync({ reason: "test", force: true });
+    expect(
+      managerDb(writer).prepare("SELECT count(*) AS count FROM memory_index_chunks").get(),
+    ).toEqual({ count: 0 });
+
+    const emptyReader = await getReader(cfg);
+    trackManager(emptyReader);
+    expect(await emptyReader.search("first-note", { minScore: 0 })).toEqual([]);
+    // No writer/watch loop remains to discover the first note in the background.
+    await writer.close();
+    await fs.writeFile(file, "First-note token added after the valid empty index.");
+    const syncSpy = vi.spyOn(RuntimeMemoryIndexManager.prototype, "sync");
+
+    try {
+      const populatedReader = await getReader(cfg);
+      trackManager(populatedReader);
+      expect(populatedReader).toBe(emptyReader);
+      expect(syncSpy).toHaveBeenCalledWith({ reason: "search", force: true });
+      expect(managerDb(populatedReader).prepare("PRAGMA query_only").get()).toEqual({
+        query_only: 1,
+      });
+      await expect(populatedReader.search("first-note", { minScore: 0 })).resolves.toEqual([
+        expect.objectContaining({ path: "memory/2026-01-12.md" }),
+      ]);
+    } finally {
+      syncSpy.mockRestore();
+    }
+  });
+
   it("keeps keyword fallback when fresh reader preparation hits the first embedding failure", async () => {
     const cfg = createConfig({ vectorEnabled: true });
     provider.providerEmbeddingFailuresRemaining = 1;

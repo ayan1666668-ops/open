@@ -44,7 +44,12 @@ describe("builtin memory search manager", () => {
       expect(result.error).toBeUndefined();
       expect(result.debug).toMatchObject({ backend: "builtin", purpose });
       expect(result.debug?.managerMs).toBeGreaterThanOrEqual(0);
-      expect(memoryIndexGet).toHaveBeenCalledWith({ cfg, agentId: "main", purpose });
+      expect(memoryIndexGet).toHaveBeenCalledWith({
+        cfg,
+        agentId: "main",
+        purpose,
+        ...(purpose === "search" ? { acquisitionOutcome: {} } : {}),
+      });
     },
   );
 

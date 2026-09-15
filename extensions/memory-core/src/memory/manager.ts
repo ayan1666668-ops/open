@@ -169,6 +169,7 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
                 );
           if (acquisition.purpose === "search") {
             await manager.prepareSearchReader();
+            manager.searchReaderWriterPrepared = false;
           }
           if (params.inspectSources) {
             await manager.inspectDiagnosticSourceState();
@@ -207,11 +208,14 @@ export class MemoryIndexManager extends MemorySearchOrchestration implements Mem
     purpose: MemoryIndexManagerPurpose;
     acquireLocalService?: MemoryCoreAcquireLocalService;
     maintenanceSource?: MemoryIndexManager;
+    writerPrepared?: boolean;
     databaseOptions: Parameters<typeof withOpenClawAgentDatabaseWrite>[0] & { path: string };
   }) {
     super(params.maintenanceSource?.automaticRebuildNotice);
     this.managerRegistry = params.managerRegistry;
     const source = params.maintenanceSource;
+    this.searchReaderWriterPrepared =
+      params.purpose === "search" && (params.writerPrepared === true || source !== undefined);
     const effectiveSettings = resolveEffectiveMemorySearchSettings(params.settings);
     const dbPath = params.databaseOptions.path;
     this.cacheKey = params.cacheKey;

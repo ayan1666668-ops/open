@@ -20,8 +20,15 @@ import {
 
 type AcquirableMemoryManager = {
   close(): Promise<void>;
+  status(): {
+    custom?: {
+      automaticRebuildNotice?: { sequence?: number; warning?: string };
+    };
+  };
   sync(params?: { reason?: string; force?: boolean }): Promise<void>;
 };
+
+export type MemoryManagerAcquisitionOutcome = { warning?: string };
 
 export type MemoryManagerGetParams<T> = {
   cfg: OpenClawConfig;
@@ -30,6 +37,7 @@ export type MemoryManagerGetParams<T> = {
   inspectSources?: boolean;
   acquireLocalService?: MemoryCoreAcquireLocalService;
   maintenanceSource?: T;
+  acquisitionOutcome?: MemoryManagerAcquisitionOutcome;
 };
 
 export type MemoryManagerAcquisitionSource<T> = {
@@ -50,6 +58,7 @@ export type MemoryManagerAcquisition<T> = {
   providerRequirement: MemoryEmbeddingProviderRequirement;
   key: string;
   maintenanceSource?: T;
+  writerPrepared?: boolean;
 };
 
 function resolveMemoryManagerAcquisition<T>(params: {
@@ -58,6 +67,7 @@ function resolveMemoryManagerAcquisition<T>(params: {
   purpose: MemoryIndexManagerPurpose;
   acquireLocalService?: MemoryCoreAcquireLocalService;
   source?: MemoryManagerAcquisitionSource<T>;
+  writerPrepared?: boolean;
 }): MemoryManagerAcquisition<T> | null {
   const cfg = params.source?.cfg ?? params.cfg;
   const agentId = params.source?.agentId ?? normalizeAgentId(params.agentId);
@@ -86,6 +96,7 @@ function resolveMemoryManagerAcquisition<T>(params: {
     providerRequirement,
     key,
     ...(params.source ? { maintenanceSource: params.source.manager } : {}),
+    ...(params.writerPrepared ? { writerPrepared: true } : {}),
   };
 }
 
@@ -101,13 +112,17 @@ export async function acquireMemoryManagerWithSearchRecovery<
     reuse: (manager: T, purpose: MemoryIndexManagerPurpose) => Promise<boolean> | boolean;
   },
 ): Promise<T | null> {
-  const acquire = async (purpose: MemoryIndexManagerPurpose): Promise<T | null> => {
+  const acquire = async (
+    purpose: MemoryIndexManagerPurpose,
+    options?: { writerPrepared?: boolean },
+  ): Promise<T | null> => {
     const acquisition = resolveMemoryManagerAcquisition({
       cfg: params.cfg,
       agentId: params.agentId,
       purpose,
       acquireLocalService: params.acquireLocalService,
       source: params.source,
+      writerPrepared: options?.writerPrepared,
     });
     if (!acquisition) {
       return null;
@@ -144,8 +159,20 @@ export async function acquireMemoryManagerWithSearchRecovery<
     if (!writer) {
       throw new Error("memory indexing is disabled");
     }
+    const beforeNotice = writer.status().custom?.automaticRebuildNotice;
+    const beforeSequence = beforeNotice?.sequence;
     await writer.sync({ reason: "search", force: true });
-    return await acquire(purpose);
+    const afterNotice = writer.status().custom?.automaticRebuildNotice;
+    if (
+      afterNotice?.sequence !== beforeSequence &&
+      typeof afterNotice?.warning === "string" &&
+      afterNotice.warning
+    ) {
+      if (params.acquisitionOutcome) {
+        params.acquisitionOutcome.warning = afterNotice.warning;
+      }
+    }
+    return await acquire(purpose, { writerPrepared: true });
   } catch (recoveryError) {
     throw new Error(
       `Memory search reader unavailable after writer preparation: ${formatErrorMessage(recoveryError)}; initial reader error: ${formatErrorMessage(initialError)}`,

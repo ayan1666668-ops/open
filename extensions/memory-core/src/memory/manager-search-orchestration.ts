@@ -43,6 +43,7 @@ type MemoryIndexSearchOptions = NonNullable<Parameters<MemorySearchManager["sear
 export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
   protected abstract sessionWarm: Set<string>;
   protected searchReaderKeywordOnly = false;
+  protected searchReaderWriterPrepared = false;
 
   protected async prepareSearchReader(): Promise<void> {
     readMemoryDatabaseRevision(this.db);
@@ -58,6 +59,9 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
       this.searchReaderKeywordOnly = true;
       if (this.hasPendingSourceRepair()) {
         throw new Error("Memory search index requires source provenance repair");
+      }
+      if (!this.searchReaderWriterPrepared && !this.hasIndexedContent()) {
+        throw new Error("Memory search index requires writer bootstrap");
       }
       return;
     }
@@ -93,6 +97,9 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
     }
     if (this.hasPendingSourceRepair()) {
       throw new Error("Memory search index requires source provenance repair");
+    }
+    if (!this.searchReaderWriterPrepared && !this.hasIndexedContent()) {
+      throw new Error("Memory search index requires writer bootstrap");
     }
   }
 
