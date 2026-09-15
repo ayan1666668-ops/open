@@ -417,6 +417,25 @@ describe("openai responses payload policy", () => {
     expect(policy.explicitStore).toBe(true);
   });
 
+  it.each(["https://api.openai.com/v1", "https://proxy.example.com/v1"])(
+    "honors explicit no-store for an opted-in model at %s",
+    (baseUrl) => {
+      const policy = resolveOpenAIResponsesPayloadPolicy(
+        {
+          api: "openai-responses",
+          provider: "openai",
+          baseUrl,
+          compat: { supportsResponsesContinuation: true },
+        },
+        { storeMode: "disable" },
+      );
+      const payload = { store: true };
+      applyOpenAIResponsesPayloadPolicy(payload, policy);
+      expect(policy.explicitContinuationOptIn).toBe(true);
+      expect(payload.store).toBe(false);
+    },
+  );
+
   it("never lets the continuation opt-in promote store for azure-openai-responses (store is hardcoded off downstream)", () => {
     const policy = resolveOpenAIResponsesPayloadPolicy(
       {

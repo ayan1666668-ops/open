@@ -24,7 +24,7 @@ type OpenAIResponsesPayloadModel = {
 
 type OpenAIResponsesPayloadPolicyOptions = {
   extraParams?: Record<string, unknown>;
-  storeMode?: "provider-policy" | "disable" | "preserve";
+  storeMode?: "provider-policy" | "transport-default" | "disable" | "preserve";
   enablePromptCacheStripping?: boolean;
   enableServerCompaction?: boolean;
 };
@@ -160,8 +160,8 @@ function resolveOpenAIResponsesPayloadCapabilities(
         : isResponsesApi && usesExplicitProxyLikeEndpoint;
   const supportsResponsesStoreField =
     readCompatPayloadBoolean(model.compat, "supportsStore") !== false && isResponsesApi;
-  // Only an explicit model capability enables stored HTTP continuation on a
-  // compatible endpoint. ChatGPT and Azure keep their own no-store contracts.
+  // Explicit model capability enables stored HTTP continuation on compatible routes.
+  // Azure and ChatGPT transport contracts stay excluded by API/provider identity.
   const explicitContinuationOptIn =
     (api === "openai-responses" || api === "openclaw-openai-responses-transport") &&
     supportsResponsesStoreField &&
@@ -286,17 +286,17 @@ export function resolveOpenAIResponsesPayloadPolicy(
 ): OpenAIResponsesPayloadPolicy {
   const capabilities = resolveOpenAIResponsesPayloadCapabilities(model);
   const storeMode = options.storeMode ?? "provider-policy";
-  // Raw transports stay stateless unless the model explicitly opts in.
+  // Public policy callers retain a strict no-store choice through disable.
+  // Transport defaults stay stateless unless the model explicitly opts in.
   // Native provider wrappers enable storage separately through provider-policy.
   const explicitStore =
     storeMode === "preserve"
       ? undefined
-      : storeMode === "disable"
-        ? capabilities.explicitContinuationOptIn
-          ? true
-          : capabilities.supportsResponsesStoreField
-            ? false
-            : undefined
+      : storeMode === "disable" ||
+          (storeMode === "transport-default" && !capabilities.explicitContinuationOptIn)
+        ? capabilities.supportsResponsesStoreField
+          ? false
+          : undefined
         : capabilities.allowsResponsesStore || capabilities.explicitContinuationOptIn
           ? true
           : undefined;
