@@ -3121,7 +3121,11 @@ describe("executePreparedCliRun supervisor output capture", () => {
       deactivate: deactivateCapture,
     };
     const adapter = createStubChildAdapter();
-    vi.mocked(createChildAdapter).mockResolvedValueOnce(adapter);
+    vi.mocked(createChildAdapter).mockResolvedValueOnce({
+      ...adapter,
+      onExit: vi.fn(),
+      onError: vi.fn(),
+    });
     const supervisor = createProcessSupervisor();
     const spawned = createDeferred<Awaited<ReturnType<ProcessSupervisor["spawn"]>>>();
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
