@@ -115,7 +115,7 @@ describe("resolveSandboxFsPathWithMounts", () => {
         defaultContainerRoot: sandbox.containerWorkdir,
         mounts: buildSandboxFsMounts(sandbox),
       });
-      expect(resolved.hostPath).toBe(path.join(sandbox.workspaceDir, "marker"));
+      expect(resolved.hostPath).toBe(path.resolve(sandbox.workspaceDir, "marker"));
       expect(resolved.containerPath).toBe("/workspace/marker");
     },
   );

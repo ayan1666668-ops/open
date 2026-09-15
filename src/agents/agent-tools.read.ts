@@ -43,12 +43,11 @@ import {
   type MemoryWriteProvenanceObserver,
   withMemoryWriteProvenance,
 } from "./memory-write-provenance.js";
-import { toRelativeWorkspacePath } from "./path-policy.js";
+import { resolveSandboxPathMapping, toRelativeWorkspacePath } from "./path-policy.js";
 import type { AgentTool, AgentToolResult } from "./runtime/index.js";
 import { assertSandboxPath, normalizeFileReferencePrefix } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
-import { resolveSandboxFsMount } from "./sandbox/fs-paths.js";
 import {
   createEditTool,
   createReadTool,
@@ -589,18 +588,6 @@ function normalizeReadResultDetails(
   return { ...result, details: { kind: "text", content: text } };
 }
 
-function mapContainerPathToWorkspaceRoot(params: {
-  filePath: string;
-  root: string;
-  containerWorkdir?: string;
-}): string {
-  return mapContainerPathToRoot({
-    filePath: params.filePath,
-    root: params.root,
-    containerRoot: params.containerWorkdir,
-  }).filePath;
-}
-
 function resolveContainerPathCandidate(filePath: string): string | null {
   let candidate = normalizeFileReferencePrefix(filePath);
   if (/^file:\/\//i.test(candidate)) {
@@ -638,41 +625,20 @@ function resolveContainerPathCandidate(filePath: string): string | null {
   return candidate;
 }
 
-function mapContainerPathToRoot(params: {
+function mapContainerPathToWorkspaceRoot(params: {
   filePath: string;
   root: string;
-  containerRoot?: string;
-}): { filePath: string; matched: boolean } {
-  const containerRoot = params.containerRoot;
-  if (!containerRoot) {
-    return { filePath: params.filePath, matched: false };
-  }
-  const normalizedRoot = containerRoot.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!normalizedRoot.startsWith("/") || !normalizedRoot) {
-    return { filePath: params.filePath, matched: false };
-  }
-
+  containerWorkdir?: string;
+}): string {
   const candidate = resolveContainerPathCandidate(params.filePath);
-  if (candidate === null) {
-    return { filePath: params.filePath, matched: false };
-  }
-
-  const normalizedCandidate = path.posix.normalize(candidate.replace(/\\/g, "/"));
-  if (normalizedCandidate === normalizedRoot) {
-    return { filePath: path.resolve(params.root), matched: true };
-  }
-  const prefix = `${normalizedRoot}/`;
-  if (!normalizedCandidate.startsWith(prefix)) {
-    return { filePath: candidate, matched: false };
-  }
-  const relative = normalizedCandidate.slice(prefix.length);
-  if (!relative) {
-    return { filePath: path.resolve(params.root), matched: true };
-  }
-  return {
-    filePath: path.resolve(params.root, ...relative.split("/").filter(Boolean)),
-    matched: true,
-  };
+  const mapped =
+    params.containerWorkdir && candidate !== null
+      ? resolveSandboxPathMapping(
+          [{ hostRoot: params.root, containerRoot: params.containerWorkdir }],
+          candidate,
+        )
+      : null;
+  return mapped?.hostPath ?? candidate ?? params.filePath;
 }
 
 /** Resolve a model-supplied file path against the host workspace root. */
@@ -921,7 +887,7 @@ export function wrapToolWorkspaceRootGuardWithOptions(
   root: string,
   options?: {
     additionalRoots?: readonly string[];
-    additionalContainerMounts?: readonly {
+    containerMounts?: readonly {
       containerRoot: string;
       hostRoot: string;
     }[];
@@ -933,6 +899,16 @@ export function wrapToolWorkspaceRootGuardWithOptions(
     readPathValidation?: "bridge";
   },
 ): AnyAgentTool {
+  // v2026.9.4 exposed bridges without descriptors. Preserve their host-root
+  // admission until a future breaking SDK contract can require pathMappings.
+  const declaredMappings = options?.bridge?.pathMappings;
+  const legacyBridge = options?.bridge && declaredMappings === undefined;
+  const mounts =
+    options?.containerMounts ??
+    declaredMappings ??
+    (options?.containerWorkdir
+      ? [{ hostRoot: root, containerRoot: options.containerWorkdir }]
+      : []);
   const pathParamKeys =
     options?.pathParamKeys && options.pathParamKeys.length > 0 ? options.pathParamKeys : ["path"];
   return {
@@ -961,56 +937,30 @@ export function wrapToolWorkspaceRootGuardWithOptions(
         // Admission still uses this tool's allowed roots. Reads delegate the
         // physical boundary to the bridge, which resolves container aliases;
         // mutation/list guards retain their selected host boundary check.
-        const guardPath = options?.bridge
-          ? options.bridge.resolvePath({
-              filePath: resolveContainerPathCandidate(filePath) ?? filePath,
-              cwd: options.resolutionCwd ?? root,
-            }).containerPath
-          : filePath;
-        let guardedRoot = root;
-        let workspaceMapping: ReturnType<typeof mapContainerPathToRoot> | undefined;
-        let sandboxPath = guardPath;
-        const allowedMount = resolveSandboxFsMount(
-          options?.additionalContainerMounts ?? [],
-          path.posix.normalize(resolveContainerPathCandidate(guardPath) ?? guardPath),
+        const guardPath =
+          options?.bridge && !legacyBridge
+            ? options.bridge.resolvePath({
+                filePath: resolveContainerPathCandidate(filePath) ?? filePath,
+                cwd: options.resolutionCwd ?? root,
+              }).containerPath
+            : filePath;
+        const workspaceMapping = resolveSandboxPathMapping(
+          mounts,
+          resolveContainerPathCandidate(guardPath) ?? guardPath,
         );
-        if (allowedMount) {
-          const mountMapping = mapContainerPathToRoot({
-            filePath: guardPath,
-            root: allowedMount.hostRoot,
-            containerRoot: allowedMount.containerRoot,
-          });
-          if (mountMapping.matched) {
-            guardedRoot = path.resolve(allowedMount.hostRoot);
-            workspaceMapping = mountMapping;
-            sandboxPath = mountMapping.filePath;
-          }
-        }
-        if (!workspaceMapping?.matched) {
-          workspaceMapping = mapContainerPathToRoot({
-            filePath: guardPath,
-            root,
-            containerRoot: options?.containerWorkdir,
-          });
-          sandboxPath = workspaceMapping.filePath;
-        }
-        const additionalRoots =
-          guardedRoot === root && !workspaceMapping?.matched
-            ? (options?.additionalRoots ?? [])
-            : [];
+        const guardedRoot = workspaceMapping?.mapping.hostRoot ?? root;
+        const sandboxPath = workspaceMapping?.hostPath ?? guardPath;
+        const additionalRoots = workspaceMapping ? [] : (options?.additionalRoots ?? []);
         let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>> | undefined;
         try {
-          if (options?.bridge && !workspaceMapping?.matched) {
+          if (options?.bridge && !legacyBridge && !workspaceMapping) {
             throw new Error(
               `Path escapes sandbox root (${options.containerWorkdir ?? root}): ${guardPath}`,
             );
           }
-          if (!options?.bridge || options.readPathValidation !== "bridge") {
+          if (!options?.bridge || legacyBridge || options.readPathValidation !== "bridge") {
             sandboxResult = await assertSandboxPathWithinAnyRoot({
-              cwd:
-                guardedRoot === root && !workspaceMapping?.matched
-                  ? options?.resolutionCwd
-                  : undefined,
+              cwd: !workspaceMapping ? options?.resolutionCwd : undefined,
               filePath: sandboxPath,
               roots: [guardedRoot, ...additionalRoots],
             });
@@ -1020,7 +970,8 @@ export function wrapToolWorkspaceRootGuardWithOptions(
         }
         if (options?.normalizeGuardedPathParams && record) {
           normalizedRecord ??= { ...record };
-          normalizedRecord[key] = options.bridge ? guardPath : sandboxResult!.resolved;
+          normalizedRecord[key] =
+            options.bridge && !legacyBridge ? guardPath : sandboxResult!.resolved;
         }
       }
       return tool.execute(toolCallId, normalizedRecord ?? args, signal, onUpdate);

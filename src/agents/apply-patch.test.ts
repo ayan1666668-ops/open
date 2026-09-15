@@ -13,6 +13,7 @@ import {
 } from "../test-utils/symlink-rebind-race.js";
 import { createApplyPatchTool } from "./apply-patch.js";
 import { applyPatch, createMemoryPatchSandbox } from "./apply-patch.test-support.js";
+import { createSandboxFsBridgeFromResolver } from "./test-helpers/host-sandbox-fs-bridge.js";
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>) {
   // realpath: production sandbox checks compare against canonical paths; on macOS
@@ -839,6 +840,48 @@ describe("applyPatch", () => {
         } finally {
           await fs.rm(outside, { recursive: true, force: true });
         }
+      });
+    },
+  );
+
+  it.each(["legacy", "empty", "miss", "mapped"] as const)(
+    "honors %s path mappings before patch mutation",
+    async (mode) => {
+      await withTempDir(async (root) => {
+        const mapping = { hostRoot: root, containerRoot: "C:\\NativeWorkspace" };
+        const mappings = mode === "legacy" ? undefined : mode === "empty" ? [] : [mapping];
+        const runtimeRoot = mode === "miss" ? "C:\\Other" : mapping.containerRoot;
+        const bridge = createSandboxFsBridgeFromResolver((filePath) => {
+          const relativePath = path.win32.isAbsolute(filePath)
+            ? path.win32.relative(runtimeRoot, filePath)
+            : filePath;
+          return {
+            hostPath: path.resolve(root, relativePath),
+            relativePath,
+            containerPath: path.win32.join(runtimeRoot, relativePath),
+          };
+        }, mappings);
+        const create = vi.spyOn(bridge, "createFileExclusive");
+        const tool = createApplyPatchTool({
+          cwd: root,
+          sandbox: { root, bridge, workspaceMounts: mappings },
+        });
+        if (mode === "empty" || mode === "miss") {
+          await expect(
+            tool.execute("denied", { input: buildAddFilePatch("new.txt") }),
+          ).rejects.toThrow("Path escapes sandbox root");
+          expect(create).not.toHaveBeenCalled();
+          expect(await fs.readdir(root)).toEqual([]);
+          return;
+        }
+        await tool.execute("admitted", { input: buildAddFilePatch("new.txt") });
+        expect(await fs.readFile(path.join(root, "new.txt"), "utf8")).toBe("escaped\n");
+        expect(create).toHaveBeenCalledWith(
+          expect.objectContaining({ filePath: "C:\\NativeWorkspace\\new.txt" }),
+        );
+        await expect(
+          tool.execute("outside", { input: buildAddFilePatch("../outside.txt") }),
+        ).rejects.toThrow(/Path escapes sandbox root/);
       });
     },
   );

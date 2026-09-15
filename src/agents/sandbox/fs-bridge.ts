@@ -89,6 +89,10 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     };
   }
 
+  get pathMappings(): NonNullable<SandboxFsBridge["pathMappings"]> {
+    return this.mounts;
+  }
+
   async [SANDBOX_FILE_IDENTITY](params: {
     filePath: string;
     cwd?: string;

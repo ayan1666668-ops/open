@@ -72,7 +72,11 @@ function createUnsafeMountedBridge(params: {
     return { hostPath, relativePath, containerPath };
   };
 
-  return createSandboxFsBridgeFromResolver(resolvePath);
+  return createSandboxFsBridgeFromResolver(resolvePath, [
+    { hostRoot: root, containerRoot: workspaceContainerRoot },
+    { hostRoot: agentHostRoot, containerRoot: "/agent" },
+    ...(skillsHostRoot ? [{ hostRoot: skillsHostRoot, containerRoot: skillsContainerRoot }] : []),
+  ]);
 }
 
 export function createUnsafeMountedSandbox(params: {

@@ -71,12 +71,13 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
               ...createSandboxFsBridgeFromResolver((filePath, cwd) => {
                 const resolved = resolvePath({ filePath, cwd });
                 return { ...resolved, hostPath: path.join(remoteRoot, resolved.relativePath) };
-              }),
+              }, remoteBridge.pathMappings),
               // Only backing operations see hostPath. Public resolution must keep
               // path policy on asynchronous remote stat, including on Windows.
               resolvePath,
             }
           : remoteBridge;
+      const patchSandbox = { root: hostRoot, bridge, workspaceMounts: bridge.pathMappings };
       const guard = (tool: ReturnType<typeof createSandboxedReadTool>) =>
         wrapToolWorkspaceRootGuardWithOptions(tool, hostRoot, {
           containerWorkdir,
@@ -167,7 +168,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
         "+referenced patched",
         "*** End Patch",
       ].join("\n");
-      const patchOptions = { cwd: hostRoot, sandbox: { root: hostRoot, bridge } };
+      const patchOptions = { cwd: hostRoot, sandbox: patchSandbox };
       await expect(
         extractResolvedApplyPatchTargetPaths(referencedPatch, patchOptions),
       ).resolves.toEqual([path.posix.join(containerWorkdir, "@notes.md")]);
@@ -200,7 +201,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
       const memoryWriteTool = wrapToolMemoryFlushAppendOnlyWrite(writeTool, {
         root: hostRoot,
         relativePath: journal,
-        sandbox: { root: hostRoot, bridge },
+        sandbox: patchSandbox,
       });
       await expect(
         memoryWriteTool.execute("remote-at-memory", {
@@ -210,7 +211,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
       ).rejects.toThrow(/Memory flush writes are restricted/);
       await expect(fs.readFile(path.join(remoteRoot, journal), "utf8")).resolves.toBe("allowed");
 
-      await createApplyPatchTool({ cwd: hostRoot, sandbox: { root: hostRoot, bridge } }).execute(
+      await createApplyPatchTool({ cwd: hostRoot, sandbox: patchSandbox }).execute(
         "remote-at-patch",
         {
           input: ["*** Begin Patch", "*** Delete File: @notes.md", "*** End Patch"].join("\n"),
@@ -222,7 +223,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
       await expect(fs.readFile(path.join(remoteRoot, "notes.md"), "utf8")).resolves.toBe(
         "sibling original",
       );
-      await createApplyPatchTool({ cwd: hostRoot, sandbox: { root: hostRoot, bridge } }).execute(
+      await createApplyPatchTool({ cwd: hostRoot, sandbox: patchSandbox }).execute(
         "remote-at-shorthand-patch",
         {
           input: [
@@ -256,7 +257,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
       await expect(fs.readFile(path.join(remoteRoot, "moved.md"), "utf8")).resolves.toBe(
         "move target",
       );
-      await createApplyPatchTool({ cwd: hostRoot, sandbox: { root: hostRoot, bridge } }).execute(
+      await createApplyPatchTool({ cwd: hostRoot, sandbox: patchSandbox }).execute(
         "remote-at-replace-patch",
         {
           input: [
@@ -319,7 +320,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
           await expectQuarantine("edited");
           await createApplyPatchTool({
             cwd: hostRoot,
-            sandbox: { root: hostRoot, bridge },
+            sandbox: patchSandbox,
             memoryWriteProvenance,
           }).execute("remote-memory-patch", {
             input: [
@@ -336,7 +337,7 @@ describe.each(["portable", "Linux shell"] as const)("leading-@ remote paths (%s)
             root: hostRoot,
             relativePath,
             containerWorkdir,
-            sandbox: { root: hostRoot, bridge },
+            sandbox: patchSandbox,
             memoryWriteProvenance,
           }).execute("remote-memory-flush", { path: memoryPath, content: "flushed" });
           await expectQuarantine("patched\nflushed");

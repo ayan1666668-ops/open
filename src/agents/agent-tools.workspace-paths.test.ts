@@ -533,9 +533,13 @@ function createSandboxFsTools(params: { sandbox: UnsafeMountedSandbox; workspace
   }
   return tools.map((tool) =>
     wrapToolWorkspaceRootGuardWithOptions(tool, params.sandbox.workspaceDir, {
-      additionalContainerMounts:
+      containerMounts:
         tool.name === "read"
           ? [
+              {
+                hostRoot: params.sandbox.workspaceDir,
+                containerRoot: params.sandbox.containerWorkdir,
+              },
               ...(params.sandbox.workspaceAccess === "ro"
                 ? [
                     {
