@@ -656,6 +656,58 @@ describe("skills-remote", () => {
     }
   });
 
+  it.each(["disconnect", "shutdown", "commands", "replacement"] as const)(
+    "rechecks the live node after loading workspace skills (%s)",
+    async (change) => {
+      const nodeId = `node-${randomUUID()}`;
+      const bin = `bin-${randomUUID()}`;
+      const { cfg, workspaceDir } = createRemoteSkillWorkspace(bin);
+      const lifetime = new AbortController();
+      let session: ReturnType<NodeRegistry["get"]> = testRemoteSession(nodeId, {
+        commands: ["system.run"],
+      });
+      const invoke = vi.fn(async () => ({ ok: true as const, payload: { bins: [bin] } }));
+      let refresh: Promise<void> | undefined;
+      try {
+        setTestSkillsRemoteRegistry(nodeId, { get: () => session, invoke });
+        recordRemoteNodeInfo(session);
+        refresh = refreshRemoteNodeBins({ nodeId, cfg, readinessSignal: lifetime.signal });
+        if (change === "disconnect") {
+          session = undefined;
+          removeRemoteNodeInfo(nodeId);
+        } else if (change === "shutdown") {
+          lifetime.abort();
+        } else {
+          session = {
+            ...session,
+            commands: change === "replacement" ? ["system.which"] : [],
+            pairingGeneration: "generation-current",
+          };
+          recordRemoteNodeInfo(session);
+        }
+        await refresh;
+
+        if (change === "replacement") {
+          expect(invoke).toHaveBeenCalledOnce();
+          expect(invoke).toHaveBeenCalledWith(
+            expect.objectContaining({
+              command: "system.which",
+              expectedPairingGeneration: "generation-current",
+            }),
+          );
+        } else {
+          expect(invoke).not.toHaveBeenCalled();
+          expect(getRemoteSkillEligibility()?.hasBin(bin) ?? false).toBe(false);
+        }
+      } finally {
+        lifetime.abort();
+        await Promise.allSettled([refresh]);
+        removeRemoteNodeInfo(nodeId);
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("waits for connect readiness before connectivity preflight and bin probing", async () => {
     vi.useFakeTimers();
     const nodeId = `node-${randomUUID()}`;
