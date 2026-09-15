@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { AgentDeletionCommitUncertainError } from "../../agents/agent-lifecycle-registry.js";
 import {
+  closeOpenClawStateDatabaseAsync,
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
 } from "../../state/openclaw-state-db.js";
@@ -492,12 +493,16 @@ async function withStateDirForStorePath<T>(
   runWithStateDir: () => Promise<T>,
 ): Promise<T> {
   const stateRoot = path.dirname(path.dirname(storePath));
+  await closeOpenClawStateDatabaseAsync();
   resetTaskRegistryForTests();
-  try {
-    return await withEnvAsync({ OPENCLAW_STATE_DIR: stateRoot }, runWithStateDir);
-  } finally {
-    resetTaskRegistryForTests();
-  }
+  return await withEnvAsync({ OPENCLAW_STATE_DIR: stateRoot }, async () => {
+    try {
+      return await runWithStateDir();
+    } finally {
+      await closeOpenClawStateDatabaseAsync();
+      resetTaskRegistryForTests();
+    }
+  });
 }
 
 function createTimedOutIsolatedCronState(params: { storePath: string; now: number }) {
