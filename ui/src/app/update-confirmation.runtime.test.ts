@@ -130,8 +130,15 @@ it("shows the git target when no package version is available", async () => {
   const { settled } = startUpdate({
     updateAvailable: null,
     updateSchedule: {
-      target: { commitsBehind: 3, kind: "git" },
-    } as unknown as UpdateScheduleState,
+      channel: "dev",
+      autoEnabled: false,
+      target: {
+        commitsBehind: 3,
+        kind: "git",
+        upstreamRef: "origin/main",
+        upstreamSha: "abc1234",
+      },
+    },
   });
   const { modal } = await getRenderedModalDialog(document.body);
 
@@ -564,7 +571,6 @@ it.each([
       check.click();
       pendingStatus.resolve();
       await statusOperation;
-      await flushMicrotasks();
       expect(modal.textContent).not.toContain("Run status read failed");
       expect(modal.querySelector('[role="status"]')?.textContent).toContain("Status refreshed.");
       expect(view.run).toEqual(run);
@@ -572,12 +578,9 @@ it.each([
         statusReadsBeforeCheck + 1,
       );
 
-      statusResponse = Promise.resolve().then(() => {
-        throw new Error("Status refresh unavailable");
-      });
+      statusResponse = Promise.reject(new Error("Status refresh unavailable"));
       findButton("Check status").click();
       await statusOperation;
-      await flushMicrotasks();
       expect(modal.textContent).toContain(
         "Could not check for updates: Status refresh unavailable",
       );
@@ -587,7 +590,6 @@ it.each([
       statusResponse = Promise.resolve();
       findButton("Check status").click();
       await statusOperation;
-      await flushMicrotasks();
       expect(modal.textContent).not.toContain("Could not check for updates");
       expect(view.run).toEqual(run);
       harness.update({ phase: "connecting", client: null });
