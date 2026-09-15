@@ -56,6 +56,7 @@ import { readSessionPreviewItemsFromTranscript } from "../session-transcript-pre
 import type { SessionListActiveRunProjector } from "../session-utils-contracts.js";
 import { projectGatewaySessionActiveRun } from "../session-utils-display.js";
 import { resolveGatewaySessionActiveModel } from "../session-utils-row.js";
+import type { GatewaySessionStoreDiscoveryCache } from "../session-utils-store-lookup.js";
 import {
   listSessionsFromStoreAsync,
   loadCombinedSessionStoreForGatewayCore,
@@ -102,6 +103,9 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       ? createSessionListEntryFilter({ client, cfg })
       : undefined;
     const restrictVisibility = restrictIncognito || Boolean(roleVisibilityFilter);
+    const targetDiscoveryCache: GatewaySessionStoreDiscoveryCache | undefined = roleVisibilityFilter
+      ? new Map()
+      : undefined;
     const canSearchSessionKey = (sessionKey: string) => {
       if (
         isIncognitoSessionKey(sessionKey) &&
@@ -112,7 +116,12 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
       if (!roleVisibilityFilter) {
         return true;
       }
-      const target = resolveSessionSharingTarget({ cfg, sessionKey, agentId });
+      const target = resolveSessionSharingTarget({
+        cfg,
+        sessionKey,
+        agentId,
+        targetDiscoveryCache,
+      });
       return Boolean(target && roleVisibilityFilter(target.storeKey, target.entry));
     };
     if (requestedAgentId && !params.sessionKeys && configured) {
