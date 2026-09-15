@@ -10,8 +10,7 @@ import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/c
 import {
   buildCanonicalSentMessageHookContext,
   deriveInboundMessageHookContext,
-  toPluginInboundClaimEvent,
-  toPluginInboundClaimContext,
+  toPluginInboundClaimPair,
   toInternalMessagePreprocessedContext,
   toInternalMessageReceivedContext,
   toInternalMessageSentContext,
@@ -24,6 +23,13 @@ import {
 type ResolveInboundConversationParams = Parameters<
   NonNullable<ChannelMessagingAdapter["resolveInboundConversation"]>
 >[0];
+
+interface MinimalInboundHookContext {
+  from: string;
+  content: string;
+  channelId: string;
+  isGroup: boolean;
+}
 
 function makeInboundCtx(overrides: Partial<FinalizedMsgContext> = {}): FinalizedMsgContext {
   return {
@@ -121,6 +127,26 @@ describe("message hook mappers", () => {
     );
   });
 
+  it("preserves producer enrichment and minimal mapper input compatibility", () => {
+    const derived = deriveInboundMessageHookContext(makeInboundCtx());
+    derived.runId = "run-1";
+    derived.trace = {
+      traceId: "11111111111111111111111111111111",
+      spanId: "2222222222222222",
+    };
+    derived.callDepth = 2;
+    derived.mediaStagingPending = true;
+    derived.originalMedia = [];
+
+    const minimal: MinimalInboundHookContext = {
+      from: "sender",
+      content: "hello",
+      channelId: "demo-chat",
+      isGroup: false,
+    };
+    expect(toPluginMessageContext(minimal)).toMatchObject({ channelId: "demo-chat" });
+  });
+
   it("derives canonical inbound context with body precedence and group metadata", () => {
     const canonical = deriveInboundMessageHookContext(makeInboundCtx());
 
@@ -131,6 +157,19 @@ describe("message hook mappers", () => {
     expect(canonical.isGroup).toBe(true);
     expect(canonical.groupId).toBe("demo-chat:chat:456");
     expect(canonical.guildId).toBe("guild-1");
+  });
+
+  it("normalizes canonical inbound message id precedence", () => {
+    expect(
+      deriveInboundMessageHookContext(
+        makeInboundCtx({ MessageSidFull: "full-message-id", MessageSid: "short-message-id" }),
+      ).messageId,
+    ).toBe("full-message-id");
+    expect(
+      deriveInboundMessageHookContext(
+        makeInboundCtx({ MessageSidFull: "  ", MessageSid: "short-message-id" }),
+      ).messageId,
+    ).toBe("short-message-id");
   });
 
   it("uses the session key as the Control UI conversation id", () => {
@@ -175,7 +214,7 @@ describe("message hook mappers", () => {
       replyToIsQuote: true,
     });
 
-    const claimContext = toPluginInboundClaimContext(canonical);
+    const { context: claimContext, event: claimEvent } = toPluginInboundClaimPair(canonical);
     expect(claimContext).toMatchObject({
       replyToId: "discord-message-42",
       replyToIdFull: "discord:channel-1:discord-message-42",
@@ -184,7 +223,6 @@ describe("message hook mappers", () => {
       replyToIsQuote: true,
     });
 
-    const claimEvent = toPluginInboundClaimEvent(canonical);
     expect(claimEvent).toMatchObject({
       replyToId: "discord-message-42",
       replyToIdFull: "discord:channel-1:discord-message-42",
@@ -305,7 +343,7 @@ describe("message hook mappers", () => {
       "https://example.test/ramp.jpg",
     ]);
     expect(canonical.mediaTypes).toEqual(["image/jpeg", "image/jpeg"]);
-    const claimEvent = toPluginInboundClaimEvent(canonical);
+    const { event: claimEvent } = toPluginInboundClaimPair(canonical);
     expect(claimEvent.metadata?.mediaPath).toBe("/tmp/tree.jpg");
     expect(claimEvent.metadata?.mediaUrl).toBe("https://example.test/tree.jpg");
     expect(claimEvent.metadata?.mediaType).toBe("image/jpeg");
@@ -376,7 +414,7 @@ describe("message hook mappers", () => {
     },
   ])("dual-emits $name hook media from canonical facts", (testCase) => {
     const ctx = finalizeInboundContextForSdk(makeInboundCtx(testCase.input));
-    const event = toPluginInboundClaimEvent(deriveInboundMessageHookContext(ctx));
+    const { event } = toPluginInboundClaimPair(deriveInboundMessageHookContext(ctx));
     const expectedIndex = "expectedIndex" in testCase ? (testCase.expectedIndex ?? 0) : 0;
 
     expect(event.media?.[expectedIndex]?.path).toBe(testCase.expectedPath);
@@ -408,7 +446,7 @@ describe("message hook mappers", () => {
     ];
 
     for (const event of [
-      toPluginInboundClaimEvent(canonical),
+      toPluginInboundClaimPair(canonical).event,
       toPluginMessageReceivedEvent(canonical),
       toInternalMessageReceivedContext(canonical),
       toInternalMessageTranscribedContext(canonical, {}),
@@ -418,7 +456,7 @@ describe("message hook mappers", () => {
       expect(event.originalMedia).toEqual(expectedOriginalMedia);
       expect(event.mediaStagingPending).toBe(true);
     }
-    expect(toPluginInboundClaimEvent(canonical).metadata?.mediaPath).toBeUndefined();
+    expect(toPluginInboundClaimPair(canonical).event.metadata?.mediaPath).toBeUndefined();
     expect(toPluginMessageReceivedEvent(canonical).metadata?.mediaPath).toBeUndefined();
     expect(toInternalMessageReceivedContext(canonical).metadata?.mediaPath).toBeUndefined();
   });
@@ -622,8 +660,7 @@ describe("message hook mappers", () => {
       ...deriveInboundMessageHookContext(makeInboundCtx()),
       trace,
     };
-    const inboundContext = toPluginInboundClaimContext(inbound);
-    const inboundEvent = toPluginInboundClaimEvent(inbound);
+    const { context: inboundContext, event: inboundEvent } = toPluginInboundClaimPair(inbound);
     expect(inboundContext.trace).not.toBe(trace);
     expect(inboundContext.trace).toEqual(trace);
     expect(Object.isFrozen(inboundContext.trace)).toBe(true);
@@ -657,7 +694,7 @@ describe("message hook mappers", () => {
       }),
     );
 
-    expect(toPluginInboundClaimContext(canonical)).toEqual({
+    expect(toPluginInboundClaimPair(canonical).context).toEqual({
       channelId: "claim-chat",
       accountId: "acc-1",
       conversationId: "channel:123456789012345678",
@@ -688,8 +725,9 @@ describe("message hook mappers", () => {
       }),
     );
 
-    expect(toPluginInboundClaimContext(canonical).conversationId).toBeUndefined();
-    expect(toPluginInboundClaimEvent(canonical).conversationId).toBeUndefined();
+    const { context, event } = toPluginInboundClaimPair(canonical);
+    expect(context.conversationId).toBeUndefined();
+    expect(event.conversationId).toBeUndefined();
   });
 
   it("passes thread parent ids to channel plugin claim resolvers", () => {
@@ -707,7 +745,7 @@ describe("message hook mappers", () => {
       }),
     );
 
-    expect(toPluginInboundClaimContext(canonical)).toMatchObject({
+    expect(toPluginInboundClaimPair(canonical).context).toMatchObject({
       channelId: "thread-claim-chat",
       conversationId: "1510164477642014740",
       parentConversationId: "channel:1510164477642014999",
@@ -728,7 +766,7 @@ describe("message hook mappers", () => {
       }),
     );
 
-    expect(toPluginInboundClaimContext(canonical)).toEqual({
+    expect(toPluginInboundClaimPair(canonical).context).toEqual({
       channelId: "claim-chat",
       accountId: "acc-1",
       conversationId: "user:1177378744822943744",
@@ -807,6 +845,44 @@ describe("message hook mappers", () => {
       messageId: "out-1",
       isGroup: true,
       groupId: "demo-chat:chat:456",
+    });
+  });
+
+  it("projects normalized location and stable provider update identity", () => {
+    const canonical = deriveInboundMessageHookContext(
+      makeInboundCtx({
+        LocationLat: 43.8376,
+        LocationLon: 18.4534,
+        LocationAccuracy: 12,
+        LocationSource: "live",
+        LocationIsLive: true,
+        LocationLivePeriodSeconds: 900,
+        ProviderUpdateId: "9002",
+        ProviderUpdateKind: "edited_message",
+        ProviderMessageTimestamp: 1_786_094_460_000,
+        ProviderEditTimestamp: 1_786_094_520_000,
+      }),
+    );
+
+    const { event } = toPluginInboundClaimPair(canonical);
+    expect(event.location).toEqual({
+      latitude: 43.8376,
+      longitude: 18.4534,
+      accuracy: 12,
+      source: "live",
+      isLive: true,
+      livePeriodSeconds: 900,
+    });
+    expect(event.providerUpdate).toEqual({
+      id: "9002",
+      kind: "edited_message",
+      messageId: "msg-1",
+      messageTimestamp: 1_786_094_460_000,
+      editedTimestamp: 1_786_094_520_000,
+    });
+    expect(toPluginMessageReceivedEvent(canonical)).toMatchObject({
+      location: event.location,
+      providerUpdate: event.providerUpdate,
     });
   });
 });
