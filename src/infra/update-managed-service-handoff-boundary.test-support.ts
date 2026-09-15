@@ -215,8 +215,7 @@ export function createManagedServiceManagerBoundary({
         string[],
         { env: NodeJS.ProcessEnv },
       ];
-      const scriptPath = generatedArgs[0];
-      const generatedParamsPath = generatedArgs[1];
+      const [scriptPath, generatedParamsPath] = generatedArgs;
       if (!scriptPath || !generatedParamsPath) {
         throw new Error("expected generated managed handoff script and parameters");
       }
@@ -585,6 +584,7 @@ export function createManagedServiceManagerBoundary({
         const updated = activated && options.nativePreparation !== "timeout-stop";
         await expect(pathExists(updaterPath)).resolves.toBe(updated);
       } else if (options?.parentExitTimeoutMs !== undefined) {
+        const timeout = options.parentExitTimeoutMs + (options.launchdTeardown ? 8_000 : 3_000);
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           expect(
@@ -593,7 +593,7 @@ export function createManagedServiceManagerBoundary({
               new Promise<never>((_resolve, reject) => {
                 timer = setTimeout(
                   () => reject(new Error("managed helper did not restore the stalled parent")),
-                  options.parentExitTimeoutMs + (options.launchdTeardown ? 8_000 : 3_000),
+                  timeout,
                 );
               }),
             ]),
