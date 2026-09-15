@@ -245,6 +245,7 @@ export function renderApplicationShell(host: ShellViewHost) {
     method: "sessions.create",
     params: {},
   });
+  const newSessionDisabledReason = newSessionAccess.allowed ? undefined : newSessionAccess.reason;
   const openNewSession = (agentId: string, target?: NewSessionTarget) => {
     const access = readSessionMethodAccess(context.gateway.snapshot, {
       method: "sessions.create",
@@ -440,9 +441,7 @@ export function renderApplicationShell(host: ShellViewHost) {
                 .historyOnly=${settingsTakeover}
                 .canGoBack=${host.nativeHistoryState.canGoBack}
                 .canGoForward=${host.nativeHistoryState.canGoForward}
-                .newSessionDisabledReason=${
-                  newSessionAccess.allowed ? undefined : newSessionAccess.reason
-                }
+                .newSessionDisabledReason=${newSessionDisabledReason}
                 .onToggleSidebar=${() => host.toggleNavigationSurface()}
                 .onOpenPalette=${() => host.openPalette()}
                 .onOpenNewSession=${() => host.handleNativeNewSession()}
@@ -487,7 +486,7 @@ export function renderApplicationShell(host: ShellViewHost) {
                   agentId: selectedAgentId,
                   className: "shell-chrome-controls__button shell-chrome-controls__new-thread",
                   label: t("chat.runControls.newSession"),
-                  disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
+                  disabledReason: newSessionDisabledReason,
                   onOpen: openNewSession,
                 })}
                 <openclaw-tooltip
