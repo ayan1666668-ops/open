@@ -248,6 +248,8 @@ function toWorkerStreamEvent(
     case "toolcall_start":
     case "toolcall_delta":
     case "toolcall_end":
+    // Worker inference has no opt-in preview contract; keep snapshots off its wire.
+    case "text_preview":
     case "done":
     case "error":
       return undefined;

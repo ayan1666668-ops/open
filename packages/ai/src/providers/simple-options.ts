@@ -23,6 +23,7 @@ export function buildBaseOptions(
   const firstEventOptions = options as FirstEventStreamOptions | undefined;
   const baseOptions = {
     temperature: options?.temperature,
+    bodyPreview: options?.bodyPreview,
     ...(options?.serviceTier ? { serviceTier: options.serviceTier } : {}),
     maxTokens: options?.maxTokens,
     responseFormat: options?.responseFormat,
