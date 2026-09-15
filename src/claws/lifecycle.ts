@@ -653,7 +653,11 @@ export async function buildClawAddPlan(params: {
   const notices = clawAgentConfigurationNotices(
     openClawAgentSettings,
     context.config ?? {},
-    new Set([...(context.existingAgentIds ?? []), finalId]),
+    new Set([
+      ...[...(context.existingAgents ?? [])].map((agent) => agent.id),
+      ...(context.existingAgentIds ?? []),
+      finalId,
+    ]),
   );
   const planIntegrity = digestClawAddPlanIntegrity({
     manifestSchemaVersion: params.manifest.schemaVersion,

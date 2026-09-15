@@ -173,6 +173,26 @@ describe("buildClawAddPlan configured-agent adoption", () => {
     expect(conflict?.message).not.toContain("browser");
   });
 
+  it("does not flag a delegation target that is an existing configured agent", async () => {
+    const { source, workspace } = await fixture();
+    const plan = await buildClawAddPlan({
+      manifest: manifest(),
+      source,
+      openClawProfile: {
+        schemaVersion: 1,
+        agent: { subagents: { allowAgents: ["other"], delegationMode: "prefer" } },
+      },
+      context: {
+        workspace,
+        existingAgents: [{ id: "other", name: "Other", workspace: `${workspace}-other` }],
+      },
+    });
+
+    expect(plan.diagnostics ?? []).not.toContainEqual(
+      expect.objectContaining({ code: "delegation_target_unresolved" }),
+    );
+  });
+
   it("compares the full config when workspace spellings resolve identically", async () => {
     const { source, workspace } = await fixture();
     const plan = await buildClawAddPlan({
