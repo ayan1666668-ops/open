@@ -149,6 +149,7 @@ type CronAddParams = {
   };
   deleteAfterRun?: boolean;
   agentId?: string;
+  sessionKey?: string;
   sessionTarget?: string;
 };
 
@@ -1562,6 +1563,17 @@ describe("cron cli", () => {
       sessionKey: "agent:ops:main",
       payload: { kind: "command", cwd: "/srv/app" },
     });
+  });
+
+  it("creates the job when --agent, --session-key, and --command-cwd are omitted on cron add", async () => {
+    const params = await runCronAddAndGetParams(
+      namedCronAddArgs("Omitted flags", "--command", "pwd"),
+    );
+
+    expect(params?.payload).toMatchObject({ kind: "command", argv: ["sh", "-lc", "pwd"] });
+    expect(params?.agentId).toBeUndefined();
+    expect(params?.sessionKey).toBeUndefined();
+    expect(params?.payload?.cwd).toBeUndefined();
   });
 
   it("does not warn when --system-event is used (no agent needed)", async () => {
