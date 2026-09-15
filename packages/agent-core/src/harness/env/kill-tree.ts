@@ -1,4 +1,3 @@
-// Agent Core module implements kill tree behavior.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -81,6 +80,33 @@ export function signalProcessTree(
     opts?.detached === true || (opts?.detached !== false && isProcessGroupLeader(pid)) ? -pid : pid;
   signalUnixTarget(target, signal);
   opts?.onComplete?.();
+}
+
+/** Capture the group selected by signalProcessTree while its leader still exists. */
+export function readUnixProcessGroupMembers(pid: number): number[] {
+  if (process.platform === "win32" || !isProcessGroupLeader(pid)) {
+    return [pid];
+  }
+  try {
+    const result = spawnSync("ps", ["-axo", "pid=,pgid="], {
+      encoding: "utf8",
+      timeout: 500,
+    });
+    if (result.error || result.status !== 0) {
+      return [pid];
+    }
+    const members = new Set([pid]);
+    for (const line of result.stdout.split("\n")) {
+      const [memberText, groupText] = line.trim().split(/\s+/);
+      const member = parseProcessGroupId(memberText);
+      if (member && parseProcessGroupId(groupText) === pid) {
+        members.add(member);
+      }
+    }
+    return [...members];
+  } catch {
+    return [pid];
+  }
 }
 
 /** Signals every process group and process still owned by one forkpty session. */

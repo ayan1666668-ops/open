@@ -861,6 +861,35 @@ describe("session MCP runtime", () => {
     expect(mapValidator({ foo: 42 }).valid).toBe(false);
   });
 
+  it.each([
+    { $schema: undefined, validFormat: false },
+    { $schema: "http://json-schema.org/draft-07/schema#", validFormat: false },
+    { $schema: "https://json-schema.org/draft/2020-12/schema", validFormat: true },
+  ])(
+    "preserves format and non-mutating validation semantics for $schema",
+    ({ $schema, validFormat }) => {
+      const schema = {
+        ...($schema ? { $schema } : {}),
+        type: "object",
+        properties: {
+          url: { type: "string", format: "uri" },
+          count: { type: "integer", default: 7 },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      };
+      const originalSchema = structuredClone(schema);
+      const validator = createBundleMcpJsonSchemaValidator().getValidator(schema);
+      const input = { url: "not a uri" };
+      expect(validator(input).valid).toBe(validFormat);
+      const validInput = { url: "https://example.test" };
+      expect(validator(validInput).data).toBe(validInput);
+      expect(validInput).toEqual({ url: "https://example.test" });
+      expect(validator({ url: "https://example.test", count: "7" }).valid).toBe(false);
+      expect(schema).toEqual(originalSchema);
+    },
+  );
+
   it("rejects invalid draft-2020-12 tool output schemas from external MCP catalogs", () => {
     for (const schema of [
       {
@@ -945,6 +974,27 @@ describe("session MCP runtime", () => {
         "Invalid MCP draft-2020-12 JSON Schema",
       );
     }
+  });
+
+  it("reports malformed annotation formats at their original schema path", () => {
+    expect(() =>
+      createBundleMcpJsonSchemaValidator().getValidator({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          node: {
+            type: ["object", "null"],
+            // Deliberately malformed external schema must reach runtime shape validation.
+            $defs: { Leaf: { type: "string", format: 42 as never } },
+          },
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining("<schema>.properties.node.$defs.Leaf.format"),
+        cause: expect.any(Error),
+      }),
+    );
   });
 
   it("accepts draft-2020-12 local refs to boolean schemas and anchors", () => {
@@ -1101,6 +1151,64 @@ describe("session MCP runtime", () => {
     expect(validator({ a: {}, b: {} }).valid).toBe(true);
     expect(validator({ a: {}, b: 1 }).valid).toBe(false);
   });
+
+  it.each([
+    { label: "valid leaf", structuredContent: { node: null, label: "leaf" }, valid: true },
+    { label: "invalid leaf", structuredContent: { node: null, label: 42 }, valid: false },
+  ])(
+    "validates nested union resource references over stdio: $label",
+    async ({ structuredContent, valid }) => {
+      const tempDir = tempDirTracker.make("bundle-mcp-nested-union-schema-");
+      const serverPath = path.join(tempDir, "server.mjs");
+      await writeListToolsMcpServer({
+        filePath: serverPath,
+        logPath: path.join(tempDir, "server.log"),
+        tools: [
+          {
+            name: "nested",
+            inputSchema: { type: "object" },
+            outputSchema: {
+              $schema: "https://json-schema.org/draft/2020-12/schema",
+              type: "object",
+              properties: {
+                node: { type: ["object", "null"], $defs: { Leaf: { type: "string" } } },
+                label: { $ref: "#/properties/node/$defs/Leaf" },
+              },
+              required: ["node", "label"],
+              additionalProperties: false,
+            },
+          },
+          { name: "healthy", inputSchema: { type: "object" } },
+        ],
+        callToolResult: { content: [], structuredContent },
+      });
+      const runtime = createSessionMcpRuntime({
+        sessionId: "session-nested-union-schema",
+        workspaceDir: tempDir,
+        cfg: { mcp: { servers: { docs: { command: process.execPath, args: [serverPath] } } } },
+      });
+      try {
+        expect((await runtime.getCatalog()).tools.map((entry) => entry.toolName)).toEqual([
+          "healthy",
+          "nested",
+        ]);
+        if (valid) {
+          await expect(runtime.callTool("docs", "nested", {})).resolves.toMatchObject({
+            structuredContent,
+          });
+        } else {
+          await expect(runtime.callTool("docs", "nested", {})).rejects.toThrow(
+            "does not match the tool's output schema",
+          );
+        }
+        await expect(runtime.callTool("docs", "healthy", {})).resolves.toMatchObject({
+          structuredContent,
+        });
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
 
   it("enforces output schemas under the canonical trimmed tool name", async () => {
     const tempDir = tempDirTracker.make("bundle-mcp-canonical-schema-");
@@ -3388,6 +3496,90 @@ process.on("SIGINT", shutdown);`,
     await manager.disposeAll();
   });
 
+  it("does not let run settlement disarm an ended session before late creation", async () => {
+    const sessionId = "session-ended-before-creation";
+    await retireSessionMcpRuntime({
+      sessionId,
+      reason: "session-end",
+      preserveActiveLeases: true,
+      retainAcrossReuse: true,
+    });
+    await retireSessionMcpRuntime({
+      sessionId,
+      reason: "embedded-run-end",
+      preserveActiveLeases: true,
+    });
+    try {
+      const runtime = await getOrCreateSessionMcpRuntime({
+        sessionId,
+        workspaceDir: "/workspace",
+        cfg: { mcp: { servers: {} } },
+      });
+      await completeDeferredSessionMcpRuntimeRetirement(runtime);
+      expect(testing.getCachedSessionIds()).not.toContain(sessionId);
+    } finally {
+      await retireSessionMcpRuntime({ sessionId, reason: "test-cleanup" });
+    }
+  });
+
+  it.each(["reset", "shutdown"] as const)(
+    "keeps an unleased stdio child alive until %s",
+    async (cleanup) => {
+      const tempDir = makeTempDir(tempDirs, "bundle-mcp-keep-alive-");
+      const serverPath = path.join(tempDir, "server.mjs");
+      const pidPath = path.join(tempDir, "server.pid");
+      await writeListToolsMcpServer({
+        filePath: serverPath,
+        logPath: path.join(tempDir, "server.log"),
+        pidPath,
+      });
+      const manager = createSessionMcpRuntimeManager({
+        enableIdleSweepTimer: false,
+        now: () => Date.now(),
+      });
+      const params: RuntimeParams = {
+        sessionId: "session-child-keep-alive",
+        workspaceDir: tempDir,
+        cfg: { mcp: { servers: { child: { command: process.execPath, args: [serverPath] } } } },
+      };
+      try {
+        const runtime = await manager.getOrCreate(params);
+        await runtime.getCatalog();
+        await runtime.callTool("child", "slow_tool", {});
+        await waitForFileText(pidPath, "", LIST_TOOLS_SERVER_LOG_TIMEOUT_MS);
+        const pid = Number.parseInt(await fs.readFile(pidPath, "utf8"), 10);
+        const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 86_400_000);
+        try {
+          expect(await manager.sweepIdleRuntimes()).toBe(0);
+          expect(manager.peekSession({ sessionId: params.sessionId })).toBe(runtime);
+          expect(() => process.kill(pid, 0)).not.toThrow();
+        } finally {
+          clock.mockRestore();
+        }
+        if (cleanup === "reset") {
+          await manager.disposeSession(params.sessionId);
+        } else {
+          await manager.disposeAll();
+        }
+        await waitForPredicate(
+          () => {
+            try {
+              process.kill(pid, 0);
+              return false;
+            } catch {
+              return true;
+            }
+          },
+          "keep-alive MCP child exit",
+          LIST_TOOLS_SERVER_LOG_TIMEOUT_MS,
+        );
+        expect(manager.listRuntimeKeys()).toEqual([]);
+      } finally {
+        await manager.disposeAll();
+      }
+    },
+  );
+
   it("keeps a real requester-scoped MCP transport alive during an idle sweep", async () => {
     const resolverRegistry = createMcpProofPluginRegistry();
     await withPluginRuntimeRegistryScope(resolverRegistry.registry, async () => {
@@ -3420,13 +3612,16 @@ process.on("SIGINT", shutdown);`,
         transport: "streamable-http" as const,
         url: "https://placeholder.invalid/mcp",
       };
-      const params = makeRequesterParams(
-        "session-real-requester-sweep",
-        {
-          mcp: { servers: { "real-requester": declaredServer } },
-        },
-        "proof-requester",
-      );
+      const params = {
+        ...makeRequesterParams(
+          "session-real-requester-sweep",
+          {
+            mcp: { sessionIdleTtlMs: 600_000, servers: { "real-requester": declaredServer } },
+          },
+          "proof-requester",
+        ),
+        autoApproveCodexAppServerApprovals: true,
+      };
       const singletonStore = globalThis as Record<PropertyKey, unknown>;
       const hadRuntimeManager = Object.hasOwn(singletonStore, SESSION_MCP_RUNTIME_MANAGER_KEY);
       const previousRuntimeManager = singletonStore[SESSION_MCP_RUNTIME_MANAGER_KEY];
@@ -3543,7 +3738,7 @@ describe("requester-scoped MCP connection resolution", () => {
     ["full", 2],
     ["requester-only", 1],
   ] as const)(
-    "expires %s runtimes at ten idle minutes while preserving reuse and active leases",
+    "expires %s runtimes at the configured idle TTL while preserving reuse and active leases",
     async (entrypoint, expectedExpired) => {
       const resolverRegistry = createMcpProofPluginRegistry();
       await withPluginRuntimeRegistryScope(resolverRegistry.registry, async () => {
@@ -3564,6 +3759,7 @@ describe("requester-scoped MCP connection resolution", () => {
           ...(entrypoint === "static" ? {} : { requesterSenderId: "sender-a" }),
           cfg: {
             mcp: {
+              sessionIdleTtlMs: 1_200_000.9,
               servers: {
                 shared: { command: "true" },
                 ...(entrypoint === "static"
@@ -3579,12 +3775,12 @@ describe("requester-scoped MCP connection resolution", () => {
             : manager.getOrCreate(params);
         try {
           await getRuntime();
-          nowMs += 10 * 60 * 1000 - 1;
+          nowMs += 1_200_000 - 1;
           expect(await manager.sweepIdleRuntimes()).toBe(0);
 
           const reused = expectDefined(await getRuntime(), "admitted MCP runtime");
           expect(reused.lastUsedAt).toBe(nowMs);
-          nowMs += 10 * 60 * 1000 - 1;
+          nowMs += 1_200_000 - 1;
           expect(await manager.sweepIdleRuntimes()).toBe(0);
           const release = expectDefined(reused.acquireLease, "MCP runtime lease")();
           nowMs += 1;
@@ -3603,7 +3799,83 @@ describe("requester-scoped MCP connection resolution", () => {
     },
   );
 
-  it("sweeps admitted runtimes on the fixed idle timer and stops maintenance after disposal", async () => {
+  it.each([undefined, 0] as const)(
+    "keeps session runtimes alive with TTL %s without scheduling idle maintenance",
+    async (sessionIdleTtlMs) => {
+      vi.useFakeTimers();
+      const manager = createSessionMcpRuntimeManager();
+      const params: RuntimeParams = {
+        sessionId: "session-keep-alive",
+        workspaceDir: "/workspace",
+        cfg: { mcp: { sessionIdleTtlMs, servers: {} } },
+      };
+      try {
+        const runtime = await manager.getOrCreate(params);
+        await vi.advanceTimersByTimeAsync(86_400_000);
+        expect(manager.peekSession({ sessionId: params.sessionId })).toBe(runtime);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await manager.disposeAll();
+      }
+    },
+  );
+
+  it("changes idle policy on reuse and reload without replacing the runtime", async () => {
+    vi.useFakeTimers();
+    const manager = createSessionMcpRuntimeManager();
+    const params: RuntimeParams = {
+      sessionId: "session-policy",
+      workspaceDir: "/workspace",
+      cfg: { mcp: { servers: {} } },
+    };
+    try {
+      const runtime = await manager.getOrCreate(params);
+      params.cfg = { mcp: { sessionIdleTtlMs: 120_000, servers: {} } };
+      expect(await manager.getOrCreate(params)).toBe(runtime);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(manager.peekSession({ sessionId: params.sessionId })).toBe(runtime);
+      await manager.reloadConfig({ cfg: { mcp: { servers: {} } } });
+      // A turn prepared before publication must not restore its former idle policy.
+      expect(await manager.getOrCreate(params)).toBe(runtime);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(manager.peekSession({ sessionId: params.sessionId })).toBe(runtime);
+      await manager.reloadConfig({ cfg: { mcp: { sessionIdleTtlMs: 1_000, servers: {} } } });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(manager.listRuntimeKeys()).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await manager.disposeAll();
+    }
+  });
+
+  it("keeps replacement capacity reserved when an old child's cleanup is uncertain", async () => {
+    const manager = createSessionMcpRuntimeManager({ enableIdleSweepTimer: false });
+    const params: RuntimeParams = {
+      sessionId: "uncertain-child",
+      workspaceDir: "/workspace",
+      cfg: { mcp: { servers: { child: { command: "true" } } } },
+    };
+    try {
+      const previous = await manager.getOrCreate(params);
+      previous.joinCleanup = async () => {
+        throw new Error("child cleanup uncertain");
+      };
+      await expect(
+        manager.getOrCreate({ ...params, workspaceDir: "/replacement" }),
+      ).rejects.toThrow("child cleanup uncertain");
+      for (let index = 0; index < 255; index += 1) {
+        await manager.getOrCreate({ ...params, sessionId: `other-${index}` });
+      }
+      await expect(manager.getOrCreate({ ...params, sessionId: "overflow" })).rejects.toThrow(
+        "live runtime limit (256)",
+      );
+    } finally {
+      await manager.disposeAll();
+    }
+  });
+
+  it("sweeps admitted runtimes only with an opt-in idle timer and stops maintenance after disposal", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(100_000);
     const now = vi.fn(() => Date.now());
@@ -3611,7 +3883,7 @@ describe("requester-scoped MCP connection resolution", () => {
     const params: RuntimeParams = {
       sessionId: "session-idle-timer",
       workspaceDir: "/workspace",
-      cfg: { mcp: { servers: {} } },
+      cfg: { mcp: { sessionIdleTtlMs: 600_000, servers: {} } },
     };
     try {
       await manager.getOrCreate(params);
@@ -4164,75 +4436,6 @@ describe("requester-scoped MCP connection resolution", () => {
       await manager.disposeAll();
     });
   });
-
-  it.each([
-    ["full", 3],
-    ["requester-only", 2],
-  ] as const)(
-    "evicts LRU idle requester runtimes past the per-session cap via %s materialization",
-    async (entrypoint, expectedRuntimeCount) => {
-      const resolverRegistry = createMcpProofPluginRegistry();
-      await withPluginRuntimeRegistryScope(resolverRegistry.registry, async () => {
-        const resolverApi = resolverRegistry.apiFor("test-plugin");
-        resolverApi.registerMcpServerConnectionResolver({
-          serverName: "user-mail",
-          resolve: async (ctx) => ({ url: `https://mcp.example.test/${ctx.requesterSenderId}` }),
-        });
-
-        const disposedSenders: string[] = [];
-        let syntheticLastUsedAt = 100_000;
-        const createRuntime: RuntimeFactory = (params) => {
-          const sender = params.requesterScope?.requesterSenderId;
-          // Distinct ascending lastUsedAt per runtime so LRU ordering is deterministic.
-          const lastUsedAt = (syntheticLastUsedAt += 1_000);
-          return {
-            ...makeManagedRuntime(params),
-            get lastUsedAt() {
-              return lastUsedAt;
-            },
-            markUsed: () => {},
-            dispose: async () => {
-              if (sender) {
-                disposedSenders.push(sender);
-              }
-            },
-          };
-        };
-        const manager = createSessionMcpRuntimeManager({
-          createRuntime,
-          // Pin the sweep clock near the synthetic lastUsedAt values so the idle
-          // TTL sweep never fires; this test exercises only the cap eviction.
-          now: () => 150_000,
-          maxIdleRequesterRuntimesPerSession: 2,
-        });
-        const cfg = {
-          mcp: { servers: { "user-mail": { transport: "streamable-http" } } },
-        };
-
-        for (const sender of ["sender-a", "sender-b", "sender-c"]) {
-          const runtimeParams = makeRequesterParams("session-cap", cfg as never, sender);
-          if (entrypoint === "full") {
-            await manager.getOrCreate(runtimeParams);
-          } else {
-            await manager.getOrCreateRequesterScoped(runtimeParams);
-          }
-        }
-
-        // sender-a is the least recently used zero-lease scoped runtime.
-        expect(disposedSenders).toEqual(["sender-a"]);
-        const runtimeKeys = manager.listRuntimeKeys();
-        expect(runtimeKeys).toHaveLength(expectedRuntimeCount);
-        expect(runtimeKeys.includes("session-cap")).toBe(entrypoint === "full");
-        expect(
-          runtimeKeys
-            .filter((key) => key.startsWith("{"))
-            .map((key) => (JSON.parse(key) as { requesterSenderId: string }).requesterSenderId),
-        ).toEqual(["sender-b", "sender-c"]);
-
-        await manager.disposeAll();
-      });
-    },
-  );
 
   it("re-merges the combined catalog after a part refreshes on tools/list_changed", async () => {
     const resolverRegistry = createMcpProofPluginRegistry();
@@ -5375,6 +5578,7 @@ describe("requester-scoped MCP connection resolution", () => {
             workspaceDir: "/workspace",
             cfg: scopedConfig as never,
             requesterSenderId: "authed",
+            autoApproveCodexAppServerApprovals: true,
           });
           expect(first?.advertisedTools.map((tool) => tool.name)).toEqual(["user-mail__inbox"]);
           await first?.dispose();
@@ -5386,6 +5590,128 @@ describe("requester-scoped MCP connection resolution", () => {
             requesterSenderId: "guest",
           });
           expect(afterRemoval).toBeUndefined();
+        } finally {
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+        }
+      });
+    },
+  );
+
+  it(
+    "gates requester MCP dispatch behind the approval boundary on a real transport",
+    { timeout: 15_000 },
+    async () => {
+      let toolsCallCount = 0;
+      const resolverRegistry = createMcpProofPluginRegistry();
+      await withPluginRuntimeRegistryScope(resolverRegistry.registry, async () => {
+        const server = http.createServer((request, response) => {
+          if (request.method === "DELETE") {
+            response.writeHead(204).end();
+            return;
+          }
+          if (request.method !== "POST") {
+            response.writeHead(405).end();
+            return;
+          }
+          let body = "";
+          request.setEncoding("utf8");
+          request.on("data", (chunk) => {
+            body += chunk;
+          });
+          request.on("end", () => {
+            const message = JSON.parse(body) as { id?: string | number; method?: string };
+            if (message.method === "notifications/initialized") {
+              response.writeHead(202).end();
+              return;
+            }
+            if (message.method === "tools/call") {
+              toolsCallCount += 1;
+            }
+            response.setHeader("content-type", "application/json");
+            response.setHeader("mcp-session-id", "session-approval-proof");
+            response.writeHead(200).end(
+              JSON.stringify(
+                message.method === "initialize"
+                  ? {
+                      jsonrpc: "2.0",
+                      id: message.id,
+                      result: {
+                        protocolVersion: "2025-03-26",
+                        capabilities: { tools: {} },
+                        serverInfo: { name: "approval-proof-server", version: "1.0.0" },
+                      },
+                    }
+                  : message.method === "tools/call"
+                    ? {
+                        jsonrpc: "2.0",
+                        id: message.id,
+                        result: {
+                          content: [{ type: "text", text: "server-result" }],
+                        },
+                      }
+                    : {
+                        jsonrpc: "2.0",
+                        id: message.id,
+                        result: {
+                          tools: [
+                            {
+                              name: "inbox",
+                              description: "read inbox",
+                              inputSchema: { type: "object", properties: {} },
+                            },
+                          ],
+                        },
+                      },
+              ),
+            );
+          });
+        });
+        await new Promise<void>((resolve) => {
+          server.listen(0, "127.0.0.1", resolve);
+        });
+        const address = server.address() as { port: number };
+
+        const resolverApi = resolverRegistry.apiFor("test-plugin");
+        resolverApi.registerMcpServerConnectionResolver({
+          serverName: "user-mail",
+          resolve: async () => ({ url: `http://127.0.0.1:${address.port}/mcp` }),
+        });
+        const scopedConfig = {
+          mcp: { servers: { "user-mail": { transport: "streamable-http" } } },
+        };
+
+        try {
+          // Unannotated auto-mode tool: approval required; a deny must produce zero
+          // server tool dispatches across the real transport.
+          const denied = await materializeRequesterScopedMcpToolsForHarnessRun({
+            sessionId: "session-approval-proof",
+            workspaceDir: "/workspace",
+            cfg: scopedConfig as never,
+            requesterSenderId: "authed",
+            requestInteractiveCodexApproval: async () => {
+              throw new Error("operator denied");
+            },
+          });
+          const gatedTool = expectDefined(denied?.tools[0], "gated requester tool");
+          await expect(gatedTool.execute("denied-call", {})).rejects.toThrow("operator denied");
+          expect(toolsCallCount).toBe(0);
+
+          // An approval grants exactly one dispatch through to the real server.
+          const allowed = await materializeRequesterScopedMcpToolsForHarnessRun({
+            sessionId: "session-approval-proof",
+            workspaceDir: "/workspace",
+            cfg: scopedConfig as never,
+            requesterSenderId: "authed",
+            requestInteractiveCodexApproval: async () => {},
+          });
+          const allowedTool = expectDefined(allowed?.tools[0], "approved requester tool");
+          const result = await allowedTool.execute("allowed-call", {});
+          expect(result.content[0]).toMatchObject({ type: "text", text: "server-result" });
+          expect(toolsCallCount).toBe(1);
+          await denied?.dispose();
+          await allowed?.dispose();
         } finally {
           await new Promise<void>((resolve, reject) => {
             server.close((error) => (error ? reject(error) : resolve()));

@@ -196,6 +196,17 @@ function parseDispatchedSubcommands(script: string): string[] {
 }
 
 describe("scripts/pr wrappers", () => {
+  it("loads the tooling include policy from the wrapper source inventory", () => {
+    const root = tempDirs.make("openclaw-wrapper-include-policy-");
+    copyPrWrapperSources(root);
+    const loaded = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", "await import('./test/vitest/vitest.include-patterns.ts')"],
+      { cwd: root, encoding: "utf8", env: isolatedWrapperEnv(root) },
+    );
+    expect(loaded.status, loaded.stderr).toBe(0);
+  });
+
   it("keeps the main PR helper usage and command table aligned", () => {
     const script = readScript("scripts/pr");
 
@@ -252,16 +263,20 @@ describe("scripts/pr wrappers", () => {
     const review = readScript("scripts/pr-lib/review.sh");
     const push = readScript("scripts/pr-lib/push.sh");
     const merge = readScript("scripts/pr-lib/merge.sh");
+    const mergeOutcome = readScript("scripts/pr-lib/merge-outcome.sh");
 
     expect(script).toContain('base_json=$(read_pr_view_json "$pr" "baseRefName")');
     expect(common).toContain('gh pr view "$pr" --json "$fields"');
     expect(worktree).toContain('metadata=$(read_pr_view_json "$pr"');
     expect(review).toContain('gh_plain pr edit "$pr" --add-assignee "$reviewer"');
-    expect(push).toContain('gh_plain api graphql --input - <<< "$payload"');
+    expect(push).toContain('gh_plain api graphql --input "$payload_file"');
+    expect(push).not.toContain("gh_plain api graphql --input -");
     expect(merge).toContain('gh_plain pr merge "$pr"');
-    expect(merge).toContain('"repos/$repo_nwo/issues/$pr/comments"');
-    expect(merge).toContain("--jq '.html_url // empty'");
-    expect(merge).toContain('git push --force-with-lease="refs/heads/$head_ref:$PREP_HEAD_SHA"');
+    expect(mergeOutcome).toContain('gh_plain api --hostname "$MERGE_REPO_HOST" --method POST');
+    expect(mergeOutcome).toContain("--jq '.html_url // empty'");
+    expect(merge).toContain(
+      'git push --force-with-lease="refs/heads/$MERGE_HEAD_REF:$PREP_HEAD_SHA"',
+    );
   });
 
   itPosix("fails loudly at preflight when ripgrep is unavailable", () => {
@@ -365,6 +380,44 @@ describe("scripts/pr wrappers", () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toBe(`<123>\n<false>\n<>\n<>\n<${join(caller, "operator body.md")}>\n`);
   });
+
+  itPosix(
+    "requires an exact receipt and explicit confirmation for completion-only dispatch",
+    () => {
+      const fixture = makeMismatchedWrapperRepo();
+      writeFileSync(
+        join(fixture.canonical, "scripts/pr-lib/merge.sh"),
+        `merge_complete() { printf '<%s>\\n' "$@"; }\nmerge_run() { exit 99; }\n`,
+      );
+      const oid = "a".repeat(40);
+      for (const args of [
+        ["123", oid],
+        ["123", "HEAD", "--confirmed-operator-completion"],
+        ["0123", oid, "--confirmed-operator-completion"],
+        ["123", oid, "--confirmed-operator-recovery"],
+        ["123", oid, "--confirmed-operator-completion", "--auto-merge"],
+      ]) {
+        const result = spawnSync(
+          join(fixture.canonical, "scripts/pr"),
+          ["merge-complete", ...args],
+          {
+            cwd: fixture.canonical,
+            encoding: "utf8",
+            env: fixture.env,
+          },
+        );
+        expect(result.status, result.stdout + result.stderr).toBe(2);
+        expect(result.stdout).toContain("Usage:");
+      }
+      const result = spawnSync(
+        join(fixture.canonical, "scripts/pr"),
+        ["merge-complete", "123", oid, "--confirmed-operator-completion"],
+        { cwd: fixture.canonical, encoding: "utf8", env: fixture.env },
+      );
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toBe(`<123>\n<${oid}>\n`);
+    },
+  );
 
   itPosix("rejects ambiguous body flags and keeps recovery confirmation mandatory", () => {
     const fixture = makeMismatchedWrapperRepo();
@@ -1124,18 +1177,6 @@ exit 99
     expect(script).toContain('exec "$base" merge-run "$pr"');
   });
 
-  it("defaults to squash and allows commit-preserving merge methods", () => {
-    const script = readScript("scripts/pr-lib/merge.sh");
-
-    expect(script).toContain("OPENCLAW_PR_MERGE_METHOD:-squash");
-    expect(script).toContain("--squash");
-    expect(script).toContain("--merge");
-    expect(script).toContain("--rebase");
-    expect(script).toContain("'Merged via %s.");
-    expect(script).toContain("--auto");
-    expect(script).toContain('--match-head-commit "$PREP_HEAD_SHA"');
-  });
-
   it("keeps prepare wrapper modes delegated to the main PR helper", () => {
     const script = readScript("scripts/pr-prepare");
 
@@ -1466,11 +1507,26 @@ exit 99
     { name: "successful last quota request", status: 200, code: 0, body: viewer, headers: quota },
   ];
 
+  const esmPreflightCase: (typeof preflightCases)[number] = {
+    name: "valid viewer below an ESM package",
+    status: 200,
+    code: 0,
+    body: viewer,
+  };
   it.each([
-    ...preflightCases.map((scenario) => ({ ...scenario, route: "default" })),
-    { ...preflightCases[0]!, route: "override" },
-  ])("GitHub API preflight: $name ($route)", ({ route, ...scenario }) => {
-    const dir = tempDirs.make("openclaw-pr-auth-");
+    ...preflightCases.map((scenario) => ({ ...scenario, route: "default", esmParent: false })),
+    { ...preflightCases[0]!, route: "override", esmParent: false },
+    { ...esmPreflightCase, route: "default", esmParent: true },
+    { ...esmPreflightCase, route: "override", esmParent: true },
+  ])("GitHub API preflight: $name ($route)", ({ route, esmParent, ...scenario }) => {
+    const root = tempDirs.make("openclaw-pr-auth-");
+    const dir = esmParent ? join(root, "fixture") : root;
+    if (esmParent) {
+      writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
+      mkdirSync(dir);
+    }
+    // Both extensionless executables use CommonJS, even below a repo-local TMPDIR.
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}\n');
     const env = isolatedWrapperEnv(dir);
     const bin = join(dir, "bin");
     mkdirSync(bin);

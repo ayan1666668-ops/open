@@ -3,6 +3,7 @@ import fs from "node:fs";
 import type { HeapProfiler } from "node:inspector";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { formatErrorMessage } from "../../scripts/lib/error-format.mts";
 import {
@@ -10,6 +11,7 @@ import {
   parseArgs,
   resolveVitestProfileDir,
 } from "../../scripts/run-vitest-profile.mts";
+import { decodeUtf8Tail } from "../helpers/bounded-child-output.js";
 import { createFixtureLifetime } from "../helpers/fixture-lifetime.js";
 import { waitForFixtureFile } from "../helpers/process-wait.js";
 import { runNodeScript } from "../helpers/run-node-script.js";
@@ -22,25 +24,105 @@ describe("scripts/run-vitest-profile", () => {
   const repoRoot = path.resolve(import.meta.dirname, "../..");
   afterEach(() => lifetime.cleanup());
 
-  async function runProfileProcess(args: string[], root: string, signal: AbortSignal) {
-    const result = await lifetime.track(
-      runNodeScript(
-        args,
-        { PATH: process.env.PATH, HOME: root, USERPROFILE: root, CI: "1" },
-        undefined,
-        {
-          cwd: root,
-          signal,
-          maxBuffer: 1024 * 1024,
-          requireProcessTreeExit: process.platform !== "win32",
-        },
-      ),
-    );
-    const output = result.stdout + result.stderr;
-    if (result.error) {
-      throw new Error(`${formatErrorMessage(result.error)}\n${output}`, { cause: result.error });
+  async function runProfileProcess(
+    args: string[],
+    root: string,
+    signal: AbortSignal,
+    env?: NodeJS.ProcessEnv,
+    diagnostics?: { mode: string; flags: string[]; ordering: string; profiles: string },
+  ) {
+    let inspectChild: (() => unknown) | undefined;
+    let reported = false;
+    const reportFailure = () => {
+      if (!diagnostics || reported) {
+        return;
+      }
+      reported = true;
+      try {
+        let hashOrder: string;
+        try {
+          const fd = fs.openSync(diagnostics.ordering, "r");
+          try {
+            const bytes = Buffer.alloc(4096);
+            hashOrder = bytes.subarray(0, fs.readSync(fd, bytes)).toString("utf8");
+          } finally {
+            fs.closeSync(fd);
+          }
+        } catch {
+          hashOrder = "unavailable";
+        }
+        let cpuProfiles: number | "unavailable";
+        try {
+          cpuProfiles = fs
+            .readdirSync(diagnostics.profiles)
+            .filter((name) => name.endsWith(".cpuprofile")).length;
+        } catch {
+          cpuProfiles = "unavailable";
+        }
+        console.error(
+          "[run-vitest-profile failure]",
+          JSON.stringify(
+            {
+              mode: diagnostics.mode,
+              flags: diagnostics.flags,
+              aborted: signal.aborted,
+              child: inspectChild?.() ?? "not observed",
+              hashOrder,
+              cpuProfiles,
+            },
+            (_key, value: unknown) =>
+              typeof value === "string"
+                ? value.replaceAll(root, "<fixture>").replaceAll(repoRoot, "<repo>")
+                : value,
+          ),
+        );
+      } catch {
+        // Diagnostics must never interrupt the existing cancellation or cleanup owner.
+        console.error("[run-vitest-profile failure] diagnostic capture failed");
+      }
+    };
+    // Register before the managed command so timeout evidence precedes its stop/cleanup.
+    signal.addEventListener("abort", reportFailure, { once: true });
+    try {
+      const result = await lifetime.track(
+        runNodeScript(
+          args,
+          { PATH: process.env.PATH, HOME: root, USERPROFILE: root, CI: "1", ...env },
+          undefined,
+          {
+            cwd: root,
+            signal,
+            maxBuffer: 1024 * 1024,
+            requireProcessTreeExit: process.platform !== "win32",
+            onReady(child, readOutput) {
+              inspectChild = () => {
+                const output = readOutput();
+                return {
+                  pid: child.pid,
+                  exitCode: child.exitCode,
+                  signalCode: child.signalCode,
+                  killed: child.killed,
+                  stdoutEnded: child.stdout?.readableEnded,
+                  stderrEnded: child.stderr?.readableEnded,
+                  stdout: decodeUtf8Tail(Buffer.from(output.stdout).subarray(-8192)),
+                  stderr: decodeUtf8Tail(Buffer.from(output.stderr).subarray(-8192)),
+                };
+              };
+            },
+          },
+        ),
+      );
+      const output = result.stdout + result.stderr;
+      if (result.error || result.status !== 0) {
+        reportFailure();
+      }
+      if (result.error) {
+        throw new Error(`${formatErrorMessage(result.error)}\n${output}`, { cause: result.error });
+      }
+      return { code: result.status, output };
+    } finally {
+      signal.removeEventListener("abort", reportFailure);
     }
-    return { code: result.status, output };
   }
 
   it("defaults profile output outside the repo", () => {
@@ -340,6 +422,36 @@ it("holds admitted work until the caller releases it", async () => {
   ])("prints $mode help for $flags without starting a test server", ({ mode, flags }, { signal }) =>
     lifetime.run(async () => {
       const root = createTempDir("oc-profile-help-");
+      const ordering = path.join(root, "hash-order.jsonl");
+      const preload = path.join(root, "observe-hash-order.mjs");
+      fs.writeFileSync(
+        preload,
+        `import crypto from "node:crypto";
+import fs from "node:fs";
+import inspector from "node:inspector/promises";
+import { syncBuiltinESMExports } from "node:module";
+let profiling = false;
+inspector.Session = class extends inspector.Session {
+  async post(method, ...params) {
+    const result = await super.post(method, ...params);
+    if (method === "Profiler.start") profiling = true;
+    return result;
+  }
+};
+const getHashes = crypto.getHashes;
+let recorded = false;
+crypto.getHashes = function() {
+  if (!recorded) {
+    recorded = true;
+    const tlsLoaded = process.moduleLoadList.includes("NativeModule tls");
+    fs.appendFileSync(${JSON.stringify(ordering)}, JSON.stringify({ tlsLoaded, profiling }) + "\\n");
+    // Fail before entering the native lock race, rather than waiting for it to hang.
+    if (tlsLoaded) throw new Error("TLS initialized before hash enumeration");
+  }
+  return getHashes();
+};
+syncBuiltinESMExports();`,
+      );
       const args = [
         path.join(repoRoot, "scripts/run-vitest-profile.mts"),
         mode,
@@ -348,7 +460,21 @@ it("holds admitted work until the caller releases it", async () => {
         "--",
         ...flags,
       ];
-      const result = await runProfileProcess(args, root, signal);
+      const result = await runProfileProcess(
+        args,
+        root,
+        signal,
+        { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
+        { mode, flags, ordering, profiles: path.join(root, "profiles") },
+      );
+      expect(
+        fs
+          .readFileSync(ordering, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+        result.output,
+      ).toEqual([{ tlsLoaded: false, profiling: mode === "main" }]);
       expect(result.code, result.output).toBe(0);
       expect(result.output).toContain("Usage:");
     }),
@@ -365,6 +491,13 @@ it("holds admitted work until the caller releases it", async () => {
       const root = createTempDir("oc-profile-validation-");
       const config = path.join(root, "probe.config.mjs");
       const marker = path.join(root, "config-loaded");
+      const uncaught = path.join(root, "uncaught-error");
+      const preload = path.join(root, "observe-uncaught.mjs");
+      fs.writeFileSync(
+        preload,
+        `import fs from "node:fs";
+process.on("uncaughtExceptionMonitor", () => fs.writeFileSync(${JSON.stringify(uncaught)}, "uncaught"));`,
+      );
       fs.writeFileSync(
         config,
         `import fs from "node:fs";
@@ -383,10 +516,14 @@ throw new Error("Invalid CLI options reached config loading");`,
         "native",
         flag,
       ];
-      const result = await runProfileProcess(args, root, signal);
+      const result = await runProfileProcess(args, root, signal, {
+        NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+      });
       expect(result.code, result.output).toBe(1);
       expect(result.output).toContain(error);
       expect(fs.existsSync(marker)).toBe(false);
+      expect(fs.existsSync(uncaught), result.output).toBe(false);
+      expect(fs.readdirSync(path.join(root, "profiles"))).toHaveLength(mode === "main" ? 1 : 0);
       expect(result.output.trimEnd()).toMatch(/\[run-vitest-profile\] FAILED \(exit 1\)$/u);
     }),
   );

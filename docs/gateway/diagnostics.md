@@ -64,7 +64,7 @@ Codex id list.
 That makes the Codex debugging loop short: notice bad behavior in a channel,
 run `/diagnostics`, approve once, share the report, then run the printed
 `codex resume <thread-id>` command locally if you want to inspect the thread
-yourself. See [Codex harness](/plugins/codex-harness#inspect-codex-threads-locally).
+yourself. See [Codex harness](/plugins/codex-harness/commands#inspect-codex-threads-locally).
 
 ## What the export contains
 
@@ -147,6 +147,19 @@ available and contain fixed phase names and numbers, not patch values or session
 keys. Repeated stage visits contribute to the counts and totals. Parallel and
 nested stages can overlap, so their totals are neither an exclusive breakdown
 of request time nor CPU measurements.
+
+Two related info-level records help attribute slow worktree cleanup:
+`slow managed worktree removal` separates allocation admission, callback work,
+and final settlement, with preparation, snapshot, checkout removal, and body
+finalization timings inside the callback; `slow Git ref mutation` separates directory resolution,
+queue waiting, and queued work. Both require diagnostics and info-level logging,
+emit only after an operation lasting at least one second settles, and have
+separate fixed budgets of 60 records per minute per runtime isolate with
+`omittedObservations` counts. They retain fixed scalar fields and existing traces,
+without adding private paths or new identities. Their elapsed intervals can nest
+inside `worktreeCleanup` and include asynchronous waits; they are not CPU or
+individual child-command timings. See [Slow worktree cleanup](/logging#slow-worktree-cleanup)
+for fields and missing-record limits.
 
 SQLite session-write warnings also separate `queueWaitMs`, `writerExecutionMs`,
 and `completionDelayMs`. These measure time until the writer starts, work and
@@ -240,3 +253,5 @@ file-system scan or writing a pre-OOM snapshot.
 - [Gateway protocol](/gateway/protocol/rpc-methods#rpc-method-families)
 - [Logging](/logging)
 - [OpenTelemetry export](/gateway/opentelemetry) - separate flow for streaming diagnostics to a collector
+- [Codex harness runtime](/plugins/codex-harness-runtime) - runtime boundaries, permissions, and diagnostics for the Codex harness
+- [Diagnostics flags](/diagnostics/flags) - the named flags that turn on extra logging for one subsystem without raising `logging.level` globally

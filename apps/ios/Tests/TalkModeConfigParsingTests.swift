@@ -235,13 +235,13 @@ struct TalkModeManagerTests {
 
         let parsed = Self.parse(config)
 
-        #expect(parsed.activeProvider == "elevenlabs")
+        #expect(parsed.snapshot.activeProvider == "elevenlabs")
         #expect(parsed.executionMode == .realtimeRelay)
         #expect(parsed.defaultModelId == "eleven_v3")
         #expect(parsed.defaultVoiceId == "eleven-voice")
-        #expect(parsed.realtimeProvider == "openai")
+        #expect(parsed.snapshot.realtime.provider == "openai")
         #expect(parsed.realtimeModelId == "gpt-realtime-2")
-        #expect(parsed.realtimeVoiceId == "marin")
+        #expect(parsed.snapshot.realtime.voice == "marin")
     }
 
     @Test func `infers realtime provider when provider map has single entry`() {
@@ -251,7 +251,7 @@ struct TalkModeManagerTests {
             transport: "webrtc")
 
         #expect(parsed.executionMode == .realtimeWebRTC)
-        #expect(parsed.realtimeProvider == "openai")
+        #expect(parsed.snapshot.realtime.provider == "openai")
         #expect(parsed.realtimeModelId == "gpt-realtime-2")
     }
 
@@ -277,7 +277,7 @@ struct TalkModeManagerTests {
         #expect(parsed.executionMode == .realtimeRelay)
         #expect(parsed.defaultModelId == "eleven_v3")
         #expect(parsed.realtimeModelId == "gpt-realtime-2")
-        #expect(parsed.realtimeVoiceId == nil)
+        #expect(parsed.snapshot.realtime.voice == nil)
     }
 
     @Test func `omits model override when gateway owns redacted selection`() {
@@ -587,16 +587,20 @@ struct TalkModeManagerTests {
         }
     }
 
-    @Test func `relay close restarts enabled continuous realtime`() {
+    @Test(arguments: [false, true])
+    func `relay close recovers disconnections but preserves explicit stop`(explicitStop: Bool) {
         let manager = TalkModeManager(allowSimulatorCapture: true)
         manager._test_prepareEnabledRealtimeSessionForClose()
 
         manager._test_handleRealtimeRelayStatus("Listening (Realtime)")
         manager._test_handleRealtimeRelayStatus("Ready")
-        manager._test_handleRealtimeRelayTermination()
+        manager._test_handleRealtimeRelayTermination(explicitStop
+            ? .outputCancelled(reason: "user")
+            : .remoteClose(reason: "completed"))
 
-        #expect(manager.statusText == "Reconnecting")
-        #expect(manager._test_rapidRealtimeRestartCount() == 1)
+        #expect(manager.statusText == (explicitStop ? "Off" : "Reconnecting"))
+        #expect(manager.isEnabled == !explicitStop)
+        #expect(manager._test_rapidRealtimeRestartCount() == (explicitStop ? 0 : 1))
         manager.isEnabled = false
     }
 
@@ -890,11 +894,11 @@ struct TalkModeManagerTests {
 
         let parsed = Self.parse(config)
 
-        #expect(parsed.activeProvider == "elevenlabs")
+        #expect(parsed.snapshot.activeProvider == "elevenlabs")
         #expect(parsed.executionMode == .realtimeWebRTC)
-        #expect(parsed.realtimeProvider == "openai")
+        #expect(parsed.snapshot.realtime.provider == "openai")
         #expect(parsed.realtimeModelId == "gpt-realtime-2")
-        #expect(parsed.realtimeVoiceId == "cedar")
+        #expect(parsed.snapshot.realtime.voice == "cedar")
         #expect(parsed.rawConfigApiKey == "__OPENCLAW_REDACTED__")
     }
 

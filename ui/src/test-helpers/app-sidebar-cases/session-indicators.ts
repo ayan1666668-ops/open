@@ -46,21 +46,25 @@ describe("AppSidebar session indicators", () => {
     expect(row()?.style.getPropertyValue("--session-color")).toBe("");
   });
 
-  it("renders named glyphs as strokes and keeps emoji as text", async () => {
+  it("renders named glyphs and SVG artwork while keeping emoji as text", async () => {
     const glyphKey = "agent:main:glyph";
     const emojiKey = "agent:main:emoji";
-    const sessions = createSessionsHarness("main", [glyphKey, emojiKey]);
+    const svgKey = "agent:main:svg";
+    const svgIcon = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>')}`;
+    const sessions = createSessionsHarness("main", [glyphKey, emojiKey, svgKey]);
     const result = sessions.sessions.state.result;
     if (!result) {
       throw new Error("expected session list");
     }
     const glyph = result.sessions.find((row) => row.key === glyphKey);
     const emoji = result.sessions.find((row) => row.key === emojiKey);
-    if (!glyph || !emoji) {
+    const svg = result.sessions.find((row) => row.key === svgKey);
+    if (!glyph || !emoji || !svg) {
       throw new Error("expected icon sessions");
     }
     glyph.icon = "braces";
     emoji.icon = "🦞";
+    svg.icon = svgIcon;
 
     const { sidebar } = await mountSidebar(
       createGatewayHarness({} as GatewayBrowserClient).gateway,
@@ -68,11 +72,24 @@ describe("AppSidebar session indicators", () => {
     );
     const glyphRow = sidebar.querySelector(`[data-session-key="${glyphKey}"]`);
     const emojiRow = sidebar.querySelector(`[data-session-key="${emojiKey}"]`);
+    const svgRow = () => sidebar.querySelector(`[data-session-key="${svgKey}"]`);
 
     expect(glyphRow?.querySelector(".session-glyph__icon svg")).not.toBeNull();
     expect(glyphRow?.querySelector(".session-glyph__emoji")).toBeNull();
     expect(emojiRow?.querySelector(".session-glyph__emoji")?.textContent).toBe("🦞");
     expect(emojiRow?.querySelector(".session-glyph__icon")).toBeNull();
+    expect(svgRow()?.querySelector(".session-glyph__icon img")?.getAttribute("src")).toBe(svgIcon);
+    expect(svgRow()?.querySelector(".session-glyph__icon svg")).toBeNull();
+    expect(svgRow()?.querySelector(".session-glyph__emoji")).toBeNull();
+
+    sessions.publish({
+      result: reconcileSessionChanged(sessions.sessions.state.result, {
+        sessionKey: svgKey,
+        icon: null,
+      }).result,
+    });
+    await sidebar.updateComplete;
+    expect(svgRow()?.querySelector(".session-glyph__icon")).toBeNull();
   });
 
   it("prioritizes session icons, then channel avatars, then owner chips", async () => {
@@ -336,8 +353,9 @@ describe("AppSidebar session indicators", () => {
           ".sidebar-session-indicator .session-glyph--running .session-glyph__ring",
         );
         expect.soft(ring).not.toBeNull();
-        expect.soft(row.querySelector(".session-row-state .session-run-spinner")).toBeNull();
+        expect.soft(row.querySelector(".session-row-state")).toBeNull();
         expect(row.querySelector(".session-unread-dot")).toBeNull();
+        expect(row.querySelector(".session-glyph__badge--unread")).toBeNull();
         expect(row.querySelector(".session-owner-chip") !== null).toBe(key === keys[0]);
         const link = row.querySelector("a")!;
         const description = sidebar.querySelector(
@@ -397,6 +415,7 @@ describe("AppSidebar session indicators", () => {
           label: "Queued child",
           updatedAt: 2,
           hasActiveRun: true,
+          hasActiveSubagentRun: true,
           status: "queued",
         },
         {
@@ -627,24 +646,20 @@ describe("AppSidebar session indicators", () => {
     expect(forked?.querySelector(".session-row-state")).toBeNull();
 
     const unread = sidebar.querySelector(`[data-session-key="${keys.unread}"]`);
-    expectEmptyLead(unread);
-    expect(
-      unread?.querySelector(".session-row-aside > .session-row-state .session-unread-dot"),
-    ).not.toBeNull();
+    expect(unread?.querySelector(".sidebar-session-indicator .session-unread-dot")).not.toBeNull();
+    expect(unread?.querySelector(".session-row-state")).toBeNull();
+    expect(unread?.querySelector("a")?.hasAttribute("aria-describedby")).toBe(false);
 
     const runningUnread = sidebar.querySelector(`[data-session-key="${keys.runningUnread}"]`);
     expect(runningUnread?.classList.contains("session-row-host--running")).toBe(true);
     expect(
       runningUnread?.querySelector(".sidebar-session-indicator .session-glyph__ring"),
     ).not.toBeNull();
-    expect(
-      runningUnread?.querySelector(".session-row-aside > .session-row-state .session-run-spinner"),
-    ).toBeNull();
-    expect(
-      runningUnread?.querySelector(".session-row-aside > .session-row-state .session-unread-dot"),
-    ).toBeNull();
+    expect(runningUnread?.querySelector(".session-row-state")).toBeNull();
+    expect(runningUnread?.querySelector(".session-unread-dot")).toBeNull();
+    expect(runningUnread?.querySelector(".session-glyph__badge--unread")).toBeNull();
 
-    for (const key of [keys.unread, keys.runningUnread]) {
+    for (const key of [keys.forked, keys.runningUnread]) {
       const link = sidebar.querySelector(`[data-session-key="${key}"] a`);
       const descriptionId = link?.getAttribute("aria-describedby");
       expect(descriptionId).toBe(`sidebar-session-state-${encodeURIComponent(key)}`);
@@ -684,24 +699,5 @@ describe("AppSidebar session indicators", () => {
       expect(sidebar.querySelector('[data-pull-request-state="open"]')).toBeNull();
       expectEmptyLead(sidebar.querySelector(`[data-session-key="${keys.openPullRequest}"]`));
     });
-  });
-
-  it("keeps an idle parent's glyph unringed while a hidden child runs", async () => {
-    const parentKey = "agent:main:idle-parent";
-    const sessions = createSessionsHarness("main", [parentKey]);
-    const row = sessions.sessions.state.result!.sessions[0]!;
-    row.hasActiveRun = false;
-    row.hasActiveSubagentRun = true;
-    row.childSessions = ["agent:main:idle-parent-child"];
-    const { sidebar } = await mountSidebar(
-      createGatewayHarness({} as GatewayBrowserClient).gateway,
-      sessions.sessions,
-    );
-    const parent = sidebar.querySelector(`[data-session-key="${parentKey}"]`)!;
-    // Descendant activity is a right-side summary on the collapsed toggle; only
-    // the row's own run may ring its glyph.
-    expectEmptyLead(parent);
-    expect(parent.querySelector(".sidebar-child-session-toggle--running")).not.toBeNull();
-    expect(parent.querySelector(".session-row-state .session-run-spinner")).toBeNull();
   });
 });
