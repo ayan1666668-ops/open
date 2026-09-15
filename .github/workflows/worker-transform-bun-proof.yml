@@ -1,0 +1,138 @@
+name: Temporary worker transform Bun proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/worker-transform-bun-proof.yml
+      - test/scripts/fixtures/vitest-worker-compiler.mjs
+      - test/scripts/vitest-worker-artifacts.test-support.ts
+      - test/scripts/vitest-worker-artifacts.transforms.test-support.ts
+      - test/scripts/vitest-worker-artifacts.transforms.test.ts
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-transform-bun-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  SOURCE_PINS: '{"package.json":"2eff013c5971df482a4a1299158e36014d856364b279559695f7ed956b9e4754","pnpm-lock.yaml":"a6a6f2aecc88c5a04c7f268a2ffbbc998deead2567e7161773f753b7ca4370c2",".github/actions/setup-node-env/action.yml":"fea305846e06212801d1db28b4a911d4af7e33944515ac9d1b651876655a756a","test/scripts/fixtures/vitest-worker-compiler.mjs":"91a151b810b676ceb42f499f3bd8df626deab94c9621508ecbe164a50ac96e54","test/scripts/fixtures/ci-fixture-runtime.cjs":"1fc703337b3b3bb6dbc4b8b754d2c898c4d80a4e56a6831e70e4477f640a7101","test/scripts/vitest-worker-artifacts.test-support.ts":"627fd1c1b102cc245123d330893c854066e52fcd8b32e210ecaf6b1a2de6eff3","test/scripts/vitest-worker-artifacts.transforms.test-support.ts":"b471211c1a271e7cfb45312ba26863754dd556e09ec26147b69bbf475e34a435","test/scripts/vitest-worker-artifacts.transforms.test.ts":"8a1fc75655b04097951901d35cb99a0e949f3d75a61ded95b6fa42c1c596a965","test/scripts/vitest-worker-artifacts.test.ts":"e168711ac7e9559d100d15e3387dc8fc793c697c164c0f28a16bf471947e195c","test/scripts/vitest-worker-artifacts.ci.test.ts":"b8d013909836f797dd0f288d489a2b0166538664bcc84d9dffd1a4f38d2c3926","test/helpers/run-node-script.ts":"c7ca780b077c7dec05d4a5f5417b998f3b70145e8de249f8a33f97919ebe6236","scripts/run-vitest-child.mts":"7a31d1d0af29e53d080f6c216400c4cc6b4d88190edb4d577a58b3236836b292","scripts/run-vitest.mts":"886a82e4e45e24a06baceba727e802856bacaab119ddcf7573fa4da3526e81df","scripts/lib/vitest-worker-run.mts":"399e25186231c8ebc3efcadbae1408d14612926da5190ef2da7258c51c7a665c","scripts/lib/vitest-worker-artifacts.mts":"55c84550381fddb1fadcb4203d6b595cdb041799bb1576380924e95fe9f32c8c","test/vitest/vitest.worker-artifacts.ts":"5170cef320ee4fd2ab7d0d23ad6afaeed8ca883709b19f6d4a2a67ac60554a90","test/vitest/vitest.tooling.config.ts":"7b605b7cc182559e4d8f50aec0917cc89add1add2d2d74be802d104a424618b8","test/vitest/vitest.scoped-config.ts":"5e4d5f780b6b8a445972d30cbcc35c8c90dcf83b3d215a9fd8f64c31afb2b05e","test/vitest/vitest.shared.config.ts":"6152861da83f7c7ef4b1ad855187665d57996392af3f19ff52155c4b17cc08f8","src/infra/runtime-process-entrypoints.ts":"a43fce5e00930162f580fe071c4200ddde9d02fd523151ec2ed0c5cc87552462"}'
+
+jobs:
+  bun-transform:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/stdio-cleanup-completion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENCLAW_VITEST_MAX_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact source
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_PARENT: e30b4509727b0bc1b2b844b5396271096a1b32d2
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/worker-transform-bun-proof.yml"
+          git show --no-patch --format='%H %P'
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          for (const [file, expected] of Object.entries(JSON.parse(process.env.SOURCE_PINS))) {
+            const actual = createHash('sha256').update(readFileSync(file)).digest('hex');
+            assert.equal(actual, expected, file);
+            console.log(`${actual}  ${file}`);
+          }
+          NODE
+      - name: Setup frozen Node and Bun environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.19.0"
+          install-bun: "true"
+          cache-mode: "off"
+      - name: Run both transform sequences under native Bun
+        run: |
+          set -euo pipefail
+          proof_dir="$GITHUB_WORKSPACE/.artifacts/worker-transform-bun-proof"
+          test ! -e "$proof_dir"
+          mkdir -p "$proof_dir"
+          trap 'rm -rf -- "$proof_dir"' EXIT
+          export BUN_PROOF_RUNTIME_FILE="$RUNNER_TEMP/worker-transform-bun-runtime.jsonl"
+          export BUN_PROOF_REPORT="$RUNNER_TEMP/worker-transform-bun-report.json"
+          BUN_PROOF_VERSION="$(bun -p 'process.versions.bun')"
+          export BUN_PROOF_VERSION
+          test -n "$BUN_PROOF_VERSION"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          import path from 'node:path';
+          const dir = path.join(process.cwd(), '.artifacts/worker-transform-bun-proof');
+          writeFileSync(path.join(dir, 'runtime.mjs'), `
+            import assert from 'node:assert/strict';
+            import { appendFileSync } from 'node:fs';
+            assert.ok(process.versions.bun, 'the actual Vitest worker must run Bun');
+            assert.equal(process.versions.bun, process.env.BUN_PROOF_VERSION);
+            const receipt = {pid:process.pid,bun:process.versions.bun,node:process.version,platform:process.platform,arch:process.arch};
+            appendFileSync(process.env.BUN_PROOF_RUNTIME_FILE, JSON.stringify(receipt)+'\\n');
+            console.log('Actual Bun Vitest worker', JSON.stringify(receipt));
+          `);
+          writeFileSync(path.join(dir, 'vitest.config.mts'), `
+            import { fileURLToPath } from 'node:url';
+            import { createToolingVitestConfig } from '../../test/vitest/vitest.tooling.config.ts';
+            const base = createToolingVitestConfig();
+            export default {...base,test:{...base.test,passWithNoTests:false,setupFiles:[...(base.test.setupFiles ?? []),fileURLToPath(new URL('./runtime.mjs',import.meta.url))]}};
+          `);
+          NODE
+          # The .mjs launcher deliberately selects Node; this is its existing native implementation.
+          bun scripts/run-vitest-child.mts run --config "$proof_dir/vitest.config.mts" test/scripts/vitest-worker-artifacts.transforms.test.ts --reporter=verbose --reporter=json --outputFile.json="$BUN_PROOF_REPORT"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.BUN_PROOF_REPORT, 'utf8'));
+          const runtime = readFileSync(process.env.BUN_PROOF_RUNTIME_FILE, 'utf8').trim().split('\n').map(JSON.parse);
+          assert.equal(report.success, true);
+          assert.equal(report.numTotalTests, 2);
+          assert.equal(report.numPassedTests, 2);
+          assert.equal(report.numFailedTests, 0);
+          assert.equal(report.numPendingTests, 0);
+          assert.equal(report.testResults.length, 1);
+          const cases = report.testResults.flatMap(result => result.assertionResults);
+          assert.equal(cases.length, 2);
+          assert.ok(cases.every(test => test.status === 'passed'));
+          assert.ok(cases.some(test => test.fullName.endsWith('(single)')));
+          assert.ok(cases.some(test => test.fullName.endsWith('(projects)')));
+          assert.ok(runtime.length > 0);
+          assert.ok(runtime.every(row => row.bun === process.env.BUN_PROOF_VERSION && row.platform === 'linux'));
+          console.log(JSON.stringify({runtime,tests:cases.map(test => ({name:test.fullName,status:test.status,duration:test.duration}))}));
+          NODE
+      - name: Final source verification
+        if: always()
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_PARENT: e30b4509727b0bc1b2b844b5396271096a1b32d2
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/worker-transform-bun-proof.yml"
+          git show --no-patch --format='%H %P'
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          for (const [file, expected] of Object.entries(JSON.parse(process.env.SOURCE_PINS))) {
+            const actual = createHash('sha256').update(readFileSync(file)).digest('hex');
+            assert.equal(actual, expected, file);
+            console.log(`${actual}  ${file}`);
+          }
+          NODE
