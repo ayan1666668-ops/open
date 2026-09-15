@@ -6967,13 +6967,13 @@ setImmediate(() => {
       ...expectedHostedRunners,
       "security-fast": "blacksmith-4vcpu-ubuntu-2404",
       android: "blacksmith-8vcpu-ubuntu-2404",
-      "build-artifacts": "blacksmith-32vcpu-ubuntu-2404",
+      "build-artifacts": "blacksmith-16vcpu-ubuntu-2404",
       "checks-node-core-test-nondist-shard": "blacksmith-32vcpu-ubuntu-2404",
       "checks-ui-e2e": "blacksmith-8vcpu-ubuntu-2404",
-      "checks-ui-e2e-real-gateway": "blacksmith-32vcpu-ubuntu-2404",
+      "checks-ui-e2e-real-gateway": "blacksmith-16vcpu-ubuntu-2404",
       "docker-seed-e2e": "blacksmith-16vcpu-ubuntu-2404",
       "qa-smoke-ci-profile": "blacksmith-16vcpu-ubuntu-2404",
-      "check-test-types-hosted-core-shard": "blacksmith-32vcpu-ubuntu-2404",
+      "check-test-types-hosted-core-shard": "blacksmith-16vcpu-ubuntu-2404",
       "checks-ui": "blacksmith-8vcpu-ubuntu-2404",
       "checks-windows": "blacksmith-8vcpu-windows-2025",
     } as const;
@@ -9283,9 +9283,9 @@ server.listen(0, "127.0.0.1", () => {
     expect(source).toContain("createNodeTestShardBundles");
     const artifactRunner = workflow.jobs["build-artifacts"]["runs-on"];
     for (const [frozenTarget, expected] of [
-      ["false", "blacksmith-32vcpu-ubuntu-2404"],
-      ["true", "blacksmith-32vcpu-ubuntu-2404"],
-      ["", "blacksmith-32vcpu-ubuntu-2404"],
+      ["false", "blacksmith-16vcpu-ubuntu-2404"],
+      ["true", "blacksmith-16vcpu-ubuntu-2404"],
+      ["", "blacksmith-16vcpu-ubuntu-2404"],
     ] as const) {
       const context = {
         eventName: "push",
@@ -9342,7 +9342,7 @@ server.listen(0, "127.0.0.1", () => {
       expect(workflow.jobs["check-shard"].strategy.matrix.include).toContainEqual({
         check_name: `check-${task}`,
         task,
-        runner: "blacksmith-32vcpu-ubuntu-2404",
+        runner: "blacksmith-16vcpu-ubuntu-2404",
       });
     }
     expect(workflow.jobs["check-additional-shard"]["runs-on"]).toContain("matrix.runner");
@@ -9382,7 +9382,7 @@ server.listen(0, "127.0.0.1", () => {
     expect(readFrozenAdditionalCheckRows()).toContainEqual({
       check_name: "check-additional-extension-package-boundary",
       group: "extension-package-boundary",
-      runner: "blacksmith-32vcpu-ubuntu-2404",
+      runner: "blacksmith-16vcpu-ubuntu-2404",
     });
     const runStep = additionalJob.steps.find(
       (step: WorkflowStep) => step.name === "Run additional check shard",
@@ -15184,7 +15184,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
           matrix,
           blacksmithRunner:
             matrix.task === "control-ui"
-              ? "blacksmith-32vcpu-ubuntu-2404"
+              ? "blacksmith-16vcpu-ubuntu-2404"
               : "blacksmith-8vcpu-ubuntu-2404",
         })),
       {
@@ -15192,7 +15192,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         name: "checks-ui-e2e-real-gateway",
         setup: realGatewaySetup,
         matrix: {},
-        blacksmithRunner: "blacksmith-32vcpu-ubuntu-2404",
+        blacksmithRunner: "blacksmith-16vcpu-ubuntu-2404",
       },
     ] as const;
     const routingScenarios = [
