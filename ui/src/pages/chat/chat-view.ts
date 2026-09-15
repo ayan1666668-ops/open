@@ -435,10 +435,7 @@ export function renderChat(props: ChatProps) {
                     (pendingInputs.error ||
                       pendingInputs.page.nextBefore !== undefined ||
                       pendingInputs.before !== undefined)
-                      ? html`<div
-                          class="chat-history-error chat-history-error--inline"
-                          role="status"
-                        >
+                      ? html`<div class="chat-pending-inputs" role="status">
                           ${pendingInputs.error ? html`<span>${pendingInputs.error}</span>` : nothing}
                           ${
                             pendingInputs.page.nextBefore !== undefined
