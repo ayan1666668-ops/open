@@ -486,11 +486,11 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
   }
 
   protected async loadCatalogSession(key: CatalogSessionKey, older: boolean): Promise<boolean> {
-    const state = this.state;
-    const client = state?.client;
-    if (!state || !client || !state.connected) {
+    const scope = this.captureConnectionScope();
+    if (!scope) {
       return false;
     }
+    const { state, client } = scope;
     if (older && !this.catalogCursor) {
       return false;
     }
@@ -498,6 +498,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
     const generation = older ? this.catalogLoadGeneration : ++this.catalogLoadGeneration;
     const requestedSessionKey = this.sessionKey;
     const isCurrent = () =>
+      this.isConnectionScopeCurrent(scope) &&
       generation === this.catalogLoadGeneration &&
       this.sessionKey === requestedSessionKey &&
       resolveChatAgentId(state) === agentId;
@@ -513,7 +514,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
     try {
       if (!older) {
         const lookup = await lookupCatalogSession({ agentId, client, key, isCurrent });
-        if (!lookup) {
+        if (!lookup || !isCurrent()) {
           return false;
         }
         this.catalogHost = lookup.host;
@@ -555,24 +556,22 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
           this.olderCursorsSeen.has(page.nextCursor));
       this.catalogMessages = nextMessages;
       this.catalogCursor = olderExhausted ? undefined : page.nextCursor;
-      const currentState = this.state ?? state;
-      currentState.lastError = null;
-      scheduleChatScroll(currentState, !older);
+      state.lastError = null;
+      scheduleChatScroll(state, !older);
       return !older || addedMessages || !olderExhausted;
     } catch (error) {
       if (isCurrent()) {
-        (this.state ?? state).lastError = formatUiError(error);
+        state.lastError = formatUiError(error);
       }
       return false;
     } finally {
       if (isCurrent()) {
-        const currentState = this.state ?? state;
         if (!older) {
           this.catalogLoading = false;
-          currentState.chatLoading = false;
+          state.chatLoading = false;
         }
         if (!older) {
-          currentState.requestUpdate();
+          state.requestUpdate();
         }
       }
     }
