@@ -6,7 +6,6 @@ import {
 import {
   ErrorCodes,
   errorShape,
-  type ErrorShape,
   validateSessionsAbortParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-manager-api.js";
@@ -33,15 +32,11 @@ import { waitForChatAbortTerminalPersistence } from "../chat-abort-lifecycle-int
 import type { ChatAbortControllerEntry } from "../chat-abort.js";
 import { resolveChatRunOwnerAgentId } from "../chat-run-owner.js";
 import { resolveSessionKeyForRun } from "../server-session-key.js";
-import {
-  persistGatewaySessionLifecycleEvent,
-  reconcileStaleRunningSession,
-} from "../session-lifecycle-state.js";
+import { persistGatewaySessionLifecycleEvent } from "../session-lifecycle-state.js";
 import {
   resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId,
   tryResolveSessionCompatibilityOwnerAgentId,
 } from "../session-request-agent.js";
-import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import {
   resolveSessionStoreAgentId,
   resolveSessionStoreKey,
@@ -58,7 +53,6 @@ import {
   abortQueuedCollectorSession,
   descendantAbortError,
 } from "./chat-abort-runtime.js";
-import { createVisibleActiveSessionRunLivenessProbe } from "./session-active-runs.js";
 import { emitSessionsChanged } from "./session-change-event.js";
 import { requireSessionKey } from "./sessions-shared.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
@@ -344,47 +338,6 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       sessionMutationAuthorization?.assertCurrent();
       assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
     };
-    // Stop must repair a session whose run already died without persisting a
-    // terminal lifecycle event. Reconcile through the lifecycle owner so the
-    // subsequent UI refresh observes a terminal row instead of stale `running`.
-    // The probe and the commit guard both re-read the live-run registries, so a
-    // run that becomes live during the awaited abort work is never settled.
-    const probeLiveRun = createVisibleActiveSessionRunLivenessProbe(context);
-    // Returns null when the row needed no settlement or the settlement was
-    // legitimately declined; real persistence/authorization failures are
-    // surfaced so the caller does not acknowledge a recovery that never landed.
-    const reconcileStaleRunning = async (): Promise<ErrorShape | null> => {
-      try {
-        await reconcileStaleRunningSession({
-          sessionKey: canonicalKey,
-          agentId: targetAgentId,
-          ...(cfg ? { cfg } : {}),
-          hasLiveRun: () =>
-            probeLiveRun({
-              requestedKey: key,
-              canonicalKey,
-              ...(sessionEntry?.sessionId ? { sessionId: sessionEntry.sessionId } : {}),
-              agentId: targetAgentId,
-              ...(stableTargetOwner ? { defaultAgentId: stableTargetOwner } : {}),
-            }),
-          assertCommitAllowed: assertAbortCurrent,
-        });
-        return null;
-      } catch (error: unknown) {
-        if (error instanceof SessionMutationAuthorizationChangedError) {
-          return error.error;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        context.logGateway.warn(
-          `Failed to reconcile stale running session ${canonicalKey}: ${message}`,
-        );
-        return errorShape(
-          ErrorCodes.UNAVAILABLE,
-          `Session recovery failed for ${canonicalKey}: ${message}`,
-          { retryable: true },
-        );
-      }
-    };
     const persistEmbeddedAbort = (owner: ActiveEmbeddedRunOwner) =>
       persistGatewaySessionLifecycleEvent({
         sessionKey: canonicalKey,
@@ -432,13 +385,6 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       if (error) {
         respond(false, undefined, error);
       } else {
-        if (!aborted) {
-          const settlementError = await reconcileStaleRunning();
-          if (settlementError) {
-            respond(false, undefined, settlementError);
-            return;
-          }
-        }
         respond(true, {
           ok: true,
           abortedRunId: aborted ? embeddedRun.runId : null,
@@ -556,13 +502,6 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
       if (!result.ok) {
         respond(false, undefined, result.error);
       } else {
-        if (!result.value.aborted) {
-          const settlementError = await reconcileStaleRunning();
-          if (settlementError) {
-            respond(false, undefined, settlementError);
-            return;
-          }
-        }
         respond(
           true,
           {
@@ -642,13 +581,6 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
     await settleAbortPersistence(abortedRunIds);
     if (!chatAbortSucceeded) {
       return;
-    }
-    if (!aborted) {
-      const settlementError = await reconcileStaleRunning();
-      if (settlementError) {
-        respond(false, undefined, settlementError);
-        return;
-      }
     }
     respond(
       true,
