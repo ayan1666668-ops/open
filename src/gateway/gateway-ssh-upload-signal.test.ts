@@ -113,16 +113,14 @@ describe.runIf(process.platform !== "win32")("Gateway SSH workspace seeding", ()
 
       let requestedPaths = ["payload.txt"];
       let requestIndex = 0;
-      const server = createServer(async (request, response) => {
-        const chunks: Buffer[] = [];
-        for await (const chunk of request) {
-          chunks.push(Buffer.from(chunk));
+      const server = createServer((request, response) => {
+        request.resume();
+        if (request.method !== "POST" || request.url !== "/v1/responses") {
+          response.writeHead(404).end();
+          return;
         }
-        const body: { input: Array<{ type: string }> } = JSON.parse(
-          Buffer.concat(chunks).toString("utf8"),
-        );
         requestIndex += 1;
-        if (body.input.at(-1)?.type === "function_call_output" && requestedPaths.length === 0) {
+        if (requestedPaths.length === 0) {
           writeOpenAiResponsesText(response, {
             text: "Read results received.",
             messageId: `msg_${requestIndex}`,
@@ -140,7 +138,9 @@ describe.runIf(process.platform !== "win32")("Gateway SSH workspace seeding", ()
       let client: GatewayChatClient | undefined;
       await runQaGatewayFixture(
         async () => {
-          await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+          await new Promise<void>((resolve) => {
+            server.listen(0, "127.0.0.1", resolve);
+          });
           const address = server.address();
           if (!address || typeof address === "string") {
             throw new Error("Model fixture did not bind a TCP port");
