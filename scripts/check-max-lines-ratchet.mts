@@ -16,6 +16,7 @@ import {
   reportRatchetSuccess,
   resolveRatchetBase,
 } from "./lib/shrink-ratchet.mts";
+import { collectTypeScriptCommentRanges } from "./lib/ts-guard-utils.mts";
 
 const BASELINE_PATH = "config/max-lines-baseline.txt";
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;
@@ -58,25 +59,9 @@ export function collectLintDisableDirectives(source: string, filePath = "source.
     false,
     scriptKind,
   );
-  const comments = new Map<number, string>();
-  const addComments = (ranges: readonly ts.CommentRange[] | undefined) => {
-    for (const range of ranges ?? []) {
-      comments.set(range.pos, source.slice(range.pos, range.end));
-    }
-  };
-  const visit = (node: ts.Node) => {
-    addComments(ts.getLeadingCommentRanges(source, node.pos));
-    addComments(ts.getTrailingCommentRanges(source, node.end));
-    // getChildren includes delimiter tokens; forEachChild misses directives before closing tokens.
-    for (const child of node.getChildren(sourceFile)) {
-      visit(child);
-    }
-  };
-  visit(sourceFile);
-  addComments(ts.getLeadingCommentRanges(source, sourceFile.endOfFileToken.pos));
-
   const directives: string[][] = [];
-  for (const text of comments.values()) {
+  for (const range of collectTypeScriptCommentRanges(ts, sourceFile)) {
+    const text = source.slice(range.pos, range.end);
     const comment = text.slice(2, text.startsWith("/*") ? -2 : undefined);
     const match = directive.exec(comment.trim());
     if (!match) {
@@ -92,14 +77,6 @@ export function collectLintDisableDirectives(source: string, filePath = "source.
 
 export function isMaxLinesRule(rule: string) {
   return rule === "max-lines" || rule.endsWith("/max-lines");
-}
-
-export function hasMaxLinesDisable(source: string, filePath = "source.ts") {
-  return collectLintDisableDirectives(source, filePath).some((rules) => rules.some(isMaxLinesRule));
-}
-
-export function hasAllRuleDisable(source: string, filePath = "source.ts") {
-  return collectLintDisableDirectives(source, filePath).some((rules) => rules.length === 0);
 }
 
 function baselineWithVerifiedRenames(
@@ -165,21 +142,24 @@ export function collectCurrentSuppressionState(
     .filter(Boolean)
     .filter(isGovernedSourcePath)
     .filter((filePath) => staged || fs.existsSync(path.join(root, filePath)));
-  const sources = staged
-    ? [...loadRatchetSources(root, governedPaths)]
-    : governedPaths.map((filePath): [string, string] => [
-        filePath,
-        fs.readFileSync(path.join(root, filePath), "utf8"),
-      ]);
+  const stagedSources = staged ? loadRatchetSources(root, governedPaths) : undefined;
+  const allRules: string[] = [];
+  const explicit: string[] = [];
+  for (const filePath of governedPaths) {
+    const source = stagedSources
+      ? stagedSources.get(filePath)!
+      : fs.readFileSync(path.join(root, filePath), "utf8");
+    const directives = collectLintDisableDirectives(source, filePath);
+    if (directives.some((rules) => rules.length === 0)) {
+      allRules.push(filePath);
+    }
+    if (directives.some((rules) => rules.some(isMaxLinesRule))) {
+      explicit.push(filePath);
+    }
+  }
   return {
-    allRules: sources
-      .filter(([filePath, source]) => hasAllRuleDisable(source, filePath))
-      .map(([filePath]) => filePath)
-      .toSorted(compareStrings),
-    explicit: sources
-      .filter(([filePath, source]) => hasMaxLinesDisable(source, filePath))
-      .map(([filePath]) => filePath)
-      .toSorted(compareStrings),
+    allRules: allRules.toSorted(compareStrings),
+    explicit: explicit.toSorted(compareStrings),
   };
 }
 

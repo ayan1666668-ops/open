@@ -39,6 +39,7 @@ import type {
   CliBackendPromptContext,
 } from "../../plugins/cli-backend.types.js";
 import type { PluginHookChannelContext } from "../../plugins/hook-types.js";
+import type { PluginInstanceConsumer } from "../../plugins/plugin-instance.types.js";
 import type { SpawnSecretInput } from "../../process/supervisor/types.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
@@ -67,6 +68,7 @@ import type { ContextEngineTurnAttemptFacts } from "../harness/context-engine-tu
 import type { PreparedQuestionAnswerAuthority } from "../harness/host-private-capabilities.js";
 import type { AgentHarnessIsolatedCompletionParamsV2 } from "../harness/types.js";
 import type { ModelFallbackAttemptProvenance } from "../model-fallback.types.js";
+import type { RootedExecutionRequest } from "../rooted-run-params.js";
 import type { ScheduledToolPolicyContext } from "../scheduled-tool-policy.js";
 import type { SessionManager } from "../sessions/index.js";
 import type { SilentReplyPromptMode } from "../system-prompt.types.js";
@@ -103,6 +105,10 @@ export type RunCliAgentParams = {
   trigger?: EmbeddedRunTrigger;
   sessionFile: string;
   workspaceDir: string;
+  /** Host-owned task root; preparation must mediate all tools through its filesystem policy. */
+  rootedExecution?: RootedExecutionRequest;
+  /** Instruction workspace, separate from a host-owned task's file-tool root. */
+  bootstrapWorkspaceDir?: string;
   /** Trusted model/auth owner directory. Defaults to the session agent directory. */
   agentDir?: string;
   /** Task working directory for CLI execution. Defaults to workspaceDir. */
@@ -237,6 +243,7 @@ export type RunCliAgentParams = {
   messageProvider?: string;
   /** Capabilities declared by the gateway client that originated this run. */
   clientCaps?: string[];
+  gatewayUiCommandTarget?: import("../../gateway/ui-command-target.types.js").GatewayUiCommandTarget;
   /** Trusted run-local capability to author pinned widgets without inline presentation. */
   pinnedWidgetAuthoring?: boolean;
   currentChannelId?: string;
@@ -378,12 +385,15 @@ export type PreparedCliRunContext = {
   backendResolved: ResolvedCliBackend;
   preparedBackend: CliPreparedBackend;
   executionTarget: CliExecutionTarget;
+  /** Keeps a plugin-owned turn admitted on its backend instance across a plugin hot reload. */
+  pluginExecutionConsumer?: PluginInstanceConsumer;
   reusableCliSession: CliReusableSession;
   /** Resume is safe only while the exact managed Claude stdio child still exists. */
   requiredClaudeLiveSessionGeneration?: string;
   hadSessionFile: boolean;
   contextEngineConfig: OpenClawConfig;
   contextEngine?: ContextEngine;
+  deferContextEngineDisposalUntil?: (promise: Promise<void>) => void;
   contextEngineTurnPrompt?: string;
   promptContext?: CliBackendPromptContext;
   /** Logical model input retained for policy/observation hooks when transport context is separate. */

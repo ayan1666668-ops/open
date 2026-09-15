@@ -19,10 +19,13 @@ RUN apt-get update \
 RUN corepack enable
 RUN npm install -g tsx@4.23.12 --no-fund --no-audit
 
-COPY scripts/prepublish-plugin-registry-artifact.mjs /opt/openclaw-e2e/scripts/
+COPY --chmod=0644 scripts/prepublish-plugin-registry-artifact.mjs /opt/openclaw-e2e/scripts/
 COPY --chmod=0755 scripts/e2e/lib/prepublish-plugin-registry.sh /opt/openclaw-e2e/scripts/e2e/lib/
 COPY scripts/e2e/lib/plugins/npm-registry-server.mjs /opt/openclaw-e2e/scripts/e2e/lib/plugins/
 COPY scripts/lib/bounded-response.mjs /opt/openclaw-e2e/scripts/lib/
+
+# COPY --chmod can also set modes on newly created parent directories.
+RUN find /opt/openclaw-e2e -type d -exec chmod 0755 {} +
 
 RUN useradd --create-home --shell /bin/bash appuser \
  && mkdir -p /app \
@@ -112,6 +115,8 @@ INSTALL_DEPS
 
 FROM bare AS functional
 
+ARG OPENCLAW_FS_SAFE_NATIVE_CONTRACT=required
+
 # The app under test enters through the named BuildKit context, not by copying
 # checkout sources into the image.
 COPY --from=openclaw_package --chown=appuser:appuser openclaw-current.tgz /tmp/openclaw-current.tgz
@@ -126,7 +131,8 @@ RUN tar -xzf /tmp/openclaw-current.tgz -C /app --strip-components=1 \
  && ln -sfn /app /app/node_modules/openclaw \
  && mkdir -p "$HOME/.local/bin" \
  && ln -sf /app/openclaw.mjs "$HOME/.local/bin/openclaw" \
- && node /tmp/verify-fs-safe-native.mjs --package-root /app --mode require \
+ && OPENCLAW_FS_SAFE_NATIVE_CONTRACT="$OPENCLAW_FS_SAFE_NATIVE_CONTRACT" \
+      node /tmp/verify-fs-safe-native.mjs --package-root /app --mode require \
  && rm -f /tmp/openclaw-current.tgz
 
 CMD ["bash"]

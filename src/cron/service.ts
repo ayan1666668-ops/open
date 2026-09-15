@@ -100,8 +100,8 @@ export class CronService implements CronServiceContract {
     return await readOps.list(this.state, opts);
   }
 
-  async listPage(opts?: CronListPageOptions) {
-    return await readOps.listPage(this.state, opts);
+  async listPage(opts?: CronListPageOptions, matchesJob?: (job: CronJob) => boolean) {
+    return await readOps.listPage(this.state, opts, matchesJob);
   }
 
   async add(input: CronJobCreate, opts?: CronAddOptions) {
@@ -236,7 +236,9 @@ export class CronService implements CronServiceContract {
   }
 
   getDefaultAgentId(): string | undefined {
-    return this.state.deps.defaultAgentId;
+    return this.state.deps.resolveDefaultAgentId
+      ? this.state.deps.resolveDefaultAgentId()
+      : this.state.deps.defaultAgentId;
   }
 
   wake(opts: { mode: CronWakeMode; text: string; sessionKey?: string; agentId?: string }) {

@@ -5,17 +5,18 @@ import type {
   ResponseInput,
 } from "openai/resources/responses/responses.js";
 import { resolveCacheRetention } from "../providers/cache-retention.js";
-import { resolveOpenAIResponsesCacheParams } from "../providers/openai-prompt-cache.js";
+import { resolveOpenAIPromptCacheParams } from "../providers/openai-prompt-cache.js";
 import {
   normalizeOpenAIReasoningEffort,
   resolveOpenAIReasoningEffortForModel,
   supportsOpenAITemperature,
   type OpenAIApiReasoningEffort,
 } from "../providers/openai-reasoning-effort.js";
-import { convertResponsesToolPayload } from "../providers/openai-responses-tools.js";
+import { prepareResponsesTools } from "../providers/openai-responses-tools.js";
 import { reconcileOpenAIResponsesToolChoice } from "../providers/openai-tool-projection.js";
 import { stripSystemPromptCacheBoundary } from "../utils/system-prompt-cache-boundary.js";
 import { resolveOpenAIStrictToolSetting } from "./host-policy.js";
+import { usesNativeOpenAICodexResponsesBackend } from "./openai-completions-compat.js";
 import type { OpenAIResponsesReplayMode } from "./openai-responses-compaction-replay.js";
 import {
   OPENAI_CODEX_RESPONSES_DEFAULT_INSTRUCTIONS,
@@ -31,11 +32,7 @@ import {
   buildResponsesInputMessage,
   convertResponsesMessages,
 } from "./openai-responses-replay-internal.js";
-import {
-  getCompat,
-  resolveOpenAIStrictToolFlagWithDiagnostics,
-  usesNativeOpenAICodexResponsesBackend,
-} from "./openai-transport-params.js";
+import { getCompat } from "./openai-transport-params.js";
 import { resolvePromptCacheKey, type OpenAIModeModel } from "./openai-transport-shared.js";
 import { sanitizeTransportPayloadText } from "./transport-stream-shared.js";
 
@@ -97,6 +94,7 @@ const OPENAI_CODEX_RESPONSES_UNSUPPORTED_PARAMS = [
   "max_output_tokens",
   "metadata",
   "prompt_cache_retention",
+  "prompt_cache_options",
   "service_tier",
   "temperature",
   "top_p",
@@ -205,7 +203,7 @@ function ensureOpenAIResponsesNonEmptyInput(messages: ResponseInput, context: Co
   );
 }
 
-function resolveOpenAIResponsesTextFormat(
+export function resolveOpenAIResponsesTextFormat(
   responseFormat: Record<string, unknown>,
 ): ResponseFormatTextConfig {
   if (
@@ -259,7 +257,10 @@ export function buildOpenAIResponsesParams(
   const messages = convertOpenAIResponsesMessagesForRequest(model, context, options, replayMode);
   ensureOpenAIResponsesNonEmptyInput(messages, context);
   const cacheRetention = resolveCacheRetention(options?.cacheRetention);
-  const promptCacheKey = resolvePromptCacheKey(options, cacheRetention);
+  const compat = getCompat(model);
+  const promptCacheKey = compat.supportsPromptCacheKey
+    ? resolvePromptCacheKey(options, cacheRetention)
+    : undefined;
   const instructions = resolveOpenAIResponsesInstructions(
     model,
     context,
@@ -270,11 +271,7 @@ export function buildOpenAIResponsesParams(
     input: messages,
     stream: true,
     prompt_cache_key: promptCacheKey,
-    ...resolveOpenAIResponsesCacheParams(
-      model,
-      cacheRetention,
-      model.baseUrl?.includes("api.openai.com"),
-    ),
+    ...resolveOpenAIPromptCacheParams(model, cacheRetention, compat),
     ...(instructions ? { instructions } : {}),
     ...(metadata ? { metadata } : {}),
   };
@@ -300,31 +297,19 @@ export function buildOpenAIResponsesParams(
     params.service_tier = options.serviceTier;
   }
   if (context.tools) {
-    const converted = convertResponsesToolPayload(
-      context.tools,
-      {
-        model,
-        strict: resolveOpenAIStrictToolSetting(model as OpenAIModeModel, {
-          transport: "stream",
-        }),
-      },
-      (projection, setting) =>
-        resolveOpenAIStrictToolFlagWithDiagnostics(projection, setting, {
-          transport: "responses",
-          model: model as OpenAIModeModel,
-        }),
-    );
+    const tools = context.tools;
+    const strict = resolveOpenAIStrictToolSetting(model as OpenAIModeModel, {
+      transport: "stream",
+    });
+    const { projection, tools: converted } = prepareResponsesTools(tools, strict, model);
     if (
-      converted.tools.length > 0 ||
-      (converted.projection.inputToolCount === 0 && converted.projection.diagnostics.length === 0)
+      converted.length > 0 ||
+      (projection.inputToolCount === 0 && projection.diagnostics.length === 0)
     ) {
-      params.tools = converted.tools;
+      params.tools = converted;
     }
     if (options?.toolChoice) {
-      const toolChoice = reconcileOpenAIResponsesToolChoice(
-        options.toolChoice,
-        converted.projection,
-      );
+      const toolChoice = reconcileOpenAIResponsesToolChoice(options.toolChoice, projection);
       if (toolChoice !== undefined) {
         params.tool_choice = toolChoice;
       }
