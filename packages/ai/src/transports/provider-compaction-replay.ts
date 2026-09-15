@@ -155,7 +155,7 @@ function estimateResponsesInput(
       return (
         tokens +
         estimate.json(metadata) +
-        estimateResponsesContent(content, estimate, estimate.text)
+        estimateResponsesContent(content, estimate, (value) => estimate.text(value))
       );
     }
     if (entry.type === "function_call_output" || entry.type === "custom_tool_call_output") {
@@ -163,7 +163,9 @@ function estimateResponsesInput(
       return (
         tokens +
         estimate.json(metadata) +
-        estimateResponsesContent(output, estimate, estimate.toolResult ?? estimate.text)
+        estimateResponsesContent(output, estimate, (value) =>
+          estimate.toolResult ? estimate.toolResult(value) : estimate.text(value),
+        )
       );
     }
     return tokens + estimate.json(entry);
@@ -214,8 +216,7 @@ export function resolveCompactionReplayPressure<T extends ReplayMessage>(
   // is authoritative only when its saved wire prefix still matches this replay.
   const { contextUsage: _staleContextUsage, ...usage } = checkpoint.owner.usage;
   const tail: T[] = [];
-  for (let index = ownerIndex + 1; index < messages.length; index += 1) {
-    const message = messages[index]!;
+  for (const message of messages.slice(ownerIndex + 1)) {
     if (!isAssistantReplayMessage(message) || message.usage.contextUsage === undefined) {
       tail.push(message);
       continue;

@@ -102,7 +102,8 @@ describe("provider checkpoint prompt pressure", () => {
 
   it("uses measured checkpoint usage after a saved transcript roundtrip and counts new input", () => {
     const { owner, response } = measuredWindow();
-    const messages = JSON.parse(JSON.stringify([owner, response])) as AgentMessage[];
+    const persisted = JSON.stringify([owner, response]);
+    const messages = JSON.parse(persisted) as AgentMessage[];
     expect(pressure(messages)).toBeGreaterThanOrEqual(2_001);
     expect(pressure(messages)).toBeLessThan(2_100);
     const legacy = resolveCompactionReplayPressure([owner, response], model, identity, {

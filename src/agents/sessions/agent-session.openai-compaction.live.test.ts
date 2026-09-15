@@ -228,9 +228,8 @@ describeLive("OpenAI AgentSession repeated compaction live", () => {
               message.role === "toolResult",
           );
       const reopen = () => {
-        sessionManager = SessionManager.fromEntries(
-          JSON.parse(JSON.stringify(sessionManager.getPersistedEntries())),
-        );
+        const persisted = JSON.stringify(sessionManager.getPersistedEntries());
+        sessionManager = SessionManager.fromEntries(JSON.parse(persisted));
       };
       const complete = async (toolChoice: "none" | "required") => {
         try {

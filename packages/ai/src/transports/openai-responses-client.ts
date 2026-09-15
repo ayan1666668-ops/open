@@ -668,15 +668,13 @@ export function createAzureOpenAIResponsesTransportStreamFn(): StreamFn {
     outputApi: "azure-openai-responses",
     firstEventTimeoutMs: AZURE_RESPONSES_FIRST_EVENT_TIMEOUT_MS,
     createClient: createAzureOpenAIClient,
-    buildRequest: (model, context, options, metadata, replayMode) =>
-      buildAzureOpenAIResponsesParams(
-        model,
-        context,
-        options,
-        resolveAzureDeploymentName(model),
-        metadata,
-        replayMode,
-      ),
+    buildRequest: (model, context, options, metadata, replayMode) => {
+      const deploymentName = resolveAzureDeploymentName(model);
+      const params = buildOpenAIResponsesParams(model, context, options, metadata, replayMode);
+      params.model = deploymentName;
+      delete params.store;
+      return params;
+    },
   });
 }
 
@@ -711,18 +709,4 @@ function createAzureOpenAIClient(
     ...clientOptions,
     apiVersion: resolveAzureOpenAIApiVersion(),
   });
-}
-
-function buildAzureOpenAIResponsesParams(
-  model: Model,
-  context: Context,
-  options: OpenAIResponsesOptions | undefined,
-  deploymentName: string,
-  metadata?: Record<string, string>,
-  replayMode: OpenAIResponsesReplayMode = "checkpoint",
-) {
-  const params = buildOpenAIResponsesParams(model, context, options, metadata, replayMode);
-  params.model = deploymentName;
-  delete params.store;
-  return params;
 }

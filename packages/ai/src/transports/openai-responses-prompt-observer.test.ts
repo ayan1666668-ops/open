@@ -1,5 +1,5 @@
 import { zstdDecompressSync } from "node:zlib";
-import type { Api, AssistantMessage, Context, Model } from "@openclaw/llm-core";
+import type { Api, Context, Model } from "@openclaw/llm-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureAiTransportHost, getAiTransportHost } from "../host.js";
 import { responsesPromptObserver, type ResponsesPromptObservation } from "../internal/openai.js";
@@ -13,16 +13,15 @@ import {
 import { streamOpenAIResponses } from "../providers/openai-responses.js";
 import { cleanupSessionResources } from "../session-resources.js";
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "../utils/system-prompt-cache-boundary.js";
-import {
-  buildOpenAIResponsesReasoningReplayMetadata,
-  captureOpenAIResponsesCompaction,
-} from "./openai-responses-compaction-replay.js";
 import { resolveResponsesContextUsageBoundary } from "./openai-responses-context-usage.js";
-import { OPENAI_RESPONSES_REASONING_REPLAY_META_KEY } from "./openai-responses-contracts.js";
+import {
+  createCompactionContext,
+  createOrphanedToolOutputCompactionContext,
+  SDK_FULL_HISTORY_PREFIX,
+  SDK_REASONING_CIPHERTEXT,
+} from "./openai-responses-prompt-observer.test-support.js";
 
 type SdkResponse = { data: AsyncIterable<unknown>; response: Response };
-const SDK_FULL_HISTORY_PREFIX = "full history before compaction";
-const SDK_REASONING_CIPHERTEXT = "opaque-sdk-reasoning";
 
 const sdkState = vi.hoisted(() => ({
   clients: [] as Array<"openai" | "azure">,
@@ -54,7 +53,6 @@ vi.mock("openai", () => {
   return { default: createClient("openai"), AzureOpenAI: createClient("azure") };
 });
 
-import { createZeroUsage } from "../usage.test-support.js";
 import {
   createAzureOpenAIResponsesTransportStreamFn,
   createOpenAIResponsesTransportStreamFn,
@@ -125,97 +123,6 @@ function completedSdkResponse(responseId: string): SdkResponse {
       };
     })(),
     response: new Response(null, { status: 200 }),
-  };
-}
-
-function createCompactionContext(
-  model: Model,
-  identity: { authProfileId: string; sessionId: string },
-  includeReasoning = false,
-): Context {
-  const prior: AssistantMessage = {
-    role: "assistant",
-    content: includeReasoning
-      ? [
-          {
-            type: "thinking",
-            thinking: "prior reasoning",
-            thinkingSignature: JSON.stringify({
-              type: "reasoning",
-              id: "rs_sdk_retry",
-              encrypted_content: SDK_REASONING_CIPHERTEXT,
-              summary: [],
-              [OPENAI_RESPONSES_REASONING_REPLAY_META_KEY]:
-                buildOpenAIResponsesReasoningReplayMetadata(model, identity),
-            }),
-          },
-        ]
-      : [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: createZeroUsage(),
-    stopReason: "stop",
-    timestamp: 1,
-  };
-  captureOpenAIResponsesCompaction(
-    prior,
-    {
-      type: "compaction",
-      id: "cmp_azure_rejected",
-      encrypted_content: "opaque-azure-compaction",
-    },
-    0,
-    model,
-    buildOpenAIResponsesReasoningReplayMetadata(model, identity),
-  );
-  return {
-    systemPrompt: "PRIVATE-AZURE-RECOVERY-PROMPT",
-    messages: [
-      { role: "user", content: SDK_FULL_HISTORY_PREFIX, timestamp: 0 },
-      prior,
-      { role: "user", content: "continue", timestamp: 2 },
-    ],
-  };
-}
-
-function createOrphanedToolOutputCompactionContext(
-  model: Model,
-  identity: { authProfileId: string; sessionId: string },
-): Context {
-  const callId = "call_compacted";
-  const prior: AssistantMessage = {
-    role: "assistant",
-    content: [{ type: "toolCall", id: callId, name: "lookup", arguments: {} }],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    usage: createZeroUsage(),
-    stopReason: "stop",
-    timestamp: 1,
-  };
-  captureOpenAIResponsesCompaction(
-    prior,
-    { type: "compaction", id: "cmp_orphaned_output", encrypted_content: "opaque-compaction" },
-    1,
-    model,
-    buildOpenAIResponsesReasoningReplayMetadata(model, identity),
-  );
-  return {
-    systemPrompt: "PRIVATE-ORPHANED-OUTPUT-RECOVERY-PROMPT",
-    messages: [
-      { role: "user", content: SDK_FULL_HISTORY_PREFIX, timestamp: 0 },
-      prior,
-      {
-        role: "toolResult",
-        toolCallId: callId,
-        toolName: "lookup",
-        content: [{ type: "text", text: "result" }],
-        isError: false,
-        timestamp: 2,
-      },
-      { role: "user", content: "continue", timestamp: 3 },
-    ],
   };
 }
 
@@ -335,9 +242,8 @@ describe("OpenAI Responses provider prompt observer", () => {
           promptTokens: 5,
           totalTokens: 8,
         });
-        const savedMessages = JSON.parse(
-          JSON.stringify([...context.messages, result]),
-        ) as Context["messages"];
+        const persisted = JSON.stringify([...context.messages, result]);
+        const savedMessages = JSON.parse(persisted) as Context["messages"];
         return {
           result,
           boundary: resolveResponsesContextUsageBoundary(
@@ -403,9 +309,10 @@ describe("OpenAI Responses provider prompt observer", () => {
       type: "thinking",
       thinkingSignature: expect.stringContaining("opaque-streamed-reasoning"),
     });
+    const persisted = JSON.stringify([...context.messages, result]);
     expect(
       resolveResponsesContextUsageBoundary(
-        JSON.parse(JSON.stringify([...context.messages, result])),
+        JSON.parse(persisted),
         model,
         identity,
         context.systemPrompt,
