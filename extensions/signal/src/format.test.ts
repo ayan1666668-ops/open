@@ -1,7 +1,26 @@
+// Signal tests cover format plugin behavior.
 import { describe, expect, it } from "vitest";
 import { markdownToSignalText } from "./format.js";
 
 describe("markdownToSignalText", () => {
+  it("marks assistant-authored transcript role headers as monospace", () => {
+    const result = markdownToSignalText("user[Thu 2026-07-02] question");
+
+    expect(result.text).toBe("user[Thu 2026-07-02] question");
+    expect(result.styles).toContainEqual({
+      start: 0,
+      length: "user[Thu 2026-07-02]".length,
+      style: "MONOSPACE",
+    });
+
+    const spoilerResult = markdownToSignalText("||user[Thu 2026-07-02] hidden||");
+    expect(spoilerResult.styles).toContainEqual({
+      start: 0,
+      length: "user[Thu 2026-07-02]".length,
+      style: "MONOSPACE",
+    });
+  });
+
   it("renders inline styles", () => {
     const res = markdownToSignalText("hi _there_ **boss** ~~nope~~ `code`");
 
@@ -66,6 +85,31 @@ describe("markdownToSignalText", () => {
     expect(res.styles).toEqual([{ start: prefix.length, length: 4, style: "BOLD" }]);
   });
 
+  it.each([
+    {
+      name: "nested style around an expanded link",
+      markdown: "**[docs](https://example.com) _nested_ tail**",
+      expected: {
+        text: "docs (https://example.com) nested tail",
+        styles: [
+          { start: 0, length: 4, style: "BOLD" },
+          { start: 26, length: 12, style: "BOLD" },
+          { start: 27, length: 6, style: "ITALIC" },
+        ],
+      },
+    },
+    {
+      name: "CJK with emoji offsets",
+      markdown: "前置 **粗体😀** 后置",
+      expected: {
+        text: "前置 粗体😀 后置",
+        styles: [{ start: 3, length: 4, style: "BOLD" }],
+      },
+    },
+  ])("preserves the $name golden output", ({ markdown, expected }) => {
+    expect(markdownToSignalText(markdown)).toEqual(expected);
+  });
+
   describe("duplicate URL display", () => {
     it("does not duplicate URL for normalized equivalent labels", () => {
       const equivalentCases = [
@@ -100,19 +144,19 @@ describe("markdownToSignalText", () => {
     it("renders headings as bold text", () => {
       const res = markdownToSignalText("# Heading 1");
       expect(res.text).toBe("Heading 1");
-      expect(res.styles).toContainEqual({ start: 0, length: 9, style: "BOLD" });
+      expect(res.styles).toStrictEqual([{ start: 0, length: 9, style: "BOLD" }]);
     });
 
     it("renders h2 headings as bold text", () => {
       const res = markdownToSignalText("## Heading 2");
       expect(res.text).toBe("Heading 2");
-      expect(res.styles).toContainEqual({ start: 0, length: 9, style: "BOLD" });
+      expect(res.styles).toStrictEqual([{ start: 0, length: 9, style: "BOLD" }]);
     });
 
     it("renders h3 headings as bold text", () => {
       const res = markdownToSignalText("### Heading 3");
       expect(res.text).toBe("Heading 3");
-      expect(res.styles).toContainEqual({ start: 0, length: 9, style: "BOLD" });
+      expect(res.styles).toStrictEqual([{ start: 0, length: 9, style: "BOLD" }]);
     });
 
     it("renders blockquotes with a visible prefix", () => {

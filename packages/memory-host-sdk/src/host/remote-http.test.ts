@@ -1,5 +1,6 @@
+// Memory Host SDK tests cover remote http behavior.
 import { describe, expect, it } from "vitest";
-import { MEMORY_REMOTE_TRUSTED_ENV_PROXY_MODE, withRemoteHttpResponse } from "./remote-http.js";
+import { withRemoteHttpResponse } from "./remote-http.js";
 
 describe("package withRemoteHttpResponse", () => {
   function makeFetchDeps({ useEnvProxy = false }: { useEnvProxy?: boolean } = {}) {
@@ -28,7 +29,7 @@ describe("package withRemoteHttpResponse", () => {
     });
 
     expect(deps.calls[0]).toHaveProperty("url", "https://memory.example/v1/embeddings");
-    expect(deps.calls[0]).toHaveProperty("mode", MEMORY_REMOTE_TRUSTED_ENV_PROXY_MODE);
+    expect(deps.calls[0]).toHaveProperty("mode", "trusted_env_proxy");
   });
 
   it("keeps strict guarded fetch mode when proxy env would not proxy the target", async () => {
@@ -42,5 +43,19 @@ describe("package withRemoteHttpResponse", () => {
 
     expect(deps.calls).toHaveLength(1);
     expect(deps.calls[0]).not.toHaveProperty("mode");
+  });
+
+  it("passes abort signals to the guarded fetch", async () => {
+    const deps = makeFetchDeps();
+    const controller = new AbortController();
+
+    await withRemoteHttpResponse({
+      url: "https://memory.example/v1/embeddings",
+      signal: controller.signal,
+      onResponse: async () => undefined,
+      ...deps,
+    });
+
+    expect(deps.calls[0]).toHaveProperty("signal", controller.signal);
   });
 });

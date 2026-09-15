@@ -1,2 +1,2 @@
-export { sendMessageTelegram, sendPollTelegram, type TelegramApiOverride } from "./src/send.js";
-export { resetTelegramThreadBindingsForTests } from "./src/thread-bindings.js";
+export { renderTelegramProgressDraftPreview } from "./src/progress-draft-preview.js";
+export { telegramHtmlToPlainTextFallback } from "./src/format.js";

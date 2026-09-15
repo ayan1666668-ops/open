@@ -1,16 +1,73 @@
-import { describe, expect, it } from "vitest";
-import type { PluginManifestCommandAliasRegistry } from "../plugins/manifest-command-aliases.js";
+// Run main tests cover CLI main entrypoint behavior and process error handling.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resolveManifestCommandAliasOwnerInRegistry,
+  resolveManifestToolOwnerInRegistry,
+  type PluginManifestCommandAliasRegistry,
+} from "../plugins/manifest-command-aliases.js";
+import {
+  resolveGatewayCatalogCommandPath,
+  resolveGatewayRunPreBootstrapOptions,
+} from "./gateway-run-argv.js";
 import {
   rewriteUpdateFlagArgv,
   resolveMissingPluginCommandMessage,
+  shouldHandleBareRoot,
   shouldEnsureCliPath,
-  shouldStartCrestodianForBareRoot,
-  shouldStartCrestodianForModernOnboard,
   shouldStartProxyForCli,
-  shouldUseBrowserHelpFastPath,
   shouldUseRootHelpFastPath,
+  shouldUseSetupOnboardConfigureHelpFastPath,
 } from "./run-main-policy.js";
-import { isGatewayRunFastPathArgv } from "./run-main.js";
+import { isGatewayRunFastPathArgv, runCli } from "./run-main.js";
+
+const runGatewayCommand = vi.hoisted(() => vi.fn());
+
+vi.mock("./gateway-cli/run.js", () => ({ runGatewayCommand }));
+vi.mock("./gateway-cli/pre-bootstrap.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./gateway-cli/pre-bootstrap.js")>()),
+  selectGatewayRunEnvironment: async () => true,
+  prepareGatewayRunBootstrap: async () => false,
+}));
+vi.mock("../logging.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../logging.js")>()),
+  enableConsoleCapture: vi.fn(),
+}));
+
+describe("Gateway fast-path Commander parsing", () => {
+  const previousExitCode = process.exitCode;
+
+  beforeEach(() => {
+    process.exitCode = undefined;
+    runGatewayCommand.mockClear();
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { flag: "--ambient-channels", key: "ambientChannels" },
+    { flag: "--dev-ambient-channels", key: "devAmbientChannels" },
+    { flag: "--verbose", key: "verbose" },
+    { flag: "--update-canary", key: "updateCanary" },
+  ])("accepts root no-color after $flag on parent and child", async ({ flag, key }) => {
+    for (const args of [
+      [flag, "--no-color", "run"],
+      ["run", flag, "--no-color"],
+    ]) {
+      runGatewayCommand.mockClear();
+      await runCli(["node", "openclaw", "gateway", ...args, "--token=--no-color"]);
+
+      expect(process.exitCode).toBeUndefined();
+      expect(runGatewayCommand).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ [key]: true, token: "--no-color" }),
+        expect.any(Object),
+      );
+    }
+  });
+});
 
 const memoryWikiCommandAliasRegistry: PluginManifestCommandAliasRegistry = {
   plugins: [
@@ -40,7 +97,36 @@ const losslessClawToolRegistry: PluginManifestCommandAliasRegistry = {
   ],
 };
 
+const browserCommandAliasRegistry: PluginManifestCommandAliasRegistry = {
+  plugins: [
+    {
+      id: "browser",
+      enabledByDefault: true,
+      commandAliases: [{ name: "browser" }],
+    },
+  ],
+};
+
+const workboardCommandAliasRegistry: PluginManifestCommandAliasRegistry = {
+  plugins: [
+    {
+      id: "workboard",
+      commandAliases: [{ name: "workboard" }],
+    },
+  ],
+};
+
 describe("isGatewayRunFastPathArgv", () => {
+  it.each([
+    { args: ["--update-canary"], commandPath: ["gateway"] },
+    { args: ["--update-canary", "run"], commandPath: ["gateway", "run"] },
+    { args: ["run", "--update-canary"], commandPath: ["gateway", "run"] },
+  ])("keeps update canaries on the foreground startup path: $args", ({ args, commandPath }) => {
+    const argv = ["node", "openclaw", "gateway", ...args, "--bind", "loopback", "--port", "14720"];
+    expect(isGatewayRunFastPathArgv(argv)).toBe(true);
+    expect(resolveGatewayCatalogCommandPath(argv)).toEqual(commandPath);
+  });
+
   it("matches only plain gateway foreground starts without root options or help", () => {
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway"])).toBe(true);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--force"])).toBe(true);
@@ -51,13 +137,89 @@ describe("isGatewayRunFastPathArgv", () => {
     ).toBe(true);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "run"])).toBe(true);
     expect(
+      isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--log-level", "debug", "run"]),
+    ).toBe(false);
+    expect(
+      isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--log-level=debug", "run"]),
+    ).toBe(false);
+    expect(
       isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "run", "--raw-stream-path", "x"]),
     ).toBe(true);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "call", "health"])).toBe(false);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--help"])).toBe(false);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--port"])).toBe(false);
     expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--unknown"])).toBe(false);
+    expect(isGatewayRunFastPathArgv(["node", "openclaw", "gateway", "--update-canary=true"])).toBe(
+      false,
+    );
   });
+
+  it("keeps post-root log levels out of the gateway command path", () => {
+    expect(
+      resolveGatewayCatalogCommandPath([
+        "node",
+        "openclaw",
+        "gateway",
+        "--log-level",
+        "debug",
+        "run",
+      ]),
+    ).toEqual(["gateway", "run"]);
+    expect(
+      resolveGatewayCatalogCommandPath([
+        "node",
+        "openclaw",
+        "gateway",
+        "--log-level=debug",
+        "restart-handoff",
+        "capabilities",
+      ]),
+    ).toEqual(["gateway", "restart-handoff"]);
+  });
+});
+
+describe("resolveGatewayRunPreBootstrapOptions", () => {
+  it("resolves destructive gateway flags across fast and full Commander paths", () => {
+    expect(
+      resolveGatewayRunPreBootstrapOptions(["node", "openclaw", "gateway", "run", "--force"]),
+    ).toEqual({ force: true, reset: false });
+    expect(
+      resolveGatewayRunPreBootstrapOptions([
+        "node",
+        "openclaw",
+        "--log-level",
+        "debug",
+        "gateway",
+        "run",
+        "--force",
+        "--reset",
+      ]),
+    ).toEqual({ force: true, reset: true });
+  });
+
+  it("does not treat malformed required option values as destructive flags", () => {
+    expect(
+      resolveGatewayRunPreBootstrapOptions(["node", "openclaw", "gateway", "--token", "--force"]),
+    ).toEqual({ force: false, reset: false });
+  });
+
+  it.each([
+    { args: ["--", "gateway", "status"], commandPath: ["gateway", "status"] },
+    { args: ["gateway", "--", "status"], commandPath: ["gateway", "status"] },
+    { args: ["--", "gateway", "--force"], commandPath: ["gateway", "--force"] },
+    { args: ["--", "gateway", "run", "--reset"], commandPath: ["gateway", "run"] },
+    { args: ["gateway", "--", "run", "--force"], commandPath: ["gateway", "run"] },
+    { args: ["gateway", "run", "--", "--reset"], commandPath: ["gateway", "run"] },
+  ])(
+    "preserves literal gateway commands without enabling destructive flags: $args",
+    ({ args, commandPath }) => {
+      const argv = ["node", "openclaw", ...args];
+      expect(resolveGatewayCatalogCommandPath(argv)).toEqual(commandPath);
+      const options = resolveGatewayRunPreBootstrapOptions(argv);
+      expect(options?.force).not.toBe(true);
+      expect(options?.reset).not.toBe(true);
+    },
+  );
 });
 
 describe("rewriteUpdateFlagArgv", () => {
@@ -92,6 +254,45 @@ describe("rewriteUpdateFlagArgv", () => {
       "--json",
     ]);
   });
+
+  it("does not rewrite --update after -- positional terminator", () => {
+    expect(
+      rewriteUpdateFlagArgv(["node", "entry.js", "config", "set", "foo", "--", "--update"]),
+    ).toEqual(["node", "entry.js", "config", "set", "foo", "--", "--update"]);
+  });
+
+  it("does not rewrite --update when a subcommand appears before it", () => {
+    expect(
+      rewriteUpdateFlagArgv(["node", "entry.js", "config", "set", "update.channel", "--update"]),
+    ).toEqual(["node", "entry.js", "config", "set", "update.channel", "--update"]);
+  });
+
+  it("does not rewrite --update that appears as a value after a subcommand", () => {
+    expect(rewriteUpdateFlagArgv(["node", "entry.js", "config", "set", "foo", "--update"])).toEqual(
+      ["node", "entry.js", "config", "set", "foo", "--update"],
+    );
+  });
+
+  it("rewrites --update when it appears before any subcommand", () => {
+    expect(rewriteUpdateFlagArgv(["node", "entry.js", "--update", "config", "set", "foo"])).toEqual(
+      ["node", "entry.js", "update", "config", "set", "foo"],
+    );
+  });
+
+  it("rewrites --update after root boolean flags", () => {
+    expect(rewriteUpdateFlagArgv(["node", "entry.js", "--no-color", "--update"])).toEqual([
+      "node",
+      "entry.js",
+      "--no-color",
+      "update",
+    ]);
+  });
+
+  it("does not skip root boolean flag followers as option values", () => {
+    expect(rewriteUpdateFlagArgv(["node", "entry.js", "--no-color", "status", "--update"])).toEqual(
+      ["node", "entry.js", "--no-color", "status", "--update"],
+    );
+  });
 });
 
 describe("shouldEnsureCliPath", () => {
@@ -104,6 +305,12 @@ describe("shouldEnsureCliPath", () => {
   it("skips path bootstrap for read-only fast paths", () => {
     expect(shouldEnsureCliPath(["node", "openclaw"])).toBe(false);
     expect(shouldEnsureCliPath(["node", "openclaw", "--profile", "work"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "approvals"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "channels"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "cron"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "devices"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "plugins"])).toBe(false);
+    expect(shouldEnsureCliPath(["node", "openclaw", "mcp"])).toBe(false);
     expect(shouldEnsureCliPath(["node", "openclaw", "status"])).toBe(false);
     expect(shouldEnsureCliPath(["node", "openclaw", "--log-level", "debug", "status"])).toBe(false);
     expect(shouldEnsureCliPath(["node", "openclaw", "sessions", "--json"])).toBe(false);
@@ -119,39 +326,33 @@ describe("shouldEnsureCliPath", () => {
   });
 });
 
-describe("shouldStartCrestodianForBareRoot", () => {
-  it("starts Crestodian for bare root invocations", () => {
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw"])).toBe(true);
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw", "--profile", "work"])).toBe(true);
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw", "--dev"])).toBe(true);
+describe("shouldHandleBareRoot", () => {
+  it("handles bare root invocations", () => {
+    expect(shouldHandleBareRoot(["node", "openclaw"])).toBe(true);
+    expect(shouldHandleBareRoot(["node", "openclaw", "--profile", "work"])).toBe(true);
+    expect(shouldHandleBareRoot(["node", "openclaw", "--dev"])).toBe(true);
   });
 
-  it("does not start Crestodian for help, version, or commands", () => {
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw", "--help"])).toBe(false);
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw", "-V"])).toBe(false);
-    expect(shouldStartCrestodianForBareRoot(["node", "openclaw", "status"])).toBe(false);
-  });
-});
-
-describe("shouldStartCrestodianForModernOnboard", () => {
-  it("starts Crestodian before heavy command registration for modern onboard", () => {
-    expect(
-      shouldStartCrestodianForModernOnboard([
-        "node",
-        "openclaw",
-        "onboard",
-        "--modern",
-        "--non-interactive",
-        "--json",
-      ]),
-    ).toBe(true);
+  it("does not handle help, version, or commands", () => {
+    expect(shouldHandleBareRoot(["node", "openclaw", "--help"])).toBe(false);
+    expect(shouldHandleBareRoot(["node", "openclaw", "-V"])).toBe(false);
+    expect(shouldHandleBareRoot(["node", "openclaw", "status"])).toBe(false);
   });
 
-  it("keeps classic onboard and help on the normal command path", () => {
-    expect(shouldStartCrestodianForModernOnboard(["node", "openclaw", "onboard"])).toBe(false);
-    expect(
-      shouldStartCrestodianForModernOnboard(["node", "openclaw", "onboard", "--modern", "--help"]),
-    ).toBe(false);
+  it.each([
+    { args: ["--", "config", "get", "gateway.mode"] },
+    { args: ["--profile", "work", "--", "config", "get", "gateway.mode"] },
+    { args: ["--", "--help"] },
+    { args: ["--", "config", "--help"] },
+    { args: ["--", "config", "unknown"] },
+  ])("does not start bare-root flows for literal commands: $args", ({ args }) => {
+    const argv = ["node", "openclaw", ...args];
+    expect(shouldHandleBareRoot(argv)).toBe(false);
+    expect(shouldUseRootHelpFastPath(argv)).toBe(false);
+  });
+
+  it("retains bare-root behavior for an otherwise empty terminator", () => {
+    expect(shouldHandleBareRoot(["node", "openclaw", "--"])).toBe(true);
   });
 });
 
@@ -159,6 +360,25 @@ describe("shouldStartProxyForCli", () => {
   it("starts managed proxy routing for the --update shorthand", () => {
     expect(shouldStartProxyForCli(["node", "openclaw", "--update"])).toBe(true);
     expect(shouldStartProxyForCli(["node", "openclaw", "--profile", "p", "--update"])).toBe(true);
+  });
+
+  it("skips managed proxy routing for bare parent default help", () => {
+    expect(shouldStartProxyForCli(["node", "openclaw", "qa", "suite"])).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "plugins"])).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "channels"])).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "cron"])).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "devices"])).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "mcp"])).toBe(false);
+  });
+
+  it("skips managed proxy routing before shared-state SQLite maintenance", () => {
+    expect(
+      shouldStartProxyForCli(["node", "openclaw", "doctor", "--state-sqlite", "compact", "--json"]),
+    ).toBe(false);
+    expect(
+      shouldStartProxyForCli(["node", "openclaw", "doctor", "--state-sqlite=compact", "--json"]),
+    ).toBe(false);
+    expect(shouldStartProxyForCli(["node", "openclaw", "doctor", "--lint"])).toBe(true);
   });
 });
 
@@ -174,29 +394,72 @@ describe("shouldUseRootHelpFastPath", () => {
   });
 });
 
-describe("shouldUseBrowserHelpFastPath", () => {
-  it("uses the fast path for browser command help only", () => {
-    expect(shouldUseBrowserHelpFastPath(["node", "openclaw", "browser", "--help"])).toBe(true);
-    expect(shouldUseBrowserHelpFastPath(["node", "openclaw", "browser", "-h"])).toBe(true);
+describe("shouldUseSetupOnboardConfigureHelpFastPath", () => {
+  it("uses the fast path only for setup, onboard, and configure help", () => {
     expect(
-      shouldUseBrowserHelpFastPath(["node", "openclaw", "--profile", "work", "browser", "-h"]),
+      shouldUseSetupOnboardConfigureHelpFastPath(["node", "openclaw", "setup", "--help"]),
     ).toBe(true);
-    expect(shouldUseBrowserHelpFastPath(["node", "openclaw", "browser", "status", "--help"])).toBe(
-      false,
+    expect(shouldUseSetupOnboardConfigureHelpFastPath(["node", "openclaw", "onboard", "-h"])).toBe(
+      true,
     );
-    expect(shouldUseBrowserHelpFastPath(["node", "openclaw", "status", "--help"])).toBe(false);
+    expect(
+      shouldUseSetupOnboardConfigureHelpFastPath([
+        "node",
+        "openclaw",
+        "--profile",
+        "work",
+        "configure",
+        "-h",
+      ]),
+    ).toBe(true);
+    expect(
+      shouldUseSetupOnboardConfigureHelpFastPath([
+        "node",
+        "openclaw",
+        "onboard",
+        "status",
+        "--help",
+      ]),
+    ).toBe(false);
+    expect(
+      shouldUseSetupOnboardConfigureHelpFastPath(["node", "openclaw", "status", "--help"]),
+    ).toBe(false);
+    expect(
+      shouldUseSetupOnboardConfigureHelpFastPath([
+        "node",
+        "openclaw",
+        "onboard",
+        "--gateway-port",
+        "--help",
+      ]),
+    ).toBe(false);
   });
 });
+
+function commandResolvers(registry: PluginManifestCommandAliasRegistry) {
+  return {
+    resolveCommandAliasOwner: ({ command }: { command: string | undefined }) =>
+      resolveManifestCommandAliasOwnerInRegistry({ command, registry }),
+    resolveToolOwner: ({ toolName }: { toolName: string | undefined }) =>
+      resolveManifestToolOwnerInRegistry({ toolName, registry }),
+  };
+}
 
 describe("resolveMissingPluginCommandMessage", () => {
   it("explains plugins.allow misses for a bundled plugin command", () => {
     expect(
-      resolveMissingPluginCommandMessage("browser", {
-        plugins: {
-          allow: ["quietchat"],
+      resolveMissingPluginCommandMessage(
+        "browser",
+        {
+          plugins: {
+            allow: ["quietchat"],
+          },
         },
-      }),
-    ).toContain('`plugins.allow` excludes "browser"');
+        commandResolvers(browserCommandAliasRegistry),
+      ),
+    ).toBe(
+      'The `openclaw browser` command is unavailable because `plugins.allow` excludes "browser". Add "browser" to `plugins.allow` if you want that bundled plugin CLI surface.',
+    );
   });
 
   it("explains explicit bundled plugin disablement", () => {
@@ -210,7 +473,9 @@ describe("resolveMissingPluginCommandMessage", () => {
           },
         },
       }),
-    ).toContain("plugins.entries.browser.enabled=false");
+    ).toBe(
+      "The `openclaw browser` command is unavailable because `plugins.entries.browser.enabled=false`. Re-enable that entry if you want the bundled plugin CLI surface.",
+    );
   });
 
   it("returns null when the bundled plugin command is already allowed", () => {
@@ -238,14 +503,11 @@ describe("resolveMissingPluginCommandMessage", () => {
     const message = resolveMissingPluginCommandMessage(
       "dreaming",
       {},
-      {
-        registry: memoryCoreCommandAliasRegistry,
-      },
+      commandResolvers(memoryCoreCommandAliasRegistry),
     );
-    expect(message).toContain("runtime slash command");
-    expect(message).toContain("/dreaming");
-    expect(message).toContain("memory-core");
-    expect(message).toContain("openclaw memory");
+    expect(message).toBe(
+      '"dreaming" is a runtime slash command (/dreaming), not a CLI command. It is provided by the "memory-core" plugin. Use `openclaw memory` for related CLI operations, or `/dreaming` in a chat session.',
+    );
   });
 
   it("returns the runtime command message even when plugins.allow is set", () => {
@@ -256,9 +518,7 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["memory-core"],
         },
       },
-      {
-        registry: memoryCoreCommandAliasRegistry,
-      },
+      commandResolvers(memoryCoreCommandAliasRegistry),
     );
     expect(message).toContain("runtime slash command");
     expect(message).not.toContain("plugins.allow");
@@ -272,34 +532,42 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["dreaming"],
         },
       },
-      {
-        registry: memoryCoreCommandAliasRegistry,
-      },
+      commandResolvers(memoryCoreCommandAliasRegistry),
     );
-    expect(message).toContain('"dreaming" is not a plugin');
-    expect(message).toContain('"memory-core"');
-    expect(message).toContain("plugins.allow");
+    expect(message).toBe(
+      '"dreaming" is not a plugin; it is a command provided by the "memory-core" plugin. Add "memory-core" to `plugins.allow` instead of "dreaming".',
+    );
   });
 
   it("explains disabled-by-default parent plugins for CLI command aliases", () => {
     const message = resolveMissingPluginCommandMessage(
       "voicecall",
       {},
-      {
-        registry: {
-          plugins: [
-            {
-              id: "voice-call",
-              commandAliases: [{ name: "voicecall" }],
-            },
-          ],
-        },
-      },
+      commandResolvers({
+        plugins: [
+          {
+            id: "voice-call",
+            commandAliases: [{ name: "voicecall" }],
+          },
+        ],
+      }),
     );
 
     expect(message).toContain('"voice-call" plugin');
     expect(message).toContain("disabled by default");
     expect(message).toContain("openclaw plugins enable voice-call");
+  });
+
+  it("prefers CLI ownership for plugins that also register a slash command", () => {
+    const message = resolveMissingPluginCommandMessage(
+      "workboard",
+      {},
+      commandResolvers(workboardCommandAliasRegistry),
+    );
+
+    expect(message).toBe(
+      'The `openclaw workboard` command is provided by the "workboard" plugin, but that bundled plugin is disabled by default. Run `openclaw plugins enable workboard` to enable that CLI surface.',
+    );
   });
 
   it("returns null for CLI command aliases when disabled-by-default parent plugins are enabled", () => {
@@ -314,16 +582,14 @@ describe("resolveMissingPluginCommandMessage", () => {
           },
         },
       },
-      {
-        registry: {
-          plugins: [
-            {
-              id: "voice-call",
-              commandAliases: [{ name: "voicecall" }],
-            },
-          ],
-        },
-      },
+      commandResolvers({
+        plugins: [
+          {
+            id: "voice-call",
+            commandAliases: [{ name: "voicecall" }],
+          },
+        ],
+      }),
     );
 
     expect(message).toBeNull();
@@ -341,9 +607,7 @@ describe("resolveMissingPluginCommandMessage", () => {
           },
         },
       },
-      {
-        registry: memoryCoreCommandAliasRegistry,
-      },
+      commandResolvers(memoryCoreCommandAliasRegistry),
     );
     expect(message).toContain("plugins.entries.memory-core.enabled=false");
     expect(message).not.toContain("runtime slash command");
@@ -357,7 +621,7 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["memory-wiki"],
         },
       },
-      { registry: memoryWikiCommandAliasRegistry },
+      commandResolvers(memoryWikiCommandAliasRegistry),
     );
     expect(message).toBeNull();
   });
@@ -370,7 +634,7 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["quietchat"],
         },
       },
-      { registry: memoryWikiCommandAliasRegistry },
+      commandResolvers(memoryWikiCommandAliasRegistry),
     );
     expect(message).toContain('"memory-wiki"');
     expect(message).toContain("plugins.allow");
@@ -384,25 +648,30 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["lossless-claw"],
         },
       },
-      { registry: losslessClawToolRegistry },
+      commandResolvers(losslessClawToolRegistry),
     );
-    expect(message).not.toBeNull();
-    expect(message).toContain('"lcm_recent"');
-    expect(message).toContain('"lossless-claw"');
-    expect(message).toContain("agent tool");
-    expect(message).not.toContain("plugins.allow");
+    if (message === null) {
+      throw new Error("expected missing plugin command message");
+    }
+    expect(message).toBe(
+      '"lcm_recent" is an agent tool available from the "lossless-claw" plugin, not a CLI subcommand. Use it from an agent turn (model tool-use), not the CLI. Run `openclaw --help` to see available CLI subcommands.',
+    );
   });
 
   it("matches agent tool names case-insensitively", () => {
-    const message = resolveMissingPluginCommandMessage("LCM_Recent", undefined, {
-      registry: losslessClawToolRegistry,
-    });
-    expect(message).not.toBeNull();
+    const message = resolveMissingPluginCommandMessage(
+      "LCM_Recent",
+      undefined,
+      commandResolvers(losslessClawToolRegistry),
+    );
+    if (message === null) {
+      throw new Error("expected missing plugin command message");
+    }
     expect(message).toContain("agent tool");
     expect(message).toContain('"lossless-claw"');
   });
 
-  it("preserves the plugins.allow suggestion when the unknown name is not a plugin tool", () => {
+  it("returns null for unknown names excluded by plugins.allow", () => {
     const message = resolveMissingPluginCommandMessage(
       "totally-unknown",
       {
@@ -410,16 +679,32 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["quietchat"],
         },
       },
-      { registry: losslessClawToolRegistry },
+      commandResolvers(losslessClawToolRegistry),
     );
-    expect(message).not.toBeNull();
-    expect(message).toContain('`plugins.allow` excludes "totally-unknown"');
+    expect(message).toBeNull();
+  });
+
+  it("points metadata-only CLI roots in plugins.allow at their parent plugin", () => {
+    const message = resolveMissingPluginCommandMessage(
+      "qa",
+      {
+        plugins: {
+          allow: ["browser"],
+        },
+      },
+      {
+        resolveCliCommandSurfaceOwner: () => "qa-lab",
+      },
+    );
+    expect(message).toContain('"qa" is not a plugin');
+    expect(message).toContain('"qa-lab"');
+    expect(message).toContain('Add "qa-lab" to `plugins.allow` instead of "qa"');
   });
 
   it("does not attribute a tool to an owning plugin excluded by plugins.allow", () => {
     // The owning plugin is denied via plugins.allow, so the manifest-declared
-    // tool is not available through the owning plugin. Fall through to the
-    // standard plugins.allow message instead of falsely attributing it.
+    // tool is not available through the owning plugin. Tool names are not CLI
+    // command surfaces, so do not suggest adding the tool name to plugins.allow.
     const message = resolveMissingPluginCommandMessage(
       "lcm_recent",
       {
@@ -427,11 +712,9 @@ describe("resolveMissingPluginCommandMessage", () => {
           allow: ["quietchat"],
         },
       },
-      { registry: losslessClawToolRegistry },
+      commandResolvers(losslessClawToolRegistry),
     );
-    expect(message).not.toBeNull();
-    expect(message).not.toContain("agent tool available");
-    expect(message).toContain('`plugins.allow` excludes "lcm_recent"');
+    expect(message).toBeNull();
   });
 
   it("does not attribute a tool to an owning plugin disabled via plugins.entries", () => {
@@ -444,7 +727,7 @@ describe("resolveMissingPluginCommandMessage", () => {
           },
         },
       },
-      { registry: losslessClawToolRegistry },
+      commandResolvers(losslessClawToolRegistry),
     );
     // entries.<id>.enabled = false on the OWNING plugin invalidates the
     // plugin-tool attribution. With no allow filter on the bare name the
@@ -467,9 +750,11 @@ describe("resolveMissingPluginCommandMessage", () => {
     const message = resolveMissingPluginCommandMessage("feishu_chat", undefined, {
       resolveToolOwner: () => manifestOnlyOwner,
     });
-    expect(message).not.toBeNull();
-    expect(message).toContain("may be provided by");
-    expect(message).toContain('"feishu"');
-    expect(message).not.toContain("registered by");
+    if (message === null) {
+      throw new Error("expected missing plugin command message");
+    }
+    expect(message).toBe(
+      '"feishu_chat" may be provided by the "feishu" plugin as an agent tool, not a CLI subcommand. Run `openclaw --help` to see available CLI subcommands.',
+    );
   });
 });

@@ -1,3 +1,4 @@
+// Public logging facade for console logger settings and styling.
 import type { ConsoleLoggerSettings, ConsoleStyle } from "./logging/console.js";
 import {
   enableConsoleCapture,
@@ -5,7 +6,6 @@ import {
   getResolvedConsoleSettings,
   routeLogsToStderr,
   setConsoleSubsystemFilter,
-  setConsoleConfigLoaderForTests,
   setConsoleTimestampPrefix,
   shouldLogSubsystemToConsole,
 } from "./logging/console.js";
@@ -20,7 +20,6 @@ import {
   getResolvedLoggerSettings,
   isFileLogLevelEnabled,
   resetLogger,
-  setLoggerConfigLoaderForTests,
   setLoggerOverride,
   toPinoLikeLogger,
 } from "./logging/logger.js";
@@ -38,7 +37,6 @@ export {
   getResolvedConsoleSettings,
   routeLogsToStderr,
   setConsoleSubsystemFilter,
-  setConsoleConfigLoaderForTests,
   setConsoleTimestampPrefix,
   shouldLogSubsystemToConsole,
   ALLOWED_LOG_LEVELS,
@@ -51,7 +49,6 @@ export {
   getResolvedLoggerSettings,
   isFileLogLevelEnabled,
   resetLogger,
-  setLoggerConfigLoaderForTests,
   setLoggerOverride,
   toPinoLikeLogger,
   createSubsystemLogger,

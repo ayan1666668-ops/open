@@ -1,16 +1,17 @@
+// Registry helper tests cover channel registry fixtures and lookup helpers.
+
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
-  pinActivePluginChannelRegistry,
+  getActivePluginChannelRegistryVersion,
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "../plugins/runtime.js";
+import { createTestRegistry } from "../test-utils/channel-plugins.js";
 import { listChatChannels } from "./chat-meta.js";
-import {
-  formatChannelSelectionLine,
-  listRegisteredChannelPluginIds,
-  normalizeAnyChannelId,
-} from "./registry.js";
+import { normalizeAnyChannelId as normalizeAnyChannelIdLight } from "./registry-normalize.js";
+import { formatChannelSelectionLine, normalizeAnyChannelId } from "./registry.js";
 
 describe("channel registry helpers", () => {
   afterEach(() => {
@@ -30,6 +31,16 @@ describe("channel registry helpers", () => {
       return `${label}:${path}`;
     }
     return label ?? path ?? "";
+  }
+
+  function createRegistryWithRegisteredChannel(id: string, aliases: string[] = []) {
+    return createTestRegistry([
+      {
+        pluginId: id,
+        plugin: { id, meta: { aliases } },
+        source: "test",
+      },
+    ]);
   }
 
   it("keeps Feishu first in the current default order", () => {
@@ -52,48 +63,53 @@ describe("channel registry helpers", () => {
     expect(line).toContain("https://openclaw.ai");
   });
 
-  it("prefers the pinned channel registry when resolving registered plugin channels", () => {
-    const startupRegistry = createEmptyPluginRegistry();
-    startupRegistry.channels = [
-      {
-        pluginId: "openclaw-weixin",
-        plugin: { id: "openclaw-weixin", meta: { aliases: ["weixin"] } },
-        source: "test",
-      },
-    ] as never;
-    setActivePluginRegistry(startupRegistry);
-    pinActivePluginChannelRegistry(startupRegistry);
+  it("prefers an exact channel id over an earlier plugin alias", () => {
+    const aliasOwner = createRegistryWithRegisteredChannel("alias-owner", ["exact-id"]).channels[0];
+    const exactOwner = createRegistryWithRegisteredChannel("exact-id").channels[0];
+    setActivePluginRegistry(
+      createTestRegistry([
+        expectDefined(aliasOwner, "alias owner test channel"),
+        expectDefined(exactOwner, "exact owner test channel"),
+      ]),
+    );
 
-    const replacementRegistry = createEmptyPluginRegistry();
-    replacementRegistry.channels = [
-      {
-        pluginId: "qqbot",
-        plugin: { id: "qqbot", meta: { aliases: ["qq"] } },
-        source: "test",
-      },
-    ] as never;
-    setActivePluginRegistry(replacementRegistry);
-
-    expect(listRegisteredChannelPluginIds()).toEqual(["openclaw-weixin"]);
-    expect(normalizeAnyChannelId("weixin")).toBe("openclaw-weixin");
+    expect(normalizeAnyChannelId("exact-id")).toBe("exact-id");
+    expect(normalizeAnyChannelIdLight("exact-id")).toBe("exact-id");
   });
 
-  it("falls back to the active registry when the pinned channel registry has no channels", () => {
-    const startupRegistry = createEmptyPluginRegistry();
-    setActivePluginRegistry(startupRegistry);
-    pinActivePluginChannelRegistry(startupRegistry);
+  it("rebuilds registered channel lookups when the active registry changes", () => {
+    const alphaRegistry = createRegistryWithRegisteredChannel("alpha", ["a"]);
+    setActivePluginRegistry(alphaRegistry);
 
-    const replacementRegistry = createEmptyPluginRegistry();
-    replacementRegistry.channels = [
-      {
-        pluginId: "qqbot",
-        plugin: { id: "qqbot", meta: { aliases: ["qq"] } },
-        source: "test",
-      },
-    ] as never;
-    setActivePluginRegistry(replacementRegistry);
+    const channelVersion = getActivePluginChannelRegistryVersion();
+    expect(normalizeAnyChannelId("a")).toBe("alpha");
+    expect(normalizeAnyChannelIdLight("a")).toBe("alpha");
 
-    expect(listRegisteredChannelPluginIds()).toEqual(["qqbot"]);
-    expect(normalizeAnyChannelId("qq")).toBe("qqbot");
+    const betaRegistry = createRegistryWithRegisteredChannel("beta", ["b"]);
+    setActivePluginRegistry(betaRegistry);
+
+    expect(getActivePluginChannelRegistryVersion()).not.toBe(channelVersion);
+    expect(normalizeAnyChannelId("a")).toBeNull();
+    expect(normalizeAnyChannelId("b")).toBe("beta");
+    expect(normalizeAnyChannelIdLight("a")).toBeNull();
+    expect(normalizeAnyChannelIdLight("b")).toBe("beta");
+  });
+
+  it("refreshes registered channel lookups when selected registry channels grow in place", () => {
+    const registry = createEmptyPluginRegistry();
+    setActivePluginRegistry(registry);
+
+    expect(normalizeAnyChannelId("a")).toBeNull();
+    expect(normalizeAnyChannelIdLight("a")).toBeNull();
+
+    registry.channels.push(
+      expectDefined(
+        createRegistryWithRegisteredChannel("alpha", ["a"]).channels[0],
+        'createRegistryWithRegisteredChannel("alpha", ["a"]).channels[0] test invariant',
+      ),
+    );
+
+    expect(normalizeAnyChannelId("a")).toBe("alpha");
+    expect(normalizeAnyChannelIdLight("a")).toBe("alpha");
   });
 });

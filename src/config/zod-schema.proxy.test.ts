@@ -1,3 +1,4 @@
+// Covers proxy schema parsing and validation behavior.
 import { describe, it, expect } from "vitest";
 import { ProxyConfigSchema } from "./zod-schema.proxy.js";
 
@@ -23,11 +24,17 @@ describe("ProxyConfigSchema", () => {
     const result = ProxyConfigSchema.parse({
       enabled: true,
       proxyUrl: "http://127.0.0.1:3128",
+      tls: {
+        caFile: "/etc/openclaw/proxy-ca.pem",
+      },
       loopbackMode: "gateway-only",
     });
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       enabled: true,
       proxyUrl: "http://127.0.0.1:3128",
+      tls: {
+        caFile: "/etc/openclaw/proxy-ca.pem",
+      },
       loopbackMode: "gateway-only",
     });
   });
@@ -45,13 +52,12 @@ describe("ProxyConfigSchema", () => {
     expect(issues.map((issue) => issue.path.join("."))).toContain("loopbackMode");
   });
 
-  it("rejects HTTPS proxy URLs because the node:http routing layer requires HTTP proxies", () => {
-    expect(() =>
-      ProxyConfigSchema.parse({
-        enabled: true,
-        proxyUrl: "https://proxy.example.com:8443",
-      }),
-    ).toThrow(/http:\/\//i);
+  it("accepts HTTPS proxy URLs for TLS-to-proxy endpoints", () => {
+    const result = ProxyConfigSchema.parse({
+      proxyUrl: "https://proxy.example.com:8443",
+    });
+
+    expect(result?.proxyUrl).toBe("https://proxy.example.com:8443");
   });
 
   it("does not expose bundled-proxy or unsupported upstream proxy keys", () => {
@@ -64,10 +70,9 @@ describe("ProxyConfigSchema", () => {
 
   it("rejects proxyUrl values that are not HTTP forward proxies", () => {
     const socksIssues = expectProxyConfigFailure({
-      enabled: true,
       proxyUrl: "socks5://127.0.0.1",
     });
-    const invalidUrlIssues = expectProxyConfigFailure({ enabled: true, proxyUrl: "not-a-url" });
+    const invalidUrlIssues = expectProxyConfigFailure({ proxyUrl: "not-a-url" });
     expect(socksIssues.map((issue) => issue.path.join("."))).toContain("proxyUrl");
     expect(invalidUrlIssues.map((issue) => issue.path.join("."))).toContain("proxyUrl");
   });
@@ -77,7 +82,18 @@ describe("ProxyConfigSchema", () => {
     expect(issues[0]?.code).toBe("unrecognized_keys");
   });
 
-  it("accepts enabled: false to disable the proxy", () => {
+  it("rejects unknown proxy TLS keys", () => {
+    expect(() =>
+      ProxyConfigSchema.parse({
+        proxyUrl: "https://proxy.example.com:8443",
+        tls: {
+          ca: "/etc/openclaw/proxy-ca.pem",
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts enabled: false as an explicit opt-out", () => {
     const result = ProxyConfigSchema.parse({ enabled: false });
     expect(result?.enabled).toBe(false);
   });

@@ -1,36 +1,42 @@
+// OC Path tests cover find plugin behavior.
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { findOcPaths } from "../find.js";
 import { parseJsonc } from "../jsonc/parse.js";
 import { parseJsonl } from "../jsonl/parse.js";
-import { formatOcPath, hasWildcard, OcPathError, parseOcPath } from "../oc-path.js";
+import { formatOcPath, isPattern, OcPathError, parseOcPath } from "../oc-path.js";
 import { parseMd } from "../parse.js";
 import { resolveOcPath, setOcPath } from "../universal.js";
 
-describe("hasWildcard", () => {
+function requireFirstResult<T>(results: readonly T[]): T {
+  return expectDefined(results[0], "first OC path match");
+}
+
+describe("isPattern", () => {
   it("detects single-segment * in any slot", () => {
-    expect(hasWildcard(parseOcPath("oc://X/*/y"))).toBe(true);
-    expect(hasWildcard(parseOcPath("oc://X/a/*"))).toBe(true);
-    expect(hasWildcard(parseOcPath("oc://X/a/b/*"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/*/y"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/a/*"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/a/b/*"))).toBe(true);
   });
 
   it("detects ** in any slot", () => {
-    expect(hasWildcard(parseOcPath("oc://X/**"))).toBe(true);
-    expect(hasWildcard(parseOcPath("oc://X/a/**/c"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/**"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/a/**/c"))).toBe(true);
   });
 
   it("detects wildcards inside dotted sub-segments", () => {
-    expect(hasWildcard(parseOcPath("oc://X/a.*.c"))).toBe(true);
-    expect(hasWildcard(parseOcPath("oc://X/a.**.c"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/a.*.c"))).toBe(true);
+    expect(isPattern(parseOcPath("oc://X/a.**.c"))).toBe(true);
   });
 
   it("returns false for plain paths", () => {
-    expect(hasWildcard(parseOcPath("oc://X/a/b/c"))).toBe(false);
-    expect(hasWildcard(parseOcPath("oc://X/a.b.c"))).toBe(false);
+    expect(isPattern(parseOcPath("oc://X/a/b/c"))).toBe(false);
+    expect(isPattern(parseOcPath("oc://X/a.b.c"))).toBe(false);
   });
 
   it("treats `*` inside an identifier as literal", () => {
-    expect(hasWildcard(parseOcPath("oc://X/foo*bar"))).toBe(false);
-    expect(hasWildcard(parseOcPath("oc://X/a*"))).toBe(false);
+    expect(isPattern(parseOcPath("oc://X/foo*bar"))).toBe(false);
+    expect(isPattern(parseOcPath("oc://X/a*"))).toBe(false);
   });
 });
 
@@ -38,9 +44,7 @@ describe("wildcard guard", () => {
   const ast = parseJsonc('{"steps":[{"id":"a","command":"foo"}]}').ast;
 
   it("resolveOcPath throws OcPathError for wildcard pattern", () => {
-    expect(() => resolveOcPath(ast, parseOcPath("oc://wf/steps/*/command"))).toThrow(
-      /findOcPaths/,
-    );
+    expect(() => resolveOcPath(ast, parseOcPath("oc://wf/steps/*/command"))).toThrow(/findOcPaths/);
     try {
       resolveOcPath(ast, parseOcPath("oc://wf/**"));
       expect.fail("should have thrown");
@@ -72,8 +76,8 @@ describe("findOcPaths — non-wildcard fast-path", () => {
     const ast = parseJsonc('{"name":"x"}').ast;
     const out = findOcPaths(ast, parseOcPath("oc://wf/name"));
     expect(out).toHaveLength(1);
-    expect(out[0].match.kind).toBe("leaf");
-    expect(formatOcPath(out[0].path)).toBe("oc://wf/name");
+    expect(requireFirstResult(out).match.kind).toBe("leaf");
+    expect(formatOcPath(requireFirstResult(out).path)).toBe("oc://wf/name");
   });
 
   it("returns empty for unresolved plain path", () => {
@@ -81,7 +85,6 @@ describe("findOcPaths — non-wildcard fast-path", () => {
     expect(findOcPaths(ast, parseOcPath("oc://wf/missing"))).toHaveLength(0);
   });
 });
-
 
 describe("findOcPaths — JSONC kind", () => {
   const jsonc = parseJsonc(
@@ -114,8 +117,91 @@ describe("findOcPaths — JSONC kind", () => {
       }
     }
   });
+
+  it.each([
+    {
+      name: "quotes positional object keys",
+      raw: '{"items":{"zeta.key":10,"alpha":20}}',
+      pattern: "oc://config/items/$first",
+      expectedPath: 'oc://config/items/"zeta.key"',
+      expectedValue: "10",
+    },
+    {
+      name: "emits positional array indexes",
+      raw: '{"items":[10,20,30]}',
+      pattern: "oc://config/items/$last",
+      expectedPath: "oc://config/items/2",
+      expectedValue: "30",
+    },
+  ])("$name", ({ raw, pattern, expectedPath, expectedValue }) => {
+    const ast = parseJsonc(raw).ast;
+    const out = findOcPaths(ast, parseOcPath(pattern));
+
+    expect(out).toHaveLength(1);
+    const result = requireFirstResult(out);
+    expect(formatOcPath(result.path)).toBe(expectedPath);
+    expect(result.match.kind === "leaf" && result.match.valueText).toBe(expectedValue);
+  });
 });
 
+describe("findOcPaths — slash-deep JSONC paths", () => {
+  const jsonc = parseJsonc(
+    JSON.stringify({
+      mcp: {
+        servers: {
+          github: { env: { GITHUB_TOKEN: "gh-token" } },
+          gitlab: { env: { GITHUB_TOKEN: "gl-token" } },
+        },
+      },
+      agents: [
+        { id: "coder", tools: { exec: { security: "deny" } } },
+        { id: "reviewer", tools: { exec: { security: "allowlist" } } },
+      ],
+    }),
+  ).ast;
+
+  it("expands * in a slash-deep JSON object path", () => {
+    const out = findOcPaths(
+      jsonc,
+      parseOcPath("oc://openclaw.json/mcp/servers/*/env/GITHUB_TOKEN"),
+    );
+    expect(out).toHaveLength(2);
+    const values = out.map((m) => (m.match.kind === "leaf" ? m.match.valueText : ""));
+    expect(values.toSorted()).toEqual(["gh-token", "gl-token"]);
+  });
+
+  it("expands * in a slash-deep JSON array path", () => {
+    const out = findOcPaths(jsonc, parseOcPath("oc://openclaw.json/agents/*/tools/exec/security"));
+    expect(out).toHaveLength(2);
+    const values = out.map((m) => (m.match.kind === "leaf" ? m.match.valueText : ""));
+    expect(values.toSorted()).toEqual(["allowlist", "deny"]);
+  });
+
+  it("expands predicates in slash-deep JSON array paths", () => {
+    const out = findOcPaths(
+      jsonc,
+      parseOcPath("oc://openclaw.json/agents/[id=reviewer]/tools/exec/security"),
+    );
+    expect(out).toHaveLength(1);
+    const result = requireFirstResult(out);
+    expect(result.match.kind === "leaf" && result.match.valueText).toBe("allowlist");
+  });
+
+  it("expands ** in slash-deep JSON paths", () => {
+    const out = findOcPaths(jsonc, parseOcPath("oc://openclaw.json/mcp/**/GITHUB_TOKEN"));
+    expect(out).toHaveLength(2);
+    const values = out.map((m) => (m.match.kind === "leaf" ? m.match.valueText : ""));
+    expect(values.toSorted()).toEqual(["gh-token", "gl-token"]);
+  });
+
+  it("returns slash-deep JSON matches as concrete paths that resolve", () => {
+    const out = findOcPaths(jsonc, parseOcPath("oc://openclaw.json/agents/*/tools/exec/security"));
+    for (const m of out) {
+      expect(resolveOcPath(jsonc, m.path)?.kind).toBe("leaf");
+      expect(formatOcPath(m.path)).not.toContain("*");
+    }
+  });
+});
 
 describe("findOcPaths — JSONL kind", () => {
   const jsonl = parseJsonl(
@@ -155,8 +241,9 @@ describe("findOcPaths — JSONL kind", () => {
   it("predicate [event=action] at line slot filters by top-level field", () => {
     const out = findOcPaths(jsonl, parseOcPath("oc://session/[event=action]/userId"));
     expect(out).toHaveLength(1);
-    if (out[0]?.match.kind === "leaf") {
-      expect(out[0].match.valueText).toBe("u1");
+    const result = requireFirstResult(out);
+    if (result.match.kind === "leaf") {
+      expect(result.match.valueText).toBe("u1");
     }
   });
 
@@ -166,12 +253,23 @@ describe("findOcPaths — JSONL kind", () => {
   });
 });
 
+describe("positional primitives — $first / $last", () => {
+  it("$first picks first array element", () => {
+    const jsonc = parseJsonc('{"items":[10,20,30]}').ast;
+    const m = resolveOcPath(jsonc, parseOcPath("oc://config/items/$first"));
+    expect(m?.kind === "leaf" && m.valueText).toBe("10");
+  });
 
-describe("positional primitives — $last", () => {
   it("$last picks last array element", () => {
     const jsonc = parseJsonc('{"items":[10,20,30]}').ast;
     const m = resolveOcPath(jsonc, parseOcPath("oc://config/items/$last"));
     expect(m?.kind === "leaf" && m.valueText).toBe("30");
+  });
+
+  it("$first picks first value line on jsonl", () => {
+    const jsonl = parseJsonl('{"event":"start"}\n{"event":"step"}\n{"event":"end"}\n').ast;
+    const m = resolveOcPath(jsonl, parseOcPath("oc://session/$first/event"));
+    expect(m?.kind === "leaf" && m.valueText).toBe("start");
   });
 
   it("$last picks last value line on jsonl", () => {
@@ -180,11 +278,11 @@ describe("positional primitives — $last", () => {
     expect(m?.kind === "leaf" && m.valueText).toBe("end");
   });
 
-  it("hasWildcard returns false for $last", () => {
-    expect(hasWildcard(parseOcPath("oc://X/$last/id"))).toBe(false);
+  it("isPattern returns false for positional tokens", () => {
+    expect(isPattern(parseOcPath("oc://X/$first/id"))).toBe(false);
+    expect(isPattern(parseOcPath("oc://X/$last/id"))).toBe(false);
   });
 });
-
 
 describe("quoted segments (v1.0)", () => {
   const jsonc = parseJsonc(
@@ -228,7 +326,7 @@ describe("quoted segments (v1.0)", () => {
     }
   });
 
-  it("rejects quoted segments containing `\"` or `\\` (no escape support)", () => {
+  it('rejects quoted segments containing `"` or `\\` (no escape support)', () => {
     expect(() => parseOcPath('oc://X/keys/"a\\\\b"')).toThrow(/Quoted segment cannot contain/);
   });
 
@@ -272,8 +370,9 @@ describe("value predicates — numeric operators (v1.1)", () => {
   it("> finds models exceeding the per-request output cap", () => {
     const out = findOcPaths(jsonc, parseOcPath(`${PREFIX}/[maxTokens>128000]/id`));
     expect(out).toHaveLength(1);
-    if (out[0].match.kind === "leaf") {
-      expect(out[0].match.valueText).toBe("claude-opus-4-7");
+    const result = requireFirstResult(out);
+    if (result.match.kind === "leaf") {
+      expect(result.match.valueText).toBe("claude-opus-4-7");
     }
   });
 
@@ -286,8 +385,9 @@ describe("value predicates — numeric operators (v1.1)", () => {
   it("< filters small context windows", () => {
     const out = findOcPaths(jsonc, parseOcPath(`${PREFIX}/[contextWindow<500000]/id`));
     expect(out).toHaveLength(1);
-    if (out[0].match.kind === "leaf") {
-      expect(out[0].match.valueText).toBe("claude-sonnet-4-7");
+    const result = requireFirstResult(out);
+    if (result.match.kind === "leaf") {
+      expect(result.match.valueText).toBe("claude-sonnet-4-7");
     }
   });
 
@@ -320,7 +420,6 @@ describe("value predicates — jsonc", () => {
     expect(roles.toSorted()).toEqual(["tracker", "vcs"]);
   });
 });
-
 
 describe("ordinal addressing — md", () => {
   // Two items share slug `foo` after slugify.
@@ -363,7 +462,6 @@ describe("ordinal addressing — md", () => {
   });
 });
 
-
 describe("findOcPaths — Markdown kind", () => {
   const md = parseMd(
     "---\nname: drafter\nrole: writer\n---\n\n" +
@@ -383,16 +481,17 @@ describe("findOcPaths — Markdown kind", () => {
   it("* in field slot enumerates each item kv key", () => {
     const out = findOcPaths(md, parseOcPath("oc://SKILL.md/Tools/send-email/*"));
     expect(out).toHaveLength(1);
-    expect(out[0].match.kind).toBe("leaf");
-    if (out[0].match.kind === "leaf") {
-      expect(out[0].match.valueText).toBe("enabled");
+    const result = requireFirstResult(out);
+    expect(result.match.kind).toBe("leaf");
+    if (result.match.kind === "leaf") {
+      expect(result.match.valueText).toBe("enabled");
     }
   });
 
   it("* in item slot + matching field returns each item whose kv key matches", () => {
     const out = findOcPaths(md, parseOcPath("oc://SKILL.md/Tools/*/send_email"));
     expect(out).toHaveLength(1);
-    expect(out[0].path.item).toBe("send-email");
+    expect(requireFirstResult(out).path.item).toBe("send-email");
   });
 
   it("** at section slot matches items at every depth (cross-kind symmetry)", () => {
@@ -443,7 +542,6 @@ describe("findOcPaths — quoted segments survive expansion", () => {
   });
 });
 
-
 describe("union segments — md", () => {
   const RAW = `## Boundaries
 
@@ -470,9 +568,7 @@ describe("union segments — md", () => {
     const ast = parseMd(RAW).ast;
     const out = findOcPaths(ast, parseOcPath("oc://X.md/limits/{max-tokens,alias}/*"));
     expect(out.length).toBe(2);
-    const items = out
-      .map((m) => m.path.item)
-      .toSorted((a, b) => (a ?? "").localeCompare(b ?? ""));
+    const items = out.map((m) => m.path.item).toSorted((a, b) => (a ?? "").localeCompare(b ?? ""));
     expect(items).toEqual(["alias", "max-tokens"]);
   });
 
@@ -480,7 +576,7 @@ describe("union segments — md", () => {
     const ast = parseMd(RAW).ast;
     const out = findOcPaths(ast, parseOcPath("oc://X.md/limits/alias/{alias,nope}"));
     expect(out.length).toBe(1);
-    expect(out[0]?.path.field).toBe("alias");
+    expect(requireFirstResult(out)?.path.field).toBe("alias");
   });
 });
 
@@ -509,17 +605,14 @@ describe("predicate segments — md", () => {
     const ast = parseMd(RAW).ast;
     const out = findOcPaths(ast, parseOcPath("oc://X.md/limits/[enabled=false]/*"));
     expect(out.length).toBe(1);
-    expect(out[0]?.path.item).toBe("enabled");
+    expect(requireFirstResult(out)?.path.item).toBe("enabled");
   });
 
   it("matches the kv pair at the field slot", () => {
     const ast = parseMd(RAW).ast;
-    const out = findOcPaths(
-      ast,
-      parseOcPath("oc://X.md/limits/max-tokens/[max-tokens=4096]"),
-    );
+    const out = findOcPaths(ast, parseOcPath("oc://X.md/limits/max-tokens/[max-tokens=4096]"));
     expect(out.length).toBe(1);
-    expect(out[0]?.path.field).toBe("max-tokens");
+    expect(requireFirstResult(out)?.path.field).toBe("max-tokens");
   });
 
   it("returns empty when no section's item matches", () => {

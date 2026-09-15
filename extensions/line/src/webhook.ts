@@ -1,11 +1,13 @@
+// Line plugin module implements webhook behavior.
 import type { webhook } from "@line/bot-sdk";
 import type { NextFunction, Request, Response } from "express";
-import {
-  createMessageReceiveContext,
-  type MessageReceiveContext,
-} from "openclaw/plugin-sdk/channel-message";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { danger, logVerbose, type RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
-import { parseLineWebhookBody, validateLineSignature } from "./webhook-utils.js";
+import {
+  parseLineWebhookBody,
+  resolveLineWebhookPath,
+  validateLineSignature,
+} from "./webhook-utils.js";
 
 const LINE_WEBHOOK_MAX_RAW_BODY_BYTES = 64 * 1024;
 
@@ -38,7 +40,6 @@ export function createLineWebhookMiddleware(
   const { channelSecret, onEvents, runtime } = options;
 
   return async (req: Request, res: Response, _next: NextFunction): Promise<void> => {
-    let receiveContext: MessageReceiveContext<webhook.CallbackRequest> | undefined;
     try {
       const signature = req.headers["x-line-signature"];
 
@@ -71,28 +72,13 @@ export function createLineWebhookMiddleware(
         return;
       }
 
-      receiveContext = createMessageReceiveContext({
-        id: `${Date.now()}:line:webhook`,
-        channel: "line",
-        message: body,
-        ackPolicy: body.events?.length ? "after_agent_dispatch" : "after_receive_record",
-        onAck: () => {
-          res.status(200).json({ status: "ok" });
-        },
-      });
-
       if (body.events && body.events.length > 0) {
         logVerbose(`line: received ${body.events.length} webhook events`);
         await onEvents(body);
       }
-
-      const ackStage = body.events?.length ? "agent_dispatch" : "receive_record";
-      if (receiveContext.shouldAckAfter(ackStage)) {
-        await receiveContext.ack();
-      }
+      res.status(200).json({ status: "ok" });
     } catch (err) {
-      await receiveContext?.nack(err);
-      runtime?.error?.(danger(`line webhook error: ${String(err)}`));
+      runtime?.error?.(danger(`line webhook error: ${formatErrorMessage(err)}`));
       if (!res.headersSent) {
         res.status(500).json({ error: "Internal server error" });
       }
@@ -119,7 +105,7 @@ export function startLineWebhook(options: StartLineWebhookOptions): {
         "Set channels.line.channelSecret in your config.",
     );
   }
-  const path = options.path ?? "/line/webhook";
+  const path = resolveLineWebhookPath(options.path);
   const middleware = createLineWebhookMiddleware({
     channelSecret,
     onEvents: options.onEvents,

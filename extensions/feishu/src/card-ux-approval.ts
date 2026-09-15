@@ -1,6 +1,10 @@
+// Feishu plugin module implements card ux approval behavior.
 import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
-import { buildFeishuCardButton, buildFeishuCardInteractionContext } from "./card-ux-shared.js";
-import { actionRowToColumnSet } from "./outbound.js";
+import {
+  buildFeishuCardButton,
+  buildFeishuCardButtonRow,
+  buildFeishuCardInteractionContext,
+} from "./card-ux-shared.js";
 
 export const FEISHU_APPROVAL_REQUEST_ACTION = "feishu.quick_actions.request_approval";
 export const FEISHU_APPROVAL_CONFIRM_ACTION = "feishu.approval.confirm";
@@ -37,7 +41,7 @@ export function createApprovalCard(params: {
           tag: "markdown",
           content: params.prompt,
         },
-        actionRowToColumnSet([
+        buildFeishuCardButtonRow([
           buildFeishuCardButton({
             label: params.confirmLabel ?? "Confirm",
             type: "primary",

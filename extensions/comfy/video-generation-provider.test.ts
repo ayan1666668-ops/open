@@ -1,31 +1,92 @@
+// Comfy tests cover video generation provider plugin behavior.
 import { expectExplicitVideoGenerationCapabilities } from "openclaw/plugin-sdk/provider-test-contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildComfyConfig,
+  fetchGuardJson,
   mockComfyCloudJobResponses,
   mockComfyProviderApiKey,
   parseComfyJsonBody,
 } from "./test-helpers.js";
-import {
-  _setComfyFetchGuardForTesting,
-  buildComfyVideoGenerationProvider,
-} from "./video-generation-provider.js";
+import { buildComfyVideoGenerationProvider } from "./video-generation-provider.js";
 
 const { fetchWithSsrFGuardMock } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),
+}));
+
+vi.mock("openclaw/plugin-sdk/ssrf-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/ssrf-runtime")>()),
+  fetchWithSsrFGuard: fetchWithSsrFGuardMock,
 }));
 
 function parseJsonBody(call: number): Record<string, unknown> {
   return parseComfyJsonBody(fetchWithSsrFGuardMock, call);
 }
 
+function fetchGuardParams(call: number): { url?: unknown; auditContext?: unknown } {
+  const params = fetchWithSsrFGuardMock.mock.calls[call]?.[0];
+  if (!params || typeof params !== "object") {
+    throw new Error(`expected Comfy fetch guard call ${call}`);
+  }
+  return params as { url?: unknown; auditContext?: unknown };
+}
+
+function mockLocalVideoResponses(params: {
+  promptId: string;
+  outputs: Record<string, unknown>;
+  download?: {
+    body: string;
+    contentType: string;
+  };
+}) {
+  fetchWithSsrFGuardMock
+    .mockResolvedValueOnce(fetchGuardJson({ prompt_id: params.promptId }))
+    .mockResolvedValueOnce(
+      fetchGuardJson({
+        [params.promptId]: {
+          outputs: params.outputs,
+        },
+      }),
+    );
+
+  if (params.download) {
+    fetchWithSsrFGuardMock.mockResolvedValueOnce({
+      response: new Response(Buffer.from(params.download.body), {
+        status: 200,
+        headers: { "content-type": params.download.contentType },
+      }),
+      release: vi.fn(async () => {}),
+    });
+  }
+}
+
+function generateLocalVideo(outputNodeId?: string) {
+  const provider = buildComfyVideoGenerationProvider();
+  return provider.generateVideo({
+    provider: "comfy",
+    model: "workflow",
+    prompt: "animate a lobster",
+    cfg: buildComfyConfig({
+      video: {
+        workflow: {
+          "6": { inputs: { text: "" } },
+          "9": { inputs: {} },
+        },
+        promptNodeId: "6",
+        ...(outputNodeId ? { outputNodeId } : {}),
+      },
+    }),
+  });
+}
+
 describe("comfy video-generation provider", () => {
   beforeEach(() => {
+    fetchWithSsrFGuardMock.mockReset();
     vi.clearAllMocks();
   });
 
   afterEach(() => {
-    _setComfyFetchGuardForTesting(null);
+    fetchWithSsrFGuardMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -50,40 +111,18 @@ describe("comfy video-generation provider", () => {
   });
 
   it("submits a local workflow, waits for history, and downloads videos", async () => {
-    _setComfyFetchGuardForTesting(fetchWithSsrFGuardMock);
-    fetchWithSsrFGuardMock
-      .mockResolvedValueOnce({
-        response: new Response(JSON.stringify({ prompt_id: "local-video-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-        release: vi.fn(async () => {}),
-      })
-      .mockResolvedValueOnce({
-        response: new Response(
-          JSON.stringify({
-            "local-video-1": {
-              outputs: {
-                "9": {
-                  gifs: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
-                },
-              },
-            },
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        ),
-        release: vi.fn(async () => {}),
-      })
-      .mockResolvedValueOnce({
-        response: new Response(Buffer.from("mp4-data"), {
-          status: 200,
-          headers: { "content-type": "video/mp4" },
-        }),
-        release: vi.fn(async () => {}),
-      });
+    mockLocalVideoResponses({
+      promptId: "local-video-1",
+      outputs: {
+        "9": {
+          gifs: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
+        },
+      },
+      download: {
+        body: "mp4-data",
+        contentType: "video/mp4",
+      },
+    });
 
     const provider = buildComfyVideoGenerationProvider();
     const result = await provider.generateVideo({
@@ -102,33 +141,20 @@ describe("comfy video-generation provider", () => {
       }),
     });
 
-    expect(fetchWithSsrFGuardMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        url: "http://127.0.0.1:8188/prompt",
-        auditContext: "comfy-video-generate",
-      }),
-    );
+    expect(fetchGuardParams(0).url).toBe("http://127.0.0.1:8188/prompt");
+    expect(fetchGuardParams(0).auditContext).toBe("comfy-video-generate");
     expect(parseJsonBody(1)).toEqual({
       prompt: {
         "6": { inputs: { text: "animate a lobster" } },
         "9": { inputs: {} },
       },
     });
-    expect(fetchWithSsrFGuardMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        url: "http://127.0.0.1:8188/history/local-video-1",
-        auditContext: "comfy-history",
-      }),
+    expect(fetchGuardParams(1).url).toBe("http://127.0.0.1:8188/history/local-video-1");
+    expect(fetchGuardParams(1).auditContext).toBe("comfy-history");
+    expect(fetchGuardParams(2).url).toBe(
+      "http://127.0.0.1:8188/view?filename=generated.mp4&subfolder=&type=output",
     );
-    expect(fetchWithSsrFGuardMock).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        url: "http://127.0.0.1:8188/view?filename=generated.mp4&subfolder=&type=output",
-        auditContext: "comfy-video-download",
-      }),
-    );
+    expect(fetchGuardParams(2).auditContext).toBe("comfy-video-download");
     expect(result).toEqual({
       videos: [
         {
@@ -149,16 +175,220 @@ describe("comfy video-generation provider", () => {
     });
   });
 
+  it("returns only MP4 video entries from mixed images buckets", async () => {
+    mockLocalVideoResponses({
+      promptId: "local-video-mixed",
+      outputs: {
+        "2": {
+          images: [{ filename: "generated.png", subfolder: "", type: "output" }],
+        },
+        "4": {
+          images: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
+        },
+      },
+      download: {
+        body: "mp4-data",
+        contentType: "video/mp4",
+      },
+    });
+
+    const result = await generateLocalVideo();
+
+    expect(fetchGuardParams(2).url).toBe(
+      "http://127.0.0.1:8188/view?filename=generated.mp4&subfolder=&type=output",
+    );
+    expect(result.videos).toEqual([
+      expect.objectContaining({
+        buffer: Buffer.from("mp4-data"),
+        mimeType: "video/mp4",
+        fileName: "generated.mp4",
+        metadata: {
+          nodeId: "4",
+          promptId: "local-video-mixed",
+        },
+      }),
+    ]);
+    expect(result.metadata?.outputNodeIds).toEqual(["4"]);
+    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts uppercase WEBM names from the images bucket", async () => {
+    mockLocalVideoResponses({
+      promptId: "local-video-webm",
+      outputs: {
+        "9": {
+          images: [{ name: "generated.WEBM", subfolder: "", type: "output" }],
+        },
+      },
+      download: {
+        body: "webm-data",
+        contentType: "video/webm",
+      },
+    });
+
+    const result = await generateLocalVideo();
+
+    expect(fetchGuardParams(2).url).toBe(
+      "http://127.0.0.1:8188/view?filename=generated.WEBM&subfolder=&type=output",
+    );
+    expect(result.videos[0]).toEqual(
+      expect.objectContaining({
+        buffer: Buffer.from("webm-data"),
+        mimeType: "video/webm",
+        fileName: "generated.WEBM",
+      }),
+    );
+  });
+
+  it("rejects images-only workflow output for video generation", async () => {
+    mockLocalVideoResponses({
+      promptId: "local-video-images-only",
+      outputs: {
+        "9": {
+          images: [
+            { filename: "generated.png", subfolder: "", type: "output" },
+            { filename: "generated.jpg", subfolder: "", type: "output" },
+          ],
+        },
+      },
+    });
+
+    await expect(generateLocalVideo()).rejects.toThrow(
+      "Comfy workflow local-video-images-only completed without video outputs",
+    );
+    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves legacy videos bucket output without filename filtering", async () => {
+    mockLocalVideoResponses({
+      promptId: "local-video-legacy",
+      outputs: {
+        "9": {
+          videos: [{ filename: "generated.mov", subfolder: "", type: "output" }],
+        },
+      },
+      download: {
+        body: "legacy-video-data",
+        contentType: "video/quicktime",
+      },
+    });
+
+    const result = await generateLocalVideo("9");
+
+    expect(result.videos[0]).toEqual(
+      expect.objectContaining({
+        buffer: Buffer.from("legacy-video-data"),
+        mimeType: "video/quicktime",
+        fileName: "generated.mov",
+      }),
+    );
+  });
+
+  it("rejects generated video downloads that exceed the configured media cap", async () => {
+    mockLocalVideoResponses({
+      promptId: "local-video-1",
+      outputs: {
+        "9": {
+          gifs: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
+        },
+      },
+      download: {
+        body: "too-large",
+        contentType: "video/mp4",
+      },
+    });
+
+    const provider = buildComfyVideoGenerationProvider();
+    await expect(
+      provider.generateVideo({
+        provider: "comfy",
+        model: "workflow",
+        prompt: "animate a lobster",
+        cfg: {
+          ...buildComfyConfig({
+            video: {
+              workflow: {
+                "6": { inputs: { text: "" } },
+                "9": { inputs: {} },
+              },
+              promptNodeId: "6",
+              outputNodeId: "9",
+            },
+          }),
+          agents: { defaults: { mediaMaxMb: 0.000001 } },
+        } as never,
+      }),
+    ).rejects.toThrow("Comfy video output download exceeds 1 bytes");
+  });
+
+  it.each([
+    { name: "JSON error", contentType: "application/json", body: '{"error":"denied"}' },
+    { name: "problem JSON", contentType: "application/problem+json", body: '{"title":"denied"}' },
+    { name: "HTML", contentType: "text/html; charset=utf-8", body: "<html>sign in</html>" },
+    { name: "empty video", contentType: "video/mp4", body: "" },
+  ])(
+    "rejects a successful $name output download as generated video",
+    async ({ contentType, body }) => {
+      mockLocalVideoResponses({
+        promptId: "local-video-invalid-download",
+        outputs: {
+          "9": {
+            gifs: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
+          },
+        },
+        download: { body, contentType },
+      });
+
+      await expect(generateLocalVideo()).rejects.toThrow(
+        "Comfy video output download: malformed video response",
+      );
+    },
+  );
+
+  it("releases a rejected video output download without draining its body", async () => {
+    let canceled = false;
+    let bytesPulled = 0;
+    const neverEndingJson = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          bytesPulled += 1;
+          controller.enqueue(new Uint8Array(1024));
+        },
+        cancel() {
+          canceled = true;
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const release = vi.fn(async () => {});
+    mockLocalVideoResponses({
+      promptId: "local-video-tee",
+      outputs: {
+        "9": {
+          gifs: [{ filename: "generated.mp4", subfolder: "", type: "output" }],
+        },
+      },
+    });
+    fetchWithSsrFGuardMock.mockResolvedValueOnce({ response: neverEndingJson, release });
+
+    await expect(generateLocalVideo()).rejects.toThrow(
+      "Comfy video output download: malformed video response",
+    );
+
+    expect(canceled).toBe(true);
+    // The stream never ends, so draining it would have surfaced the byte-cap error instead.
+    expect(bytesPulled).toBeLessThanOrEqual(1);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("uses cloud endpoints for video workflows", async () => {
     mockComfyProviderApiKey();
-    _setComfyFetchGuardForTesting(fetchWithSsrFGuardMock);
     mockComfyCloudJobResponses(fetchWithSsrFGuardMock, {
       body: Buffer.from("cloud-video-data"),
       contentType: "video/mp4",
       filename: "cloud.mp4",
       outputKind: "gifs",
       promptId: "cloud-video-1",
-      redirectLocation: "https://cdn.example.com/cloud.mp4",
     });
 
     const provider = buildComfyVideoGenerationProvider();
@@ -179,13 +409,8 @@ describe("comfy video-generation provider", () => {
       }),
     });
 
-    expect(fetchWithSsrFGuardMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        url: "https://cloud.comfy.org/api/prompt",
-        auditContext: "comfy-video-generate",
-      }),
-    );
+    expect(fetchGuardParams(0).url).toBe("https://cloud.comfy.org/api/prompt");
+    expect(fetchGuardParams(0).auditContext).toBe("comfy-video-generate");
     expect(result.metadata).toEqual({
       promptId: "cloud-video-1",
       outputNodeIds: ["9"],

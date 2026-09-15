@@ -1,3 +1,4 @@
+// Openai provider module implements model/runtime integration.
 import {
   registerProviderPlugin,
   requireRegisteredProvider,
@@ -7,7 +8,6 @@ import {
   expectedOpenaiPluginCodexCatalogEntriesWithGpt55,
   expectCodexMissingAuthHint,
   importProviderRuntimeCatalogModule,
-  loadBundledPluginPublicSurface,
 } from "openclaw/plugin-sdk/provider-test-contracts";
 import type { ProviderPlugin } from "openclaw/plugin-sdk/provider-test-contracts";
 import { beforeEach, describe, it, vi } from "vitest";
@@ -23,7 +23,7 @@ const resolveOwningPluginIdsForProviderMock = vi.hoisted(() =>
   vi.fn<ResolveOwningPluginIdsForProvider>(() => undefined),
 );
 const resolveCatalogHookProviderPluginIdsMock = vi.hoisted(() =>
-  vi.fn<ResolveCatalogHookProviderPluginIds>((_) => [] as string[]),
+  vi.fn<ResolveCatalogHookProviderPluginIds>((_params) => [] as string[]),
 );
 
 vi.mock("openclaw/plugin-sdk/provider-catalog-runtime", async () => {
@@ -60,12 +60,7 @@ vi.mock("openclaw/plugin-sdk/provider-catalog-runtime", async () => {
 export function describeOpenAIProviderCatalogContract() {
   const contractDepsPromise = (async () => {
     vi.resetModules();
-    const openaiPlugin = await loadBundledPluginPublicSurface<{
-      default: Parameters<typeof registerProviderPlugin>[0]["plugin"];
-    }>({
-      pluginId: "openai",
-      artifactBasename: "index.js",
-    });
+    const openaiPlugin = await import("../index.js");
     const openaiProviders = (
       await registerProviderPlugin({
         plugin: openaiPlugin.default,
@@ -103,7 +98,6 @@ export function describeOpenAIProviderCatalogContract() {
           switch (params.provider) {
             case "azure-openai-responses":
             case "openai":
-            case "openai-codex":
               return ["openai"];
             default:
               return undefined;
@@ -118,7 +112,7 @@ export function describeOpenAIProviderCatalogContract() {
         const { openaiProvider } = await contractDepsPromise;
         expectCodexMissingAuthHint(
           (params) => openaiProvider.buildMissingAuthMessage?.(params.context) ?? undefined,
-          "openai/gpt-*",
+          "openai/gpt-6-astra",
         );
       });
 

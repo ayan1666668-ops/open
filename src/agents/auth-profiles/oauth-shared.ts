@@ -1,13 +1,27 @@
+/**
+ * Shared OAuth credential identity policy.
+ * Used by manager, external CLI overlays, and persistence paths to decide when
+ * incoming runtime credentials may bootstrap or settle stored profiles.
+ */
 import { cloneAuthProfileStore } from "./clone.js";
-import { hasUsableOAuthCredential as hasUsableStoredOAuthCredential } from "./credential-state.js";
-import type { AuthProfileStore, OAuthCredential } from "./types.js";
+import { hasUsableOAuthCredential } from "./credential-state.js";
+import {
+  isSafeToCopyOAuthIdentity,
+  normalizeAuthEmailToken,
+  normalizeAuthIdentityToken,
+} from "./oauth-identity.js";
+import type { AuthProfileStore, OAuthCredential, RuntimeAuthProfileStore } from "./types.js";
 
+export { normalizeAuthEmailToken, normalizeAuthIdentityToken } from "./oauth-identity.js";
+
+/** OAuth profile imported from a runtime external CLI source. */
 export type RuntimeExternalOAuthProfile = {
   profileId: string;
   credential: OAuthCredential;
   persistence?: "runtime-only" | "persisted";
 };
 
+/** Returns true when two OAuth credentials contain the same token/identity data. */
 export function areOAuthCredentialsEquivalent(
   a: OAuthCredential | undefined,
   b: OAuthCredential,
@@ -28,47 +42,7 @@ export function areOAuthCredentialsEquivalent(
   );
 }
 
-function hasNewerStoredOAuthCredential(
-  existing: OAuthCredential | undefined,
-  incoming: OAuthCredential,
-): boolean {
-  return Boolean(
-    existing &&
-    existing.provider === incoming.provider &&
-    Number.isFinite(existing.expires) &&
-    (!Number.isFinite(incoming.expires) || existing.expires > incoming.expires),
-  );
-}
-
-export function shouldReplaceStoredOAuthCredential(
-  existing: OAuthCredential | undefined,
-  incoming: OAuthCredential,
-): boolean {
-  if (!existing || existing.type !== "oauth") {
-    return true;
-  }
-  if (areOAuthCredentialsEquivalent(existing, incoming)) {
-    return false;
-  }
-  return !hasNewerStoredOAuthCredential(existing, incoming);
-}
-
-export function hasUsableOAuthCredential(
-  credential: OAuthCredential | undefined,
-  now = Date.now(),
-): boolean {
-  return hasUsableStoredOAuthCredential(credential, { now });
-}
-
-export function normalizeAuthIdentityToken(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-export function normalizeAuthEmailToken(value: string | undefined): string | undefined {
-  return normalizeAuthIdentityToken(value)?.toLowerCase();
-}
-
+/** Returns true when an OAuth credential has account or email identity. */
 export function hasOAuthIdentity(
   credential: Pick<OAuthCredential, "accountId" | "email">,
 ): boolean {
@@ -78,31 +52,49 @@ export function hasOAuthIdentity(
   );
 }
 
-function hasMatchingOAuthIdentity(
+/** Returns true when OAuth identity fields match by account id or email. */
+export function hasMatchingOAuthIdentity(
   existing: Pick<OAuthCredential, "accountId" | "email">,
   incoming: Pick<OAuthCredential, "accountId" | "email">,
 ): boolean {
-  const existingAccountId = normalizeAuthIdentityToken(existing.accountId);
-  const incomingAccountId = normalizeAuthIdentityToken(incoming.accountId);
-  if (existingAccountId !== undefined && incomingAccountId !== undefined) {
-    return existingAccountId === incomingAccountId;
-  }
-
-  const existingEmail = normalizeAuthEmailToken(existing.email);
-  const incomingEmail = normalizeAuthEmailToken(incoming.email);
-  if (existingEmail !== undefined && incomingEmail !== undefined) {
-    return existingEmail === incomingEmail;
-  }
-
-  return false;
+  return hasOAuthIdentity(existing) && isSafeToCopyOAuthIdentity(existing, incoming);
 }
 
-export function isSafeToOverwriteStoredOAuthIdentity(
+/** Returns true when the current owner accepts its provider refresh result. */
+export function isSafeOAuthOwnerRefreshResult(
+  claimed: OAuthCredential,
+  refreshed: OAuthCredential,
+): boolean {
+  return claimed.provider === refreshed.provider && isSafeToCopyOAuthIdentity(claimed, refreshed);
+}
+
+/** Returns true when a claimed generation may settle with a live credential. */
+export function isSafeOAuthPostClaimSettlement(
+  claimedGeneration: OAuthCredential,
+  candidate: OAuthCredential | undefined,
+): candidate is OAuthCredential {
+  return (
+    candidate?.type === "oauth" &&
+    candidate.provider === claimedGeneration.provider &&
+    hasUsableOAuthCredential(candidate) &&
+    hasMatchingOAuthIdentity(claimedGeneration, candidate)
+  );
+}
+
+// Different adoption paths have different safety thresholds. Bootstrap can
+// adopt missing identities, while stored overwrite requires an identity match.
+type OAuthIdentitySafetyPolicy = {
+  whenExistingCredentialMissing: boolean;
+  whenExistingIdentityMissing: boolean;
+};
+
+function isSafeOAuthIdentityTransition(
   existing: OAuthCredential | undefined,
   incoming: OAuthCredential,
+  policy: OAuthIdentitySafetyPolicy,
 ): boolean {
   if (!existing || existing.type !== "oauth") {
-    return true;
+    return policy.whenExistingCredentialMissing;
   }
   if (existing.provider !== incoming.provider) {
     return false;
@@ -111,76 +103,87 @@ export function isSafeToOverwriteStoredOAuthIdentity(
     return true;
   }
   if (!hasOAuthIdentity(existing)) {
-    return false;
+    return policy.whenExistingIdentityMissing;
   }
   return hasMatchingOAuthIdentity(existing, incoming);
 }
 
+/** Returns true when bootstrap may adopt an external OAuth identity. */
 export function isSafeToAdoptBootstrapOAuthIdentity(
   existing: OAuthCredential | undefined,
   incoming: OAuthCredential,
 ): boolean {
-  if (!existing || existing.type !== "oauth") {
-    return true;
-  }
-  if (existing.provider !== incoming.provider) {
-    return false;
-  }
-  if (areOAuthCredentialsEquivalent(existing, incoming)) {
-    return true;
-  }
-  if (!hasOAuthIdentity(existing)) {
-    return true;
-  }
-  return hasMatchingOAuthIdentity(existing, incoming);
+  return isSafeOAuthIdentityTransition(existing, incoming, {
+    whenExistingCredentialMissing: true,
+    whenExistingIdentityMissing: true,
+  });
 }
 
+/** Returns true when agent-local state may adopt a main-store OAuth identity. */
 export function isSafeToAdoptMainStoreOAuthIdentity(
   existing: OAuthCredential | undefined,
   incoming: OAuthCredential,
 ): boolean {
-  if (!existing || existing.type !== "oauth") {
-    return false;
-  }
-  if (existing.provider !== incoming.provider) {
-    return false;
-  }
-  if (areOAuthCredentialsEquivalent(existing, incoming)) {
-    return true;
-  }
-  if (!hasOAuthIdentity(existing)) {
-    return true;
-  }
-  return hasMatchingOAuthIdentity(existing, incoming);
+  return isSafeOAuthIdentityTransition(existing, incoming, {
+    whenExistingCredentialMissing: false,
+    whenExistingIdentityMissing: true,
+  });
 }
 
+/** Returns true when an external CLI credential should bootstrap stored OAuth. */
 export function shouldBootstrapFromExternalCliCredential(params: {
   existing: OAuthCredential | undefined;
   imported: OAuthCredential;
   now?: number;
 }): boolean {
   const now = params.now ?? Date.now();
-  if (hasUsableOAuthCredential(params.existing, now)) {
+  if (hasUsableOAuthCredential(params.existing, { now })) {
     return false;
   }
-  return hasUsableOAuthCredential(params.imported, now);
+  return hasUsableOAuthCredential(params.imported, { now });
 }
 
+/** Overlays runtime external OAuth profiles on a cloned store. */
 export function overlayRuntimeExternalOAuthProfiles(
   store: AuthProfileStore,
   profiles: Iterable<RuntimeExternalOAuthProfile>,
+  options?: { runtimeExternalProfileIdsAuthoritative?: boolean },
 ): AuthProfileStore {
   const externalProfiles = Array.from(profiles);
-  if (externalProfiles.length === 0) {
-    return store;
-  }
-  const next = cloneAuthProfileStore(store);
+  const next: RuntimeAuthProfileStore = cloneAuthProfileStore(store);
+  const overlaidProfileIds = new Set(externalProfiles.map((profile) => profile.profileId));
   for (const profile of externalProfiles) {
     next.profiles[profile.profileId] = profile.credential;
+    delete next.runtimeCredentialSources?.[profile.profileId];
   }
+  next.runtimePersistedProfileIds = store.runtimePersistedProfileIds
+    ?.filter((profileId) => next.profiles[profileId] && !overlaidProfileIds.has(profileId))
+    .toSorted();
+  if (next.runtimePersistedProfileIds?.length === 0) {
+    next.runtimePersistedProfileIds = undefined;
+  }
+  const runtimeOnlyProfileIds = new Set(
+    externalProfiles
+      .filter((profile) => profile.persistence !== "persisted")
+      .map((profile) => profile.profileId),
+  );
+  // Preserve previous runtime-only profile ids that still exist so repeated
+  // overlays do not accidentally persist or drop external profile metadata.
+  for (const profileId of store.runtimeExternalProfileIds ?? []) {
+    if (next.profiles[profileId]) {
+      runtimeOnlyProfileIds.add(profileId);
+    }
+  }
+  next.runtimeExternalProfileIds =
+    runtimeOnlyProfileIds.size > 0 || options?.runtimeExternalProfileIdsAuthoritative === true
+      ? [...runtimeOnlyProfileIds].toSorted()
+      : undefined;
+  next.runtimeExternalProfileIdsAuthoritative =
+    options?.runtimeExternalProfileIdsAuthoritative === true ? true : undefined;
   return next;
 }
 
+/** Returns true when a runtime external OAuth profile should be persisted. */
 export function shouldPersistRuntimeExternalOAuthProfile(params: {
   profileId: string;
   credential: OAuthCredential;

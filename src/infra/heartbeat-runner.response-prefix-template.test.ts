@@ -1,3 +1,5 @@
+// Tests heartbeat runner response prefix template handling.
+import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { runHeartbeatOnce, type HeartbeatDeps } from "./heartbeat-runner.js";
@@ -29,9 +31,9 @@ describe("runHeartbeatOnce responsePrefix templates", () => {
           token: "test-token",
           allowFrom: ["*"],
           heartbeat: { showOk: false },
+          responsePrefix: params.responsePrefix,
         },
       } as never,
-      messages: { responsePrefix: params.responsePrefix },
       session: { store: params.storePath },
     };
   }
@@ -66,7 +68,7 @@ describe("runHeartbeatOnce responsePrefix templates", () => {
 
       replySpy.mockImplementation(async (_ctx, opts) => {
         opts?.onModelSelected?.({
-          provider: "openai-codex",
+          provider: "openai",
           model: "gpt-5.4-20260401",
           thinkLevel: "high",
         });
@@ -93,11 +95,13 @@ describe("runHeartbeatOnce responsePrefix templates", () => {
     });
 
     expect(sendTelegram).toHaveBeenCalledTimes(1);
-    expect(sendTelegram).toHaveBeenCalledWith(
-      TELEGRAM_GROUP,
-      "[openai-codex/gpt-5.4|think:high] Heartbeat alert",
-      expect.any(Object),
+    const [target, message, options] = expectDefined(
+      sendTelegram.mock.calls[0],
+      "telegram send call",
     );
+    expect(target).toBe(TELEGRAM_GROUP);
+    expect(message).toBe("[openai/gpt-5.4|think:high] Heartbeat alert");
+    expect(typeof options).toBe("object");
   });
 
   it("uses the resolved responsePrefix when suppressing prefixed HEARTBEAT_OK replies", async () => {

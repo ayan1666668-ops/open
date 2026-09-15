@@ -1,10 +1,13 @@
+// Matrix plugin module implements create client behavior.
 import fs from "node:fs";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { PinnedDispatcherPolicy } from "openclaw/plugin-sdk/ssrf-dispatcher";
 import {
   ssrfPolicyFromDangerouslyAllowPrivateNetwork,
   type SsrFPolicy,
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixClient } from "../sdk.js";
 import { resolveValidatedMatrixHomeserverUrl } from "./config.js";
 import {
@@ -13,23 +16,12 @@ import {
   writeStorageMeta,
 } from "./storage.js";
 
-type MatrixCreateClientRuntimeDeps = {
-  MatrixClient: typeof import("../sdk.js").MatrixClient;
-  ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
-};
-
-let matrixCreateClientRuntimeDepsPromise: Promise<MatrixCreateClientRuntimeDeps> | undefined;
-
-async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRuntimeDeps> {
-  matrixCreateClientRuntimeDepsPromise ??= Promise.all([
-    import("../sdk.js"),
-    import("./logging.js"),
-  ]).then(([sdkModule, loggingModule]) => ({
+const loadMatrixCreateClientRuntimeDeps = createLazyRuntimeModule(() =>
+  Promise.all([import("../sdk.js"), import("./logging.js")]).then(([sdkModule, loggingModule]) => ({
     MatrixClient: sdkModule.MatrixClient,
     ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
-  }));
-  return await matrixCreateClientRuntimeDepsPromise;
-}
+  })),
+);
 
 export async function createMatrixClient(params: {
   homeserver: string;
@@ -93,7 +85,7 @@ export async function createMatrixClient(params: {
     encryption: params.encryption,
     localTimeoutMs: params.localTimeoutMs,
     initialSyncLimit: params.initialSyncLimit,
-    storagePath: storagePaths?.storagePath,
+    storageRootDir: storagePaths?.rootDir,
     recoveryKeyPath: storagePaths?.recoveryKeyPath,
     idbSnapshotPath: storagePaths?.idbSnapshotPath,
     cryptoDatabasePrefix,
@@ -101,5 +93,6 @@ export async function createMatrixClient(params: {
     ssrfPolicy:
       params.ssrfPolicy ?? ssrfPolicyFromDangerouslyAllowPrivateNetwork(params.allowPrivateNetwork),
     dispatcherPolicy: params.dispatcherPolicy,
+    stateRuntime: getMatrixRuntime().state,
   });
 }

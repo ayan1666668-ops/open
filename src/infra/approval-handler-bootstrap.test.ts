@@ -1,4 +1,6 @@
+// Covers channel approval handler bootstrap lifecycle.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withTestTimeout, createDeferred } from "../../test/helpers/promise.js";
 import { createRuntimeChannel } from "../plugins/runtime/runtime-channel.js";
 import { startChannelApprovalHandlerBootstrap } from "./approval-handler-bootstrap.js";
 import { createApprovalNativeRuntimeAdapterStubs } from "./approval-handler.test-helpers.js";
@@ -114,28 +116,21 @@ describe("startChannelApprovalHandlerBootstrap", () => {
     createChannelApprovalHandlerFromCapability.mockReturnValue(new Promise(() => {}));
     registerApprovalContext(channelRuntime);
 
-    const result = await Promise.race([
+    const result = await withTestTimeout(
       startTestBootstrap({ channelRuntime }).then((cleanup) => ({ cleanup })),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
-    ]);
+      50,
+      "timed out waiting for approval bootstrap",
+    );
 
-    expect(result).not.toBe("timeout");
-    if (result !== "timeout") {
-      await result.cleanup();
-    }
+    await result.cleanup();
   });
 
   it("does not start a handler after the runtime context is unregistered mid-boot", async () => {
     const channelRuntime = createRuntimeChannel();
-    let resolveRuntime:
-      | ((value: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }) => void)
-      | undefined;
-    const runtimePromise = new Promise<{
+    const { promise: runtimePromise, resolve: resolveRuntime } = createDeferred<{
       start: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
-    }>((resolve) => {
-      resolveRuntime = resolve;
-    });
+    }>();
     createChannelApprovalHandlerFromCapability.mockReturnValue(runtimePromise);
 
     const cleanup = await startTestBootstrap({ channelRuntime });
@@ -259,17 +254,10 @@ describe("startChannelApprovalHandlerBootstrap", () => {
 
     expect(start).toHaveBeenCalledTimes(1);
     await flushTransitions();
-    expect(logger.error).not.toHaveBeenCalledWith(
-      expect.stringContaining("failed to start native approval handler"),
-    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledOnce();
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("native approval handler deferred until gateway readiness recovers"),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("gateway readiness unavailable before approval handler start"),
-    );
-    expect(logger.warn).not.toHaveBeenCalledWith(
-      expect.stringContaining("gateway event loop readiness timeout"),
+      "native approval handler deferred until gateway readiness recovers: gateway readiness unavailable before approval handler start",
     );
 
     await vi.advanceTimersByTimeAsync(1_000);

@@ -1,3 +1,8 @@
+// Discord plugin module implements speaker context behavior.
+import {
+  asDateTimestampMs,
+  resolveExpiresAtMsFromDurationMs,
+} from "openclaw/plugin-sdk/number-runtime";
 import type { Client } from "../internal/discord.js";
 import { resolveDiscordOwnerAccess } from "../monitor/allow-list.js";
 import { formatDiscordUserTag } from "../monitor/format.js";
@@ -42,7 +47,11 @@ export class DiscordVoiceSpeakerContextResolver {
       label: identity.label,
       name: identity.name,
       tag: identity.tag,
-      senderIsOwner: this.resolveIsOwner(identity),
+      senderIsOwner: resolveDiscordOwnerAccess({
+        allowFrom: this.params.ownerAllowFrom,
+        sender: identity,
+        allowNameMatching: false,
+      }).ownerAllowed,
     };
     this.setCachedContext(guildId, userId, context);
     return context;
@@ -82,18 +91,6 @@ export class DiscordVoiceSpeakerContextResolver {
     }
   }
 
-  private resolveIsOwner(identity: Pick<VoiceSpeakerIdentity, "id" | "name" | "tag">): boolean {
-    return resolveDiscordOwnerAccess({
-      allowFrom: this.params.ownerAllowFrom,
-      sender: {
-        id: identity.id,
-        name: identity.name,
-        tag: identity.tag,
-      },
-      allowNameMatching: false,
-    }).ownerAllowed;
-  }
-
   private resolveCacheKey(guildId: string, userId: string): string {
     return `${guildId}:${userId}`;
   }
@@ -104,7 +101,9 @@ export class DiscordVoiceSpeakerContextResolver {
     if (!cached) {
       return undefined;
     }
-    if (cached.expiresAt <= Date.now()) {
+    const now = asDateTimestampMs(Date.now());
+    const expiresAt = asDateTimestampMs(cached.expiresAt);
+    if (now === undefined || expiresAt === undefined || expiresAt <= now) {
       this.cache.delete(key);
       return undefined;
     }
@@ -119,9 +118,12 @@ export class DiscordVoiceSpeakerContextResolver {
 
   private setCachedContext(guildId: string, userId: string, context: VoiceSpeakerContext): void {
     const key = this.resolveCacheKey(guildId, userId);
-    this.cache.set(key, {
-      ...context,
-      expiresAt: Date.now() + SPEAKER_CONTEXT_CACHE_TTL_MS,
-    });
+    const expiresAt = resolveExpiresAtMsFromDurationMs(SPEAKER_CONTEXT_CACHE_TTL_MS);
+    if (expiresAt !== undefined) {
+      this.cache.set(key, {
+        ...context,
+        expiresAt,
+      });
+    }
   }
 }

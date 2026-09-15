@@ -1,3 +1,4 @@
+// Tests heartbeat runner typing indicator behavior.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -33,20 +34,25 @@ function installHeartbeatTypingPlugin(params: {
 function createHeartbeatConfig(params: {
   tmpDir: string;
   storePath: string;
+  agents?: OpenClawConfig["agents"];
   session?: OpenClawConfig["session"];
-  channelHeartbeat?: Record<string, unknown>;
+  channelHeartbeatVisibility?: Record<string, unknown>;
 }): OpenClawConfig {
   return {
     agents: {
+      ...params.agents,
       defaults: {
         workspace: params.tmpDir,
         heartbeat: { every: "5m", target: "telegram" },
+        ...params.agents?.defaults,
       },
     },
     channels: {
       telegram: {
         allowFrom: ["*"],
-        ...(params.channelHeartbeat ? { heartbeat: params.channelHeartbeat } : {}),
+        ...(params.channelHeartbeatVisibility
+          ? { heartbeatVisibility: params.channelHeartbeatVisibility }
+          : {}),
       },
     },
     session: {
@@ -68,10 +74,11 @@ function expectTypingCall(
   mock: ReturnType<typeof vi.fn>,
   expected: { cfg: OpenClawConfig; to: string },
 ) {
-  const params = mock.mock.calls[0]?.[0] as { cfg?: unknown; to?: unknown } | undefined;
-  if (!params) {
+  const call = mock.mock.calls[0];
+  if (!call) {
     throw new Error("missing typing call");
   }
+  const [params] = call as [{ cfg?: unknown; to?: unknown }];
   expect(params.cfg).toBe(expected.cfg);
   expect(params.to).toBe(expected.to);
 }
@@ -140,7 +147,35 @@ describe("runHeartbeatOnce heartbeat typing", () => {
       const cfg = createHeartbeatConfig({
         tmpDir,
         storePath,
-        session: { typingMode: "never" },
+        agents: { defaults: { typingMode: "never" } },
+      });
+      await seedTelegramSession(storePath, cfg);
+      replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: {
+          getReplyFromConfig: replySpy,
+          getQueueSize: () => 0,
+          nowMs: () => 0,
+        },
+      });
+
+      expect(sendTyping).not.toHaveBeenCalled();
+    });
+  });
+
+  it("honors a per-agent typingMode override", async () => {
+    await withTempHeartbeatSandbox(async ({ tmpDir, storePath, replySpy }) => {
+      const sendTyping = vi.fn(async () => undefined);
+      installHeartbeatTypingPlugin({ sendTyping });
+      const cfg = createHeartbeatConfig({
+        tmpDir,
+        storePath,
+        agents: {
+          defaults: { typingMode: "instant" },
+          entries: { main: { typingMode: "never" } },
+        },
       });
       await seedTelegramSession(storePath, cfg);
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
@@ -165,7 +200,7 @@ describe("runHeartbeatOnce heartbeat typing", () => {
       const cfg = createHeartbeatConfig({
         tmpDir,
         storePath,
-        channelHeartbeat: { showAlerts: false, showOk: false, useIndicator: true },
+        channelHeartbeatVisibility: { showAlerts: false, showOk: false, useIndicator: true },
       });
       await seedTelegramSession(storePath, cfg);
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });

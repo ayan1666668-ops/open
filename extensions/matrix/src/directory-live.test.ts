@@ -1,3 +1,4 @@
+// Matrix tests cover directory live plugin behavior.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { matrixAuthedHttpClientCtorMock, requestJsonMock } = vi.hoisted(() => ({
@@ -127,17 +128,15 @@ describe("matrix directory live", () => {
       limit: 3,
     });
 
-    expect(requestJsonMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: "POST",
-        endpoint: "/_matrix/client/v3/user_directory/search",
-        timeoutMs: 10_000,
-        body: {
-          search_term: "Alice",
-          limit: 3,
-        },
-      }),
-    );
+    expect(requestJsonMock).toHaveBeenCalledWith({
+      method: "POST",
+      endpoint: "/_matrix/client/v3/user_directory/search",
+      timeoutMs: 10_000,
+      body: {
+        search_term: "Alice",
+        limit: 3,
+      },
+    });
   });
 
   it("accepts prefixed fully qualified user ids without hitting Matrix", async () => {
@@ -173,13 +172,12 @@ describe("matrix directory live", () => {
         handle: "#Team:Example.org",
       },
     ]);
-    expect(requestJsonMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: "GET",
-        endpoint: "/_matrix/client/v3/directory/room/%23Team%3AExample.org",
-        timeoutMs: 10_000,
-      }),
-    );
+    expect(requestJsonMock).toHaveBeenCalledWith({
+      method: "GET",
+      endpoint: "/_matrix/client/v3/directory/room/%23Team%3AExample.org",
+      timeoutMs: 10_000,
+      body: undefined,
+    });
   });
 
   it("accepts prefixed room ids without additional Matrix lookups", async () => {
@@ -196,5 +194,21 @@ describe("matrix directory live", () => {
       },
     ]);
     expect(requestJsonMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-object peer directory response instead of returning no matches", async () => {
+    requestJsonMock.mockResolvedValue([]);
+
+    await expect(listMatrixDirectoryPeersLive({ cfg, query: "alice" })).rejects.toThrow(
+      /non-object JSON response/,
+    );
+  });
+
+  it("rejects a non-object joined-rooms response instead of returning no groups", async () => {
+    requestJsonMock.mockResolvedValue([]);
+
+    await expect(listMatrixDirectoryGroupsLive({ cfg, query: "somegroup" })).rejects.toThrow(
+      /non-object JSON response/,
+    );
   });
 });

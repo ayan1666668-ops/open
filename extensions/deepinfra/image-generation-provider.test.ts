@@ -1,58 +1,28 @@
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getProviderHttpMocks,
+  installProviderHttpMockCleanup,
+  requireFirstPostJsonRecordRequest,
+  requireFirstPostJsonRequest,
+} from "openclaw/plugin-sdk/provider-http-test-mocks";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildDeepInfraImageGenerationProvider } from "./image-generation-provider.js";
 
 const {
-  assertOkOrThrowHttpErrorMock,
   postJsonRequestMock,
   postMultipartRequestMock,
   resolveApiKeyForProviderMock,
   resolveProviderHttpRequestConfigMock,
-  createProviderOperationDeadlineMock,
-  resolveProviderOperationTimeoutMsMock,
-} = vi.hoisted(() => ({
-  assertOkOrThrowHttpErrorMock: vi.fn(async () => {}),
-  postJsonRequestMock: vi.fn(),
-  postMultipartRequestMock: vi.fn(),
-  resolveApiKeyForProviderMock: vi.fn(async () => ({ apiKey: "deepinfra-key" })),
-  createProviderOperationDeadlineMock: vi.fn((params: Record<string, unknown>) => params),
-  resolveProviderOperationTimeoutMsMock: vi.fn(
-    (params: Record<string, unknown>) => params.defaultTimeoutMs,
-  ),
-  resolveProviderHttpRequestConfigMock: vi.fn((params: Record<string, unknown>) => ({
-    baseUrl: params.baseUrl ?? params.defaultBaseUrl ?? "https://api.deepinfra.com/v1/openai",
-    allowPrivateNetwork: false,
-    headers: new Headers(params.defaultHeaders as HeadersInit | undefined),
-    dispatcherPolicy: undefined,
-  })),
-}));
+} = getProviderHttpMocks();
 
-vi.mock("openclaw/plugin-sdk/provider-auth-runtime", () => ({
-  resolveApiKeyForProvider: resolveApiKeyForProviderMock,
-}));
-
-vi.mock("openclaw/plugin-sdk/provider-http", () => ({
-  assertOkOrThrowHttpError: assertOkOrThrowHttpErrorMock,
-  createProviderOperationDeadline: createProviderOperationDeadlineMock,
-  postJsonRequest: postJsonRequestMock,
-  postMultipartRequest: postMultipartRequestMock,
-  resolveProviderHttpRequestConfig: resolveProviderHttpRequestConfigMock,
-  resolveProviderOperationTimeoutMs: resolveProviderOperationTimeoutMsMock,
-  sanitizeConfiguredModelProviderRequest: vi.fn((request) => request),
-}));
-
-afterAll(() => {
-  vi.doUnmock("openclaw/plugin-sdk/provider-auth-runtime");
-  vi.doUnmock("openclaw/plugin-sdk/provider-http");
-  vi.resetModules();
-});
+installProviderHttpMockCleanup();
 
 describe("deepinfra image generation provider", () => {
+  beforeEach(() => {
+    resolveApiKeyForProviderMock.mockResolvedValue({ apiKey: "deepinfra-key" });
+  });
+
   afterEach(() => {
-    assertOkOrThrowHttpErrorMock.mockClear();
-    postJsonRequestMock.mockReset();
     postMultipartRequestMock.mockReset();
-    resolveApiKeyForProviderMock.mockClear();
-    resolveProviderHttpRequestConfigMock.mockClear();
   });
 
   it("declares generation and single-reference edit support", () => {
@@ -60,6 +30,12 @@ describe("deepinfra image generation provider", () => {
 
     expect(provider.id).toBe("deepinfra");
     expect(provider.defaultModel).toBe("black-forest-labs/FLUX-1-schnell");
+    expect(provider.models).toEqual([
+      "black-forest-labs/FLUX-1-schnell",
+      "black-forest-labs/FLUX-1-dev",
+      "Qwen/Qwen-Image-Max",
+      "stabilityai/sdxl-turbo",
+    ]);
     expect(provider.capabilities.generate.maxCount).toBe(4);
     expect(provider.capabilities.edit.enabled).toBe(true);
     expect(provider.capabilities.edit.maxInputImages).toBe(1);
@@ -68,14 +44,12 @@ describe("deepinfra image generation provider", () => {
   it("sends OpenAI-compatible image generation requests and sniffs JPEG output", async () => {
     const release = vi.fn(async () => {});
     const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
-    postJsonRequestMock.mockResolvedValue({
-      response: {
-        json: async () => ({
-          data: [{ b64_json: jpegBytes.toString("base64"), revised_prompt: "red square" }],
-        }),
-      },
+    postJsonRequestMock.mockImplementation(async () => ({
+      response: Response.json({
+        data: [{ b64_json: jpegBytes.toString("base64"), revised_prompt: "red square" }],
+      }),
       release,
-    });
+    }));
 
     const provider = buildDeepInfraImageGenerationProvider();
     const result = await provider.generateImage({
@@ -113,7 +87,10 @@ describe("deepinfra image generation provider", () => {
       ],
     ]);
     expect(postJsonRequestMock).toHaveBeenCalledOnce();
-    const [jsonRequest] = postJsonRequestMock.mock.calls[0] ?? [];
+    const jsonRequest = requireFirstPostJsonRequest(
+      postJsonRequestMock,
+      "DeepInfra JSON image request",
+    );
     const jsonRequestHeaders = Reflect.get(jsonRequest ?? {}, "headers");
     expect(jsonRequestHeaders).toBeInstanceOf(Headers);
     expect(Object.fromEntries((jsonRequestHeaders as Headers).entries())).toEqual({
@@ -150,20 +127,18 @@ describe("deepinfra image generation provider", () => {
   });
 
   it("sends image edits as multipart OpenAI-compatible requests", async () => {
-    postMultipartRequestMock.mockResolvedValue({
-      response: {
-        json: async () => ({
-          data: [
-            {
-              b64_json: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString(
-                "base64",
-              ),
-            },
-          ],
-        }),
-      },
+    postMultipartRequestMock.mockImplementation(async () => ({
+      response: Response.json({
+        data: [
+          {
+            b64_json: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString(
+              "base64",
+            ),
+          },
+        ],
+      }),
       release: vi.fn(async () => {}),
-    });
+    }));
 
     const provider = buildDeepInfraImageGenerationProvider();
     const result = await provider.generateImage({
@@ -175,10 +150,10 @@ describe("deepinfra image generation provider", () => {
     });
 
     expect(postMultipartRequestMock).toHaveBeenCalledOnce();
-    const [multipartRequest] = postMultipartRequestMock.mock.calls[0] ?? [];
-    if (!multipartRequest) {
-      throw new Error("Expected DeepInfra multipart request");
-    }
+    const multipartRequest = requireFirstPostJsonRecordRequest(
+      postMultipartRequestMock,
+      "DeepInfra multipart image request",
+    );
     const multipartHeaders = Reflect.get(multipartRequest, "headers");
     expect(multipartHeaders).toBeInstanceOf(Headers);
     expect(Object.fromEntries((multipartHeaders as Headers).entries())).toEqual({

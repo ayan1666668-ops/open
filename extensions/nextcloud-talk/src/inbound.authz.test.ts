@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PluginRuntime, RuntimeEnv } from "../runtime-api.js";
+import { createRuntimeSpies } from "../../test-support/runtime-spies.js";
+import type { PluginRuntime } from "../runtime-api.js";
 import type { ResolvedNextcloudTalkAccount } from "./accounts.js";
 import { handleNextcloudTalkInbound } from "./inbound.js";
 import { setNextcloudTalkRuntime } from "./runtime.js";
@@ -26,13 +27,6 @@ function installInboundAuthzRuntime(params: {
       },
     },
   } as unknown as PluginRuntime);
-}
-
-function createTestRuntimeEnv(): RuntimeEnv {
-  return {
-    log: vi.fn(),
-    error: vi.fn(),
-  } as unknown as RuntimeEnv;
 }
 
 describe("nextcloud-talk inbound authz", () => {
@@ -83,13 +77,10 @@ describe("nextcloud-talk inbound authz", () => {
       message,
       account,
       config,
-      runtime: createTestRuntimeEnv(),
+      runtime: createRuntimeSpies(),
     });
 
-    expect(readAllowFromStore).toHaveBeenCalledWith({
-      channel: "nextcloud-talk",
-      accountId: "default",
-    });
+    expect(readAllowFromStore).not.toHaveBeenCalled();
     expect(buildMentionRegexes).not.toHaveBeenCalled();
   });
 
@@ -141,7 +132,7 @@ describe("nextcloud-talk inbound authz", () => {
           },
         },
       },
-      runtime: createTestRuntimeEnv(),
+      runtime: createRuntimeSpies(),
     });
 
     expect(buildMentionRegexes).not.toHaveBeenCalled();

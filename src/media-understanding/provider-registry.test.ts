@@ -1,3 +1,5 @@
+// Provider registry tests cover runtime provider loading, normalization aliases,
+// manifest-only image capability, and config-derived image providers.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildMediaUnderstandingRegistry,
@@ -44,11 +46,73 @@ describe("media-understanding provider registry", () => {
     const registry = buildMediaUnderstandingRegistry();
 
     expect(requireMediaProvider(registry, "groq").id).toBe("groq");
+    expect(requireMediaProvider(registry, "groq").capabilities).toContain("image");
     expect(requireMediaProvider(registry, "deepgram").id).toBe("deepgram");
     expect(resolvePluginCapabilityProvidersMock).toHaveBeenCalledWith({
       key: "mediaUnderstandingProviders",
       cfg: undefined,
     });
+  });
+
+  it("keeps manifest-only image providers available for model-backed dispatch", () => {
+    resolvePluginCapabilityProvidersMock.mockReturnValue([
+      createMediaProvider({
+        id: "zai",
+        capabilities: ["image"],
+        defaultModels: { image: "glm-4.6v" },
+      }),
+    ]);
+
+    const registry = buildMediaUnderstandingRegistry();
+    const provider = requireMediaProvider(registry, "zai");
+
+    expect(provider.defaultModels?.image).toBe("glm-4.6v");
+    expect(provider.describeImage).toBeUndefined();
+    expect(provider.describeImages).toBeUndefined();
+  });
+
+  it("resets earlier custom hooks when a prepared owner requests model-backed dispatch", () => {
+    const customImage = vi.fn(async () => ({ text: "custom image" }));
+    const customImages = vi.fn(async () => ({ text: "custom images" }));
+    const registry = buildMediaUnderstandingRegistry(undefined, undefined, [
+      createMediaProvider({
+        id: "zai",
+        capabilities: ["image"],
+        describeImage: customImage,
+        describeImages: customImages,
+      }),
+      createMediaProvider({
+        id: "zai",
+        capabilities: ["image"],
+        defaultModels: { image: "glm-4.6v" },
+        describeImage: undefined,
+        describeImages: undefined,
+      }),
+    ]);
+
+    const provider = requireMediaProvider(registry, "zai");
+    expect(provider.defaultModels?.image).toBe("glm-4.6v");
+    expect(provider.describeImage).toBeUndefined();
+    expect(provider.describeImages).toBeUndefined();
+  });
+
+  it("preserves partial native overrides for dispatch", () => {
+    const overrideImage = vi.fn(async () => ({ text: "override image" }));
+    const registry = buildMediaUnderstandingRegistry(
+      {
+        zai: createMediaProvider({
+          id: "zai",
+          capabilities: ["image"],
+          describeImage: overrideImage,
+        }),
+      },
+      undefined,
+      [createMediaProvider({ id: "zai", capabilities: ["image"] })],
+    );
+
+    const provider = requireMediaProvider(registry, "zai");
+    expect(provider.describeImage).toBe(overrideImage);
+    expect(provider.describeImages).toBeUndefined();
   });
 
   it("keeps provider id normalization behavior for capability providers", () => {
@@ -80,8 +144,8 @@ describe("media-understanding provider registry", () => {
 
     expect(glmProvider.id).toBe("glm");
     expect(glmProvider.capabilities).toEqual(["image"]);
-    expect(typeof glmProvider.describeImage).toBe("function");
-    expect(typeof glmProvider.describeImages).toBe("function");
+    expect(glmProvider.describeImage).toBeUndefined();
+    expect(glmProvider.describeImages).toBeUndefined();
     expect(textOnlyProvider).toBeUndefined();
   });
 

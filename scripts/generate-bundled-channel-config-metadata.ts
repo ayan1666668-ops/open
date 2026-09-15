@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+// Generate Bundled Channel Config Metadata script supports OpenClaw repository automation.
 import fs from "node:fs";
 import path from "node:path";
+import { asFiniteNumber } from "../packages/normalization-core/src/number-coercion.ts";
 import { loadBundledPluginPublicArtifactModuleSync } from "../src/plugins/public-surface-loader.js";
+import { isDirectRunUrl } from "./lib/direct-run.mjs";
 import { loadChannelConfigSurfaceModule } from "./load-channel-config-surface.ts";
 
 const GENERATED_BY = "scripts/generate-bundled-channel-config-metadata.ts";
 const DEFAULT_OUTPUT_PATH = "src/config/bundled-channel-config-metadata.generated.ts";
+const IDS_OUTPUT_PATH = "src/channels/bundled-channel-ids.generated.ts";
 const GENERATED_JSON_CHUNK_SIZE = 16 * 1024;
 
 type BundledPluginSource = {
@@ -61,6 +65,10 @@ const { writeGeneratedOutput } = (await import(
 type BundledChannelConfigMetadata = {
   pluginId: string;
   channelId: string;
+  aliases?: readonly string[];
+  order?: number;
+  configurable?: boolean;
+  channelEnvVars?: readonly string[];
   label?: string;
   description?: string;
   schema: Record<string, unknown>;
@@ -134,6 +142,64 @@ function resolveRootDescription(
   return undefined;
 }
 
+function resolveRootAliases(source: BundledPluginSource, channelId: string): string[] {
+  const channelMeta = resolvePackageChannelMeta(source);
+  if (channelMeta?.id !== channelId || !Array.isArray(channelMeta.aliases)) {
+    return [];
+  }
+  return [
+    ...new Set(
+      channelMeta.aliases
+        .map((alias) => (typeof alias === "string" ? alias.trim().toLowerCase() : ""))
+        .filter((alias) => alias.length > 0),
+    ),
+  ].toSorted((left, right) => left.localeCompare(right));
+}
+
+function resolveRootOrder(source: BundledPluginSource, channelId: string): number | undefined {
+  const channelMeta = resolvePackageChannelMeta(source);
+  const order = channelMeta?.id === channelId ? channelMeta.order : undefined;
+  return asFiniteNumber(order);
+}
+
+function resolveRootConfigurable(source: BundledPluginSource, channelId: string): boolean {
+  const channelMeta = resolvePackageChannelMeta(source);
+  const exposure =
+    channelMeta?.id === channelId &&
+    channelMeta.exposure &&
+    typeof channelMeta.exposure === "object" &&
+    !Array.isArray(channelMeta.exposure)
+      ? (channelMeta.exposure as Record<string, unknown>)
+      : null;
+  return exposure?.configured !== false;
+}
+
+function resolveRootChannelEnvVars(source: BundledPluginSource, channelId: string): string[] {
+  const channelMeta = resolvePackageChannelMeta(source);
+  if (channelMeta?.id !== channelId) {
+    return [];
+  }
+  const configuredState = channelMeta.configuredState;
+  if (!configuredState || typeof configuredState !== "object" || Array.isArray(configuredState)) {
+    return [];
+  }
+  const env = (configuredState as Record<string, unknown>).env;
+  if (!env || typeof env !== "object" || Array.isArray(env)) {
+    return [];
+  }
+  const envRecord = env as Record<string, unknown>;
+  const values = [envRecord.allOf, envRecord.anyOf].flatMap((value) =>
+    Array.isArray(value) ? value : [],
+  );
+  return [
+    ...new Set(
+      values
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0),
+    ),
+  ].toSorted((left, right) => left.localeCompare(right));
+}
+
 function formatTypeScriptModule(source: string, outputPath: string, repoRoot: string): string {
   return formatGeneratedModule(source, {
     repoRoot,
@@ -179,7 +245,7 @@ function resolveChannelUnsupportedSecretRefSurfacePatterns(
   }
 }
 
-export async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string }) {
+async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string }) {
   const repoRoot = path.resolve(params?.repoRoot ?? process.cwd());
   const sources = collectBundledPluginSources({ repoRoot, requirePackageJson: true });
   const entries: BundledChannelConfigMetadata[] = [];
@@ -197,11 +263,15 @@ export async function collectBundledChannelConfigMetadata(params?: { repoRoot?: 
     if (!modulePath) {
       continue;
     }
-    const surface = await loadChannelConfigSurfaceModule(modulePath, { repoRoot });
+    const surface = await loadChannelConfigSurfaceModule(modulePath);
     if (!surface?.schema) {
       continue;
     }
     for (const channelId of channelIds) {
+      const aliases = resolveRootAliases(source, channelId);
+      const order = resolveRootOrder(source, channelId);
+      const configurable = resolveRootConfigurable(source, channelId);
+      const channelEnvVars = resolveRootChannelEnvVars(source, channelId);
       const label = resolveRootLabel(source, channelId);
       const description = resolveRootDescription(source, channelId);
       const unsupportedSecretRefSurfacePatterns = resolveChannelUnsupportedSecretRefSurfacePatterns(
@@ -211,6 +281,10 @@ export async function collectBundledChannelConfigMetadata(params?: { repoRoot?: 
       entries.push({
         pluginId: source.manifest.id,
         channelId,
+        ...(aliases.length > 0 ? { aliases } : {}),
+        ...(order === undefined ? {} : { order }),
+        ...(configurable ? {} : { configurable }),
+        ...(channelEnvVars.length > 0 ? { channelEnvVars } : {}),
         ...(label ? { label } : {}),
         ...(description ? { description } : {}),
         schema: surface.schema,
@@ -225,7 +299,7 @@ export async function collectBundledChannelConfigMetadata(params?: { repoRoot?: 
   return entries.toSorted((left, right) => left.channelId.localeCompare(right.channelId));
 }
 
-export async function writeBundledChannelConfigMetadataModule(params?: {
+async function writeBundledChannelConfigMetadataModule(params?: {
   repoRoot?: string;
   outputPath?: string;
   check?: boolean;
@@ -240,6 +314,10 @@ export async function writeBundledChannelConfigMetadataModule(params?: {
 type BundledChannelConfigMetadata = {
   pluginId: string;
   channelId: string;
+  aliases?: readonly string[];
+  order?: number;
+  configurable?: boolean;
+  channelEnvVars?: readonly string[];
   label?: string;
   description?: string;
   schema: Record<string, unknown>;
@@ -258,27 +336,56 @@ export const GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA = JSON.parse(
     outputPath,
     repoRoot,
   );
-  return writeGeneratedOutput({
+  const ids = entries.map(({ channelId, aliases, order, configurable, label }) => ({
+    channelId,
+    aliases,
+    order,
+    configurable,
+    label,
+  }));
+  const idsModule = formatTypeScriptModule(
+    `// Auto-generated by ${GENERATED_BY}. Do not edit directly.
+
+type BundledChannelIdMetadata = {
+  channelId: string;
+  aliases?: readonly string[];
+  order?: number;
+  configurable?: boolean;
+  label?: string;
+};
+
+export const GENERATED_BUNDLED_CHANNEL_IDS: readonly BundledChannelIdMetadata[] = ${JSON.stringify(ids, null, 2)};
+`,
+    IDS_OUTPUT_PATH,
     repoRoot,
-    outputPath,
-    next,
-    check: params?.check,
-  });
+  );
+  return [
+    writeGeneratedOutput({ repoRoot, outputPath, next, check: params?.check }),
+    writeGeneratedOutput({
+      repoRoot,
+      outputPath: IDS_OUTPUT_PATH,
+      next: idsModule,
+      check: params?.check,
+    }),
+  ];
 }
 
-if (import.meta.url === new URL(process.argv[1] ?? "", "file://").href) {
+if (isDirectRunUrl(process.argv[1], import.meta.url)) {
   const check = process.argv.includes("--check");
-  const result = await writeBundledChannelConfigMetadataModule({ check });
-  if (!result.changed) {
-    process.exitCode = 0;
-  } else if (check) {
-    console.error(
-      `[bundled-channel-config-metadata] stale generated output at ${path.relative(process.cwd(), result.outputPath)}`,
-    );
-    process.exitCode = 1;
-  } else {
-    console.log(
-      `[bundled-channel-config-metadata] wrote ${path.relative(process.cwd(), result.outputPath)}`,
-    );
+  const results = await writeBundledChannelConfigMetadataModule({ check });
+  for (const result of results) {
+    if (!result.changed) {
+      continue;
+    }
+    if (check) {
+      console.error(
+        `[bundled-channel-config-metadata] stale generated output at ${path.relative(process.cwd(), result.outputPath)}; run "pnpm config:channels:gen" and commit the result`,
+      );
+      process.exitCode = 1;
+    } else {
+      console.log(
+        `[bundled-channel-config-metadata] wrote ${path.relative(process.cwd(), result.outputPath)}`,
+      );
+    }
   }
 }

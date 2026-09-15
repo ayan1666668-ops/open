@@ -1,5 +1,8 @@
+// Channels resolve tests cover channel/account selection and command output for message routing.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChannelResolverAdapter } from "../channels/plugins/types.adapters.js";
 import { channelsResolveCommand } from "./channels/resolve.js";
+import { createTestRuntime } from "./test-runtime-config-helpers.js";
 
 const mocks = vi.hoisted(() => ({
   resolveCommandSecretRefsViaGateway: vi.fn(),
@@ -11,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   refreshPluginRegistryAfterConfigMutation: vi.fn(async () => undefined),
   resolveMessageChannelSelection: vi.fn(),
   resolveInstallableChannelPlugin: vi.fn(),
-  getChannelPlugin: vi.fn(),
 }));
 
 vi.mock("../cli/command-secret-gateway.js", () => ({
@@ -22,14 +24,18 @@ vi.mock("../cli/command-secret-targets.js", () => ({
   getChannelsCommandSecretTargetIds: mocks.getChannelsCommandSecretTargetIds,
 }));
 
-vi.mock("../config/config.js", () => ({
-  getRuntimeConfig: mocks.loadConfig,
-  loadConfig: mocks.loadConfig,
-  readConfigFileSnapshot: mocks.readConfigFileSnapshot,
-  replaceConfigFile: mocks.replaceConfigFile,
-}));
+vi.mock("../config/config.js", async () => {
+  const actual = await vi.importActual<typeof import("../config/config.js")>("../config/config.js");
+  return {
+    ...actual,
+    getRuntimeConfig: mocks.loadConfig,
+    loadConfig: mocks.loadConfig,
+    readConfigFileSnapshot: mocks.readConfigFileSnapshot,
+    replaceConfigFile: mocks.replaceConfigFile,
+  };
+});
 
-vi.mock("../cli/plugins-registry-refresh.js", () => ({
+vi.mock("../plugins/registry-refresh.js", () => ({
   refreshPluginRegistryAfterConfigMutation: mocks.refreshPluginRegistryAfterConfigMutation,
 }));
 
@@ -45,16 +51,8 @@ vi.mock("./channel-setup/channel-plugin-resolution.js", () => ({
   resolveInstallableChannelPlugin: mocks.resolveInstallableChannelPlugin,
 }));
 
-vi.mock("../channels/plugins/index.js", () => ({
-  getChannelPlugin: mocks.getChannelPlugin,
-}));
-
 describe("channelsResolveCommand", () => {
-  const runtime = {
-    log: vi.fn(),
-    error: vi.fn(),
-    exit: vi.fn(),
-  };
+  const runtime = createTestRuntime();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -69,13 +67,42 @@ describe("channelsResolveCommand", () => {
     });
     mocks.resolveMessageChannelSelection.mockResolvedValue({
       channel: "telegram",
+      plugin: { id: "telegram" },
       configured: ["telegram"],
       source: "explicit",
     });
   });
 
+  it.each([undefined, "work"])(
+    "rejects missing entries before config for account %j",
+    async (account) => {
+      await expect(channelsResolveCommand({ account, entries: [] }, runtime)).rejects.toThrow(
+        "At least one entry is required.",
+      );
+      expect(mocks.loadConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the unsupported resolver error for a named account", async () => {
+    mocks.resolveInstallableChannelPlugin.mockResolvedValue({
+      cfg: { channels: {} },
+      channelId: "telegram",
+      configChanged: false,
+      pluginInstalled: false,
+      plugin: { id: "telegram" },
+    });
+
+    await expect(
+      channelsResolveCommand({ channel: "telegram", account: "work", entries: ["room"] }, runtime),
+    ).rejects.toThrow('Channel "telegram" does not support resolve.');
+  });
+
   it("uses installed channel plugins for explicit target resolution without installing", async () => {
-    const resolveTargets = vi.fn().mockResolvedValue([
+    mocks.loadConfig.mockReturnValue({
+      agents: { list: [{ id: "main" }, { id: "ops" }] },
+      channels: {},
+    });
+    const resolveTargets = vi.fn<ChannelResolverAdapter["resolveTargets"]>().mockResolvedValue([
       {
         input: "friends",
         resolved: true,
@@ -96,28 +123,53 @@ describe("channelsResolveCommand", () => {
 
     await channelsResolveCommand(
       {
+        agent: "ops",
         channel: "whatsapp",
         entries: ["friends"],
       },
       runtime,
     );
 
-    expect(mocks.resolveInstallableChannelPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rawChannel: "whatsapp",
-        allowInstall: false,
-      }),
+    expect(mocks.resolveInstallableChannelPlugin).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveInstallableChannelPlugin).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ agentId: "ops", rawChannel: "whatsapp", allowInstall: false }),
+    );
+    expect(mocks.resolveCommandSecretRefsViaGateway).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ agentId: "ops" }),
     );
     expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
     expect(mocks.refreshPluginRegistryAfterConfigMutation).not.toHaveBeenCalled();
-    expect(resolveTargets).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cfg: { channels: {} },
-        inputs: ["friends"],
-        kind: "group",
-      }),
-    );
+    expect(resolveTargets).toHaveBeenCalledTimes(1);
+    expect(resolveTargets.mock.calls[0]?.[0].cfg).toStrictEqual({ channels: {} });
+    expect(resolveTargets.mock.calls[0]?.[0].inputs).toStrictEqual(["friends"]);
+    expect(resolveTargets).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: "group" }));
     expect(runtime.log).toHaveBeenCalledWith("friends -> 120363000000@g.us (Friends)");
+  });
+
+  it.each([
+    [
+      "unknown",
+      "nope-agent",
+      'Unknown agent id "nope-agent". Run openclaw agents list to see configured agents.',
+    ],
+    ["empty", "", "--agent must not be blank"],
+    ["whitespace-only", "   ", "--agent must not be blank"],
+  ])("rejects an %s explicit agent before channel resolution", async (_label, agent, message) => {
+    mocks.loadConfig.mockReturnValue({
+      agents: { list: [{ id: "main" }] },
+      channels: {},
+    });
+
+    await expect(
+      channelsResolveCommand({ agent, channel: "telegram", entries: ["friends"] }, runtime),
+    ).rejects.toThrow(message);
+
+    expect(mocks.readConfigFileSnapshot).not.toHaveBeenCalled();
+    expect(mocks.resolveCommandSecretRefsViaGateway).not.toHaveBeenCalled();
+    expect(mocks.resolveInstallableChannelPlugin).not.toHaveBeenCalled();
+    expect(mocks.resolveMessageChannelSelection).not.toHaveBeenCalled();
   });
 
   it("tells users to add an explicit catalog channel before resolving", async () => {
@@ -147,7 +199,7 @@ describe("channelsResolveCommand", () => {
       channels: { whatsapp: {} },
       plugins: { allow: ["whatsapp"] },
     };
-    const resolveTargets = vi.fn().mockResolvedValue([
+    const resolveTargets = vi.fn<ChannelResolverAdapter["resolveTargets"]>().mockResolvedValue([
       {
         input: "friends",
         resolved: true,
@@ -162,12 +214,12 @@ describe("channelsResolveCommand", () => {
     mocks.applyPluginAutoEnable.mockReturnValue({ config: autoEnabledConfig, changes: [] });
     mocks.resolveMessageChannelSelection.mockResolvedValue({
       channel: "whatsapp",
+      plugin: {
+        id: "whatsapp",
+        resolver: { resolveTargets },
+      },
       configured: ["whatsapp"],
       source: "single-configured",
-    });
-    mocks.getChannelPlugin.mockReturnValue({
-      id: "whatsapp",
-      resolver: { resolveTargets },
     });
 
     await channelsResolveCommand(
@@ -185,12 +237,9 @@ describe("channelsResolveCommand", () => {
       cfg: autoEnabledConfig,
       channel: null,
     });
-    expect(resolveTargets).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cfg: autoEnabledConfig,
-        inputs: ["friends"],
-        kind: "group",
-      }),
-    );
+    expect(resolveTargets).toHaveBeenCalledTimes(1);
+    expect(resolveTargets.mock.calls[0]?.[0].cfg).toBe(autoEnabledConfig);
+    expect(resolveTargets.mock.calls[0]?.[0].inputs).toStrictEqual(["friends"]);
+    expect(resolveTargets).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: "group" }));
   });
 });

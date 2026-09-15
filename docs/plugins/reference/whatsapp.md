@@ -1,33 +1,28 @@
 ---
-summary: "Adds the WhatsApp channel surface for sending and receiving OpenClaw messages."
+summary: "OpenClaw WhatsApp channel plugin for WhatsApp Web chats."
 read_when:
   - You are installing, configuring, or auditing the whatsapp plugin
-title: "WhatsApp plugin"
+title: "WhatsApp plugin reference"
 ---
 
-# WhatsApp plugin
+<!-- Generated file. Do not edit by hand.
+Run `pnpm plugins:inventory:gen` to rebuild it. Hand-written text survives only
+between the openclaw-plugin-reference:manual-start and
+openclaw-plugin-reference:manual-end comment markers. -->
 
-Adds the WhatsApp channel surface for sending and receiving OpenClaw messages.
+OpenClaw WhatsApp channel plugin for WhatsApp Web chats.
 
 ## Distribution
 
 - Package: `@openclaw/whatsapp`
-- Install route: npm; ClawHub
+- Install route: npm or ClawHub: `clawhub:@openclaw/whatsapp`
 
 ## Surface
 
-channels: whatsapp
-
-## Windows install note
-
-On Windows, the WhatsApp plugin needs Git on `PATH` during npm install because one of its Baileys/libsignal dependencies is fetched from a git URL. Install Git for Windows, then restart the shell and rerun the install:
-
-```powershell
-winget install --id Git.Git -e
-```
-
-Portable Git also works if its `bin` directory is on `PATH`.
+- Channels: `whatsapp`
+- Contracts: `tools`
+- Skills
 
 ## Related docs
 
-- [whatsapp](/channels/whatsapp)
+- [WhatsApp](/channels/whatsapp)

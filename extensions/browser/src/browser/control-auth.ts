@@ -1,18 +1,27 @@
+/**
+ * Browser control authentication helpers.
+ *
+ * Resolves browser-control auth from Gateway auth config and auto-generates a
+ * token/password for local control when safe to persist one.
+ */
 import crypto from "node:crypto";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-} from "openclaw/plugin-sdk/text-runtime";
-import { getRuntimeConfig, replaceConfigFile } from "../config/config.js";
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
 import { ensureGatewayStartupAuth } from "../gateway/startup-auth.js";
+import { persistBrowserControlCredential } from "./config-mutations.js";
 
+/** Auth material accepted by browser-control HTTP middleware and clients. */
 export type BrowserControlAuth = {
   token?: string;
   password?: string;
 };
 
+/** Resolve browser-control auth material from config and environment. */
 export function resolveBrowserControlAuth(
   cfg?: OpenClawConfig,
   env: NodeJS.ProcessEnv = process.env,
@@ -38,6 +47,7 @@ export function resolveBrowserControlAuth(
   }
 }
 
+/** Return true when startup may auto-generate browser-control auth. */
 export function shouldAutoGenerateBrowserAuth(env: NodeJS.ProcessEnv): boolean {
   const nodeEnv = normalizeLowercaseStringOrEmpty(env.NODE_ENV);
   if (nodeEnv === "test") {
@@ -65,80 +75,29 @@ function hasExplicitNonStringGatewayCredentialForMode(params: {
   return auth.password != null && typeof auth.password !== "string";
 }
 
-function generateBrowserControlToken(): string {
-  return crypto.randomBytes(24).toString("hex");
-}
-
-async function generateAndPersistBrowserControlToken(params: {
-  cfg: OpenClawConfig;
+async function generateAndPersistBrowserControlCredential(params: {
+  kind: "token" | "password";
   env: NodeJS.ProcessEnv;
 }): Promise<{
   auth: BrowserControlAuth;
   generatedToken?: string;
 }> {
-  const token = generateBrowserControlToken();
-  const nextCfg: OpenClawConfig = {
-    ...params.cfg,
-    gateway: {
-      ...params.cfg.gateway,
-      auth: {
-        ...params.cfg.gateway?.auth,
-        token,
-      },
-    },
-  };
-  await replaceConfigFile({
-    nextConfig: nextCfg,
-    afterWrite: { mode: "auto" },
-  });
+  const credential = crypto.randomBytes(24).toString("hex");
+  await persistBrowserControlCredential({ kind: params.kind, value: credential });
 
   // Re-read to stay consistent with any concurrent config writer.
   const persistedAuth = resolveBrowserControlAuth(getRuntimeConfig(), params.env);
   if (persistedAuth.token || persistedAuth.password) {
     return {
       auth: persistedAuth,
-      generatedToken: persistedAuth.token === token ? token : undefined,
+      generatedToken: persistedAuth[params.kind] === credential ? credential : undefined,
     };
   }
 
-  return { auth: { token }, generatedToken: token };
+  return { auth: { [params.kind]: credential }, generatedToken: credential };
 }
 
-async function generateAndPersistBrowserControlPassword(params: {
-  cfg: OpenClawConfig;
-  env: NodeJS.ProcessEnv;
-}): Promise<{
-  auth: BrowserControlAuth;
-  generatedToken?: string;
-}> {
-  const password = generateBrowserControlToken();
-  const nextCfg: OpenClawConfig = {
-    ...params.cfg,
-    gateway: {
-      ...params.cfg.gateway,
-      auth: {
-        ...params.cfg.gateway?.auth,
-        password,
-      },
-    },
-  };
-  await replaceConfigFile({
-    nextConfig: nextCfg,
-    afterWrite: { mode: "auto" },
-  });
-
-  // Re-read to stay consistent with any concurrent config writer.
-  const persistedAuth = resolveBrowserControlAuth(getRuntimeConfig(), params.env);
-  if (persistedAuth.token || persistedAuth.password) {
-    return {
-      auth: persistedAuth,
-      generatedToken: persistedAuth.password === password ? password : undefined,
-    };
-  }
-
-  return { auth: { password }, generatedToken: password };
-}
-
+/** Ensure browser-control auth exists, generating and persisting it when allowed. */
 export async function ensureBrowserControlAuth(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
@@ -181,13 +140,11 @@ export async function ensureBrowserControlAuth(params: {
       // Startup will fail closed if no resolved browser auth is available.
       return { auth: latestAuth };
     }
-    if (latestMode === "trusted-proxy") {
-      // gateway.auth.mode=trusted-proxy must never be persisted with gateway.auth.token.
-      // Persist a browser-only shared secret through gateway.auth.password instead so
-      // out-of-process loopback clients can resolve it from config/env.
-      return await generateAndPersistBrowserControlPassword({ cfg: latestCfg, env });
-    }
-    return await generateAndPersistBrowserControlToken({ cfg: latestCfg, env });
+    // trusted-proxy must use a browser-only password, never a gateway auth token.
+    return await generateAndPersistBrowserControlCredential({
+      kind: latestMode === "trusted-proxy" ? "password" : "token",
+      env,
+    });
   }
 
   const ensured = await ensureGatewayStartupAuth({

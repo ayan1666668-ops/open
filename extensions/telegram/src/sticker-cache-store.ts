@@ -1,77 +1,74 @@
-import path from "node:path";
-import { loadJsonFile, saveJsonFile } from "openclaw/plugin-sdk/json-store";
-import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import type { PluginStateKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
+import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { getTelegramRuntime } from "./runtime.js";
+import {
+  normalizeCachedStickerForStore,
+  TELEGRAM_STICKER_CACHE_MAX_ENTRIES,
+  TELEGRAM_STICKER_CACHE_NAMESPACE,
+  type CachedSticker,
+} from "./sticker-cache-store.legacy-state.js";
 
-const CACHE_VERSION = 1;
+export type { CachedSticker };
 
-export interface CachedSticker {
-  fileId: string;
-  fileUniqueId: string;
-  emoji?: string;
-  setName?: string;
-  description: string;
-  cachedAt: string;
-  receivedFrom?: string;
+type TelegramStickerCacheStore = PluginStateKeyedStore<CachedSticker>;
+
+function openStickerCacheStore(): TelegramStickerCacheStore {
+  return getTelegramRuntime().state.openKeyedStore<CachedSticker>({
+    namespace: TELEGRAM_STICKER_CACHE_NAMESPACE,
+    maxEntries: TELEGRAM_STICKER_CACHE_MAX_ENTRIES,
+  });
 }
 
-interface StickerCache {
-  version: number;
-  stickers: Record<string, CachedSticker>;
-}
-
-function getCacheFile(): string {
-  return path.join(resolveStateDir(), "telegram", "sticker-cache.json");
-}
-
-function loadCache(): StickerCache {
-  const data = loadJsonFile(getCacheFile());
-  if (!data || typeof data !== "object") {
-    return { version: CACHE_VERSION, stickers: {} };
+async function readStickerCacheStore<T>(
+  operation: string,
+  read: (store: TelegramStickerCacheStore) => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await read(openStickerCacheStore());
+  } catch (err) {
+    logVerbose(`telegram sticker cache ${operation} failed: ${String(err)}`);
+    return fallback;
   }
-  const cache = data as StickerCache;
-  if (cache.version !== CACHE_VERSION) {
-    // Future: handle migration if needed
-    return { version: CACHE_VERSION, stickers: {} };
-  }
-  return cache;
-}
-
-function saveCache(cache: StickerCache): void {
-  saveJsonFile(getCacheFile(), cache);
-}
-
-function normalizeStickerSearchText(value: unknown): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
 /**
  * Get a cached sticker by its unique ID.
  */
-export function getCachedSticker(fileUniqueId: string): CachedSticker | null {
-  const cache = loadCache();
-  return cache.stickers[fileUniqueId] ?? null;
+export async function getCachedSticker(fileUniqueId: string): Promise<CachedSticker | null> {
+  return readStickerCacheStore(
+    "lookup",
+    async (store) => (await store.lookup(fileUniqueId)) ?? null,
+    null,
+  );
 }
 
 /**
  * Add or update a sticker in the cache.
  */
-export function cacheSticker(sticker: CachedSticker): void {
-  const cache = loadCache();
-  cache.stickers[sticker.fileUniqueId] = sticker;
-  saveCache(cache);
+export async function cacheSticker(sticker: CachedSticker): Promise<void> {
+  await readStickerCacheStore(
+    "register",
+    (store) => store.register(sticker.fileUniqueId, normalizeCachedStickerForStore(sticker)),
+    undefined,
+  );
 }
 
 /**
  * Search cached stickers by text query (fuzzy match on description + emoji + setName).
  */
-export function searchStickers(query: string, limit = 10): CachedSticker[] {
-  const cache = loadCache();
-  const queryLower = normalizeStickerSearchText(query);
+export async function searchStickers(query: string, limit = 10): Promise<CachedSticker[]> {
+  const queryLower = normalizeLowercaseStringOrEmpty(query);
   const results: Array<{ sticker: CachedSticker; score: number }> = [];
 
-  for (const sticker of Object.values(cache.stickers)) {
+  for (const { value: sticker } of await readStickerCacheStore(
+    "entries",
+    (store) => store.entries(),
+    [],
+  )) {
     let score = 0;
-    const descLower = normalizeStickerSearchText(sticker.description);
+    const descLower = normalizeLowercaseStringOrEmpty(sticker.description);
 
     // Exact substring match in description
     if (descLower.includes(queryLower)) {
@@ -93,7 +90,7 @@ export function searchStickers(query: string, limit = 10): CachedSticker[] {
     }
 
     // Set name match
-    if (normalizeStickerSearchText(sticker.setName).includes(queryLower)) {
+    if (normalizeLowercaseStringOrEmpty(sticker.setName).includes(queryLower)) {
       score += 3;
     }
 
@@ -111,17 +108,23 @@ export function searchStickers(query: string, limit = 10): CachedSticker[] {
 /**
  * Get all cached stickers (for debugging/listing).
  */
-export function getAllCachedStickers(): CachedSticker[] {
-  const cache = loadCache();
-  return Object.values(cache.stickers);
+export async function getAllCachedStickers(): Promise<CachedSticker[]> {
+  return readStickerCacheStore(
+    "entries",
+    async (store) => (await store.entries()).map((entry) => entry.value),
+    [],
+  );
 }
 
 /**
  * Get cache statistics.
  */
-export function getCacheStats(): { count: number; oldestAt?: string; newestAt?: string } {
-  const cache = loadCache();
-  const stickers = Object.values(cache.stickers);
+export async function getCacheStats(): Promise<{
+  count: number;
+  oldestAt?: string;
+  newestAt?: string;
+}> {
+  const stickers = await getAllCachedStickers();
   if (stickers.length === 0) {
     return { count: 0 };
   }

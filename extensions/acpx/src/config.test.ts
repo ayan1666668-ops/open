@@ -1,9 +1,26 @@
+// ACPX tests cover config plugin behavior.
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { buildPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AcpxPluginConfigSchema } from "./config-schema.js";
 import { resolveAcpxPluginConfig, resolveAcpxPluginRoot } from "./config.js";
 
+const requireFromTest = createRequire(import.meta.url);
+const TSX_IMPORT = requireFromTest.resolve("tsx");
+
+function expectedMcpServerArgs(params: { sourceEntry: string; distEntry: string }): string[] {
+  const distEntry = path.resolve(params.distEntry);
+  if (fs.existsSync(distEntry)) {
+    return [distEntry];
+  }
+  return ["--import", TSX_IMPORT, path.resolve(params.sourceEntry)];
+}
+
 describe("embedded acpx plugin config", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("resolves workspace stateDir and cwd by default", () => {
     const workspaceDir = path.resolve("/tmp/openclaw-acpx");
     const resolved = resolveAcpxPluginConfig({
@@ -16,6 +33,7 @@ describe("embedded acpx plugin config", () => {
     expect(resolved.permissionMode).toBe("approve-reads");
     expect(resolved.nonInteractivePermissions).toBe("fail");
     expect(resolved.timeoutSeconds).toBe(120);
+    expect(resolved.probeAgent).toBeUndefined();
     expect(resolved.agents).toStrictEqual({});
   });
 
@@ -30,17 +48,6 @@ describe("embedded acpx plugin config", () => {
     expect(resolved.timeoutSeconds).toBe(300);
   });
 
-  it("keeps explicit probeAgent config", () => {
-    const resolved = resolveAcpxPluginConfig({
-      rawConfig: {
-        probeAgent: "claude",
-      },
-      workspaceDir: "/tmp/openclaw-acpx",
-    });
-
-    expect(resolved.probeAgent).toBe("claude");
-  });
-
   it("accepts agent command overrides", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
@@ -53,8 +60,8 @@ describe("embedded acpx plugin config", () => {
     });
 
     expect(resolved.agents).toEqual({
-      claude: "claude --acp",
-      codex: "codex custom-acp",
+      claude: ["claude", "--acp"],
+      codex: ["codex", "custom-acp"],
     });
   });
 
@@ -76,12 +83,47 @@ describe("embedded acpx plugin config", () => {
     });
 
     expect(resolved.agents).toEqual({
-      claude: "node /path/to/adapter.mjs --verbose",
-      codex: "codex-acp --model gpt-5",
+      claude: ["node", "/path/to/adapter.mjs", "--verbose"],
+      codex: ["codex-acp", "--model", "gpt-5"],
     });
   });
 
-  it("quotes agent args that need to survive command-line parsing as one token", () => {
+  it.each([
+    {
+      platform: "win32",
+      command: String.raw`.\agent.exe --stdio`,
+      expected: [String.raw`.\agent.exe`, "--stdio"],
+    },
+    {
+      platform: "win32",
+      command: String.raw`node C:\tools\agent.js`,
+      expected: ["node", String.raw`C:\tools\agent.js`],
+    },
+    {
+      platform: "win32",
+      command: String.raw`"\\server\share\agent.exe" "" "C:\work dir\\"`,
+      expected: [String.raw`\\server\share\agent.exe`, "", "C:\\work dir\\"],
+    },
+    {
+      platform: "win32",
+      command: String.raw`node "say \"hello\""`,
+      expected: ["node", 'say "hello"'],
+    },
+    {
+      platform: "linux",
+      command: String.raw`node ./some\ file.js ""`,
+      expected: ["node", "./some file.js", ""],
+    },
+  ] as const)("preserves $platform command syntax: $command", ({ platform, command, expected }) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    const config = resolveAcpxPluginConfig({
+      rawConfig: { agents: { fixture: { command, args: ["suffix"] } } },
+      workspaceDir: "/tmp/openclaw-acpx",
+    });
+    expect(config.agents.fixture).toEqual([...expected, "suffix"]);
+  });
+
+  it("preserves structured agent args without shell quoting", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
         agents: {
@@ -95,7 +137,7 @@ describe("embedded acpx plugin config", () => {
     });
 
     expect(resolved.agents).toEqual({
-      custom: "node '/tmp/My Adapter.mjs' '--flag=value with spaces' 'owner'\"'\"'s-choice'",
+      custom: ["node", "/tmp/My Adapter.mjs", "--flag=value with spaces", "owner's-choice"],
     });
   });
 
@@ -110,20 +152,20 @@ describe("embedded acpx plugin config", () => {
     });
 
     expect(resolved.agents).toEqual({
-      simple: "simple-acp",
+      simple: ["simple-acp"],
     });
   });
 
-  it("leaves probeAgent undefined by default so the runtime picks its built-in probe agent", () => {
-    const resolved = resolveAcpxPluginConfig({
-      rawConfig: undefined,
-      workspaceDir: "/tmp/openclaw-acpx",
-    });
-
-    expect(resolved.probeAgent).toBeUndefined();
+  it("rejects incomplete command quoting before creating launch argv", () => {
+    expect(() =>
+      resolveAcpxPluginConfig({
+        rawConfig: { agents: { custom: { command: "node 'unfinished argument" } } },
+        workspaceDir: "/tmp/openclaw-acpx",
+      }),
+    ).toThrow("unterminated quote");
   });
 
-  it("carries an explicit probeAgent through to the resolved plugin config, trimmed and lowercased", () => {
+  it("carries an explicit probeAgent through to the resolved plugin config, trimmed", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
         probeAgent: "  OpenCode  ",
@@ -131,7 +173,7 @@ describe("embedded acpx plugin config", () => {
       workspaceDir: "/tmp/openclaw-acpx",
     });
 
-    expect(resolved.probeAgent).toBe("opencode");
+    expect(resolved.probeAgent).toBe("OpenCode");
   });
 
   it("rejects an empty probeAgent string", () => {
@@ -154,13 +196,13 @@ describe("embedded acpx plugin config", () => {
     });
 
     const server = resolved.mcpServers["openclaw-plugin-tools"];
-    expect(server).toMatchObject({
+    expect(server).toEqual({
       command: process.execPath,
-      args: expect.any(Array),
+      args: expectedMcpServerArgs({
+        sourceEntry: "src/mcp/plugin-tools-serve.ts",
+        distEntry: "dist/mcp/plugin-tools-serve.js",
+      }),
     });
-    expect(server.command).toBe(process.execPath);
-    expect(Array.isArray(server.args)).toBe(true);
-    expect(server.args?.length).toBeGreaterThan(0);
   });
 
   it("injects the built-in OpenClaw tools MCP server only when explicitly enabled", () => {
@@ -172,13 +214,13 @@ describe("embedded acpx plugin config", () => {
     });
 
     const server = resolved.mcpServers["openclaw-tools"];
-    expect(server).toMatchObject({
+    expect(server).toEqual({
       command: process.execPath,
-      args: expect.any(Array),
+      args: expectedMcpServerArgs({
+        sourceEntry: "src/mcp/openclaw-tools-serve.ts",
+        distEntry: "dist/mcp/openclaw-tools-serve.js",
+      }),
     });
-    expect(server.command).toBe(process.execPath);
-    expect(Array.isArray(server.args)).toBe(true);
-    expect(server.args?.length).toBeGreaterThan(0);
   });
 
   it("resolves the plugin root from shared dist chunk paths", () => {
@@ -194,20 +236,8 @@ describe("embedded acpx plugin config", () => {
       fs.readFileSync(path.join(pluginRoot, "openclaw.plugin.json"), "utf8"),
     ) as { configSchema?: unknown };
 
-    expect(manifest.configSchema).toMatchObject({
-      type: "object",
-      additionalProperties: false,
-      properties: expect.objectContaining({
-        cwd: expect.any(Object),
-        stateDir: expect.any(Object),
-        probeAgent: expect.any(Object),
-        timeoutSeconds: expect.objectContaining({
-          default: 120,
-        }),
-        agents: expect.any(Object),
-        mcpServers: expect.any(Object),
-        openClawToolsMcpBridge: expect.any(Object),
-      }),
-    });
+    expect(buildPluginConfigSchema(AcpxPluginConfigSchema).jsonSchema).toEqual(
+      manifest.configSchema,
+    );
   });
 });

@@ -1,10 +1,29 @@
 import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { NextFunction, Request, Response } from "express";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { createMockIncomingRequest } from "openclaw/plugin-sdk/test-env";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { createRuntimeSpies } from "../../test-support/runtime-spies.js";
+
+const runDetachedWebhookWorkSpy = vi.hoisted(() => vi.fn());
+vi.mock("openclaw/plugin-sdk/webhook-request-guards", async () => {
+  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/webhook-request-guards")>(
+    "openclaw/plugin-sdk/webhook-request-guards",
+  );
+  runDetachedWebhookWorkSpy.mockImplementation(actual.runDetachedWebhookWork);
+  return {
+    ...actual,
+    runDetachedWebhookWork: runDetachedWebhookWorkSpy,
+  };
+});
+
 import { createLineNodeWebhookHandler, readLineWebhookRequestBody } from "./webhook-node.js";
 import { createLineWebhookMiddleware } from "./webhook.js";
+
+afterAll(() => {
+  vi.doUnmock("openclaw/plugin-sdk/webhook-request-guards");
+});
 
 const sign = (body: string, secret: string) =>
   crypto.createHmac("SHA256", secret).update(body).digest("base64");
@@ -34,34 +53,46 @@ type ParsedLineWebhookPayload = {
   events: unknown;
 };
 
-type RuntimeEnvMock = RuntimeEnv & {
-  error: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
-  exit: ReturnType<typeof vi.fn<(code: number) => void>>;
-  log: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
-};
+function firstMockCall(
+  mock: { mock: { calls: Array<readonly unknown[]> } },
+  label: string,
+): readonly unknown[] {
+  const call = mock.mock.calls[0];
+  if (!call) {
+    throw new Error(`expected ${label} call`);
+  }
+  return call;
+}
 
-function createRuntimeMock(): RuntimeEnvMock {
-  return {
-    error: vi.fn<(...args: unknown[]) => void>(),
-    exit: vi.fn<(code: number) => void>(),
-    log: vi.fn<(...args: unknown[]) => void>(),
-  };
+function firstParsedPayload(
+  mock: { mock: { calls: Array<readonly unknown[]> } },
+  label: string,
+): ParsedLineWebhookPayload {
+  return firstMockCall(mock, label)[0] as ParsedLineWebhookPayload;
 }
 
 function createMiddlewareRes() {
+  const status = vi.fn<Response["status"]>();
+  const json = vi.fn<Response["json"]>();
   const res = {
-    status: vi.fn(),
-    json: vi.fn(),
+    status,
+    json,
     headersSent: false,
-  } as any;
-  res.status.mockReturnValue(res);
-  res.json.mockReturnValue(res);
+  } as unknown as Response & { status: typeof status; json: typeof json };
+  status.mockReturnValue(res);
+  json.mockReturnValue(res);
   return res;
 }
 
+function createMiddlewareRequest(
+  request: Pick<Request, "body" | "headers"> & { rawBody?: string | Buffer },
+): Request {
+  return request as unknown as Request;
+}
+
 function createPostWebhookTestHarness(rawBody: string, secret = "secret") {
-  const bot = { handleWebhook: vi.fn(async () => {}) };
-  const runtime = createRuntimeMock();
+  const bot = { handleWebhook: vi.fn(async () => "durable" as const) };
+  const runtime = createRuntimeSpies();
   const handler = createLineNodeWebhookHandler({
     channelSecret: secret,
     bot,
@@ -109,12 +140,12 @@ async function invokeWebhook(params: {
     }
   }
 
-  const req = {
+  const req = createMiddlewareRequest({
     headers,
     body: params.body,
-  } as any;
+  });
   const res = createMiddlewareRes();
-  await middleware(req, res, {} as any);
+  await middleware(req, res, vi.fn() as NextFunction);
   return { res, onEvents: onEventsMock };
 }
 
@@ -138,22 +169,24 @@ type WebhookPostResult = {
 };
 
 type WebhookPostInvoker = (params: {
-  failWith?: Error;
+  failWith?: unknown;
   rawBody: string;
   signed: boolean;
 }) => Promise<WebhookPostResult>;
 
 async function invokeNodePostContract(params: {
-  failWith?: Error;
+  failWith?: unknown;
   rawBody: string;
   signed: boolean;
 }) {
   const dispatched = vi.fn(async () => {
     if (params.failWith) {
+      // oxlint-disable-next-line typescript/only-throw-error -- Webhook boundaries must report non-Error throws from downstream dispatchers.
       throw params.failWith;
     }
+    return "durable" as const;
   });
-  const runtime = createRuntimeMock();
+  const runtime = createRuntimeSpies();
   const handler = createLineNodeWebhookHandler({
     channelSecret: SECRET,
     bot: { handleWebhook: dispatched },
@@ -178,13 +211,14 @@ async function invokeNodePostContract(params: {
 }
 
 async function invokeMiddlewarePostContract(params: {
-  failWith?: Error;
+  failWith?: unknown;
   rawBody: string;
   signed: boolean;
 }) {
-  const runtime = createRuntimeMock();
+  const runtime = createRuntimeSpies();
   const onEvents = vi.fn(async () => {
     if (params.failWith) {
+      // oxlint-disable-next-line typescript/only-throw-error -- Webhook boundaries must report non-Error throws from downstream dispatchers.
       throw params.failWith;
     }
   });
@@ -223,20 +257,20 @@ async function expectSignedRawBodyWins(params: { rawBody: string | Buffer; signe
   });
   const rawBodyText =
     typeof params.rawBody === "string" ? params.rawBody : params.rawBody.toString("utf-8");
-  const req = {
+  const req = createMiddlewareRequest({
     headers: { "x-line-signature": sign(rawBodyText, SECRET) },
     rawBody: params.rawBody,
     body: reqBody,
-  } as any;
+  });
   const res = createMiddlewareRes();
 
-  await middleware(req, res, {} as any);
+  await middleware(req, res, vi.fn() as NextFunction);
 
   expect(res.status).toHaveBeenCalledWith(200);
   expect(onEvents).toHaveBeenCalledTimes(1);
-  const processedBody = (
-    onEvents.mock.calls[0] as unknown as [{ events?: Array<{ source?: { userId?: string } }> }]
-  )?.[0];
+  const processedBody = firstMockCall(onEvents, "LINE webhook events")[0] as {
+    events?: Array<{ source?: { userId?: string } }>;
+  };
   expect(processedBody?.events?.[0]?.source?.userId).toBe(params.signedUserId);
   expect(processedBody?.events?.[0]?.source?.userId).not.toBe("tampered-user");
 }
@@ -285,26 +319,45 @@ describe("LINE webhook shared POST contract", () => {
   );
 
   it.each(sharedWebhookPostContractCases)(
-    "$name returns 500 when event processing fails and does not acknowledge with 200",
+    "$name returns 500 when durable admission fails",
     async ({ invoke }) => {
       const result = await invoke({
-        failWith: new Error("transient failure"),
+        failWith: new Error("persist failed"),
         rawBody: JSON.stringify({ events: [{ type: "message" }] }),
         signed: true,
       });
 
       expect(result.status).toBe(500);
       expect(result.body).toEqual({ error: "Internal server error" });
-      expect(result.dispatched).toHaveBeenCalledTimes(1);
       expect(result.runtimeError).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(sharedWebhookPostContractCases)(
+    "$name reports non-Error admission failures without object Object",
+    async ({ invoke }) => {
+      const result = await invoke({
+        failWith: { code: "LINE_ADMISSION_REJECTED", retryAfterMs: 250 },
+        rawBody: JSON.stringify({ events: [{ type: "message" }] }),
+        signed: true,
+      });
+
+      expect(result.status).toBe(500);
+      expect(result.body).toEqual({ error: "Internal server error" });
+      expect(result.runtimeError).toHaveBeenCalledTimes(1);
+      const runtimeMessage = String(firstMockCall(result.runtimeError, "runtime error")[0]);
+      expect(runtimeMessage).toContain("line webhook error:");
+      expect(runtimeMessage).toContain("LINE_ADMISSION_REJECTED");
+      expect(runtimeMessage).toContain("retryAfterMs");
+      expect(runtimeMessage).not.toContain("[object Object]");
     },
   );
 });
 
 describe("createLineNodeWebhookHandler", () => {
   it("returns 200 for GET", async () => {
-    const bot = { handleWebhook: vi.fn(async () => {}) };
-    const runtime = createRuntimeMock();
+    const bot = { handleWebhook: vi.fn(async () => "durable" as const) };
+    const runtime = createRuntimeSpies();
     const handler = createLineNodeWebhookHandler({
       channelSecret: "secret",
       bot,
@@ -320,8 +373,8 @@ describe("createLineNodeWebhookHandler", () => {
   });
 
   it("returns 204 for HEAD", async () => {
-    const bot = { handleWebhook: vi.fn(async () => {}) };
-    const runtime = createRuntimeMock();
+    const bot = { handleWebhook: vi.fn(async () => "durable" as const) };
+    const runtime = createRuntimeSpies();
     const handler = createLineNodeWebhookHandler({
       channelSecret: "secret",
       bot,
@@ -348,8 +401,8 @@ describe("createLineNodeWebhookHandler", () => {
   });
 
   it("rejects unsigned POST requests before reading the body", async () => {
-    const bot = { handleWebhook: vi.fn(async () => {}) };
-    const runtime = createRuntimeMock();
+    const bot = { handleWebhook: vi.fn(async () => "durable" as const) };
+    const runtime = createRuntimeSpies();
     const readBody = vi.fn(async () => JSON.stringify({ events: [{ type: "message" }] }));
     const handler = createLineNodeWebhookHandler({
       channelSecret: "secret",
@@ -368,8 +421,8 @@ describe("createLineNodeWebhookHandler", () => {
 
   it("uses strict pre-auth limits for signed POST requests", async () => {
     const rawBody = JSON.stringify({ events: [{ type: "message" }] });
-    const bot = { handleWebhook: vi.fn(async () => {}) };
-    const runtime = createRuntimeMock();
+    const bot = { handleWebhook: vi.fn(async () => "durable" as const) };
+    const runtime = createRuntimeSpies();
     const readBody = vi.fn(async (_req: IncomingMessage, maxBytes: number, timeoutMs?: number) => {
       expect(maxBytes).toBe(64 * 1024);
       expect(timeoutMs).toBe(5_000);
@@ -413,24 +466,25 @@ describe("createLineNodeWebhookHandler", () => {
     await runSignedPost({ handler, rawBody, secret, res });
 
     expect(res.statusCode).toBe(200);
+    expect(parseResponseBody(res.body)).toEqual({ status: "ok" });
     expect(bot.handleWebhook).toHaveBeenCalledTimes(1);
-    const [payload] = bot.handleWebhook.mock.calls[0] as unknown as [ParsedLineWebhookPayload];
+    const payload = firstParsedPayload(bot.handleWebhook, "LINE node webhook payload");
     expect(payload.events).toEqual([{ type: "message" }]);
   });
 
-  it("releases authenticated requests before event processing completes", async () => {
+  it("waits for durable admission before acknowledging signed event requests", async () => {
     const rawBody = JSON.stringify({ events: [{ type: "message" }] });
     let releaseAuthenticated: (() => void) | undefined;
     const bot = {
       handleWebhook: vi.fn(
         async () =>
-          await new Promise<void>((resolve) => {
-            releaseAuthenticated = resolve;
+          await new Promise<"durable">((resolve) => {
+            releaseAuthenticated = () => resolve("durable");
           }),
       ),
     };
     const onRequestAuthenticated = vi.fn();
-    const runtime = createRuntimeMock();
+    const runtime = createRuntimeSpies();
     const handler = createLineNodeWebhookHandler({
       channelSecret: SECRET,
       bot,
@@ -453,8 +507,8 @@ describe("createLineNodeWebhookHandler", () => {
     }
     releaseAuthenticated();
     await request;
-
     expect(res.statusCode).toBe(200);
+    expect(res.headersSent).toBe(true);
   });
 
   it("returns 400 for invalid JSON payload even when signature is valid", async () => {
@@ -493,9 +547,20 @@ describe("createLineWebhookMiddleware", () => {
   ])("parses JSON from %s", async (_label, body, expectedEvents) => {
     const { res, onEvents } = await invokeWebhook({ body });
     expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ status: "ok" });
     expect(onEvents).toHaveBeenCalledTimes(1);
-    const [payload] = onEvents.mock.calls[0] as unknown as [ParsedLineWebhookPayload];
+    const payload = firstParsedPayload(onEvents, "LINE middleware payload");
     expect(payload.events).toEqual(expectedEvents);
+  });
+
+  it("waits for middleware event admission before acknowledging", async () => {
+    runDetachedWebhookWorkSpy.mockClear();
+    const { res, onEvents } = await invokeWebhook({
+      body: JSON.stringify({ events: [{ type: "message" }] }),
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(runDetachedWebhookWorkSpy).not.toHaveBeenCalled();
+    expect(onEvents).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid JSON payloads", async () => {
@@ -562,14 +627,14 @@ describe("createLineWebhookMiddleware", () => {
       onEvents,
     });
 
-    const req = {
+    const req = createMiddlewareRequest({
       headers: { "x-line-signature": sign(rawBody, SECRET) },
       rawBody,
       body: { events: [{ type: "message" }] },
-    } as any;
+    });
     const res = createMiddlewareRes();
 
-    await middleware(req, res, {} as any);
+    await middleware(req, res, vi.fn() as NextFunction);
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ error: "Invalid webhook payload" });

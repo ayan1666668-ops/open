@@ -1,3 +1,4 @@
+/** Tests external plugin channel secret contract API loading. */
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,15 +8,11 @@ const tempDirs: string[] = [];
 
 const {
   loadPluginMetadataSnapshotMock,
-  loadBundledPluginPublicArtifactModuleSyncMock,
+  loadBundledPublicArtifactMock,
   shouldRejectHardlinkedPluginFilesMock,
 } = vi.hoisted(() => ({
   loadPluginMetadataSnapshotMock: vi.fn(),
-  loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(() => {
-    throw new Error(
-      "Unable to resolve bundled plugin public surface discord/secret-contract-api.js",
-    );
-  }),
+  loadBundledPublicArtifactMock: vi.fn(() => null),
   shouldRejectHardlinkedPluginFilesMock: vi.fn(() => true),
 }));
 
@@ -23,8 +20,15 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
   loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
 }));
 
+vi.mock("../config/io.plugin-metadata.js", () => ({
+  resolveConfigWidePluginManifestRegistry: (...args: unknown[]) => {
+    const snapshot = loadPluginMetadataSnapshotMock(...args);
+    return snapshot.manifestRegistry ?? snapshot;
+  },
+}));
+
 vi.mock("../plugins/public-surface-loader.js", () => ({
-  loadBundledPluginPublicArtifactModuleSync: loadBundledPluginPublicArtifactModuleSyncMock,
+  loadBundledPluginPublicArtifactModuleFromCandidatesSync: loadBundledPublicArtifactMock,
 }));
 
 vi.mock("../plugins/hardlink-policy.js", () => ({
@@ -42,6 +46,12 @@ function requireChannelSecretContractApi(
     throw new Error("expected channel secret contract API");
   }
   return api;
+}
+
+function expectDiscordTokenRegistryEntry(contractApi: ChannelSecretContractApi): void {
+  const entries = contractApi.secretTargetRegistryEntries ?? [];
+  const entry = entries.find((record) => record.id === "channels.discord.token");
+  expect(entry?.id).toBe("channels.discord.token");
 }
 
 function channelSecretContractModuleSource(channelId: string) {
@@ -91,7 +101,7 @@ function writeExternalChannelPlugin(params: { pluginId: string; channelId: strin
 describe("external channel secret contract api", () => {
   beforeEach(() => {
     loadPluginMetadataSnapshotMock.mockReset();
-    loadBundledPluginPublicArtifactModuleSyncMock.mockClear();
+    loadBundledPublicArtifactMock.mockClear();
     shouldRejectHardlinkedPluginFilesMock.mockReset();
     shouldRejectHardlinkedPluginFilesMock.mockReturnValue(true);
   });
@@ -114,14 +124,24 @@ describe("external channel secret contract api", () => {
     });
 
     const contractApi = requireChannelSecretContractApi(api);
-    expect(contractApi.secretTargetRegistryEntries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "channels.discord.token",
-        }),
-      ]),
-    );
+    expectDiscordTokenRegistryEntry(contractApi);
     expect(contractApi.collectRuntimeConfigAssignments).toBeTypeOf("function");
+  });
+
+  it("keeps a healthy external contract available when another artifact fails to load", () => {
+    const broken = writeExternalChannelPlugin({ pluginId: "custom", channelId: "custom" });
+    const healthy = writeExternalChannelPlugin({ pluginId: "custom-alt", channelId: "custom" });
+    fs.writeFileSync(
+      path.join(broken.rootDir, "secret-contract-api.cjs"),
+      'throw new Error("contract dependency unavailable");\n',
+    );
+    loadPluginMetadataSnapshotMock.mockReturnValue({ plugins: [broken, healthy] });
+
+    const api = loadChannelSecretContractApi({ channelId: "custom", config: {}, env: {} });
+
+    expect(api?.secretTargetRegistryEntries?.map((entry) => entry.id)).toEqual([
+      "channels.custom.token",
+    ]);
   });
 
   it("loads dist/ secret-contract-api sidecars for compiled npm-published external channel plugins", () => {
@@ -151,13 +171,7 @@ describe("external channel secret contract api", () => {
     });
 
     const contractApi = requireChannelSecretContractApi(api);
-    expect(contractApi.secretTargetRegistryEntries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "channels.discord.token",
-        }),
-      ]),
-    );
+    expectDiscordTokenRegistryEntry(contractApi);
     expect(contractApi.collectRuntimeConfigAssignments).toBeTypeOf("function");
   });
 
@@ -199,13 +213,7 @@ describe("external channel secret contract api", () => {
         env,
       });
       const contractApi = requireChannelSecretContractApi(api);
-      expect(contractApi.secretTargetRegistryEntries).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "channels.discord.token",
-          }),
-        ]),
-      );
+      expectDiscordTokenRegistryEntry(contractApi);
     },
   );
 
@@ -223,5 +231,54 @@ describe("external channel secret contract api", () => {
     });
 
     expect(api).toBeUndefined();
+  });
+
+  it("falls back to official host secret metadata when an external plugin has no artifact", () => {
+    loadPluginMetadataSnapshotMock.mockReturnValue({ plugins: [] });
+
+    const api = loadChannelSecretContractApi({
+      channelId: "qqbot",
+      config: { channels: { qqbot: { appId: "app" } } },
+      env: {},
+    });
+
+    expect(api?.secretTargetRegistryEntries?.map((entry) => entry.id)).toEqual([
+      "channels.qqbot.accounts.*.clientSecret",
+      "channels.qqbot.clientSecret",
+    ]);
+    expect(api?.collectRuntimeConfigAssignments).toBeTypeOf("function");
+  });
+
+  it("falls back to official host secret metadata when plugin metadata is unavailable", () => {
+    loadPluginMetadataSnapshotMock.mockImplementation(() => {
+      throw new Error("metadata unavailable");
+    });
+
+    const api = loadChannelSecretContractApi({
+      channelId: "qqbot",
+      config: { channels: { qqbot: { appId: "app" } } },
+      env: {},
+    });
+
+    expect(api?.secretTargetRegistryEntries?.map((entry) => entry.id)).toEqual([
+      "channels.qqbot.accounts.*.clientSecret",
+      "channels.qqbot.clientSecret",
+    ]);
+  });
+
+  it("does not hide installed plugin contract loading failures behind the official fallback", () => {
+    const record = writeExternalChannelPlugin({ pluginId: "qqbot", channelId: "qqbot" });
+    loadPluginMetadataSnapshotMock.mockReturnValue({ plugins: [record] });
+    shouldRejectHardlinkedPluginFilesMock.mockImplementation(() => {
+      throw new Error("contract policy failed");
+    });
+
+    expect(() =>
+      loadChannelSecretContractApi({
+        channelId: "qqbot",
+        config: { channels: { qqbot: { appId: "app" } } },
+        env: {},
+      }),
+    ).toThrow("contract policy failed");
   });
 });
