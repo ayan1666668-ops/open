@@ -1,6 +1,6 @@
 import { adoptTailscaleProfileAvatar } from "../../../state/user-profiles.js";
 import { sleep } from "../../../utils/sleep.js";
-import { formatForLog } from "../../../ws-log.js";
+import { formatForLog } from "../../ws-log.js";
 
 /**
  * Backoff between detached GitHub identity sync retries after the first
@@ -45,7 +45,7 @@ export async function adoptTailscaleAvatarIfMissing(params: {
   onAdopted: (profileId: string, updatedAt: number) => void;
   warn: (message: string) => void;
 }): Promise<void> {
-  if (params.profile.hasAvatar || !params.profilePic) {
+  if (params.hasAvatar || !params.profilePic) {
     return;
   }
   try {
