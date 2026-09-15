@@ -8,6 +8,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { hasConfiguredSecretInput } from "../../config/types.secrets.js";
 import type { SkillConfig } from "../../config/types.skills.js";
 import {
+  findActiveDegradedSecretOwner,
+  listActiveDegradedSecretOwners,
+} from "../../secrets/runtime-degraded-state.js";
+import {
   evaluateRuntimeEligibility,
   hasBinary,
   isConfigPathTruthyWithDefaults,
@@ -57,6 +61,21 @@ export function resolveSkillConfig(
   return entry;
 }
 
+/** Returns whether cold startup isolated this exact skill's configured secret. */
+export function isSkillSecretOwnerUnavailable(skillKey: string): boolean {
+  return Boolean(findActiveDegradedSecretOwner("capability", `skill:${skillKey}`));
+}
+
+/** Returns whether cold startup isolated any configured skill secret. */
+export function hasUnavailableSkillSecretOwners(): boolean {
+  return listActiveDegradedSecretOwners().some(
+    (owner) =>
+      owner.degradationState !== "stale" &&
+      owner.ownerKind === "capability" &&
+      owner.ownerId.startsWith("skill:"),
+  );
+}
+
 export function isSkillEnvRequirementSatisfied(params: {
   envName: string;
   skillConfig?: SkillConfig;
@@ -81,7 +100,7 @@ function normalizeAllowlist(input: unknown): ReadonlySet<string> | undefined {
   return normalized.length > 0 ? new Set(normalized) : undefined;
 }
 
-const BUNDLED_SOURCES = new Set(["openclaw-bundled"]);
+const BUNDLED_SOURCES = new Set(["openclaw-bundled", "openclaw-custodian"]);
 
 function isBundledSkill(entry: SkillEntry): boolean {
   return BUNDLED_SOURCES.has(resolveSkillSource(entry.skill));
@@ -107,12 +126,16 @@ export function shouldIncludeSkill(params: {
   config?: OpenClawConfig;
   bundledAllowlist: ReadonlySet<string> | undefined;
   eligibility?: SkillEligibilityContext;
+  hasBin?: (bin: string) => boolean;
 }): boolean {
   const { entry, config, bundledAllowlist, eligibility } = params;
   const skillKey = resolveSkillKey(entry.skill, entry);
   const skillConfig = resolveSkillConfig(config, skillKey);
 
   if (skillConfig?.enabled === false) {
+    return false;
+  }
+  if (isSkillSecretOwnerUnavailable(skillKey)) {
     return false;
   }
   if (!isBundledSkillAllowed(entry, bundledAllowlist)) {
@@ -123,7 +146,7 @@ export function shouldIncludeSkill(params: {
     remotePlatforms: eligibility?.remote?.platforms,
     always: entry.metadata?.always,
     requires: entry.metadata?.requires,
-    hasBin: hasBinary,
+    hasBin: params.hasBin ?? hasBinary,
     hasRemoteBin: eligibility?.remote?.hasBin,
     hasAnyRemoteBin: eligibility?.remote?.hasAnyBin,
     hasEnv: (envName) =>

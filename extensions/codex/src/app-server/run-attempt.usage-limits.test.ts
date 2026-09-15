@@ -2,6 +2,7 @@
 import path from "node:path";
 import { saveAuthProfileStore } from "openclaw/plugin-sdk/agent-runtime";
 import { describe, expect, it } from "vitest";
+import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
 import { readCodexRateLimitsRevision, rememberCodexRateLimitsRead } from "./rate-limit-cache.js";
 import {
   createParams,
@@ -63,8 +64,8 @@ describe("runCodexAppServerAttempt usage limits", () => {
     };
 
     const result = await runCodexAppServerAttempt(params);
-    expect(result.promptErrorSource).toBe("prompt");
-    const promptError = expectUsageLimitPromptError(result.promptError);
+    expect(readAttemptTerminal(result).promptErrorSource).toBe("prompt");
+    const promptError = expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
     expect(promptError.message).toContain("You've reached your Codex subscription usage limit.");
     expect(promptError.message).toContain("Next reset in");
   });
@@ -114,8 +115,8 @@ describe("runCodexAppServerAttempt usage limits", () => {
     await harness.waitForMethod("turn/start");
 
     const result = await run;
-    expect(result.promptErrorSource).toBe("prompt");
-    const promptError = expectUsageLimitPromptError(result.promptError);
+    expect(readAttemptTerminal(result).promptErrorSource).toBe("prompt");
+    const promptError = expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
     expect(promptError.message).toContain("You've reached your Codex subscription usage limit.");
     expect(promptError.message).toContain("Next reset in");
     expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBeUndefined();
@@ -173,7 +174,9 @@ describe("runCodexAppServerAttempt usage limits", () => {
 
     const result = await runCodexAppServerAttempt(params);
 
-    expect(expectUsageLimitPromptError(result.promptError).message).toContain("Next reset in");
+    expect(expectUsageLimitPromptError(readAttemptTerminal(result).promptError).message).toContain(
+      "Next reset in",
+    );
     expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBeUndefined();
   });
 
@@ -197,11 +200,46 @@ describe("runCodexAppServerAttempt usage limits", () => {
     await harness.waitForMethod("account/rateLimits/read");
 
     const result = await run;
-    expect(result.promptErrorSource).toBe("prompt");
-    const promptError = expectUsageLimitPromptError(result.promptError);
+    expect(readAttemptTerminal(result).promptErrorSource).toBe("prompt");
+    const promptError = expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
     expect(promptError.message).toContain("You've reached your Codex subscription usage limit.");
     expect(promptError.message).toContain("Next reset in");
     expect(promptError.message).not.toContain("Codex did not return a reset time");
+  });
+
+  it("does not report exhaustion when refreshed account limits show full availability", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const harness = createStartedThreadHarness(async (method) => {
+      if (method === "turn/start") {
+        throw Object.assign(new Error("You've reached your usage limit."), {
+          data: { codexErrorInfo: "usageLimitExceeded" },
+        });
+      }
+      if (method === "account/rateLimits/read") {
+        return {
+          rateLimits: {
+            limitId: "codex",
+            primary: { usedPercent: 0, windowDurationMins: null, resetsAt: null },
+            secondary: null,
+            rateLimitReachedType: null,
+          },
+        };
+      }
+      return undefined;
+    });
+
+    const run = runCodexAppServerAttempt(createParams(sessionFile, workspaceDir));
+    await harness.waitForMethod("account/rateLimits/read");
+
+    const result = await run;
+    expect(readAttemptTerminal(result).promptErrorSource).toBe("prompt");
+    const promptError = expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
+    expect(promptError.message).toContain(
+      "current account usage does not report an exhausted limit",
+    );
+    expect(promptError.message).not.toContain("subscription usage limit");
+    expect(promptError.message).not.toContain("could not determine a reset time");
   });
 
   it("refreshes Codex account rate limits when a failed turn omits reset details", async () => {
@@ -252,7 +290,7 @@ describe("runCodexAppServerAttempt usage limits", () => {
 
     const result = await run;
 
-    const promptError = expectUsageLimitPromptError(result.promptError);
+    const promptError = expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
     expect(promptError.message).toContain("You've reached your Codex subscription usage limit.");
     expect(promptError.message).toContain("Next reset in");
     expect(promptError.message).not.toContain("Codex did not return a reset time");
@@ -262,56 +300,72 @@ describe("runCodexAppServerAttempt usage limits", () => {
     );
   });
 
-  it("blocks after a streamed usage-limit failure with trusted in-turn limits", async () => {
-    const sessionFile = path.join(tempDir, "session.jsonl");
-    const workspaceDir = path.join(tempDir, "workspace");
-    const resetsAt = Math.ceil(Date.now() / 1000) + 120;
-    const authProfileId = "openai:work";
-    const harness = createStartedThreadHarness(async () => undefined);
-    const params = createParams(sessionFile, workspaceDir);
-    params.agentDir = path.join(tempDir, "trusted-streamed-usage-limit-agent");
-    params.authProfileId = authProfileId;
-    params.authProfileStore = {
-      version: 1,
-      profiles: {
-        [authProfileId]: {
-          type: "oauth",
-          provider: "openai",
-          access: "placeholder",
-          refresh: "placeholder",
-          expires: Date.now() + 60_000,
-        },
+  it.each([
+    {
+      error: { message: "You've reached your usage limit.", codexErrorInfo: "usageLimitExceeded" },
+      blocked: true,
+    },
+    {
+      error: {
+        message: "Too many requests; please retry later.",
+        codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
       },
-    };
-    saveAuthProfileStore(params.authProfileStore, params.agentDir);
-
-    const run = runCodexAppServerAttempt(params);
-    await harness.waitForMethod("turn/start");
-    await harness.notify(rateLimitsUpdated(resetsAt));
-    await harness.notify({
-      method: "turn/completed",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        turn: {
-          id: "turn-1",
-          status: "failed",
-          error: {
-            message: "You've reached your usage limit.",
-            codexErrorInfo: "usageLimitExceeded",
+      blocked: false,
+    },
+  ])(
+    "blocks only native usage exhaustion with trusted in-turn limits: $blocked",
+    async ({ error, blocked }) => {
+      const sessionFile = path.join(tempDir, "session.jsonl");
+      const workspaceDir = path.join(tempDir, "workspace");
+      const resetsAt = Math.ceil(Date.now() / 1000) + 120;
+      const authProfileId = "openai:work";
+      const harness = createStartedThreadHarness(async () => undefined);
+      const params = createParams(sessionFile, workspaceDir);
+      params.agentDir = path.join(tempDir, "trusted-streamed-usage-limit-agent");
+      params.authProfileId = authProfileId;
+      params.authProfileStore = {
+        version: 1,
+        profiles: {
+          [authProfileId]: {
+            type: "oauth",
+            provider: "openai",
+            access: "placeholder",
+            refresh: "placeholder",
+            expires: Date.now() + 60_000,
           },
         },
-      },
-    });
+      };
+      saveAuthProfileStore(params.authProfileStore, params.agentDir);
 
-    const result = await run;
+      const run = runCodexAppServerAttempt(params);
+      await harness.waitForMethod("turn/start");
+      await harness.notify(rateLimitsUpdated(resetsAt));
+      await harness.notify({
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          turn: {
+            id: "turn-1",
+            status: "failed",
+            error,
+          },
+        },
+      });
 
-    expect(expectUsageLimitPromptError(result.promptError).message).toContain("Next reset in");
-    expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBe(resetsAt * 1000);
-    expect(harness.requests.some((request) => request.method === "account/rateLimits/read")).toBe(
-      false,
-    );
-  });
+      const result = await run;
+
+      expect(
+        expectUsageLimitPromptError(readAttemptTerminal(result).promptError).message,
+      ).toContain(blocked ? "Next reset in" : error.message);
+      expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBe(
+        blocked ? resetsAt * 1000 : undefined,
+      );
+      expect(harness.requests.some((request) => request.method === "account/rateLimits/read")).toBe(
+        false,
+      );
+    },
+  );
 
   it("does not block after a streamed usage-limit failure with only stale limits", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
@@ -356,7 +410,9 @@ describe("runCodexAppServerAttempt usage limits", () => {
 
     const result = await run;
 
-    expect(expectUsageLimitPromptError(result.promptError).message).toContain("Next reset in");
+    expect(expectUsageLimitPromptError(readAttemptTerminal(result).promptError).message).toContain(
+      "Next reset in",
+    );
     expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBeUndefined();
     expect(harness.requests.some((request) => request.method === "account/rateLimits/read")).toBe(
       false,

@@ -5,6 +5,7 @@
  */
 import type { AgentToolResult } from "../../agents/runtime/index.js";
 import { normalizeOptionalAccountId, normalizeAccountId } from "../../routing/account-id.js";
+import { withChannelReadAuthority } from "../../shared/channel-read-authority.js";
 import { normalizeChatType, type ChatType } from "../chat-type.js";
 import { normalizeConversationReadInvocationOrigin } from "./conversation-read-origin.js";
 import { resolveChannelPluginRegistration } from "./registry.js";
@@ -14,40 +15,163 @@ import type {
   ChannelPlugin,
 } from "./types.js";
 
-const READ_DEPENDENT_ACTIONS = new Set<ChannelMessageActionName>([
-  "poll-vote",
-  "react",
-  "reactions",
+declare const serverOwnedConversationReadOrigin: unique symbol;
+
+type ServerOwnedConversationReadOrigin = ReturnType<
+  typeof normalizeConversationReadInvocationOrigin
+> & {
+  readonly [serverOwnedConversationReadOrigin]: true;
+};
+
+type ChannelMessageActionDispatchContext = Omit<ChannelMessageActionContext, "action"> & {
+  action: unknown;
+};
+
+type PreparedMessageActionReadContext = {
+  actionContext: ChannelMessageActionContext;
+  plugin: ChannelPlugin;
+  origin: ServerOwnedConversationReadOrigin;
+  actionPolicy: ChannelMessageActionReadPolicy;
+  enforcement: MessageActionReadEnforcement;
+  assertReadAuthorityCurrent?: () => void;
+};
+
+type ChannelMessageActionReadPolicy =
+  | { readonly kind: "none" }
+  | {
+      readonly kind: "conversation-read";
+      readonly targetlessCache: "deny" | "bundled-current-context";
+    };
+
+const NO_CONVERSATION_READ = { kind: "none" } as const;
+const CONVERSATION_READ = { kind: "conversation-read", targetlessCache: "deny" } as const;
+const BUNDLED_CURRENT_CONTEXT_CACHE_READ = {
+  kind: "conversation-read",
+  targetlessCache: "bundled-current-context",
+} as const;
+
+// Exhaustive by design: every new core action must declare its read authority
+// before the dispatcher will compile.
+const CHANNEL_MESSAGE_ACTION_READ_POLICIES = {
+  send: NO_CONVERSATION_READ,
+  broadcast: NO_CONVERSATION_READ,
+  poll: NO_CONVERSATION_READ,
+  "poll-vote": CONVERSATION_READ,
+  react: CONVERSATION_READ,
+  reactions: CONVERSATION_READ,
+  read: CONVERSATION_READ,
+  edit: CONVERSATION_READ,
+  unsend: CONVERSATION_READ,
+  reply: NO_CONVERSATION_READ,
+  sendWithEffect: NO_CONVERSATION_READ,
+  renameGroup: NO_CONVERSATION_READ,
+  setGroupIcon: NO_CONVERSATION_READ,
+  addParticipant: NO_CONVERSATION_READ,
+  removeParticipant: NO_CONVERSATION_READ,
+  leaveGroup: NO_CONVERSATION_READ,
+  sendAttachment: NO_CONVERSATION_READ,
+  delete: CONVERSATION_READ,
+  pin: CONVERSATION_READ,
+  unpin: CONVERSATION_READ,
+  "list-pins": CONVERSATION_READ,
+  permissions: CONVERSATION_READ,
+  "thread-create": NO_CONVERSATION_READ,
+  "thread-list": CONVERSATION_READ,
+  "thread-reply": NO_CONVERSATION_READ,
+  search: CONVERSATION_READ,
+  sticker: NO_CONVERSATION_READ,
+  "sticker-search": BUNDLED_CURRENT_CONTEXT_CACHE_READ,
+  "member-info": CONVERSATION_READ,
+  "role-info": CONVERSATION_READ,
+  "emoji-list": CONVERSATION_READ,
+  "emoji-upload": NO_CONVERSATION_READ,
+  "sticker-upload": NO_CONVERSATION_READ,
+  "role-add": NO_CONVERSATION_READ,
+  "role-remove": NO_CONVERSATION_READ,
+  "channel-info": CONVERSATION_READ,
+  "channel-list": CONVERSATION_READ,
+  "channel-create": NO_CONVERSATION_READ,
+  "conversation-open": NO_CONVERSATION_READ,
+  "channel-edit": NO_CONVERSATION_READ,
+  "channel-delete": NO_CONVERSATION_READ,
+  "channel-move": NO_CONVERSATION_READ,
+  "category-create": NO_CONVERSATION_READ,
+  "category-edit": NO_CONVERSATION_READ,
+  "category-delete": NO_CONVERSATION_READ,
+  "topic-create": NO_CONVERSATION_READ,
+  "topic-edit": NO_CONVERSATION_READ,
+  "voice-status": CONVERSATION_READ,
+  "event-list": CONVERSATION_READ,
+  "event-create": NO_CONVERSATION_READ,
+  timeout: NO_CONVERSATION_READ,
+  kick: NO_CONVERSATION_READ,
+  ban: NO_CONVERSATION_READ,
+  "set-profile": NO_CONVERSATION_READ,
+  "set-presence": NO_CONVERSATION_READ,
+  "download-file": CONVERSATION_READ,
+  "upload-file": NO_CONVERSATION_READ,
+} as const satisfies Record<ChannelMessageActionName, ChannelMessageActionReadPolicy>;
+
+function resolveChannelMessageActionReadPolicy(
+  action: unknown,
+): ChannelMessageActionReadPolicy | undefined {
+  if (typeof action !== "string" || !Object.hasOwn(CHANNEL_MESSAGE_ACTION_READ_POLICIES, action)) {
+    return undefined;
+  }
+  return CHANNEL_MESSAGE_ACTION_READ_POLICIES[action as ChannelMessageActionName];
+}
+
+type MessageActionReadEnforcement =
+  | { kind: "provider-owned"; pluginTrust: "bundled" | "external"; fenced: boolean }
+  | {
+      kind: "host-exact-current";
+      pluginTrust: "bundled" | "external";
+    };
+
+// Context retrieval only. The broader conversation-read class also contains mutations.
+const FENCED_PROVIDER_READ_ACTIONS = new Set<ChannelMessageActionName>([
   "read",
-  "edit",
-  "unsend",
-  "delete",
-  "pin",
-  "unpin",
-  "list-pins",
-  "permissions",
-  "thread-list",
   "search",
-  "sticker-search",
+  "reactions",
+  "list-pins",
+  "thread-list",
+  "channel-info",
+  "permissions",
   "member-info",
   "role-info",
   "emoji-list",
-  "channel-info",
   "channel-list",
   "voice-status",
   "event-list",
+  "sticker-search",
   "download-file",
 ]);
 
-// These bundled adapters have host-reviewed provider-side current/configured
-// gates. Other bundled adapters retain the exact-current compatibility limit.
-const BUNDLED_CHANNELS_WITH_PROVIDER_READ_GATES = new Set([
-  "discord",
-  "feishu",
-  "matrix",
-  "msteams",
-  "slack",
-]);
+function resolveMessageActionReadEnforcement(params: {
+  action: ChannelMessageActionName;
+  actions: ChannelPlugin["actions"];
+  pluginOrigin: string | undefined;
+  hasReadAuthority: boolean;
+}): MessageActionReadEnforcement {
+  const providerOwnedReadGates = params.actions?.providerOwnedReadGates;
+  if (providerOwnedReadGates === true || providerOwnedReadGates?.includes(params.action) === true) {
+    const fencedReadAction =
+      params.actions?.readAuthorityActions?.includes(params.action) === true &&
+      FENCED_PROVIDER_READ_ACTIONS.has(params.action);
+    if (params.pluginOrigin === "bundled") {
+      // Bundled admission stays provider-owned, but an opted-in read must use
+      // its registered lifecycle owner rather than an unfenced artifact fallback.
+      return { kind: "provider-owned", pluginTrust: "bundled", fenced: fencedReadAction };
+    }
+    if (params.hasReadAuthority && fencedReadAction) {
+      return { kind: "provider-owned", pluginTrust: "external", fenced: true };
+    }
+  }
+  return {
+    kind: "host-exact-current",
+    pluginTrust: params.pluginOrigin === "bundled" ? "bundled" : "external",
+  };
+}
 
 type HostConversationTargetKind =
   | "user"
@@ -227,10 +351,69 @@ function hasTargetInput(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function attachExternalCurrentTargetSibling(params: {
+  ctx: ChannelMessageActionContext;
+  plugin: ChannelPlugin;
+  origin: ServerOwnedConversationReadOrigin;
+  actionPolicy: ChannelMessageActionReadPolicy;
+  enforcement: MessageActionReadEnforcement;
+}): ChannelMessageActionContext {
+  if (
+    params.origin === "direct-operator" ||
+    params.actionPolicy.kind !== "conversation-read" ||
+    params.enforcement.kind !== "host-exact-current" ||
+    params.enforcement.pluginTrust !== "external"
+  ) {
+    return params.ctx;
+  }
+  const target =
+    typeof params.ctx.params.target === "string" ? params.ctx.params.target.trim() : "";
+  if (!target) {
+    return params.ctx;
+  }
+  const mirroredTo = params.ctx.params.to;
+  if (typeof mirroredTo !== "string" || mirroredTo.trim() !== target) {
+    return params.ctx;
+  }
+  const providerPrefixes = params.plugin.messaging?.targetPrefixes;
+  const requestedTarget = normalizeHostConversationTarget({
+    value: target,
+    channel: params.ctx.channel,
+    providerPrefixes,
+  });
+  if (!requestedTarget) {
+    return params.ctx;
+  }
+  const trustedCurrentTarget = [
+    params.ctx.toolContext?.currentMessagingTarget,
+    params.ctx.toolContext?.currentChannelId,
+  ].find((value) => {
+    const normalized = normalizeHostConversationTarget({
+      value,
+      channel: params.ctx.channel,
+      providerPrefixes,
+    });
+    return (
+      normalized?.id === requestedTarget.id &&
+      (!requestedTarget.kind || !normalized.kind || normalized.kind === requestedTarget.kind)
+    );
+  });
+  if (typeof trustedCurrentTarget !== "string" || !trustedCurrentTarget.trim()) {
+    return params.ctx;
+  }
+  return {
+    ...params.ctx,
+    params: {
+      ...params.ctx.params,
+      to: trustedCurrentTarget.trim(),
+    },
+  };
+}
+
 function isExactCurrentConversation(params: {
   ctx: ChannelMessageActionContext;
   plugin: ChannelPlugin;
-  pluginOrigin: string | undefined;
+  pluginTrust: "bundled" | "external";
 }): boolean {
   if (
     !hasMatchingCurrentProviderContext(params.ctx) ||
@@ -239,10 +422,10 @@ function isExactCurrentConversation(params: {
     return false;
   }
   const normalizeTarget =
-    params.pluginOrigin === "bundled" ? params.plugin.messaging?.normalizeTarget : undefined;
+    params.pluginTrust === "bundled" ? params.plugin.messaging?.normalizeTarget : undefined;
   const providerPrefixes = params.plugin.messaging?.targetPrefixes;
   const aliasSpec =
-    params.pluginOrigin === "bundled"
+    params.pluginTrust === "bundled"
       ? params.plugin.actions?.messageActionTargetAliases?.[params.ctx.action]
       : undefined;
   const deliveryTargetAliases = new Set(aliasSpec?.deliveryTargetAliases ?? []);
@@ -272,7 +455,7 @@ function isExactCurrentConversation(params: {
   }
   let hasDeliveryAliasInput = false;
   let normalizedAliasTarget: HostConversationTarget | undefined;
-  if (params.pluginOrigin === "bundled") {
+  if (params.pluginTrust === "bundled") {
     hasDeliveryAliasInput = (aliasSpec?.deliveryTargetAliases ?? []).some((alias) =>
       hasTargetInput(params.ctx.params[alias]),
     );
@@ -337,7 +520,7 @@ function isExactCurrentConversation(params: {
     return true;
   }
   if (
-    params.pluginOrigin !== "bundled" ||
+    params.pluginTrust !== "bundled" ||
     !hasDeliveryAliasInput ||
     !params.ctx.toolContext ||
     !aliasSpec?.matchesCurrentConversation ||
@@ -352,64 +535,170 @@ function isExactCurrentConversation(params: {
   });
 }
 
-function assertConversationReadAllowed(params: {
-  ctx: ChannelMessageActionContext;
-  plugin: ChannelPlugin;
-  pluginOrigin: string | undefined;
-}): void {
-  const usesBundledProviderReadGate =
-    params.pluginOrigin === "bundled" &&
-    BUNDLED_CHANNELS_WITH_PROVIDER_READ_GATES.has(params.ctx.channel);
-  if (
-    normalizeConversationReadInvocationOrigin(params.ctx.conversationReadOrigin) ===
-      "direct-operator" ||
-    usesBundledProviderReadGate ||
-    !READ_DEPENDENT_ACTIONS.has(params.ctx.action)
-  ) {
-    return;
-  }
-  const isBundledCurrentContextCacheRead =
-    params.pluginOrigin === "bundled" &&
-    params.ctx.action === "sticker-search" &&
-    hasMatchingCurrentProviderContext(params.ctx) &&
-    hasMatchingCurrentAccountContext(params.ctx) &&
-    hasCurrentConversationTarget(params.ctx);
-  if (
-    isBundledCurrentContextCacheRead ||
-    isExactCurrentConversation({
-      ctx: params.ctx,
-      plugin: params.plugin,
-      pluginOrigin: params.pluginOrigin,
-    })
-  ) {
-    return;
-  }
-  throw new Error(
-    `Delegated ${params.ctx.channel}:${params.ctx.action} requires the exact current conversation and account for this plugin.`,
-  );
-}
-
-function canonicalizeExternalExactCurrentTarget(params: {
-  ctx: ChannelMessageActionContext;
-  pluginOrigin: string | undefined;
-}): void {
-  if (
-    params.pluginOrigin === "bundled" ||
-    normalizeConversationReadInvocationOrigin(params.ctx.conversationReadOrigin) ===
-      "direct-operator" ||
-    !READ_DEPENDENT_ACTIONS.has(params.ctx.action)
-  ) {
-    return;
-  }
-  const target = params.ctx.params.target;
-  const resolvedTarget = [params.ctx.params.to, params.ctx.params.channelId].find(
+function canonicalizeExternalExactCurrentTarget(ctx: ChannelMessageActionContext): void {
+  const target = ctx.params.target;
+  const resolvedTarget = [ctx.params.to, ctx.params.channelId].find(
     (value): value is string => typeof value === "string" && Boolean(value.trim()),
   );
   if (typeof target === "string" && target.trim() && resolvedTarget) {
     // Authorization used the raw spelling. Plugin execution receives the
     // resolved destination so it cannot reinterpret an accepted kind alias.
-    params.ctx.params.target = resolvedTarget;
+    ctx.params.target = resolvedTarget;
   }
+}
+
+function prepareMessageActionReadContext(
+  ctx: ChannelMessageActionDispatchContext,
+): PreparedMessageActionReadContext | undefined {
+  const actionPolicy = resolveChannelMessageActionReadPolicy(ctx.action);
+  if (!actionPolicy) {
+    return undefined;
+  }
+  const registration = resolveChannelPluginRegistration(ctx.channel);
+  if (!registration) {
+    return undefined;
+  }
+  const action = ctx.action as ChannelMessageActionName;
+  const origin = normalizeConversationReadInvocationOrigin(
+    ctx.conversationReadOrigin,
+  ) as ServerOwnedConversationReadOrigin;
+  const actionContext: ChannelMessageActionContext = {
+    ...ctx,
+    action,
+    conversationReadOrigin: origin,
+  };
+  const authority = registration.captureReadAuthority?.();
+  const enforcement = resolveMessageActionReadEnforcement({
+    action,
+    actions: registration.plugin.actions,
+    pluginOrigin: registration.origin,
+    hasReadAuthority: authority?.() === true,
+  });
+  const assertCallerCurrent = ctx.assertDirectAdapterHandoff;
+  const assertReadAuthorityCurrent =
+    origin !== "direct-operator" && enforcement.kind === "provider-owned" && enforcement.fenced
+      ? () => {
+          assertCallerCurrent?.();
+          if (!authority?.()) {
+            throw new Error(`Plugin ${ctx.channel} read authority is no longer active.`);
+          }
+        }
+      : undefined;
+  return {
+    actionContext,
+    plugin: registration.plugin,
+    origin,
+    actionPolicy,
+    enforcement,
+    assertReadAuthorityCurrent,
+  };
+}
+
+function isExternalDelegatedMessageActionRead(
+  prepared: PreparedMessageActionReadContext | undefined,
+): prepared is PreparedMessageActionReadContext & {
+  actionPolicy: Extract<ChannelMessageActionReadPolicy, { kind: "conversation-read" }>;
+  enforcement: Extract<MessageActionReadEnforcement, { kind: "host-exact-current" }> & {
+    pluginTrust: "external";
+  };
+} {
+  return Boolean(
+    prepared &&
+    prepared.origin !== "direct-operator" &&
+    prepared.actionPolicy.kind === "conversation-read" &&
+    prepared.enforcement.kind === "host-exact-current" &&
+    prepared.enforcement.pluginTrust === "external",
+  );
+}
+
+/** The sole host chokepoint before any read-capable plugin callback runs. */
+function enforceMessageActionConversationReadGate(params: {
+  ctx: ChannelMessageActionContext;
+  plugin: ChannelPlugin;
+  origin: ServerOwnedConversationReadOrigin;
+  actionPolicy: ChannelMessageActionReadPolicy;
+  enforcement: MessageActionReadEnforcement;
+}): void {
+  if (params.actionPolicy.kind === "none" || params.origin === "direct-operator") {
+    return;
+  }
+  if (params.enforcement.kind === "provider-owned") {
+    // Restore cross-conversation reads, not missing-origin or cross-account authority.
+    if (
+      params.enforcement.fenced &&
+      params.enforcement.pluginTrust === "external" &&
+      (!hasMatchingCurrentProviderContext(params.ctx) ||
+        !hasMatchingCurrentAccountContext(params.ctx) ||
+        !hasCurrentConversationTarget(params.ctx))
+    ) {
+      throw new Error(
+        `Delegated ${params.ctx.channel}:${params.ctx.action} requires current provider and account context.`,
+      );
+    }
+    return;
+  }
+
+  const isBundledCurrentContextCacheRead =
+    params.enforcement.pluginTrust === "bundled" &&
+    params.actionPolicy.targetlessCache === "bundled-current-context" &&
+    hasMatchingCurrentProviderContext(params.ctx) &&
+    hasMatchingCurrentAccountContext(params.ctx) &&
+    hasCurrentConversationTarget(params.ctx);
+  const exactCurrentConversation =
+    isBundledCurrentContextCacheRead ||
+    isExactCurrentConversation({
+      ctx: params.ctx,
+      plugin: params.plugin,
+      pluginTrust: params.enforcement.pluginTrust,
+    });
+  if (!exactCurrentConversation) {
+    throw new Error(
+      `Delegated ${params.ctx.channel}:${params.ctx.action} requires the exact current conversation and account for this plugin.`,
+    );
+  }
+  if (params.enforcement.pluginTrust === "external") {
+    canonicalizeExternalExactCurrentTarget(params.ctx);
+  }
+}
+
+/** Authorizes and canonicalizes external exact-current targets before target resolution. */
+export function prepareExternalMessageActionTargetForResolution(
+  ctx: ChannelMessageActionDispatchContext,
+): { params: Record<string, unknown>; assertReadAuthorityCurrent?: () => void } {
+  const prepared = prepareMessageActionReadContext(ctx);
+  if (prepared?.assertReadAuthorityCurrent) {
+    prepared.assertReadAuthorityCurrent();
+    enforceMessageActionConversationReadGate({
+      ctx: prepared.actionContext,
+      ...prepared,
+    });
+    return { params: ctx.params, assertReadAuthorityCurrent: prepared.assertReadAuthorityCurrent };
+  }
+  if (!isExternalDelegatedMessageActionRead(prepared)) {
+    return { params: ctx.params };
+  }
+  // External target resolution can execute plugin directory/provider lookups.
+  // Establish exact-current authority before that boundary, then recheck at dispatch.
+  const authorizedActionContext = attachExternalCurrentTargetSibling({
+    ctx: prepared.actionContext,
+    ...prepared,
+  });
+  enforceMessageActionConversationReadGate({
+    ctx: authorizedActionContext,
+    ...prepared,
+  });
+  return { params: authorizedActionContext.params };
+}
+
+/** Defers delegated external target interpretation to the attested Gateway boundary. */
+export function shouldDeferExternalMessageActionTargetResolution(
+  ctx: ChannelMessageActionDispatchContext,
+): boolean {
+  const prepared = prepareMessageActionReadContext(ctx);
+  // Official reads also wait for the Gateway's attested requester and live registry.
+  return (
+    isExternalDelegatedMessageActionRead(prepared) || Boolean(prepared?.assertReadAuthorityCurrent)
+  );
 }
 
 function requiresTrustedRequesterSender(
@@ -428,39 +717,44 @@ function requiresTrustedRequesterSender(
  * Runs a channel message action if the target plugin supports it.
  */
 export async function dispatchChannelMessageAction(
-  ctx: ChannelMessageActionContext,
+  ctx: ChannelMessageActionDispatchContext,
 ): Promise<AgentToolResult<unknown> | null> {
-  const registration = resolveChannelPluginRegistration(ctx.channel);
-  if (!registration) {
+  const prepared = prepareMessageActionReadContext(ctx);
+  if (!prepared) {
     return null;
   }
-  const { plugin } = registration;
-  const actions = plugin.actions;
-  if (!actions?.handleAction) {
-    return null;
-  }
-  // Loader provenance is host-owned. External and legacy registrations must
-  // prove the exact current conversation before any plugin callback can run.
-  assertConversationReadAllowed({
-    ctx,
-    plugin,
-    pluginOrigin: registration.origin,
+  return await withChannelReadAuthority(prepared.assertReadAuthorityCurrent, async () => {
+    const { actionContext, plugin } = prepared;
+    const actions = plugin.actions;
+    if (!actions?.handleAction) {
+      return null;
+    }
+    const authorizedActionContext = attachExternalCurrentTargetSibling({
+      ctx: actionContext,
+      ...prepared,
+    });
+    enforceMessageActionConversationReadGate({
+      ctx: authorizedActionContext,
+      ...prepared,
+    });
+    // Some plugin actions depend on the sender identity to enforce channel-local
+    // trust. Reject tool-driven calls before invoking the action without it.
+    if (
+      requiresTrustedRequesterSender(authorizedActionContext, plugin) &&
+      !authorizedActionContext.requesterSenderId?.trim()
+    ) {
+      throw new Error(
+        `Trusted sender identity is required for ${authorizedActionContext.channel}:${authorizedActionContext.action} in tool-driven contexts.`,
+      );
+    }
+    // `handleAction` may be broad; `supportsAction` lets plugins cheaply decline
+    // action names before the dispatcher enters channel-specific behavior.
+    if (
+      actions.supportsAction &&
+      !actions.supportsAction({ action: authorizedActionContext.action })
+    ) {
+      return null;
+    }
+    return await actions.handleAction(authorizedActionContext);
   });
-  canonicalizeExternalExactCurrentTarget({
-    ctx,
-    pluginOrigin: registration.origin,
-  });
-  // Some plugin actions depend on the sender identity to enforce channel-local
-  // trust. Reject tool-driven calls before invoking the action without it.
-  if (requiresTrustedRequesterSender(ctx, plugin) && !ctx.requesterSenderId?.trim()) {
-    throw new Error(
-      `Trusted sender identity is required for ${ctx.channel}:${ctx.action} in tool-driven contexts.`,
-    );
-  }
-  // `handleAction` may be broad; `supportsAction` lets plugins cheaply decline
-  // action names before the dispatcher enters channel-specific behavior.
-  if (actions.supportsAction && !actions.supportsAction({ action: ctx.action })) {
-    return null;
-  }
-  return await actions.handleAction(ctx);
 }

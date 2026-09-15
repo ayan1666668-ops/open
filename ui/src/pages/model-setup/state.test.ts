@@ -4,14 +4,16 @@ import {
   activationTimeoutForKind,
   initialWizardValue,
   mapActivationResult,
+  mapVerifyResult,
   wizardStateFromResult,
 } from "./state.ts";
 
 describe("model setup state", () => {
-  it("selects the extended activation timeout only for Codex CLI", () => {
+  it("matches the activation and provider-auth wizard lifetimes", () => {
     expect(activationTimeoutForKind("codex-cli")).toBe(480_000);
-    expect(activationTimeoutForKind("claude-cli")).toBe(150_000);
-    expect(activationTimeoutForKind("api-key")).toBe(150_000);
+    expect(activationTimeoutForKind("claude-cli")).toBe(480_000);
+    expect(activationTimeoutForKind("api-key")).toBe(480_000);
+    expect(activationTimeoutForKind("provider-auth")).toBe(25 * 60_000);
   });
 
   it("maps activation success and categorized failure results", () => {
@@ -20,6 +22,7 @@ describe("model setup state", () => {
         result: { ok: true, modelRef: "openai/gpt-5", latencyMs: 84, lines: [] },
         targetId: "openai",
         fallbackError: "failed",
+        restartWarning: "Restart the Gateway",
       }),
     ).toEqual({ phase: "success", modelRef: "openai/gpt-5", latencyMs: 84 });
     expect(
@@ -27,6 +30,7 @@ describe("model setup state", () => {
         result: { ok: false, status: "billing", error: "No credits" },
         targetId: "openai",
         fallbackError: "failed",
+        restartWarning: "Restart the Gateway",
       }),
     ).toEqual({ phase: "failure", targetId: "openai", status: "billing", error: "No credits" });
     expect(
@@ -34,8 +38,22 @@ describe("model setup state", () => {
         result: { ok: false },
         targetId: "openai",
         fallbackError: "failed",
+        restartWarning: "Restart the Gateway",
       }),
     ).toEqual({ phase: "failure", targetId: "openai", status: "unknown", error: "failed" });
+  });
+
+  it("maps connection verification success and failure results", () => {
+    expect(mapVerifyResult({ ok: true, modelRef: "openai/gpt-5", latencyMs: 84 })).toEqual({
+      phase: "ok",
+      modelRef: "openai/gpt-5",
+      latencyMs: 84,
+    });
+    expect(mapVerifyResult({ ok: false, status: "rate_limit", error: "Try later" })).toEqual({
+      phase: "failed",
+      status: "rate_limit",
+      error: "Try later",
+    });
   });
 
   it("transitions wizard results through step, validation, done, cancelled, and error", () => {
@@ -55,9 +73,16 @@ describe("model setup state", () => {
     expect(
       wizardStateFromResult("oauth", { done: false, step, error: "Pick one" }, "failed"),
     ).toMatchObject({ phase: "step", validationError: "Pick one" });
-    expect(wizardStateFromResult("oauth", { done: true, status: "done" }, "failed")).toEqual({
+    expect(
+      wizardStateFromResult(
+        "oauth",
+        { done: true, status: "done", preparedModelRef: "ollama/qwen3:0.6b" },
+        "failed",
+      ),
+    ).toEqual({
       phase: "done",
       authChoice: "oauth",
+      preparedModelRef: "ollama/qwen3:0.6b",
     });
     expect(
       wizardStateFromResult("oauth", { done: true, status: "cancelled" }, "Cancelled"),

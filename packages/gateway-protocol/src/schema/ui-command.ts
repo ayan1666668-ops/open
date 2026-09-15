@@ -25,6 +25,7 @@ export const UiPanelCommandSchema = closedObject({
   panel: Type.Union([Type.Literal("terminal"), Type.Literal("browser")]),
   open: Type.Boolean(),
   dock: Type.Optional(Type.Union([Type.Literal("bottom"), Type.Literal("right")])),
+  terminalSessionId: Type.Optional(NonEmptyString),
 });
 export const UiNavigateCommandSchema = closedObject({
   kind: Type.Literal("navigate"),
@@ -44,6 +45,7 @@ export type UiCommand = Static<typeof UiCommandSchema>;
 export const UiCommandParamsSchema = closedObject({
   command: UiCommandSchema,
   sessionKey: Type.Optional(NonEmptyString),
+  agentId: Type.Optional(NonEmptyString),
 });
 export type UiCommandParams = Static<typeof UiCommandParamsSchema>;
 

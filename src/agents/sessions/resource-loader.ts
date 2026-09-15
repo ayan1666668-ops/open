@@ -5,19 +5,21 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import chalk from "chalk";
+import { isPathInside } from "../../infra/path-guards.js";
 import type { Skill } from "../../skills/loading/session.js";
 import { loadSkills } from "../../skills/loading/session.js";
-import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.js";
+import { CONFIG_DIR_NAME } from "../package-metadata.js";
 import { canonicalizePath, isLocalPath } from "../utils/paths.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 import { createEventBus, type EventBus } from "./event-bus.js";
 import {
+  clearExtensionCache,
   createExtensionRuntime,
   loadExtensionFromFactory,
-  loadExtensions,
+  loadExtensionsCached,
 } from "./extensions/loader.js";
 import type {
   Extension,
@@ -25,11 +27,11 @@ import type {
   ExtensionRuntime,
   LoadExtensionsResult,
 } from "./extensions/types.js";
-import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
+import { DefaultPackageManager, type ResolvedPaths } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
 import { SettingsManager } from "./settings-manager.js";
-import { createSourceInfo, type SourceInfo } from "./source-info.js";
+import { createSourceInfo, type PathMetadata, type SourceInfo } from "./source-info.js";
 
 export interface ResourceExtensionPaths {
   skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -48,6 +50,13 @@ export interface ResourceLoader {
   extendResources(paths: ResourceExtensionPaths): void;
   reload(): Promise<void>;
 }
+
+const EMPTY_RESOLVED_PATHS: ResolvedPaths = {
+  extensions: [],
+  skills: [],
+  prompts: [],
+  themes: [],
+};
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
   if (!input) {
@@ -165,10 +174,6 @@ interface DefaultResourceLoaderOptions {
   };
   systemPromptTransform?: (base: string | undefined) => string | undefined;
   appendSystemPromptTransform?: (base: string[]) => string[];
-  /** @deprecated Public SDK alias. Use systemPromptTransform. */
-  systemPromptOverride?: (base: string | undefined) => string | undefined;
-  /** @deprecated Public SDK alias. Use appendSystemPromptTransform. */
-  appendSystemPromptOverride?: (base: string[]) => string[];
 }
 
 export class DefaultResourceLoader implements ResourceLoader {
@@ -229,6 +234,7 @@ export class DefaultResourceLoader implements ResourceLoader {
   private extensionThemeSourceInfos: Map<string, SourceInfo>;
   private lastPromptPaths: string[];
   private lastThemePaths: string[];
+  private loaded = false;
 
   constructor(options: DefaultResourceLoaderOptions) {
     this.cwd = options.cwd;
@@ -258,9 +264,8 @@ export class DefaultResourceLoader implements ResourceLoader {
     this.promptsOverride = options.promptsOverride;
     this.themesOverride = options.themesOverride;
     this.agentsFilesOverride = options.agentsFilesOverride;
-    this.systemPromptTransform = options.systemPromptTransform ?? options.systemPromptOverride;
-    this.appendSystemPromptTransform =
-      options.appendSystemPromptTransform ?? options.appendSystemPromptOverride;
+    this.systemPromptTransform = options.systemPromptTransform;
+    this.appendSystemPromptTransform = options.appendSystemPromptTransform;
 
     this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
     this.skills = [];
@@ -348,8 +353,14 @@ export class DefaultResourceLoader implements ResourceLoader {
   }
 
   async reload(): Promise<void> {
+    if (this.loaded) {
+      clearExtensionCache();
+    }
     await this.settingsManager.reload();
-    const resolvedPaths = await this.packageManager.resolve();
+    const resolvedPaths =
+      this.noExtensions && this.noSkills && this.noPromptTemplates && this.noThemes
+        ? EMPTY_RESOLVED_PATHS
+        : await this.packageManager.resolve();
     const cliExtensionPaths = await this.packageManager.resolveExtensionSources(
       this.additionalExtensionPaths,
       {
@@ -427,7 +438,7 @@ export class DefaultResourceLoader implements ResourceLoader {
       ? cliEnabledExtensions
       : this.mergePaths(cliEnabledExtensions, enabledExtensions);
 
-    const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+    const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
     const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
     extensionsResult.extensions.push(...inlineExtensions.extensions);
     extensionsResult.errors.push(...inlineExtensions.errors);
@@ -527,6 +538,7 @@ export class DefaultResourceLoader implements ResourceLoader {
     this.appendSystemPrompt = this.appendSystemPromptTransform
       ? this.appendSystemPromptTransform(baseAppend)
       : baseAppend;
+    this.loaded = true;
   }
 
   private normalizeExtensionPaths(
@@ -663,10 +675,7 @@ export class DefaultResourceLoader implements ResourceLoader {
     if (extraSourceInfos) {
       for (const [sourcePath, sourceInfo] of extraSourceInfos.entries()) {
         const normalizedSourcePath = resolve(sourcePath);
-        if (
-          normalizedResourcePath === normalizedSourcePath ||
-          normalizedResourcePath.startsWith(`${normalizedSourcePath}${sep}`)
-        ) {
+        if (isPathInside(normalizedSourcePath, normalizedResourcePath)) {
           return { ...sourceInfo, path: resourcePath };
         }
       }
@@ -680,10 +689,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
       for (const [sourcePath, metadata] of metadataByPath.entries()) {
         const normalizedSourcePath = resolve(sourcePath);
-        if (
-          normalizedResourcePath === normalizedSourcePath ||
-          normalizedResourcePath.startsWith(`${normalizedSourcePath}${sep}`)
-        ) {
+        if (isPathInside(normalizedSourcePath, normalizedResourcePath)) {
           return createSourceInfo(resourcePath, metadata);
         }
       }
@@ -717,7 +723,7 @@ export class DefaultResourceLoader implements ResourceLoader {
     ];
 
     for (const root of agentRoots) {
-      if (this.isUnderPath(normalizedPath, root)) {
+      if (isPathInside(root, normalizedPath)) {
         return {
           path: filePath,
           source: "local",
@@ -729,7 +735,7 @@ export class DefaultResourceLoader implements ResourceLoader {
     }
 
     for (const root of projectRoots) {
-      if (this.isUnderPath(normalizedPath, root)) {
+      if (isPathInside(root, normalizedPath)) {
         return {
           path: filePath,
           source: "local",
@@ -982,15 +988,6 @@ export class DefaultResourceLoader implements ResourceLoader {
     }
 
     return undefined;
-  }
-
-  private isUnderPath(target: string, root: string): boolean {
-    const normalizedRoot = resolve(root);
-    if (target === normalizedRoot) {
-      return true;
-    }
-    const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
-    return target.startsWith(prefix);
   }
 
   private detectExtensionConflicts(

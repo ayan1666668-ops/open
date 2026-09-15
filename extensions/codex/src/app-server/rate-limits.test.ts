@@ -152,9 +152,75 @@ describe("formatCodexUsageLimitErrorMessage", () => {
     expect(message).not.toContain("Next reset");
     expect(message).not.toContain("1 hour");
   });
+
+  it("does not report exhaustion when an authoritative snapshot has no active limit", () => {
+    const message = formatCodexUsageLimitErrorMessage({
+      message: "You've reached your usage limit.",
+      codexErrorInfo: "usageLimitExceeded",
+      rateLimits: {
+        rateLimits: {
+          limitId: "codex",
+          primary: { usedPercent: 0, windowDurationMins: null, resetsAt: null },
+          secondary: null,
+          rateLimitReachedType: null,
+        },
+      },
+      rateLimitsAuthoritative: true,
+    });
+
+    expect(message).toContain("current account usage does not report an exhausted limit");
+    expect(message).not.toContain("subscription usage limit");
+    expect(message).not.toContain("could not determine a reset time");
+  });
+
+  it("does not treat an empty authoritative snapshot as exhaustion", () => {
+    const message = formatCodexUsageLimitErrorMessage({
+      message: "You've reached your usage limit.",
+      codexErrorInfo: "usageLimitExceeded",
+      rateLimits: {
+        rateLimits: {
+          limitId: "codex",
+          primary: null,
+          secondary: null,
+          rateLimitReachedType: null,
+        },
+      },
+      rateLimitsAuthoritative: true,
+    });
+
+    expect(message).toContain("current account usage does not report an exhausted limit");
+    expect(message).not.toContain("subscription usage limit");
+  });
 });
 
 describe("buildCodexAppServerUsageSnapshot", () => {
+  it("includes additional quota groups and precise balances for account rows", () => {
+    const payload = {
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          planType: "pro",
+          primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+          credits: { hasCredits: true, balance: "12.75" },
+        },
+        extra: {
+          limitId: "extra",
+          limitName: "Extra quota",
+          primary: { usedPercent: 75, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+        },
+      },
+    };
+    const result = buildCodexAppServerUsageSnapshot(payload, { accountDetails: true });
+    expect(result).toMatchObject({
+      plan: "pro",
+      billing: [{ type: "balance", amount: 12.75, unit: "credits" }],
+      windows: [
+        { label: "5h", usedPercent: 10, resetAt: 1_900_000_000_000 },
+        { label: "5h", groupLabel: "Extra quota", usedPercent: 75 },
+      ],
+    });
+    expect(buildCodexAppServerUsageSnapshot(payload).windows).toHaveLength(1);
+  });
   it("parses Codex app-server rate-limit windows as OpenAI usage", () => {
     const result = buildCodexAppServerUsageSnapshot({
       rateLimitsByLimitId: {

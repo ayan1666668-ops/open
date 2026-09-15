@@ -13,7 +13,7 @@ For most users, the upgrade is in place:
 - the plugin stays `@openclaw/matrix`
 - the channel stays `matrix`
 - your config stays under `channels.matrix`
-- cached credentials stay under `~/.openclaw/credentials/matrix/`
+- cached credentials move into the shared `state/openclaw.sqlite` plugin state
 - runtime state stays under `~/.openclaw/matrix/`
 
 You do not need to rename config keys or reinstall the plugin under a new name.
@@ -25,11 +25,11 @@ into the root OpenClaw package.
 
 ## What the migration does automatically
 
-Matrix migration runs when you run [`openclaw doctor --fix`](/gateway/doctor), and as a fallback when the Matrix client starts and still finds file-based sidecar state next to its SQLite store.
+Matrix migration runs when you run [`openclaw doctor --fix`](/gateway/doctor). File-based sidecars next to the dedicated Matrix store retain their client-start fallback, but credential-file import is Doctor-only; runtime reads only canonical SQLite credential state.
 
-Automatic migration covers:
+Doctor migration covers:
 
-- reusing your cached Matrix credentials
+- importing and verifying retired `~/.openclaw/credentials/matrix/credentials*.json` files before archiving them
 - keeping the same account selection and `channels.matrix` config
 - importing file-based sidecar state (`bot-storage.json` sync cache, `recovery-key.json`, `legacy-crypto-migration.json`, IndexedDB snapshots) into Matrix SQLite state; migrated files are archived with a `.migrated` suffix
 - reusing the most complete existing token-hash storage root for the same Matrix account, homeserver, user, and device when the access token changes later
@@ -110,8 +110,8 @@ The previous public Matrix plugin did **not** automatically create Matrix room-k
 
 `Failed migrating legacy Matrix client storage: ...`
 
-- Meaning: the Matrix client-side fallback found file-based sidecar state, but the import into SQLite failed. OpenClaw rolls back completed moves and aborts that fallback instead of silently starting with a fresh store.
-- What to do: inspect filesystem permissions or conflicts, keep the old state intact, and retry after fixing the error.
+- Meaning: the Matrix client-side fallback failed while importing file-based sidecar state into SQLite. Startup stops. Completed SQLite imports and already archived sidecars remain in place; files not yet archived remain available for retry.
+- What to do: inspect filesystem permissions or conflicts, keep the SQLite state and source or `.migrated` files intact, and retry after fixing the error.
 
 `Matrix is installed from a custom path: ...`
 

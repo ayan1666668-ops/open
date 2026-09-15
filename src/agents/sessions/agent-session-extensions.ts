@@ -1,6 +1,4 @@
 import { basename, dirname } from "node:path";
-import { defaultApiRegistry } from "@openclaw/ai/internal/runtime";
-import { resetApiProviders } from "@openclaw/ai/providers";
 import { AgentSessionCompaction } from "./agent-session-compaction.js";
 import type { ExtensionBindings } from "./agent-session-types.js";
 import { ExtensionRunner, type ToolDefinition, wrapRegisteredTools } from "./extensions/index.js";
@@ -239,6 +237,13 @@ export abstract class AgentSessionExtensions extends AgentSessionCompaction {
     );
   }
 
+  /** Replace a runtime-owned tool surface without restarting its active agent loop. */
+  replaceCustomTools(customTools: ToolDefinition[], activeToolNames: string[]): void {
+    this.customTools = customTools;
+    this.allowedToolNames = new Set(activeToolNames);
+    this.refreshToolRegistry({ activeToolNames });
+  }
+
   private refreshToolRegistry(options?: {
     activeToolNames?: string[];
     includeAllExtensionTools?: boolean;
@@ -399,8 +404,10 @@ export abstract class AgentSessionExtensions extends AgentSessionCompaction {
       reason: "reload",
     });
     await this.settingsManager.reload();
-    resetApiProviders(defaultApiRegistry);
+    this.agent.steeringMode = this.settingsManager.getSteeringMode();
+    this.agent.followUpMode = this.settingsManager.getFollowUpMode();
     await this.sessionResourceLoader.reload();
+    this.sessionModelRegistry.refresh();
     this.buildRuntime({
       activeToolNames: this.getActiveToolNames(),
       flagValues: previousFlagValues,

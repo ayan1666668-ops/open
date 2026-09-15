@@ -5,14 +5,15 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { ensureAuthProfileStore, loadAuthProfileStoreForRuntime } from "./auth-profiles/store.js";
+import {
+  ensureAuthProfileStore,
+  loadAuthProfileStoreForRuntime,
+} from "./auth-profiles/store-runtime.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./auth-profiles/types.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
 import {
-  readClaudeCliCredentialsCached,
   readCodexCliCredentialsCached,
   readGeminiCliCredentialsCached,
-  type ClaudeCliCredential,
   type CodexCliCredential,
   type GeminiCliCredential,
 } from "./cli-credentials.js";
@@ -29,7 +30,6 @@ import {
 import type { ResolvedProviderAuth } from "./model-auth-runtime-shared.js";
 
 type CliAuthEpochDeps = {
-  readClaudeCliCredentialsCached: typeof readClaudeCliCredentialsCached;
   readCodexCliCredentialsCached: typeof readCodexCliCredentialsCached;
   readGeminiCliCredentialsCached: typeof readGeminiCliCredentialsCached;
   ensureAuthProfileStore: typeof ensureAuthProfileStore;
@@ -37,7 +37,6 @@ type CliAuthEpochDeps = {
 };
 
 const defaultCliAuthEpochDeps: CliAuthEpochDeps = {
-  readClaudeCliCredentialsCached,
   readCodexCliCredentialsCached,
   readGeminiCliCredentialsCached,
   ensureAuthProfileStore,
@@ -47,7 +46,7 @@ const defaultCliAuthEpochDeps: CliAuthEpochDeps = {
 const cliAuthEpochDeps: CliAuthEpochDeps = { ...defaultCliAuthEpochDeps };
 
 /** Version salt for CLI auth epoch encoding semantics. */
-export const CLI_AUTH_EPOCH_VERSION = 6;
+export const CLI_AUTH_EPOCH_VERSION = 7;
 
 const GEMINI_CLI_PROVIDER_ID = "google-gemini-cli";
 
@@ -97,22 +96,6 @@ function encodeOAuthIdentity(credential: {
     credential.projectId ?? null,
     credential.accountId ?? null,
   ]);
-}
-
-function encodeClaudeCredential(credential: ClaudeCliCredential): string {
-  // Identity-only hashing for both OAuth and token Claude CLI credentials.
-  // The Claude CLI keychain rewrite is not atomic: a token rotation can
-  // briefly produce a partial read where `refreshToken` is missing, and the
-  // parser falls back to a token-shaped credential. With the previous
-  // token-inclusive hash, that transient race flipped the auth-epoch and
-  // forced a session reset on every rotation. Routing both branches through
-  // `encodeOAuthIdentity` collapses partial reads and rotations onto the
-  // same provider-keyed identity hash, while a real account switch would
-  // still surface as different identity fields. Fixes #74312.
-  return encodeOAuthIdentity({
-    type: "oauth",
-    provider: credential.provider,
-  });
 }
 
 function encodeCodexCredential(credential: CodexCliCredential): string {
@@ -191,16 +174,6 @@ function encodeAuthProfileEpochPart(
 
 function getLocalCliCredentialFingerprint(provider: string): string | undefined {
   switch (provider) {
-    case "claude-cli": {
-      const credential = cliAuthEpochDeps.readClaudeCliCredentialsCached({
-        ttlMs: 5000,
-        allowKeychainPrompt: false,
-      });
-      // Keep true credential absence absent so logout/removal invalidates
-      // reusable sessions. The 5s credential cache still masks transient
-      // null reads immediately after a successful read.
-      return credential ? hashCliAuthEpochPart(encodeClaudeCredential(credential)) : undefined;
-    }
     case "codex-cli": {
       const credential = cliAuthEpochDeps.readCodexCliCredentialsCached({
         ttlMs: 5000,
@@ -221,13 +194,6 @@ function getLocalCliCredentialFingerprint(provider: string): string | undefined 
 
 function getLocalCliCredential(provider: string): AuthProfileCredential | undefined {
   switch (provider) {
-    case "claude-cli":
-      return (
-        cliAuthEpochDeps.readClaudeCliCredentialsCached({
-          ttlMs: 0,
-          allowKeychainPrompt: false,
-        }) ?? undefined
-      );
     case "codex-cli":
       return (
         cliAuthEpochDeps.readCodexCliCredentialsCached({
@@ -473,6 +439,7 @@ export async function resolveCliRuntimeOwnerFingerprint(params: {
       bundleMcpMode: backend.bundleMcpMode,
       authEpochMode: backend.authEpochMode,
       nativeToolMode: backend.nativeToolMode,
+      toolAvailabilityEnforcement: backend.toolAvailabilityEnforcement,
       sideQuestionToolMode: backend.sideQuestionToolMode,
     },
     ...(authProfileId ? { authProfileId } : {}),

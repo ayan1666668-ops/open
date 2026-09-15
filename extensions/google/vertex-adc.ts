@@ -1,8 +1,4 @@
 // Google plugin module implements vertex adc behavior.
-import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/extension-shared";
 import {
@@ -13,6 +9,11 @@ import {
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { withTimeout } from "openclaw/plugin-sdk/text-utility-runtime";
+import {
+  readGoogleAdcCredentials,
+  resolveGoogleApplicationCredentialsPath,
+  type GoogleAdcConfig,
+} from "./vertex-adc-config.js";
 
 type GoogleAuthorizedUserCredentials = {
   type: "authorized_user";
@@ -40,7 +41,6 @@ type GoogleOauthTokenResponsePayload = {
   error_description?: unknown;
 };
 
-const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
 const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_VERTEX_OAUTH_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const GOOGLE_VERTEX_ADC_TOKEN_REFRESH_TIMEOUT_MS = 30_000;
@@ -107,61 +107,10 @@ if (process.env.VITEST) {
   };
 }
 
-export function isGoogleVertexCredentialsMarker(
-  apiKey: string | undefined,
-): apiKey is undefined | typeof GCP_VERTEX_CREDENTIALS_MARKER {
-  return apiKey === undefined || apiKey === GCP_VERTEX_CREDENTIALS_MARKER;
-}
-
-function hasGoogleVertexProjectEnv(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(
-    normalizeOptionalString(env.GOOGLE_CLOUD_PROJECT) ||
-    normalizeOptionalString(env.GCLOUD_PROJECT),
-  );
-}
-
-function hasGoogleVertexLocationEnv(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(normalizeOptionalString(env.GOOGLE_CLOUD_LOCATION));
-}
-
-function resolveGoogleApplicationCredentialsPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  const explicit = normalizeOptionalString(env.GOOGLE_APPLICATION_CREDENTIALS);
-  if (explicit) {
-    return existsSync(explicit) ? explicit : undefined;
-  }
-  const homeDir = normalizeOptionalString(env.HOME) ?? os.homedir();
-  const homeFallback = path.join(
-    homeDir,
-    ".config",
-    "gcloud",
-    "application_default_credentials.json",
-  );
-  if (existsSync(homeFallback)) {
-    return homeFallback;
-  }
-  const appDataDir = normalizeOptionalString(env.APPDATA);
-  if (!appDataDir) {
-    return undefined;
-  }
-  const appDataFallback = path.join(appDataDir, "gcloud", "application_default_credentials.json");
-  return existsSync(appDataFallback) ? appDataFallback : undefined;
-}
-
-async function readGoogleAuthorizedUserCredentials(
-  credentialsPath: string,
-): Promise<GoogleAuthorizedUserCredentials | undefined> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(credentialsPath, "utf8")) as unknown;
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return undefined;
-  }
-  const record = parsed as Record<string, unknown>;
+function resolveGoogleAuthorizedUserCredentials(
+  adcConfig: GoogleAdcConfig,
+): GoogleAuthorizedUserCredentials | undefined {
+  const record = adcConfig as Record<string, unknown>;
   if (record.type !== "authorized_user") {
     return undefined;
   }
@@ -171,55 +120,6 @@ async function readGoogleAuthorizedUserCredentials(
     client_secret: normalizeOptionalString(record.client_secret),
     refresh_token: normalizeOptionalString(record.refresh_token),
   };
-}
-
-function readGoogleAdcCredentialsTypeSync(credentialsPath: string): string | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(credentialsPath, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
-    }
-    const type = (parsed as { type?: unknown }).type;
-    return typeof type === "string" ? type : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Returns true when a file/env Application Default Credentials source usable
- * for Google Vertex AI is detectable synchronously. We still call the function
- * `...AuthorizedUserAdcSync` for backwards compatibility with older tests; the
- * predicate now also covers:
- *
- *   1. `authorized_user` credentials file (existing case - `gcloud auth
- *      application-default login` produces this).
- *   2. `external_account` credentials file (Workload Identity Federation).
- *   3. `service_account` credentials file (raw GSA key - rarely used in
- *      OpenClaw, included for completeness).
- * Metadata-server ADC is intentionally not detected here: `google-auth-library`
- * probes the default metadata hosts asynchronously at request time, and the
- * provider wires the Vertex transport without this sync predicate.
- */
-function hasGoogleVertexAuthorizedUserAdcSync(env: NodeJS.ProcessEnv = process.env): boolean {
-  const credentialsPath = resolveGoogleApplicationCredentialsPath(env);
-  if (credentialsPath) {
-    const type = readGoogleAdcCredentialsTypeSync(credentialsPath);
-    if (type === "authorized_user" || type === "external_account" || type === "service_account") {
-      return true;
-    }
-  }
-  return false;
-}
-
-export function resolveGoogleVertexConfigApiKey(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  return hasGoogleVertexProjectEnv(env) &&
-    hasGoogleVertexLocationEnv(env) &&
-    hasGoogleVertexAuthorizedUserAdcSync(env)
-    ? GCP_VERTEX_CREDENTIALS_MARKER
-    : undefined;
 }
 
 async function refreshGoogleVertexAuthorizedUserAccessToken(params: {
@@ -353,7 +253,9 @@ function shouldGunzipGoogleOauthTokenResponse(
     .includes("gzip");
 }
 
-async function resolveGoogleVertexAccessTokenViaGoogleAuth(): Promise<string> {
+async function resolveGoogleVertexAccessTokenViaGoogleAuth(
+  adcConfig?: GoogleAdcConfig,
+): Promise<string> {
   // Lazy-import + cache so we don't pay the google-auth-library load cost on
   // gateway startup; only when we actually need a non-authorized_user token.
   if (!cachedGoogleAuthClient) {
@@ -367,6 +269,7 @@ async function resolveGoogleVertexAccessTokenViaGoogleAuth(): Promise<string> {
         // It also caches tokens internally and refreshes before expiry.
         return new GoogleAuth({
           scopes: [GOOGLE_VERTEX_OAUTH_SCOPE],
+          ...(adcConfig ? { credentials: adcConfig } : {}),
           // Best-effort cancellation for clients that use the shared transporter.
           // WIF STS and GCE metadata need the owner-level deadline below.
           clientOptions: {
@@ -442,21 +345,24 @@ async function resolveGoogleVertexAccessTokenViaGoogleAuth(): Promise<string> {
 export async function resolveGoogleVertexAuthorizedUserHeaders(
   fetchImpl?: typeof fetch,
 ): Promise<Record<string, string>> {
-  const credentialsPath = resolveGoogleApplicationCredentialsPath();
-  if (credentialsPath) {
-    const credentials = await readGoogleAuthorizedUserCredentials(credentialsPath);
-    if (credentials) {
-      const token = await refreshGoogleVertexAuthorizedUserAccessToken({
-        credentialsPath,
-        credentials,
-        fetchImpl,
-      });
-      return { Authorization: `Bearer ${token}` };
-    }
-  }
-  // No file-based authorized_user ADC. Fall back to google-auth-library which
-  // handles GKE Workload Identity (metadata server), Workload Identity
-  // Federation (external_account), and service-account keys.
-  const token = await resolveGoogleVertexAccessTokenViaGoogleAuth();
-  return { Authorization: `Bearer ${token}` };
+  const adcPath = resolveGoogleApplicationCredentialsPath();
+  const adcConfig = adcPath ? readGoogleAdcCredentials(adcPath) : undefined;
+  const userAdc = adcConfig ? resolveGoogleAuthorizedUserCredentials(adcConfig) : undefined;
+  // Google auth owns metadata, federation, and service-account ADC variants.
+  const token =
+    userAdc && adcPath
+      ? await refreshGoogleVertexAuthorizedUserAccessToken({
+          credentialsPath: adcPath,
+          credentials: userAdc,
+          fetchImpl,
+        })
+      : await resolveGoogleVertexAccessTokenViaGoogleAuth(adcConfig);
+  // Google auth gives the explicit billing project precedence over ADC metadata.
+  const quotaProject =
+    normalizeOptionalString(process.env.GOOGLE_CLOUD_QUOTA_PROJECT) ??
+    normalizeOptionalString((adcConfig as Record<string, unknown> | undefined)?.quota_project_id);
+  return {
+    Authorization: `Bearer ${token}`,
+    ...(quotaProject ? { "x-goog-user-project": quotaProject } : {}),
+  };
 }

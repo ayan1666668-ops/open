@@ -1,6 +1,8 @@
 // Mattermost helper module supports config schema core behavior.
 import {
   BlockStreamingCoalesceSchema,
+  ChannelImplicitMentionsSchema,
+  ContextVisibilityModeSchema,
   DmPolicySchema,
   GroupPolicySchema,
   MarkdownConfigSchema,
@@ -125,7 +127,7 @@ const MattermostReplyToModeByChatTypeSchema = z
   })
   .strict();
 
-const MattermostAccountSchemaBase = z
+export const MattermostAccountSchemaBase = z
   .object({
     name: z.string().optional(),
     capabilities: z.array(z.string()).optional(),
@@ -133,11 +135,15 @@ const MattermostAccountSchemaBase = z
     markdown: MarkdownConfigSchema,
     enabled: z.boolean().optional(),
     configWrites: z.boolean().optional(),
+    contextVisibility: ContextVisibilityModeSchema.optional(),
+    historyLimit: z.number().int().min(0).optional(),
+    mediaMaxMb: z.number().positive().optional(),
     botToken: buildSecretInputSchema().optional(),
     baseUrl: z.string().optional(),
     chatmode: z.enum(["oncall", "onmessage", "onchar"]).optional(),
     oncharPrefixes: z.array(z.string()).optional(),
     requireMention: z.boolean().optional(),
+    implicitMentions: ChannelImplicitMentionsSchema.optional(),
     dmPolicy: DmPolicySchema.optional().default("pairing"),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
@@ -149,6 +155,7 @@ const MattermostAccountSchemaBase = z
     responsePrefix: z.string().optional(),
     actions: z
       .object({
+        messages: z.boolean().optional(),
         reactions: z.boolean().optional(),
       })
       .optional(),

@@ -1,10 +1,9 @@
 // Fetches and normalizes DeepSeek provider usage records.
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
-  buildUsageHttpErrorSnapshot,
-  discardUsageResponseBody,
-  fetchJson,
+  buildUsageErrorSnapshot,
+  fetchUsageJson,
   parseFiniteNumber,
-  readUsageJson,
 } from "./provider-usage.fetch.shared.js";
 import { PROVIDER_LABELS } from "./provider-usage.shared.js";
 import type { ProviderUsageSnapshot } from "./provider-usage.types.js";
@@ -60,9 +59,10 @@ export async function fetchDeepSeekUsage(
   timeoutMs: number,
   fetchFn: typeof fetch,
 ): Promise<ProviderUsageSnapshot> {
-  const res = await fetchJson(
-    DEEPSEEK_BALANCE_URL,
-    {
+  const parsed = await fetchUsageJson({
+    provider: "deepseek",
+    url: DEEPSEEK_BALANCE_URL,
+    init: {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -71,23 +71,13 @@ export async function fetchDeepSeekUsage(
     },
     timeoutMs,
     fetchFn,
-  );
-
-  if (!res.ok) {
-    await discardUsageResponseBody(res);
-    return buildUsageHttpErrorSnapshot({
-      provider: "deepseek",
-      status: res.status,
-    });
-  }
-
-  const parsed = await readUsageJson("deepseek", res);
+  });
   if (!parsed.ok) {
     return parsed.snapshot;
   }
 
-  const data = parsed.data as DeepSeekBalanceResponse;
-  const balances = Array.isArray(data.balance_infos) ? data.balance_infos : [];
+  const data = isRecord(parsed.data) ? (parsed.data as DeepSeekBalanceResponse) : undefined;
+  const balances = data && Array.isArray(data.balance_infos) ? data.balance_infos : [];
   const summary = balances
     .map((info) => buildBalanceSummary(info))
     .filter((entry): entry is string => Boolean(entry))
@@ -106,12 +96,7 @@ export async function fetchDeepSeekUsage(
     ];
   });
   if (!summary) {
-    return {
-      provider: "deepseek",
-      displayName: PROVIDER_LABELS.deepseek,
-      windows: [],
-      error: "No balance data",
-    };
+    return buildUsageErrorSnapshot("deepseek", "No balance data");
   }
 
   return {
@@ -120,6 +105,6 @@ export async function fetchDeepSeekUsage(
     windows: [],
     billing,
     summary,
-    ...(data.is_available === false ? { plan: "Unavailable" } : {}),
+    ...(data?.is_available === false ? { plan: "Unavailable" } : {}),
   };
 }
