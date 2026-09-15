@@ -337,6 +337,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // Partial previews are replaceable; only committed final text may precede an error notice.
   let hasStreamingFinalText = false;
   const deliveredFinalTexts = new Set<string>();
+  const blockPostDeliveries = new Map<string, Promise<FeishuReplyDeliveryResult>>();
   type StreamingDisposition = "closed" | "discarded";
   type StreamingCloseOutcome = {
     disposition: StreamingDisposition;
@@ -625,7 +626,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // A failed removal can leave the card visible, so only a clean discard hands
         // the text to a post instead.
         if (closeNeedsPost && finalizationError === undefined) {
-          result = await sendPostReply(text);
+          result = await (blockPostDeliveries.get(text)?.catch(() => sendPostReply(text)) ??
+            sendPostReply(text));
         }
         if (result.visibleReplySent) {
           markVisibleReplySent();
@@ -867,25 +869,52 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     });
   };
 
-  const sendPostReply = (text: string, infoKind?: string, firstChunkMentions?: MentionTarget[]) =>
-    sendChunkedTextReply({
-      text,
-      useCard: false,
-      infoKind,
-      firstChunkMentions,
-      chunkMentions: requiredMentionTargets,
-      sendChunk: ({ chunk, mentions }) =>
-        sendMessageFeishu({
-          cfg,
-          to: sendTarget,
-          text: chunk,
-          replyToMessageId: sendReplyToMessageId,
-          replyInThread: effectiveReplyInThread,
-          allowTopLevelReplyFallback,
-          accountId,
-          ...(mentions ? { mentions } : {}),
-        }),
-    });
+  const sendPostReply = (text: string, infoKind?: string, firstChunkMentions?: MentionTarget[]) => {
+    const matchingBlock =
+      infoKind === "final" && tableNeedsPostPath(text) ? blockPostDeliveries.get(text) : undefined;
+    const send = () =>
+      sendChunkedTextReply({
+        text,
+        useCard: false,
+        infoKind,
+        firstChunkMentions,
+        chunkMentions: requiredMentionTargets,
+        sendChunk: ({ chunk, mentions }) =>
+          sendMessageFeishu({
+            cfg,
+            to: sendTarget,
+            text: chunk,
+            replyToMessageId: sendReplyToMessageId,
+            replyInThread: effectiveReplyInThread,
+            allowTopLevelReplyFallback,
+            accountId,
+            ...(mentions ? { mentions } : {}),
+          }),
+      });
+    if (matchingBlock) {
+      return matchingBlock.catch(send);
+    }
+    const delivery = send();
+    if (infoKind === "block") {
+      // Idle may overlap the send. Its matching preview inherits this post's
+      // acceptance and receipt instead of starting a second delivery.
+      const previousDelivery = blockPostDeliveries.get(text);
+      const retainedDelivery = delivery.catch((error: unknown) => {
+        // A later failed attempt cannot erase an earlier accepted post.
+        if (previousDelivery) {
+          return previousDelivery;
+        }
+        throw error;
+      });
+      blockPostDeliveries.set(text, retainedDelivery);
+      void retainedDelivery.catch(() => {
+        if (blockPostDeliveries.get(text) === retainedDelivery) {
+          blockPostDeliveries.delete(text);
+        }
+      });
+    }
+    return delivery;
+  };
 
   const sendMediaReplies = async (
     payload: ReplyPayload,
@@ -1335,6 +1364,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       if (!replyLifecycleStateInitialized) {
         replyLifecycleStateInitialized = true;
         deliveredFinalTexts.clear();
+        blockPostDeliveries.clear();
         closedStreamingSettlements.clear();
         sentIndependentBlockText = false;
         idleRequestedForReply = false;

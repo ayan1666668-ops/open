@@ -4523,6 +4523,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     let codeText = "";
 
     beforeEach(async () => {
+      sendMessageFeishuMock.mockReset();
       const actual = await vi.importActual<
         typeof import("openclaw/plugin-sdk/markdown-table-runtime")
       >("openclaw/plugin-sdk/markdown-table-runtime");
@@ -4564,6 +4565,209 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     function tableCfg(tables?: MarkdownTableMode): ClawdbotConfig {
       return tables ? { channels: { feishu: { markdown: { tables } } } } : {};
     }
+
+    function createBlockTableHarness() {
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: {
+          renderMode: "auto",
+          streaming: { mode: "partial", block: { enabled: true } },
+        },
+      });
+      return createDispatcherHarness({ accountId: "main", cfg: tableCfg("off") });
+    }
+
+    it("reuses the posted block receipt when idle closes its matching off preview", async () => {
+      const { result, options } = createBlockTableHarness();
+      sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om-block-post" });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const block = await options.deliver({ text: tableMarkdown }, { kind: "block" });
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1);
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      const final = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      expect(final).toMatchObject({
+        messageIds: ["om-block-post"],
+        visibleReplySent: true,
+      });
+      expect(final?.receipt?.parts).toEqual(block?.receipt?.parts);
+      expect(final?.receipt?.platformMessageIds).toEqual(["om-block-post"]);
+      expect(final?.receipt?.sentAt).toBe(block?.receipt?.sentAt);
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses the block post when its matching off final arrives before idle", async () => {
+      const { result, options } = createBlockTableHarness();
+      sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om-block-before-final" });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await options.deliver({ text: tableMarkdown }, { kind: "block" });
+      const final = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(final).toMatchObject({
+        messageIds: ["om-block-before-final"],
+        visibleReplySent: true,
+      });
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("waits for the matching block post before settling an idle close and final", async () => {
+      const { result, options } = createBlockTableHarness();
+      let acceptPost!: (value: { messageId: string }) => void;
+      sendMessageFeishuMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          acceptPost = resolve;
+        }),
+      );
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const block = options.deliver({ text: tableMarkdown }, { kind: "block" });
+      await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
+      const idle = Promise.resolve(options.onIdle?.());
+      await vi.waitFor(() => expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1));
+      const final = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      acceptPost({ messageId: "om-pending-block" });
+      await block;
+      await idle;
+      const settled = (await final?.finalization) ?? final;
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1);
+      expect(settled).toMatchObject({
+        messageIds: ["om-pending-block"],
+        visibleReplySent: true,
+      });
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+    });
+
+    it("retries a rejected in-flight block when idle is the only remaining delivery", async () => {
+      const { result, options } = createBlockTableHarness();
+      let rejectPost!: (error: Error) => void;
+      sendMessageFeishuMock
+        .mockReturnValueOnce(
+          new Promise((_, reject) => {
+            rejectPost = reject;
+          }),
+        )
+        .mockResolvedValue({ messageId: "om-idle-retry" });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const block = options
+        .deliver({ text: tableMarkdown }, { kind: "block" })
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
+      const idle = Promise.resolve(options.onIdle?.()).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1));
+      rejectPost(new Error("pending block unavailable"));
+
+      expect(await block).toBeInstanceOf(Error);
+      expect(await idle).toBeUndefined();
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      const final = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      expect(final).toMatchObject({ messageIds: ["om-idle-retry"], visibleReplySent: true });
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries a rejected in-flight block for its matching final before idle", async () => {
+      const { result, options } = createBlockTableHarness();
+      let rejectPost!: (error: Error) => void;
+      sendMessageFeishuMock
+        .mockReturnValueOnce(
+          new Promise((_, reject) => {
+            rejectPost = reject;
+          }),
+        )
+        .mockResolvedValue({ messageId: "om-final-retry" });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const block = options
+        .deliver({ text: tableMarkdown }, { kind: "block" })
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(sendMessageFeishuMock).toHaveBeenCalledTimes(1));
+      const final = options
+        .deliver({ text: tableMarkdown }, { kind: "final" })
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1));
+      rejectPost(new Error("pending block unavailable"));
+
+      expect(await block).toBeInstanceOf(Error);
+      expect(await final).toMatchObject({ messageIds: ["om-final-retry"], visibleReplySent: true });
+      await options.onIdle?.();
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+    });
+
+    it("still posts an unmatched table preview after a different block post", async () => {
+      const { result, options } = createBlockTableHarness();
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      const otherTable = tableMarkdown.replace("Ada", "Grace");
+      await options.deliver({ text: otherTable }, { kind: "block" });
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock.mock.calls.map(([params]) => params.text)).toEqual([
+        otherTable,
+        tableMarkdown,
+      ]);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("retains an accepted block receipt when a later matching block post fails", async () => {
+      const { result, options } = createBlockTableHarness();
+      sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om-accepted-block" });
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      await options.deliver({ text: tableMarkdown }, { kind: "block" });
+
+      sendMessageFeishuMock.mockRejectedValueOnce(new Error("later block unavailable"));
+      await expect(options.deliver({ text: tableMarkdown }, { kind: "block" })).rejects.toThrow(
+        "later block unavailable",
+      );
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      const final = await options.deliver({ text: tableMarkdown }, { kind: "final" });
+      expect(final).toMatchObject({
+        messageIds: ["om-accepted-block"],
+        visibleReplySent: true,
+      });
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
+
+    it("does not count a rejected block post as delivered when idle closes", async () => {
+      const { result, options } = createBlockTableHarness();
+      sendMessageFeishuMock.mockRejectedValueOnce(new Error("block post unavailable"));
+      result.replyOptions.onPartialReply?.({ text: tableMarkdown });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+
+      await expect(options.deliver({ text: tableMarkdown }, { kind: "block" })).rejects.toThrow(
+        "block post unavailable",
+      );
+      await options.onIdle?.();
+
+      expect(sendMessageFeishuMock).toHaveBeenCalledTimes(2);
+      expect(sendMessageFeishuMock.mock.calls[1]?.[0]?.text).toBe(tableMarkdown);
+      expect(sendStructuredCardFeishuMock).not.toHaveBeenCalled();
+    });
 
     async function deliverFinal(
       tables: MarkdownTableMode | undefined,
