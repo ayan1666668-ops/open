@@ -1612,12 +1612,6 @@ class ChatController internal constructor(
     FinalizeMutation,
   }
 
-  /** Rewinds the current transcript at one canonical history entry. */
-  suspend fun rewindSessionAtEntry(
-    sessionKey: String,
-    entryId: String,
-  ): String? = rewindSessionAtEntryResult(sessionKey, entryId)?.editorText
-
   suspend fun rewindSessionAtEntryResult(
     sessionKey: String,
     entryId: String,
@@ -7712,7 +7706,7 @@ class ChatController internal constructor(
       entryId = metadata?.get("id").asJsonStringOrNull()?.takeIf { it.isNotBlank() },
       turnBoundary = metadata?.get("turnBoundary") == JsonPrimitive(true),
       phase = if (role == "assistant") parseChatAssistantPhase(obj) else null,
-      isError = obj["isError"] == JsonPrimitive(true) || obj["stopReason"].asStringOrNull() in setOf("error", "aborted"),
+      isError = isChatToolError(obj) || obj["stopReason"].asStringOrNull() in setOf("error", "aborted"),
       isSyntheticDisplay = obj["openclawMessageToolMirror"].asObjectOrNull() != null || obj["openclawStreamFallback"].asObjectOrNull() != null,
       truncated =
         truncated == JsonPrimitive(true) ||
@@ -7725,6 +7719,7 @@ class ChatController internal constructor(
       deliveryMirror = parseChatDeliveryMirror(obj["openclawDeliveryMirror"]),
       usage = parseChatMessageUsage(obj),
       cost = parseChatMessageCost(obj),
+      sourceTools = parseChatSourceTools(obj, role),
     )
   }
 
@@ -8432,7 +8427,8 @@ internal fun isCurrentHistoryLoad(
  */
 internal fun parseChatMessageContent(el: JsonElement): ChatMessageContent? {
   val obj = el.asObjectOrNull() ?: return null
-  return when (val type = obj["type"].asStringOrNull() ?: "text") {
+  val rawType = obj["type"].asStringOrNull() ?: "text"
+  return when (val type = normalizeChatToolContentType(rawType) ?: rawType) {
     "text", "input_text", "output_text" -> {
       ChatMessageContent(
         type = "text",
@@ -8485,11 +8481,11 @@ internal fun parseChatMessageContent(el: JsonElement): ChatMessageContent? {
       )
     }
 
-    "toolCall", "tool_call", "toolcall", "tool_use" -> {
+    "toolCall" -> {
       parseToolActivityContent(obj, resultBlock = false)
     }
 
-    "toolResult", "tool_result", "toolresult", "tool_result_block" -> {
+    "toolResult" -> {
       parseToolActivityContent(obj, resultBlock = true)
     }
 
@@ -8639,7 +8635,7 @@ private fun parseToolActivityContent(
         name = name.ifEmpty { "tool" },
         detail = toolDetail(args),
         result = result,
-        isError = obj["isError"] == JsonPrimitive(true),
+        isError = isChatToolError(obj),
         arguments = toolPresentationArguments(args),
       ),
   )
@@ -8649,7 +8645,7 @@ private fun parseTopLevelToolResult(obj: JsonObject): ChatMessageContent? {
   val synthetic =
     buildMap<String, JsonElement> {
       put("type", JsonPrimitive("toolResult"))
-      listOf("toolCallId", "tool_call_id", "toolUseId", "tool_use_id", "callId", "name", "toolName", "tool_name", "isError", "content", "result", "text").forEach { key ->
+      listOf("toolCallId", "tool_call_id", "toolUseId", "tool_use_id", "callId", "name", "toolName", "tool_name", "isError", "is_error", "content", "result", "text").forEach { key ->
         obj[key]?.let { put(key, it) }
       }
     }

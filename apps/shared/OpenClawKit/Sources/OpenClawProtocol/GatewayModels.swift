@@ -1463,6 +1463,7 @@ public struct ArtifactSummary: Codable, Sendable {
     public let taskid: String?
     public let messageseq: Int?
     public let source: String?
+    public let image: [String: AnyCodable]?
     public let download: [String: AnyCodable]
 
     public init(
@@ -1476,6 +1477,7 @@ public struct ArtifactSummary: Codable, Sendable {
         taskid: String? = nil,
         messageseq: Int? = nil,
         source: String? = nil,
+        image: [String: AnyCodable]? = nil,
         download: [String: AnyCodable])
     {
         self.id = id
@@ -1488,6 +1490,7 @@ public struct ArtifactSummary: Codable, Sendable {
         self.taskid = taskid
         self.messageseq = messageseq
         self.source = source
+        self.image = image
         self.download = download
     }
 
@@ -1502,6 +1505,7 @@ public struct ArtifactSummary: Codable, Sendable {
         case taskid = "taskId"
         case messageseq = "messageSeq"
         case source
+        case image
         case download
     }
 }
@@ -1620,19 +1624,28 @@ public struct ArtifactsListParams: Codable, Sendable {
     public let taskid: String?
     public let agentid: String?
     public let messagerole: String?
+    public let type: String?
+    public let limit: Int?
+    public let cursor: String?
 
     public init(
         sessionkey: String? = nil,
         runid: String? = nil,
         taskid: String? = nil,
         agentid: String? = nil,
-        messagerole: String? = nil)
+        messagerole: String? = nil,
+        type: String? = nil,
+        limit: Int? = nil,
+        cursor: String? = nil)
     {
         self.sessionkey = sessionkey
         self.runid = runid
         self.taskid = taskid
         self.agentid = agentid
         self.messagerole = messagerole
+        self.type = type
+        self.limit = limit
+        self.cursor = cursor
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -1641,16 +1654,31 @@ public struct ArtifactsListParams: Codable, Sendable {
         case taskid = "taskId"
         case agentid = "agentId"
         case messagerole = "messageRole"
+        case type
+        case limit
+        case cursor
     }
 }
 
 public struct ArtifactsListResult: Codable, Sendable {
     public let artifacts: [ArtifactSummary]
+    public let nextcursor: String?
+    public let omittedoversized: Bool?
 
     public init(
-        artifacts: [ArtifactSummary])
+        artifacts: [ArtifactSummary],
+        nextcursor: String? = nil,
+        omittedoversized: Bool? = nil)
     {
         self.artifacts = artifacts
+        self.nextcursor = nextcursor
+        self.omittedoversized = omittedoversized
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case artifacts
+        case nextcursor = "nextCursor"
+        case omittedoversized = "omittedOversized"
     }
 }
 
@@ -8441,6 +8469,7 @@ public struct ModelChoice: Codable, Sendable {
     public let alias: String?
     public let tags: [String]?
     public let available: Bool?
+    public let manualselectionallowed: Bool?
     public let unavailablereason: AnyCodable?
     public let unavailableuntil: Int?
     public let contextwindow: Int?
@@ -8466,6 +8495,7 @@ public struct ModelChoice: Codable, Sendable {
         alias: String? = nil,
         tags: [String]? = nil,
         available: Bool? = nil,
+        manualselectionallowed: Bool? = nil,
         unavailablereason: AnyCodable? = nil,
         unavailableuntil: Int? = nil,
         contextwindow: Int? = nil,
@@ -8490,6 +8520,7 @@ public struct ModelChoice: Codable, Sendable {
         self.alias = alias
         self.tags = tags
         self.available = available
+        self.manualselectionallowed = manualselectionallowed
         self.unavailablereason = unavailablereason
         self.unavailableuntil = unavailableuntil
         self.contextwindow = contextwindow
@@ -8516,6 +8547,7 @@ public struct ModelChoice: Codable, Sendable {
         case alias
         case tags
         case available
+        case manualselectionallowed = "manualSelectionAllowed"
         case unavailablereason = "unavailableReason"
         case unavailableuntil = "unavailableUntil"
         case contextwindow = "contextWindow"
@@ -8539,6 +8571,7 @@ public struct ModelChoice: Codable, Sendable {
 public struct ModelRuntimeChoice: Codable, Sendable {
     public let agentruntime: [String: AnyCodable]
     public let available: Bool?
+    public let manualselectionallowed: Bool?
     public let unavailablereason: AnyCodable?
     public let unavailableuntil: Int?
     public let contextwindow: Int?
@@ -8557,6 +8590,7 @@ public struct ModelRuntimeChoice: Codable, Sendable {
     public init(
         agentruntime: [String: AnyCodable],
         available: Bool? = nil,
+        manualselectionallowed: Bool? = nil,
         unavailablereason: AnyCodable? = nil,
         unavailableuntil: Int? = nil,
         contextwindow: Int? = nil,
@@ -8574,6 +8608,7 @@ public struct ModelRuntimeChoice: Codable, Sendable {
     {
         self.agentruntime = agentruntime
         self.available = available
+        self.manualselectionallowed = manualselectionallowed
         self.unavailablereason = unavailablereason
         self.unavailableuntil = unavailableuntil
         self.contextwindow = contextwindow
@@ -8593,6 +8628,7 @@ public struct ModelRuntimeChoice: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case agentruntime = "agentRuntime"
         case available
+        case manualselectionallowed = "manualSelectionAllowed"
         case unavailablereason = "unavailableReason"
         case unavailableuntil = "unavailableUntil"
         case contextwindow = "contextWindow"
@@ -14505,6 +14541,8 @@ public struct SessionRow: Codable, Sendable {
     public let execcwd: String?
     public let spawnedworkspacedir: String?
     public let spawnedcwd: String?
+    public let projectid: String?
+    public let workspacedir: String?
     public let permissionmode: SessionPermissionMode?
     public let permissionmodepending: Bool?
     public let sessionroot: String?
@@ -14590,6 +14628,8 @@ public struct SessionRow: Codable, Sendable {
         execcwd: String? = nil,
         spawnedworkspacedir: String? = nil,
         spawnedcwd: String? = nil,
+        projectid: String? = nil,
+        workspacedir: String? = nil,
         permissionmode: SessionPermissionMode? = nil,
         permissionmodepending: Bool? = nil,
         sessionroot: String? = nil,
@@ -14674,6 +14714,8 @@ public struct SessionRow: Codable, Sendable {
         self.execcwd = execcwd
         self.spawnedworkspacedir = spawnedworkspacedir
         self.spawnedcwd = spawnedcwd
+        self.projectid = projectid
+        self.workspacedir = workspacedir
         self.permissionmode = permissionmode
         self.permissionmodepending = permissionmodepending
         self.sessionroot = sessionroot
@@ -14760,6 +14802,8 @@ public struct SessionRow: Codable, Sendable {
         case execcwd = "execCwd"
         case spawnedworkspacedir = "spawnedWorkspaceDir"
         case spawnedcwd = "spawnedCwd"
+        case projectid = "projectId"
+        case workspacedir = "workspaceDir"
         case permissionmode = "permissionMode"
         case permissionmodepending = "permissionModePending"
         case sessionroot = "sessionRoot"
@@ -16744,12 +16788,17 @@ public struct SessionsListParams: Codable, Sendable {
     public let includelastmessage: Bool?
     public let includeactivitysummary: Bool?
     public let label: String?
+    public let projectid: String?
+    public let workspacedir: String?
+    public let group: String?
+    public let pinned: Bool?
     public let boardface: AnyCodable?
     public let hasboard: Bool?
     public let creatorid: String?
     public let ownerid: String?
     public let ownerfirst: Bool?
     public let involvingme: Bool?
+    public let profilerelation: [String: AnyCodable]?
     public let involvingprofileid: String?
     public let includepeople: Bool?
     public let spawnedby: String?
@@ -16772,12 +16821,17 @@ public struct SessionsListParams: Codable, Sendable {
         includelastmessage: Bool? = nil,
         includeactivitysummary: Bool? = nil,
         label: String? = nil,
+        projectid: String? = nil,
+        workspacedir: String? = nil,
+        group: String? = nil,
+        pinned: Bool? = nil,
         boardface: AnyCodable? = nil,
         hasboard: Bool? = nil,
         creatorid: String? = nil,
         ownerid: String? = nil,
         ownerfirst: Bool? = nil,
         involvingme: Bool? = nil,
+        profilerelation: [String: AnyCodable]? = nil,
         involvingprofileid: String? = nil,
         includepeople: Bool? = nil,
         spawnedby: String? = nil,
@@ -16799,12 +16853,17 @@ public struct SessionsListParams: Codable, Sendable {
         self.includelastmessage = includelastmessage
         self.includeactivitysummary = includeactivitysummary
         self.label = label
+        self.projectid = projectid
+        self.workspacedir = workspacedir
+        self.group = group
+        self.pinned = pinned
         self.boardface = boardface
         self.hasboard = hasboard
         self.creatorid = creatorid
         self.ownerid = ownerid
         self.ownerfirst = ownerfirst
         self.involvingme = involvingme
+        self.profilerelation = profilerelation
         self.involvingprofileid = involvingprofileid
         self.includepeople = includepeople
         self.spawnedby = spawnedby
@@ -16828,12 +16887,17 @@ public struct SessionsListParams: Codable, Sendable {
         case includelastmessage = "includeLastMessage"
         case includeactivitysummary = "includeActivitySummary"
         case label
+        case projectid = "projectId"
+        case workspacedir = "workspaceDir"
+        case group
+        case pinned
         case boardface = "boardFace"
         case hasboard = "hasBoard"
         case creatorid = "creatorId"
         case ownerid = "ownerId"
         case ownerfirst = "ownerFirst"
         case involvingme = "involvingMe"
+        case profilerelation = "profileRelation"
         case involvingprofileid = "involvingProfileId"
         case includepeople = "includePeople"
         case spawnedby = "spawnedBy"

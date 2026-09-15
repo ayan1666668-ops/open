@@ -51,6 +51,7 @@ export const en: TranslationMap & {
   login: TranslationMap;
   newSession: TranslationMap;
   skillWorkshop: TranslationMap;
+  systems: TranslationMap;
 } = {
   pluginUi: {
     sessionRecentMessages: "Recent messages",
@@ -279,25 +280,7 @@ export const en: TranslationMap & {
       invalidSandboxUrl: "MCP App sandbox URL is invalid",
     },
   },
-  githubPreview: {
-    coAuthors: "Co-authored by {logins}",
-    loading: "Loading GitHub details…",
-    unavailable: "GitHub preview unavailable",
-    states: {
-      merged: "Merged",
-      draft: "Draft",
-      open: "Open",
-      closed: "Closed",
-      notPlanned: "Not planned",
-    },
-    file: "{count} file",
-    files: "{count} files",
-    comment: "{count} comment",
-    comments: "{count} comments",
-    pullRequest: "pull request",
-    issue: "issue",
-    ariaLabel: "{state} {kind} {repo} #{number}: {title}, by {author}",
-  },
+  githubPreview: {},
   sessionHovercard: {
     ariaLabel: "Session information",
     agentNotepad: "Agent Notepad",
@@ -668,6 +651,7 @@ export const en: TranslationMap & {
     coalescedRestart:
       "Update installed. A gateway restart is already in progress; status will refresh after it reconnects.",
     error: "Update error: {error}",
+    checkError: "Could not check for updates: {error}",
     status: "Update {status}: {reason}. {guidance}",
     verificationFailedWithIdentity:
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}. Run `openclaw triage` on the Gateway host before retrying.",
@@ -1190,6 +1174,7 @@ export const en: TranslationMap & {
     waitingForAnswer: "Waiting for your answer",
     waitingForApproval: "Waiting for approval",
     runFailedReason: "Run failed: {reason}",
+    childRunFailedReason: "Child session {label} failed: {reason}",
     runErrorTimedOut: "Timed out",
     runErrorUnknown: "Unknown error",
     attentionRequired: "Session needs attention",
@@ -2340,6 +2325,7 @@ export const en: TranslationMap & {
     reconnect: "Reconnect",
     connecting: "Connecting to desktop…",
   },
+  systems: {},
   routeTitles: {
     modelProviders: "Models",
     notifications: "Notifications",
@@ -2360,6 +2346,7 @@ export const en: TranslationMap & {
     channels: "Channels",
     connection: "Gateway",
     sessions: "Sessions",
+    systems: "Systems",
     usage: "Usage",
     cron: "Automations",
     tasks: "Tasks",
@@ -2407,6 +2394,7 @@ export const en: TranslationMap & {
     channels: "Channels and settings.",
     connection: "Gateway endpoint, credentials, and handshake status.",
     sessions: "Active sessions and defaults.",
+    systems: "Machines and desktops.",
     usage: "API usage and costs.",
     cron: "Scheduled tasks and recurring agent runs.",
     tasks: "Background tasks: subagents, automation runs, CLI.",
@@ -2529,15 +2517,16 @@ export const en: TranslationMap & {
     },
     unavailable: {
       title: "Found, but needs attention",
-      signIn: "Sign in with {provider}",
+      signIn: "Set up & verify {provider}",
       useApiKey: "Use API key",
     },
     signIn: {
-      title: "Connect an AI provider",
+      title: "Set up and verify a model",
+      description:
+        "Setup requests a model reply. To save an account first, choose Connect provider.",
+      verify: "Set up & verify",
       install: "Review & install",
       custom: "Set up endpoint",
-      signIn: "Sign in",
-      pair: "Pair",
       more: "More sign-in options",
     },
     prepare: {
@@ -2599,6 +2588,9 @@ export const en: TranslationMap & {
       dialogLabel: "Provider sign-in",
       prepareDialogLabel: "Local model setup",
       title: "Sign in with a provider",
+      connected: "Account connected. Choose a model when you want to test a reply.",
+      failed: "Could not finish. Open Details to see what to do next.",
+      details: "Details",
       prepareTitle: "Set up a local model",
       starting: "Starting provider sign-in…",
       prepareStarting: "Starting local model setup…",
@@ -2606,8 +2598,15 @@ export const en: TranslationMap & {
       working: "Working…",
       continue: "Continue",
       submit: "Submit",
-      openSignIn: "Open sign-in page",
+      openSignIn: "Open sign-in",
       copy: "Copy",
+      copyCode: "Copy code",
+      copyLink: "Copy link",
+      manualEntry: "Use manual entry",
+      browserInstructions: "Complete sign-in in your browser, then return here.",
+      waiting: "Waiting for sign-in…",
+      deviceCodeWarning:
+        "Continue only if you started this sign-in yourself. If a website or another person gave you this code, cancel.",
       expires: "Expires in {count} minutes",
       cancelled: "Provider sign-in was cancelled.",
       finishingStep: "Setup is finishing the current step. You can cancel when it finishes.",
@@ -2837,6 +2836,7 @@ export const en: TranslationMap & {
       finished: "{done} completed · {failed} failed",
       completed: "{done} completed",
       childOutcome: "Child runs finished. Check the conversation for the final response.",
+      childOutcomeProcessing: "Child runs finished. The parent is processing their results.",
       details: "Child details",
       detailsUnavailable: "Child details are unavailable. Counts include all accepted workers.",
       otherGroups: "{count} more active groups",
@@ -2956,6 +2956,7 @@ export const en: TranslationMap & {
     recapUpdating: "Updating recap…",
     recapStale: "New activity since this recap",
     recapUnavailable: "Recap unavailable",
+    recapRefreshFailed: "Couldn’t refresh recap",
     recapRetry: "Retry recap",
     recapUpdated: "Recap updated {time}",
     backToSessions: "Back to sessions",
@@ -3113,6 +3114,8 @@ export const en: TranslationMap & {
     taskCountOne: "1 task",
     agent: "Agent: {agent}",
     openSession: "Open session",
+    viewTranscript: "View transcript",
+    transcript: "Task transcript",
     cancelTask: "Cancel {title}",
     cancelling: "Cancelling…",
     retryDelivery: "Retry delivery",
@@ -3283,6 +3286,19 @@ export const en: TranslationMap & {
     },
   },
   connection: {
+    browserSignIn: {
+      title: "Sign in to continue loading content",
+      description:
+        "Your website sign-in has expired. Images and files cannot load until you sign in again. Your conversation and draft will stay open.",
+      action: "Sign in",
+      dismiss: "Not now",
+      returnHint:
+        "Finish signing in in the new tab, then return here. Visible attachments will retry automatically.",
+      checkAgain: "Check again",
+      checking: "Checking access…",
+      stillRequired: "Sign-in is still required. Finish signing in, then check again.",
+      unavailable: "Could not verify access. Check your connection and try again.",
+    },
     disconnectedTitle: "Disconnected",
     connecting: "Connecting…",
     queuedCount: "{count} queued",
@@ -5480,7 +5496,9 @@ export const en: TranslationMap & {
       noSummary: "No summary.",
       deliverySuppression: "Delivery suppression: {reason}",
       runAt: "Run at",
-      openRunChat: "Open run chat",
+      transcriptMissingMetadata: "This run is missing the identity needed to open its transcript.",
+      transcriptUnavailable:
+        "The exact run transcript is unavailable or ambiguous. Refresh run history and try again.",
       next: "Next {rel}",
       due: "Due {rel}",
     },
