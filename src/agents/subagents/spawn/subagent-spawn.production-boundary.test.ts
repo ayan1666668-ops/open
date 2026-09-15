@@ -397,18 +397,35 @@ function readBoundExecutionState(
   childRunId?: string,
 ) {
   const context = bound.context as unknown as GatewayRequestContext;
-  const cached = childRunId ? context.dedupe.get(`agent:${childRunId}`) : undefined;
-  const payload = asOptionalRecord(cached?.payload);
+  const receipt = childRunId ? context.dedupe.get(`agent:${childRunId}`) : undefined;
+  const payload = asOptionalRecord(receipt?.payload);
+  const cause = asOptionalRecord(asOptionalRecord(receipt?.error)?.cause);
+  const controller = childRunId ? context.chatAbortControllers.get(childRunId) : undefined;
+  const execution = childRunId ? subagentRuns.get(childRunId)?.execution : undefined;
+  const label = (value: unknown, allowed: readonly string[]) =>
+    typeof value === "string" && allowed.includes(value) ? value : "unknown";
+  // Read bounded lifecycle facts before finally settles the synthetic model run.
   return {
     executionPending: bound.execution.hasPendingWork,
-    childControllerPresent: childRunId ? context.chatAbortControllers.has(childRunId) : null,
-    dedupePresent: Boolean(cached),
-    dedupeOk: cached?.ok ?? null,
-    dedupeStatus:
-      ["accepted", "in_flight", "ok", "error", "timeout"].find(
-        (status) => payload?.status === status,
-      ) ?? null,
-    errorPresent: Boolean(cached?.error),
+    receiptPresent: receipt !== undefined,
+    receiptOk: receipt?.ok,
+    receiptStatus: label(payload?.status, ["accepted", "in_flight", "ok", "error", "timeout"]),
+    receiptErrorCode: label(receipt?.error?.code, ["UNAVAILABLE", "INVALID_REQUEST", "FORBIDDEN"]),
+    causeName: label(cause?.name, [
+      "Error",
+      "TypeError",
+      "AbortError",
+      "TimeoutError",
+      "SqliteWorkerError",
+      "FailoverError",
+    ]),
+    controllerPresent: controller !== undefined,
+    controllerAborted: controller?.controller.signal.aborted,
+    executionStarted: controller?.executionStarted,
+    executionStatus: label(execution?.status, ["queued", "running", "interrupted", "terminal"]),
+    outcomeStatus: label(execution?.outcome?.status, ["ok", "error", "timeout"]),
+    gatewayWarningCount: vi.mocked(context.logGateway.warn).mock.calls.length,
+    runtimeWarningCount: getPreparedModelRuntimeMocks().warn.mock.calls.length,
   };
 }
 
