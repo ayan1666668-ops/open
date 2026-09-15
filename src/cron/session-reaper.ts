@@ -77,6 +77,7 @@ export async function sweepCronRunSessions(params: {
   agentId: string;
   /** Resolved session-store target, interpreted by the SQLite accessor. */
   sessionStorePath: string;
+  isAgentAvailable?: (agentId: string) => boolean;
   nowMs?: number;
   log: Logger;
 }): Promise<ReaperResult> {
@@ -105,6 +106,10 @@ export async function sweepCronRunSessions(params: {
   let pruned = 0;
   let transcriptCleanupError: unknown;
   try {
+    if (params.isAgentAvailable?.(params.agentId) === false) {
+      params.log.debug({ agentId: params.agentId }, "cron-reaper: skipped unavailable agent");
+      return { swept: false, pruned: 0 };
+    }
     const cutoff = now - retentionMs;
     const requestedOwner = normalizeAgentId(params.agentId);
     let pendingMediaSessionKeys: Set<string> | undefined;
