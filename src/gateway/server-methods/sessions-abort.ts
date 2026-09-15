@@ -337,14 +337,22 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
     const abortSessionKey =
       canonicalKey === "global" && requestedGlobalAgentId ? "global" : resolvedAbortSessionKey;
     const abortAgentId = requestedGlobalAgentId ?? activeRunAgentId;
+    const lifecycleGeneration = getAgentEventLifecycleGeneration();
+    const assertAbortCurrent = () => {
+      sessionMutationAuthorization?.assertCurrent();
+      assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
+    };
     // Stop must repair a session whose run already died without persisting a
     // terminal lifecycle event. Reconcile through the lifecycle owner so the
     // subsequent UI refresh observes a terminal row instead of stale `running`.
+    // The probe and the commit guard both re-read the live-run registries, so a
+    // run that becomes live during the awaited abort work is never settled.
     const probeLiveRun = createVisibleActiveSessionRunLivenessProbe(context);
     const reconcileStaleRunning = async (): Promise<void> => {
       await reconcileStaleRunningSession({
         sessionKey: canonicalKey,
         agentId: targetAgentId,
+        ...(cfg ? { cfg } : {}),
         hasLiveRun: () =>
           probeLiveRun({
             requestedKey: key,
@@ -353,19 +361,12 @@ export const sessionAbortHandlers: GatewayRequestHandlers = {
             agentId: targetAgentId,
             ...(stableTargetOwner ? { defaultAgentId: stableTargetOwner } : {}),
           }),
-        ...(sessionMutationAuthorization?.assertCurrent
-          ? { assertCommitAllowed: sessionMutationAuthorization.assertCurrent }
-          : {}),
+        assertCommitAllowed: assertAbortCurrent,
       }).catch((error: unknown) => {
         context.logGateway.warn(
           `Failed to reconcile stale running session ${canonicalKey}: ${String(error)}`,
         );
       });
-    };
-    const lifecycleGeneration = getAgentEventLifecycleGeneration();
-    const assertAbortCurrent = () => {
-      sessionMutationAuthorization?.assertCurrent();
-      assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
     };
     const persistEmbeddedAbort = (owner: ActiveEmbeddedRunOwner) =>
       persistGatewaySessionLifecycleEvent({

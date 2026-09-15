@@ -36,7 +36,6 @@ import {
   parseAgentSessionKey,
 } from "../../routing/session-key.js";
 import { hasOperatorBoundary } from "../operator-role-policy.js";
-import { isStaleRunningSessionAge } from "../session-lifecycle-state.js";
 import {
   resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId,
   tryResolveSessionCompatibilityOwnerAgentId,
@@ -466,13 +465,6 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
                   agentId: session.agentId,
                   defaultAgentId: tryResolveSessionCompatibilityOwnerAgentId(cfg, storeKey),
                 });
-                // A durable running row with no live run is stale. List stays
-                // read-only, so only the projection converges; Stop and
-                // chat.history trigger the authoritative lifecycle write.
-                const staleRunning =
-                  !activeRunState.active &&
-                  session.status === "running" &&
-                  isStaleRunningSessionAge(session.updatedAt);
                 Object.assign(session, {
                   visibility,
                   ...(sharingTarget
@@ -485,9 +477,7 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
                         ),
                       }
                     : {}),
-                  ...projectGatewaySessionActiveRun(activeRunState, session.status, {
-                    staleRunning,
-                  }),
+                  ...projectGatewaySessionActiveRun(activeRunState, session.status),
                   ...projectPlacement(session.sessionId),
                   ...(activeRunState.runIds !== undefined
                     ? { activeRunIds: activeRunState.runIds }

@@ -323,6 +323,10 @@ export function createVisibleActiveSessionRunProjector(
  * Synchronous liveness probe for stale-running reconciliation. Unlike the list
  * projector it includes terminal persistence, so a session whose terminal write
  * is still in flight is treated as live and left to that write.
+ *
+ * The live-run registries are re-read on every call. This probe is invoked again
+ * inside the synchronous SQLite commit guard, where an index captured before
+ * awaited work would hide a run that acquired live ownership in the meantime.
  */
 export function createVisibleActiveSessionRunLivenessProbe(
   context: Partial<Pick<GatewayRequestContext, "chatAbortControllers">>,
@@ -333,12 +337,11 @@ export function createVisibleActiveSessionRunLivenessProbe(
   agentId?: string;
   defaultAgentId?: string;
 }) => boolean {
-  const projectedAgentRunIndex = buildProjectedAgentRunIndex();
   return (params) =>
     resolveVisibleActiveSessionRunState({
       ...params,
       context,
-      projectedAgentRunIndex,
+      projectedAgentRunIndex: buildProjectedAgentRunIndex(),
       includeTerminalPersistence: true,
     }).active;
 }

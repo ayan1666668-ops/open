@@ -32,10 +32,6 @@ import { resolveClaudeCliBindingSessionId } from "../cli-session-history.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
 import { buildGatewaySessionSnapshot } from "../session-event-payload.js";
 import {
-  isStaleRunningSessionAge,
-  reconcileStaleRunningSession,
-} from "../session-lifecycle-state.js";
-import {
   resolveRequestedSessionAgentId,
   tryResolveSessionCompatibilityOwnerAgentId,
 } from "../session-request-agent.js";
@@ -71,10 +67,7 @@ import { handleChatMetadataRequest } from "./chat-metadata-handler.js";
 import { validateChatSelectedAgent } from "./chat-origin-routing.js";
 import { readChatPendingInputs } from "./chat-pending-inputs.js";
 import { normalizeOptionalChatText as normalizeOptionalText } from "./chat-text-normalization.js";
-import {
-  createVisibleActiveSessionRunLivenessProbe,
-  resolveVisibleActiveSessionRunState,
-} from "./session-active-runs.js";
+import { resolveVisibleActiveSessionRunState } from "./session-active-runs.js";
 import { resolveGatewayModelSelectionPolicy } from "./session-model-selection-policy.js";
 import { readSessionPlacementFields } from "./session-placement-read-projection.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
@@ -480,26 +473,6 @@ async function handleChatHistoryRequest({
   }
   if (activeRunState.active) {
     sessionInfo.status = activeRunState.status ?? "running";
-  } else if (sessionInfo.status === "running" && isStaleRunningSessionAge(entry?.updatedAt)) {
-    // A durable running row with no live run is a stale lifecycle write. Report
-    // the reconciled terminal status now and settle it through the owner.
-    sessionInfo.status = "failed";
-    void reconcileStaleRunningSession({
-      sessionKey: canonicalKey,
-      ...(sessionAgentId ? { agentId: sessionAgentId } : {}),
-      hasLiveRun: () =>
-        createVisibleActiveSessionRunLivenessProbe(context)({
-          requestedKey: sessionKey,
-          canonicalKey,
-          sessionId,
-          agentId: activeRunAgentId,
-          defaultAgentId: compatibilityOwnerAgentId,
-        }),
-    }).catch((error: unknown) => {
-      context.logGateway.warn(
-        `Failed to reconcile stale running session ${canonicalKey}: ${String(error)}`,
-      );
-    });
   }
   // Clients merge this row into the same store sessions.list fills, so it must
   // carry the placement facts that projection adds; without them the merge

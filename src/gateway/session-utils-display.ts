@@ -194,15 +194,9 @@ export function resolveGatewaySessionGoal(
 export function projectGatewaySessionActiveRun(
   active: ReturnType<SessionListActiveRunProjector> | undefined,
   status: GatewaySessionRow["status"],
-  opts?: { staleRunning?: boolean },
 ): Pick<GatewaySessionRow, "status" | "hasActiveRun"> {
-  const hasActiveRun = active?.active === true;
-  // A durable `running` row with no live run is a stale lifecycle write, not an
-  // active session. Project the reconciled terminal status the owner persists so
-  // the UI cannot show a dead run as running while recovery catches up.
-  const staleRunning = !hasActiveRun && opts?.staleRunning === true;
   return {
     hasActiveRun: active?.active,
-    status: hasActiveRun ? (active.status ?? "running") : staleRunning ? "failed" : status,
+    status: active?.active ? (active.status ?? "running") : status,
   };
 }
