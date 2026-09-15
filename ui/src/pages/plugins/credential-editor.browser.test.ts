@@ -1,6 +1,7 @@
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginCredentialInspection } from "../../../../packages/gateway-protocol/src/schema/plugin-credentials.ts";
+import { createDeferred } from "../../../../test/helpers/promise.ts";
 import type { OpenClawModalDialog } from "../../components/modal-dialog.ts";
 import { REDACTED_SENTINEL } from "../../lib/config-form-utils.ts";
 import type { GatewayPageController } from "../../lit/gateway-page-controller.ts";
@@ -102,7 +103,7 @@ describe("plugin credential authoring controls", () => {
         ref: { source: "env", provider: "default", id: "ORIGINAL_KEY" },
         unresolved: false,
       });
-      const pending = Promise.withResolvers<boolean>();
+      const pending = createDeferred<boolean>();
       vi.mocked(context.onCommit).mockReturnValue(pending.promise);
       await open(editor);
       button(editor, "Save").click();

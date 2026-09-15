@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../../test/helpers/promise.ts";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import { REDACTED_SENTINEL } from "../config-form-utils.ts";
 import {
@@ -76,7 +77,9 @@ describe("field-scoped config draft cancellation", () => {
         id: "/new-key",
       });
       await runtimeConfig.flushFormChanges();
-      if (scenario === "sibling") runtimeConfig.patchForm([...parent, "mode"], "web");
+      if (scenario === "sibling") {
+        runtimeConfig.patchForm([...parent, "mode"], "web");
+      }
       await expect(runtimeConfig.discardFormValue([...parent, "apiKey"])).resolves.toBe(true);
       expect(runtimeConfig.state.configForm).toEqual(
         scenario === "sibling"
@@ -88,7 +91,9 @@ describe("field-scoped config draft cancellation", () => {
           : saved,
       );
       expect(runtimeConfig.state.configFormDirty).toBe(scenario === "sibling");
-      if (scenario === "sibling") runtimeConfig.setWritesSuspended(true);
+      if (scenario === "sibling") {
+        runtimeConfig.setWritesSuspended(true);
+      }
       await vi.advanceTimersByTimeAsync(1_000);
       expect(request.mock.calls.filter(([method]) => method === "config.set")).toHaveLength(1);
       runtimeConfig.dispose();
@@ -122,7 +127,7 @@ describe("field-scoped config draft cancellation", () => {
       runtimeConfig.patchForm(["count"], 2);
       await runtimeConfig.flushFormChanges();
       const snapshot = await server.request("config.get");
-      const read = Promise.withResolvers<unknown>();
+      const read = createDeferred<typeof snapshot>();
       request.mockImplementationOnce(() => read.promise);
       const cancel = runtimeConfig.discardFormValue(["count"]);
       if (change === "field" || change === "same-value") {
