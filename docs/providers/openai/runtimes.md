@@ -100,8 +100,11 @@ remains available when you want an OpenClaw-owned profile.
 
 If you previously relied on automatic use of a native Codex login, sign in with
 `openclaw models auth login --provider openai` and select the resulting OpenClaw
-profile. Setup no longer enables user-home sharing merely because a native login
-exists. Existing explicit `homeScope: "user"` settings remain opt-ins; remove that
+profile. Selecting detected Codex in Model Setup reuses eligible OpenClaw credentials
+or opens the supported OpenAI sign-in flow before testing the connection. A cancelled
+or failed sign-in does not promote the route. If verification fails after sign-in,
+choose the saved sign-in to retry without logging in again. Setup no longer enables
+user-home sharing merely because a native login exists. Existing explicit `homeScope: "user"` settings remain opt-ins; remove that
 setting to use isolated sessions. Native session adoption and supervision are
 unchanged. Existing personal Codex history is not moved or deleted, and ordinary
 OpenClaw sessions remain durable in the per-agent Codex home.
