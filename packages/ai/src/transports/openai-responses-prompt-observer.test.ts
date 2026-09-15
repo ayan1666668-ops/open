@@ -15,6 +15,7 @@ import { cleanupSessionResources } from "../session-resources.js";
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "../utils/system-prompt-cache-boundary.js";
 import { resolveResponsesContextUsageBoundary } from "./openai-responses-context-usage.js";
 import {
+  completedSdkResponse,
   createCompactionContext,
   createOrphanedToolOutputCompactionContext,
   SDK_FULL_HISTORY_PREFIX,
@@ -109,23 +110,6 @@ function completedSseResponse(responseId = "resp_test"): Response {
   );
 }
 
-function completedSdkResponse(responseId: string): SdkResponse {
-  return {
-    data: (async function* () {
-      yield {
-        type: "response.completed",
-        response: {
-          id: responseId,
-          status: "completed",
-          output: [],
-          usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
-        },
-      };
-    })(),
-    response: new Response(null, { status: 200 }),
-  };
-}
-
 function requestHasCompaction(request: Record<string, unknown> | undefined): boolean {
   return Array.isArray(request?.input) && request.input.some((item) => item?.type === "compaction");
 }
@@ -184,6 +168,46 @@ afterEach(() => {
 });
 
 describe("OpenAI Responses provider prompt observer", () => {
+  it.each(["string input", "missing terminal output"])(
+    "preserves %s without a checkpoint measurement",
+    async (shape) => {
+      const response = completedSdkResponse("resp_unbound_shape");
+      if (shape === "missing terminal output") {
+        response.data = (async function* () {
+          yield {
+            type: "response.completed",
+            response: {
+              id: "resp_unbound_shape",
+              status: "completed",
+              usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+            },
+          };
+        })();
+      }
+      sdkState.outcomes = [response];
+      const model = createModel();
+      const identity = { sessionId: "unbound-shape", authProfileId: "profile-a" };
+      const stream = await Promise.resolve(
+        createOpenAIResponsesTransportStreamFn()(model, createCompactionContext(model, identity), {
+          apiKey: "test-key",
+          ...identity,
+          transport: "sse",
+          onPayload:
+            shape === "string input"
+              ? () => ({ model: model.id, input: "hello", stream: true })
+              : undefined,
+        }),
+      );
+      const result = await stream.result();
+      if (shape === "string input") {
+        expect(sdkState.requests[0]?.input).toBe("hello");
+      }
+      expect(result.errorMessage).toBeUndefined();
+      expect(result.stopReason).toBe("stop");
+      expect(result).not.toHaveProperty("openclawResponsesInputReplay.contextUsage");
+    },
+  );
+
   it.each(["native", "shared", "chatgpt"] as const)(
     "preserves measured checkpoint usage through %s egress and saved-history replay",
     async (transport) => {

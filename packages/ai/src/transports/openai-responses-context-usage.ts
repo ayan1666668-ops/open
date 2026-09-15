@@ -64,7 +64,9 @@ export function recordResponsesContextUsage(
     message.stopReason === "aborted" ||
     message.providerReplay ||
     request.previous_response_id ||
-    !request.input?.some((item) => item.type === "compaction") ||
+    !Array.isArray(request.input) ||
+    !request.input.some((item: unknown) => isRecord(item) && item.type === "compaction") ||
+    !Array.isArray(output) ||
     output.some((item) => isRecord(item) && item.type === "compaction")
   ) {
     return;

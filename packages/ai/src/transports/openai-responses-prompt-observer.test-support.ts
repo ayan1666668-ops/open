@@ -9,6 +9,26 @@ import { OPENAI_RESPONSES_REASONING_REPLAY_META_KEY } from "./openai-responses-c
 export const SDK_FULL_HISTORY_PREFIX = "full history before compaction";
 export const SDK_REASONING_CIPHERTEXT = "opaque-sdk-reasoning";
 
+export function completedSdkResponse(responseId: string): {
+  data: AsyncIterable<unknown>;
+  response: Response;
+} {
+  return {
+    data: (async function* () {
+      yield {
+        type: "response.completed",
+        response: {
+          id: responseId,
+          status: "completed",
+          output: [],
+          usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+        },
+      };
+    })(),
+    response: new Response(null, { status: 200 }),
+  };
+}
+
 export function createCompactionContext(
   model: Model,
   identity: { authProfileId: string; sessionId: string },
