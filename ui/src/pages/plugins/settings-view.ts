@@ -422,7 +422,6 @@ function renderInstalledAdvanced(props: DetailProps): TemplateResult {
         })
       : nothing
   }
-  ${props.configError ? renderRetryError(props.configError, props.onConfigWriteRetry) : nothing}
   ${renderPluginDeclaredCapabilities(props.inspection.declared)}
   ${renderPluginGrants(props.inspection.grants, props.inspection.plugin.origin)}`;
 }
