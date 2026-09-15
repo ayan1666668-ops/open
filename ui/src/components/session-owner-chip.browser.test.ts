@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionParticipant } from "../../../packages/gateway-protocol/src/schema/session-participant.js";
 import "../test-helpers/load-styles.ts";
-import { renderSessionGlyph } from "./session-glyph.ts";
+import { renderSessionLeadingState } from "./session-leading-indicator.ts";
 import "./session-owner-chip.ts";
 
 const originalTheme = document.documentElement.getAttribute("data-theme-mode");
@@ -33,45 +33,19 @@ async function mountOwnerChip(params: {
 }
 
 describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
-  it.each([
-    {
-      backSelector: ".session-owner-stack__back .viewer-avatar",
-      name: "one participant avatar",
-      participantCount: 1,
-      participants: [{ identity: { type: "profile" as const, id: "profile-bob" }, label: "Bob" }],
-    },
-  ])("keeps $name legible as an equal peer behind the owner", async (fixture) => {
-    const chip = await mountOwnerChip(fixture);
-    const stack = chip.querySelector<HTMLElement>(".session-owner-stack");
-    const back = chip.querySelector<HTMLElement>(fixture.backSelector);
-    const front = chip.querySelector<HTMLElement>(".session-owner-stack__front");
-    if (!stack || !back || !front) {
-      throw new Error("expected complete session owner stack");
-    }
-
-    const stackBounds = stack.getBoundingClientRect();
-    const backBounds = back.getBoundingClientRect();
-    const frontBounds = front.getBoundingClientRect();
-    expect({
-      backSize: [backBounds.width, backBounds.height],
-      frontSize: [frontBounds.width, frontBounds.height],
-      stackSize: [stackBounds.width, stackBounds.height],
-    }).toEqual({
-      backSize: [18, 18],
-      frontSize: [18, 18],
-      stackSize: [28, 20],
-    });
-    expect(backBounds.right - frontBounds.left).toBe(8);
-    expect(frontBounds.left - backBounds.left).toBe(10);
-  });
-
   it.each(
     ["light", "dark"].flatMap((theme) =>
-      [2, 4, 12].map((participantCount) => ({ theme, participantCount })),
+      [2, 3, 5, 12, 13].flatMap((ownerCount) =>
+        ["present", "running", "away", "unread"].map((presence) => ({
+          theme,
+          ownerCount,
+          presence,
+        })),
+      ),
     ),
   )(
-    "shows the primary owner beside all $participantCount others in $theme",
-    async ({ theme, participantCount }) => {
+    "keeps $ownerCount owners in an equal pair in $theme while $presence",
+    async ({ theme, ownerCount, presence }) => {
       document.documentElement.setAttribute("data-theme-mode", theme);
       const sidebar = document.createElement("aside");
       sidebar.className = "sidebar sidebar-recent-sessions";
@@ -80,12 +54,44 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
         html`<div class="sidebar-recent-session">
           <a class="sidebar-recent-session__link">
             <span class="sidebar-session-indicator"
-              >${renderSessionGlyph({
-                content: html`<openclaw-session-owner-chip></openclaw-session-owner-chip>`,
-                running: true,
-                circular: true,
-                ring: "pair",
-              })}</span
+              >${
+                renderSessionLeadingState(
+                  {
+                    key: "agent:main:shared",
+                    label: "Shared session",
+                    renameValue: "Shared session",
+                    active: false,
+                    visuallyActive: false,
+                    hasActiveRun: presence === "running",
+                    modelSelectionLocked: false,
+                    pinned: false,
+                    pinnable: true,
+                    cloudWorkerStopAction: null,
+                    hasAutomation: false,
+                    unread: presence === "unread",
+                    attention: { kind: "none" },
+                    childSessionKeys: [],
+                    children: [],
+                    isChild: false,
+                    loadingChildren: false,
+                    containsActiveDescendant: false,
+                    runningChildCount: 0,
+                    failedChildCount: 0,
+                    participants: [
+                      { identity: { type: "profile", id: "profile-bob" }, label: "Bob" },
+                    ],
+                    participantCount: ownerCount - 1,
+                  },
+                  {
+                    type: "human",
+                    id: "profile-ada",
+                    identity: { type: "profile", id: "profile-ada" },
+                    label: "Ada",
+                  },
+                  "owned",
+                  presence === "away" ? false : undefined,
+                ).leadingIndicator
+              }</span
             >
             <span class="sidebar-recent-session__title">Shared session</span>
           </a>
@@ -94,39 +100,22 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
       );
       const row = sidebar.querySelector<HTMLElement>(".sidebar-recent-session")!;
       const chip = sidebar.querySelector("openclaw-session-owner-chip")!;
-      chip.owner = { type: "human", id: "profile-ada", label: "Ada" };
-      chip.attribution = "owned";
-      chip.participants = [{ identity: { type: "profile", id: "profile-bob" }, label: "Bob" }];
-      chip.participantCount = participantCount;
-      chip.viewingNow = false;
       await chip.updateComplete;
-      const front = chip.querySelector<HTMLElement>(".session-owner-stack__front")!;
-      const counter = chip.querySelector<HTMLElement>(".session-owner-stack__overflow")!;
-      expect(front.getAttribute("aria-label")).toBe("Owned by Ada");
-      expect(front.textContent?.trim()).toBe("A");
-      expect(chip.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe(
-        `Owned by Ada · +${participantCount} more`,
+      await Promise.all(
+        [...chip.querySelectorAll("openclaw-viewer-avatar")].map((avatar) => avatar.updateComplete),
       );
-      expect(counter.textContent).toBe(`+${participantCount}`);
-      const frontBounds = front.getBoundingClientRect();
-      const counterBounds = counter.getBoundingClientRect();
-      const traceBounds = row.querySelector(".session-glyph__trace")!.getBoundingClientRect();
-      expect(frontBounds.left).toBe(
-        row.querySelector(".sidebar-session-indicator")!.getBoundingClientRect().left,
+      const stack = chip.querySelector<HTMLElement>(".session-owner-stack")!;
+      const primary = chip.querySelector<HTMLElement>(".session-owner-stack__front")!;
+      const peer = chip.querySelector<HTMLElement>(
+        ownerCount === 2
+          ? ".session-owner-stack__back .viewer-avatar"
+          : ".session-owner-stack__overflow",
+      )!;
+      expect(primary.getAttribute("aria-label")).toBe("Owned by Ada");
+      expect(primary.textContent?.trim()).toBe("A");
+      expect(stack.getAttribute("aria-label")).toBe(
+        ownerCount === 2 ? "Owned by Ada · with Bob" : `Owned by Ada · +${ownerCount - 1} more`,
       );
-      expect(counterBounds.left).toBeGreaterThanOrEqual(frontBounds.right);
-      expect(counterBounds.left).toBeGreaterThan(traceBounds.right + 0.75);
-      expect(counterBounds.right).toBeLessThanOrEqual(
-        row.querySelector(".sidebar-recent-session__title")!.getBoundingClientRect().left,
-      );
-      const textRange = document.createRange();
-      textRange.selectNodeContents(counter);
-      const textBounds = textRange.getBoundingClientRect();
-      expect(textBounds.left).toBeGreaterThanOrEqual(counterBounds.left);
-      expect(textBounds.right).toBeLessThanOrEqual(counterBounds.right);
-      expect(Number.parseFloat(getComputedStyle(counter).fontSize)).toBeGreaterThanOrEqual(10);
-      expect(getComputedStyle(front).opacity).toBe("0.45");
-      expect(getComputedStyle(counter).opacity).toBe("1");
       for (const state of ["idle", "hover", "active", "selected"]) {
         await userEvent.unhover(row);
         if (state === "hover") {
@@ -135,7 +124,68 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
         row.classList.toggle("sidebar-recent-session--active", state === "active");
         row.classList.toggle("sidebar-recent-session--selected", state === "selected");
         expect(row.matches(":hover")).toBe(state === "hover");
-        const style = getComputedStyle(counter);
+        const primaryBounds = primary.getBoundingClientRect();
+        const peerBounds = peer.getBoundingClientRect();
+        const stackBounds = stack.getBoundingClientRect();
+        expect([stackBounds.width, stackBounds.height]).toEqual([28, 20]);
+        for (const bounds of [primaryBounds, peerBounds]) {
+          expect([bounds.width, bounds.height]).toEqual([18, 18]);
+          expect(bounds.top).toBe(stackBounds.top + 1);
+          expect(bounds.left).toBeGreaterThanOrEqual(stackBounds.left);
+          expect(bounds.right).toBeLessThanOrEqual(stackBounds.right);
+        }
+        expect(Math.abs(primaryBounds.left - peerBounds.left)).toBe(10);
+        expect(
+          Math.min(primaryBounds.right, peerBounds.right) -
+            Math.max(primaryBounds.left, peerBounds.left),
+        ).toBe(8);
+        expect(getComputedStyle(primary).fontSize).toBe(getComputedStyle(peer).fontSize);
+        const primaryFace = primary.querySelector<HTMLElement>(".viewer-avatar > span")!;
+        const paintedPrimary = primaryFace.getBoundingClientRect();
+        expect([paintedPrimary.width, paintedPrimary.height]).toEqual([16, 16]);
+        expect(getComputedStyle(primary).opacity).toBe(presence === "away" ? "0.45" : "1");
+        expect(getComputedStyle(peer).opacity).toBe("1");
+        if (presence === "running") {
+          const traceBounds = row.querySelector(".session-glyph__trace")!.getBoundingClientRect();
+          expect(traceBounds.left).toBe(stackBounds.left - 2);
+          expect(traceBounds.right).toBe(stackBounds.right + 2);
+        }
+        if (presence === "unread") {
+          const badge = row.querySelector(".session-glyph__badge--unread")!;
+          const badgeBounds = badge.getBoundingClientRect();
+          for (const fraction of [0.5, 0.75]) {
+            expect(
+              document.elementFromPoint(
+                badgeBounds.left + badgeBounds.width / 2,
+                badgeBounds.top + badgeBounds.height * fraction,
+              ),
+            ).toBe(badge);
+          }
+        }
+        if (ownerCount === 2) {
+          expect(peerBounds.left).toBe(stackBounds.left);
+          const paintedPeer = peer.querySelector("span")!.getBoundingClientRect();
+          expect([paintedPeer.width, paintedPeer.height]).toEqual([
+            paintedPrimary.width,
+            paintedPrimary.height,
+          ]);
+          continue;
+        }
+        expect(primaryBounds.left).toBe(stackBounds.left);
+        expect(peerBounds.right).toBe(stackBounds.right);
+        expect(peer.textContent).toBe(`+${ownerCount - 1}`);
+        const textRange = document.createRange();
+        textRange.selectNodeContents(peer);
+        const textBounds = textRange.getBoundingClientRect();
+        expect(textBounds.left).toBeGreaterThanOrEqual(peerBounds.left + 1);
+        expect(textBounds.right).toBeLessThanOrEqual(peerBounds.right - 1);
+        for (const x of [textBounds.left + 0.5, textBounds.right - 0.5]) {
+          expect(
+            peer.contains(document.elementFromPoint(x, textBounds.top + textBounds.height / 2)),
+          ).toBe(true);
+        }
+        const style = getComputedStyle(peer);
+        expect(style.borderTopWidth).toBe("1px");
         const luminances = [style.color, style.backgroundColor].map((color) => {
           const channels = color.match(/^rgb\((\d+), (\d+), (\d+)\)$/u);
           if (!channels) {
@@ -151,11 +201,6 @@ describe.skipIf(!hasBrowserLayout)("session owner stack layout", () => {
           (Math.max(...luminances) + 0.05) / (Math.min(...luminances) + 0.05),
         ).toBeGreaterThanOrEqual(4.5);
       }
-      chip.participantCount = 0;
-      await chip.updateComplete;
-      expect(chip.querySelector(".session-owner-chip")!.getBoundingClientRect().left).toBe(
-        frontBounds.left,
-      );
     },
   );
 
