@@ -94,10 +94,10 @@ suite.define(() => {
           await open();
           await comment.press("Enter");
           await chip(2).click();
-          const preview = page.getByRole("region", { name: "Annotations", exact: true });
+          const preview = page.getByRole("region", { name: "Conversation notes", exact: true });
           await preview.waitFor({ state: "visible" });
           expect(await preview.getByText(selectedText, { exact: true }).count()).toBe(2);
-          expect(await preview.getByText("User comment:", { exact: true }).count()).toBe(1);
+          expect(await preview.getByText("Your note:", { exact: true }).count()).toBe(1);
           await bounded(preview);
           await capture("multiple");
 
