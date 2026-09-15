@@ -1583,6 +1583,75 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     },
   );
 
+  it("settles a queued captioned media block with block streaming disabled", async () => {
+    resolveFeishuAccountMock.mockReturnValue({
+      ...createReplyAccount("auto", "partial", "feishu"),
+      config: { renderMode: "auto", streaming: { mode: "partial", block: { enabled: false } } },
+    });
+    sendMessageFeishuMock.mockResolvedValueOnce({ messageId: "om_caption" });
+    sendMediaFeishuMock.mockResolvedValueOnce({ messageId: "om_image" });
+    const { dispatcher, deliveries } = createRecordedFeishuDispatcher();
+    const text = "Chart ready. The hourly trend is attached.";
+
+    expect(dispatcher.sendBlockReply({ text, mediaUrl: "https://example.com/chart.png" })).toBe(
+      true,
+    );
+    dispatcher.markComplete();
+    const receipt = await dispatcher.waitForIdle();
+
+    expect(receipt).toMatchObject({
+      anyVisibleDelivered: true,
+      counts: { block: { delivered: 1 } },
+    });
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      kind: "block",
+      delivery: {
+        visibleReplySent: true,
+        content: text,
+        messageIds: ["om_caption", "om_image"],
+      },
+    });
+    expect(sendMessageFeishuMock).toHaveBeenCalledOnce();
+    expect(sendMediaFeishuMock).toHaveBeenCalledOnce();
+    expect(streamingInstances).toHaveLength(0);
+  });
+
+  it("settles a queued media block by completing its existing preview without a final", async () => {
+    resolveFeishuAccountMock.mockReturnValue({
+      ...createReplyAccount("auto", "partial", "feishu"),
+      config: { renderMode: "auto", streaming: { mode: "partial", block: { enabled: false } } },
+    });
+    sendMediaFeishuMock.mockResolvedValueOnce({ messageId: "om_image" });
+    const { result, dispatcher, deliveries } = createRecordedFeishuDispatcher();
+    const text = "Chart ready. The hourly trend is attached.";
+    result.replyOptions.onPartialReply?.({ text: `${text} Extra draft.` });
+
+    expect(dispatcher.sendBlockReply({ text, mediaUrl: "https://example.com/chart.png" })).toBe(
+      true,
+    );
+    dispatcher.markComplete();
+    const receipt = await dispatcher.waitForIdle();
+
+    expect(receipt).toMatchObject({
+      anyVisibleDelivered: true,
+      counts: { block: { delivered: 1 } },
+    });
+    expect(deliveries).toHaveLength(1);
+    await expect(deliveries[0]?.delivery?.finalization).resolves.toMatchObject({
+      visibleReplySent: true,
+      content: text,
+      messageIds: ["om_stream", "om_image"],
+    });
+    expect(streamingInstances).toHaveLength(1);
+    expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledOnce();
+    expect(requireStreamingInstance(0).closeWithResult).toHaveBeenCalledWith(text, {
+      note: "Agent: agent",
+    });
+    expect(sendMessageFeishuMock).not.toHaveBeenCalled();
+    expect(sendMediaFeishuMock).toHaveBeenCalledOnce();
+  });
+
   it("preserves text-only block suppression before a normal final", async () => {
     useNonStreamingAutoAccount();
     const { options } = createDispatcherHarness();
