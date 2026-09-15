@@ -6,6 +6,7 @@ import {
   WorkerLiveEventParamsSchema,
   type WorkerLiveEventParams,
 } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { makeTextToolResult } from "../../../test/helpers/text-tool-result.js";
 import {
   buildAgentRunTerminalReplySnapshot,
   type AgentRunTerminalReplySnapshot,
@@ -34,7 +35,10 @@ import { createWorkerEnvironmentService } from "./service.js";
 import * as support from "./service.test-support.js";
 import { createWorkerEnvironmentStore } from "./store.js";
 import type { WorkerTunnelHandle } from "./tunnel-contract.js";
-import { WorkerTurnExecutionError } from "./worker-turn-failure.js";
+import {
+  WorkerTurnExecutionError,
+  WorkerWorkspaceReconciliationError,
+} from "./worker-turn-failure.js";
 import {
   ENVIRONMENT_ID,
   MANIFEST_REF,
@@ -57,7 +61,6 @@ import {
   unusedEnvironments,
   type WorkerTurnEnvironmentService,
 } from "./worker-turn-launcher.test-support.js";
-import { WorkerWorkspaceReconciliationError } from "./workspace-result-finalize.js";
 
 describe("worker finishing admission", () => {
   support.setupWorkerEnvironmentServiceSuite();
@@ -69,7 +72,7 @@ describe("worker finishing admission", () => {
       "session-live-reentrant-credential",
       { liveEvents },
     );
-    apply.mockImplementationOnce(() => {
+    apply.mockImplementationOnce(async () => {
       support.testState.store.renewCredential({
         environmentId: identity.environmentId,
         expectedOwnerEpoch: identity.ownerEpoch,
@@ -279,7 +282,10 @@ describe("worker turn launcher terminal results", () => {
           if (reconciliationFails) {
             throw reconciliationError;
           }
-          request.journal.commit(MANIFEST_REF);
+          if (request.source.kind !== "local") {
+            throw new Error("expected local workspace source");
+          }
+          request.source.journal.commit(MANIFEST_REF);
           return {
             manifestRef: MANIFEST_REF,
             changed: false,
@@ -656,14 +662,9 @@ describe("worker turn launcher terminal results", () => {
                 },
               }),
             );
-            completed.appendMessage({
-              role: "toolResult",
-              toolCallId: "call-usage",
-              toolName: "read",
-              content: [{ type: "text", text: "usage result" }],
-              isError: false,
-              timestamp: 22,
-            });
+            completed.appendMessage(
+              makeTextToolResult("call-usage", "read", "usage result", false, 22),
+            );
             const leafId = completed.appendMessage(
               makeAgentAssistantMessage({
                 content,
@@ -707,7 +708,10 @@ describe("worker turn launcher terminal results", () => {
             throw new Error("unexpected workspace sync");
           }),
           reconcileWorkspace: vi.fn(async (request) => {
-            request.journal.commit(MANIFEST_REF);
+            if (request.source.kind !== "local") {
+              throw new Error("expected a local workspace source");
+            }
+            request.source.journal.commit(MANIFEST_REF);
             return {
               manifestRef: MANIFEST_REF,
               changed: false,

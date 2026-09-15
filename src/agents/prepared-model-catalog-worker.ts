@@ -1,13 +1,17 @@
 /** Runs complete model-catalog discovery outside the Gateway event loop. */
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   getConfigResolutionFacts,
   serializeConfigResolutionFacts,
 } from "../config/resolution-facts.js";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../config/runtime-source-projection.js";
+import { runtimeProcessEntrypoints } from "../infra/runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 import { WorkerTaskError, WorkerTaskPool } from "../infra/worker-task-pool.js";
+import type { Model } from "../llm/types.js";
 import { resolveInstalledManifestRegistryIndexFingerprint } from "../plugins/manifest-registry-installed.js";
-import { restorePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { captureProviderSyntheticAuthFacts } from "../plugins/provider-runtime.js";
 import type { PreparedSyntheticAuthFacts } from "../plugins/provider-synthetic-auth.js";
@@ -17,17 +21,24 @@ import { listManifestSyntheticAuthProviderRefs } from "../plugins/synthetic-auth
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
 import { cloneAuthProfileStore } from "./auth-profiles/clone.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
+import type { ModelCatalogAuthLabels } from "./model-catalog-auth-labels.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import {
   setPreparedModelFullCatalogAuth,
   type PreparedModelRuntimeAuth,
   type PreparedModelRuntimeAuthScope,
 } from "./prepared-model-runtime-auth.js";
-import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
+import type {
+  PreparedModelRuntimeAgentFacts,
+  PreparedModelRuntimeCatalogFacts,
+} from "./prepared-model-runtime.catalog-contract.js";
 import { PreparedModelRuntimePublicationSupersededError } from "./prepared-model-runtime.errors.js";
 import { fingerprintPreparedRuntimeFacts } from "./prepared-model-runtime.facts.js";
 import { markPreparedModelCatalogFull } from "./prepared-model-runtime.full-catalog.js";
+import { registerPreparedModelRuntimeClose } from "./prepared-model-runtime.lifecycle.js";
+import { scopeSyntheticAuthProviderRefs } from "./prepared-model-runtime.synthetic-auth.js";
 import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
+import type { AuthStorageData } from "./sessions/auth-storage.js";
 
 export type PreparedModelCatalogWorkerInput = Readonly<{
   kind: "catalog";
@@ -42,8 +53,12 @@ export type PreparedModelCatalogWorkerInput = Readonly<{
   pluginMetadataSnapshot: Omit<PluginMetadataSnapshot, "normalizePluginId">;
 }>;
 
+export type PreparedModelCatalogWorkerData = PreparedModelCatalogWorkerInput & {
+  sourceCaptureDirectory: string;
+};
+
 type PreparedModelWorkerCommand =
-  | Readonly<{ kind: "catalog" }>
+  | Readonly<{ kind: "catalog"; providerIds?: readonly string[] }>
   | Readonly<{
       kind: "auth-refresh";
       profileIds?: readonly string[];
@@ -59,6 +74,12 @@ export type PreparedModelWorkerResult =
       kind: "catalog";
       generationFingerprint: string;
       snapshot: ModelCatalogSnapshot;
+      runtimeModels: Map<string, Model[]>;
+      providerExpiries: Map<string, number>;
+      configuredProviderModelIds: Map<string, readonly string[]>;
+      configuredRuntimeModels: PreparedModelRuntimeCatalogFacts["configuredRuntimeModels"];
+      credentials: Readonly<AuthStorageData>;
+      providerAuthLabels: ModelCatalogAuthLabels;
       authStore: AuthProfileStore;
       authModes: PreparedAgentCredentialModes;
     }>
@@ -68,6 +89,7 @@ export type PreparedModelWorkerResult =
       generationFingerprint: string;
       authStore: AuthProfileStore;
       authModes: PreparedAgentCredentialModes;
+      credentials: Readonly<AuthStorageData>;
     }>
   | Readonly<{
       status: "generation-mismatch";
@@ -78,7 +100,7 @@ export type PreparedModelWorkerResult =
 
 // Cold source/plugin loading can take well over a minute. Three minutes preserves exact full-view
 // discovery while bounding a wedged provider; expiry rejects and never returns partial results.
-const PREPARED_MODEL_CATALOG_WORKER_TIMEOUT_MS = 180_000;
+export const PREPARED_MODEL_CATALOG_WORKER_TIMEOUT_MS = 180_000;
 const PREPARED_MODEL_CATALOG_WORKER_GENERATION_POLL_MS = 25;
 
 class PreparedModelCatalogGenerationMismatchError extends Error {
@@ -190,24 +212,36 @@ export function createPreparedModelCatalogWorkerInput(params: {
 }
 
 type PreparedModelCatalogWorker = Readonly<{
-  loadAuth: (scope: PreparedModelRuntimeAuthScope) => Promise<PreparedModelRuntimeAuth>;
-  loadCatalog: () => Promise<ModelCatalogSnapshot>;
+  loadAuth: (
+    scope: PreparedModelRuntimeAuthScope,
+  ) => Promise<PreparedModelRuntimeAuth & { credentials: Readonly<AuthStorageData> }>;
+  loadCatalog: (providerIds?: readonly string[]) => Promise<
+    Pick<PreparedModelRuntimeCatalogFacts, "modelCatalog" | "configuredRuntimeModels"> & {
+      runtimeModels: Map<string, Model[]>;
+      providerExpiries: Map<string, number>;
+      configuredProviderModelIds: Map<string, readonly string[]>;
+    }
+  >;
 }>;
 
-export function createPreparedModelCatalogWorker(params: {
-  input: PreparedModelCatalogWorkerInput;
-  isCurrent: () => boolean;
-  pluginRegistry?: PluginRegistry;
-}): PreparedModelCatalogWorker {
+export function createPreparedModelCatalogWorker(
+  params: Parameters<typeof createPreparedModelCatalogWorkerInput>[0] & {
+    isCurrent: () => boolean;
+    pluginRegistry?: PluginRegistry;
+  },
+): PreparedModelCatalogWorker {
+  const workerInput = createPreparedModelCatalogWorkerInput(params);
+  // Parent probes retain the canonical generation; only the worker restores a cloned payload.
+  const metadataSnapshot = params.pluginMetadataSnapshot;
   const superseded = () =>
     new PreparedModelRuntimePublicationSupersededError(
-      `prepared model runtime catalog generation was superseded for ${params.input.input.agentDir}`,
+      `prepared model runtime catalog generation was superseded for ${workerInput.input.agentDir}`,
     );
   let generationPoll: NodeJS.Timeout | undefined;
   let stoppedError: Error | undefined;
+  let releaseProcessLifetime: (() => void) | undefined;
   let expectedFingerprint: string | undefined;
   const captures = new Map<AbortController, Promise<PreparedSyntheticAuthFacts>>();
-  const metadataSnapshot = restorePluginMetadataSnapshot(params.input.pluginMetadataSnapshot);
   const assertCurrent = () => {
     if (stoppedError) {
       throw stoppedError;
@@ -221,26 +255,31 @@ export function createPreparedModelCatalogWorker(params: {
     message: Extract<PreparedModelWorkerResult, { status: "generation-mismatch" }>,
   ) =>
     new PreparedModelCatalogGenerationMismatchError(
-      params.input.input.agentDir,
+      workerInput.input.agentDir,
       message.generationFingerprint,
       message.reconstructedFingerprint,
     );
   const createPool = () =>
     new WorkerTaskPool<PreparedModelWorkerRequest, PreparedModelWorkerResult>({
-      workerUrl: resolveRuntimeWorkerUrl({
-        currentModuleUrl: import.meta.url,
-        sourceWorkerName: "prepared-model-catalog.worker",
-        distWorkerPath: "agents/prepared-model-catalog.worker.js",
-      }),
+      workerUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.preparedModelCatalog),
       maxWorkers: 1,
       // Recreating this worker would import changed plugin code under the old generation.
       // Only the lifecycle owner may retire it; crashes close the generation permanently.
       idleTimeoutMs: 0,
       restartOnError: false,
-      workerOptions: {
-        workerData: params.input,
-        // Establish state/config environment before worker module initialization reads process.env.
-        env: params.input.input.env,
+      prepareWorker: () => {
+        const directory = fs.mkdtempSync(path.join(tmpdir(), "openclaw-model-catalog-"));
+        return {
+          temporaryDirectory: directory,
+          options: {
+            workerData: {
+              ...workerInput,
+              sourceCaptureDirectory: directory,
+            } satisfies PreparedModelCatalogWorkerData,
+            // Establish state/config environment before module initialization reads process.env.
+            env: workerInput.input.env,
+          },
+        };
       },
       validateResult: (message) => {
         assertCurrent();
@@ -265,6 +304,8 @@ export function createPreparedModelCatalogWorker(params: {
     // Native probes live in the parent; drain them before retiring the compute worker.
     await Promise.allSettled(captures.values());
     await pool?.close(stoppedError);
+    releaseProcessLifetime?.();
+    releaseProcessLifetime = undefined;
   };
   const request = async (
     command: PreparedModelWorkerCommand,
@@ -278,13 +319,16 @@ export function createPreparedModelCatalogWorker(params: {
     );
     try {
       assertCurrent();
+      releaseProcessLifetime ??= registerPreparedModelRuntimeClose(stop);
       generationPoll ??= setInterval(() => {
         if (!params.isCurrent()) {
           void stop(superseded());
         }
       }, PREPARED_MODEL_CATALOG_WORKER_GENERATION_POLL_MS);
       generationPoll.unref();
-      const { input } = params.input;
+      const { input } = workerInput;
+      // Worker reconstruction consumes startup auth facts even for a scoped catalog request.
+      const providerScope = [...workerInput.providerIds, ...(command.providerIds ?? [])];
       const capture = withPluginRuntimeGenerationScope(
         { metadataSnapshot, pluginRegistry: params.pluginRegistry },
         () =>
@@ -293,12 +337,18 @@ export function createPreparedModelCatalogWorker(params: {
             env: input.env,
             workspaceDir: input.workspaceDir,
             providerRefs:
-              command.kind === "catalog"
+              command.kind === "catalog" && !command.providerIds
                 ? [
                     ...listManifestSyntheticAuthProviderRefs(metadataSnapshot.index),
-                    ...params.input.providerIds,
+                    ...workerInput.providerIds,
                   ]
-                : [...params.input.providerIds, ...command.providerIds],
+                : [
+                    ...providerScope,
+                    ...scopeSyntheticAuthProviderRefs(
+                      listManifestSyntheticAuthProviderRefs(metadataSnapshot.index),
+                      providerScope,
+                    ),
+                  ],
             signal: controller.signal,
           }),
       );
@@ -315,7 +365,7 @@ export function createPreparedModelCatalogWorker(params: {
       message = await requestPool.run(
         () => {
           assertCurrent();
-          expectedFingerprint = fingerprintPreparedModelWorkerRequest(params.input, value);
+          expectedFingerprint = fingerprintPreparedModelWorkerRequest(workerInput, value);
           return value;
         },
         { timeoutMs: PREPARED_MODEL_CATALOG_WORKER_TIMEOUT_MS, signal: controller.signal },
@@ -323,6 +373,10 @@ export function createPreparedModelCatalogWorker(params: {
       assertCurrent();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      if (failure instanceof WorkerTaskError && failure.code === "overloaded") {
+        // Admission pressure rejects this request without retiring the prepared generation.
+        throw failure;
+      }
       if (failure instanceof PreparedModelCatalogGenerationMismatchError) {
         // Keep the generation open, but retire only this request's pool: a delayed rejection
         // from it must not close a replacement already serving the same lifecycle plan.
@@ -349,8 +403,8 @@ export function createPreparedModelCatalogWorker(params: {
   };
 
   return {
-    loadCatalog: async () => {
-      const message = await request({ kind: "catalog" });
+    loadCatalog: async (providerIds) => {
+      const message = await request({ kind: "catalog", ...(providerIds ? { providerIds } : {}) });
       if (message.kind !== "catalog") {
         throw new Error("prepared model catalog worker returned an auth refresh result");
       }
@@ -358,8 +412,16 @@ export function createPreparedModelCatalogWorker(params: {
       setPreparedModelFullCatalogAuth(modelCatalog, {
         authStore: message.authStore,
         authModes: message.authModes,
+        credentials: message.credentials,
+        providerAuthLabels: message.providerAuthLabels,
       });
-      return modelCatalog;
+      return {
+        modelCatalog,
+        configuredRuntimeModels: message.configuredRuntimeModels,
+        runtimeModels: message.runtimeModels,
+        providerExpiries: message.providerExpiries,
+        configuredProviderModelIds: message.configuredProviderModelIds,
+      };
     },
     loadAuth: async ({ providerIds, profileIds }) => {
       const normalizedProviderIds = [...new Set(providerIds)].toSorted((left, right) =>
@@ -376,7 +438,11 @@ export function createPreparedModelCatalogWorker(params: {
       if (message.kind !== "auth-refresh") {
         throw new Error("prepared model auth refresh worker returned a catalog result");
       }
-      return { authStore: message.authStore, authModes: message.authModes };
+      return {
+        authStore: message.authStore,
+        authModes: message.authModes,
+        credentials: message.credentials,
+      };
     },
   };
 }

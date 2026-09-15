@@ -1,15 +1,17 @@
 import type { DiscordAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+  isRealtimeVoiceAudioAudible,
   realtimeVoiceAudioDurationMs,
   resolveRealtimeVoiceBargeIn,
   type RealtimeVoiceActivationNameTranscriptResult,
+  type RealtimeVoiceAudioChunkMetadata,
   type RealtimeVoiceBridgeSession,
+  type RealtimeVoicePlaybackItem,
   type RealtimeVoiceSessionHarness,
 } from "openclaw/plugin-sdk/realtime-voice";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
-import { convertRealtimePcm24kMonoToDiscordPcm48kStereo } from "./audio.js";
 import { DiscordRealtimeOutput } from "./realtime-output.js";
 import type { DiscordRealtimePlayer } from "./realtime-player.js";
 import type { DiscordVoiceMode, VoiceSessionEntry } from "./session.js";
@@ -48,6 +50,7 @@ export type DiscordRealtimePlaybackPort = Pick<
 
 export class DiscordRealtimePlayback<TState> {
   private readonly outputs = new Set<DiscordRealtimeOutput>();
+  private readonly generatingItems = new Map<string, RealtimeVoicePlaybackItem>();
   private generatingOutput: DiscordRealtimeOutput | undefined;
   private responseAudio: "accepting" | "discarding" | "completed" = "completed";
   private readonly unregisterPlayerLane: () => void;
@@ -89,19 +92,19 @@ export class DiscordRealtimePlayback<TState> {
     this.clearOutputAudio("session-close");
   }
 
-  handleBargeIn(reason = "barge-in"): void {
+  handleBargeIn(reason = "barge-in"): boolean {
     if (!this.isBargeInEnabled()) {
       logger.info(
         `discord voice: realtime barge-in ignored reason=${reason} bargeIn=false guild=${this.params.entry.guildId} channel=${this.params.entry.channelId}`,
       );
-      return;
+      return false;
     }
     const outputActive = this.hasInterruptibleOutputAudio();
     if (!outputActive) {
       logger.info(
         `discord voice: realtime barge-in ignored reason=${reason} outputActive=false guild=${this.params.entry.guildId} channel=${this.params.entry.channelId} playbackChunks=${this.params.harness.outputActivity.snapshot().chunks}`,
       );
-      return;
+      return false;
     }
     logger.info(
       `discord voice: realtime barge-in requested reason=${reason} guild=${this.params.entry.guildId} channel=${this.params.entry.channelId} outputAudioMs=${this.outputAudioMs()} outputActive=${this.isOutputAudioActive()} playbackChunks=${this.params.harness.outputActivity.snapshot().chunks}`,
@@ -109,11 +112,17 @@ export class DiscordRealtimePlayback<TState> {
     // A native handler may decline short audio as echo. Providers without one
     // still need local interruption when another speaker owns the incoming audio.
     const bridge = this.params.bridge();
+    const outputs = Array.from(this.outputs);
+    const items = Array.from(this.generatingItems.values());
     this.params.harness.handleBargeIn({ audioPlaybackActive: true }, () => {
       if (!bridge?.bridge.handleBargeIn) {
         this.clearOutputAudio(reason);
       }
     });
+    return (
+      outputs.some((output) => !this.outputs.has(output)) ||
+      items.some((item) => this.generatingItems.get(item.itemId) !== item)
+    );
   }
 
   isBargeInEnabled(): boolean {
@@ -124,6 +133,8 @@ export class DiscordRealtimePlayback<TState> {
       this.params.providerId() ?? this.params.realtimeConfig()?.provider ?? "openai";
     const realtimeConfig = this.params.realtimeConfig();
     return resolveRealtimeVoiceBargeIn({
+      capabilities: this.params.bridge()?.capabilities,
+      outputAudioMode: this.params.bridge()?.bridge.outputAudioMode,
       configuredBargeIn: realtimeConfig?.bargeIn,
       interruptResponseOnInputAudio:
         realtimeConfig?.providers?.[providerId]?.interruptResponseOnInputAudio,
@@ -131,8 +142,32 @@ export class DiscordRealtimePlayback<TState> {
   }
 
   hasInterruptibleOutputAudio(): boolean {
+    // Installed providers without playback snapshots retain the scalar clock contract.
     this.params.bridge()?.setMediaTimestamp(this.outputAudioMs());
-    return this.outputs.size > 0;
+    return this.isOutputAudioActive();
+  }
+
+  getPlaybackState(): RealtimeVoicePlaybackItem[] {
+    const items = new Set<RealtimeVoicePlaybackItem>();
+    for (const output of this.outputs) {
+      const outputItems = output.playbackItems();
+      // A starved item precedes later items in its response, even after its
+      // resource closes. Older completed responses still keep their queue position.
+      if (outputItems.some((item) => this.generatingItems.get(item.itemId) === item)) {
+        for (const item of this.generatingItems.values()) {
+          items.add(item);
+        }
+      }
+      for (const item of outputItems) {
+        items.add(item);
+      }
+    }
+    // Starvation can close a resource before its native response finishes. The
+    // response retains consumed offsets until later PCM resumes or generation ends.
+    for (const item of this.generatingItems.values()) {
+      items.add(item);
+    }
+    return Array.from(items, (item) => ({ ...item, audioEndMs: Math.floor(item.audioEndMs) }));
   }
 
   beginResponse(): void {
@@ -142,13 +177,28 @@ export class DiscordRealtimePlayback<TState> {
     }
   }
 
-  sendOutputAudio(realtimePcm24kMono: Buffer): void {
-    this.params.markProviderGenerationObserved();
+  sendOutputMark(acknowledge: () => void): void {
+    if (!this.params.stopped() && this.responseAudio === "accepting") {
+      this.generatingOutput?.markPlayback(acknowledge);
+    }
+  }
+
+  sendOutputAudio(realtimePcm24kMono: Buffer, metadata?: RealtimeVoiceAudioChunkMetadata): void {
     if (this.params.stopped() || this.responseAudio === "discarding") {
       return;
     }
-    const discordPcm = convertRealtimePcm24kMonoToDiscordPcm48kStereo(realtimePcm24kMono);
-    if (discordPcm.length === 0) {
+    if (this.generatingOutput && !this.generatingOutput.isAcceptingAudio()) {
+      this.generatingOutput = undefined;
+    }
+    const audible =
+      !this.isContinuousOutput() ||
+      isRealtimeVoiceAudioAudible(realtimePcm24kMono, REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ);
+    // Once speech opens an output, preserve quiet PCM until that output retires.
+    if (!audible && !this.generatingOutput) {
+      return;
+    }
+    this.params.markProviderGenerationObserved();
+    if (realtimePcm24kMono.length === 0) {
       return;
     }
     this.params.bridge()?.setMediaTimestamp(this.outputAudioMs());
@@ -157,13 +207,13 @@ export class DiscordRealtimePlayback<TState> {
       0,
     );
     if (
-      discordPcm.length > DISCORD_REALTIME_MAX_PENDING_OUTPUT_BYTES - pendingBytes ||
+      realtimePcm24kMono.length * 4 > DISCORD_REALTIME_MAX_PENDING_OUTPUT_BYTES - pendingBytes ||
       (!this.generatingOutput && this.outputs.size >= DISCORD_REALTIME_MAX_RETAINED_RESPONSES)
     ) {
       this.stopAfterPlaybackFailure(
         "output-audio-overflow",
         new Error(
-          `Discord realtime audio playback overflow: responses=${this.outputs.size} pendingBytes=${pendingBytes} incomingBytes=${discordPcm.length}`,
+          `Discord realtime audio playback overflow: responses=${this.outputs.size} pendingBytes=${pendingBytes} incomingBytes=${realtimePcm24kMono.length * 4}`,
         ),
       );
       return;
@@ -176,17 +226,29 @@ export class DiscordRealtimePlayback<TState> {
         realtimePcm24kMono.byteLength,
       ),
       sourceAudioBytes: realtimePcm24kMono.length,
-      sinkAudioBytes: discordPcm.length,
+      sinkAudioBytes: realtimePcm24kMono.length * 4,
     };
+    let item: RealtimeVoicePlaybackItem | undefined;
+    if (metadata) {
+      item = this.generatingItems.get(metadata.itemId);
+      if (!item) {
+        item = { itemId: metadata.itemId, audioEndMs: 0 };
+        this.generatingItems.set(metadata.itemId, item);
+      }
+    }
+    // Observers may interrupt synchronously; publish ownership before notifying them.
     this.params.harness.recordOutputAudio(realtimePcm24kMono, activity);
-    output.append(discordPcm, activity);
+    output.append(realtimePcm24kMono, audible, item);
   }
 
   clearOutputAudio(reason = "clear"): void {
-    if (this.responseAudio === "accepting") {
+    if (this.isContinuousOutput()) {
+      this.responseAudio = "completed";
+    } else if (this.responseAudio === "accepting") {
       this.responseAudio = "discarding";
     }
     this.generatingOutput = undefined;
+    this.generatingItems.clear();
     const outputs = Array.from(this.outputs);
     this.outputs.clear();
     // Retire all source ownership and queued requests before stopping its player.
@@ -202,6 +264,7 @@ export class DiscordRealtimePlayback<TState> {
   }): void {
     const output = this.generatingOutput;
     this.generatingOutput = undefined;
+    this.generatingItems.clear();
     this.responseAudio = "completed";
     // Generation ends before queued playback. Only this response may end its stream.
     output?.finish(outcome.status, outcome.status === "completed");
@@ -372,7 +435,11 @@ export class DiscordRealtimePlayback<TState> {
   }
 
   isOutputAudioActive(): boolean {
-    return this.outputs.size > 0;
+    return this.outputs.size > 0 || this.generatingItems.size > 0;
+  }
+
+  private isContinuousOutput(): boolean {
+    return this.params.bridge()?.bridge.outputAudioMode === "continuous";
   }
 
   private stopAfterPlaybackFailure(reason: string, error: Error): void {
@@ -388,6 +455,7 @@ export class DiscordRealtimePlayback<TState> {
     const output = new DiscordRealtimeOutput({
       player: this.params.player,
       logContext,
+      continuous: this.isContinuousOutput(),
       onStart: () => {
         this.params.harness.outputActivity.markPlaybackStarted();
         const config = this.params.realtimeConfig();
@@ -401,12 +469,17 @@ export class DiscordRealtimePlayback<TState> {
         }
         if (this.generatingOutput === closed) {
           this.generatingOutput = undefined;
-          // Starvation Idle allows the same response to resume; failed audio stays discarded.
           if (reason !== "player-idle") {
             this.responseAudio = "discarding";
           }
         }
         if (this.outputs.size === 0) {
+          // A retiring resource may already have handed generation to a successor.
+          if (reason === "player-idle" && this.isContinuousOutput()) {
+            this.responseAudio = "completed";
+            this.generatingItems.clear();
+            this.params.harness.finishOutputAudio(reason);
+          }
           this.params.harness.outputActivity.reset();
         }
         this.completeExactSpeechResponse(reason);
@@ -414,7 +487,7 @@ export class DiscordRealtimePlayback<TState> {
       onBargeIn: (reason) => this.handleBargeIn(reason),
       onError: (error) =>
         this.stopAfterPlaybackFailure(
-          "player-start-error",
+          "output-playback-error",
           error instanceof Error ? error : new Error(formatErrorMessage(error)),
         ),
     });

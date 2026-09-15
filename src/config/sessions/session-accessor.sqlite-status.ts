@@ -27,9 +27,12 @@ type SessionStatusDatabase = Pick<OpenClawAgentKyselyDatabase, "session_nodes">;
 // Metadata readers do not own prompt snapshots. Strip those bytes before JS allocation;
 // Malformed/overdepth JSON reaches the parser unchanged. Requiring an identity keeps
 // corrupt prompt-only objects distinct from the retained-window "{}" sentinel.
+// SQLite treats literal NUL as EOF. Plain %s stops there too; comparing encoded
+// byte lengths preserves that fallback across database encodings without an instr scan.
 export const sessionEntryMetadataJson =
   /* kysely-allow-raw: preserve raw-row parsing while omitting unused prompt payloads. */ sql<string>`CASE WHEN json_valid(entry_json)
   THEN CASE WHEN json_type(entry_json, '$.sessionId') = 'text'
+      AND length(CAST(entry_json AS BLOB)) = length(CAST(printf('%s', entry_json) AS BLOB))
     THEN json_remove(entry_json, '$.skillsSnapshot', '$.systemPromptReport')
     ELSE entry_json END
   ELSE entry_json END`.as("entry_json");
@@ -37,12 +40,20 @@ export const sessionEntryMetadataJson =
 export function selectSessionEntryRows(
   database: Pick<OpenClawAgentDatabase, "db">,
   projection: "full" | "list",
+  fullEntryKeys: readonly string[] = [],
+  // Prepared readers pass the column shape from this operation's fresh schema check.
+  ownerColumns?: boolean,
 ) {
+  const metadata = fullEntryKeys.length
+    ? /* kysely-allow-raw: one row snapshot preserves complete selected entries beside sibling metadata. */ sql<string>`CASE WHEN session_key IN ${sqliteStringSet(fullEntryKeys)} THEN entry_json ELSE ${sessionEntryMetadataJson.expression} END`.as(
+        "entry_json",
+      )
+    : sessionEntryMetadataJson;
   return getNodeSqliteKysely<SessionStatusDatabase>(database.db)
     .selectFrom("session_nodes")
     .select("session_key")
-    .select(projection === "full" ? "entry_json" : sessionEntryMetadataJson)
-    .$if(hasSqliteSessionOwnerColumns(database.db), (query) =>
+    .select(projection === "full" ? "entry_json" : metadata)
+    .$if(ownerColumns ?? hasSqliteSessionOwnerColumns(database.db), (query) =>
       query.select([
         "owner_actor_type",
         "owner_actor_id",

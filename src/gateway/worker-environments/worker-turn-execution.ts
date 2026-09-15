@@ -93,7 +93,24 @@ export async function executeWorkerTurn(
   turn.onExecutionStarted?.({ lifecycleGeneration: turn.lifecycleGeneration });
   turn.onExecutionPhase?.({ phase: "runner_entered", backend: "cloud-worker" });
   const transcriptTarget = resolveWorkerTurnTranscriptTarget(turn);
-  const manager = SessionManager.open(transcriptTarget);
+  // The unrecorded-input fallback retains its writable view and captured append custody.
+  const readAsynchronously =
+    turn.suppressNextUserMessagePersistence === true ||
+    turn.userTurnTranscriptRecorder?.hasPersisted() === true;
+  // Pending recorder writes keep the synchronous read-before-persist ordering.
+  const manager = readAsynchronously
+    ? await SessionManager.openModelContextAsync(transcriptTarget, { signal: turn.abortSignal })
+    : turn.userTurnTranscriptRecorder
+      ? SessionManager.openModelContext(transcriptTarget)
+      : SessionManager.open(transcriptTarget);
+  if (readAsynchronously) {
+    params.assertRunCurrent?.();
+    turn.abortSignal?.throwIfAborted();
+    if (!params.placements.validateTurnClaim(params.turnClaim)) {
+      throw new Error("Worker turn claim changed during context preparation");
+    }
+    resolveWorkerTurnTranscriptTarget(turn);
+  }
   const userMessageAlreadyPersisted =
     turn.suppressNextUserMessagePersistence === true ||
     turn.userTurnTranscriptRecorder?.hasPersisted() === true;
@@ -106,7 +123,12 @@ export async function executeWorkerTurn(
   let baseLeafId = manager.getLeafId();
   if (!userMessageAlreadyPersisted) {
     const persisted = turn.userTurnTranscriptRecorder
-      ? await turn.userTurnTranscriptRecorder.persistApproved({ cwd: params.localWorkspaceDir })
+      ? await turn.userTurnTranscriptRecorder.persistApproved({
+          cwd:
+            params.workspace.kind === "local"
+              ? params.workspace.path
+              : placement.remoteWorkspaceDir,
+        })
       : undefined;
     if (persisted) {
       baseLeafId = persisted.messageId;
@@ -236,7 +258,7 @@ export async function executeWorkerTurn(
     const media = await prepareWorkerTurnMedia({
       turn,
       history,
-      localWorkspaceDir: params.localWorkspaceDir,
+      workspace: params.workspace,
       remoteWorkspaceDir: placement.remoteWorkspaceDir,
       tunnel,
       isAuthorized,
@@ -466,7 +488,7 @@ export async function executeWorkerTurn(
       placements: params.placements,
       turnClaim: params.turnClaim,
       workspaceOperations: params.workspaceOperations,
-      localWorkspaceDir: params.localWorkspaceDir,
+      workspace: params.workspace,
       transcriptTarget,
       tunnel,
       ...(params.prepareAcceptedWorkspacePublication

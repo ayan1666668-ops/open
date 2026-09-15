@@ -10,6 +10,7 @@ type WizardViewProps = {
   mode: "auth" | "prepare" | "activate";
   state: ModelSetupWizardState;
   refreshWarning: string | null;
+  cancellationNotice?: string | null;
   value: unknown;
   onValueChange: (value: unknown) => void;
   onAnswer: (value: unknown, includeValue?: boolean) => void;
@@ -53,11 +54,9 @@ export function renderModelSetupWizard(props: WizardViewProps): TemplateResult |
           </h2>
         </div>
         <div class="model-setup-wizard__body">
-          ${
-            props.refreshWarning
-              ? html`<div class="callout warning" role="alert">${props.refreshWarning}</div>`
-              : nothing
-          }
+          ${[props.refreshWarning, props.cancellationNotice].map((warning) =>
+            warning ? html`<div class="callout warning" role="alert">${warning}</div>` : nothing,
+          )}
           ${
             props.state.phase === "starting"
               ? html`<div role="status">
@@ -83,6 +82,7 @@ export function renderModelSetupWizard(props: WizardViewProps): TemplateResult |
                       }
                       ${renderWizardStepControls({
                         step: props.state.step,
+                        externalAuthInput: props.state.externalAuthInput,
                         value: props.value,
                         busy: props.state.busy,
                         inputId: WIZARD_TEXT_INPUT_ID,
@@ -101,7 +101,9 @@ export function renderModelSetupWizard(props: WizardViewProps): TemplateResult |
                         onAnswer: props.onAnswer,
                       })}
                       ${
-                        props.state.busy
+                        props.state.busy &&
+                        !props.state.step.externalUrl &&
+                        !props.state.step.deviceCode
                           ? html`<div role="status">${t("modelSetup.wizard.working")}</div>`
                           : nothing
                       }

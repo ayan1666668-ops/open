@@ -165,9 +165,7 @@ async function runWorkerEmbeddedTurnWithResources(
     compaction: { enabled: false },
     retry: { enabled: false },
   });
-  const bootstrapFiles = (await loadWorkspaceBootstrapFiles(params.cwd)).filter(
-    (file) => file.name === DEFAULT_AGENTS_FILENAME,
-  );
+  const bootstrapFiles = await loadWorkspaceBootstrapFiles(params.cwd, [DEFAULT_AGENTS_FILENAME]);
   const contextFiles = buildBootstrapContextForFiles(bootstrapFiles, {});
   const resourceLoader = createEmbeddedAgentResourceLoader({
     cwd: params.cwd,
@@ -316,7 +314,6 @@ async function runWorkerEmbeddedTurnWithResources(
             agentId: params.agentId,
           }),
         },
-        agentId: params.agentId,
         abortSignal: toolSignal,
       }).filter((tool) => localToolNameSet.has(tool.name));
       const localTools = unboundLocalTools.map((tool) =>

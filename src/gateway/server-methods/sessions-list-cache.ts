@@ -1,6 +1,7 @@
 import type { SessionsListParams } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { readAgentRunIndexVersion } from "../../infra/agent-run-registry.js";
+import type { DiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
 import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import {
   readSessionIdentityMutationVersion,
@@ -13,6 +14,8 @@ import {
 } from "../../state/openclaw-agent-db.js";
 import { readUserProfileVersion } from "../../state/user-profile-events.js";
 import { operatorSessionCap } from "../operator-role-policy.js";
+import { readPreparedGatewayModelCatalogMetadata } from "../server-model-catalog-view.js";
+import { readSessionActivitySummaryVersion } from "../session-activity-summary-state.js";
 import { readSessionAutomationVersion } from "../session-automation-index.js";
 import { readSessionLifecyclePersistenceVersion } from "../session-lifecycle-state.js";
 import { readSessionObserverDigestVersion } from "../session-observer-model.js";
@@ -21,6 +24,7 @@ import { readSessionTitleProjectionUnavailableVersion } from "../session-transcr
 import type { SessionListModelCatalog, SessionsListResult } from "../session-utils.types.js";
 import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { readSessionsMutationVersion } from "./session-change-event.js";
+import type { SessionListDiagnostics } from "./sessions-list-diagnostics.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./types.js";
 
 type SessionListFence = {
@@ -32,16 +36,21 @@ type SessionListFence = {
   sessionIdentityMutationVersion: number;
   sessionLifecycleVersion: number;
   sessionObserverDigestVersion: number;
+  sessionActivitySummaryVersion: number;
   userProfileVersion: number;
   sessionsMutationVersion: number;
   sessionTranscriptUpdateVersion: number;
   titleProjectionUnavailableVersion: number;
   workerEnvironmentInventoryVersion: number;
+  workerMachineShapeVersion: number;
   workerPlacementDiskSpaceVersion: number;
   workerPlacementRunnerAvailabilityVersion: number;
 };
 type CatalogFence = { modelCatalogRevision: string };
-type SessionListOperation = CatalogFence & { promise: Promise<SessionsListResult> };
+type SessionListOperation = CatalogFence & {
+  promise: Promise<SessionsListResult>;
+  workTrace?: DiagnosticTraceContext;
+};
 type SessionListCompleted = CatalogFence & { expiresAt?: number; result: SessionsListResult };
 type SessionListState = SessionListFence & {
   completed: Map<string, SessionListCompleted>;
@@ -82,7 +91,7 @@ function readSessionListModelCatalogFence(
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(
       ([agentId, catalog]) =>
-        `${agentId}:${readModelCatalogRevision(catalog?.entries)}:${readModelCatalogRevision(catalog?.pluginRegistry)}`,
+        `${agentId}:${readModelCatalogRevision(catalog?.entries)}:${readModelCatalogRevision(catalog?.pluginRegistry)}:${readModelCatalogRevision(readPreparedGatewayModelCatalogMetadata(catalog))}`,
     )
     .join(",");
 }
@@ -97,6 +106,7 @@ function readSessionListFence(context: GatewayRequestContext): SessionListFence 
     sessionIdentityMutationVersion: readSessionIdentityMutationVersion(),
     sessionLifecycleVersion: readSessionLifecycleVersion(),
     sessionObserverDigestVersion: readSessionObserverDigestVersion(),
+    sessionActivitySummaryVersion: readSessionActivitySummaryVersion(),
     userProfileVersion: readUserProfileVersion(),
     sessionsMutationVersion: readSessionsMutationVersion(context),
     // Rows embed transcript-derived previews/titles; a committed transcript
@@ -104,6 +114,7 @@ function readSessionListFence(context: GatewayRequestContext): SessionListFence 
     sessionTranscriptUpdateVersion: readSessionTranscriptUpdateVersion(),
     titleProjectionUnavailableVersion: readSessionTitleProjectionUnavailableVersion(),
     workerEnvironmentInventoryVersion: context.workerEnvironmentService?.inventoryVersion() ?? 0,
+    workerMachineShapeVersion: context.workerEnvironmentService?.machineShapeVersion() ?? 0,
     workerPlacementDiskSpaceVersion: context.workerPlacementDiskSpaceReader?.version() ?? 0,
     workerPlacementRunnerAvailabilityVersion:
       context.workerPlacementRunnerAvailabilityReader?.version() ?? 0,
@@ -120,11 +131,13 @@ function matchesSessionListFence(value: SessionListFence, fence: SessionListFenc
     value.sessionIdentityMutationVersion === fence.sessionIdentityMutationVersion &&
     value.sessionLifecycleVersion === fence.sessionLifecycleVersion &&
     value.sessionObserverDigestVersion === fence.sessionObserverDigestVersion &&
+    value.sessionActivitySummaryVersion === fence.sessionActivitySummaryVersion &&
     value.userProfileVersion === fence.userProfileVersion &&
     value.sessionsMutationVersion === fence.sessionsMutationVersion &&
     value.sessionTranscriptUpdateVersion === fence.sessionTranscriptUpdateVersion &&
     value.titleProjectionUnavailableVersion === fence.titleProjectionUnavailableVersion &&
     value.workerEnvironmentInventoryVersion === fence.workerEnvironmentInventoryVersion &&
+    value.workerMachineShapeVersion === fence.workerMachineShapeVersion &&
     value.workerPlacementDiskSpaceVersion === fence.workerPlacementDiskSpaceVersion &&
     value.workerPlacementRunnerAvailabilityVersion ===
       fence.workerPlacementRunnerAvailabilityVersion
@@ -206,28 +219,41 @@ export async function respondWithCachedSessionList(params: {
   request: SessionsListParams;
   respond: RespondFn;
   run: () => Promise<SessionsListResult>;
+  diagnostics?: SessionListDiagnostics;
 }): Promise<void> {
   const workKey = sessionListWorkKey(params.request, params.client, params.config);
   const state = sessionListState(params.context, params.config);
   const modelCatalogRevision = readSessionListModelCatalogFence(params.modelCatalog);
   // Activity windows and child retention expire without mutations; hidden paginated rows
   // prevent deriving a safe deadline, so only concurrent temporal requests share work.
-  const cacheCompleted = params.request.activeMinutes === undefined && !params.request.spawnedBy;
+  // Rejected and off-page candidates can change live/goal state without a store write.
+  // Searches and active-only reads may coalesce in flight, but cannot reuse completed pages.
+  const cacheCompleted =
+    params.request.activeMinutes === undefined &&
+    params.request.activeOnly !== true &&
+    !params.request.spawnedBy &&
+    !params.request.search?.trim();
   const completed = cacheCompleted
     ? readCompletedSessionList(state, workKey, modelCatalogRevision)
     : undefined;
   if (completed) {
+    params.diagnostics?.setCacheRole("completed-hit");
+    params.diagnostics?.setSelectedRowCount(completed.count);
     params.respond(true, completed, undefined);
     return;
   }
   const pending = state.inFlight.get(workKey);
   if (pending?.modelCatalogRevision === modelCatalogRevision) {
-    params.respond(true, await pending.promise, undefined);
+    params.diagnostics?.setCacheRole("in-flight-follower", pending.workTrace);
+    const result = await pending.promise;
+    params.diagnostics?.setSelectedRowCount(result.count);
+    params.respond(true, result, undefined);
     return;
   }
 
   // A request may share only work begun at the same fence. A transition during projection
   // leaves current callers intact but fences every later caller and cache write.
+  params.diagnostics?.setCacheRole("projection-owner");
   const promise = Promise.resolve()
     .then(params.run)
     .then((result) => {
@@ -246,10 +272,12 @@ export async function respondWithCachedSessionList(params: {
       }
       return result;
     });
-  const operation = { modelCatalogRevision, promise };
+  const operation = { modelCatalogRevision, promise, workTrace: params.diagnostics?.trace };
   state.inFlight.set(workKey, operation);
   try {
-    params.respond(true, await promise, undefined);
+    const result = await promise;
+    params.diagnostics?.setSelectedRowCount(result.count);
+    params.respond(true, result, undefined);
   } finally {
     if (state.inFlight.get(workKey) === operation) {
       state.inFlight.delete(workKey);

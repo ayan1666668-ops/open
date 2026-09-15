@@ -10,7 +10,7 @@ import { formatRelativeTimestamp } from "../lib/format.ts";
 import { icons } from "./icons.ts";
 import { toSanitizedMarkdownHtml } from "./markdown.ts";
 
-type SessionProgressCardPlacement = "board" | "composer" | "hovercard";
+type SessionProgressCardPlacement = "board" | "composer";
 type PresentedProgressStepStatus = ProgressCardStep["status"] | "paused";
 
 const STATUS_LABEL_KEYS: Record<ProgressCardStep["status"], Parameters<typeof t>[0]> = {
@@ -46,13 +46,11 @@ const TERMINAL_STEP_STATUS_LABEL_KEYS: Partial<Record<SessionRunStatus, Paramete
 class ProgressActivityTimeDirective extends AsyncDirective {
   private timestamp = 0;
   private labelKey: Parameters<typeof t>[0] = "sessionProgressCard.activity.updated";
-  private compact = false;
   private timer: ReturnType<typeof setInterval> | undefined;
 
-  render(timestamp: number, labelKey: Parameters<typeof t>[0], compact = false) {
+  render(timestamp: number, labelKey: Parameters<typeof t>[0]) {
     this.timestamp = timestamp;
     this.labelKey = labelKey;
-    this.compact = compact;
     if (this.isConnected) {
       this.startTimer();
     }
@@ -84,15 +82,11 @@ class ProgressActivityTimeDirective extends AsyncDirective {
 
   private renderTime() {
     const label = t(this.labelKey, { time: formatRelativeTimestamp(this.timestamp) });
-    const visibleLabel =
-      this.compact && this.labelKey === "sessionProgressCard.activity.updated"
-        ? formatRelativeTimestamp(this.timestamp, { suffix: false })
-        : label;
     return html`<time
       datetime=${new Date(this.timestamp).toISOString()}
       aria-label=${label}
       title=${label}
-      >${visibleLabel}</time
+      >${label}</time
     >`;
   }
 }
@@ -102,12 +96,15 @@ const progressActivityTime = directive(ProgressActivityTimeDirective);
 type ComposerProgressRunLifecycle = {
   activeRunId?: string | null;
   completedRunId?: string | null;
+  readingHistory?: boolean;
 };
 
 type ComposerDisclosureOwner = {
   activeRunId: string | null;
   handledCompletedRunId: string | null;
   sessionKey: string;
+  automaticOpen: boolean;
+  manualOpen?: boolean;
 };
 
 const composerDisclosureOwners = new WeakMap<HTMLDetailsElement, ComposerDisclosureOwner>();
@@ -124,24 +121,22 @@ function reconcileComposerDisclosure(
   }
   const activeRunId = lifecycle?.activeRunId ?? null;
   const completedRunId = lifecycle?.completedRunId ?? null;
-  const owner = composerDisclosureOwners.get(element);
+  let owner = composerDisclosureOwners.get(element);
   if (!owner || owner.sessionKey !== sessionKey) {
-    element.open = initialOpen;
-    composerDisclosureOwners.set(element, {
+    owner = {
       activeRunId,
       handledCompletedRunId: completedRunId,
       sessionKey,
-    });
-    return;
-  }
-  // Run boundaries intentionally override the native disclosure. Same-run
-  // rerenders leave the operator's manual open/closed choice untouched.
-  if (activeRunId && activeRunId !== owner.activeRunId) {
+      automaticOpen: initialOpen,
+    };
+    composerDisclosureOwners.set(element, owner);
+  } else if (activeRunId && activeRunId !== owner.activeRunId) {
+    // A new run starts a fresh task choice. Revisions and completion belong
+    // to the same task and must not discard an explicit disclosure choice.
     owner.activeRunId = activeRunId;
     owner.handledCompletedRunId = null;
-    if (collapseByDefault) {
-      element.open = false;
-    }
+    owner.manualOpen = undefined;
+    owner.automaticOpen = !collapseByDefault;
   }
   if (
     completedRunId &&
@@ -149,9 +144,22 @@ function reconcileComposerDisclosure(
     completedRunId !== owner.handledCompletedRunId
   ) {
     owner.handledCompletedRunId = completedRunId;
-    if (collapseByDefault) {
-      element.open = true;
-    }
+    owner.automaticOpen = true;
+  }
+  element.open = owner.manualOpen ?? (owner.automaticOpen && !lifecycle?.readingHistory);
+}
+
+function handleComposerDisclosureClick(event: MouseEvent): void {
+  const summary = event.currentTarget;
+  const element = summary instanceof HTMLElement ? summary.parentElement : null;
+  if (!(element instanceof HTMLDetailsElement) || event.defaultPrevented) {
+    return;
+  }
+  const owner = composerDisclosureOwners.get(element);
+  if (owner) {
+    // Summary activation covers pointer and keyboard input. A toggle event also
+    // fires for automatic changes, so it cannot establish operator intent.
+    owner.manualOpen = !element.open;
   }
 }
 
@@ -166,9 +174,10 @@ function progressCounts(card: ProgressCard): { completed: number; total: number 
   };
 }
 
-export type ProgressCardHeadsUp = {
+type ProgressCardHeadsUp = {
   completed: number;
-  step: ProgressCardStep;
+  status: PresentedProgressStepStatus;
+  step: string;
   total: number;
 };
 
@@ -179,11 +188,20 @@ function unfinishedProgressStep(steps: readonly ProgressCardStep[]): ProgressCar
   );
 }
 
+function isProgressCardStaleForRun(card: ProgressCard, startedAt?: number): boolean {
+  const runStart = asDateTimestampMs(startedAt);
+  const cardUpdate = asDateTimestampMs(card.updatedAt);
+  return runStart !== undefined && cardUpdate !== undefined && cardUpdate < runStart;
+}
+
 export function progressCardHeadsUp(
   card: ProgressCard | null | undefined,
   sessionStatus?: SessionRunStatus,
+  startedAt?: number,
+  hasActiveRun = true,
 ): ProgressCardHeadsUp | null {
-  if (sessionStatus && TERMINAL_OUTCOME_LABEL_KEYS[sessionStatus]) {
+  const staleForRun = card ? isProgressCardStaleForRun(card, startedAt) : false;
+  if (sessionStatus && TERMINAL_OUTCOME_LABEL_KEYS[sessionStatus] && !staleForRun) {
     return null;
   }
   const counts = card ? progressCounts(card) : null;
@@ -194,7 +212,9 @@ export function progressCardHeadsUp(
   if (!step) {
     return null;
   }
-  return { ...counts, step };
+  const status =
+    step.status === "in_progress" && (staleForRun || !hasActiveRun) ? "paused" : step.status;
+  return { ...counts, status, step: step.step };
 }
 
 function currentProgressStep(steps: readonly ProgressCardStep[]): ProgressCardStep | undefined {
@@ -351,6 +371,14 @@ export function renderSessionProgressCard(
     validEndedAt >= validStartedAt &&
     validUpdatedAt !== undefined &&
     validUpdatedAt >= validStartedAt;
+  // A later run does not own durable progress last updated before it starts.
+  // Queued runs can retain the previous run's timestamps, but do not own its progress.
+  const hasCurrentRunActivity =
+    hasActiveRun &&
+    !isProgressCardStaleForRun(card, startedAt) &&
+    (validUpdatedAt === undefined ||
+      (sessionStatus !== "queued" &&
+        (validStartedAt !== undefined || sessionStatus === undefined)));
   const terminalTimestamp =
     sessionStatus && TERMINAL_OUTCOME_LABEL_KEYS[sessionStatus] && hasValidRunWindow
       ? validEndedAt
@@ -364,11 +392,7 @@ export function renderSessionProgressCard(
     ? ACTIVITY_LABEL_KEYS[sessionStatus!]
     : "sessionProgressCard.activity.updated";
   const accessibleLabel = countLabel;
-  const lastActivity = progressActivityTime(
-    activityTimestamp,
-    activityKey,
-    placement === "hovercard",
-  );
+  const lastActivity = progressActivityTime(activityTimestamp, activityKey);
   const dismissible = Boolean(
     onDismiss && card.steps?.length && card.steps.every((step) => step.status === "completed"),
   );
@@ -410,7 +434,7 @@ export function renderSessionProgressCard(
         })
       : nothing;
     const presentedCurrentStatus =
-      currentStep?.status === "in_progress" && !hasActiveRun && !terminalOutcomeKey
+      currentStep?.status === "in_progress" && !hasCurrentRunActivity && !terminalOutcomeKey
         ? "paused"
         : currentStep?.status;
     const summaryIndicator =
@@ -439,7 +463,11 @@ export function renderSessionProgressCard(
         ),
       )}
     >
-      <summary class="session-progress-card__summary" aria-label=${summaryLabel}>
+      <summary
+        class="session-progress-card__summary"
+        aria-label=${summaryLabel}
+        @click=${handleComposerDisclosureClick}
+      >
         <span
           class="session-progress-card__summary-indicator session-progress-card__current-marker${
             complete || effectiveSessionStatus === "done"
@@ -483,7 +511,7 @@ export function renderSessionProgressCard(
       </summary>
       <div class="session-progress-card__body" role="region" aria-label=${composerCountLabel}>
         ${renderProgressCardMarkdown(card.markdown)}
-        ${renderSteps(card, hasActiveRun, effectiveSessionStatus)}
+        ${renderSteps(card, hasCurrentRunActivity, effectiveSessionStatus)}
       </div>
     </details>`;
   }
@@ -500,6 +528,6 @@ export function renderSessionProgressCard(
         >${dismiss}
       </span>
     </div>
-    ${renderBody(card, hasActiveRun, effectiveSessionStatus)}
+    ${renderBody(card, hasCurrentRunActivity, effectiveSessionStatus)}
   </section>`;
 }

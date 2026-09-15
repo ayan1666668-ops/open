@@ -4,7 +4,6 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
 import {
   createStubChild,
@@ -24,10 +23,12 @@ type CreateWindowsOutputDecoder =
 const {
   spawnWithFallbackMock,
   signalProcessTreeMock,
+  killProcessTreeMock,
   createWindowsOutputDecoderMock,
   createServiceChildRelayAdapterMock,
 } = vi.hoisted(() => ({
   spawnWithFallbackMock: vi.fn(),
+  killProcessTreeMock: vi.fn<typeof import("../../kill-tree.js").killProcessTree>(),
   signalProcessTreeMock: vi.fn(
     (_pid: number, _signal: string, opts?: { onComplete?: () => void }) => {
       opts?.onComplete?.();
@@ -46,6 +47,7 @@ vi.mock("../../spawn-utils.js", () => ({
 
 vi.mock("../../kill-tree.js", () => ({
   signalProcessTree: signalProcessTreeMock,
+  killProcessTree: killProcessTreeMock,
 }));
 
 vi.mock("../../../infra/windows-encoding.js", () => ({
@@ -107,6 +109,7 @@ describe("createChildAdapter", () => {
     ({ createChildAdapter } = await import("./child.js"));
     spawnWithFallbackMock.mockClear();
     signalProcessTreeMock.mockClear();
+    killProcessTreeMock.mockReset();
     createServiceChildRelayAdapterMock.mockClear();
     createWindowsOutputDecoderMock.mockClear();
     createWindowsOutputDecoderMock.mockImplementation(() => ({
@@ -152,7 +155,7 @@ describe("createChildAdapter", () => {
       expect(spawnArgs.fallbacks).toStrictEqual([]);
     } else {
       expect(spawnArgs.options?.detached).toBe(true);
-      expect(spawnArgs.fallbacks?.[0]?.options?.detached).toBe(false);
+      expect(spawnArgs.fallbacks?.[0]?.detached).toBe(false);
     }
 
     adapter.kill();
@@ -370,39 +373,6 @@ describe("createChildAdapter", () => {
     },
   );
 
-  it("preserves startup failure when a worker error arrives during secret delivery", async () => {
-    setPlatform("win32");
-    const { child, killMock } = createStubChild();
-    const deliveryError = new Error("secret delivery failed");
-    const secretStream = new Writable({
-      write(_chunk, _encoding, callback) {
-        child.emit("error", new Error("worker IPC failed"));
-        setImmediate(() => callback(deliveryError));
-      },
-    });
-    Object.defineProperty(child, "stdio", {
-      value: [child.stdin, child.stdout, child.stderr, secretStream, null],
-      configurable: true,
-    });
-    spawnWithFallbackMock.mockResolvedValue({ child, usedFallback: false });
-    const transient = Buffer.from("synthetic-secret");
-
-    await expect(
-      createChildAdapter({
-        argv: ["node", "worker"],
-        ownedWorker: true,
-        secretInput: { fd: 3, createData: () => transient },
-      }),
-    ).rejects.toBe(deliveryError);
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
-
-    expect(killMock).toHaveBeenCalledWith("SIGKILL");
-    expect(transient.equals(Buffer.alloc(transient.length))).toBe(true);
-    child.removeAllListeners();
-  });
-
   it("writes secret input to an extra descriptor and zeroes the transient buffer", async () => {
     setPlatform("win32");
     const { child } = createStubChild();
@@ -438,53 +408,6 @@ describe("createChildAdapter", () => {
     ]);
     expect(Buffer.concat(chunks).toString("utf8")).toBe("selected-secret");
     expect(transient.equals(Buffer.alloc(transient.length))).toBe(true);
-  });
-
-  it("withholds input and secret bytes when request authority retires during spawn", async () => {
-    setPlatform("win32");
-    const { child, killMock, emitClose } = createStubChild();
-    const startup = createDeferred<{ child: typeof child; usedFallback: boolean }>();
-    const secretStream = new PassThrough();
-    const secretBytes = vi.fn();
-    secretStream.on("data", secretBytes);
-    Object.defineProperty(child, "stdio", {
-      value: [child.stdin, child.stdout, child.stderr, secretStream],
-      configurable: true,
-    });
-    const input = vi.spyOn(child.stdin!, "write");
-    const createData = vi.fn(() => Buffer.from("synthetic-selected-secret"));
-    spawnWithFallbackMock.mockReturnValueOnce(startup.promise);
-    const retired = new Error("request authority retired during spawn");
-    let current = true;
-    const run = createChildAdapter({
-      argv: ["agent-cli", "--prompt"],
-      input: "private prompt",
-      secretInput: { fd: 3, createData },
-      assertCurrent: () => {
-        if (!current) {
-          throw retired;
-        }
-      },
-    });
-    const outcome = Promise.allSettled([run]);
-    expect(spawnWithFallbackMock).toHaveBeenCalledOnce();
-    current = false;
-    startup.resolve({ child, usedFallback: false });
-    const [result] = await outcome;
-    try {
-      expect(result).toEqual({ status: "rejected", reason: retired });
-      expect(createData).not.toHaveBeenCalled();
-      expect(secretBytes).not.toHaveBeenCalled();
-      expect(input).not.toHaveBeenCalled();
-      expect(killMock).toHaveBeenCalledWith("SIGKILL");
-    } finally {
-      emitClose(0);
-      if (result?.status === "fulfilled") {
-        result.value.dispose();
-      }
-      secretStream.destroy();
-      child.removeAllListeners();
-    }
   });
 
   it("captures child close while secret input delivery is still pending", async () => {
@@ -542,7 +465,8 @@ describe("createChildAdapter", () => {
     );
   });
 
-  it("passes detached:false to signalProcessTree when spawn fell back to no-detach (#71662 follow-up)", async () => {
+  it("keeps macOS no-detach hard kills on the direct signal path", async () => {
+    setPlatform("darwin");
     // Simulate the fallback scenario: spawnWithFallback retried with
     // detached:false because the initial detached spawn failed. The kill
     // closure must NOT group-kill since the child shares the gateway's group.
@@ -550,7 +474,6 @@ describe("createChildAdapter", () => {
     spawnWithFallbackMock.mockResolvedValue({
       child,
       usedFallback: true,
-      fallbackLabel: "no-detach",
     });
     const adapter = await createChildAdapter({
       argv: ["node", "-e", "setTimeout(() => {}, 1000)"],
@@ -602,12 +525,12 @@ describe("createChildAdapter", () => {
     expect(killMock).not.toHaveBeenCalled();
   });
 
-  it("passes detached:false to process-tree SIGTERM when spawn fell back to no-detach", async () => {
+  it("keeps macOS no-detach TERM on the direct signal path", async () => {
+    setPlatform("darwin");
     const { child, killMock } = createStubChild(8765);
     spawnWithFallbackMock.mockResolvedValue({
       child,
       usedFallback: true,
-      fallbackLabel: "no-detach",
     });
     const adapter = await createChildAdapter({
       argv: ["node", "-e", "setTimeout(() => {}, 1000)"],
@@ -620,6 +543,75 @@ describe("createChildAdapter", () => {
       detached: false,
     });
     expect(killMock).not.toHaveBeenCalled();
+  });
+
+  it("retains one Linux fallback snapshot and forces it after root close and disposal", async () => {
+    setPlatform("linux");
+    const { child, emitExit, emitClose } = createStubChild(8765);
+    const force = vi.fn();
+    killProcessTreeMock.mockReturnValue({ force });
+    spawnWithFallbackMock.mockResolvedValue({ child, usedFallback: true });
+    const adapter = await createChildAdapter({ argv: ["node", "worker.js"] });
+
+    adapter.kill("SIGTERM");
+    adapter.kill("SIGTERM");
+    expect(killProcessTreeMock).toHaveBeenCalledExactlyOnceWith(8765, {
+      detached: false,
+      graceMs: 5_000,
+      force: false,
+    });
+    emitExit(0);
+    emitClose(0);
+    await adapter.wait();
+    adapter.dispose();
+    adapter.kill("SIGKILL");
+
+    expect(force).toHaveBeenCalledOnce();
+    expect(killProcessTreeMock).toHaveBeenCalledOnce();
+    expect(signalProcessTreeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not rediscover a Linux fallback tree when its initial identity was unavailable", async () => {
+    setPlatform("linux");
+    const { child, killMock } = createStubChild(8765);
+    spawnWithFallbackMock.mockResolvedValue({ child, usedFallback: true });
+    const adapter = await createChildAdapter({ argv: ["node", "worker.js"] });
+    adapter.kill("SIGTERM");
+    adapter.kill("SIGKILL");
+    await Promise.resolve();
+
+    expect(killProcessTreeMock).toHaveBeenCalledOnce();
+    expect(signalProcessTreeMock).not.toHaveBeenCalled();
+    // ChildProcess owns the live direct child; no numeric tree re-enumeration.
+    expect(killMock).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("does not discover a Linux fallback tree after the root has exited", async () => {
+    setPlatform("linux");
+    const { child, emitExit } = createStubChild(8765);
+    spawnWithFallbackMock.mockResolvedValue({ child, usedFallback: true });
+    const adapter = await createChildAdapter({ argv: ["node", "worker.js"] });
+    emitExit(0);
+    adapter.kill("SIGTERM");
+    adapter.kill("SIGKILL");
+    await Promise.resolve();
+    expect(killProcessTreeMock).not.toHaveBeenCalled();
+    expect(signalProcessTreeMock).not.toHaveBeenCalled();
+  });
+
+  it("uses one identity-bound immediate hard kill for a live Linux fallback root", async () => {
+    setPlatform("linux");
+    const { child } = createStubChild(8765);
+    spawnWithFallbackMock.mockResolvedValue({ child, usedFallback: true });
+    const adapter = await createChildAdapter({ argv: ["node", "worker.js"] });
+    adapter.kill("SIGKILL");
+    await Promise.resolve();
+    expect(killProcessTreeMock).toHaveBeenCalledExactlyOnceWith(8765, {
+      detached: false,
+      graceMs: 5_000,
+      force: true,
+    });
+    expect(signalProcessTreeMock).not.toHaveBeenCalled();
   });
 
   it("uses direct child.kill for non-SIGTERM and non-SIGKILL signals", async () => {

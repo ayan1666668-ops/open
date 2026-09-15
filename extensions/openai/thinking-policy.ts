@@ -73,9 +73,8 @@ function normalizeCodexReasoningEffort(value: string): OpenAIThinkingLevelId | u
 }
 
 function buildCodexLevels(efforts: readonly string[]): ProviderThinkingProfile["levels"] {
-  // Omitting an effort remains a valid Codex choice even when model/list has
-  // no reasoning presets. Every other picker stop must come from that list.
-  const supported = new Set<OpenAIThinkingLevelId>(["off"]);
+  // Omitting effort uses the model default; only an advertised none/off disables reasoning.
+  const supported = new Set<OpenAIThinkingLevelId>();
   for (const effort of efforts) {
     const level = normalizeCodexReasoningEffort(effort);
     if (level) {
@@ -101,7 +100,19 @@ function buildOpenAIThinkingProfile(params: {
       manifest.modelCatalog.providers.openai.models.find((model) => model.id === modelId)?.compat
         ?.supportedReasoningEfforts ??
       [];
-    return { levels: buildCodexLevels(efforts) };
+    // Ultra is runtime orchestration; the Platform's scalar effort list stops at Max.
+    // Preserve narrower account capabilities while exposing the supported runtime mode.
+    const supportsUltra =
+      ["openclaw", "codex", "auto"].includes(agentRuntime) && efforts.includes("max");
+    const defaultLevel = efforts.includes("medium")
+      ? "medium"
+      : efforts.includes("low")
+        ? "low"
+        : undefined;
+    return {
+      levels: buildCodexLevels(supportsUltra ? [...efforts, "ultra"] : efforts),
+      ...(defaultLevel ? { defaultLevel } : {}),
+    };
   }
   const resolvedCodexEfforts =
     params.api === undefined || params.api === "openai-chatgpt-responses"

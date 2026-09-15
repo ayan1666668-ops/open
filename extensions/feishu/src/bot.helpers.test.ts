@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { buildFeishuAgentBody } from "./bot-agent-body.js";
 import { buildBroadcastSessionKey, resolveBroadcastAgents } from "./bot-broadcast.js";
-import { parseMergeForwardContent, parseMessageContent } from "./bot-content.js";
+import { parseMessageContent } from "./bot-content.js";
+import { parseMergeForwardContent } from "./message-content.js";
 
 describe("buildFeishuAgentBody", () => {
   it("builds message id, speaker, quoted content, mention context, and permission notice in order", () => {
@@ -106,18 +107,17 @@ describe("parseMessageContent media captions", () => {
   });
 
   it("keeps a forwarded sticker key available to the agent", () => {
-    expect(
-      parseMergeForwardContent({
-        content: JSON.stringify([
-          { message_id: "om_forward", msg_type: "merge_forward" },
-          {
-            upper_message_id: "om_forward",
-            msg_type: "sticker",
-            body: { content: JSON.stringify({ file_key: "file_forwarded_sticker" }) },
-          },
-        ]),
-      }),
-    ).toBe('[Merged and Forwarded Messages]\n- <sticker key="file_forwarded_sticker"/>');
+    const items = [
+      { message_id: "om_forward", msg_type: "merge_forward" },
+      {
+        upper_message_id: "om_forward",
+        msg_type: "sticker",
+        body: { content: JSON.stringify({ file_key: "file_forwarded_sticker" }) },
+      },
+    ];
+    expect(parseMergeForwardContent(items)).toBe(
+      '[Merged and Forwarded Messages]\n- <sticker key="file_forwarded_sticker"/>',
+    );
   });
 });
 
