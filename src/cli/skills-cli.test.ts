@@ -1,5 +1,6 @@
 // Skills CLI tests cover skill listing, install, and command output behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { stripAnsi } from "../../packages/terminal-core/src/ansi.js";
 import type { SkillStatusEntry, SkillStatusReport } from "../skills/discovery/status.js";
 import { createEmptyInstallChecks } from "./requirements-test-fixtures.js";
 import { formatSkillInfo, formatSkillsCheck, formatSkillsList } from "./skills-cli.format.js";
@@ -245,6 +246,69 @@ describe("skills-cli", () => {
       expect(output).toContain("node");
       expect(output).toContain("Any binaries");
       expect(output).toContain("API_KEY");
+    });
+
+    it("renders alternative anyBins and os requirements as one group status", () => {
+      const report = createMockReport([
+        createMockSkill({
+          name: "alternative-tools",
+          description: "Synthetic alternative requirement proof.",
+          requirements: {
+            bins: [],
+            anyBins: ["node", "openclaw-definitely-missing-runtime"],
+            env: [],
+            config: [],
+            os: ["linux", "darwin"],
+          },
+          // One alternative satisfies each group on this host, so the group
+          // itself is not missing even though individual alternatives are.
+          missing: {
+            bins: [],
+            anyBins: [],
+            env: [],
+            config: [],
+            os: [],
+          },
+        }),
+      ]);
+      const output = stripAnsi(formatSkillInfo(report, "alternative-tools", {}));
+
+      expect(output).toContain(
+        "Any binaries: ✓ (any of: node, openclaw-definitely-missing-runtime)",
+      );
+      expect(output).toContain("OS: ✓ (linux, darwin)");
+      // The absent binary and the non-matching platform must not be marked
+      // satisfied individually.
+      expect(output).not.toContain("✓ openclaw-definitely-missing-runtime");
+      expect(output).not.toContain("✓ darwin");
+    });
+
+    it("marks an unsatisfied alternative requirement group as missing once", () => {
+      const report = createMockReport([
+        createMockSkill({
+          name: "missing-alternatives",
+          description: "No alternative is present.",
+          requirements: {
+            bins: [],
+            anyBins: ["node", "openclaw-definitely-missing-runtime"],
+            env: [],
+            config: [],
+            os: [],
+          },
+          missing: {
+            bins: [],
+            anyBins: ["node", "openclaw-definitely-missing-runtime"],
+            env: [],
+            config: [],
+            os: [],
+          },
+        }),
+      ]);
+      const output = stripAnsi(formatSkillInfo(report, "missing-alternatives", {}));
+
+      expect(output).toContain(
+        "Any binaries: ✗ (any of: node, openclaw-definitely-missing-runtime)",
+      );
     });
 
     it("resolves skill info case-insensitively", () => {

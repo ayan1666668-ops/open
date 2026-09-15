@@ -108,6 +108,11 @@ and separator-normalized matches must identify one skill; ambiguous selectors
 fail instead of choosing discovery order. Workshop reads and update targeting
 use the same lookup.
 
+`info` renders alternative requirements (`requires.anyBins`, `os`) as one group
+status — satisfied when any listed alternative matches — instead of marking each
+alternative individually, so an absent alternative is never shown as met on its
+own.
+
 `check` reports missing prerequisites independently of agent exclusion: a skill
 excluded by the agent allowlist can also appear under **Missing requirements**.
 Disabled skills and skills blocked by the bundled allowlist keep their separate
