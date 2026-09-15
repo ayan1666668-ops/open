@@ -3427,18 +3427,13 @@ td.data-table-key-col {
   min-width: 0;
 }
 
-.agent-scope-control__label,
-.agent-scope-control .agent-select__menu-title {
+.agent-scope-control__label {
   color: var(--muted);
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
-}
-
-.agent-scope-control .agent-select__menu-title {
-  padding: 4px 8px 2px;
 }
 
 .agent-scope-control openclaw-agent-select {
@@ -3469,6 +3464,15 @@ td.data-table-key-col {
 .agent-select {
   display: block;
   width: 100%;
+}
+
+.agent-select__menu-title {
+  padding: 4px 8px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .agent-select::part(menu) {
