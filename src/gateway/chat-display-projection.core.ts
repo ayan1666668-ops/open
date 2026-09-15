@@ -433,7 +433,7 @@ function projectEmptyAssistantErrorMessages(
 
 type ChatHistoryRecoveryOptions = Pick<
   ChatDisplayProjectionOptions,
-  "maxChars" | "stripEnvelope" | "assistantErrorPending"
+  "maxChars" | "stripEnvelope" | "assistantErrorPending" | "redactInlineMedia"
 >;
 
 function prepareChatHistoryRecoveryMessages(
