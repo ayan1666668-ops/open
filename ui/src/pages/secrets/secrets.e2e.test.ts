@@ -60,6 +60,11 @@ const bulkSecretEntry: SecretStoreEntry = {
   allowedHosts: [],
 };
 
+const longNameSecretEntry: SecretStoreEntry = {
+  ...secretEntry,
+  name: "REUTERS_OUTLOOK_CALENDAR_ICS_PRODUCTION_ACCESS_TOKEN",
+};
+
 async function capture(
   page: Page,
   fileName: string,
@@ -130,6 +135,65 @@ async function activeGatewayIdentity(page: Page) {
 }
 
 suite.define(() => {
+  it("keeps long secret names inside the Name column", async () => {
+    await suite.withPage(
+      {
+        viewport: { height: 900, width: 1440 },
+      },
+      async ({ page }) => {
+        await installMockGateway(page, {
+          featureMethods: ["secrets.store.list"],
+          methodResponses: {
+            "secrets.store.list": { entries: [longNameSecretEntry] },
+          },
+        });
+
+        await page.goto(`${suite.server.baseUrl}settings/secrets`);
+        const row = page.getByRole("row", { name: longNameSecretEntry.name });
+        const name = row.locator(".secrets-store__name");
+        const access = row.locator(".secrets-store__mode");
+
+        expect(await name.getAttribute("title")).toBe(longNameSecretEntry.name);
+        await expect
+          .poll(async () => {
+            const [nameBox, accessBox] = await Promise.all([
+              name.boundingBox(),
+              access.boundingBox(),
+            ]);
+            if (!nameBox || !accessBox) {
+              return null;
+            }
+            return {
+              nameRight: nameBox.x + nameBox.width,
+              accessLeft: accessBox.x,
+            };
+          })
+          .not.toBeNull();
+
+        const layout = await Promise.all([name.boundingBox(), access.boundingBox()]);
+        const nameBox = layout[0];
+        const accessBox = layout[1];
+        if (!nameBox || !accessBox) {
+          throw new Error("Expected Name and Access cells to have layout boxes");
+        }
+        expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(accessBox.x);
+        const nameStyle = await name.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            textOverflow: style.textOverflow,
+            whiteSpace: style.whiteSpace,
+            overflows: element.scrollWidth > element.clientWidth,
+          };
+        });
+        expect(nameStyle).toEqual({
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          overflows: true,
+        });
+      },
+    );
+  });
+
   it("blocks empty protected values without rejecting empty environment entries", async () => {
     await suite.withPage({}, async ({ page }) => {
       const gateway = await installMockGateway(page, {
