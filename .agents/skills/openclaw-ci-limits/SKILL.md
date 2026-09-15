@@ -277,7 +277,7 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   outliers reuse the existing file splitter. Preserve serial execution, worker
   pins and complete timing-history floors; no blanket increase in sharding.
 - Blacksmith and hybrid compact bins with multiple ordinary groups request the
-  existing 32-vCPU class and two child slots with a 360s aggregate budget.
+  existing 16-vCPU class and two child slots with a 360s aggregate budget.
   Compatible two-slot bins use the time budget without the ten-group cutoff;
   serial bins retain that cutoff. Blacksmith serial bins retain 200/276s, hybrid serial bins retain 210s,
   exclusive bins retain 150s by default, and groups above their serial cap stay alone.
@@ -316,14 +316,14 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   and keep two workers per child; they can exceed the eight-minute normal-run
   objective without changing existing deadlines. Fewer jobs must retain native
   elapsed-time, actual memory and cleanup proof; requested labels are not capacity.
-- The whole Blacksmith agent-support group requests `blacksmith-32vcpu-ubuntu-2404`.
+- The whole Blacksmith agent-support group requests `blacksmith-16vcpu-ubuntu-2404`.
   Its file inventory and resource-derived worker policy remain unchanged.
-- Numbered Blacksmith tooling bins request the same 32-vCPU class after packing.
+- Numbered Blacksmith tooling bins request the same 16-vCPU class after packing.
   Keep their logical classes, names, file inventories, serial project/file
   execution and two-worker pins. This adds no jobs and does not promote hosted
   or hybrid tooling. The native two-CPU/8-GB tails require a larger-host timing
   comparison; capacity alone is not a measured speedup.
-- The Docker seed job requests `blacksmith-32vcpu-ubuntu-2404`; its weighted
+- The Docker seed job requests `blacksmith-16vcpu-ubuntu-2404`; its weighted
   scheduler and serial declaration compiler policy stay unchanged.
   Canonical PRs and `main` share `resolveChangedDockerSeedLanes` owner-path
   selection; unknown paths retain the published survivor. Canonical manual CI
@@ -360,7 +360,7 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
 - Current-target `build-artifacts` uses the existing 16-class after a complete
   four-CPU/15.42-GiB compute proof, including the unchanged parallel verifier wave.
   The SDK memory owner keeps declarations serial when two heaps do not fit.
-  Frozen or unclassified targets retain 32-class; hosted fallbacks, job counts,
+  Eligible frozen or unclassified targets also request 16-class; hosted fallbacks, job counts,
   concurrency and deadlines stay unchanged. Measured compute fit does not prove
   queue savings; observe the next exact-head CI cycle.
 - Normal canonical hybrid first attempts use the existing four-part QA smoke
@@ -386,8 +386,9 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   row; other matrix rows keep running. Pure Blacksmith and targets without
   stripe support retain the full central path. Measure the combined jobs
   natively; fewer registrations alone do not prove the eight-minute target.
-- CPU-heavy test-type, core test-type stripe, runtime-topology, and npm preflight
-  jobs request `blacksmith-32vcpu-ubuntu-2404`. The 2026-09-01 x64 probe
+- CPU-heavy test-type, core test-type stripe, and runtime-topology jobs in `ci.yml`
+  request `blacksmith-16vcpu-ubuntu-2404`. The separate `openclaw-npm-preflight.yml`
+  jobs retain `blacksmith-32vcpu-ubuntu-2404`. The 2026-09-01 x64 probe
   [run 33538827388](https://github.com/openclaw/openclaw/actions/runs/33538827388)
   measured requested 8/16/32 labels delivering 2/4/8 CPUs respectively. Treat
   larger requests as a measured capacity workaround, never as worker counts.
