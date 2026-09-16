@@ -7,23 +7,17 @@ import type {
   RequesterMcpConnectDelivery,
   SessionMcpRequesterScope,
 } from "./agent-bundle-mcp-types.js";
-import { requesterMcpOAuthIdentity } from "./mcp-oauth-identity.js";
-import { readMcpOAuthCredentialsStatus, startMcpOAuthAuthorization } from "./mcp-oauth.js";
 import { resolveMcpTransportConfig } from "./mcp-transport-config.js";
 import type { AgentToolResult } from "./runtime/index.js";
 
-type RequesterOAuthServer = Extract<
-  NonNullable<ReturnType<typeof resolveMcpTransportConfig>>,
-  { kind: "http" }
->;
-
 async function connectRequesterOAuthServer(params: {
   serverName: string;
-  server: RequesterOAuthServer;
-  requesterScope: SessionMcpRequesterScope;
   publicOrigin?: string;
   delivery?: RequesterMcpConnectDelivery;
   signal?: AbortSignal;
+  authorize: (
+    redirectUrl: string,
+  ) => ReturnType<(typeof import("./mcp-oauth.js"))["startMcpOAuthAuthorization"]>;
 }): Promise<AgentToolResult<unknown>> {
   const failure = (message: string): AgentToolResult<unknown> => ({
     content: [{ type: "text", text: message }],
@@ -47,13 +41,9 @@ async function connectRequesterOAuthServer(params: {
     delivery.assertActive();
   };
   assertActive();
-  let result: Awaited<ReturnType<typeof startMcpOAuthAuthorization>>;
+  let result: Awaited<ReturnType<typeof params.authorize>>;
   try {
-    result = await startMcpOAuthAuthorization(
-      requesterMcpOAuthIdentity(params.serverName, params.server.url, params.requesterScope),
-      params.server,
-      { redirectUrl: new URL("/oauth/mcp/callback", params.publicOrigin).href },
-    );
+    result = await params.authorize(new URL("/oauth/mcp/callback", params.publicOrigin).href);
   } catch {
     assertActive();
     // Provider errors can include the bearer authorization URL. Never put them
@@ -130,15 +120,15 @@ async function connectRequesterOAuthServer(params: {
 }
 
 function buildRequesterConnectCatalog(
-  servers: ReadonlyMap<string, RequesterOAuthServer>,
+  serverNames: Iterable<string>,
   safeServerNamesByServer: ReadonlyMap<string, string>,
 ): McpToolCatalog {
-  const entries = [...servers.entries()];
+  const entries = [...serverNames];
   return {
     version: 1,
     generatedAt: Date.now(),
     servers: Object.fromEntries(
-      entries.map(([serverName]) => [
+      entries.map((serverName) => [
         serverName,
         {
           serverName,
@@ -148,13 +138,14 @@ function buildRequesterConnectCatalog(
         },
       ]),
     ),
-    tools: entries.map(([serverName]) => ({
+    tools: entries.map((serverName) => ({
       serverName,
       safeServerName: safeServerNamesByServer.get(serverName) ?? serverName,
       toolName: "connect",
       description: `Connect your ${serverName} account. Sign-in is delivered privately when this channel supports it.`,
       fallbackDescription: `Connect your ${serverName} account. Sign-in is delivered privately when this channel supports it.`,
       inputSchema: Type.Object({}),
+      oauthConnectBootstrap: true,
     })),
   };
 }
@@ -168,7 +159,13 @@ export async function createRequesterMcpConnect(params: {
   cfg?: OpenClawConfig;
   configFingerprint: string;
 }): Promise<RequesterMcpConnect | undefined> {
-  const servers = new Map<string, RequesterOAuthServer>();
+  const servers = new Map<
+    string,
+    (
+      delivery?: RequesterMcpConnectDelivery,
+      signal?: AbortSignal,
+    ) => Promise<AgentToolResult<unknown>>
+  >();
   const authorizedServerNames: string[] = [];
   for (const serverName of [...params.serverNames].toSorted((a, b) => a.localeCompare(b))) {
     const resolved = resolveMcpTransportConfig(serverName, params.mcpServers[serverName], {
@@ -181,9 +178,26 @@ export async function createRequesterMcpConnect(params: {
     ) {
       continue;
     }
-    servers.set(serverName, resolved);
-    const status = await readMcpOAuthCredentialsStatus(
-      requesterMcpOAuthIdentity(serverName, resolved.url, params.requesterScope),
+    const [identity, oauth] = await Promise.all([
+      import("./mcp-oauth-identity.js"),
+      import("./mcp-oauth.js"),
+    ]);
+    servers.set(serverName, (delivery, signal) =>
+      connectRequesterOAuthServer({
+        serverName,
+        publicOrigin: params.cfg?.gateway?.publicOrigin,
+        delivery,
+        signal,
+        authorize: (redirectUrl) =>
+          oauth.startMcpOAuthAuthorization(
+            identity.requesterMcpOAuthIdentity(serverName, resolved.url, params.requesterScope),
+            resolved,
+            { redirectUrl },
+          ),
+      }),
+    );
+    const status = await oauth.readMcpOAuthCredentialsStatus(
+      identity.requesterMcpOAuthIdentity(serverName, resolved.url, params.requesterScope),
     );
     if (status.state === "authorized") {
       authorizedServerNames.push(serverName);
@@ -198,21 +212,13 @@ export async function createRequesterMcpConnect(params: {
     publicOrigin: params.cfg?.gateway?.publicOrigin,
   });
   return {
-    catalog: buildRequesterConnectCatalog(servers, params.safeServerNamesByServer),
+    catalog: buildRequesterConnectCatalog(servers.keys(), params.safeServerNamesByServer),
     authorizedServerNames,
     configFingerprint,
     createExecute(serverName, delivery) {
-      const server = servers.get(serverName);
-      return server
-        ? async (_toolCallId, _input, signal) =>
-            await connectRequesterOAuthServer({
-              serverName,
-              server,
-              requesterScope: params.requesterScope,
-              publicOrigin: params.cfg?.gateway?.publicOrigin,
-              delivery,
-              signal,
-            })
+      const execute = servers.get(serverName);
+      return execute
+        ? async (_toolCallId, _input, signal) => await execute(delivery, signal)
         : undefined;
     },
   };

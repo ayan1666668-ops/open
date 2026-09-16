@@ -29,9 +29,9 @@ const routes = [
   "devices",
   "cloud-workers",
   "agents",
-  "labs",
   "model-providers",
   "plugin-settings",
+  "skill-settings",
   "mcp",
   "memory",
   "automation",
@@ -39,6 +39,7 @@ const routes = [
   "secrets",
   "approvals",
   "infrastructure",
+  "labs",
   "advanced",
   "debug",
   "logs",
@@ -57,7 +58,7 @@ suite.define(() => {
   for (const destination of [
     { from: "memory", route: "memory-import", title: "Import Memory", tab: "Settings" },
     { from: "skills", route: "plugins", title: "Plugins", tab: "Plugins" },
-    { from: "skills", route: "skill-workshop", title: "Skill Workshop", tab: null },
+    { from: "skills", route: "skill-workshop", title: "Skill workshop", tab: "Skill workshop" },
   ] as const) {
     it(`returns from embedded ${destination.route} through its page link and direct entry`, async () => {
       await suite.withPage(
@@ -84,10 +85,8 @@ suite.define(() => {
           if (destination.from === "memory") {
             await page.getByRole("tab", { name: destination.tab, exact: true }).click();
             await page.locator('a[href="/memory-import"]').click();
-          } else if (destination.tab) {
-            await page.getByRole("tab", { name: destination.tab, exact: true }).click();
           } else {
-            await page.getByRole("button", { name: "Workshop", exact: true }).click();
+            await page.getByRole("tab", { name: destination.tab, exact: true }).click();
           }
           await waitForControlUiRoute(page, { routeId: destination.route });
           const header = page.locator(".native-embed-header");
@@ -255,8 +254,20 @@ suite.define(() => {
               expect(
                 await page
                   .locator(
-                    ".shell-nav, openclaw-app-topbar, .shell-chrome-controls, resizable-divider, .settings-sidebar__footer, openclaw-macos-titlebar-controls, openclaw-keyboard-shortcuts-dialog",
+                    ".shell-nav, openclaw-app-topbar, .shell-chrome-controls, .settings-sidebar__footer, openclaw-macos-titlebar-controls, openclaw-keyboard-shortcuts-dialog",
                   )
+                  .count(),
+              ).toBe(0);
+              expect(
+                await page
+                  .locator(
+                    "resizable-divider:visible, .assistant-panel:visible, .debug-overlay:visible",
+                  )
+                  .count(),
+              ).toBe(0);
+              expect(
+                await page
+                  .locator("openclaw-assistant-panel-content, openclaw-debug-overlay-content")
                   .count(),
               ).toBe(0);
               if (route === "settings") {

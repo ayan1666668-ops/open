@@ -129,7 +129,9 @@ describe("requester MCP connect runtime", () => {
     expect(disconnected.tools.map((tool) => tool.name)).toEqual(["calendar__connect"]);
     expect(created.find((params) => params.requesterScope)?.includeServerNames).toEqual(new Set());
     expect(startAuthorization).not.toHaveBeenCalled();
-    const result = await disconnected.tools[0]!.execute("connect", {});
+    const connecting = disconnected.tools[0]!.execute("connect", {});
+    expect(startAuthorization).toHaveBeenCalledOnce();
+    const result = await connecting;
     expect(JSON.stringify(result)).not.toContain("https://auth.example");
     expect(readMcpConnectAction(result)).toBeUndefined();
     expect(result.content[0]).toMatchObject({ text: expect.stringContaining("private message") });

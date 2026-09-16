@@ -34,6 +34,7 @@ import {
   requiresMcpCodexToolApproval,
   resolveProjectedMcpCodexToolApprovalMode,
 } from "./mcp-codex-tool-approval.js";
+import type { ToolPolicyFilterEvent } from "./tool-policy-pipeline.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
 type RequesterScopedHarnessMcpTools = {
@@ -93,7 +94,10 @@ function applyConfiguredMcpApproval(
 ): AnyAgentTool[] {
   return tools.flatMap((tool) => {
     const mcp = getPluginToolMeta(tool)?.mcp;
-    if (mcp?.operation !== "tool") {
+    // Only the trusted requester OAuth sign-in bootstrap is exempt — identified by
+    // provenance, never by tool name, so a real server capability named "connect"
+    // stays behind the per-call approval gate.
+    if (mcp?.operation !== "tool" || mcp.oauthConnectBootstrap === true) {
       return [tool];
     }
     const projectedMode = resolveProjectedMcpCodexToolApprovalMode(
@@ -175,6 +179,12 @@ type MaterializeRequesterScopedMcpToolsForHarnessRunParams = {
   conversationCapabilityProfile?: ResolvedConversationCapabilityProfile;
   /** Builds a capability profile when conversationCapabilityProfile is omitted. */
   policyContext?: Omit<ConversationCapabilityProfileParams, "runtimeToolAllowlist">;
+  /** Exact established Codex yolo predicate; no other profile bypasses approval metadata. */
+  autoApproveCodexAppServerApprovals?: boolean;
+  /** Interactive turns request approval before the original MCP executor runs. */
+  requestInteractiveCodexApproval?: (
+    params: InteractiveConfiguredMcpApprovalRequest,
+  ) => Promise<void>;
   warn?: (message: string) => void;
 };
 
@@ -193,7 +203,9 @@ function notConnectedToolResult(serverName: string, toolName: string) {
 
 function applyHarnessToolPolicy(
   tools: AnyAgentTool[],
-  params: MaterializeRequesterScopedMcpToolsForHarnessRunParams,
+  params: MaterializeRequesterScopedMcpToolsForHarnessRunParams & {
+    onFilter?: (event: ToolPolicyFilterEvent) => void;
+  },
 ): AnyAgentTool[] {
   if (tools.length === 0) {
     return tools;
@@ -217,6 +229,7 @@ function applyHarnessToolPolicy(
     config: params.policyContext?.config ?? params.cfg,
     conversationCapabilityProfile: profile,
     warn: params.warn ?? (() => undefined),
+    onFilter: params.onFilter,
   });
 }
 
@@ -290,12 +303,17 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
     throw error;
   }
   try {
-    const policyWarnings: string[] = [];
+    // Policy warnings describe inputs; only actual omissions make configured MCP incomplete.
+    const omissions: string[] = [];
     const policyParams = {
       ...params,
-      warn: (message: string) => {
-        policyWarnings.push(message);
-        params.warn?.(message);
+      onFilter: (event: ToolPolicyFilterEvent) => {
+        const omittedCount = event.before.length - event.after.length;
+        if (omittedCount > 0) {
+          omissions.push(
+            `${event.step.label}: ${omittedCount} configured MCP tool(s) omitted by policy`,
+          );
+        }
       },
     };
     const fullPermission = params.autoApproveCodexAppServerApprovals === true;
@@ -309,7 +327,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
       ...(params.requestInteractiveCodexApproval
         ? { requestApproval: params.requestInteractiveCodexApproval }
         : {}),
-      onOmitted: (message) => policyWarnings.push(message),
+      onOmitted: (message) => omissions.push(message),
     });
     // App views outlive this attempt, so bind their callable surface to the
     // same complete catalog and final policy before any model tool can mint one.
@@ -321,7 +339,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
           ...projectedApproval,
           ...(params.requestInteractiveCodexApproval
             ? {}
-            : { onOmitted: (message: string) => policyWarnings.push(message) }),
+            : { onOmitted: (message: string) => omissions.push(message) }),
         },
       ),
     );
@@ -330,7 +348,7 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
         ...(liveRuntime.diagnostics ?? []).map(
           (diagnostic) => `${diagnostic.serverName}: ${diagnostic.message}`,
         ),
-        ...policyWarnings,
+        ...omissions,
       ],
       params.requestInteractiveCodexApproval ? "this run" : "this scheduled run",
     );
@@ -432,9 +450,19 @@ export async function materializeRequesterScopedMcpToolsForHarnessRunCore(
 
     const filteredTools = applyHarnessToolPolicy(tools, params);
     const filteredAdvertised = applyHarnessToolPolicy(advertisedTools, params);
-    // Policy must keep both lists aligned by name for fingerprint stability.
-    const allowedNames = new Set(filteredAdvertised.map((tool) => tool.name));
-    const executableTools = filteredTools.filter((tool) => allowedNames.has(tool.name));
+    // Requester-scoped tools run as dynamic tools, so every prompt-required MCP
+    // call passes the same per-call approval gate as the configured path before
+    // the bridge dispatches it — whenever the caller provides an approval
+    // channel. OpenClaw's own requester turns always provide one. Callers that
+    // pass no approval callback keep their pre-gate behavior: tools stay
+    // registered on both surfaces and dispatch ungated, so a caller's tool
+    // surface never silently loses availability across upgrades.
+    const executableTools = params.requestInteractiveCodexApproval
+      ? applyConfiguredMcpApproval(filteredTools, {
+          fullPermission: params.autoApproveCodexAppServerApprovals === true,
+          requestApproval: params.requestInteractiveCodexApproval,
+        })
+      : filteredTools;
 
     return {
       tools: executableTools,
