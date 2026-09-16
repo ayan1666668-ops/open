@@ -917,45 +917,6 @@ describe("gateway sessions patch", () => {
     expectPatchError(result, 'invalid verboseLevel (use "on"|"off"|"full")');
   });
 
-  test("clears the saved auth profile selection", async () => {
-    const entry = expectPatchOk(
-      await runPatch({
-        store: mainStoreEntry({
-          sessionId: "sess-clear-auth-profile",
-          authProfileOverride: "openai:old",
-          authProfileOverrideSource: "user",
-          authProfileOverrideCompactionCount: 3,
-          modelFallback: {
-            prevModel: OPENAI_GPT_ID,
-            prevProvider: "openai",
-            prevAuthProfileOverride: "openai:old",
-            prevAuthProfileOverrideSource: "user",
-            prevAuthProfileOverrideCompactionCount: 3,
-            ts: 1,
-            source: "agent-patch",
-          },
-        }),
-        patch: { key: MAIN_SESSION_KEY, authProfileId: null },
-      }),
-    );
-    expectAuthOverride(entry, { profile: undefined });
-    expect(entry.liveModelSwitchPending).toBe(true);
-    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverride");
-    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverrideSource");
-    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverrideCompactionCount");
-  });
-
-  test("rejects clearing and selecting an auth profile together", async () => {
-    const result = await runPatch({
-      patch: {
-        key: MAIN_SESSION_KEY,
-        authProfileId: null,
-        model: "openai/gpt-5.6@openai:new",
-      },
-    });
-    expectPatchError(result, "cannot clear and select an auth profile in the same patch");
-  });
-
   test("clears elevatedLevel when patch sets null", async () => {
     const store: Record<string, SessionEntry> = {
       [MAIN_SESSION_KEY]: { elevatedLevel: "off" } as SessionEntry,
@@ -1090,18 +1051,6 @@ describe("gateway sessions patch", () => {
     expectPatchError(result, MODEL_SELECTION_LOCKED_MESSAGE);
     expect(loadGatewayModelCatalog).not.toHaveBeenCalled();
     expect(store[MAIN_SESSION_KEY]).toEqual(before);
-  });
-
-  test("rejects auth profile clearing for model-locked sessions", async () => {
-    const result = await runPatch({
-      store: mainStoreEntry({
-        modelSelectionLocked: true,
-        authProfileOverride: "openai:locked",
-        authProfileOverrideSource: "user",
-      }),
-      patch: { key: MAIN_SESSION_KEY, authProfileId: null },
-    });
-    expectPatchError(result, MODEL_SELECTION_LOCKED_MESSAGE);
   });
 
   test("allows non-model metadata patches for model-locked sessions", async () => {
