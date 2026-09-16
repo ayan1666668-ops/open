@@ -2,7 +2,6 @@
 import { ChannelType } from "discord-api-types/v10";
 import { logError } from "openclaw/plugin-sdk/logging-core";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
-import { isDiscordThreadChannelType } from "../channel-type.js";
 import type {
   AgentComponentContext,
   AgentComponentInteraction,
@@ -10,8 +9,8 @@ import type {
   ComponentInteractionContext,
   DiscordChannelContext,
 } from "./agent-components.types.js";
-import { normalizeDiscordDisplaySlug, normalizeDiscordSlug } from "./allow-list.js";
-import { resolveDiscordChannelInfoSafe } from "./channel-access.js";
+import { normalizeDiscordDisplaySlug } from "./allow-list.js";
+import { resolveDiscordThreadLikeChannelContext } from "./thread-channel-context.js";
 
 function formatUsername(user: { username: string; discriminator?: string | null }): string {
   if (user.discriminator && user.discriminator !== "0") {
@@ -70,37 +69,27 @@ export async function replyUnavailableComponentInteraction(
   }
 }
 
-export function resolveDiscordChannelContext(
+async function resolveDiscordChannelContext(
   interaction: AgentComponentInteraction,
-): DiscordChannelContext {
-  const channel = interaction.channel;
-  const channelInfo = resolveDiscordChannelInfoSafe(channel);
-  const channelName = channelInfo.name;
-  const channelSlug = channelName ? normalizeDiscordSlug(channelName) : "";
-  const displayChannelSlug = channelName ? normalizeDiscordDisplaySlug(channelName) : "";
-  const channelType = channelInfo.type;
-  const isThread = isDiscordThreadChannelType(channelType);
-
-  let parentId: string | undefined;
-  let parentName: string | undefined;
-  let parentSlug = "";
-  if (isThread) {
-    parentId = channelInfo.parentId;
-    parentName = channelInfo.parentName;
-    if (parentName) {
-      parentSlug = normalizeDiscordSlug(parentName);
-    }
-  }
+): Promise<DiscordChannelContext> {
+  // Discord can send channel_id without a hydrated channel object; the raw id still
+  // resolves the channel type and thread parent used for allowlists and routing.
+  const channelContext = await resolveDiscordThreadLikeChannelContext({
+    client: interaction.client,
+    channel: interaction.channel,
+    channelIdFallback: interaction.rawData.channel_id,
+  });
+  const { channelName, channelSlug, channelType, isThreadChannel } = channelContext;
 
   return {
     channelName,
     channelSlug,
-    displayChannelSlug,
+    displayChannelSlug: channelName ? normalizeDiscordDisplaySlug(channelName) : "",
     channelType,
-    isThread,
-    parentId,
-    parentName,
-    parentSlug,
+    isThread: isThreadChannel,
+    parentId: channelContext.threadParentId,
+    parentName: channelContext.threadParentName,
+    parentSlug: channelContext.threadParentSlug,
   };
 }
 
@@ -137,7 +126,8 @@ export async function resolveComponentInteractionContext(params: {
   const username = formatUsername(user);
   const userId = user.id;
   const rawGuildId = interaction.rawData.guild_id;
-  const channelType = resolveDiscordChannelContext(interaction).channelType;
+  const channelCtx = await resolveDiscordChannelContext(interaction);
+  const channelType = channelCtx.channelType;
   const isGroupDm = channelType === ChannelType.GroupDM;
   const isDirectMessage =
     channelType === ChannelType.DM || (!rawGuildId && !isGroupDm && channelType == null);
@@ -155,5 +145,6 @@ export async function resolveComponentInteractionContext(params: {
     isDirectMessage,
     isGroupDm,
     memberRoleIds,
+    channelCtx,
   };
 }

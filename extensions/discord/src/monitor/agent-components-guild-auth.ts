@@ -4,7 +4,6 @@ import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-na
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveOpenProviderRuntimeGroupPolicy } from "openclaw/plugin-sdk/runtime-group-policy";
 import type { DiscordComponentEntry } from "../components.js";
-import { resolveDiscordChannelContext } from "./agent-components-context.js";
 import { resolveInteractionContextWithDmAuth } from "./agent-components-dm-auth.js";
 import { resolveAgentComponentPolicyContext } from "./agent-components-live-policy.js";
 import { replySilently } from "./agent-components-reply.js";
@@ -169,6 +168,7 @@ export async function ensureAgentComponentInteractionAllowed(params: {
   channelId: string;
   rawGuildId: string | undefined;
   memberRoleIds: string[];
+  channelCtx: DiscordChannelContext;
   user: DiscordUser;
   replyOpts: { ephemeral?: boolean };
   componentLabel: string;
@@ -183,13 +183,12 @@ export async function ensureAgentComponentInteractionAllowed(params: {
     guildId: params.rawGuildId,
     guildEntries: ctx.guildEntries,
   });
-  const channelCtx = resolveDiscordChannelContext(params.interaction);
   const memberAllowed = await ensureGuildComponentMemberAllowed({
     interaction: params.interaction,
     guildInfo,
     channelId: params.channelId,
     rawGuildId: params.rawGuildId,
-    channelCtx,
+    channelCtx: params.channelCtx,
     memberRoleIds: params.memberRoleIds,
     user: params.user,
     replyOpts: params.replyOpts,
@@ -208,7 +207,7 @@ export async function ensureAgentComponentInteractionAllowed(params: {
     });
     return null;
   }
-  return { parentId: channelCtx.parentId };
+  return { parentId: params.channelCtx.parentId };
 }
 
 export async function resolveAuthorizedComponentInteraction(params: {
@@ -234,13 +233,12 @@ export async function resolveAuthorizedComponentInteraction(params: {
     return null;
   }
 
-  const { channelId, user, replyOpts, rawGuildId, memberRoleIds } = interactionCtx;
+  const { channelId, user, replyOpts, rawGuildId, memberRoleIds, channelCtx } = interactionCtx;
   const guildInfo = resolveDiscordGuildEntry({
     guild: params.interaction.guild ?? undefined,
     guildId: rawGuildId,
     guildEntries: ctx.guildEntries,
   });
-  const channelCtx = resolveDiscordChannelContext(params.interaction);
   const allowNameMatching = isDangerousNameMatchingEnabled(ctx.discordConfig);
   const channelConfig = resolveDiscordChannelConfigWithFallback({
     guildInfo,

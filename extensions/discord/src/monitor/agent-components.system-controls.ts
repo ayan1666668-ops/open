@@ -70,6 +70,7 @@ async function runAgentSystemControlInteraction(params: AgentSystemControlParams
     isDirectMessage,
     isGroupDm,
     memberRoleIds,
+    channelCtx,
   } = interactionCtx;
 
   const allowed = await ensureAgentComponentInteractionAllowed({
@@ -78,6 +79,7 @@ async function runAgentSystemControlInteraction(params: AgentSystemControlParams
     channelId,
     rawGuildId,
     memberRoleIds,
+    channelCtx,
     user,
     replyOpts,
     componentLabel: params.authorizationComponentLabel,
