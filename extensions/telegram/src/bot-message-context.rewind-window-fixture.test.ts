@@ -6,29 +6,22 @@
 // with a projection cursor, and buildPromptContextForMessage) and pins it to
 // the fixture, so the seeded shape cannot drift from what Telegram ingress
 // actually assembles.
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import type { Message } from "grammy/types";
-import {
-  closeOpenClawStateDatabaseForTest,
-  createPluginStateKeyedStoreForTests,
-  openOpenClawStateDatabase,
-  resetPluginStateStoreForTests,
-} from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTelegramMessageContextRuntime } from "./bot-handlers.message-context.js";
 import type { RegisterTelegramHandlerParams } from "./bot-handlers.types.js";
 import { recordOutboundMessageForPromptContext } from "./outbound-message-context.js";
 import { createTelegramPromptContextProjectionCursor } from "./prompt-context-projection.js";
-import { setTelegramPluginStateRuntimeForTests } from "./runtime-state.test-support.js";
+import { setTelegramRuntime } from "./runtime.js";
 import {
   clearTelegramRuntimeForTest,
   resetTelegramMessageCacheForTest,
 } from "./runtime.test-support.js";
+import type { TelegramRuntime } from "./runtime.types.js";
 
 // recordOutboundMessageForPromptContext reports persistence failures only as a
-// false return plus a verbose log. Capture that log so a CI failure carries the
+// false return plus a verbose log. Capture that log so a failure carries the
 // underlying error instead of a bare false.
 const verboseLog = vi.hoisted(() => ({ lines: [] as string[] }));
 vi.mock("openclaw/plugin-sdk/runtime-env", async (importOriginal) => {
@@ -61,31 +54,51 @@ function loadFixture(): unknown {
   return JSON.parse(readFileSync(fixtureUrl, "utf8"));
 }
 
+// The window this test pins lives in the message cache's bucket logic; its
+// sqlite backing is a core-shard concern (the canonical state store requires
+// the host broker, which extension shards do not provide). A Map-backed store
+// keeps the persistent-cache code path exercised without that dependency.
+function setTelegramInMemoryPluginStateRuntimeForTests(): void {
+  const stores = new Map<string, Map<string, unknown>>();
+  setTelegramRuntime({
+    state: {
+      openKeyedStore: (({ namespace }: { namespace: string }) => {
+        const entries = stores.get(namespace) ?? new Map<string, unknown>();
+        stores.set(namespace, entries);
+        return {
+          async register(key: string, value: unknown) {
+            entries.set(key, value);
+          },
+          async entries() {
+            return Array.from(entries, ([key, value]) => ({ key, value }));
+          },
+          async delete(key: string) {
+            return entries.delete(key);
+          },
+          async clear() {
+            entries.clear();
+          },
+        };
+      }) as unknown as TelegramRuntime["state"]["openKeyedStore"],
+    },
+    channel: {},
+  } as TelegramRuntime);
+}
+
 describe("telegram rewind chat-window fixture", () => {
   beforeEach(() => {
     verboseLog.lines.length = 0;
-    resetPluginStateStoreForTests();
     resetTelegramMessageCacheForTest();
-    setTelegramPluginStateRuntimeForTests();
+    setTelegramInMemoryPluginStateRuntimeForTests();
   });
 
   afterEach(() => {
     clearTelegramRuntimeForTest();
     resetTelegramMessageCacheForTest();
-    resetPluginStateStoreForTests();
-    vi.unstubAllEnvs();
-    closeOpenClawStateDatabaseForTest();
   });
 
   it("matches the window the real context pipeline assembles", async () => {
     storeCounter += 1;
-    // The persisted message cache writes through the sqlite plugin-state store,
-    // which resolves OPENCLAW_STATE_DIR at call time; isolate it per test so CI
-    // never touches the runner's real home state.
-    vi.stubEnv(
-      "OPENCLAW_STATE_DIR",
-      mkdtempSync(join(tmpdir(), "openclaw-rewind-window-fixture-")),
-    );
     const storePath = `/tmp/openclaw-telegram-rewind-window-fixture-${storeCounter}.json`;
     const cfg = { session: { store: storePath } } as const;
     const messageContextRuntime = createTelegramMessageContextRuntime({
@@ -123,41 +136,6 @@ describe("telegram rewind chat-window fixture", () => {
       promptContextProjection: projection,
       ownerAgentId: "main",
     });
-    if (!recordedReply) {
-      // The boolean wrapper swallows the real error into the verbose log; probe
-      // the open and the keyed-store register directly so the failure carries
-      // the underlying cause chain and the path that was actually resolved.
-      let detail =
-        `state-dir=${process.env.OPENCLAW_STATE_DIR ?? "<unset>"}` +
-        ` tmpdir=${process.env.TMPDIR ?? "<unset>"}` +
-        ` state-dir-exists=${existsSync(process.env.OPENCLAW_STATE_DIR ?? "")}`;
-      const describe = (error: unknown): string => {
-        const chain: string[] = [];
-        let cursor: unknown = error;
-        while (cursor instanceof Error && chain.length < 5) {
-          chain.push(`${cursor.name}: ${cursor.message}`);
-          cursor = (cursor as { cause?: unknown }).cause;
-        }
-        return chain.join(" <= ");
-      };
-      try {
-        openOpenClawStateDatabase({ env: process.env });
-        detail += " manual-open=ok";
-      } catch (error) {
-        detail += ` manual-open-chain=${describe(error)}`;
-      }
-      try {
-        const probe = createPluginStateKeyedStoreForTests("telegram", {
-          namespace: "telegram.message-cache",
-          maxEntries: 3000,
-        });
-        await probe.register("rewind-fixture-diagnostic", { probe: true });
-        detail += " replay-register=ok";
-      } catch (error) {
-        detail += ` replay-register-chain=${describe(error)}`;
-      }
-      throw new Error(detail);
-    }
     expect(recordedReply, verboseLog.lines.join("\n")).toBe(true);
     const currentMessage = inboundTextMessage(104, "fresh follow-up", 4);
     const telegramCtx = {
