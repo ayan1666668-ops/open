@@ -735,6 +735,7 @@ src/logging/subsystem.ts
 src/logging/timestamps.ts
 src/media/staged-inputs.ts
 src/memory-host-sdk/host/config-utils.ts
+src/memory/root-memory-files.ts
 src/model-catalog/bundled-catalog-stamp.ts
 src/model-catalog/index.ts
 src/model-catalog/manifest-planner.ts
