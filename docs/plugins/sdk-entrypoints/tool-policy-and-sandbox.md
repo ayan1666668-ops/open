@@ -42,7 +42,8 @@ This helper splits text; it does not validate or authorize a mount.
 
 ## Sandbox filesystem mappings
 
-`SandboxFsBridge` from `openclaw/plugin-sdk/sandbox` accepts optional readonly
+`SandboxContext`, exported by `openclaw/plugin-sdk/agent-harness-runtime`, exposes
+its filesystem bridge through `fsBridge`. That bridge accepts optional readonly
 `pathMappings`: `{ hostRoot, containerRoot }` pairs from the backend's prepared
 mounts. Include workspace, agent-workspace, and protected-resource projections.
 The container root declares the path syntax: POSIX roots retain literal
