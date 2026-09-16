@@ -14,42 +14,71 @@ import type { MentionTarget } from "./mention-target.types.js";
  * reading as a marker and suppressing a table that would have converted safely. A closer
  * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
+type FeishuFenceLine = { container: string; column: number; marker: string; info: string };
+
+const FEISHU_LIST_MARKER = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t])/u;
 // `.` skips a carriage return, so the info string is matched as everything but the feed.
-const FEISHU_FENCE_LINE = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,}|~{3,})([^\n]*)$/u;
+const FEISHU_FENCE_MARKER = /^(`{3,}|~{3,})([^\n]*)$/u;
 
-type FeishuFenceLine = { depth: string; marker: string; info: string };
-
-/** A quote prefix marks the container a fence lives in, and one optional space inside it
- * is decoration rather than depth. */
-function fenceDepth(prefix: string): string {
-  return prefix.replaceAll(/[ \t]/gu, "");
+/**
+ * Read the containers a line sits in before its marker run: quotes and list items, each
+ * naming the block the fence belongs to, and the column where the content of that block
+ * begins. A closer inside a list item carries no marker of its own, only the indentation
+ * the item's content sits at, which is why the column is worth keeping.
+ */
+function readFenceLine(line: string): FeishuFenceLine | undefined {
+  let index = 0;
+  let container = "";
+  for (;;) {
+    while (line[index] === " " || line[index] === "\t") {
+      index += 1;
+    }
+    const rest = line.slice(index);
+    if (rest.startsWith(">")) {
+      container += ">";
+      index += 1;
+      continue;
+    }
+    const list = FEISHU_LIST_MARKER.exec(rest);
+    if (!list?.[0]) {
+      break;
+    }
+    container += "-";
+    index += list[0].length;
+  }
+  const marker = FEISHU_FENCE_MARKER.exec(line.slice(index));
+  if (!marker?.[1]) {
+    return undefined;
+  }
+  const info = marker[2] ?? "";
+  // A backtick fence carries no backtick in its info string, which keeps an inline run in
+  // ordinary prose from reading as a marker. A tilde fence carries anything, so a sample of
+  // backticks inside one is content rather than a block of its own.
+  if (marker[1].startsWith("`") && info.includes("`")) {
+    return undefined;
+  }
+  return { container, column: index, marker: marker[1], info };
 }
 
 /**
- * Both fence characters open a block, and only the one that opened it can close it. A
- * backtick fence carries no backtick in its info string, which is what keeps an inline run
- * from reading as a marker; a tilde fence carries anything, so a sample of backticks inside
- * one is content rather than a block of its own.
+ * Four spaces with no container above them is indented code, not a fence, which is where
+ * the shared scanner draws the line too. Inside a list item the same four spaces are where
+ * the item's content starts, so a fence opened by the item's own marker line is closed by a
+ * marker at that column.
  */
-function readFenceLine(line: string): FeishuFenceLine | undefined {
-  const match = FEISHU_FENCE_LINE.exec(line);
-  const marker = match?.[2];
-  if (!match || !marker) {
-    return undefined;
-  }
-  const info = match[3] ?? "";
-  if (marker.startsWith("`") && info.includes("`")) {
-    return undefined;
-  }
-  return { depth: fenceDepth(match[1] ?? ""), marker, info };
+function opensFence(line: FeishuFenceLine): boolean {
+  return line.container !== "" || line.column <= 3;
 }
 
 function closesFence(open: FeishuFenceLine, line: FeishuFenceLine): boolean {
+  if (line.info.trim() !== "" || line.marker[0] !== open.marker[0]) {
+    return false;
+  }
+  if (line.marker.length < open.marker.length) {
+    return false;
+  }
   return (
-    line.info.trim() === "" &&
-    line.marker[0] === open.marker[0] &&
-    line.marker.length >= open.marker.length &&
-    line.depth === open.depth
+    line.container === open.container || (line.container === "" && line.column === open.column)
   );
 }
 
@@ -69,7 +98,9 @@ function fencesBalance(chunk: string): boolean {
       continue;
     }
     if (!open) {
-      open = fence;
+      if (opensFence(fence)) {
+        open = fence;
+      }
       continue;
     }
     if (closesFence(open, fence)) {
