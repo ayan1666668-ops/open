@@ -242,7 +242,7 @@ describe("eligible status recovery", () => {
           vi.spyOn(gather, "gatherDaemonStatus").mockResolvedValue(status);
           const { runDaemonStatus } = await import("./status.js");
 
-          await runDaemonStatus({ rpc: {}, probe: true, json: false });
+          await runDaemonStatus({ rpc: {}, probe: true, requireRpc: false, json: false });
 
           const output = humanOutput();
           expect(output).toContain(`Connectivity probe: ${ok ? "ok" : "failed"}`);
