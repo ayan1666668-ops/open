@@ -24,7 +24,7 @@ env:
 jobs:
   bun-transform:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/stdio-cleanup-completion'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
       OPENCLAW_VITEST_MAX_WORKERS: "1"
@@ -40,7 +40,7 @@ jobs:
       - name: Verify exact source
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: e30b4509727b0bc1b2b844b5396271096a1b32d2
+          EXPECTED_PARENT: ae90f457b36068e79779044824c81b92092667ef
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
@@ -120,7 +120,7 @@ jobs:
         if: always()
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: e30b4509727b0bc1b2b844b5396271096a1b32d2
+          EXPECTED_PARENT: ae90f457b36068e79779044824c81b92092667ef
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
