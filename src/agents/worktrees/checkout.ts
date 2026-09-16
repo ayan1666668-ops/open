@@ -305,7 +305,8 @@ async function prepareTemplate(options: CheckoutOptions) {
 }
 
 /** Git owns registration, branches and indexes; the backend only materializes files. */
-export async function addManagedWorktree(options: CheckoutOptions): Promise<CheckoutResult> {
+export async function addManagedWorktree(inputOptions: CheckoutOptions): Promise<CheckoutResult> {
+  let options = inputOptions;
   const branch = options.branch;
   const existingRef = branch?.mode === "existing" ? `refs/heads/${branch.name}` : undefined;
   // A caller-owned branch is an immutable seed, not permission to create/reset it.
