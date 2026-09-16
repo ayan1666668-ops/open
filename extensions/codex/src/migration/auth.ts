@@ -61,6 +61,22 @@ type CodexAuthProfileConfig = {
   displayName?: string;
 };
 
+async function loadLocalAuthProfileStore(
+  targets: CodexMigrationTargets,
+  stateDir: string,
+): Promise<ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles>> {
+  let localStore: ReturnType<typeof loadAuthProfileStoreWithoutExternalProfiles> | undefined;
+  await updateAuthProfileStoreWithLock({
+    agentDir: targets.agentDir,
+    stateDir,
+    updater: (store) => {
+      localStore = structuredClone(store);
+      return false;
+    },
+  });
+  return localStore ?? { version: 1, profiles: {} };
+}
+
 type CodexAuthConfigApplyResult = "configured" | "conflict" | "unavailable";
 
 class CodexAuthConfigConflict extends Error {}
@@ -424,6 +440,7 @@ export async function buildCodexAuthItems(params: {
     );
   }
   const store = loadAuthProfileStoreWithoutExternalProfiles(params.targets.agentDir);
+  const localStore = await loadLocalAuthProfileStore(params.targets, params.ctx.stateDir);
   const skipped = !params.ctx.includeSecrets;
   return credentials.map((credential) => {
     const { profileId, matchedExisting } = itemProfileTarget(
@@ -431,6 +448,7 @@ export async function buildCodexAuthItems(params: {
       store,
       params.ctx,
       params.source,
+      localStore,
     );
     const existing = store.profiles[profileId];
     const configProfile = authProfileConfigForCredential(credential, profileId);
@@ -582,8 +600,8 @@ async function applyCodexAuthItem(
       ctx.signal?.throwIfAborted();
       const effectiveStore = loadAuthProfileStoreWithoutExternalProfiles(targets.agentDir);
       if (
-        item.details?.legacyNativeHome !== undefined &&
-        itemProfileTarget(credential, effectiveStore, ctx, source).profileId !== profileId
+        itemProfileTarget(credential, effectiveStore, ctx, source, freshStore).profileId !==
+        profileId
       ) {
         conflicted = true;
         return false;

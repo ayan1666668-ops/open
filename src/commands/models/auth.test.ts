@@ -25,6 +25,7 @@ type ResolvePluginProvidersCall = {
 
 type PersistProviderAuthCall = {
   agentDir?: string;
+  validateCurrentCredential?: (profileId: string, credential: unknown) => void;
   profiles?: Array<{
     profileId?: string;
     credential?: {
@@ -427,7 +428,17 @@ describe("modelsAuthLoginCommand", () => {
     mocks.upsertAuthProfileWithLock.mockResolvedValue({ version: 1, profiles: {} });
     mocks.persistProviderAuthProfilesAfterLogin.mockReset();
     mocks.persistProviderAuthProfilesAfterLogin.mockImplementation(
-      async (params: PersistProviderAuthCall) => params.profiles ?? [],
+      async (params: PersistProviderAuthCall) => {
+        for (const profile of params.profiles ?? []) {
+          if (profile.profileId) {
+            params.validateCurrentCredential?.(
+              profile.profileId,
+              mocks.authProfileStore.profiles[profile.profileId],
+            );
+          }
+        }
+        return params.profiles ?? [];
+      },
     );
     mocks.promoteAuthProfileInOrder.mockReset();
     mocks.promoteAuthProfileInOrder.mockResolvedValue({
@@ -717,6 +728,107 @@ describe("modelsAuthLoginCommand", () => {
         ([call]) => (call as PersistProviderAuthCall).profiles?.[0]?.profileId,
       ),
     ).toEqual(["openai:one", "openai:two"]);
+  });
+
+  it("does not reuse an existing profile id when any account matcher throws", async () => {
+    mocks.authProfileStore = {
+      version: 1,
+      profiles: {
+        "openai:matching": { type: "oauth", provider: "openai", accountId: "acct-same" },
+        "openai:unknown": { type: "oauth", provider: "openai", accountId: "acct-unknown" },
+      },
+    };
+    runProviderAuth.mockResolvedValueOnce({
+      profiles: [
+        {
+          profileId: "openai:new",
+          credential: { type: "oauth", provider: "openai", accountId: "acct-same" },
+        },
+      ],
+    });
+    const matchesPersonalAccount = vi.fn((credential, existing) => {
+      if (existing.accountId === "acct-unknown") {
+        throw new Error("identity unavailable");
+      }
+      return credential.accountId === existing.accountId;
+    });
+    mocks.resolvePluginProvidersCore.mockReturnValue([
+      createProvider({
+        id: "openai",
+        auth: [
+          {
+            id: "oauth",
+            label: "OAuth",
+            kind: "oauth",
+            run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+            matchesPersonalAccount,
+          },
+        ],
+      }),
+    ]);
+
+    await runModelsAuthLoginFlowCore({
+      provider: "openai",
+      runtime: createRuntime(),
+      prompter: mocks.createClackPrompter(),
+    });
+
+    expect(
+      (readMockCallArg(mocks.persistProviderAuthProfilesAfterLogin) as PersistProviderAuthCall)
+        .profiles?.[0]?.profileId,
+    ).toBe("openai:new");
+  });
+
+  it("rejects reuse when the matched profile identity changes before persistence", async () => {
+    mocks.authProfileStore = {
+      version: 1,
+      profiles: {
+        "openai:old": { type: "oauth", provider: "openai", accountId: "acct-same" },
+      },
+    };
+    runProviderAuth.mockImplementationOnce(async () => {
+      mocks.authProfileStore.profiles["openai:old"] = {
+        type: "oauth",
+        provider: "openai",
+        accountId: "acct-reassigned",
+      };
+      return {
+        profiles: [
+          {
+            profileId: "openai:new",
+            credential: { type: "oauth" as const, provider: "openai", accountId: "acct-same" },
+          },
+        ],
+      };
+    });
+    const matchesPersonalAccount: NonNullable<
+      ProviderPlugin["auth"][number]["matchesPersonalAccount"]
+    > = (credential, existing) =>
+      credential.type === "oauth" &&
+      existing.type === "oauth" &&
+      credential.accountId === existing.accountId;
+    mocks.resolvePluginProvidersCore.mockReturnValue([
+      createProvider({
+        id: "openai",
+        auth: [
+          {
+            id: "oauth",
+            label: "OAuth",
+            kind: "oauth",
+            run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+            matchesPersonalAccount,
+          },
+        ],
+      }),
+    ]);
+
+    await expect(
+      runModelsAuthLoginFlowCore({
+        provider: "openai",
+        runtime: createRuntime(),
+        prompter: mocks.createClackPrompter(),
+      }),
+    ).rejects.toThrow("existing auth profile identity changed during sign-in");
   });
 
   it("persists a named login profile and promotes that same profile", async () => {

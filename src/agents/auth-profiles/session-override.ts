@@ -372,7 +372,7 @@ async function resolveSessionAuthProfileOverride(params: {
           event: "session_auth_profile_unavailable",
           sessionKey,
           profileId: currentProfileId,
-          recovery: "reconnect this account or clear the session account selection",
+          recovery: "clear the session account selection or reconnect using this exact profile id",
           tags: ["auth_profiles", "session_recovery"],
         },
       );

@@ -921,14 +921,28 @@ describe("gateway sessions patch", () => {
     const entry = expectPatchOk(
       await runPatch({
         store: mainStoreEntry({
+          sessionId: "sess-clear-auth-profile",
           authProfileOverride: "openai:old",
           authProfileOverrideSource: "user",
           authProfileOverrideCompactionCount: 3,
+          modelFallback: {
+            prevModel: OPENAI_GPT_ID,
+            prevProvider: "openai",
+            prevAuthProfileOverride: "openai:old",
+            prevAuthProfileOverrideSource: "user",
+            prevAuthProfileOverrideCompactionCount: 3,
+            ts: 1,
+            source: "agent-patch",
+          },
         }),
         patch: { key: MAIN_SESSION_KEY, authProfileId: null },
       }),
     );
     expectAuthOverride(entry, { profile: undefined });
+    expect(entry.liveModelSwitchPending).toBe(true);
+    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverride");
+    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverrideSource");
+    expect(entry.modelFallback).not.toHaveProperty("prevAuthProfileOverrideCompactionCount");
   });
 
   test("rejects clearing and selecting an auth profile together", async () => {

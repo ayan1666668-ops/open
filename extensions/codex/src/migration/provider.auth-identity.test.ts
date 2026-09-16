@@ -69,8 +69,15 @@ describe("Codex migration auth identity and inherited profiles", () => {
       providerOptions: { credentialKind: "oauth", configPatchMode: "none" },
     });
     const plan = await provider.plan(ctx);
-    expect(findItem(plan.items, "auth:openai").status).toBe("conflict");
-    await provider.apply(ctx, plan);
+    expect(findItem(plan.items, "auth:openai")).toMatchObject({
+      status: "planned",
+      details: { profileId: "openai:account-shared-workspace-import" },
+    });
+    const result = await provider.apply(ctx, plan);
+    expect(findItem(result.items, "auth:openai")).toMatchObject({
+      status: "migrated",
+      details: { profileId: "openai:account-shared-workspace-import" },
+    });
     expect(loadTargetAuthStore(fixture).profiles["openai:account-shared-workspace"]).toEqual(
       existing,
     );
@@ -455,10 +462,9 @@ describe("Codex migration auth identity and inherited profiles", () => {
     {
       state: "usable",
       expires: 2_100_000_000_000,
-      status: "migrated",
     },
-    { state: "expired", expires: 1_000, status: "skipped" },
-  ])("checks inherited matching OAuth after planning ($state)", async ({ expires, status }) => {
+    { state: "expired", expires: 1_000 },
+  ])("rejects inherited matching OAuth added after planning ($state)", async ({ expires }) => {
     const fixture = await createCodexFixture();
     vi.stubEnv("CODEX_HOME", fixture.codexHome);
     credentialStorage.accountType = "chatgpt";
@@ -506,7 +512,7 @@ describe("Codex migration auth identity and inherited profiles", () => {
 
     const result = await provider.apply(ctx, plan);
 
-    expect(findItem(result.items, "auth:openai").status).toBe(status);
+    expect(findItem(result.items, "auth:openai").status).toBe("conflict");
     await updateAuthProfileStoreWithLock({
       agentDir: targetAgentDir(fixture),
       stateDir: fixture.stateDir,

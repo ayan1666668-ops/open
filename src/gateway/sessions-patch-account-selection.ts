@@ -24,5 +24,14 @@ export function applySessionsPatchAccountSelection(params: {
   delete next.authProfileOverride;
   delete next.authProfileOverrideSource;
   delete next.authProfileOverrideCompactionCount;
+  if (next.modelFallback?.source === "agent-patch") {
+    next.modelFallback = { ...next.modelFallback };
+    delete next.modelFallback.prevAuthProfileOverride;
+    delete next.modelFallback.prevAuthProfileOverrideSource;
+    delete next.modelFallback.prevAuthProfileOverrideCompactionCount;
+  }
+  if (next.sessionId) {
+    next.liveModelSwitchPending = true;
+  }
   return undefined;
 }

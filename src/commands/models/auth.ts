@@ -427,6 +427,10 @@ async function persistProviderAuthResult(params: {
   setDefault?: boolean;
   env?: NodeJS.ProcessEnv;
   beforePersistentEffect?: () => void | Promise<void>;
+  validateCurrentCredential?: (
+    profileId: string,
+    credential: AuthProfileCredential | undefined,
+  ) => void;
   assertCurrent?: () => void;
   signal?: AbortSignal;
   refreshAfterLogin?: ModelsAuthLoginFlowOptions["refreshAfterLogin"];
@@ -468,6 +472,7 @@ async function persistProviderAuthResult(params: {
       const persisted = await persistProviderAuthProfilesAfterLogin({
         profiles: [candidate],
         beforeWrite: params.assertCurrent,
+        validateCurrentCredential: params.validateCurrentCredential,
         config: params.config,
         env: params.env,
         agentDir: params.agentDir,
@@ -675,6 +680,17 @@ async function runProviderAuthMethod(params: {
     existingProfiles: params.existingProfiles,
     matchesPersonalAccount: params.method.matchesPersonalAccount,
   });
+  const returnedProfile = connectionResult.profiles[0];
+  const resolvedProfile = profiles[0];
+  const reusedProfileId =
+    !params.profileId &&
+    connectionResult.profiles.length === 1 &&
+    profiles.length === 1 &&
+    returnedProfile &&
+    resolvedProfile &&
+    returnedProfile.profileId !== resolvedProfile.profileId
+      ? resolvedProfile.profileId
+      : undefined;
 
   const { profiles: persistedProfiles, authRefresh } = await persistProviderAuthResult({
     result: connectionResult,
@@ -690,6 +706,24 @@ async function runProviderAuthMethod(params: {
     setDefault: params.setDefault,
     env: params.env ?? process.env,
     beforePersistentEffect: params.beforePersistentEffect,
+    ...(reusedProfileId && params.method.matchesPersonalAccount && returnedProfile
+      ? {
+          validateCurrentCredential: (
+            profileId: string,
+            current: AuthProfileCredential | undefined,
+          ) => {
+            if (
+              profileId !== reusedProfileId ||
+              !current ||
+              !params.method.matchesPersonalAccount?.(returnedProfile.credential, current)
+            ) {
+              throw new Error(
+                "The existing auth profile identity changed during sign-in. Start the sign-in again.",
+              );
+            }
+          },
+        }
+      : {}),
     refreshAfterLogin: params.refreshAfterLogin,
   });
   if (persistedProfiles.length > 0) {
@@ -1079,15 +1113,16 @@ function resolveLoginProfiles(params: {
       return params.result.profiles;
     }
     const profile = expectDefined(params.result.profiles[0], "auth profile");
-    const matchingProfileIds = Object.entries(params.existingProfiles)
-      .filter(([, credential]) => {
-        try {
-          return params.matchesPersonalAccount?.(profile.credential, credential) === true;
-        } catch {
-          return false;
+    const matchingProfileIds: string[] = [];
+    for (const [profileId, credential] of Object.entries(params.existingProfiles)) {
+      try {
+        if (params.matchesPersonalAccount(profile.credential, credential)) {
+          matchingProfileIds.push(profileId);
         }
-      })
-      .map(([profileId]) => profileId);
+      } catch {
+        return params.result.profiles;
+      }
+    }
     return matchingProfileIds.length === 1
       ? [{ ...profile, profileId: matchingProfileIds[0]! }]
       : params.result.profiles;

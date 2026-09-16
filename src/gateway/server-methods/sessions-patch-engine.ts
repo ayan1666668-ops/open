@@ -646,7 +646,11 @@ export async function executeSessionPatchMutations(params: {
                   for (const [groupIndex, target] of group.entries()) {
                     const outcome = groupOutcomes[groupIndex]!;
                     outcomes[target.index] = outcome;
-                    if (outcome.ok && outcome.applied && "agentRuntime" in target.fullPatch) {
+                    if (
+                      outcome.ok &&
+                      outcome.applied &&
+                      ("agentRuntime" in target.fullPatch || "authProfileId" in target.fullPatch)
+                    ) {
                       refreshSessionPatchQueuedSelection({
                         cfg,
                         entry: outcome.entry,
