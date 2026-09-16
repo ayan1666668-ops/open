@@ -26,6 +26,7 @@ import {
   resolveAgentOperationAgentId,
   resolveConfiguredAgentId,
 } from "../agents/agent-scope-config.js";
+import { resolvePersistedSessionStoreOwnerForKey } from "../config/sessions/session-store-owner.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GatewayClient } from "../gateway/client.js";
 import type { SessionsListResult } from "../gateway/session-utils.js";
@@ -354,6 +355,14 @@ export class AcpTranslatorSessionLifecycle {
         agentId: this.opts.agentId,
         requestKey: sessionKey,
       });
+    }
+    // Keep fixed-store keys unqualified so Gateway preserves their persisted
+    // owner, including refusal for a retired owner instead of a system fallback.
+    if (
+      !this.opts.agentId &&
+      resolvePersistedSessionStoreOwnerForKey(this.config, sessionKey).kind !== "none"
+    ) {
+      return sessionKey;
     }
     const agentId = resolveAgentOperationAgentId(this.config, this.opts.agentId, {
       surface: "ACP bridge session",

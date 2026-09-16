@@ -169,7 +169,7 @@ Use `--agent <id>` to select the owner for newly generated bridge sessions:
 openclaw acp --agent design
 ```
 
-For local Gateways, omitting `--agent` selects the configured system agent or the only configured agent when that choice is unambiguous. In an explicit local multi-agent setup with no default owner, pass `--agent` or route to an existing agent-owned session key or label.
+For local Gateways with a fixed `session.store` and a recorded `agents.defaults.sessionStore.agentId`, omitting `--agent` preserves a bare generated key so the Gateway keeps the store's owner, even when a different system agent is configured. A retired store owner remains unavailable instead of falling back to another agent. Otherwise, omitting `--agent` selects the configured system agent or the only configured agent when that choice is unambiguous. In an explicit local multi-agent setup with no default owner, pass `--agent` or route to an existing agent-owned session key or label.
 
 For local Gateways, `--agent` is validated against the configured agent roster and an unknown id fails when a generated session needs an owner. For remote targets selected by `--url`, `OPENCLAW_GATEWAY_URL`, or `gateway.mode: "remote"`, the client's local roster and system-agent setting do not select the owner. An explicit `--agent` is embedded in the generated key and validated by the remote Gateway. Without it, the bridge sends a bare `acp-bridge:<uuid>` key for the remote Gateway to resolve. If that Gateway requires an explicit owner, pass `--agent <remote-agent-id>` or an existing agent-owned session key or label.
 
@@ -279,7 +279,7 @@ In Zed, open the Agent panel and select "OpenClaw ACP" to start a thread.
 
 ## Session mapping
 
-Generated ACP bridge sessions use `agent:<id>:acp-bridge:<uuid>` when an owner is selected locally or passed with `--agent`. Remote sessions without `--agent` use `acp-bridge:<uuid>` and leave owner resolution to the remote Gateway. These normal-model bridge sessions are synthetic and disposable: they are subject to stale-entry pruning and are not treated as protected human conversation surfaces. To reuse a known session, pass a session key or label:
+Generated ACP bridge sessions use `agent:<id>:acp-bridge:<uuid>` when an owner is selected locally or passed with `--agent`. Without `--agent`, remote sessions and local sessions with a recorded fixed-store owner use `acp-bridge:<uuid>` and leave owner resolution to the Gateway. These normal-model bridge sessions are synthetic and disposable: they are subject to stale-entry pruning and are not treated as protected human conversation surfaces. To reuse a known session, pass a session key or label:
 
 - `--session <key>`: use a specific Gateway session key.
 - `--session-label <label>`: resolve an existing session by label.

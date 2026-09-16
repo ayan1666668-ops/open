@@ -98,6 +98,39 @@ describe("acp session UX bridge behavior", () => {
     );
   });
 
+  it.each([
+    { storeOwner: "ops", systemOwner: undefined, selected: undefined, owner: undefined },
+    { storeOwner: "ops", systemOwner: "research", selected: undefined, owner: undefined },
+    { storeOwner: "retired", systemOwner: "research", selected: undefined, owner: undefined },
+    { storeOwner: "ops", systemOwner: undefined, selected: "research", owner: "research" },
+  ])(
+    "preserves fixed-store routing with store=$storeOwner system=$systemOwner selected=$selected",
+    async ({ storeOwner, systemOwner, selected, owner }) => {
+      const sessionStore = createInMemorySessionStore();
+      const agent = createAcpGatewayAgent(createAcpConnection(), createAcpGateway(), {
+        agentId: selected,
+        config: {
+          session: { store: "/tmp/shared.sqlite" },
+          agents: {
+            ...explicitMultiAgentConfig.agents,
+            defaults: {
+              sessionStore: { agentId: storeOwner },
+              ...(systemOwner ? { systemAgent: { agentId: systemOwner } } : {}),
+            },
+          },
+        },
+        sessionStore,
+      });
+
+      const result = await agent.newSession(createNewSessionRequest());
+
+      // Bare keys preserve Gateway fixed-store ownership, including retired-owner refusal.
+      expect(sessionStore.getSession(result.sessionId)?.sessionKey).toBe(
+        `${owner ? `agent:${owner}:` : ""}acp-bridge:${result.sessionId}`,
+      );
+    },
+  );
+
   it("rejects an unknown explicitly selected agent", async () => {
     const agent = createAcpGatewayAgent(createAcpConnection(), createAcpGateway(), {
       agentId: "missing",
