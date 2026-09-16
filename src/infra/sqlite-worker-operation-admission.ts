@@ -10,7 +10,7 @@ const REFUSED = 2;
 const ADMISSION_TIMEOUT_MS = 5_000;
 
 type SqliteWorkerAdmissionRequest = {
-  stage: "open" | "prepare" | "transaction";
+  stage: "open" | "prepare" | "transaction" | "commit";
   facts: unknown;
 };
 
@@ -50,7 +50,10 @@ export function createSqliteWorkerOperationAdmission(
       !isRecord(message) ||
       !(message.decision instanceof SharedArrayBuffer) ||
       message.decision.byteLength !== Int32Array.BYTES_PER_ELEMENT ||
-      (message.stage !== "open" && message.stage !== "prepare" && message.stage !== "transaction")
+      (message.stage !== "open" &&
+        message.stage !== "prepare" &&
+        message.stage !== "transaction" &&
+        message.stage !== "commit")
     ) {
       failure ??= new SqliteWorkerError(
         "SQLite worker admission request is invalid",

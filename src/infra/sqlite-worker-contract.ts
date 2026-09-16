@@ -53,6 +53,7 @@ export type SqliteWorkerReply = {
   | {
       ok: false;
       retire?: true;
+      openNotEntered?: true;
       error: {
         name: string;
         message: string;

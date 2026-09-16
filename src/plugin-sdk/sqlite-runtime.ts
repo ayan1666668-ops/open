@@ -4,12 +4,18 @@ export type { Generated, Selectable } from "kysely";
 export { runQueuedStoreWrite, type StoreWriterQueue } from "../shared/store-writer-queue.js";
 export {
   openSqliteWorkerStore,
+  runSqliteWorkerStoreWrite,
   SqliteWorkerError,
   type SqliteWorkerBackend,
   type SqliteWorkerCommand,
   type SqliteWorkerOperations,
   type SqliteWorkerStore,
 } from "../infra/sqlite-worker-store.js";
+export { requestSqliteWorkerOperationAdmission } from "../infra/sqlite-worker-operation-admission.js";
+export {
+  openOpenClawAgentSqliteWorkerStore,
+  type OpenClawAgentSqliteWorkerStore,
+} from "../state/openclaw-agent-worker-store.js";
 
 export {
   borrowOpenClawAgentDatabase,

@@ -30,6 +30,7 @@ import {
 } from "../../src/plugins/loader-sdk-bridge-artifacts.test-support.ts";
 import { persistenceRuntimeEntrypoint } from "../../src/skills/library/persistence-runtime.test-support.ts";
 import { agentDatabaseModuleIdentityEntrypoints } from "../../src/state/openclaw-agent-db-module-identity-runtime.test-support.ts";
+import { agentWorkerStoreFixtureEntrypoint } from "../../src/state/openclaw-agent-worker-store.runtime.test-support.ts";
 import {
   agentDatabaseHeldRuntimeEntrypoint,
   stateLeaseProcessExitRuntimeEntrypoint,
@@ -59,6 +60,7 @@ export const vitestWorkerBuildEntries = {
   ...runtimeProcessBuildEntries,
   ...Object.fromEntries(
     [
+      agentWorkerStoreFixtureEntrypoint,
       ...Object.values(triageTestRuntimeEntrypoints),
       ...Object.values(triageMaintenanceRuntimeEntrypoints),
       codeModeRetentionEntrypoint,

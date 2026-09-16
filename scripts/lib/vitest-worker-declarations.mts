@@ -10,6 +10,8 @@ export const runtimeProcessDeclarationEntries = {
 };
 export const vitestWorkerDeclarationEntries = {
   ...runtimeProcessDeclarationEntries,
+  "state/openclaw-agent-worker-store.runtime.test-support":
+    "src/state/openclaw-agent-worker-store.runtime.test-support.ts",
   "cli/update-cli/update-command-legacy-finalize-entrypoint.test-support":
     "src/cli/update-cli/update-command-legacy-finalize-entrypoint.test-support.ts",
   "extensions/logbook/sqlite-backend-entrypoint.test-support":

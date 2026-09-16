@@ -12,7 +12,10 @@ import {
   type SqliteWorkerRequest,
 } from "./sqlite-worker-contract.js";
 import { assertExistingDatabaseIdentity } from "./sqlite-worker-identity.js";
-import { withSqliteWorkerOperationAdmission } from "./sqlite-worker-operation-admission.js";
+import {
+  withSqliteWorkerOperationAdmission,
+  requestSqliteWorkerOperationAdmission,
+} from "./sqlite-worker-operation-admission.js";
 import {
   runWithSqliteWorkerStateContext,
   type SqliteWorkerStateContext,
@@ -89,6 +92,7 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
   let retire = false;
   let completeResult = false;
   let inputNext = false;
+  let openNotEntered = false;
   try {
     let value: unknown;
     if (request.type !== "result-next" && request.type !== "execute-frame") {
@@ -266,11 +270,18 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
       if (request.existingIdentity) {
         assertExistingDatabaseIdentity(request.databasePath, request.existingIdentity);
       }
-      const backend: unknown = await runInActorContext(request.actor, () =>
-        factory(deserialize(request.input), {
-          databasePath: request.databasePath,
-        }),
-      );
+      const backend: unknown = await runInActorContext(request.actor, () => {
+        const input = deserialize(request.input);
+        if (request.operationAdmission) {
+          try {
+            requestSqliteWorkerOperationAdmission({ stage: "open", facts: undefined });
+          } catch (error) {
+            openNotEntered = true;
+            throw error;
+          }
+        }
+        return factory(input, { databasePath: request.databasePath });
+      });
       if (
         !isRecord(backend) ||
         typeof backend.execute !== "function" ||
@@ -329,6 +340,7 @@ async function receive(request: SqliteWorkerRequest): Promise<void> {
       id: request.id,
       ok: false,
       ...(retire ? { retire: true } : {}),
+      ...(openNotEntered ? { openNotEntered: true } : {}),
       error: {
         name: executed ? "SqliteWorkerError" : failure.name,
         message: failure.message,
