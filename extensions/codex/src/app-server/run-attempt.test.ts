@@ -127,7 +127,12 @@ import * as settledTurnContext from "./settled-turn-context.js";
 import * as sharedClientModule from "./shared-client.js";
 import type { CodexAppServerClientOptions } from "./shared-client.js";
 import { attachSqliteSessionTarget } from "./sqlite-session.test-helpers.js";
-import { createClientHarness, createCodexTestModel } from "./test-support.js";
+import {
+  createClientHarness,
+  createCodexTestModel,
+  createRuntimeDynamicTool,
+  directTool,
+} from "./test-support.js";
 import {
   buildDeveloperInstructions,
   buildTurnStartParams,
@@ -549,23 +554,6 @@ function flattenSpecsWithNamespace(
 
 function specNames(specs: readonly CodexDynamicToolSpec[]): string[] {
   return flattenCodexDynamicToolFunctions(specs).map((tool) => tool.name);
-}
-
-function createRuntimeDynamicTool(name: string): RuntimeDynamicToolForTest {
-  return {
-    name,
-    label: name,
-    description: `${name} test tool`,
-    parameters: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-    execute: vi.fn(async () => ({
-      content: [{ type: "text" as const, text: `${name} done` }],
-      details: {},
-    })),
-  };
 }
 
 function registerMemoryPromptForTest() {
@@ -2382,12 +2370,7 @@ describe("runCodexAppServerAttempt", () => {
     testing.setOpenClawCodingToolsFactoryForTests((options) => [
       createRuntimeDynamicTool("message"),
       ...(options?.enableHeartbeatTool === true
-        ? [
-            {
-              ...createRuntimeDynamicTool("heartbeat_respond"),
-              catalogMode: "direct-only" as const,
-            },
-          ]
+        ? [directTool(createRuntimeDynamicTool("heartbeat_respond"))]
         : []),
     ]);
     const { sessionFile, workspaceDir } = createRunPaths();
@@ -2403,10 +2386,7 @@ describe("runCodexAppServerAttempt", () => {
     };
     const registeredTools = [
       createRuntimeDynamicTool("message"),
-      {
-        ...createRuntimeDynamicTool("heartbeat_respond"),
-        catalogMode: "direct-only" as const,
-      },
+      directTool(createRuntimeDynamicTool("heartbeat_respond")),
     ];
     const normalBridge = createCodexToolBridgeForTest(
       createHeartbeatRunParams(),
@@ -2421,10 +2401,7 @@ describe("runCodexAppServerAttempt", () => {
       heartbeatParams,
       [
         createRuntimeDynamicTool("message"),
-        {
-          ...createRuntimeDynamicTool("heartbeat_respond"),
-          catalogMode: "direct-only" as const,
-        },
+        directTool(createRuntimeDynamicTool("heartbeat_respond")),
       ],
       registeredTools,
     );

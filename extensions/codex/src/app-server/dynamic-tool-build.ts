@@ -38,6 +38,8 @@ import {
   type CodexPluginConfig,
 } from "./config.js";
 import { dynamicToolBuildState } from "./dynamic-tool-build-state.js";
+import { preserveRingZeroSystemAgentTool } from "./dynamic-tool-filter-helpers.js";
+import { resolveCodexHeartbeatToolEnabled } from "./dynamic-tool-heartbeat.js";
 import {
   filterCodexDynamicTools,
   filterCodexDynamicToolsForDisabledNativeSurface,
@@ -118,18 +120,6 @@ export function resolveCodexNodePlacementToolConstructionPlan(
   };
 }
 
-function preserveRingZeroSystemAgentTool<T extends { name: string; catalogMode?: string }>(
-  allTools: T[],
-  filteredTools: T[],
-): T[] {
-  const openclaw = allTools.find(
-    (tool) => tool.name === "openclaw" && tool.catalogMode === "direct-only",
-  );
-  if (!openclaw) {
-    return filteredTools;
-  }
-  return [openclaw, ...filteredTools.filter((tool) => tool.name !== "openclaw")];
-}
 /** Runtime inputs needed to derive the exact Codex dynamic tool surface for a turn. */
 type DynamicToolBuildParams = {
   params: EmbeddedRunAttemptParams;
@@ -224,11 +214,7 @@ export async function buildDynamicTools(
   input: DynamicToolBuildParams,
 ): Promise<OpenClawDynamicTool[]> {
   const { params } = input;
-  const heartbeatToolEnabled =
-    params.trigger === "heartbeat" ||
-    params.enableHeartbeatTool === true ||
-    params.forceHeartbeatTool === true ||
-    input.forceHeartbeatTool === true;
+  const heartbeatToolEnabled = resolveCodexHeartbeatToolEnabled(params, input.forceHeartbeatTool);
   const messagePolicyParams = input.ignoreDisableMessageTool
     ? { ...params, disableMessageTool: false }
     : params;
