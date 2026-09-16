@@ -225,7 +225,7 @@ const EXCLUDED_PROJECT_CONFIGS = new Set([
 const DEFAULT_NODE_TEST_RUNNER = "blacksmith-8vcpu-ubuntu-2404";
 const BUNDLED_NODE_TEST_RUNNER = "blacksmith-4vcpu-ubuntu-2404";
 const EXTRA_LARGE_NODE_TEST_RUNNER = "blacksmith-32vcpu-ubuntu-2404";
-const CLI_NODE_TEST_RUNNER = "blacksmith-16vcpu-ubuntu-2404";
+const CAPACITY_NODE_TEST_RUNNER = "blacksmith-16vcpu-ubuntu-2404";
 // Startup-core transforms the broad gateway graph before its assertions run.
 // Keep enough CPU here to avoid spending minutes in Vitest imports on 4 vCPU.
 const GATEWAY_STARTUP_CORE_RUNNER = DEFAULT_NODE_TEST_RUNNER;
@@ -3328,7 +3328,7 @@ function createCompactNodeTestShardBundles(
       (isBlacksmithProfile && bin.some((group) => group.configs.includes(TOOLING_CONFIG)))
         ? EXTRA_LARGE_NODE_TEST_RUNNER
         : usesBlacksmithCapacity(runner) && bin.some((group) => group.shard_name === "agentic-cli")
-          ? CLI_NODE_TEST_RUNNER
+          ? CAPACITY_NODE_TEST_RUNNER
           : runner;
     compactJobs.push({
       checkName,
