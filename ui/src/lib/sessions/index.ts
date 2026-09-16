@@ -548,6 +548,7 @@ export function createSessionCapability(
     if (event.event !== "sessions.changed" && event.event !== "session.message") {
       return;
     }
+    // SAFETY: sessions.changed/session.message payloads are record envelopes; narrowed fields stay unknown and are re-checked by typeof before use.
     const payload = event.payload as {
       agentId?: unknown;
       reason?: unknown;
@@ -700,6 +701,8 @@ export function createSessionCapability(
     groupsStatus: groups.status,
     groupsInvalidate: groups.invalidate,
     groupsPut: groups.put,
+    groupsAdd: groups.add,
+    groupsReorder: groups.reorder,
     groupsRename: groups.rename,
     groupsUpdate: groups.update,
     groupsDelete: groups.delete,
