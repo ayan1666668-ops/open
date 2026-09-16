@@ -41,7 +41,7 @@ export async function resolveWorktreeSourceProfile(
     gitOptions,
   );
   const directories = new Set([PROFILE_DIRECTORY]);
-  for (const name of [...new Set(names)].sort()) {
+  for (const name of [...new Set(names)].toSorted()) {
     const definition = `${PROFILE_DIRECTORY}/${name}`;
     const entry = await requireGit(
       repoRoot,
@@ -74,7 +74,10 @@ export async function resolveWorktreeSourceProfile(
             part.toLowerCase() === ".git",
         );
       // These are literal cone directories, not patterns, commands or C-quoted paths.
-      if (invalidComponent || /[\u0000-\u001f\u007f\\:*?\[\]!"<>|]/u.test(directory)) {
+      const hasControlCharacter = [...directory].some(
+        (character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f,
+      );
+      if (invalidComponent || hasControlCharacter || /[\\:*?[\]!"<>|]/u.test(directory)) {
         throw new Error(
           `Worktree profile ${definition} contains an invalid cone directory: ${JSON.stringify(directory)}.`,
         );
@@ -97,5 +100,5 @@ export async function resolveWorktreeSourceProfile(
     }
   }
   assertOwned();
-  return { commit, directories: [...directories].sort() };
+  return { commit, directories: [...directories].toSorted() };
 }
