@@ -94,10 +94,6 @@ type MutationOutcome =
   | { ok: false; error: ErrorShape };
 
 type ArchiveTransition = Awaited<ReturnType<typeof prepareSessionPatchArchiveTransition>>;
-type GroupMutationOperation = {
-  result: GroupMutationResult;
-};
-
 type GroupMutationResult =
   | { kind: "model-catalog" }
   | { kind: "complete"; outcomes: MutationOutcome[] };
@@ -356,7 +352,7 @@ export async function executeSessionPatchMutations(params: {
                   const projectGroup = async (
                     entries: SqliteLifecycleTargetSnapshot,
                     catalogPreparation?: SessionPatchCatalogResult,
-                  ): Promise<GroupMutationOperation> => {
+                  ): Promise<GroupMutationResult> => {
                     const workingStore = Object.fromEntries(
                       entries.flatMap(({ entry, sessionKey }) =>
                         isInternalSessionEffectsKey(sessionKey)
@@ -370,7 +366,7 @@ export async function executeSessionPatchMutations(params: {
                     let committedGroupOutcomes: MutationOutcome[] | undefined;
                     const projectTargets = async (
                       startIndex: number,
-                    ): Promise<GroupMutationOperation> => {
+                    ): Promise<GroupMutationResult> => {
                       for (let groupIndex = startIndex; groupIndex < group.length; groupIndex++) {
                         const target = group[groupIndex]!;
                         let continuationStarted = false;
@@ -536,7 +532,7 @@ export async function executeSessionPatchMutations(params: {
                           if (projection.kind === "model-catalog") {
                             // No replacements or runtime effects exist yet. Release this
                             // writer snapshot; completed preparation must use fresh rows.
-                            return { result: projection };
+                            return projection;
                           }
                           const projected = projection.result;
                           if (!projected.ok) {
@@ -688,7 +684,8 @@ export async function executeSessionPatchMutations(params: {
                                 if (committedGroupOutcomes) {
                                   applicationErrors.set(target.index, applied.error);
                                   return {
-                                    result: { kind: "complete", outcomes: committedGroupOutcomes },
+                                    kind: "complete",
+                                    outcomes: committedGroupOutcomes,
                                   };
                                 }
                                 throw new SessionMutationAuthorizationChangedError(applied.error);
@@ -721,7 +718,7 @@ export async function executeSessionPatchMutations(params: {
                             },
                           })
                         : projectedOutcomes;
-                      return { result: { kind: "complete", outcomes: committedGroupOutcomes } };
+                      return { kind: "complete", outcomes: committedGroupOutcomes };
                     };
                     return await projectTargets(0);
                   };
@@ -755,16 +752,15 @@ export async function executeSessionPatchMutations(params: {
                   // Preserve ordered label and runtime decisions without holding the
                   // agent writer across catalog, allocation, or filesystem preparation.
                   groupTiming?.mark("projection");
-                  let operation = await projectGroup(snapshot);
-                  if (operation.result.kind === "model-catalog") {
+                  let result = await projectGroup(snapshot);
+                  if (result.kind === "model-catalog") {
                     groupTiming?.mark();
                     const catalog = await catalogs.prepare(first.targetAgentId);
                     groupTiming?.mark("snapshot");
                     snapshot = await readGroup();
                     groupTiming?.mark("projection");
-                    operation = await projectGroup(snapshot, catalog);
+                    result = await projectGroup(snapshot, catalog);
                   }
-                  const { result } = operation;
                   if (result.kind !== "complete")
                     throw new Error("Session patch catalog preparation did not complete");
                   const groupOutcomes = result.outcomes;

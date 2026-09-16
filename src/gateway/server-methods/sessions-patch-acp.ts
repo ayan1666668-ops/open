@@ -105,10 +105,10 @@ export async function prepareAcpSessionPatch(params: {
         errorShape(ErrorCodes.INVALID_REQUEST, MODEL_SELECTION_LOCKED_MESSAGE),
       );
     }
+    return current;
   };
   try {
-    assertActive();
-    const current = manager.resolveSession(target);
+    const current = assertActive();
     const { meta } = requireReadySession(current);
     const prepared = await prepareSessionExecutionSelection({
       ...target,
@@ -129,10 +129,8 @@ export async function prepareAcpSessionPatch(params: {
       return invalidSessionPatchOutcome("Changing apps requires a new conversation.");
     }
     const assertSelectionCurrent = () => {
-      assertActive();
-      const current = manager.resolveSession(target);
+      const current = assertActive();
       if (
-        current.kind !== "ready" ||
         !isDeepStrictEqual(current.entry.executionSelection, params.entry.executionSelection) ||
         sessionPatchExpectationsChanged(current.entry, params.patch) ||
         resolveSessionUnreadAck(current.entry, params.patch).kind !== "apply"

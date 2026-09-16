@@ -2,7 +2,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString as normalizeText,
 } from "@openclaw/normalization-core/string-coerce";
-import type { SessionAcpIdentity, SessionAcpLifecycle, SessionAcpMeta } from "../types.js";
+import type { SessionAcpIdentity, SessionAcpLifecycle } from "../types.js";
 import { isSessionIdentityPending, resolveSessionIdentityFromMeta } from "./session-identity.js";
 
 export const ACP_SESSION_IDENTITY_RENDERER_VERSION = "v1";
@@ -100,18 +100,6 @@ export function resolveAcpSessionCwd(meta?: SessionAcpLifecycle): string | undef
     return runtimeCwd;
   }
   return normalizeText(meta?.cwd);
-}
-
-/** Renders thread-detail identifier lines plus a backend-specific resume hint when stable. */
-export function resolveAcpThreadSessionDetailLines(params: {
-  sessionKey: string;
-  meta?: SessionAcpMeta;
-}): string[] {
-  return resolveAcpLifecycleDetailLines({
-    meta: params.meta,
-    backend: params.meta?.backend,
-    agent: params.meta?.agent,
-  });
 }
 
 /** Renders lifecycle identifiers using the accepted executor supplied by the session owner. */

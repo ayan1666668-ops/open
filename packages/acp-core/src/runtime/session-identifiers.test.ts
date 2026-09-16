@@ -3,16 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAcpSessionCwd,
   resolveAcpSessionIdentifierLinesFromIdentity,
-  resolveAcpThreadSessionDetailLines,
+  resolveAcpLifecycleDetailLines,
 } from "./session-identifiers.js";
 
 describe("session identifier helpers", () => {
   it("hides unresolved identifiers from thread intro details while pending", () => {
-    const lines = resolveAcpThreadSessionDetailLines({
-      sessionKey: "agent:codex:acp:pending-1",
+    const lines = resolveAcpLifecycleDetailLines({
+      backend: "acpx",
+      agent: "codex",
       meta: {
-        backend: "acpx",
-        agent: "codex",
         runtimeSessionName: "runtime-1",
         identity: {
           state: "pending",
@@ -31,11 +30,10 @@ describe("session identifier helpers", () => {
   });
 
   it("adds a Codex resume hint when agent identity is resolved", () => {
-    const lines = resolveAcpThreadSessionDetailLines({
-      sessionKey: "agent:codex:acp:resolved-1",
+    const lines = resolveAcpLifecycleDetailLines({
+      backend: "acpx",
+      agent: "codex",
       meta: {
-        backend: "acpx",
-        agent: "codex",
         runtimeSessionName: "runtime-1",
         identity: {
           state: "resolved",
@@ -58,11 +56,10 @@ describe("session identifier helpers", () => {
   });
 
   it("adds a Kimi resume hint when agent identity is resolved", () => {
-    const lines = resolveAcpThreadSessionDetailLines({
-      sessionKey: "agent:kimi:acp:resolved-1",
+    const lines = resolveAcpLifecycleDetailLines({
+      backend: "acpx",
+      agent: "kimi",
       meta: {
-        backend: "acpx",
-        agent: "kimi",
         runtimeSessionName: "runtime-1",
         identity: {
           state: "resolved",
@@ -101,8 +98,6 @@ describe("session identifier helpers", () => {
 
   it("prefers runtimeOptions.cwd over legacy meta.cwd", () => {
     const cwd = resolveAcpSessionCwd({
-      backend: "acpx",
-      agent: "codex",
       runtimeSessionName: "runtime-1",
       mode: "persistent",
       runtimeOptions: {

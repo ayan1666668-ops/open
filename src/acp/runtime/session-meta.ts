@@ -692,7 +692,7 @@ export async function upsertAcpSessionMeta(params: {
           sessionId: persisted.entry.sessionId,
           lifecycleRevision: persisted.entry.lifecycleRevision,
           meta: metaToPersist,
-          updatedAt,
+          updatedAt: Math.max(updatedAt, persisted.entry.updatedAt),
         }),
       );
       if (persistedDatabaseSessionKey !== databaseSessionKey) {

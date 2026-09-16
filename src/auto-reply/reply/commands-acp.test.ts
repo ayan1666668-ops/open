@@ -739,13 +739,7 @@ async function withStoredAcpCommandSession(
   run: (cfg: OpenClawConfig, manager: InstanceType<typeof AcpSessionManager>) => Promise<void>,
 ): Promise<void> {
   await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
-    const cfg = {
-      ...baseCfg,
-      session: {
-        ...baseCfg.session,
-        store: path.join(state.sessionsDir("codex"), "sessions.json"),
-      },
-    } satisfies OpenClawConfig;
+    const cfg = baseCfg;
     const sessionMeta = await vi.importActual<typeof import("../../acp/runtime/session-meta.js")>(
       "../../acp/runtime/session-meta.js",
     );
@@ -760,15 +754,66 @@ async function withStoredAcpCommandSession(
     hoisted.upsertAcpSessionMetaMock.mockImplementation(deps.upsertSessionMeta);
     const manager = new AcpSessionManager(deps);
     acpManagerTesting.setAcpSessionManagerForTests(manager);
-    await manager.initializeSession({
-      cfg,
-      sessionKey: defaultAcpSessionKey,
-      agent: "codex",
-      agentId: "codex",
-      mode: "persistent",
-    });
-    hoisted.sessionBindingResolveByConversationMock.mockReturnValue(createBoundThreadSession());
     try {
+      const initialized = await manager.initializeSession({
+        cfg,
+        sessionKey: defaultAcpSessionKey,
+        agent: "codex",
+        agentId: "codex",
+        mode: "persistent",
+      });
+      const accessor = await vi.importActual<
+        typeof import("../../config/sessions/session-accessor.js")
+      >("../../config/sessions/session-accessor.js");
+      const target = sessionMeta.resolveSessionStorePathForAcp({
+        cfg,
+        agentId: "codex",
+        sessionKey: defaultAcpSessionKey,
+      });
+      const persisted = accessor.loadSessionEntryReadOnly({
+        agentId: target.agentId,
+        sessionKey: target.storeSessionKey,
+        storePath: target.storePath,
+      });
+      if (!persisted) {
+        throw new Error("ACP initialization returned before its agent session row was readable");
+      }
+      expect(persisted.sessionId).toBe(initialized.sessionEntry.sessionId);
+      expect(persisted.executionSelection).toEqual(initialized.sessionEntry.executionSelection);
+      expect(requireAcpExecutionSelection(persisted)).toEqual({
+        executor: { kind: "acp", backend: "acpx", agent: "codex" },
+        model: "native-managed",
+      });
+      const sharedState = await vi.importActual<
+        typeof import("../../state/openclaw-state-db-readonly.js")
+      >("../../state/openclaw-state-db-readonly.js");
+      const sessionKeys = await vi.importActual<
+        typeof import("../../acp/runtime/session-meta-keys.js")
+      >("../../acp/runtime/session-meta-keys.js");
+      const lifecycle = sharedState.withExistingOpenClawStateDatabaseReadOnly(
+        ({ db }) =>
+          sessionKeys.selectAcpSessionRow(
+            db,
+            sessionKeys.buildAcpDatabaseSessionKey(target.storeSessionKey, target.agentId),
+          ),
+        { env: state.env },
+      );
+      expect(lifecycle?.runtime_session_name).toBe(initialized.meta.runtimeSessionName);
+      expect(lifecycle?.session_id).toBe(persisted.lifecycleRevision ?? persisted.sessionId);
+      expect(lifecycle?.updated_at).toBeGreaterThanOrEqual(persisted.sessionStartedAt ?? 0);
+      const joined = deps.loadSessionEntry({
+        cfg,
+        agentId: target.agentId,
+        sessionKey: target.storeSessionKey,
+        clone: false,
+      });
+      expect(joined?.storeReadFailed).toBeUndefined();
+      expect(joined?.entry).toEqual(persisted);
+      expect(joined?.acp?.runtimeSessionName).toBe(initialized.meta.runtimeSessionName);
+      expect(
+        manager.resolveSession({ cfg, agentId: target.agentId, sessionKey: defaultAcpSessionKey }),
+      ).toMatchObject({ kind: "ready" });
+      hoisted.sessionBindingResolveByConversationMock.mockReturnValue(createBoundThreadSession());
       await run(cfg, manager);
     } finally {
       acpManagerTesting.resetAcpSessionManagerForTests();
@@ -1490,6 +1535,7 @@ describe("/acp command", () => {
 
   it("keeps freshly spawned Slack-bound ACP metadata readable for the immediate follow-up", async () => {
     await withStoredAcpCommandSession(async (cfg, manager) => {
+      hoisted.sessionBindingResolveByConversationMock.mockReturnValue(null);
       const result = await runSlackDmAcpCommand("/acp spawn codex --bind here", cfg);
       expect(result?.reply?.text).toContain("Bound this conversation to");
       const binding = expectBindingBindCall({
@@ -1499,6 +1545,7 @@ describe("/acp command", () => {
           accountId: "default",
           conversationId: "user:U123",
         },
+        metadata: { boundBy: "U123" },
       });
       const requestId = "immediate-bound-followup";
       const sessionKey = binding.targetSessionKey;
@@ -2430,10 +2477,10 @@ describe("/acp command", () => {
   it("updates ACP config options and keeps cwd local when using /acp set", async () => {
     await withStoredAcpCommandSession(async (cfg, manager) => {
       const setModel = await runThreadAcpCommand("/acp set model qa-next", cfg);
-      expectMockCallFields(hoisted.setConfigOptionMock, { key: "model", value: "qa-next" });
       expect(setModel?.reply?.text).toBe(
         "Model changed to the selected model. Still using the selected app.",
       );
+      expectMockCallFields(hoisted.setConfigOptionMock, { key: "model", value: "qa-next" });
       const selected = requireReadySession(
         manager.resolveSession({ cfg, sessionKey: defaultAcpSessionKey }),
       );
