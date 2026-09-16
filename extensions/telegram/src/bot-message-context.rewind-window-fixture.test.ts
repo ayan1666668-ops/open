@@ -6,10 +6,15 @@
 // with a projection cursor, and buildPromptContextForMessage) and pins it to
 // the fixture, so the seeded shape cannot drift from what Telegram ingress
 // actually assembles.
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Message } from "grammy/types";
-import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  closeOpenClawStateDatabaseForTest,
+  resetPluginStateStoreForTests,
+} from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTelegramMessageContextRuntime } from "./bot-handlers.message-context.js";
 import type { RegisterTelegramHandlerParams } from "./bot-handlers.types.js";
 import { recordOutboundMessageForPromptContext } from "./outbound-message-context.js";
@@ -50,10 +55,19 @@ describe("telegram rewind chat-window fixture", () => {
     clearTelegramRuntimeForTest();
     resetTelegramMessageCacheForTest();
     resetPluginStateStoreForTests();
+    vi.unstubAllEnvs();
+    closeOpenClawStateDatabaseForTest();
   });
 
   it("matches the window the real context pipeline assembles", async () => {
     storeCounter += 1;
+    // The persisted message cache writes through the sqlite plugin-state store,
+    // which resolves OPENCLAW_STATE_DIR at call time; isolate it per test so CI
+    // never touches the runner's real home state.
+    vi.stubEnv(
+      "OPENCLAW_STATE_DIR",
+      mkdtempSync(join(tmpdir(), "openclaw-rewind-window-fixture-")),
+    );
     const storePath = `/tmp/openclaw-telegram-rewind-window-fixture-${storeCounter}.json`;
     const cfg = { session: { store: storePath } } as const;
     const messageContextRuntime = createTelegramMessageContextRuntime({
