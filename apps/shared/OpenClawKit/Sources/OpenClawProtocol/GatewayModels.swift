@@ -14512,6 +14512,7 @@ public struct SessionRow: Codable, Sendable {
     public let chattype: AnyCodable?
     public let activitysummary: SessionActivitySummary?
     public let updatedat: AnyCodable?
+    public let snapshotat: Double?
     public let archived: Bool?
     public let archivedat: Double?
     public let archivedby: SessionCreatedActor?
@@ -14599,6 +14600,7 @@ public struct SessionRow: Codable, Sendable {
         chattype: AnyCodable? = nil,
         activitysummary: SessionActivitySummary? = nil,
         updatedat: AnyCodable? = nil,
+        snapshotat: Double? = nil,
         archived: Bool? = nil,
         archivedat: Double? = nil,
         archivedby: SessionCreatedActor? = nil,
@@ -14685,6 +14687,7 @@ public struct SessionRow: Codable, Sendable {
         self.chattype = chattype
         self.activitysummary = activitysummary
         self.updatedat = updatedat
+        self.snapshotat = snapshotat
         self.archived = archived
         self.archivedat = archivedat
         self.archivedby = archivedby
@@ -14773,6 +14776,7 @@ public struct SessionRow: Codable, Sendable {
         case chattype = "chatType"
         case activitysummary = "activitySummary"
         case updatedat = "updatedAt"
+        case snapshotat = "snapshotAt"
         case archived
         case archivedat = "archivedAt"
         case archivedby = "archivedBy"

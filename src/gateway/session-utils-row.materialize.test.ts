@@ -591,8 +591,12 @@ test("preserves complete base rows across time and caller presentation fixtures"
         rows.map((row) => JSON.stringify(row)),
       );
       expect(materialized).toStrictEqual(retainedMaterialized);
+      expect(materialized.row.snapshotAt).toBeUndefined();
       rows.forEach((row, index) => {
-        const json = JSON.stringify(row);
+        expect(row.snapshotAt).toBe(TIMES[index]);
+        // Sampling metadata is additive; retain golden coverage of every existing wire field.
+        const { snapshotAt: _snapshotAt, ...previousWireFields } = row;
+        const json = JSON.stringify(previousWireFields);
         const actualHash = createHash("sha256").update(json).digest("hex");
         const expectedHash = GOLDEN_HASHES[fixture.name]?.[index];
         if (actualHash !== expectedHash) {

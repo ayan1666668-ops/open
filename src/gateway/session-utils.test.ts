@@ -342,6 +342,28 @@ describe("gateway session utils", () => {
 
   afterAll(closeSessionSqliteDatabasesForTest);
 
+  test("stamps read snapshots without changing persisted session update time", () => {
+    const key = "agent:main:snapshot-clock";
+    const entry = { sessionId: "snapshot-clock", updatedAt: 10 };
+    const project = (now: number) =>
+      buildGatewaySessionRow({
+        cfg: {},
+        agentId: "main",
+        storePath: "/tmp/snapshot-clock/sessions.json",
+        store: { [key]: entry },
+        key,
+        entry,
+        now,
+        skipTranscriptUsageFallback: true,
+      });
+    const earlier = project(100);
+    const later = project(200);
+    expect(earlier).toMatchObject({ snapshotAt: 100, updatedAt: 10 });
+    expect(later).toMatchObject({ snapshotAt: 200, updatedAt: 10 });
+    expect(structuredClone(earlier).snapshotAt).toBe(100);
+    expect(entry).toEqual({ sessionId: "snapshot-clock", updatedAt: 10 });
+  });
+
   test.each([
     {
       name: "inherited default",
