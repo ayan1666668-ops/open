@@ -656,6 +656,16 @@ async function inspectSystemdService(unit, deadline) {
   return parseSystemdProperties(result.stdout);
 }
 
+// cgroup-v2 hosts expose a single "0::<path>" line; cgroup-v1/hybrid hosts emit
+// one "N:<controller>:<path>" line per hierarchy (systemd's is "name=systemd").
+// Accept either so scope admission works on both, mirroring the lease-side
+// endsWith check.
+function procCgroupMembershipMatches(cgroupFile, controlGroup) {
+  return cgroupFile.split("\n").some(
+    (line) => line === "0::" + controlGroup || line.endsWith(":name=systemd:" + controlGroup),
+  );
+}
+
 async function inspectTriageScope() {
   const result = await runServiceCommand("systemctl", [
     "--user",
@@ -675,7 +685,7 @@ async function inspectTriageScope() {
     !scope.PartOf?.split(/\s+/).includes(params.serviceRecovery.unit) ||
     !/^[a-f0-9]{32}$/i.test(scope.InvocationID || "") ||
     !scope.ControlGroup ||
-    membership !== "0::" + scope.ControlGroup ||
+    !procCgroupMembershipMatches(membership, scope.ControlGroup) ||
     !hasManagedUpdateLease()
   ) {
     throw new Error("automatic triage native scope ownership could not be verified");
@@ -1436,8 +1446,10 @@ async function runOwnedUpdateCommand(phase, commandArgv, timeoutMs, cwd = params
             if (
               !hasManagedUpdateLease() ||
               managedUpdateLease.payload !== runnerIdentity ||
-              fs.readFileSync("/proc/" + child.pid + "/cgroup", "utf8").trim() !==
-                "0::" + scope.ControlGroup
+              !procCgroupMembershipMatches(
+                fs.readFileSync("/proc/" + child.pid + "/cgroup", "utf8").trim(),
+                scope.ControlGroup,
+              )
             ) {
               throw new Error("automatic triage executor lost its native placement");
             }
