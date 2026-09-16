@@ -20,7 +20,12 @@ import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plug
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import { projectSessionActivitySummary } from "./session-activity-summary-state.js";
 import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
-import { buildGatewaySessionRow } from "./session-utils-row.js";
+import {
+  buildGatewaySessionRow,
+  materializeSessionRow,
+  presentSessionRow,
+  readSessionRowInputs,
+} from "./session-utils-row.js";
 import type { GatewaySessionRow } from "./session-utils.types.js";
 import {
   projectWorkerSessionPlacement,
@@ -28,7 +33,7 @@ import {
 } from "./worker-environments/placement-projector.js";
 import type { WorkerSessionPlacementRecord } from "./worker-environments/placement-store.js";
 
-// Frozen before the split from ef93dfcbb0daf5d5bda66b79b52f635bd4abee02.
+// Frozen from the unchanged builder at 7b47d7a65a17e7a49d943795a5b112ae4adcfe3c.
 // SHA256 pins JSON.stringify wire bytes, including serialized property order.
 const START = Date.UTC(2026, 8, 15);
 const TIMES = [START + 29_999, START + 30_000, START + 7_200_001] as const;
@@ -513,36 +518,79 @@ test("preserves complete base rows across time and caller presentation fixtures"
           },
         });
       }
-      const rows = TIMES.map((now) => {
-        const rowContext = buildSessionListRowMetadataContext({ now, sessionKeys: [] });
-        rowContext.subagentRuns = buildSubagentRunReadIndexFromRuns({
-          runs: new Map((fixture.runs ?? []).map((run) => [run.runId, run])),
-          inMemoryRuns: [],
-          now,
-        });
-        if (fixture.entry) {
-          rowContext.acpSessionMetaByEntry.set(fixture.entry, fixture.entry.acp);
-        }
-        return decorate(
-          buildGatewaySessionRow({
-            cfg,
-            agentId: "main",
-            key: fixture.key,
-            entry: fixture.entry,
-            store: fixture.store ?? (fixture.entry ? { [fixture.key]: fixture.entry } : {}),
-            storePath,
+      const rowContext = buildSessionListRowMetadataContext({ now: TIMES[0], sessionKeys: [] });
+      const subagentRunInputs = {
+        runs: new Map((fixture.runs ?? []).map((run) => [run.runId, run])),
+        inMemoryRuns: [],
+      };
+      const runsByChild = new Map<string, SubagentRunRecord[]>();
+      for (const run of fixture.runs ?? []) {
+        const childKey = run.childSessionKey.trim();
+        const runs = runsByChild.get(childKey) ?? [];
+        runs.push(run);
+        runsByChild.set(childKey, runs);
+      }
+      rowContext.subagentRunsByChildSessionKey = runsByChild;
+      rowContext.subagentRuns = buildSubagentRunReadIndexFromRuns({
+        ...subagentRunInputs,
+        now: TIMES[0],
+      });
+      if (fixture.entry) {
+        rowContext.acpSessionMetaByEntry.set(fixture.entry, fixture.entry.acp);
+      }
+      const rowParams = {
+        cfg,
+        agentId: "main",
+        key: fixture.key,
+        entry: fixture.entry,
+        store: fixture.store ?? (fixture.entry ? { [fixture.key]: fixture.entry } : {}),
+        storePath,
+        now: TIMES[0],
+        rowContext: fixture.omitRowContext ? undefined : rowContext,
+        includeSwarmChildren: true,
+        skipTranscriptUsageFallback: !fixture.transcript,
+        lightweightListRow: !fixture.transcript,
+        includeDerivedTitles: fixture.transcript,
+        includeLastMessage: fixture.transcript,
+      };
+      const { inputs, presentation } = readSessionRowInputs(rowParams);
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => {
+        throw new Error("Materialization must not read the clock");
+      });
+      let materialized: ReturnType<typeof materializeSessionRow>;
+      try {
+        materialized = materializeSessionRow(inputs);
+      } finally {
+        clock.mockRestore();
+      }
+      const retainedMaterialized = structuredClone(materialized);
+      const rows = TIMES.map((now) =>
+        decorate(
+          presentSessionRow(materialized, {
+            ...presentation,
             now,
-            rowContext: fixture.omitRowContext ? undefined : rowContext,
-            includeSwarmChildren: true,
-            skipTranscriptUsageFallback: !fixture.transcript,
-            lightweightListRow: !fixture.transcript,
-            includeDerivedTitles: fixture.transcript,
-            includeLastMessage: fixture.transcript,
+            subagentRuns: buildSubagentRunReadIndexFromRuns({ ...subagentRunInputs, now }),
           }),
           fixture,
           cfg,
-        );
-      });
+        ),
+      );
+      const replay = TIMES.map((now) =>
+        decorate(
+          presentSessionRow(materialized, {
+            ...presentation,
+            now,
+            subagentRuns: undefined,
+          }),
+          fixture,
+          cfg,
+        ),
+      );
+      expect(replay).toStrictEqual(rows);
+      expect(replay.map((row) => JSON.stringify(row))).toEqual(
+        rows.map((row) => JSON.stringify(row)),
+      );
+      expect(materialized).toStrictEqual(retainedMaterialized);
       rows.forEach((row, index) => {
         const json = JSON.stringify(row);
         const actualHash = createHash("sha256").update(json).digest("hex");
@@ -558,6 +606,12 @@ test("preserves complete base rows across time and caller presentation fixtures"
           );
         }
       });
+      if (fixture.transcript) {
+        const lightweight = buildGatewaySessionRow({ ...rowParams, lightweightListRow: true });
+        expect(lightweight.totalTokens).toBe(rows[0]?.totalTokens);
+        expect(lightweight.totalTokens).toBeGreaterThan(0);
+        expect(lightweight.estimatedCostUsd).toBe(fixture.entry?.estimatedCostUsd);
+      }
       if (fixture.key === RETAINED) {
         expect(rows.map((row) => row.controlOwnerSessionKey)).toEqual([
           "agent:main:parent-a",
