@@ -25,6 +25,7 @@ import { renderWelcomeState } from "../chat/components/chat-welcome.ts";
 import * as catalog from "./catalog-target.ts";
 import { NewSessionDictationControl } from "./composer-dictation-control.ts";
 import { ConnectMachineSetupState, renderConnectMachineDialog } from "./connect-machine-dialog.ts";
+import { resolveSessionPlacementPreflightWorkspacePath } from "./device-placement.ts";
 import { renderNewSessionBody } from "./draft-composer.ts";
 import { DraftGatewayState } from "./draft-gateway-state.ts";
 import * as drafts from "./draft-navigation-handoff.ts";
@@ -108,6 +109,14 @@ export class NewSessionPage extends OpenClawLightDomElement {
         },
         agentsHydrated: this.place?.agentsHydrated ?? false,
         runtimeId: this.place?.devicePlacementRuntime()?.id ?? "",
+        workspacePath: resolveSessionPlacementPreflightWorkspacePath({
+          freshWorkspace: this.place?.freshWorkspace,
+          remoteRepository: this.place?.remoteRepository,
+          folder: this.place?.folder,
+          workspacePath: this.place?.workspacePath(),
+        }),
+        agentId: this.place?.agentId ?? "",
+        authProfileId: this.place?.modelControl.authProfileIdForPlacement() ?? "",
       }),
       {
         requestUpdate: () => this.requestUpdate(),

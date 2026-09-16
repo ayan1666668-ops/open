@@ -448,6 +448,12 @@ export class NewSessionModelControl {
       : this.selected;
   }
 
+  /** Selected auth profile for session-placement prepared-auth preflight. */
+  authProfileIdForPlacement(): string | undefined {
+    const id = this.draftAccount?.authProfileId?.trim();
+    return id || undefined;
+  }
+
   accountSelectionReady(): boolean {
     if (!this.draftAccount) {
       return true;

@@ -66,6 +66,9 @@ function createBrowser(
       pendingPlacement: { sessionKey: "", gatewayUrl: "", recoveryScope: "" },
       agentsHydrated: false,
       runtimeId: "",
+      workspacePath: "",
+      agentId: "",
+      authProfileId: "",
     }),
     {
       requestUpdate: vi.fn(),

@@ -2,6 +2,7 @@ import { vi } from "vitest";
 import { createChatSubmissions } from "../../app/chat-submissions.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import { registerChatAttachmentPayload } from "../chat/attachment-payload-store.ts";
+import { resolveSessionPlacementPreflightWorkspacePath } from "./device-placement.ts";
 import { DraftGatewayState } from "./draft-gateway-state.ts";
 import { DraftPlaceBrowser } from "./draft-place-browser.ts";
 import { DraftPlaceState } from "./draft-place-state.ts";
@@ -106,6 +107,14 @@ export function createDraftFixture(options: FixtureOptions = {}) {
       },
       agentsHydrated: place?.agentsHydrated ?? false,
       runtimeId: place?.devicePlacementRuntime()?.id ?? "",
+      workspacePath: resolveSessionPlacementPreflightWorkspacePath({
+        freshWorkspace: place?.freshWorkspace,
+        remoteRepository: place?.remoteRepository,
+        folder: place?.folder,
+        workspacePath: place?.workspacePath?.(),
+      }),
+      agentId: place?.agentId ?? "",
+      authProfileId: place?.modelControl.authProfileIdForPlacement() ?? "",
     }),
     {
       requestUpdate: vi.fn(),

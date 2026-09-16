@@ -13,7 +13,7 @@ import { normalizeAgentId } from "../../lib/sessions/session-key.ts";
 import * as catalog from "./catalog-target.ts";
 import { CLOUD_PROFILE_RETRY_DELAYS_MS } from "./cloud-profile-discovery.ts";
 import { requestPlaceCatalog } from "./cloud-target.ts";
-import type { DraftCloudProfile, DraftEnvironment } from "./discovery.ts";
+import type { DraftCloudProfile, DraftEnvironment, DraftSessionPlacement } from "./discovery.ts";
 import { discoverGatewayName } from "./gateway-name-discovery.ts";
 import type { NewSessionRouteData } from "./location.ts";
 import {
@@ -50,6 +50,9 @@ type DraftGatewaySnapshot = Readonly<{
   }>;
   agentsHydrated: boolean;
   runtimeId: string;
+  workspacePath: string;
+  agentId: string;
+  authProfileId: string;
 }>;
 
 type DraftGatewayCallbacks = {
@@ -67,6 +70,7 @@ type DraftGatewayCallbacks = {
 export class DraftGatewayState {
   private cloudProfilesValue: DraftCloudProfile[] = [];
   private environmentsValue: DraftEnvironment[] | null = null;
+  private sessionPlacementValue: DraftSessionPlacement | undefined;
   private cloudProfilesReadyValue = false;
   private catalogRetryingValue = false;
   private catalogRevalidationPending = false;
@@ -121,20 +125,39 @@ export class DraftGatewayState {
           this.read().isAdmin,
           this.gatewayRecoveryScopeValue,
           this.read().runtimeId,
+          this.read().workspacePath,
+          this.read().agentId,
+          this.read().authProfileId,
         ] as const,
-      task: async ([client, _connectionEpoch, canWrite, isAdmin, _recoveryScope, runtimeId]) => {
+      task: async ([
+        client,
+        _connectionEpoch,
+        canWrite,
+        isAdmin,
+        _recoveryScope,
+        runtimeId,
+        workspacePath,
+        agentId,
+        authProfileId,
+      ]) => {
         if (!client) {
           return initialState;
         }
         if (!canWrite) {
           return { profiles: [], environments: [] };
         }
-        const result = await requestPlaceCatalog(client, runtimeId);
+        const result = await requestPlaceCatalog(client, {
+          runtimeId,
+          workspacePath,
+          agentId,
+          authProfileId,
+        });
         return { ...result, profiles: isAdmin ? result.profiles : [] };
       },
       onComplete: (placeCatalog) => {
         this.resetCloudProfileRetry();
         this.environmentsValue = placeCatalog.environments;
+        this.sessionPlacementValue = placeCatalog.sessionPlacement;
         this.applyCloudProfiles(placeCatalog.profiles);
         this.cloudProfilesReadyValue = true;
       },
@@ -158,6 +181,10 @@ export class DraftGatewayState {
 
   get environments(): readonly DraftEnvironment[] | null {
     return this.environmentsValue;
+  }
+
+  get sessionPlacement(): DraftSessionPlacement | undefined {
+    return this.sessionPlacementValue;
   }
 
   get cloudProfilesReady(): boolean {
@@ -327,11 +354,12 @@ export class DraftGatewayState {
   invalidateDiscovery(resetHostSelection: boolean, submissionOutcome: SubmissionOutcomeReason) {
     this.cloudProfileRefresh = null;
     // Retire pending results synchronously; Lit may not run hostUpdate before they settle.
-    void this.cloudProfileTask.run([null, -1, false, false, ""]);
+    void this.cloudProfileTask.run([null, -1, false, false, "", "", ""]);
     this.cloudProfilesValue = [];
     this.cloudProfilesReadyValue = false;
     if (resetHostSelection) {
       this.environmentsValue = null;
+      this.sessionPlacementValue = undefined;
     }
     this.resetCloudProfileRetry();
     this.callbacks.onInvalidate(resetHostSelection, submissionOutcome);
@@ -501,7 +529,7 @@ export class DraftGatewayState {
     globalThis.clearTimeout(this.catalogRetryTimer);
     this.catalogRetryTimer = undefined;
     void this.gatewayNameTask.run([null, false, -1]);
-    void this.cloudProfileTask.run([null, -1, false, false, ""]);
+    void this.cloudProfileTask.run([null, -1, false, false, "", "", ""]);
     this.resetCloudProfileRetry();
   }
 

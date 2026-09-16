@@ -10,6 +10,7 @@ import {
 } from "../chat/attachment-payload-store.ts";
 import { CHAT_ROUTE_READY_EVENT } from "../chat/chat-history-events.ts";
 import { buildDraftSessionCreateParams } from "./create-params.ts";
+import { resolveSessionPlacementPreflightWorkspacePath } from "./device-placement.ts";
 import { DraftGatewayState } from "./draft-gateway-state.ts";
 import { DraftPlaceBrowser } from "./draft-place-browser.ts";
 import { DraftPlaceState } from "./draft-place-state.ts";
@@ -800,6 +801,14 @@ describe("DraftSubmissionFlow", () => {
         },
         agentsHydrated: place?.agentsHydrated ?? false,
         runtimeId: place?.devicePlacementRuntime()?.id ?? "",
+        workspacePath: resolveSessionPlacementPreflightWorkspacePath({
+          freshWorkspace: place?.freshWorkspace,
+          remoteRepository: place?.remoteRepository,
+          folder: place?.folder,
+          workspacePath: place?.workspacePath?.(),
+        }),
+        agentId: place?.agentId ?? "",
+        authProfileId: place?.modelControl.authProfileIdForPlacement() ?? "",
       }),
       {
         requestUpdate: vi.fn(),
