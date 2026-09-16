@@ -11,7 +11,7 @@ import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import { resolveMatrixExtraContent } from "../../outbound.js";
 import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixClient } from "../sdk.js";
-import { sendMessageMatrix } from "../send.js";
+import { chunkMatrixText, sendMessageMatrix } from "../send.js";
 import type { MatrixSendResult } from "../send/types.js";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "./runtime-api.js";
 
@@ -113,9 +113,10 @@ export async function deliverMatrixReplies(params: {
   const acceptedResults: MatrixSendResult[] = [];
   try {
     for (const reply of params.replies) {
-      const visibleText = resolveVisibleMatrixReplyText(reply.text);
+      const visibleText =
+        reply.isReasoning === true ? reply.text : resolveVisibleMatrixReplyText(reply.text);
       const { hasMedia, hasText, mediaUrls } = resolveSendableOutboundReplyParts(reply);
-      if (reply.isReasoning === true || (!hasMedia && reply.text && visibleText === undefined)) {
+      if (!hasMedia && reply.text && visibleText === undefined) {
         logVerbose("matrix reply suppressed as reasoning-only");
         continue;
       }
@@ -144,7 +145,7 @@ export async function deliverMatrixReplies(params: {
       const onDeliveryResult = (result: MatrixSendResult) => {
         // A concrete event consumes the first-reply slot even when a later event fails.
         acceptedResults.push(result);
-        if (replyToIdForReply) {
+        if (replyToIdForReply && reply.isReasoning !== true) {
           hasRepliedRef.value = true;
         }
       };
@@ -152,6 +153,27 @@ export async function deliverMatrixReplies(params: {
       // The reply's own event fields ride its first event, exactly as the outbound
       // send path places them; a later chunk would attach them to the wrong event.
       const extraContent = resolveMatrixExtraContent(reply);
+
+      if (reply.isReasoning === true) {
+        // Each notice chunk carries quiet metadata; the answer retains its first-reply slot.
+        const { chunks } = chunkMatrixText(rawText, {
+          cfg: params.cfg,
+          accountId: params.accountId,
+        });
+        for (const chunk of chunks) {
+          await sendMessageMatrix(params.roomId, chunk, {
+            client: params.client,
+            cfg: params.cfg,
+            replyToId: replyToIdForReply,
+            fallbackReplyToId,
+            threadId: params.threadId,
+            accountId: params.accountId,
+            extraContent: { msgtype: "m.notice", "m.mentions": {} },
+            onDeliveryResult,
+          });
+        }
+        continue;
+      }
 
       if (mediaUrls.length === 0) {
         // The send owner prepares native formatting and reports each accepted chunk.

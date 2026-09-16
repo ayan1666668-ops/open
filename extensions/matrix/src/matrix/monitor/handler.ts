@@ -1,4 +1,5 @@
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
+import { resolveAgentConfig } from "openclaw/plugin-sdk/agent-scope-runtime";
 import {
   createChannelInboundEnvelopeBuilder,
   hasFinalInboundReplyDispatch,
@@ -9,7 +10,7 @@ import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
 import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
-import { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import { prepareMatrixReplyPayload } from "../../outbound.js";
 import { isPollEventType } from "../poll-types.js";
 import type { LocationMessageEventContent } from "../sdk.js";
@@ -376,6 +377,24 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         accountId: _route.accountId,
         mediaLocalRoots,
         logVerboseMessage,
+        shouldDeliverReasoning: () => {
+          // Directives may change the setting after dispatch starts. Read it at delivery
+          // so CLI reasoning payloads cannot outlive a user's /reasoning off command.
+          try {
+            const level = getSessionEntry({
+              agentId: _route.agentId,
+              storePath,
+              sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+              readConsistency: "latest",
+            })?.reasoningLevel;
+            const configDefault =
+              resolveAgentConfig(cfg, _route.agentId)?.reasoningDefault ??
+              cfg.agents?.defaults?.reasoningDefault;
+            return (level ?? configDefault) === "on";
+          } catch {
+            return false;
+          }
+        },
       });
       const { deliverReply, onReplyError, turnDispatcherOptions } = replyDispatcher;
       const pinnedMainDmOwner = isDirectMessage
@@ -502,6 +521,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             },
             replyOptions: {
               skillFilter: roomConfig?.skills,
+              reasoningPayloadsEnabled: true,
               // Preserve explicit block streaming with draft previews: drafts update the live
               // block, while block deliveries finalize completed blocks as separate events.
               disableBlockStreaming: !blockStreamingEnabled,
@@ -510,7 +530,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 : undefined,
               onBlockReplyQueued: draftStream
                 ? (payload, context) => {
-                    if (payload.isCompactionNotice === true) {
+                    if (payload.isCompactionNotice === true || payload.isReasoning === true) {
                       return false;
                     }
                     draftController.queueDraftBlockBoundary(payload, context);

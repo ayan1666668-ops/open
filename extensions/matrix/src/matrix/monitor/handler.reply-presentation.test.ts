@@ -1,6 +1,7 @@
 import { shouldAckReaction } from "openclaw/plugin-sdk/channel-feedback";
 // Matrix tests cover the handler's reply presentation wiring.
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareMatrixReplyPayload } from "../../outbound.js";
 import { installMatrixMonitorTestRuntime } from "../../test-runtime.js";
@@ -40,6 +41,14 @@ vi.mock("../send.js", () => ({
 }));
 
 const deliverMatrixRepliesMock = vi.hoisted(() => vi.fn());
+const getSessionEntryMock = vi.hoisted(() =>
+  vi.fn<typeof import("openclaw/plugin-sdk/session-store-runtime").getSessionEntry>(),
+);
+
+vi.mock("openclaw/plugin-sdk/session-store-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/session-store-runtime")>()),
+  getSessionEntry: getSessionEntryMock,
+}));
 
 vi.mock("./replies.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./replies.js")>()),
@@ -58,6 +67,7 @@ describe("matrix monitor handler reply presentation", () => {
     editMessageMatrixMock.mockClear();
     sendSingleTextMessageMatrixMock.mockClear();
     reactMatrixMessageMock.mockClear();
+    getSessionEntryMock.mockReset().mockReturnValue(undefined);
     deliverMatrixRepliesMock.mockReset().mockResolvedValue({
       messageIds: ["$reply1"],
       receipt: {
@@ -167,6 +177,141 @@ describe("matrix monitor handler reply presentation", () => {
         ?.extraContent ?? {})["com.openclaw.presentation"],
     ).toMatchObject({ type: "message.presentation", version: 1 });
   });
+
+  it("delivers explicit reasoning without consuming the answer draft or its block offsets", async () => {
+    const runGate = createDeferred<void>();
+    const capturedDeliver = createDeferred<DeliverFn>();
+    const capturedOptions = createDeferred<GetReplyOptions>();
+    const { handler } = createMatrixHandlerTestHarness({
+      cfg: {
+        agents: { defaults: { reasoningDefault: "on" } },
+        channels: { matrix: { dm: { allowFrom: ["*"] } } },
+      },
+      streaming: "partial",
+      blockStreamingEnabled: true,
+      replyToMode: "off",
+      previewToolProgressEnabled: false,
+      createReplyDispatcherWithTyping: (params) => {
+        capturedDeliver.resolve((params as { deliver: DeliverFn }).deliver);
+        return {
+          dispatcher: { markComplete: () => {}, waitForIdle: async () => {} },
+          replyOptions: {},
+          markDispatchIdle: () => {},
+          markRunComplete: () => {},
+        };
+      },
+      dispatchInboundMessage: async ({ replyOptions }) => {
+        capturedOptions.resolve(replyOptions ?? {});
+        await runGate.promise;
+        return { queuedFinal: true, counts: { final: 1, block: 1, tool: 0 } };
+      },
+    });
+    const handlerDone = handler(
+      "!room:example.org",
+      createMatrixTextMessageEvent({ eventId: "$reasoning", body: "Explain the answer" }),
+    );
+    const [deliver, options] = await Promise.all([
+      capturedDeliver.promise,
+      capturedOptions.promise,
+    ]);
+    vi.useFakeTimers();
+    try {
+      expect(options.reasoningPayloadsEnabled).toBe(true);
+      options.onPartialReply?.({ text: "Answer prefix" });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
+
+      const reasoning: ReplyPayload = { text: "Reasoning:\nCheck the inputs", isReasoning: true };
+      await options.onBlockReplyQueued?.(reasoning, { assistantMessageIndex: 0 });
+      await deliver(reasoning, { kind: "block" });
+      expect(deliverMatrixRepliesMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ replies: [reasoning] }),
+      );
+      expect(editMessageMatrixMock).not.toHaveBeenCalled();
+      expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
+
+      const answer = "Answer prefix with the complete result";
+      options.onPartialReply?.({ text: answer });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(editMessageMatrixMock).toHaveBeenLastCalledWith(
+        "!room:example.org",
+        "$draft1",
+        answer,
+        expect.objectContaining({ live: true }),
+      );
+      expect(sendSingleTextMessageMatrixMock).toHaveBeenCalledTimes(1);
+
+      await deliver({ text: answer }, { kind: "final" });
+      expect(editMessageMatrixMock).toHaveBeenLastCalledWith(
+        "!room:example.org",
+        "$draft1",
+        answer,
+        expect.objectContaining({ live: false }),
+      );
+      expect(deliverMatrixRepliesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      runGate.resolve();
+      await handlerDone;
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { name: "configured off", defaultLevel: "off", sessionOff: false, readError: false },
+    { name: "configured stream", defaultLevel: "stream", sessionOff: false, readError: false },
+    { name: "session override off", defaultLevel: "on", sessionOff: true, readError: false },
+    { name: "session read failure", defaultLevel: "on", sessionOff: false, readError: true },
+  ] as const)(
+    "suppresses typed reasoning for $name while delivering the answer",
+    async (testCase) => {
+      const capturedDeliver = createDeferred<DeliverFn>();
+      const { handler } = createMatrixHandlerTestHarness({
+        cfg: {
+          agents: { defaults: { reasoningDefault: testCase.defaultLevel } },
+          channels: { matrix: { dm: { allowFrom: ["*"] } } },
+        },
+        streaming: "off",
+        createReplyDispatcherWithTyping: (params) => {
+          capturedDeliver.resolve((params as { deliver: DeliverFn }).deliver);
+          return {
+            dispatcher: { markComplete: () => {}, waitForIdle: async () => {} },
+            replyOptions: {},
+            markDispatchIdle: () => {},
+            markRunComplete: () => {},
+          };
+        },
+        dispatchInboundMessage: async () => {
+          // A directive can change the session after the Matrix dispatcher was created.
+          if (testCase.sessionOff) {
+            getSessionEntryMock.mockReturnValue({
+              sessionId: "reasoning-session",
+              updatedAt: 1,
+              reasoningLevel: "off",
+            });
+          }
+          if (testCase.readError) {
+            getSessionEntryMock.mockImplementation(() => {
+              throw new Error("session storage unavailable");
+            });
+          }
+          const deliver = await capturedDeliver.promise;
+          await deliver({ text: "Hidden reasoning", isReasoning: true }, { kind: "block" });
+          await deliver({ text: "Visible answer" }, { kind: "final" });
+          return { queuedFinal: true, counts: { final: 1, block: 1, tool: 0 } };
+        },
+      });
+
+      await handler(
+        "!room:example.org",
+        createMatrixTextMessageEvent({ eventId: "$visibility", body: "Answer normally" }),
+      );
+
+      expect(deliverMatrixRepliesMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ replies: [{ text: "Visible answer" }] }),
+      );
+      expect(sendSingleTextMessageMatrixMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("edits a matching live preview to attach the final reply's controls", async () => {
     const context = {

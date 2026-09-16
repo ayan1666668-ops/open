@@ -55,6 +55,7 @@ export function createMatrixReplyDispatcher(config: {
   accountId: string;
   mediaLocalRoots: readonly string[];
   logVerboseMessage: (message: string) => void;
+  shouldDeliverReasoning?: () => boolean;
 }) {
   const {
     cfg,
@@ -107,6 +108,11 @@ export function createMatrixReplyDispatcher(config: {
     ...prefixOptions,
     humanDelay,
     deliver: async (payload: ReplyPayload, info: { kind: string }) => {
+      if (payload.isReasoning === true) {
+        return config.shouldDeliverReasoning?.()
+          ? await deliverPayload(payload)
+          : mergeMatrixReplyDeliveryResults([]);
+      }
       const completeDelivery = async (
         result: MatrixReplyDeliveryResult,
       ): Promise<MatrixReplyDeliveryResult> => {
