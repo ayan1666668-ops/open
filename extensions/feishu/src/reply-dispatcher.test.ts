@@ -6186,6 +6186,73 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       await outgrowing.options.deliver({ text: outgrows }, { kind: "final" });
       expect(streamingUpdateTexts(1)).toEqual([]);
     });
+
+    // The payload is rendered before delivery, so the post path receives text that already
+    // carries its fences. Asking whether this step produced them answered nothing, and a
+    // quoted table then reached separate messages with unmatched markers.
+    it("posts a quoted table as authored when the cut cannot carry its fences", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+        chunking.chunkMarkdownTextWithMode,
+      );
+      resolveFeishuAccountMock.mockReturnValue({
+        accountId: "main",
+        appId: "app_id",
+        appSecret: "app_secret",
+        domain: "feishu",
+        config: { renderMode: "raw", streaming: { mode: "off" } },
+      });
+      const rows = Array.from({ length: 40 }, (_entry, index) => `> | row${index} | d |`);
+      const text = [
+        "> | name | detail |",
+        "> | --- | --- |",
+        ...rows,
+        `> | wide | ${"w".repeat(220)} |`,
+      ].join("\n");
+      const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+      // The case only means anything while the conversion carries quoted markers and needs
+      // more than one message to arrive.
+      expect(convert(text, "code")).toContain("> ```");
+      expect(convert(text, "code").length).toBeGreaterThan(4000);
+
+      const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("code") });
+      await options.deliver({ text }, { kind: "final" });
+
+      const posts = sendMessageFeishuMock.mock.calls.map((call) => String(call[0]?.text ?? ""));
+      expect(posts.length).toBeGreaterThan(0);
+      for (const post of posts) {
+        // A message opens and closes its own fences or carries none at all.
+        expect((post.match(/^> ```/gmu) ?? []).length % 2).toBe(0);
+      }
+      expect(posts.join("")).toContain("row39");
+    });
+
+    // A close writes its whole text in one go. The preview stands down once a conversion
+    // outgrows the limit the settled answer is held to, and the close has to settle the same
+    // way or it writes the projection the preview was refusing.
+    it("closes an outgrown projection through a post rather than the card", async () => {
+      const convert = getFeishuRuntimeMock().channel.text.convertMarkdownTables;
+      const outgrows = [
+        "| name | detail |",
+        "| --- | --- |",
+        ...Array.from({ length: 40 }, (_entry, index) => `| row${index} | d |`),
+        `| wide | ${"w".repeat(220)} |`,
+      ].join("\n");
+      // Guard the fixture: it fits the limit as authored and its projection does not.
+      expect(outgrows.length).toBeLessThanOrEqual(4000);
+      expect(convert(outgrows, "code").length).toBeGreaterThan(4000);
+
+      const { result, options } = createBlockTableHarness(tableCfg("code"));
+      result.replyOptions.onPartialReply?.({ text: outgrows });
+      await vi.waitFor(() => expect(streamingInstances).toHaveLength(1));
+      await options.onIdle?.();
+
+      expect(requireStreamingInstance(0).closeWithResult).not.toHaveBeenCalled();
+      expect(requireStreamingInstance(0).discard).toHaveBeenCalledTimes(1);
+      expect(sendMessageFeishuMock).toHaveBeenCalled();
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

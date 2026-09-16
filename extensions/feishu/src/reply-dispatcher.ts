@@ -514,7 +514,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return undefined;
     }
     const display = streamDisplayText();
-    return display.length > textChunkLimit ? undefined : display;
+    // Only the converted form answers to this limit. Text the author wrote long is not this
+    // branch's doing and streams the way it always has.
+    return display !== streamText && display.length > textChunkLimit ? undefined : display;
   };
 
   const queueStreamingUpdate = (
@@ -697,9 +699,16 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         // Committing here would put the table in a card just as surely as delivering a
         // final would, so this close drops the card and reuses a matching block
         // receipt or sends the combined text for a final to inherit.
+        // A close writes the whole projection in one go and cannot cut it into several, so a
+        // conversion past the limit the settled answer is held to takes the post path here
+        // for the same reason the preview stands down for it.
+        const closeProjectionExceedsLimit =
+          answerText !== finalizedAnswerText && answerText.length > textChunkLimit;
         const closeNeedsPost =
           disposition === "closed" &&
-          (tableNeedsPostPath(rawText) || answerTableNeedsPostPath(answerText));
+          (tableNeedsPostPath(rawText) ||
+            answerTableNeedsPostPath(answerText) ||
+            closeProjectionExceedsLimit);
         // Reasoning is blockquoted before it reaches the card, and a card does not draw
         // a blockquoted table, so a native one there loses its rows. Bullets survive the
         // quote, so reasoning degrades to a list rather than the rows disappearing, and
@@ -746,7 +755,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             text,
             "final",
             mentionTargets?.length ? mentionTargets : undefined,
-            answerText,
+            {
+              blockAnswerText: answerText,
+              authoredText: buildCombinedStreamText(finalizedReasoningText, finalizedAnswerText),
+            },
           );
         }
         if (result.visibleReplySent) {
@@ -921,6 +933,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
 
   const sendChunkedTextReply = async (paramsLocal: {
     text: string;
+    /** The text before this branch converted it, for a conversion the cut cannot carry. */
+    authoredText?: string;
     useCard: boolean;
     infoKind?: string;
     firstChunkMentions?: MentionTarget[];
@@ -938,11 +952,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     );
     // The shared fence scanner reads no quote prefix, so a converted blockquoted table
     // cannot be closed and reopened at a cut and its two markers land in different
-    // messages. The outbound post path asks the same question of the same chunker.
+    // messages. The outbound post path asks the same question of the same chunker. The
+    // text can arrive converted already, since the payload is rendered before delivery, so
+    // the question is whether the cut carries the markers rather than whether this step is
+    // the step that produced them.
     const chunkSource = paramsLocal.useCard
       ? paramsLocal.text
-      : convertedPostText === paramsLocal.text ||
-          postFencesSurvive(convertedPostText, {
+      : postFencesSurvive(convertedPostText, {
             text: convertedPostText,
             limit: textChunkLimit,
             mode: chunkMode,
@@ -950,7 +966,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             chunkMentions: paramsLocal.chunkMentions,
           })
         ? convertedPostText
-        : materializeFeishuPostMarkdownSoftBreaks(paramsLocal.text);
+        : materializeFeishuPostMarkdownSoftBreaks(paramsLocal.authoredText ?? paramsLocal.text);
     const initialChunks = core.channel.text.chunkMarkdownTextWithMode(
       chunkSource,
       textChunkLimit,
@@ -1024,8 +1040,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     text: string,
     infoKind?: string,
     firstChunkMentions?: MentionTarget[],
-    blockAnswerText = text,
+    options?: { blockAnswerText?: string; authoredText?: string },
   ) => {
+    const blockAnswerText = options?.blockAnswerText ?? text;
     // Block receipts are keyed by the rendered answer, never the reasoning preview
     // added by close. Keep that key separate from an unmatched close's post body.
     const matchingBlock =
@@ -1036,6 +1053,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     const send = () =>
       sendChunkedTextReply({
         text,
+        ...(options?.authoredText === undefined ? {} : { authoredText: options.authoredText }),
         useCard: false,
         infoKind,
         firstChunkMentions,
@@ -1804,7 +1822,9 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             // attachment is an independent send, so the rejection holds until the media
             // has been attempted and both are reported together.
             try {
-              await collectDelivery(sendPostReply(text, info?.kind, firstChunkMentions));
+              await collectDelivery(
+                sendPostReply(text, info?.kind, firstChunkMentions, { authoredText: sourceText }),
+              );
             } catch (error: unknown) {
               holdPartialForMedia(error, hasMedia);
             }
@@ -1938,7 +1958,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           const firstChunkMentions =
             info?.kind === "final" && mentionTargets?.length ? mentionTargets : undefined;
           try {
-            deliveredResults.push(await sendPostReply(text, info?.kind, firstChunkMentions));
+            deliveredResults.push(
+              await sendPostReply(text, info?.kind, firstChunkMentions, {
+                authoredText: sourceText,
+              }),
+            );
           } catch (error: unknown) {
             holdPartialForMedia(error, hasMedia);
           }
