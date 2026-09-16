@@ -38,6 +38,7 @@ import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
 import {
   chunkFeishuMarkdown,
   chunkFeishuPostMarkdown,
+  chunkLimitHoldsFence,
   materializeFeishuPostMarkdownSoftBreaks,
 } from "./markdown.js";
 import { buildFeishuMediaFallbackText } from "./media-fallback.js";
@@ -250,12 +251,21 @@ async function sendCommentThreadReply(params: {
   const account = resolveFeishuAccount({ cfg: params.cfg, accountId: params.accountId });
   const client = createFeishuClient(account);
   // Comments have no native table renderer, so block falls back to code here.
-  const tableMode = resolveMarkdownTableMode({
+  const requestedTableMode = resolveMarkdownTableMode({
     cfg: params.cfg,
     channel: "feishu",
     accountId: account.accountId,
     supportsBlockTables: false,
   });
+  const commentLimit = resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
+    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
+  });
+  // A limit too small to hold a balanced fence would turn the conversion into an
+  // unterminated code block, so the table is left as it arrived instead.
+  const tableMode =
+    requestedTableMode === "code" && !chunkLimitHoldsFence(commentLimit)
+      ? "off"
+      : requestedTableMode;
   const content = convertMarkdownTables(params.text, tableMode);
   // Core chunks raw text before channel rendering, so the conversion above can push
   // a unit past the limit it was cut to. Re-chunk after the expansion, the way the
@@ -263,9 +273,7 @@ async function sendCommentThreadReply(params: {
   // closed and reopened rather than cut in half.
   const chunks = chunkMarkdownTextWithMode(
     content,
-    resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
-      fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
-    }),
+    commentLimit,
     resolveChunkMode(params.cfg, "feishu", account.accountId),
   );
   const replyId = params.replyId?.trim();

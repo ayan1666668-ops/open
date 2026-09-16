@@ -9,6 +9,7 @@ import { createFeishuClient } from "./client.js";
 import { createCommentTypingReactionLifecycle } from "./comment-reaction.js";
 import type { CommentFileType } from "./comment-target.js";
 import { deliverCommentThreadText } from "./drive.js";
+import { chunkLimitHoldsFence } from "./markdown.js";
 import { buildFeishuMediaFallbackText } from "./media-fallback.js";
 import { buildFeishuPresentationFallback, resolveFeishuRichReply } from "./presentation-card.js";
 import {
@@ -53,12 +54,18 @@ export function createFeishuCommentReplyDispatcher(
   );
   const chunkMode = core.channel.text.resolveChunkMode(params.cfg, "feishu", account.accountId);
   // Comments have no native table renderer, so block falls back to code here.
-  const tableMode = core.channel.text.resolveMarkdownTableMode({
+  const requestedTableMode = core.channel.text.resolveMarkdownTableMode({
     cfg: params.cfg,
     channel: "feishu",
     accountId: account.accountId,
     supportsBlockTables: false,
   });
+  // A limit too small to hold a balanced fence would turn the conversion into an
+  // unterminated code block, so the table is left as it arrived instead.
+  const tableMode =
+    requestedTableMode === "code" && !chunkLimitHoldsFence(textChunkLimit)
+      ? "off"
+      : requestedTableMode;
   const typingReaction = createCommentTypingReactionLifecycle({
     cfg: params.cfg,
     fileToken: params.fileToken,

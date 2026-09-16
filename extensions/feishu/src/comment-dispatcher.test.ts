@@ -497,6 +497,47 @@ describe("createFeishuCommentReplyDispatcher", () => {
     // ordinary table at a workable limit, in both real chunk modes. A limit too small to
     // hold a marker pair, or a marker grown long by backticks inside a cell, still falls
     // back to a raw boundary in the core chunker and is not repaired here.
+    // Below nine characters a fence cannot balance, so converting would leave the
+    // first comment opening a code block nothing closes and the last closing one
+    // nothing opened. The table is left as it arrived instead.
+    it("leaves a comment table unconverted when the limit cannot hold a fence", async () => {
+      const chunking = await vi.importActual<typeof import("openclaw/plugin-sdk/reply-chunking")>(
+        "openclaw/plugin-sdk/reply-chunking",
+      );
+      const runtime = getFeishuRuntimeMock();
+      getFeishuRuntimeMock.mockReturnValue({
+        ...runtime,
+        channel: {
+          ...runtime.channel,
+          text: {
+            ...runtime.channel.text,
+            resolveTextChunkLimit: vi.fn(() => 8),
+            resolveChunkMode: vi.fn(() => "length"),
+            chunkTextWithMode: chunking.chunkTextWithMode,
+            chunkMarkdownTextWithMode: chunking.chunkMarkdownTextWithMode,
+          },
+        },
+      });
+      const created = createTestCommentReplyDispatcher();
+
+      await replyDispatcherOptions(created).deliver({ text: tableMarkdown }, { kind: "final" });
+
+      const contents = deliverCommentThreadTextMock.mock.calls.map(
+        (call) => call[1].content as string,
+      );
+      const joined = contents.join("");
+      // No comment carries a fence marker at all, so none can be unterminated.
+      expect(joined).not.toContain("`");
+      // Every cell still arrives. The chunker trims at the boundaries it cuts on, so
+      // the joined text is not the authored string, but nothing is dropped.
+      for (const cell of ["Name", "Role", "Ada", "Lead"]) {
+        expect(joined).toContain(cell);
+      }
+      for (const content of contents) {
+        expect(content.length).toBeLessThanOrEqual(8);
+      }
+    });
+
     it.each(["length", "newline"] as const)(
       "balances the fences of an oversized converted table in %s mode",
       async (chunkMode) => {

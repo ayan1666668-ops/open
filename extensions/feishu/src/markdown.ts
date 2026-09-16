@@ -5,6 +5,17 @@ import { gfmTable } from "micromark-extension-gfm-table";
 import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/reply-chunking";
 import type { MentionTarget } from "./mention-target.types.js";
 
+/**
+ * A fenced block spends four characters on its opening marker and newline and
+ * four more closing the pair, so a chunk limit below nine cannot carry a balanced
+ * fence around even one character of content. Converting a table to a fence under
+ * such a limit leaves an opening marker with nothing closing it and a close with
+ * nothing opening it, which renders worse than the table it replaced.
+ */
+export function chunkLimitHoldsFence(limit: number): boolean {
+  return limit >= 9;
+}
+
 export type FeishuMarkdownNode = {
   type: string;
   depth?: number;
