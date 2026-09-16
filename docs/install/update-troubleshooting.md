@@ -104,8 +104,11 @@ the CLI fallback on the Gateway host.
 - `deps-install-failed`, `build-failed`, `ui-build-failed`: inspect the failing
   step, fix the dependency or build error, then retry.
 - `global-install-failed`: the package-manager install, staging, verification,
-  or launcher swap exited nonzero and the previous install was restored, so the
-  reported "before" version keeps running. The generated failure report redacts
+  or launcher swap exited nonzero. The updater then attempts rollback. The
+  generated report's `Rollback outcome` line and `openclaw update status`
+  record whether the previous install was restored and is safe to restart.
+  `openclaw gateway status --deep` shows what is serving; confirm both before
+  assuming the previous version runs. The generated failure report redacts
   the package manager's own error line; the failing step's bounded stderr tail
   is kept in the durable run record and in the update-failure context saved
   under `logs/support/` in the state directory. Two causes belong to the
@@ -116,8 +119,12 @@ changed` when the updater's umask differs from the installed launcher's
   fingerprint timeout reported as a changed package tree. Retrying with the
   same installed updater repeats them. Install the target once with the
   [manual package-manager procedure](/install/updating/update-methods#alternative-manual-npm-pnpm-or-bun),
-  run `openclaw doctor --fix`, and restart the Gateway; later updates run
-  through the fixed updater. Other causes show the package manager's error:
+  run `openclaw doctor --fix`, and restart the Gateway. This manual install
+  bypasses the installed updater once. No published release contains both fixes
+  yet: `openclaw update` runs through a repaired updater only after installing a
+  release later than 2026.9.4 that contains [#145282](https://github.com/openclaw/openclaw/pull/145282)
+  and [#144758](https://github.com/openclaw/openclaw/pull/144758).
+  Other causes show the package manager's error:
   `EACCES`, `EPERM`, or a prefix mismatch mean the global prefix is custom or
   not writable by the invoking user; fix ownership and permissions, then retry.
   Re-run the [installer](/install/installer) if the package install is
