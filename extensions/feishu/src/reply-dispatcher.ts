@@ -1342,6 +1342,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         to: sendTarget,
         identity,
         renderText: renderTables,
+        tableMode,
         // Cards notify only required bot recipients; incoming user mentions remain context.
         mentions: requiredMentionTargets,
       });

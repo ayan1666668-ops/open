@@ -274,6 +274,34 @@ describe("feishuPlugin actions", () => {
 
       expect(markdown).toEqual([tableMarkdown, `<font color='grey'>${tableMarkdown}</font>`]);
     });
+
+    // A card draws neither a quoted table nor one a list marker opens, and every mode that
+    // converts replaces those rows with a shape it does draw. off converts nothing and asks
+    // for the pipes, so the card element has to leave them alone as well.
+    it("keeps an authored quoted table on an off presentation card", async () => {
+      sendCardFeishuMock.mockResolvedValueOnce({ messageId: "om_card", chatId: "oc_group_1" });
+      const quoted = "> | Name | Role |\n> | --- | --- |\n> | Ada | Lead |";
+      await feishuPlugin.actions?.handleAction?.({
+        action: "send",
+        params: {
+          to: "chat:oc_group_1",
+          presentation: { blocks: [{ type: "text", text: quoted }] },
+        },
+        cfg: tableModeCfg("channel", "off"),
+        accountId: undefined,
+        toolContext: {},
+      } as never);
+
+      const sendCardArgs = requireRecord(
+        mockCallArg(sendCardFeishuMock, 0, 0, "sendCardFeishu"),
+        "send card args",
+      );
+      const body = requireRecord(requireRecord(sendCardArgs.card, "card").body, "card body");
+      const markdown = requireArray(body.elements, "card elements").map((element) =>
+        String(requireRecord(element, "card element").content),
+      );
+      expect(markdown).toEqual(["&gt; | Name | Role |\n&gt; | --- | --- |\n&gt; | Ada | Lead |"]);
+    });
   });
 
   it("falls back to text delivery when presentation text exceeds the card table limit", async () => {

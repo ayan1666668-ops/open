@@ -1,7 +1,7 @@
 import type { normalizeMessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
 import type { FeishuNativeCard } from "./native-card.js";
 // Feishu plugin module builds the presentation card the direct-send actions own.
-import { presentationTextRenderer } from "./outbound.js";
+import { presentationTableMode, presentationTextRenderer } from "./outbound.js";
 import {
   buildFeishuPresentationCard,
   feishuCardWithinTableLimit,
@@ -24,9 +24,11 @@ export function buildFeishuActionPresentationCard(params: {
   if (!params.presentation) {
     return undefined;
   }
+  const modeContext = { cfg: params.cfg, accountId: params.accountId };
   return buildFeishuPresentationCard({
     presentation: params.presentation,
-    renderText: presentationTextRenderer({ cfg: params.cfg, accountId: params.accountId }),
+    renderText: presentationTextRenderer(modeContext),
+    tableMode: presentationTableMode(modeContext),
     ...(params.fallbackText === undefined ? {} : { fallbackText: params.fallbackText }),
   });
 }

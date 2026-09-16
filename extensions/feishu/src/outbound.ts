@@ -5,7 +5,10 @@ import {
   attachChannelToResult,
   createAttachedChannelResultAdapter,
 } from "openclaw/plugin-sdk/channel-send-result";
-import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
+import {
+  resolveMarkdownTableMode,
+  type MarkdownTableMode,
+} from "openclaw/plugin-sdk/markdown-table-runtime";
 import { resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
 import {
   getReplyPayloadTtsSupplement,
@@ -418,15 +421,23 @@ async function sendFeishuTtsSupplementPayload(params: {
 }
 
 // The direct-send action builds its presentation card before reaching
-// `sendPayload`, so it shares this resolver instead of repeating the rule.
-export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">) {
+// `sendPayload`, so it shares these resolvers instead of repeating the rule. The card
+// asks for the mode as well as for the renderer, because a mode that converts nothing
+// still says whether the card may replace a shape it cannot draw.
+export function presentationTableMode(
+  ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">,
+): MarkdownTableMode {
   const account = resolveFeishuAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
-  const tableMode = resolveMarkdownTableMode({
+  return resolveMarkdownTableMode({
     cfg: ctx.cfg,
     channel: "feishu",
     accountId: account.accountId,
     supportsBlockTables: true,
   });
+}
+
+export function presentationTextRenderer(ctx: Pick<FeishuSendPayloadContext, "cfg" | "accountId">) {
+  const tableMode = presentationTableMode(ctx);
   return (text: string) => (tableMode === "block" ? text : convertMarkdownTables(text, tableMode));
 }
 
@@ -566,7 +577,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       ...params,
       payload: { ...params.payload, presentation },
       presentation,
-      ctx: { ...params.ctx, renderText },
+      ctx: { ...params.ctx, renderText, tableMode: presentationTableMode(params.ctx) },
     });
   },
   sendPayload: async (ctx) => {
@@ -618,6 +629,7 @@ export const feishuOutbound: ChannelOutboundAdapter = {
       text: ctx.text,
       identity: ctx.identity,
       renderText,
+      ...(renderText ? { tableMode: presentationTableMode(ctx) } : {}),
     });
     if (!card) {
       const { presentation } = resolveFeishuRichReply(payload);

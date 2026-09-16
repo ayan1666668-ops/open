@@ -13,6 +13,7 @@ import {
   type MessagePresentationBlock,
   type MessagePresentationButton,
 } from "openclaw/plugin-sdk/interactive-runtime";
+import type { MarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import type { OutboundIdentity, ReplyPayload } from "../runtime-api.js";
@@ -425,16 +426,24 @@ function buildFeishuPresentationCardElements(params: {
  * presentation cannot take that route without losing its controls, so its elements take the
  * fallback the streamed preview takes and the rows survive as a list. The prose a fallback
  * carries is left alone, since a post draws what a card cannot.
+ *
+ * `off` is the exception: it asks for the authored pipes rather than for a card-safe shape,
+ * and a list is a shape. Every other mode either converts the rows itself, which leaves this
+ * nothing to replace, or draws them natively and only needs the shapes the card refuses. An
+ * unstated mode is not `off`, so it keeps the substitution.
  */
 function cardElementRenderer(
   renderText?: (text: string) => string,
+  tableMode?: MarkdownTableMode,
 ): ((text: string) => string) | undefined {
   if (!renderText) {
     return undefined;
   }
   return (text: string) => {
     const rendered = renderText(text);
-    return hasUndrawableCardTable(rendered) ? convertMarkdownTables(rendered, "bullets") : rendered;
+    return tableMode !== "off" && hasUndrawableCardTable(rendered)
+      ? convertMarkdownTables(rendered, "bullets")
+      : rendered;
   };
 }
 
@@ -442,10 +451,13 @@ export function buildFeishuPresentationCard(params: {
   presentation: NormalizedMessagePresentation;
   fallbackText?: string;
   renderText?: (text: string) => string;
+  tableMode?: MarkdownTableMode;
 }): FeishuNativeCard {
   const elementParams = {
     ...params,
-    ...(params.renderText ? { renderText: cardElementRenderer(params.renderText) } : {}),
+    ...(params.renderText
+      ? { renderText: cardElementRenderer(params.renderText, params.tableMode) }
+      : {}),
   };
   return {
     schema: "2.0",
@@ -531,6 +543,7 @@ export function buildFeishuPayloadCard(params: {
   identity?: OutboundIdentity;
   mentions?: MentionTarget[];
   renderText?: (text: string) => string;
+  tableMode?: MarkdownTableMode;
 }): FeishuNativeCard | undefined {
   const nativeCard = readNativeFeishuCard(params.payload);
   const rawText = params.text ?? params.payload.text;
@@ -541,6 +554,7 @@ export function buildFeishuPayloadCard(params: {
   if (!card && presentation) {
     card = buildFeishuPresentationCard({
       renderText: params.renderText,
+      tableMode: params.tableMode,
       presentation: {
         ...presentation,
         title: presentation.title ?? resolveFeishuIdentityHeaderTitle(params.identity),
@@ -581,6 +595,7 @@ type FeishuPresentationContext = {
   identity?: OutboundIdentity;
   mentions?: MentionTarget[];
   renderText?: (text: string) => string;
+  tableMode?: MarkdownTableMode;
 };
 
 export function renderFeishuPresentationPayload({
@@ -600,6 +615,7 @@ export function renderFeishuPresentationPayload({
     identity: ctx.identity,
     mentions: ctx.mentions,
     renderText: ctx.renderText,
+    tableMode: ctx.tableMode,
   });
   const isComment = Boolean(parseFeishuCommentTarget(ctx.to));
   // Native limits may clip labels. A whole-card or comment fallback must retain

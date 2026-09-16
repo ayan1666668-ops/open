@@ -1079,4 +1079,23 @@ describe("createFeishuReplyDispatcher table limits", () => {
     expect(delivery?.content).toContain(fallback.lastProseLine);
     expect(delivery?.content).not.toContain("```");
   });
+
+  // The reply path builds the same card, so the mode it resolves has to reach the element
+  // renderer there too. off converts nothing, so without it the raw rows read as undrawable
+  // and the card would list what the mode asked it to leave alone.
+  it("keeps an authored quoted table on an off presentation card", async () => {
+    resolveFeishuAccountMock.mockReturnValue(createReplyAccount("auto", "off", "feishu"));
+    const quoted = "> | Name | Role |\n> | --- | --- |\n> | Ada | Lead |";
+    const { options } = createDispatcherHarness({ accountId: "main", cfg: tableCfg("off") });
+
+    await options.deliver(
+      { presentation: { blocks: [{ type: "text", text: quoted }] } },
+      { kind: "final" },
+    );
+
+    expect(sendCardFeishuMock).toHaveBeenCalledTimes(1);
+    expect(presentationCardMarkdown()).toEqual([
+      "&gt; | Name | Role |\n&gt; | --- | --- |\n&gt; | Ada | Lead |",
+    ]);
+  });
 });

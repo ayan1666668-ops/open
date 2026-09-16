@@ -131,12 +131,34 @@ describe("buildFeishuPresentationCard", () => {
       presentation,
       // block mode leaves a table for the card to draw, which is the case this is about.
       renderText: (text) => text,
+      tableMode: "block",
     }).body.elements as { tag: string; content?: string }[];
 
     const markdown = elements.find((element) => element.tag === "markdown")?.content ?? "";
     expect(markdown).toContain("Ada");
     expect(markdown).not.toContain("| --- |");
     expect(elements.some((element) => element.tag === "button")).toBe(true);
+  });
+
+  // The list above is a card-safe shape, and off asks for the authored pipes rather than for
+  // a shape. Its renderer converts nothing, so without the mode the card element would read
+  // the raw rows as undrawable and list them anyway.
+  it("keeps an authored quoted table on an off card", () => {
+    const quoted = "> | Name | Role |\n> | --- | --- |\n> | Ada | Lead |";
+    const presentation = normalizeMessagePresentation({ blocks: [{ type: "text", text: quoted }] });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      renderText: (text) => text,
+      tableMode: "off",
+    }).body.elements as { tag: string; content?: string }[];
+
+    const markdown = elements.find((element) => element.tag === "markdown")?.content ?? "";
+    expect(markdown).toContain("| --- |");
+    expect(markdown).not.toContain("•");
   });
 
   // A table block carries as many rows as the producer had, and its linear form is one
