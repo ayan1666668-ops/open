@@ -64,6 +64,8 @@ Invalid or unreadable configuration reports `invalid-config` before database
 schema inspection. The diagnostic identifies invalid fields and recommends
 `openclaw doctor --fix`, followed by correcting any remaining errors. A dry run
 keeps this guidance in its JSON `notes` without changing the configuration.
+Guided recovery recognizes the saved config failure after a later successful
+update and still verifies the installed runtime and Gateway readiness.
 
 The 2026.9.4 updater reports this condition as `database-schema-preflight` and
 can show `mode: unknown` even after resolving an npm target. Before another
