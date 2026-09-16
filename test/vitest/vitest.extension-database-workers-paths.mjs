@@ -24,6 +24,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/device-pair/doctor-contract-api.test.ts",
   "extensions/device-pair/notify.test.ts",
   "extensions/discord/src/monitor/model-picker-preferences.test.ts",
+  "extensions/discord/src/monitor/presence-cooldown-store.test.ts",
   "extensions/imessage/src/monitor.approval-reaction-replay.test.ts",
   "extensions/imessage/src/monitor.behavior.test.ts",
   "extensions/imessage/src/monitor/cache-lifecycle.test.ts",
