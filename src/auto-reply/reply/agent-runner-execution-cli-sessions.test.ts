@@ -14,6 +14,7 @@ import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
+  configureTestCliModel,
   createFollowupRun,
   createTestUserTurnRecorder,
   requireRecord,
@@ -52,8 +53,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
     const followupRun = createFollowupRun();
     followupRun.originatingThreadId = 42;
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-sonnet-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-sonnet-4-6",
+    );
     followupRun.run.thinkingCatalog = [
       {
         provider: "claude-cli",
@@ -76,7 +80,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       modelContextWindow: 400_000,
       modelContextTokens: 321_000,
@@ -109,8 +113,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     ];
     const imageOrder = ["inline" as const];
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-5";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-5",
+    );
     followupRun.images = images;
     followupRun.imageOrder = imageOrder;
 
@@ -125,7 +132,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       images,
       imageOrder,
@@ -193,8 +200,11 @@ describe("executeAgentTurn: CLI session routing", () => {
       };
     });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-5";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-5",
+    );
     followupRun.run.thinkingCatalog = [
       {
         provider: "claude-cli",
@@ -224,7 +234,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       images,
       imageOrder,
@@ -249,8 +259,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.run.agentId = "main";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.extraSystemPrompt = "dynamic inbound metadata\n\nstable group prompt";
     followupRun.run.extraSystemPromptStatic = "stable group prompt";
     followupRun.run.senderId = "sender-static";
@@ -272,7 +281,7 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     const result = await executeAgentTurn(createRunAgentTurnParams(followupRun));
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       modelProvider: "codex-cli",
       extraSystemPrompt: "dynamic inbound metadata\n\nstable group prompt",
@@ -313,8 +322,11 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-sonnet-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-sonnet-4-6",
+    );
     followupRun.run.sourceReplyDeliveryMode = "message_tool_only";
     followupRun.run.allowEmptyAssistantReplyAsSilent = true;
     followupRun.originatingChannel = "telegram";
@@ -330,7 +342,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       }),
     );
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       provider: "claude-cli",
       model: "claude-sonnet-4-6",
@@ -356,8 +368,7 @@ describe("executeAgentTurn: CLI session routing", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const preparedUserTurnMessage = {
       role: "user",
       content: "describe this",
@@ -386,7 +397,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       getActiveSessionEntry: () => activeSessionStore.main,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).toHaveBeenCalledOnce();
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI runtime", {
       sessionKey: "main",
@@ -435,8 +446,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.currentInboundEventKind = "room_event";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
       cliSessionBindings: {
         "codex-cli": { sessionId: "existing-cli-session" },
@@ -450,7 +460,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       getActiveSessionEntry: () => sessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       currentInboundEventKind: "room_event",
       persistAssistantTranscript: false,
@@ -493,8 +503,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.currentInboundEventKind = "room_event";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {} as unknown as SessionEntry;
 
     const result = await executeAgentTurn({
@@ -502,7 +511,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       getActiveSessionEntry: () => sessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       currentInboundEventKind: "room_event",
       cliSessionId: undefined,
@@ -543,8 +552,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.currentInboundEventKind = "room_event";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
       cliSessionBindings: {
         "codex-cli": { sessionId: "existing-cli-session" },
@@ -574,7 +582,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       restoreAdmission();
     }
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expect(cleanupObservedBeforePlacementRelease).toBe(true);
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
       currentInboundEventKind: "room_event",
@@ -614,8 +622,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.currentInboundEventKind = "room_event";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
       cliSessionBindings: {
         "codex-cli": { sessionId: "existing-cli-session" },
@@ -629,7 +636,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       getActiveSessionEntry: () => sessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     if (result.kind !== "success") {
       throw new Error("expected success");
     }
@@ -663,8 +670,7 @@ describe("executeAgentTurn: CLI session routing", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.currentInboundEventKind = "room_event";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     const sessionEntry = {
       cliSessionBindings: {
         "codex-cli": { sessionId: "existing-cli-session" },
@@ -678,7 +684,7 @@ describe("executeAgentTurn: CLI session routing", () => {
       getActiveSessionEntry: () => sessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     if (result.kind !== "success") {
       throw new Error("expected success");
     }
@@ -709,8 +715,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     );
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
     const sessionEntry = {
       sessionId: "openclaw-session",
       updatedAt: 1,
@@ -755,8 +764,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
     const sessionEntry = {
       sessionId: "openclaw-session",
       updatedAt: 1,
@@ -797,8 +809,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     );
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
     const sessionEntry = {
       sessionId: "openclaw-session",
       updatedAt: 1,
@@ -861,8 +876,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     });
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
     const sessionEntry = {
       sessionId: "openclaw-session",
       updatedAt: 1,
@@ -916,8 +934,11 @@ describe("executeAgentTurn: CLI session routing", () => {
     );
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
     followupRun.run.skillsSnapshot = { prompt: "", skills: [], version: 0 };
     followupRun.run.timeoutMs = 10_000;
     const sessionEntry = {

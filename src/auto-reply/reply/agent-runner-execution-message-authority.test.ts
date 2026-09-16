@@ -6,6 +6,7 @@ import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent
 import { resolveMessageActionTurnCapability } from "../../gateway/message-action-turn-capability.js";
 import {
   createFollowupRun,
+  configureTestCliModel,
   createMinimalRunAgentTurnParams,
   fallbackAttemptOptions,
   getExecuteAgentTurnForTest,
@@ -46,8 +47,7 @@ function channelTurn() {
   const followupRun = createFollowupRun();
   Object.assign(followupRun.run, {
     sessionKey,
-    provider: "claude-cli",
-    model: "claude-sonnet-4-6",
+    executionSelection: configureTestCliModel(followupRun, "claude-cli", "claude-sonnet-4-6"),
     messageProvider: "discord",
     agentAccountId: "default",
     senderId: "100000000000000009",

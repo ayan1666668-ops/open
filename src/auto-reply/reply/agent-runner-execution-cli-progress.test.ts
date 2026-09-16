@@ -9,6 +9,7 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  configureTestCliModel,
   initialFallbackAttemptOptions,
   runInitialFallbackAttempt,
   createMinimalRunAgentTurnParams,
@@ -54,8 +55,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -121,8 +125,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
 
     const runPromise = executeAgentTurn({
       commandBody: "hi",
@@ -189,8 +196,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -254,8 +264,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const toolStarted = createDeferred();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
     const runPromise = executeAgentTurn({
       commandBody: "hi",
       followupRun,
@@ -339,8 +352,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const partialReplyStarted = createDeferred();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
     const runPromise = executeAgentTurn({
       commandBody: "hi",
       followupRun,
@@ -401,8 +417,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const onItemEvent = vi.fn<NonNullable<GetReplyOptions["onItemEvent"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -447,8 +466,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const onItemEvent = vi.fn<NonNullable<GetReplyOptions["onItemEvent"]>>();
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -495,8 +517,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     const onToolStart = vi.fn<NonNullable<GetReplyOptions["onToolStart"]>>(async () => undefined);
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
     followupRun.run.silentExpected = true;
 
     await executeAgentTurn({
@@ -544,8 +569,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-6",
+    );
     followupRun.run.silentExpected = true;
 
     await executeAgentTurn({
@@ -602,8 +630,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-7";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-7",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -698,8 +729,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-7";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-7",
+    );
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -750,8 +784,11 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-7";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-7",
+    );
     followupRun.run.silentExpected = true;
 
     await executeAgentTurn({
@@ -794,8 +831,7 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.5";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.5");
 
     await executeAgentTurn({
       commandBody: "hi",
@@ -845,8 +881,10 @@ describe("executeAgentTurn: CLI progress bridging", () => {
     );
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "anthropic";
-    followupRun.run.model = "claude-sonnet-4-7";
+    followupRun.run.executionSelection = {
+      model: { provider: "anthropic", id: "claude-sonnet-4-7" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
 
     await executeAgentTurn({
       commandBody: "hi",

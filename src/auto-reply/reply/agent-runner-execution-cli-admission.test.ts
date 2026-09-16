@@ -14,6 +14,7 @@ import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  configureTestCliModel,
   requireMockCall,
   expectMockCallArgFields,
   initialFallbackAttemptOptions,
@@ -44,6 +45,17 @@ describe("executeAgentTurn: CLI admission", () => {
     const entry: SessionEntry = {
       sessionId: "session",
       updatedAt: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "configured",
+      },
+      cliSessionBindings: {
+        "claude-cli": { sessionId: "admitted-native-session", authProfileId: "anthropic:cli" },
+      },
       ...(kind === "revised" ? { lifecycleRevision: "original" } : {}),
     };
     const rejected = kind === "rejected" || kind === "rejected-clear";
@@ -58,8 +70,11 @@ describe("executeAgentTurn: CLI admission", () => {
       },
     );
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-sonnet-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-sonnet-4-6",
+    );
     if (kind === "preserved") {
       followupRun.run.inputProvenance = {
         kind: "inter_session",
@@ -182,12 +197,23 @@ describe("executeAgentTurn: CLI admission", () => {
       const entry: SessionEntry = {
         sessionId: "session",
         updatedAt: 1,
+        executionSelection: {
+          state: "accepted",
+          selection: {
+            model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+            executor: { kind: "cli", id: "claude-cli" },
+          },
+          fallbackPermission: "configured",
+        },
         cliSessionBindings: { "claude-cli": binding },
       };
       await replaceSessionEntry({ sessionKey, storePath }, entry);
       const followupRun = createFollowupRun();
-      followupRun.run.provider = "claude-cli";
-      followupRun.run.model = "claude-sonnet-4-6";
+      followupRun.run.executionSelection = configureTestCliModel(
+        followupRun,
+        "claude-cli",
+        "claude-sonnet-4-6",
+      );
       if (kind === "room-event") {
         followupRun.currentInboundEventKind = "room_event";
       }
@@ -274,6 +300,14 @@ describe("executeAgentTurn: CLI admission", () => {
     let sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: 1,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "configured",
+      },
       permissionMode: "guarded",
       sessionRoot: "/workspace/old",
       execHost: "gateway",
@@ -284,6 +318,14 @@ describe("executeAgentTurn: CLI admission", () => {
     const admittedSessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: 2,
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "claude-cli", id: "claude-sonnet-4-6" },
+          executor: { kind: "cli", id: "claude-cli" },
+        },
+        fallbackPermission: "configured",
+      },
       permissionMode: "read-only",
       sessionRoot: "/workspace/project",
       execHost: "node",
@@ -295,8 +337,11 @@ describe("executeAgentTurn: CLI admission", () => {
     };
     state.runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-sonnet-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-sonnet-4-6",
+    );
     const restoreAdmission = installSessionPlacementAdmissionProvider({
       assertCompactionSuccessorAllowed: rejectUnexpectedCompactionSuccessor,
       executeLocalTurn: async (_claim, runLocal) => {

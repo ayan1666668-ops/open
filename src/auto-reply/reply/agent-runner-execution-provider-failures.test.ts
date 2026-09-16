@@ -16,6 +16,8 @@ import {
   GENERIC_RUN_FAILURE_TEXT,
   getExecuteAgentTurnForTest,
   createFollowupRun,
+  createLiveSwitchSession,
+  configureTestCliModel,
   initialFallbackAttemptOptions,
   createMockReplyOperation,
   createMinimalRunAgentTurnParams,
@@ -211,16 +213,26 @@ describe("executeAgentTurn: provider failures", () => {
   )(
     "surfaces $failure failure after an accepted partial in $surface.label chats",
     async ({ surface: testCase, failure }) => {
+      const followupRun = createFollowupRun();
+      const session = createLiveSwitchSession(followupRun);
       let partialDelivered = false;
       state.runEmbeddedAgentMock.mockImplementation(async (params: EmbeddedAgentParams) => {
         await params.onPartialReply?.({ text: "partial answer" });
         throw failure === "provider"
           ? new Error("model stream failed")
-          : new LiveSessionModelSwitchError({ provider: "openai", model: "gpt-5.4" });
+          : session.publish(
+              new LiveSessionModelSwitchError({
+                selection: {
+                  model: { provider: "openai", id: "gpt-5.4" },
+                  executor: { kind: "harness", id: "openclaw" },
+                },
+              }),
+            );
       });
 
       const result = await executeTestTurn(
         {
+          followupRun,
           sessionCtx: createNonDirectFailureSessionCtx(testCase),
           opts: {
             onPartialReply: () => {
@@ -229,7 +241,10 @@ describe("executeAgentTurn: provider failures", () => {
             },
           },
         },
-        { resolveVisibleReplyDelivery: async () => partialDelivered },
+        {
+          resolveVisibleReplyDelivery: async () => partialDelivered,
+          getActiveSessionEntry: session.getActiveSessionEntry,
+        },
       );
 
       expect(result).toMatchObject({
@@ -604,8 +619,11 @@ describe("executeAgentTurn: provider failures", () => {
     }));
     state.runCliAgentMock.mockRejectedValue(timeoutError);
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "claude-opus-4-8";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "claude-opus-4-8",
+    );
 
     const resultPromise = executeTestTurn({ followupRun });
     await vi.advanceTimersByTimeAsync(2_500);

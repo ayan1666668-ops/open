@@ -1,6 +1,7 @@
 import type { ModelRef } from "../agents/model-ref-shared.js";
 import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import { inheritSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 
 type TurnModelSelectionSource =
@@ -106,9 +107,14 @@ export function createTurnModelEntry(params: {
     ...(params.parentSessionKey ? { parentSessionKey: params.parentSessionKey } : {}),
     ...(params.override
       ? {
-          providerOverride: params.override.provider,
-          modelOverride: params.override.model,
-          modelOverrideSource: "user" as const,
+          executionSelection: {
+            state: "accepted" as const,
+            selection: {
+              model: { provider: params.override.provider, id: params.override.model },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            },
+            fallbackPermission: "explicit" as const,
+          },
         }
       : {}),
     ...(params.locked ? { modelSelectionLocked: true, agentHarnessId: "turn-model-recorder" } : {}),
@@ -298,3 +304,9 @@ export const TURN_MODEL_DIFFERENTIAL_FIXTURES: TurnModelDifferentialFixture[] = 
     },
   },
 ];
+
+for (const fixture of TURN_MODEL_DIFFERENTIAL_FIXTURES) {
+  if (fixture.parent && !fixture.child.executionSelection) {
+    Object.assign(fixture.child, inheritSessionExecutionSelection(fixture.parent.entry));
+  }
+}

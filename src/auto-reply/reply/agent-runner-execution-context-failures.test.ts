@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FailoverError } from "../../agents/failover-error.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import {
@@ -34,6 +35,8 @@ describe("executeAgentTurn: context failures", () => {
 
     const activeSessionEntry = { sessionId: "session", updatedAt: 1 } as SessionEntry;
     const activeSessionStore = { "agent:main:main": activeSessionEntry };
+    const storePath = makeTestSessionStorePath();
+    await replaceSessionEntry({ storePath, sessionKey: "agent:main:main" }, activeSessionEntry);
     const followupRun = createFollowupRun();
     followupRun.run.agentId = "main";
     const { replyOperation, failMock, updateSessionIdMock } = createMockReplyOperation();
@@ -50,7 +53,7 @@ describe("executeAgentTurn: context failures", () => {
       sessionKey: "agent:main:main",
       getActiveSessionEntry: () => activeSessionEntry,
       activeSessionStore,
-      storePath: makeTestSessionStorePath(),
+      storePath,
     });
 
     expect(result.kind).toBe("final");
@@ -80,6 +83,8 @@ describe("executeAgentTurn: context failures", () => {
 
     const activeSessionEntry = { sessionId: "session", updatedAt: 1 } as SessionEntry;
     const activeSessionStore = { "agent:main:main": activeSessionEntry };
+    const storePath = makeTestSessionStorePath();
+    await replaceSessionEntry({ storePath, sessionKey: "agent:main:main" }, activeSessionEntry);
     const followupRun = createFollowupRun();
     followupRun.run.agentId = "main";
     const { replyOperation, failMock, updateSessionIdMock } = createMockReplyOperation();
@@ -96,7 +101,7 @@ describe("executeAgentTurn: context failures", () => {
       sessionKey: "agent:main:main",
       getActiveSessionEntry: () => activeSessionEntry,
       activeSessionStore,
-      storePath: makeTestSessionStorePath(),
+      storePath,
     });
 
     expect(result.kind).toBe("final");
@@ -159,8 +164,10 @@ describe("executeAgentTurn: context failures", () => {
     );
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openrouter";
-    followupRun.run.model = "qwen3.6-plus";
+    followupRun.run.executionSelection = {
+      model: { provider: "openrouter", id: "qwen3.6-plus" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     followupRun.run.config = {
       models: {
         providers: {

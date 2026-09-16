@@ -9,15 +9,28 @@ import type { RunEmbeddedAgentInternalParams } from "../../agents/embedded-agent
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
 import { FailoverError, type FallbackAttemptRecord } from "../../agents/failover-error.js";
 import { AUTH_INVALID_TOKEN_USER_TEXT } from "../../agents/failover/user-copy.js";
+import type { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import type { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import { evaluatePublishedModelRuntimeChoice } from "../../agents/model-runtime-choice.js";
 import {
   initialModelFallbackAttemptOptions,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import type { SessionEntry } from "../../config/sessions.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
-import { getActivePluginRegistryVersion } from "../../plugins/runtime.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isModelExecutionSelection,
+  type ModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  getActivePluginRegistryVersion,
+  requireActivePluginRegistry,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import {
   createUserTurnTranscriptRecorder,
   type PersistedUserTurnMessage,
@@ -70,6 +83,7 @@ const state = vi.hoisted(() => ({
   runEmbeddedAgentEntryMock: vi.fn(),
   runCliAgentMock: vi.fn(),
   runWithModelFallbackMock: vi.fn(),
+  cliModels: new Map<string, string>(),
   isCliProviderMock: vi.fn((_provider: unknown) => false),
   isInternalMessageChannelMock: vi.fn((_channel: unknown) => false),
   createBlockReplyDeliveryHandlerMock: vi.fn(),
@@ -148,39 +162,8 @@ vi.mock("../../agents/model-fallback-runner.js", () => ({
         return params.run(provider, model, options);
       },
     };
-    const adapted = input.classifyResult
-      ? {
-          ...input,
-          classifyResult: (
-            classification: Parameters<NonNullable<typeof params.classifyResult>>[0],
-          ) => {
-            const candidate = classification.result;
-            const wrappedCandidate =
-              candidate && typeof candidate === "object" && "result" in candidate
-                ? candidate
-                : { result: candidate };
-            return input.classifyResult?.({
-              ...classification,
-              result: wrappedCandidate,
-            });
-          },
-        }
-      : input;
-    const resolved = (await state.runWithModelFallbackMock(adapted)) as {
-      outcome?: "completed" | "exhausted";
-      result?: unknown;
-      [key: string]: unknown;
-    };
-    const candidate = resolved?.result;
-    const wrappedCandidate =
-      candidate && typeof candidate === "object" && "result" in candidate
-        ? candidate
-        : { result: candidate };
-    return {
-      ...resolved,
-      outcome: resolved.outcome ?? "completed",
-      result: wrappedCandidate,
-    };
+    const resolved = await state.runWithModelFallbackMock(input);
+    return { ...resolved, outcome: resolved.outcome ?? "completed" };
   },
 }));
 
@@ -337,14 +320,6 @@ vi.mock("./agent-runner-utils.js", async () => ({
           },
         },
   resolveQueuedReplyRuntimeConfig: <T>(config: T) => config,
-  resolveModelFallbackOptions: vi.fn(
-    (run: { provider?: string; model?: string; config?: unknown; agentDir?: string }) => ({
-      provider: run.provider,
-      model: run.model,
-      cfg: run.config,
-      agentDir: run.agentDir,
-    }),
-  ),
   resolveRunFastModeForFallbackCandidate: (params: {
     run: { fastMode?: unknown; fastModeAutoOnSeconds?: unknown };
   }) => ({
@@ -513,6 +488,43 @@ export function createMockTypingSignaler(): TypingSignaler {
   };
 }
 
+export function configureTestCliModel(
+  followupRun: FollowupRun,
+  provider: string,
+  model: string,
+  backendId = provider,
+  modelProvider = provider,
+): ModelExecutionSelection {
+  state.cliModels.set(`${provider}/${model}`, backendId);
+  const registry = requireActivePluginRegistry();
+  setActivePluginRegistry({
+    ...registry,
+    cliBackends: [
+      ...registry.cliBackends.filter(({ backend }) => backend.id !== backendId),
+      {
+        pluginId: "execution-test-cli",
+        source: "test",
+        backend: { id: backendId, modelProvider, config: { command: "test-cli" } },
+      },
+    ],
+  });
+  const cfg = followupRun.run.config;
+  followupRun.run.config = {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: {
+        ...cfg.agents?.defaults,
+        models: {
+          ...cfg.agents?.defaults?.models,
+          [`${provider}/${model}`]: { agentRuntime: { id: backendId } },
+        },
+      },
+    },
+  };
+  return { model: { provider, id: model }, executor: { kind: "cli", id: backendId } };
+}
+
 export function createFollowupRun(): FollowupRun {
   const rootDir = useAutoCleanupTempDirTracker(onTestFinished).make("openclaw-agent-execution-");
   return {
@@ -672,6 +684,33 @@ export function createAgentTurnExecutionDefaults() {
   } satisfies Partial<AgentTurnParams>;
 }
 
+export function createLiveSwitchSession(followupRun: FollowupRun) {
+  let entry: SessionEntry = {
+    sessionId: followupRun.run.sessionId,
+    updatedAt: 1,
+    lifecycleRevision: "reply-fixture-generation",
+    executionSelection: {
+      state: "accepted",
+      selection: followupRun.run.executionSelection,
+      fallbackPermission: "configured",
+    },
+    authProfileOverride: followupRun.run.authProfileId,
+    authProfileOverrideSource: followupRun.run.authProfileIdSource,
+  };
+  return {
+    getActiveSessionEntry: () => entry,
+    publish(error: LiveSessionModelSwitchError, cause: "user" | "reset" = "user") {
+      const next = { ...entry };
+      commitSessionExecutionSelection(next, error.selection, { cause: { kind: cause } });
+      next.authProfileOverride = error.authProfileId;
+      next.authProfileOverrideSource = error.authProfileId ? error.authProfileIdSource : undefined;
+      next.authProfileOverrideCompactionCount = undefined;
+      entry = next;
+      return error;
+    },
+  };
+}
+
 export function createRunAgentTurnParams(followupRun: FollowupRun): AgentTurnParams {
   return {
     commandBody: "hello",
@@ -738,12 +777,23 @@ export async function setupAgentRunnerExecutionTestState() {
 
   beforeEach(() => {
     vi.useRealTimers();
+    const registry = captureActivePluginRegistrySnapshot();
+    setActivePluginRegistry(createEmptyPluginRegistry());
+    state.cliModels.clear();
     const generation = { current: true };
     onTestFinished(() => {
       generation.current = false;
+      restoreActivePluginRegistrySnapshot(registry);
     });
     vi.mocked(evaluatePublishedModelRuntimeChoice).mockImplementation(
-      async ({ provider, model }) => {
+      async ({ provider, model, runtimeId }) => {
+        const requiredRuntime = state.cliModels.get(`${provider}/${model}`);
+        const isCliRuntime = requireActivePluginRegistry().cliBackends.some(
+          ({ backend }) => backend.id === runtimeId,
+        );
+        if (requiredRuntime ? runtimeId !== requiredRuntime : isCliRuntime) {
+          return { kind: "unsupported", message: "The fixture model uses a different executor." };
+        }
         const registryGeneration = getActivePluginRegistryVersion();
         return {
           kind: "ready",
@@ -787,9 +837,13 @@ export async function setupAgentRunnerExecutionTestState() {
       }),
     );
     state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
-      result: await params.run("anthropic", "claude", initialModelFallbackAttemptOptions(params)),
-      provider: "anthropic",
-      model: "claude",
+      result: await params.run(
+        params.provider,
+        params.model,
+        initialModelFallbackAttemptOptions(params),
+      ),
+      provider: params.provider,
+      model: params.model,
       attempts: [],
     }));
   });

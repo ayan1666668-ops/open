@@ -4,6 +4,7 @@ import { buildCurrentInboundPrompt } from "../../agents/embedded-agent-runner/ru
 import { updateMcpAppModelContext } from "../../agents/mcp-app-model-context.js";
 import {
   createFollowupRun,
+  configureTestCliModel,
   createMinimalRunAgentTurnParams,
   initialFallbackAttemptOptions,
   setupAgentRunnerExecutionTestState,
@@ -90,9 +91,8 @@ describe("executeAgentTurn MCP App context", () => {
 
   it("retains pending MCP App context in full and resumable CLI prompts until process start", async () => {
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
-    const { provider, model } = followupRun.run;
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
+    const { provider, id: model } = followupRun.run.executionSelection.model;
     state.isCliProviderMock.mockReturnValue(true);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run(provider, model, initialFallbackAttemptOptions(params)),

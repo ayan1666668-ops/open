@@ -659,14 +659,9 @@ describe("executeAgentTurn: lifecycle progress", () => {
 
     expect(result.kind).toBe("success");
     expect(onAgentRunTerminalOutcome).toHaveBeenCalledExactlyOnceWith("failed");
-    const lifecycleEvent = requireRecord(
-      requireMockCallArgWithFields(
-        emitAgentEvent,
-        { runId: "run-timeout", sessionKey: "main", stream: "lifecycle" },
-        "agent event",
-      ),
-      "agent event",
-    );
+    const terminalEvents = terminalEventsForRun(emitAgentEvent.mock.calls, "run-timeout");
+    expect(terminalEvents).toHaveLength(1);
+    const lifecycleEvent = requireRecord(terminalEvents[0], "terminal lifecycle event");
     const lifecycleData = requireRecord(lifecycleEvent.data, "lifecycle data");
     expectRecordFields(lifecycleData, {
       phase: "error",
@@ -802,14 +797,9 @@ describe("executeAgentTurn: lifecycle progress", () => {
       expect(result.runResult.payloads).toEqual([{ text: "recovered" }]);
     }
     expect(onBlockReply).not.toHaveBeenCalled();
-    const lifecycleEvent = requireRecord(
-      requireMockCallArgWithFields(
-        emitAgentEvent,
-        { runId: "run-recovered", sessionKey: "main", stream: "lifecycle" },
-        "agent event",
-      ),
-      "agent event",
-    );
+    const terminalEvents = terminalEventsForRun(emitAgentEvent.mock.calls, "run-recovered");
+    expect(terminalEvents).toHaveLength(1);
+    const lifecycleEvent = requireRecord(terminalEvents[0], "terminal lifecycle event");
     expectRecordFields(requireRecord(lifecycleEvent.data, "lifecycle data"), {
       phase: "end",
       startedAt: 2_000,
@@ -906,8 +896,10 @@ describe("executeAgentTurn: lifecycle progress", () => {
     }));
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.4" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     const result = await executeTestTurn({ followupRun }, { commandBody: "ok do it" });
 
     expect(result.kind).toBe("success");
@@ -944,8 +936,10 @@ describe("executeAgentTurn: lifecycle progress", () => {
     }));
 
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.4" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     const result = await executeTestTurn(
       { followupRun },
       { commandBody: "explain in detail what changed" },

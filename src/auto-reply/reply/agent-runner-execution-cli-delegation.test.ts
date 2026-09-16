@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildCliMcpGrantContext } from "../../agents/cli-runner/mcp-grant-context.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
 import {
+  configureTestCliModel,
   createFollowupRun,
   createMinimalRunAgentTurnParams,
   fallbackAttemptOptions,
@@ -37,8 +38,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     }));
     state.runCliAgentMock.mockResolvedValue({ payloads: [{ text: "done" }], meta: {} });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.inputProvenance = {
       kind: "inter_session",
       sourceTool: "subagent_announce",
@@ -47,7 +47,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expect(resolveMockedCliGrantCapability()).toBeUndefined();
   });
 
@@ -65,6 +65,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [], meta: {} });
     state.runCliAgentMock.mockResolvedValue({ payloads: [{ text: "done" }], meta: {} });
     const followupRun = createFollowupRun();
+    configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.inputProvenance = {
       kind: "inter_session",
       sourceTool: "subagent_announce",
@@ -73,7 +74,7 @@ describe("executeAgentTurn: CLI delegation grants", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
-    expect(result.kind).toBe("success");
+    expect(result).toMatchObject({ kind: "success" });
     expect(resolveMockedCliGrantCapability()).toBe("report_only");
   });
 });

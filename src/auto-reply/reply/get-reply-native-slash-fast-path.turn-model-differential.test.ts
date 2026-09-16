@@ -5,6 +5,10 @@ import * as preparedModelCatalog from "../../agents/prepared-model-catalog.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import {
@@ -125,12 +129,10 @@ async function observeStatusSelection(
   if (!call) {
     throw new Error(`status path did not build a reply for ${fixture.name}`);
   }
+  const selection = getSessionExecutionSelection(call.sessionEntry);
   const ref =
-    call.sessionEntry?.modelOverrideSource !== "default" && call.sessionEntry?.modelOverride
-      ? {
-          provider: call.sessionEntry.providerOverride ?? call.provider,
-          model: call.sessionEntry.modelOverride,
-        }
+    selection && isModelExecutionSelection(selection)
+      ? { provider: selection.model.provider, model: selection.model.id }
       : { provider: call.provider, model: call.model };
   return turnModelVerdict(
     ref,

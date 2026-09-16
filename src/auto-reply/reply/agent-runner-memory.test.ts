@@ -836,10 +836,13 @@ describe("runMemoryFlushIfNeeded", () => {
       return { payloads: [], meta: {} };
     });
     const sessionEntry = createFlushSessionEntry();
+    await writeTestSessionStore(path.join(rootDir, "sessions.json"), "main", sessionEntry);
 
-    await runDefaultMemoryFlush(sessionEntry, {
+    const result = await runDefaultMemoryFlush(sessionEntry, {
       followupRun: createTestFollowupRun({ workspaceDir: rootDir, senderIsOwner: false }),
     });
+
+    expect(result.outcome).toBe("completed");
 
     expect(runEmbeddedAgentMock).toHaveBeenCalledWith(
       expect.objectContaining({ initialTurnTainted: true }),
@@ -4821,7 +4824,7 @@ describe("runMemoryFlushIfNeeded", () => {
         if (fails) {
           throw new Error("synthetic maintenance failure");
         }
-        return { payloads: [] };
+        return { payloads: [], meta: {} };
       });
       const result = await runMemoryFlushIfNeeded({
         opts: { runId: "parent-memory-status" },

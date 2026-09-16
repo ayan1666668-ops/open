@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
+import type { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
   createFollowupRun,
+  configureTestCliModel,
   initialFallbackAttemptOptions,
   createMockTypingSignaler,
   getExecuteAgentTurnForTest,
@@ -98,8 +100,11 @@ function useScriptedClaudeCliBackend() {
 function createClaudeCliFollowupRun() {
   const followupRun = createFollowupRun();
   followupRun.run.agentId = "agent";
-  followupRun.run.provider = "claude-cli";
-  followupRun.run.model = "claude-opus-4-6";
+  followupRun.run.executionSelection = configureTestCliModel(
+    followupRun,
+    "claude-cli",
+    "claude-opus-4-6",
+  );
   followupRun.run.skillsSnapshot = { prompt: "", skills: [], version: 0 };
   followupRun.run.timeoutMs = 10_000;
   return followupRun;
@@ -141,17 +146,15 @@ describe("executeAgentTurn: CLI durable commentary", () => {
 
     expect(state.runCliAgentMock.mock.calls[0]?.[0]).toMatchObject({ emitCommentaryText: true });
     const resolveContextEngineHost = state.runEmbeddedAgentEntryMock.mock.calls[0]?.[0]?.harness
-      ?.resolveContextEngineHost as
-      | ((
-          provider: string,
-          model: string,
-        ) => {
-          id: string;
-          label: string;
-          capabilities: readonly string[];
-        })
-      | undefined;
-    expect(resolveContextEngineHost?.("claude-cli", "claude-opus-4-6")).toEqual({
+      ?.resolveContextEngineHost as Parameters<
+      typeof runEmbeddedAgentEntry
+    >[0]["harness"]["resolveContextEngineHost"];
+    expect(
+      resolveContextEngineHost?.({
+        model: { provider: "claude-cli", id: "claude-opus-4-6" },
+        executor: { kind: "cli", id: "claude-cli" },
+      }),
+    ).toEqual({
       id: "cli:claude-cli",
       label: 'CLI backend "claude-cli"',
       capabilities: ["thread-bootstrap-projection"],

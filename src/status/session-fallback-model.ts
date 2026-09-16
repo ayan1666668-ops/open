@@ -1,5 +1,4 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
 import { readSessionTranscriptBoundedMessageTailPage } from "../config/sessions/session-accessor.sqlite-active-events.js";
 import type { SessionTranscriptReadScope } from "../config/sessions/session-accessor.types.js";
@@ -8,7 +7,10 @@ import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { projectSessionDisplayMessage } from "../gateway/session-display-projection.js";
 import { readSessionTranscriptRunId } from "../sessions/transcript-events.js";
-import { resolveActiveFallbackState } from "./fallback-notice-state.js";
+import {
+  matchesFallbackNoticeModelRef,
+  resolveActiveFallbackState,
+} from "./fallback-notice-state.js";
 
 /** Reads a terminal fallback model only when the run, selection, and notice agree. */
 export function readSessionFallbackModel(params: {
@@ -34,7 +36,7 @@ export function readSessionFallbackModel(params: {
     selectedModel: params.selectedModel,
     parseSelectedProvider: params.parseSelectedProvider,
   }).selected.label;
-  if (normalizeOptionalString(entry.fallbackNotice.selectedModel) !== selectedLabel) {
+  if (!matchesFallbackNoticeModelRef(entry.fallbackNotice.selectedModel, selectedLabel)) {
     return undefined;
   }
   try {

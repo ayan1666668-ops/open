@@ -612,6 +612,20 @@ function createSessionEntry(overrides?: Partial<InternalSessionEntry>): Internal
   };
 }
 
+function createHostSessionEntry(overrides?: Partial<InternalSessionEntry>): InternalSessionEntry {
+  return createSessionEntry({
+    executionSelection: {
+      state: "accepted",
+      selection: {
+        model: { provider: "anthropic", id: "claude-opus-4-6" },
+        executor: { kind: "harness", id: "openclaw" },
+      },
+      fallbackPermission: "explicit",
+    },
+    ...overrides,
+  });
+}
+
 function setDirectiveTestProviders(
   providers: Array<{
     id: string;
@@ -658,7 +672,8 @@ beforeEach(() => {
   registerAgentHarness({
     id: "codex",
     label: "Selected app",
-    supports: () => ({ supported: true }),
+    autoSelection: { providerIds: ["openai"] },
+    supports: ({ provider }) => ({ supported: provider === "openai" }),
     async runAttempt() {
       throw new Error("not used");
     },
@@ -2389,7 +2404,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
   });
 
   it("keeps an authorized selection session-only without a default target", async () => {
-    const sessionEntry = createSessionEntry();
+    const sessionEntry = createHostSessionEntry();
     const result = await runHandleCommand("/model openai/gpt-4o", {
       sessionEntry,
       canPersistStickyModelSelection: true,
@@ -2450,7 +2465,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
   });
 
   it("keeps a non-owner model selection session-scoped", async () => {
-    const sessionEntry = createSessionEntry();
+    const sessionEntry = createHostSessionEntry();
 
     const result = await runHandleCommand("/model openai/gpt-4o", {
       sessionEntry,
@@ -2472,7 +2487,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
 
   it("reports immutable agent configuration without claiming an update", async () => {
     stickyModelMock.persistBestEffort.mockReturnValueOnce("skipped-immutable");
-    const sessionEntry = createSessionEntry();
+    const sessionEntry = createHostSessionEntry();
 
     const result = await runHandleCommand("/model openai/gpt-4o -a", {
       sessionEntry,
@@ -2534,9 +2549,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       }),
     );
 
-    expect(result?.text).toBe(
-      "the selected app cannot run the selected model. Choose another model or app.",
-    );
+    expect(result?.text).toBe("the selected app cannot run GPT-4o. Choose another model or app.");
     expect(result?.isError).toBe(true);
     expect(sessionEntry).toEqual(initialSessionEntry);
     expect(queueMocks.refreshQueuedFollowupSession).not.toHaveBeenCalled();
@@ -2759,6 +2772,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
   it("keeps a mixed-command model selection session-scoped without authority", async () => {
     const { sessionEntry } = await persistModelDirectiveForTest({
       command: "/model openai/gpt-4o continue with the request",
+      sessionEntry: createHostSessionEntry(),
       allowedModelKeys: ["anthropic/claude-opus-4-6", "openai/gpt-4o"],
       canPersistStickyModelSelection: false,
     });
@@ -2791,7 +2805,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
   });
 
   it("announces the model change before the thinking remap in the ack", async () => {
-    const sessionEntry = createSessionEntry({ thinkingLevel: "adaptive" });
+    const sessionEntry = createHostSessionEntry({ thinkingLevel: "adaptive" });
 
     const result = await runHandleCommand("/model openai/gpt-4o", {
       allowedModelKeys: new Set(["anthropic/claude-opus-4-6", "openai/gpt-4o"]),
@@ -2812,7 +2826,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     registerInternalHook("session:patch", async (event) => {
       events.push(event);
     });
-    const sessionEntry = createSessionEntry();
+    const sessionEntry = createHostSessionEntry();
 
     await runHandleCommand("/model openai/gpt-4o", { sessionEntry });
 
@@ -2855,7 +2869,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
         }),
       },
     ]);
-    const sessionEntry = createSessionEntry({ thinkingLevel: "xhigh" });
+    const sessionEntry = createHostSessionEntry({ thinkingLevel: "xhigh" });
 
     const result = await runHandleCommand("/model opencode/claude-opus-4-7", {
       allowedModelKeys: new Set([...allowedModelKeys, "opencode/claude-opus-4-7"]),
@@ -2872,7 +2886,7 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
   });
   it("retargets queued followups when /model mutates session state", async () => {
     const directives = parseInlineSessionDirectives("/model openai/gpt-4o");
-    const sessionEntry = createSessionEntry();
+    const sessionEntry = createHostSessionEntry();
 
     await handleDirectiveOnly(
       createHandleParams({
@@ -2891,9 +2905,12 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
       nextAuthProfileIdSource: undefined,
       nextThinking: {
         level: undefined,
-        catalog: allowedModelCatalog,
+        catalog: expect.arrayContaining(allowedModelCatalog),
       },
     });
+    expect(
+      queueMocks.refreshQueuedFollowupSession.mock.calls[0]?.[0].nextThinking?.catalog,
+    ).toHaveLength(allowedModelCatalog.length);
   });
 
   it("suppresses model side effects when a concurrent switch wins", async () => {

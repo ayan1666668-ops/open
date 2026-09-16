@@ -101,11 +101,13 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
       candidateRun: {
         ...params.effectiveRun,
         executionSelection: candidate,
-        ...(isModelExecutionSelection(candidate)
-          ? resolveRunAuthProfile(params.effectiveRun, candidate.model.provider, {
-              config: params.runtimeConfig,
-            })
-          : { authProfileId: undefined, authProfileIdSource: undefined }),
+        ...(candidate.executor.kind === "cli"
+          ? {}
+          : isModelExecutionSelection(candidate)
+            ? resolveRunAuthProfile(params.effectiveRun, candidate.model.provider, {
+                config: params.runtimeConfig,
+              })
+            : { authProfileId: undefined, authProfileIdSource: undefined }),
       },
       cliExecutionProvider: candidate.executor.kind === "cli" ? candidate.executor.id : undefined,
     };

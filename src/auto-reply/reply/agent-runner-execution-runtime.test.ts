@@ -7,6 +7,7 @@ import {
   setupAgentRunnerExecutionTestState,
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
+  configureTestCliModel,
   createFollowupRun,
   initialFallbackAttemptOptions,
   requireRecord,
@@ -39,8 +40,11 @@ describe("executeAgentTurn: runtime selection", () => {
       const executeAgentTurn = await getExecuteAgentTurnForTest();
       const followupRun = createFollowupRun();
       followupRun.run.agentId = "main";
-      followupRun.run.provider = "codex-cli";
-      followupRun.run.model = "gpt-5.4";
+      followupRun.run.executionSelection = configureTestCliModel(
+        followupRun,
+        "codex-cli",
+        "gpt-5.4",
+      );
       followupRun.run.sessionKey = "agent:main:opaque:binding";
       followupRun.run.chatType = chatType;
 
@@ -78,8 +82,7 @@ describe("executeAgentTurn: runtime selection", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
     followupRun.run.agentId = "main";
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.sessionKey = "agent:main:opaque:binding";
     followupRun.run.chatType = "direct";
 
@@ -116,8 +119,7 @@ describe("executeAgentTurn: runtime selection", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.messageProvider = "stale-provider";
 
     await executeAgentTurn({
@@ -168,8 +170,10 @@ describe("executeAgentTurn: runtime selection", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "anthropic";
-    followupRun.run.model = "claude-opus-4-7";
+    followupRun.run.executionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-7" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     followupRun.run.config = {
       agents: {
         defaults: {
@@ -184,11 +188,15 @@ describe("executeAgentTurn: runtime selection", () => {
         ({
           sessionId: "session",
           updatedAt: Date.now(),
-          agentRuntimeOverride: "claude-cli",
+          executionSelection: {
+            state: "accepted",
+            selection: followupRun.run.executionSelection,
+            fallbackPermission: "configured",
+          },
         }) as SessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).not.toHaveBeenCalled();
     expect(state.runEmbeddedAgentMock).toHaveBeenCalledOnce();
     expect(
@@ -217,8 +225,10 @@ describe("executeAgentTurn: runtime selection", () => {
 
       const executeAgentTurn = await getExecuteAgentTurnForTest();
       const followupRun = createFollowupRun();
-      followupRun.run.provider = "openai";
-      followupRun.run.model = "gpt-5.4";
+      followupRun.run.executionSelection = {
+        model: { provider: "openai", id: "gpt-5.4" },
+        executor: { kind: "harness", id: "codex" },
+      };
       followupRun.run.modelSelectionLocked = true;
 
       const result = await executeAgentTurn({
@@ -227,14 +237,18 @@ describe("executeAgentTurn: runtime selection", () => {
           ({
             sessionId: "session",
             updatedAt: Date.now(),
-            agentRuntimeOverride: "codex",
+            executionSelection: {
+              state: "accepted",
+              selection: followupRun.run.executionSelection,
+              fallbackPermission: "configured",
+            },
             modelSelectionLocked: true,
             pluginOwnerId: "model-owner",
             agentHarnessId,
           }) as SessionEntry,
       });
 
-      expect(result.kind).toBe("success");
+      expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
       expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
         provider: "openai",
         model: "gpt-5.4",
@@ -245,7 +259,7 @@ describe("executeAgentTurn: runtime selection", () => {
     },
   );
 
-  it("forwards model-scoped Codex policy as a worker preparation hint", async () => {
+  it("forwards the accepted executor as the worker preparation hint", async () => {
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run("openai", "gpt-5.5", initialFallbackAttemptOptions(params)),
       provider: "openai",
@@ -261,8 +275,10 @@ describe("executeAgentTurn: runtime selection", () => {
     const followupRun = createFollowupRun();
     followupRun.run.agentId = "worker";
     followupRun.run.sessionKey = "agent:worker:main";
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.5";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.5" },
+      executor: { kind: "harness", id: "codex" },
+    };
     followupRun.run.config = {
       agents: {
         ownership: "explicit",
@@ -282,17 +298,17 @@ describe("executeAgentTurn: runtime selection", () => {
       sessionKey: "agent:worker:main",
     });
 
-    expect(result.kind).toBe("success");
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
       agentId: "worker",
       githubPublicationAvailable: false,
       agentHarnessId: undefined,
-      agentHarnessRuntimeOverride: undefined,
+      agentHarnessRuntimeOverride: "codex",
       agentHarnessRuntimePreparationHint: "codex",
     });
   });
 
-  it("keeps catalog-adopted Codex sessions on Codex during heartbeat model overrides", async () => {
+  it("keeps the accepted executor during heartbeat despite another policy preference", async () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run(
@@ -311,8 +327,10 @@ describe("executeAgentTurn: runtime selection", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "anthropic";
-    followupRun.run.model = "claude-opus-4-6";
+    followupRun.run.executionSelection = {
+      model: { provider: "anthropic", id: "claude-opus-4-6" },
+      executor: { kind: "harness", id: "codex" },
+    };
     followupRun.run.config = {
       agents: {
         defaults: {
@@ -330,6 +348,11 @@ describe("executeAgentTurn: runtime selection", () => {
         ({
           sessionId: "catalog-adopted-session",
           updatedAt: Date.now(),
+          executionSelection: {
+            state: "accepted",
+            selection: followupRun.run.executionSelection,
+            fallbackPermission: "configured",
+          },
           agentHarnessId: "codex",
           modelSelectionLocked: true,
           pluginExtensions: {
@@ -343,7 +366,7 @@ describe("executeAgentTurn: runtime selection", () => {
         }) as SessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).not.toHaveBeenCalled();
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
       provider: "anthropic",
@@ -370,8 +393,10 @@ describe("executeAgentTurn: runtime selection", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.4" },
+      executor: { kind: "harness", id: "codex" },
+    };
     followupRun.run.config = {};
 
     const result = await executeAgentTurn({
@@ -380,12 +405,17 @@ describe("executeAgentTurn: runtime selection", () => {
         ({
           sessionId: "catalog-adopted-session",
           updatedAt: Date.now(),
+          executionSelection: {
+            state: "accepted",
+            selection: followupRun.run.executionSelection,
+            fallbackPermission: "configured",
+          },
           agentHarnessId: "codex",
           modelSelectionLocked: true,
         }) as SessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).not.toHaveBeenCalled();
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
       provider: "openai",
@@ -419,8 +449,13 @@ describe("executeAgentTurn: runtime selection", () => {
     }));
     state.runCliAgentMock.mockResolvedValueOnce({ payloads: [{ text: "continued" }], meta: {} });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "anthropic";
-    followupRun.run.model = "claude-sonnet-4-6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "anthropic",
+      "claude-sonnet-4-6",
+      "claude-cli",
+      "anthropic",
+    );
     followupRun.run.modelSelectionLocked = true;
     // Modality preparation looks up the canonical model, not the CLI backend alias.
     followupRun.run.thinkingCatalog = [
@@ -435,7 +470,11 @@ describe("executeAgentTurn: runtime selection", () => {
         updatedAt: 1,
         modelSelectionLocked: true,
         pluginOwnerId: "cli-owner",
-        agentRuntimeOverride: "claude-cli",
+        executionSelection: {
+          state: "accepted",
+          selection: followupRun.run.executionSelection,
+          fallbackPermission: "configured",
+        },
         agentHarnessId: "claude-cli",
       }),
     });
@@ -448,7 +487,7 @@ describe("executeAgentTurn: runtime selection", () => {
     });
   });
 
-  it("honors agent session runtime overrides before CLI runtime aliases", async () => {
+  it("honors the accepted executor before a configured CLI preference", async () => {
     state.isCliProviderMock.mockImplementation((provider: unknown) => provider === "claude-cli");
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run("openai", "gpt-5.4", initialFallbackAttemptOptions(params)),
@@ -463,8 +502,10 @@ describe("executeAgentTurn: runtime selection", () => {
 
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.4" },
+      executor: { kind: "harness", id: "codex" },
+    };
     followupRun.run.config = {
       agents: {
         defaults: {
@@ -479,11 +520,15 @@ describe("executeAgentTurn: runtime selection", () => {
         ({
           sessionId: "session",
           updatedAt: Date.now(),
-          agentRuntimeOverride: "codex",
+          executionSelection: {
+            state: "accepted",
+            selection: followupRun.run.executionSelection,
+            fallbackPermission: "configured",
+          },
         }) as SessionEntry,
     });
 
-    expect(result.kind).toBe("success");
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).not.toHaveBeenCalled();
     expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
       provider: "openai",

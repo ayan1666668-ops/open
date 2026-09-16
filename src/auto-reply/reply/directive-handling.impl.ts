@@ -12,6 +12,7 @@ import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
+import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-snapshot-merge.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import {
@@ -547,11 +548,11 @@ export async function handleDirectiveOnly(
       if (modelSelection && isModelSelectionLocked(current)) {
         throw new DirectiveCommitError(MODEL_SELECTION_LOCKED_MESSAGE);
       }
+      return current;
     };
     const assertSelectionCurrent = () => {
-      assertActive();
-      const current = readCurrentEntry();
-      if (!current || executionSelectionTransactionChanged(initialSessionEntry, current)) {
+      const current = assertActive();
+      if (executionSelectionTransactionChanged(initialSessionEntry, current)) {
         throw new DirectiveCommitError(
           "Model change was not applied because the session changed. Retry.",
         );
@@ -654,6 +655,11 @@ export async function handleDirectiveOnly(
       if (selectionCommitted && failure && acceptedSelection && preparedModel) {
         confirmationNotice = failure.confirmationNotice;
       } else if (error instanceof DirectiveCommitError) {
+        const current = readCurrentEntry();
+        if (current) {
+          sessionStore[sessionKey] = current;
+          adoptPersistedSessionSnapshot(sessionEntry, current);
+        }
         return rejectModelTransaction(error.message);
       } else if (failure) {
         return rejectModelTransaction(failure.message);

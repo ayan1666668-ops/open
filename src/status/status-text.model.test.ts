@@ -224,7 +224,7 @@ describe("buildStatusText prepared context windows", () => {
           fallbackNotice: {
             kind: "active",
             selectedModel: "MiXeD/Model:Case",
-            activeModel: "fallback/small-model",
+            activeModel: "FaLlBaCk/small-model",
           },
         },
       },
@@ -270,6 +270,32 @@ describe("buildStatusText prepared context windows", () => {
           },
           "other-run",
         ),
+      },
+    ],
+    [
+      "case-distinct selected model",
+      {
+        status: {
+          provider: "mixed",
+          model: "Model:Case",
+          thinkingCatalog: [
+            ...catalog,
+            {
+              provider: "mixed",
+              id: "Model:Case",
+              contextWindow: 1_000_000,
+              contextTokens: 1_000_000,
+            },
+          ],
+        },
+        entry: {
+          executionSelection: acceptedSelection("mixed", "Model:Case"),
+          fallbackNotice: {
+            kind: "active",
+            selectedModel: "MiXeD/model:case",
+            activeModel: "fallback/small-model",
+          },
+        },
       },
     ],
     [

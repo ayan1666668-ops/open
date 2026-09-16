@@ -1,5 +1,6 @@
 /** Agent-runner execution loop, fallback handling, and user-facing failure mapping. */
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   hasNonEmptyString,
   normalizeOptionalString,
@@ -30,6 +31,7 @@ import { leaseMcpAppModelContextForTurn } from "../../agents/mcp-app-model-conte
 import { createAgentPatchedSessionModelRunGuard } from "../../agents/session-model-auto-revert.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import {
@@ -42,11 +44,18 @@ import { drainAgentRunTerminalWrites } from "../../infra/agent-run-terminal-writ
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
-import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  getSessionExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   bindGatewayContextResolver,
   getPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
+import {
+  isModelSelectionLocked,
+  ModelSelectionLockedError,
+} from "../../sessions/model-overrides.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { handleAgentExecutionError } from "./agent-runner-error-handler.js";
 import { recordAgentTurnExecutionOutcome } from "./agent-runner-execution-outcome.js";
@@ -137,26 +146,8 @@ async function executeAgentTurnInternalLoop(
           ...runnableRun,
           config: runtimeConfig,
         };
+  const sessionLifecycleRevision = params.getActiveSessionEntry()?.lifecycleRevision;
   let liveModelSwitchRuntimeEntry: SessionEntry | undefined;
-  const applyLiveModelSwitchToRun = (
-    run: FollowupRun["run"],
-    err: LiveSessionModelSwitchError,
-  ): void => {
-    run.executionSelection = err.selection;
-    run.authProfileId = err.authProfileId;
-    run.authProfileIdSource = err.authProfileId ? err.authProfileIdSource : undefined;
-    // Keep runtime paired with the error's model/auth winner even if the
-    // active in-memory session snapshot lags the persisted directive write.
-    liveModelSwitchRuntimeEntry =
-      params.storePath && params.sessionKey
-        ? loadSessionEntryReadOnly({
-            agentId: run.agentId,
-            storePath: params.storePath,
-            sessionKey: params.sessionKey,
-            readConsistency: "latest",
-          })
-        : params.getActiveSessionEntry();
-  };
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
   const agentTurnTiming = createAgentTurnTimingTracker({
@@ -367,9 +358,39 @@ async function executeAgentTurnInternalLoop(
       fallbackAttempts = cycle.fallbackAttempts;
       terminalRunFailed = cycle.terminalRunFailed;
       break;
-    } catch (err) {
-      if (err instanceof LiveSessionModelSwitchError) {
-        liveModelSwitchRetries += 1;
+    } catch (caught) {
+      let err = caught;
+      let committedSwitchEntry: SessionEntry | undefined;
+      try {
+        if (err instanceof LiveSessionModelSwitchError) {
+          liveModelSwitchRetries += 1;
+          const current =
+            params.storePath && params.sessionKey
+              ? loadSessionEntryReadOnly({
+                  agentId: runnableRun.agentId,
+                  storePath: params.storePath,
+                  sessionKey: params.sessionKey,
+                  readConsistency: "latest",
+                })
+              : params.getActiveSessionEntry();
+          if (
+            !current ||
+            current.sessionId !== (params.replyOperation?.sessionId ?? runnableRun.sessionId) ||
+            current.lifecycleRevision !== sessionLifecycleRevision ||
+            !isDeepStrictEqual(getSessionExecutionSelection(current), err.selection) ||
+            normalizeOptionalString(current.authProfileOverride) !== err.authProfileId ||
+            resolveCollapsedSessionAuthPinSource(current) !== err.authProfileIdSource ||
+            isModelSelectionLocked(current)
+          ) {
+            err = isModelSelectionLocked(current)
+              ? new ModelSelectionLockedError()
+              : new Error("The session selection changed. Retry the turn.");
+          } else {
+            committedSwitchEntry = current;
+          }
+        }
+      } catch (error) {
+        err = error;
       }
       const action = await handleAgentExecutionError({
         turn: params,
@@ -394,14 +415,16 @@ async function executeAgentTurnInternalLoop(
           },
         };
       }
-      if (action.liveModelSwitchError) {
+      if (action.liveModelSwitchError && committedSwitchEntry) {
+        liveModelSwitchRuntimeEntry = committedSwitchEntry;
         const switchError = action.liveModelSwitchError;
-        applyLiveModelSwitchToRun(params.followupRun.run, switchError);
-        if (runnableRun !== params.followupRun.run) {
-          applyLiveModelSwitchToRun(runnableRun, switchError);
-        }
-        if (effectiveRun !== runnableRun && effectiveRun !== params.followupRun.run) {
-          applyLiveModelSwitchToRun(effectiveRun, switchError);
+        for (const run of new Set([params.followupRun.run, runnableRun, effectiveRun])) {
+          run.sessionId = committedSwitchEntry.sessionId;
+          run.executionSelection = switchError.selection;
+          run.authProfileId = switchError.authProfileId;
+          run.authProfileIdSource = switchError.authProfileId
+            ? switchError.authProfileIdSource
+            : undefined;
         }
       }
       continue;

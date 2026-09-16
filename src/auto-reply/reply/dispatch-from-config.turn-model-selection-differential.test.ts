@@ -117,7 +117,14 @@ describe("turn model selection harness-path differential", () => {
           sessionId: "owned-session",
           updatedAt: 100,
           agentHarnessId: "codex",
-          agentRuntimeOverride: "openclaw",
+          executionSelection: {
+            state: "accepted",
+            selection: {
+              model: { provider: "openai", id: "dispatch-model" },
+              executor: { kind: "harness", id: expectedOverride },
+            },
+            fallbackPermission: "explicit",
+          },
           modelSelectionLocked: true,
           pluginOwnerId,
         },

@@ -28,6 +28,7 @@ import {
   getExecuteAgentTurnForTest,
   createMockTypingSignaler,
   createFollowupRun,
+  configureTestCliModel,
   fallbackAttemptOptions,
   initialFallbackAttemptOptions,
   createMockReplyOperation,
@@ -328,8 +329,10 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     "revalidates original thinking for main-chat fallback with turn request=%s",
     async (override) => {
       const followupRun = createFollowupRun();
-      followupRun.run.provider = "openai";
-      followupRun.run.model = "gpt-5.6-sol";
+      followupRun.run.executionSelection = {
+        model: { provider: "openai", id: "gpt-5.6-sol" },
+        executor: { kind: "harness", id: "openclaw" },
+      };
       followupRun.run.thinkLevel = "ultra";
       if (override !== undefined) {
         followupRun.run = {
@@ -376,8 +379,10 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
 
   it("preserves thinking for runtime-discovered Ollama fallback models", async () => {
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "openai";
-    followupRun.run.model = "gpt-5.6-sol";
+    followupRun.run.executionSelection = {
+      model: { provider: "openai", id: "gpt-5.6-sol" },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     followupRun.run.thinkLevel = "high";
     followupRun.run.thinkingCatalog = [{ provider: "ollama", id: "qwen3.5:4b", reasoning: true }];
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => {
@@ -777,8 +782,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       return { payloads: [{ text: "final" }], meta: {} };
     });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "codex-cli";
-    followupRun.run.model = "gpt-5.4";
+    followupRun.run.executionSelection = configureTestCliModel(followupRun, "codex-cli", "gpt-5.4");
     followupRun.run.clientCaps = ["tool-events", "inline-widgets"];
     followupRun.media = [{ path: "/tmp/cli.png", contentType: "image/png" }];
     const typingSignals = createMockTypingSignaler();
@@ -814,8 +818,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "sonnet-4.6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "sonnet-4.6",
+    );
     const params = createMinimalRunAgentTurnParams({
       followupRun,
       opts: { isHeartbeat: true },
@@ -901,8 +908,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
     const followupRun = createFollowupRun();
-    followupRun.run.provider = "claude-cli";
-    followupRun.run.model = "sonnet-4.6";
+    followupRun.run.executionSelection = configureTestCliModel(
+      followupRun,
+      "claude-cli",
+      "sonnet-4.6",
+    );
     const opts: InternalGetReplyOptions = { isHeartbeat: true, cleanupBundleMcpOnRunEnd: true };
     const params = createMinimalRunAgentTurnParams({ followupRun, opts });
     params.isHeartbeat = true;

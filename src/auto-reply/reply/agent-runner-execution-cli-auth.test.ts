@@ -3,8 +3,10 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { saveAuthProfileStore } from "../../agents/auth-profiles/store-runtime.js";
 import type { AuthProfileCredential } from "../../agents/auth-profiles/types.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
+import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../../agents/failover/user-copy.js";
 import { closeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
 import {
+  configureTestCliModel,
   createFollowupRun,
   createMinimalRunAgentTurnParams,
   expectMockCallArgFields,
@@ -100,8 +102,10 @@ describe("executeAgentTurn: CLI credential selection", () => {
       );
     });
     const model = "test-model";
-    followupRun.run.provider = testCase.primary;
-    followupRun.run.model = model;
+    followupRun.run.executionSelection = {
+      model: { provider: testCase.primary, id: model },
+      executor: { kind: "harness", id: "openclaw" },
+    };
     followupRun.run.authProfileId = testCase.selected;
     followupRun.run.authProfileIdSource = testCase.source;
     followupRun.run.thinkingCatalog = [{ provider: testCase.provider, id: model, input: ["text"] }];
@@ -143,6 +147,16 @@ describe("executeAgentTurn: CLI credential selection", () => {
       ],
       resolvePluginSetupCliBackend: () => undefined,
     });
+    const cliSelection = configureTestCliModel(
+      followupRun,
+      testCase.provider,
+      model,
+      testCase.backend,
+      testCase.backend === "claude-cli" ? "anthropic" : testCase.provider,
+    );
+    if (testCase.primary === testCase.provider || testCase.primary === "anthropic") {
+      followupRun.run.executionSelection = cliSelection;
+    }
     state.isCliProviderMock.mockImplementation((provider) => provider === testCase.backend);
     state.runWithModelFallbackMock.mockImplementationOnce(async (params: FallbackRunnerParams) => ({
       result: await params.run(
@@ -158,11 +172,16 @@ describe("executeAgentTurn: CLI credential selection", () => {
     const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
     if ("error" in testCase) {
-      expect(await result).toMatchObject({ kind: "final", payload: { isError: true } });
+      expect(await result).toMatchObject({
+        kind: "final",
+        payload: { isError: true, text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT },
+      });
+      const { defaultRuntime } = await import("../../runtime.js");
+      expect(defaultRuntime.error).toHaveBeenCalledWith(expect.stringContaining(testCase.error));
       expect(state.runCliAgentMock).not.toHaveBeenCalled();
       return;
     }
-    expect((await result).kind).toBe("success");
+    expect(await result).toMatchObject({ kind: "success" });
     expect(state.runCliAgentMock).toHaveBeenCalledOnce();
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI credential handoff", {
       provider: testCase.backend,
