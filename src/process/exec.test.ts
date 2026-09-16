@@ -2,7 +2,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { closeSync, existsSync, openSync } from "node:fs";
-import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
