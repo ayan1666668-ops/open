@@ -5436,6 +5436,40 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect(shown).not.toContain("_| Ada | Lead |_");
     });
 
+    // A matching block that already failed partially rethrows instead of replaying its
+    // accepted chunks. The attachment on the final is an independent send, so that
+    // rejection must not cancel it.
+    it("still delivers final media after a partly rejected matching block", async () => {
+      const { chunkMarkdownTextWithMode } = await vi.importActual<
+        typeof import("openclaw/plugin-sdk/reply-chunking")
+      >("openclaw/plugin-sdk/reply-chunking");
+      getFeishuRuntimeMock().channel.text.chunkMarkdownTextWithMode.mockImplementation(
+        chunkMarkdownTextWithMode,
+      );
+      getFeishuRuntimeMock().channel.text.resolveTextChunkLimit.mockReturnValue(200);
+      const { options } = createBlockTableHarness(tableCfg("off"));
+      const text = `${tableMarkdown}\n${"| Grace | Engineer |\n".repeat(30)}`.trim();
+      sendMessageFeishuMock
+        .mockResolvedValueOnce({ messageId: "om-accepted-prefix" })
+        .mockRejectedValueOnce(new Error("later chunk rejected"))
+        .mockResolvedValue({ messageId: "om-later" });
+      sendMediaFeishuMock.mockResolvedValueOnce({ messageId: "om-media" });
+
+      const blockError: unknown = await options
+        .deliver({ text }, { kind: "block" })
+        .catch((error: unknown) => error);
+      expect(blockError).toBeInstanceOf(Error);
+
+      const finalError: unknown = await options
+        .deliver({ text, mediaUrl: "https://example.com/report.png" }, { kind: "final" })
+        .catch((error: unknown) => error);
+
+      // The attachment is attempted even though the text settlement is a rejection.
+      expect(sendMediaFeishuMock).toHaveBeenCalledTimes(1);
+      // The rejection still reaches the caller rather than being swallowed.
+      expect(finalError).toBeInstanceOf(Error);
+    });
+
     // An idle close with no prior block delivery owns nothing in the block receipt map,
     // so a partly accepted close post used to leave the matching final free to send the
     // whole answer again, including the prefix the provider had already taken.

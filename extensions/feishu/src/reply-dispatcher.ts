@@ -1648,6 +1648,19 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       const deliveredResults: FeishuReplyDeliveryResult[] = priorClosedStreamingSettlement
         ? [priorClosedStreamingSettlement.result]
         : [];
+      // A partial text rejection owns its accepted chunks and must still reach the
+      // caller, but an attachment is an independent send that the rejection should not
+      // cancel. Sites that send text before media hold the failure here and surface it
+      // once the media has been attempted, with both recorded.
+      let textPartialFailure: unknown;
+      const holdPartialForMedia = (error: unknown, hasMediaToSend: boolean): void => {
+        const accepted = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
+        if (!hasMediaToSend || !accepted) {
+          throw error;
+        }
+        deliveredResults.push(accepted);
+        textPartialFailure = error;
+      };
       const collectDelivery = async (
         pending: Promise<FeishuReplyDeliveryResult>,
         acceptedContent?: string,
@@ -1710,12 +1723,29 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               info?.kind === "final" || (info?.kind === "block" && !sentIndependentBlockText)
                 ? mentionTargets
                 : undefined;
-            await collectDelivery(sendPostReply(text, info?.kind, firstChunkMentions));
+            // A partial text failure owns its accepted chunks, and a matching block that
+            // already failed that way rethrows here rather than replaying them. The
+            // attachment is an independent send, so the rejection holds until the media
+            // has been attempted and both are reported together.
+            try {
+              await collectDelivery(sendPostReply(text, info?.kind, firstChunkMentions));
+            } catch (error: unknown) {
+              holdPartialForMedia(error, hasMedia);
+            }
             if (info?.kind === "block") {
               sentIndependentBlockText = true;
             }
             if (hasMedia) {
               await collectDelivery(sendMediaReplies(payload));
+            }
+            if (textPartialFailure !== undefined) {
+              const accumulated = mergeFeishuReplyDeliveryResults(deliveredResults, text);
+              throw createFeishuPartialReplyDeliveryError(
+                textPartialFailure instanceof Error
+                  ? (textPartialFailure.cause ?? textPartialFailure)
+                  : textPartialFailure,
+                { ...accumulated, content: accumulated.content ?? "" },
+              );
             }
           }
           return mergeFeishuReplyDeliveryResults(deliveredResults, text);
@@ -1828,7 +1858,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         } else {
           const firstChunkMentions =
             info?.kind === "final" && mentionTargets?.length ? mentionTargets : undefined;
-          deliveredResults.push(await sendPostReply(text, info?.kind, firstChunkMentions));
+          try {
+            deliveredResults.push(await sendPostReply(text, info?.kind, firstChunkMentions));
+          } catch (error: unknown) {
+            holdPartialForMedia(error, hasMedia);
+          }
         }
       }
 
@@ -1840,6 +1874,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               ? { fallbackText: text }
               : undefined,
           ),
+        );
+      }
+      if (textPartialFailure !== undefined) {
+        const withMedia = mergeFeishuReplyDeliveryResults(deliveredResults, text);
+        throw createFeishuPartialReplyDeliveryError(
+          textPartialFailure instanceof Error
+            ? (textPartialFailure.cause ?? textPartialFailure)
+            : textPartialFailure,
+          { ...withMedia, content: withMedia.content ?? "" },
         );
       }
       const deliveredContent = hasVoiceMedia ? (deliveredResults.at(-1)?.content ?? text) : text;
