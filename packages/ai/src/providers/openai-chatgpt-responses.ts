@@ -686,9 +686,7 @@ function buildRequestBody(
   }
 
   if (context.tools) {
-    // The Responses API treats an absent `strict` as strict mode, which forces the
-    // model to emit every optional property (Codex sends `strict: false` for the
-    // same reason). Tool schemas here are not strict-compatible, so say so.
+    // Explicit false prevents the backend from normalizing optional properties into required ones.
     const tools = convertResponsesToolPayload(context.tools, { strict: false });
     if (tools.length > 0) {
       body.tools = tools;

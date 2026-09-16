@@ -89,27 +89,36 @@ describe("ChatGPT Responses tool request controls", () => {
     });
   });
 
-  it("declares non-strict tools so optional properties stay optional", async () => {
-    // An absent `strict` is strict mode on the Responses API: the model then fills
-    // every optional property with a placeholder instead of omitting it.
+  it.each([
+    { label: "all-optional", required: [] },
+    { label: "mixed-required", required: ["action"] },
+  ])("preserves $label schemas in streamOpenAICodexResponses", async ({ required }) => {
+    const parameters = {
+      type: "object",
+      properties: { action: { type: "string" }, after: { type: "string" } },
+      required,
+      additionalProperties: false,
+    };
+    const expectedParameters = structuredClone(parameters);
     const payload = await capturePayload({
       ...context,
       tools: [
         {
           name: "board",
           description: "Read or edit a board.",
-          parameters: {
-            type: "object",
-            properties: { action: { type: "string" }, after: { type: "string" } },
-            required: ["action"],
-            additionalProperties: false,
-          },
+          parameters,
         },
       ],
     });
 
-    const [tool] = payload.tools as [{ strict: unknown; parameters: { required: string[] } }];
-    expect(tool.strict).toBe(false);
-    expect(tool.parameters.required).toEqual(["action"]);
+    expect(payload.tools).toEqual([
+      {
+        type: "function",
+        name: "board",
+        description: "Read or edit a board.",
+        strict: false,
+        parameters: expectedParameters,
+      },
+    ]);
   });
 });
