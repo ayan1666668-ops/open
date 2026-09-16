@@ -10,7 +10,6 @@
 import path from "node:path";
 import { distArtifactEntryArgs } from "./dist-artifact-ownership.mts";
 import { runManagedCommand } from "./managed-child-process.mts";
-import { resolveRepoRoot } from "./repo-root.mjs";
 import {
   TSDOWN_UNIFIED_CONFIG_GROUP,
   TSDOWN_UNIFIED_DTS_CONFIG_GROUPS,
@@ -25,9 +24,9 @@ const TYPED_RUNTIME_DTS_GROUP = TSDOWN_UNIFIED_DTS_CONFIG_GROUPS[0];
  * runtime dist entries (both .js and .d.ts) exist for the type-check shard.
  */
 export async function buildTsgoCoreTestTypedRuntimeDist(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
+  repoRoot: string,
 ): Promise<number> {
-  const repoRoot = resolveRepoRoot(import.meta.url);
   console.error(
     "[tsgo core test] building typed runtime dist entries before dist-dependent shards",
   );
