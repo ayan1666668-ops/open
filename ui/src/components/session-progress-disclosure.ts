@@ -9,7 +9,7 @@ export const PROGRESS_DISCLOSURE = {
   scrollSettleMs: 300,
 } as const;
 
-export type ProgressDisclosureChoice = boolean | number;
+type ProgressDisclosureChoice = boolean | number;
 
 export type ProgressDisclosureState = Readonly<{
   open: boolean;
