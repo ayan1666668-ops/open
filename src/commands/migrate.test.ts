@@ -1,13 +1,20 @@
+// Top-level migrate command tests cover provider planning, interactive selection, apply flow, and JSON output.
 import fs from "node:fs/promises";
+import { CANCEL_SYMBOL } from "@clack/prompts";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MigrationApplyResult, MigrationPlan } from "../plugins/types.js";
-import type { RuntimeEnv } from "../runtime.js";
+import type {
+  MigrationApplyResult,
+  MigrationPlan,
+  MigrationProviderPlugin,
+} from "../plugins/types.js";
+import { createNonExitingRuntime, ExitError, type RuntimeEnv } from "../runtime.js";
 
 const mocks = vi.hoisted(() => ({
   backupCreateCommand: vi.fn(),
-  cancelSymbol: Symbol("cancel"),
   clackCancel: vi.fn(),
-  clackIsCancel: vi.fn(),
+  clackConfirm: vi.fn(),
+  clackLogMessage: vi.fn(),
   multiselect: vi.fn(),
   progress: {
     setLabel: vi.fn(),
@@ -33,8 +40,18 @@ vi.mock("../config/config.js", () => ({
   loadConfig: () => ({}),
 }));
 
+// Per-run unique + realpath'd state dir: the apply flow writes real report dirs under it and
+// the suite rm -rf's it, so concurrent runs on one machine must never share the root (macOS
+// os.tmpdir() is a /var -> /private/var symlink).
+const testStateDir = await vi.hoisted(async () => {
+  const { mkdtemp, realpath } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  return await realpath(await mkdtemp(join(tmpdir(), "openclaw-migrate-command-test-")));
+});
+
 vi.mock("../config/paths.js", () => ({
-  resolveStateDir: () => "/tmp/openclaw-migrate-command-test",
+  resolveStateDir: () => testStateDir,
 }));
 
 vi.mock("../cli/prompt.js", () => ({
@@ -45,21 +62,22 @@ vi.mock("../cli/progress.js", () => ({
   withProgress: mocks.withProgress,
 }));
 
-vi.mock("@clack/prompts", () => ({
+vi.mock("@clack/prompts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clack/prompts")>()),
   cancel: mocks.clackCancel,
-  isCancel: mocks.clackIsCancel,
-  log: { message: vi.fn() },
+  confirm: mocks.clackConfirm,
+  log: { message: mocks.clackLogMessage },
 }));
 
 vi.mock("./migrate/skill-selection-prompt.js", () => ({
-  promptMigrationSelectionValues: mocks.multiselect,
   promptMigrationSkillSelectionValues: mocks.multiselect,
 }));
 
 vi.mock("../plugins/migration-provider-runtime.js", () => ({
-  ensureStandaloneMigrationProviderRegistryLoaded: vi.fn(),
-  resolvePluginMigrationProvider: () => mocks.provider,
-  resolvePluginMigrationProviders: () => [mocks.provider],
+  withPluginMigrationProviders: async (
+    params: { providerId?: string },
+    run: (providers: MigrationProviderPlugin[]) => Promise<unknown>,
+  ) => await run([{ ...mocks.provider, id: params.providerId ?? mocks.provider.id }]),
 }));
 
 vi.mock("./backup.js", () => ({
@@ -67,9 +85,9 @@ vi.mock("./backup.js", () => ({
 }));
 
 const {
-  MIGRATION_SKILL_SELECTION_ACCEPT,
-  MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF,
-  MIGRATION_SKILL_SELECTION_TOGGLE_ALL_ON,
+  MIGRATION_SELECTION_ACCEPT,
+  MIGRATION_SELECTION_TOGGLE_ALL_OFF,
+  MIGRATION_SELECTION_TOGGLE_ALL_ON,
 } = await import("./migrate/selection.js");
 const { migrateApplyCommand, migrateDefaultCommand, migratePlanCommand } =
   await import("./migrate.js");
@@ -90,6 +108,30 @@ function plan(overrides: Partial<MigrationPlan> = {}): MigrationPlan {
     items: [{ id: "workspace:AGENTS.md", kind: "workspace", action: "copy", status: "planned" }],
     ...overrides,
   };
+}
+
+function authPlan(status: MigrationPlan["items"][number]["status"] = "skipped"): MigrationPlan {
+  return plan({
+    summary: {
+      total: 1,
+      planned: status === "planned" ? 1 : 0,
+      migrated: 0,
+      skipped: status === "skipped" ? 1 : 0,
+      conflicts: 0,
+      errors: 0,
+      sensitive: 1,
+    },
+    items: [
+      {
+        id: "auth:openai",
+        kind: "auth",
+        action: status === "planned" ? "create" : "skip",
+        status,
+        sensitive: true,
+        reason: status === "skipped" ? "auth credential migration not selected" : undefined,
+      },
+    ],
+  });
 }
 
 function codexSkillPlan(overrides: Partial<MigrationPlan> = {}): MigrationPlan {
@@ -262,7 +304,7 @@ describe("migrateApplyCommand", () => {
   const originalIsTty = process.stdin.isTTY;
 
   beforeEach(async () => {
-    await fs.rm("/tmp/openclaw-migrate-command-test", { force: true, recursive: true });
+    await fs.rm(testStateDir, { force: true, recursive: true });
     Object.defineProperty(process.stdin, "isTTY", {
       configurable: true,
       value: false,
@@ -275,8 +317,8 @@ describe("migrateApplyCommand", () => {
     mocks.progress.tick.mockClear();
     mocks.multiselect.mockReset();
     mocks.clackCancel.mockReset();
-    mocks.clackIsCancel.mockReset();
-    mocks.clackIsCancel.mockImplementation((value) => value === mocks.cancelSymbol);
+    mocks.clackConfirm.mockReset();
+    mocks.clackLogMessage.mockReset();
     mocks.promptYesNo.mockReset();
     mocks.backupCreateCommand.mockReset();
     mocks.backupCreateCommand.mockResolvedValue({ archivePath: "/tmp/openclaw-backup.tgz" });
@@ -287,7 +329,7 @@ describe("migrateApplyCommand", () => {
       configurable: true,
       value: originalIsTty,
     });
-    await fs.rm("/tmp/openclaw-migrate-command-test", { force: true, recursive: true });
+    await fs.rm(testStateDir, { force: true, recursive: true });
     vi.clearAllMocks();
   });
 
@@ -300,7 +342,7 @@ describe("migrateApplyCommand", () => {
 
   it("requires --yes in non-interactive apply mode", async () => {
     await expect(migrateApplyCommand(runtime, { provider: "hermes" })).rejects.toThrow(
-      "requires --yes",
+      "requires --yes in non-interactive mode. Preview first with openclaw migrate plan 'hermes'.",
     );
     expect(mocks.provider.plan).not.toHaveBeenCalled();
   });
@@ -360,6 +402,23 @@ describe("migrateApplyCommand", () => {
       expect.objectContaining({ indeterminate: true, label: "Scanning codex migration…" }),
       expect.any(Function),
     );
+  });
+
+  it("lets --no-auth-credentials override explicit secret import in plan", async () => {
+    const planned = authPlan("skipped");
+    mocks.provider.plan.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(false);
+      return planned;
+    });
+
+    const result = await migratePlanCommand(runtime, {
+      provider: "hermes",
+      includeSecrets: true,
+      authCredentials: false,
+    });
+
+    expect(result).toBe(planned);
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
   });
 
   it("does not wrap JSON planning in progress output", async () => {
@@ -457,6 +516,203 @@ describe("migrateApplyCommand", () => {
     expect(firstAppliedPlan()).toBe(planned);
   });
 
+  it("asks before including auth credentials in interactive root migrations", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    const skippedAuthPlan = authPlan("skipped");
+    const plannedAuthPlan = authPlan("planned");
+    mocks.provider.plan
+      .mockImplementationOnce(async (ctx) => {
+        expect(ctx.includeSecrets).toBe(false);
+        return skippedAuthPlan;
+      })
+      .mockImplementationOnce(async (ctx) => {
+        expect(ctx.includeSecrets).toBe(true);
+        return plannedAuthPlan;
+      });
+    mocks.clackConfirm.mockResolvedValue(true);
+
+    const result = await migrateDefaultCommand(runtime, { provider: "hermes", dryRun: true });
+
+    expect(result).toBe(plannedAuthPlan);
+    expect(mocks.clackConfirm).toHaveBeenCalledWith({
+      message: "Do you want to migrate your auth credentials as well?",
+      initialValue: true,
+    });
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replan auth credentials when the interactive auth prompt is declined", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    const skippedAuthPlan = authPlan("skipped");
+    mocks.provider.plan.mockResolvedValue(skippedAuthPlan);
+    mocks.clackConfirm.mockResolvedValue(false);
+
+    const result = await migrateDefaultCommand(runtime, { provider: "hermes", dryRun: true });
+
+    expect(result).toBe(skippedAuthPlan);
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
+    expect(mocks.clackConfirm).toHaveBeenCalledWith({
+      message: "Do you want to migrate your auth credentials as well?",
+      initialValue: true,
+    });
+  });
+
+  it("cancels the migration when the interactive auth prompt is canceled", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    const skippedAuthPlan = authPlan("skipped");
+    mocks.provider.plan.mockResolvedValue(skippedAuthPlan);
+    mocks.clackConfirm.mockResolvedValue(CANCEL_SYMBOL);
+
+    await expect(
+      migrateDefaultCommand(runtime, { provider: "hermes", dryRun: true }),
+    ).rejects.toThrow("exit 0");
+
+    expect(mocks.clackCancel).toHaveBeenCalledWith("Migration cancelled.");
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
+    expect(mocks.provider.apply).not.toHaveBeenCalled();
+    expect(mocks.promptYesNo).not.toHaveBeenCalled();
+  });
+
+  it("honors suppressPlanLog while using the interactive auth prompt path", async () => {
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    const skippedAuthPlan = authPlan("skipped");
+    const plannedAuthPlan = authPlan("planned");
+    mocks.provider.plan
+      .mockResolvedValueOnce(skippedAuthPlan)
+      .mockResolvedValueOnce(plannedAuthPlan);
+    mocks.clackConfirm.mockResolvedValue(true);
+
+    const result = await migrateDefaultCommand(runtime, {
+      provider: "hermes",
+      dryRun: true,
+      suppressPlanLog: true,
+    });
+
+    expect(result).toBe(plannedAuthPlan);
+    expect(mocks.clackLogMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps auth credentials skipped by default for non-interactive --yes apply", async () => {
+    const planned = authPlan("skipped");
+    const applied: MigrationApplyResult = {
+      ...planned,
+      items: planned.items,
+    };
+    mocks.provider.plan.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(false);
+      return planned;
+    });
+    mocks.provider.apply.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(false);
+      return applied;
+    });
+
+    await migrateApplyCommand(runtime, { provider: "hermes", yes: true });
+
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
+    expect(mocks.provider.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes auth credentials when --yes is paired with explicit secret import", async () => {
+    const planned = authPlan("planned");
+    const applied: MigrationApplyResult = {
+      ...planned,
+      summary: { ...planned.summary, planned: 0, migrated: 1 },
+      items: planned.items.map((item) => ({ ...item, status: "migrated" })),
+    };
+    mocks.provider.plan.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(true);
+      return planned;
+    });
+    mocks.provider.apply.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(true);
+      return applied;
+    });
+
+    await migrateApplyCommand(runtime, { provider: "hermes", yes: true, includeSecrets: true });
+
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
+    expect(mocks.provider.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets --no-auth-credentials override explicit secret import", async () => {
+    const planned = authPlan("skipped");
+    const applied: MigrationApplyResult = {
+      ...planned,
+      items: planned.items,
+    };
+    mocks.provider.plan.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(false);
+      return planned;
+    });
+    mocks.provider.apply.mockImplementation(async (ctx) => {
+      expect(ctx.includeSecrets).toBe(false);
+      return applied;
+    });
+
+    await migrateApplyCommand(runtime, {
+      provider: "hermes",
+      yes: true,
+      includeSecrets: true,
+      authCredentials: false,
+    });
+
+    expect(mocks.provider.plan).toHaveBeenCalledTimes(1);
+    expect(mocks.provider.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { label: "skills", command: migrateDefaultCommand, acceptSkills: false },
+    { label: "plugins after skills (default)", command: migrateDefaultCommand, acceptSkills: true },
+    { label: "plugins after skills (apply)", command: migrateApplyCommand, acceptSkills: true },
+  ])(
+    "stops before confirmation and apply when cancelling $label",
+    async ({ command, acceptSkills }) => {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      const skillPlan = codexSkillPlan();
+      const items = [...skillPlan.items, ...codexPluginPlan().items];
+      const planned = codexSkillPlan({
+        items,
+        summary: { ...skillPlan.summary, total: items.length, planned: items.length },
+      });
+      const original = structuredClone(planned);
+      mocks.provider.plan.mockResolvedValue(planned);
+      if (acceptSkills) {
+        mocks.multiselect.mockResolvedValueOnce(["skill:alpha"]);
+      }
+      mocks.multiselect.mockResolvedValueOnce(CANCEL_SYMBOL);
+
+      const result = await command(runtime, { provider: "codex" });
+
+      expect(result).toBe(planned);
+      expect(planned).toStrictEqual(original);
+      expect(mocks.clackCancel).toHaveBeenCalledWith("Migration cancelled.");
+      expect(runtime.log).toHaveBeenCalledWith("Migration cancelled.");
+      expect(mocks.multiselect).toHaveBeenCalledTimes(acceptSkills ? 2 : 1);
+      expect(String(multiselectPrompt().message)).toContain("Select Codex skills");
+      if (acceptSkills) {
+        expect(String(multiselectPrompt(1).message)).toContain("Select native Codex plugins");
+        expect(runtime.log).toHaveBeenCalledWith("Selected 1 of 2 Codex skills for migration.");
+      }
+      expect(mocks.clackConfirm).not.toHaveBeenCalled();
+      expect(mocks.promptYesNo).not.toHaveBeenCalled();
+      expect(mocks.backupCreateCommand).not.toHaveBeenCalled();
+      expect(mocks.provider.apply).not.toHaveBeenCalled();
+    },
+  );
+
   it("prompts for Codex skills before interactive default apply", async () => {
     Object.defineProperty(process.stdin, "isTTY", {
       configurable: true,
@@ -479,13 +735,12 @@ describe("migrateApplyCommand", () => {
     const selectionPrompt = multiselectPrompt();
     expect(String(selectionPrompt.message)).toContain("Select Codex skills");
     expect(selectionPrompt.initialValues).toStrictEqual(["skill:alpha", "skill:beta"]);
-    expect(selectionPrompt.required).toBe(false);
     expect(selectionPrompt.options?.map(({ label, value }) => ({ label, value }))).toStrictEqual([
-      { value: MIGRATION_SKILL_SELECTION_ACCEPT, label: "Accept recommended" },
+      { value: MIGRATION_SELECTION_ACCEPT, label: "Accept recommended" },
       { value: "skill:alpha", label: "alpha" },
       { value: "skill:beta", label: "beta" },
-      { value: MIGRATION_SKILL_SELECTION_TOGGLE_ALL_ON, label: "Toggle all on" },
-      { value: MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF, label: "Toggle all off" },
+      { value: MIGRATION_SELECTION_TOGGLE_ALL_ON, label: "Toggle all on" },
+      { value: MIGRATION_SELECTION_TOGGLE_ALL_OFF, label: "Toggle all off" },
     ]);
     expect(mocks.promptYesNo).toHaveBeenCalledWith("Apply this migration now?", false);
     const appliedPlan = firstAppliedPlan();
@@ -539,13 +794,12 @@ describe("migrateApplyCommand", () => {
     const pluginPrompt = multiselectPrompt(1);
     expect(String(pluginPrompt.message)).toContain("Select native Codex plugins");
     expect(pluginPrompt.initialValues).toStrictEqual(["plugin:google-calendar", "plugin:gmail"]);
-    expect(pluginPrompt.required).toBe(false);
     expect(pluginPrompt.options?.map(({ label, value }) => ({ label, value }))).toStrictEqual([
-      { value: MIGRATION_SKILL_SELECTION_ACCEPT, label: "Accept recommended" },
+      { value: MIGRATION_SELECTION_ACCEPT, label: "Accept recommended" },
       { value: "plugin:google-calendar", label: "google-calendar" },
       { value: "plugin:gmail", label: "gmail" },
-      { value: MIGRATION_SKILL_SELECTION_TOGGLE_ALL_ON, label: "Toggle all on" },
-      { value: MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF, label: "Toggle all off" },
+      { value: MIGRATION_SELECTION_TOGGLE_ALL_ON, label: "Toggle all on" },
+      { value: MIGRATION_SELECTION_TOGGLE_ALL_OFF, label: "Toggle all off" },
     ]);
     expect(mocks.promptYesNo).toHaveBeenCalledWith("Apply this migration now?", false);
     const appliedPlan = firstAppliedPlan();
@@ -565,8 +819,8 @@ describe("migrateApplyCommand", () => {
         (
           (
             (
-              appliedPlan.items.find((item) => item.id === "config:codex-plugins")?.details
-                ?.value as Record<string, unknown>
+              appliedPlan.items.find((item) => item.id === "config:codex-plugins")!.details!
+                .value as Record<string, unknown>
             ).config as Record<string, unknown>
           ).codexPlugins as Record<string, unknown>
         ).plugins as Record<string, unknown>,
@@ -595,7 +849,7 @@ describe("migrateApplyCommand", () => {
     });
     mocks.provider.plan.mockResolvedValue(planned);
     mocks.multiselect
-      .mockResolvedValueOnce([MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF])
+      .mockResolvedValueOnce([MIGRATION_SELECTION_TOGGLE_ALL_OFF])
       .mockResolvedValueOnce(["plugin:google-calendar", "plugin:gmail"]);
     mocks.promptYesNo.mockResolvedValue(true);
     mocks.provider.apply.mockImplementation(async (_ctx, selectedPlan: MigrationPlan) => ({
@@ -653,8 +907,8 @@ describe("migrateApplyCommand", () => {
             pluginName: "google-calendar",
           },
         },
-        codexPluginPlan().items[1],
-        codexPluginPlan().items[2],
+        expectDefined(codexPluginPlan().items[1], "codexPluginPlan().items[1] test invariant"),
+        expectDefined(codexPluginPlan().items[2], "codexPluginPlan().items[2] test invariant"),
       ],
     });
     mocks.provider.plan.mockResolvedValue(planned);
@@ -696,7 +950,7 @@ describe("migrateApplyCommand", () => {
     });
     const planned = codexPluginPlan();
     mocks.provider.plan.mockResolvedValue(planned);
-    mocks.multiselect.mockResolvedValue([MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF]);
+    mocks.multiselect.mockResolvedValue([MIGRATION_SELECTION_TOGGLE_ALL_OFF]);
 
     const result = await migrateDefaultCommand(runtime, { provider: "codex" });
 
@@ -812,7 +1066,7 @@ describe("migrateApplyCommand", () => {
     });
     const planned = codexSkillPlan();
     mocks.provider.plan.mockResolvedValue(planned);
-    mocks.multiselect.mockResolvedValue([MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF]);
+    mocks.multiselect.mockResolvedValue([MIGRATION_SELECTION_TOGGLE_ALL_OFF]);
 
     const result = await migrateDefaultCommand(runtime, { provider: "codex" });
 
@@ -840,7 +1094,7 @@ describe("migrateApplyCommand", () => {
     });
     const planned = codexSkillPlan();
     mocks.provider.plan.mockResolvedValue(planned);
-    mocks.multiselect.mockResolvedValue([MIGRATION_SKILL_SELECTION_TOGGLE_ALL_ON]);
+    mocks.multiselect.mockResolvedValue([MIGRATION_SELECTION_TOGGLE_ALL_ON]);
     mocks.promptYesNo.mockResolvedValue(true);
     mocks.provider.apply.mockImplementation(async (_ctx, selectedPlan: MigrationPlan) => ({
       ...selectedPlan,
@@ -852,15 +1106,15 @@ describe("migrateApplyCommand", () => {
 
     await migrateDefaultCommand(runtime, { provider: "codex" });
 
-    let appliedPlan = firstAppliedPlan();
+    const appliedPlan = firstAppliedPlan();
     expect(appliedPlan.summary.planned).toBe(3);
     expect(appliedPlan.summary.skipped).toBe(0);
     expect(appliedPlan.summary.conflicts).toBe(0);
 
     mocks.provider.plan.mockResolvedValue(planned);
     mocks.multiselect.mockResolvedValue([
-      MIGRATION_SKILL_SELECTION_TOGGLE_ALL_ON,
-      MIGRATION_SKILL_SELECTION_TOGGLE_ALL_OFF,
+      MIGRATION_SELECTION_TOGGLE_ALL_ON,
+      MIGRATION_SELECTION_TOGGLE_ALL_OFF,
     ]);
     mocks.promptYesNo.mockResolvedValue(true);
     mocks.provider.apply.mockClear();
@@ -1044,6 +1298,49 @@ describe("migrateApplyCommand", () => {
     expect(mocks.backupCreateCommand).toHaveBeenCalled();
   });
 
+  it.each(["planned", "conflict"] as const)(
+    "keeps --skill configuration inside the selected copy when unselected policy is %s",
+    async (unselectedStatus) => {
+      const planned = plan({
+        items: [
+          {
+            id: "skill:folder",
+            kind: "skill",
+            action: "copy",
+            status: "planned",
+            source: "/tmp/hermes/skills/folder",
+            details: { skillName: "selected" },
+          },
+          ...["selected", "unselected", "target-only"].map((key) => ({
+            id: `config:skill:${key}`,
+            kind: "config" as const,
+            action: "merge" as const,
+            status: key === "selected" ? ("planned" as const) : unselectedStatus,
+            details: { path: ["skills", "entries", key], value: { enabled: false } },
+          })),
+          { id: "other-config", kind: "config", action: "merge", status: "planned" },
+        ],
+      });
+      mocks.provider.plan.mockResolvedValue(planned);
+      mocks.provider.apply.mockImplementation(async (_ctx, selectedPlan: MigrationPlan) => ({
+        ...selectedPlan,
+        summary: { ...selectedPlan.summary, planned: 0, migrated: 3 },
+        items: selectedPlan.items.map((item) =>
+          item.status === "planned" ? { ...item, status: "migrated" as const } : item,
+        ),
+      }));
+
+      await migrateApplyCommand(runtime, { provider: "hermes", yes: true, skills: ["folder"] });
+
+      expect(
+        firstAppliedPlan()
+          .items.filter((item) => item.status === "planned")
+          .map((item) => item.id),
+      ).toEqual(["skill:folder", "config:skill:selected", "other-config"]);
+      expect(firstAppliedPlan().summary.conflicts).toBe(0);
+    },
+  );
+
   it("filters explicit Codex plugins before apply", async () => {
     const planned = codexPluginPlan();
     mocks.provider.plan.mockResolvedValue(planned);
@@ -1222,6 +1519,7 @@ describe("migrateApplyCommand", () => {
     const logs: string[] = [];
     const jsonRuntime: RuntimeEnv = {
       ...runtime,
+      exit: createNonExitingRuntime().exit,
       log(message) {
         logs.push(String(message));
       },
@@ -1231,7 +1529,7 @@ describe("migrateApplyCommand", () => {
 
     await expect(
       migrateApplyCommand(jsonRuntime, { provider: "hermes", yes: true, json: true }),
-    ).rejects.toThrow("Migration finished with 1 error");
+    ).rejects.toBeInstanceOf(ExitError);
 
     expect(logs).toHaveLength(1);
     const logPayload = JSON.parse(logs[0] ?? "{}") as {
@@ -1262,6 +1560,7 @@ describe("migrateApplyCommand", () => {
     const logs: string[] = [];
     const jsonRuntime: RuntimeEnv = {
       ...runtime,
+      exit: createNonExitingRuntime().exit,
       log(message) {
         logs.push(String(message));
       },
@@ -1271,7 +1570,7 @@ describe("migrateApplyCommand", () => {
 
     await expect(
       migrateApplyCommand(jsonRuntime, { provider: "hermes", yes: true, json: true }),
-    ).rejects.toThrow("Migration finished with 1 conflict");
+    ).rejects.toBeInstanceOf(ExitError);
 
     expect(logs).toHaveLength(1);
     const logPayload = JSON.parse(logs[0] ?? "{}") as {
@@ -1341,3 +1640,4 @@ describe("migrateApplyCommand", () => {
     expect(logPayload.warnings).toEqual([warning]);
   });
 });
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

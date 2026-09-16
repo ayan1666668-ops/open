@@ -9,12 +9,13 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Instant
@@ -25,17 +26,14 @@ import kotlin.math.sqrt
 private const val ACCELEROMETER_SAMPLE_TARGET = 20
 private const val ACCELEROMETER_SAMPLE_TIMEOUT_MS = 6_000L
 
-internal data class MotionActivityRequest(
-  val startISO: String?,
-  val endISO: String?,
-  val limit: Int,
-)
-
-internal data class MotionPedometerRequest(
+/** Optional range shared by Android motion commands. */
+internal data class MotionRangeRequest(
   val startISO: String?,
   val endISO: String?,
 )
 
+/** Motion activity sample returned in gateway-compatible boolean flags. */
+@Serializable
 internal data class MotionActivityRecord(
   val startISO: String,
   val endISO: String,
@@ -48,6 +46,7 @@ internal data class MotionActivityRecord(
   val isUnknown: Boolean,
 )
 
+/** Pedometer sample returned from Android's cumulative step counter. */
 internal data class PedometerRecord(
   val startISO: String,
   val endISO: String,
@@ -57,23 +56,22 @@ internal data class PedometerRecord(
   val floorsDescended: Int?,
 )
 
+/** Motion data seam for Android sensors and tests. */
 internal interface MotionDataSource {
   fun isActivityAvailable(context: Context): Boolean
 
   fun isPedometerAvailable(context: Context): Boolean
 
-  fun isAvailable(context: Context): Boolean = isActivityAvailable(context) || isPedometerAvailable(context)
-
   fun hasPermission(context: Context): Boolean
 
   suspend fun activity(
     context: Context,
-    request: MotionActivityRequest,
+    request: MotionRangeRequest,
   ): MotionActivityRecord
 
   suspend fun pedometer(
     context: Context,
-    request: MotionPedometerRequest,
+    request: MotionRangeRequest,
   ): PedometerRecord
 }
 
@@ -94,9 +92,11 @@ private object SystemMotionDataSource : MotionDataSource {
 
   override suspend fun activity(
     context: Context,
-    request: MotionActivityRequest,
+    request: MotionRangeRequest,
   ): MotionActivityRecord {
     if (!request.startISO.isNullOrBlank() || !request.endISO.isNullOrBlank()) {
+      // Android does not expose historical activity samples here; fail with a
+      // stable gateway code instead of pretending the range is empty.
       throw IllegalArgumentException("MOTION_RANGE_UNAVAILABLE: historical activity range not supported on Android")
     }
     val sensorManager =
@@ -127,9 +127,10 @@ private object SystemMotionDataSource : MotionDataSource {
 
   override suspend fun pedometer(
     context: Context,
-    request: MotionPedometerRequest,
+    request: MotionRangeRequest,
   ): PedometerRecord {
     if (!request.startISO.isNullOrBlank() || !request.endISO.isNullOrBlank()) {
+      // TYPE_STEP_COUNTER is cumulative since boot, not a historical query API.
       throw IllegalArgumentException("PEDOMETER_RANGE_UNAVAILABLE: historical pedometer range not supported on Android")
     }
     val sensorManager =
@@ -216,6 +217,8 @@ private object SystemMotionDataSource : MotionDataSource {
                 sumDelta += abs(magnitude - SensorManager.GRAVITY_EARTH.toDouble())
                 count += 1
                 if (count >= ACCELEROMETER_SAMPLE_TARGET) {
+                  // Average gravity-adjusted magnitude across a short window so
+                  // one noisy sensor event cannot decide the activity label.
                   val result =
                     AccelerometerSample(
                       samples = count,
@@ -260,12 +263,12 @@ private object SystemMotionDataSource : MotionDataSource {
   }
 }
 
-class MotionHandler private constructor(
+/** Handles Android motion-related node.invoke commands backed by live sensors. */
+class MotionHandler internal constructor(
   private val appContext: Context,
-  private val dataSource: MotionDataSource,
+  private val dataSource: MotionDataSource = SystemMotionDataSource,
 ) {
-  constructor(appContext: Context) : this(appContext = appContext, dataSource = SystemMotionDataSource)
-
+  /** Classifies a short accelerometer sample into the gateway activity shape. */
   suspend fun handleMotionActivity(paramsJson: String?): GatewaySession.InvokeResult {
     if (!dataSource.hasPermission(appContext)) {
       return GatewaySession.InvokeResult.error(
@@ -274,37 +277,18 @@ class MotionHandler private constructor(
       )
     }
     val request =
-      parseActivityRequest(paramsJson)
+      parseRangeRequest(paramsJson)
         ?: return GatewaySession.InvokeResult.error(
           code = "INVALID_REQUEST",
           message = "INVALID_REQUEST: expected JSON object",
         )
     return try {
       val activity = dataSource.activity(appContext, request)
-      GatewaySession.InvokeResult.ok(
-        buildJsonObject {
-          put(
-            "activities",
-            buildJsonArray {
-              add(
-                buildJsonObject {
-                  put("startISO", JsonPrimitive(activity.startISO))
-                  put("endISO", JsonPrimitive(activity.endISO))
-                  put("confidence", JsonPrimitive(activity.confidence))
-                  put("isWalking", JsonPrimitive(activity.isWalking))
-                  put("isRunning", JsonPrimitive(activity.isRunning))
-                  put("isCycling", JsonPrimitive(activity.isCycling))
-                  put("isAutomotive", JsonPrimitive(activity.isAutomotive))
-                  put("isStationary", JsonPrimitive(activity.isStationary))
-                  put("isUnknown", JsonPrimitive(activity.isUnknown))
-                },
-              )
-            },
-          )
-        }.toString(),
-      )
+      GatewaySession.InvokeResult.ok(Json.encodeToString(mapOf("activities" to listOf(activity))))
     } catch (err: IllegalArgumentException) {
       GatewaySession.InvokeResult.error(code = "MOTION_UNAVAILABLE", message = err.message ?: "MOTION_UNAVAILABLE")
+    } catch (err: CancellationException) {
+      throw err
     } catch (err: Throwable) {
       GatewaySession.InvokeResult.error(
         code = "MOTION_UNAVAILABLE",
@@ -313,6 +297,7 @@ class MotionHandler private constructor(
     }
   }
 
+  /** Returns the current boot-scoped Android step-counter reading. */
   suspend fun handleMotionPedometer(paramsJson: String?): GatewaySession.InvokeResult {
     if (!dataSource.hasPermission(appContext)) {
       return GatewaySession.InvokeResult.error(
@@ -321,7 +306,7 @@ class MotionHandler private constructor(
       )
     }
     val request =
-      parsePedometerRequest(paramsJson)
+      parseRangeRequest(paramsJson)
         ?: return GatewaySession.InvokeResult.error(
           code = "INVALID_REQUEST",
           message = "INVALID_REQUEST: expected JSON object",
@@ -340,6 +325,8 @@ class MotionHandler private constructor(
       )
     } catch (err: IllegalArgumentException) {
       GatewaySession.InvokeResult.error(code = "MOTION_UNAVAILABLE", message = err.message ?: "MOTION_UNAVAILABLE")
+    } catch (err: CancellationException) {
+      throw err
     } catch (err: Throwable) {
       GatewaySession.InvokeResult.error(
         code = "MOTION_UNAVAILABLE",
@@ -348,52 +335,20 @@ class MotionHandler private constructor(
     }
   }
 
-  fun isAvailable(): Boolean = dataSource.isAvailable(appContext)
-
+  /** Returns true when live accelerometer classification can be sampled. */
   fun isActivityAvailable(): Boolean = dataSource.isActivityAvailable(appContext)
 
+  /** Returns true when Android exposes a cumulative step-counter sensor. */
   fun isPedometerAvailable(): Boolean = dataSource.isPedometerAvailable(appContext)
 
-  private fun parseActivityRequest(paramsJson: String?): MotionActivityRequest? {
+  private fun parseRangeRequest(paramsJson: String?): MotionRangeRequest? {
     if (paramsJson.isNullOrBlank()) {
-      return MotionActivityRequest(startISO = null, endISO = null, limit = 200)
+      return MotionRangeRequest(startISO = null, endISO = null)
     }
-    val params =
-      try {
-        Json.parseToJsonElement(paramsJson).asObjectOrNull()
-      } catch (_: Throwable) {
-        null
-      } ?: return null
-    val limit = ((params["limit"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 200).coerceIn(1, 1000)
-    return MotionActivityRequest(
-      startISO = (params["startISO"] as? JsonPrimitive)?.content?.trim()?.ifEmpty { null },
-      endISO = (params["endISO"] as? JsonPrimitive)?.content?.trim()?.ifEmpty { null },
-      limit = limit,
+    val params = parseJsonParamsObject(paramsJson) ?: return null
+    return MotionRangeRequest(
+      startISO = parseJsonString(params, "startISO")?.trim()?.ifEmpty { null },
+      endISO = parseJsonString(params, "endISO")?.trim()?.ifEmpty { null },
     )
-  }
-
-  private fun parsePedometerRequest(paramsJson: String?): MotionPedometerRequest? {
-    if (paramsJson.isNullOrBlank()) {
-      return MotionPedometerRequest(startISO = null, endISO = null)
-    }
-    val params =
-      try {
-        Json.parseToJsonElement(paramsJson).asObjectOrNull()
-      } catch (_: Throwable) {
-        null
-      } ?: return null
-    return MotionPedometerRequest(
-      startISO = (params["startISO"] as? JsonPrimitive)?.content?.trim()?.ifEmpty { null },
-      endISO = (params["endISO"] as? JsonPrimitive)?.content?.trim()?.ifEmpty { null },
-    )
-  }
-
-  companion object {
-    fun isMotionCapabilityAvailable(context: Context): Boolean = SystemMotionDataSource.isAvailable(context)
-
-    internal fun forTesting(
-      appContext: Context,
-      dataSource: MotionDataSource,
-    ): MotionHandler = MotionHandler(appContext = appContext, dataSource = dataSource)
   }
 }

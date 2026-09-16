@@ -1,3 +1,4 @@
+// TTS directive tests cover parsing and applying speech directives.
 import { describe, expect, it } from "vitest";
 import type { SpeechProviderPlugin } from "../plugins/types.js";
 import { createTtsDirectiveTextStreamCleaner, parseTtsDirectives } from "./directives.js";
@@ -116,12 +117,17 @@ describe("parseTtsDirectives provider-aware routing", () => {
   });
 
   it("routes to preferred provider aliases when no provider token is declared", () => {
-    const azure = makeProvider("azure-speech", 20, ({ key, value }) => {
-      if (key === "speed") {
-        return { handled: true, overrides: { speed: Number(value) } };
-      }
-      return undefined;
-    }, { aliases: ["azure"] });
+    const azure = makeProvider(
+      "azure-speech",
+      20,
+      ({ key, value }) => {
+        if (key === "speed") {
+          return { handled: true, overrides: { speed: Number(value) } };
+        }
+        return undefined;
+      },
+      { aliases: ["azure"] },
+    );
 
     const result = parseTtsDirectives("[[tts:speed=1.5]]", fullPolicy, {
       providers: [elevenlabs, azure],
@@ -216,6 +222,24 @@ describe("parseTtsDirectives provider-aware routing", () => {
     expect(selectedProvider).toBe("selected");
   });
 
+  it("routes generic speakerVoice directive tokens to the selected provider", () => {
+    const result = parseTtsDirectives(
+      "[[tts:provider=elevenlabs speakerVoice=Rachel speakerVoiceId=voice-123]]",
+      fullPolicy,
+      { providers: [elevenlabs, minimax] },
+    );
+
+    expect(result.overrides.provider).toBe("elevenlabs");
+    expect(result.overrides.providerOverrides?.elevenlabs).toEqual({
+      speakerVoice: "Rachel",
+      voice: "Rachel",
+      voiceName: "Rachel",
+      speakerVoiceId: "voice-123",
+      voiceId: "voice-123",
+    });
+    expect(result.warnings).toStrictEqual([]);
+  });
+
   it("resolves explicit provider aliases without rewriting the requested provider value", () => {
     const microsoft = makeProvider(
       "microsoft",
@@ -303,16 +327,36 @@ describe("parseTtsDirectives provider-aware routing", () => {
     expect(result.cleanedText).toBe("spoken content");
   });
 
-  it("does not parse tts examples inside markdown code", () => {
-    const input = [
-      "Use `[[tts:text]]` for hidden speech.",
-      "",
-      "```",
-      "[[tts:provider=elevenlabs voice=alloy]]",
-      "```",
-      "",
-      "Then continue normally.",
-    ].join("\n");
+  const ttsExample =
+    "[[tts:text]]hidden example[[/tts:text]] [[tts]]visible example[[/tts]] " +
+    "[[tts:provider=elevenlabs speed=1.2]] [[tts]] [[/tts:text]]";
+
+  it.each([
+    {
+      name: "a closed fence and inline span",
+      input: [
+        "Use `[[tts:text]]` for hidden speech.",
+        "",
+        "```",
+        ttsExample,
+        "```",
+        "",
+        "Then continue normally.",
+      ].join("\n"),
+    },
+    { name: "an unclosed fence", input: `\`\`\`md\n${ttsExample}` },
+    {
+      name: "a false closing fence",
+      input: `\`\`\`md\n\`\`\` not a close\n${ttsExample}\n\`\`\``,
+    },
+    {
+      name: "a longer enclosing fence",
+      input: `\`\`\`\`md\n\`\`\`\n${ttsExample}\n\`\`\`\n\`\`\`\``,
+    },
+    { name: "a multiline code span", input: `Use \`a\n${ttsExample}\nb\` literally.` },
+    { name: "a quoted fence", input: `> \`\`\`md\n> ${ttsExample}\n> \`\`\`` },
+    { name: "an indented code block", input: `    ${ttsExample}` },
+  ])("does not parse tts examples inside $name", ({ input }) => {
     const result = parseTtsDirectives(input, fullPolicy, {
       providers: [elevenlabs, minimax],
     });

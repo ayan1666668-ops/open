@@ -1,14 +1,28 @@
+// Runtime task-flow tests cover plugin task-flow registration and execution behavior.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getTaskFlowById } from "../../tasks/task-flow-registry.js";
+import { createAcpTaskBackingDetailForTest } from "../../tasks/task-backing-authority.test-support.js";
+import { createRunningTaskRunCore } from "../../tasks/task-executor.js";
+import { createTaskFlowForTask, getTaskFlowById } from "../../tasks/task-flow-registry.js";
 import { getTaskById } from "../../tasks/task-registry.js";
+import { getInspectableActiveTaskRestartBlockers } from "../../tasks/task-registry.maintenance.js";
 import {
   installRuntimeTaskDeliveryMock,
   resetRuntimeTaskTestState,
 } from "./runtime-task-test-harness.js";
 import { createRuntimeTaskFlow } from "./runtime-taskflow.js";
 
-afterEach(() => {
-  resetRuntimeTaskTestState({ persist: false });
+type BoundTaskFlow = ReturnType<ReturnType<typeof createRuntimeTaskFlow>["bindSession"]>;
+type MutationName = "setWaiting" | "resume" | "finish" | "fail" | "requestCancel";
+
+function requireCreatedFlow<T>(flow: T | null): T {
+  if (!flow) {
+    throw new Error("expected managed TaskFlow creation to succeed");
+  }
+  return flow;
+}
+
+afterEach(async () => {
+  await resetRuntimeTaskTestState();
 });
 
 describe("runtime TaskFlow", () => {
@@ -26,12 +40,14 @@ describe("runtime TaskFlow", () => {
       },
     });
 
-    const created = taskFlow.createManaged({
-      controllerId: "tests/runtime-taskflow",
-      goal: "Triage inbox",
-      currentStep: "classify",
-      stateJson: { lane: "inbox" },
-    });
+    const created = requireCreatedFlow(
+      taskFlow.createManaged({
+        controllerId: "tests/runtime-taskflow",
+        goal: "Triage inbox",
+        currentStep: "classify",
+        stateJson: { lane: "inbox" },
+      }),
+    );
 
     expect(created.syncMode).toBe("managed");
     expect(created.ownerKey).toBe("agent:main:main");
@@ -55,10 +71,12 @@ describe("runtime TaskFlow", () => {
       },
     });
 
-    const created = taskFlow.createManaged({
-      controllerId: "tests/runtime-taskflow",
-      goal: "Review queue",
-    });
+    const created = requireCreatedFlow(
+      taskFlow.createManaged({
+        controllerId: "tests/runtime-taskflow",
+        goal: "Review queue",
+      }),
+    );
 
     expect(created.requesterOrigin?.channel).toBe("discord");
     expect(created.requesterOrigin?.to).toBe("channel:123");
@@ -84,13 +102,26 @@ describe("runtime TaskFlow", () => {
       sessionKey: "agent:main:other",
     });
 
-    const created = ownerTaskFlow.createManaged({
-      controllerId: "tests/runtime-taskflow",
-      goal: "Inspect PR batch",
-    });
+    const created = requireCreatedFlow(
+      ownerTaskFlow.createManaged({
+        controllerId: "tests/runtime-taskflow",
+        goal: "Inspect PR batch",
+      }),
+    );
 
     expect(otherTaskFlow.get(created.flowId)).toBeUndefined();
     expect(otherTaskFlow.list()).toStrictEqual([]);
+
+    createRunningTaskRunCore({
+      runtime: "acp",
+      ownerKey: "agent:main:main",
+      scopeKind: "session",
+      childSessionKey: "agent:main:subagent:child",
+      runId: "runtime-taskflow-child",
+      task: "Inspect PR 1",
+      startedAt: 10,
+      detail: createAcpTaskBackingDetailForTest("instance:runtime-taskflow-child"),
+    });
 
     const child = ownerTaskFlow.runTask({
       flowId: created.flowId,
@@ -122,5 +153,128 @@ describe("runtime TaskFlow", () => {
     }
     expect(summary.total).toBe(1);
     expect(summary.active).toBe(1);
+  });
+
+  it("applies each managed transition exactly once with its explicit payload", () => {
+    const taskFlow = createRuntimeTaskFlow().bindSession({ sessionKey: "agent:main:main" });
+    const created = requireCreatedFlow(
+      taskFlow.createManaged({
+        controllerId: "tests/runtime-taskflow/transitions",
+        goal: "Apply transitions",
+      }),
+    );
+    const transitions: Array<[name: MutationName, input: Record<string, unknown>, status: string]> =
+      [
+        [
+          "setWaiting",
+          {
+            currentStep: "await_review",
+            stateJson: { phase: "waiting" },
+            waitJson: { kind: "approval" },
+            blockedTaskId: "task-review",
+            blockedSummary: "Review required",
+            updatedAt: 20,
+          },
+          "blocked",
+        ],
+        [
+          "resume",
+          {
+            status: "running",
+            currentStep: "continue_work",
+            stateJson: { phase: "running" },
+            updatedAt: 30,
+          },
+          "running",
+        ],
+        ["finish", { stateJson: { phase: "done" }, updatedAt: 40, endedAt: 41 }, "succeeded"],
+        [
+          "fail",
+          {
+            stateJson: { phase: "failed" },
+            blockedTaskId: "task-failed",
+            blockedSummary: "Task failed",
+            updatedAt: 50,
+            endedAt: 51,
+          },
+          "failed",
+        ],
+        ["requestCancel", { cancelRequestedAt: 60 }, "failed"],
+      ];
+
+    for (const [index, [name, input, status]] of transitions.entries()) {
+      const mutate = taskFlow[name] as BoundTaskFlow["setWaiting"];
+      const result = mutate({
+        flowId: created.flowId,
+        expectedRevision: index,
+        ...input,
+      });
+      expect(result.applied, name).toBe(true);
+      if (!result.applied) {
+        throw new Error(`expected ${name} to apply`);
+      }
+      expect(result.flow, name).toMatchObject({
+        ...input,
+        status,
+        flowId: created.flowId,
+        revision: index + 1,
+      });
+      expect(getTaskFlowById(created.flowId)?.revision, name).toBe(index + 1);
+    }
+  });
+
+  it("rejects invalid mutation targets before writing and preserves conflict mapping", () => {
+    const runtime = createRuntimeTaskFlow();
+    const ownerTaskFlow = runtime.bindSession({ sessionKey: "agent:main:main" });
+    const otherTaskFlow = runtime.bindSession({ sessionKey: "agent:main:other" });
+    const managed = requireCreatedFlow(
+      ownerTaskFlow.createManaged({
+        controllerId: "tests/runtime-taskflow/auth",
+        goal: "Keep ownership",
+      }),
+    );
+
+    const denied = otherTaskFlow.setWaiting({
+      flowId: managed.flowId,
+      expectedRevision: managed.revision,
+    });
+    expect(denied).toEqual({ applied: false, code: "not_found" });
+    expect(getTaskFlowById(managed.flowId)?.revision).toBe(0);
+
+    const mirrored = requireCreatedFlow(
+      createTaskFlowForTask({
+        task: {
+          ownerKey: "agent:main:main",
+          taskId: "task-mirrored",
+          notifyPolicy: "done_only",
+          status: "running",
+          task: "Mirror this task",
+          createdAt: 10,
+          lastEventAt: 10,
+        },
+      }),
+    );
+    const wrongMode = ownerTaskFlow.resume({
+      flowId: mirrored.flowId,
+      expectedRevision: mirrored.revision,
+    });
+    expect(wrongMode).toMatchObject({ applied: false, code: "not_managed" });
+
+    const conflict = ownerTaskFlow.finish({ flowId: managed.flowId, expectedRevision: 1 });
+    expect(conflict).toMatchObject({ applied: false, code: "revision_conflict" });
+    expect(getTaskFlowById(managed.flowId)).toMatchObject({
+      revision: 0,
+      status: "queued",
+    });
+    expect(getTaskFlowById(managed.flowId)?.endedAt).toBeUndefined();
+    expect(getTaskFlowById(mirrored.flowId)?.revision).toBe(0);
+  });
+
+  // Declared last on purpose: it observes what the earlier tests' afterEach
+  // resets left behind. A reset that keeps durable rows lets
+  // ensureTaskRegistryReady() restore them here, and every later test file in
+  // this isolate:false worker then inherits phantom active restart blockers.
+  it("leaves no restorable task restart blockers for later test files", () => {
+    expect(getInspectableActiveTaskRestartBlockers()).toStrictEqual([]);
   });
 });

@@ -1,24 +1,23 @@
-import { execFileSync } from "node:child_process";
+/** Builds runtime command arguments for gateway and node service installs. */
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isSupportedNodeVersion } from "../infra/runtime-guard.js";
+import { SUPPORTED_NODE_VERSIONS } from "../../node-version.mjs";
+import type { GatewayDaemonRuntime } from "../commands/daemon-runtime.js";
 import {
   buildGatewayDistEntrypointCandidates,
   findFirstAccessibleGatewayEntrypoint,
   isGatewayDistEntrypointPath,
 } from "./gateway-entrypoint.js";
-import { isBunRuntime, isNodeRuntime } from "./runtime-binary.js";
+import { resolveGatewayHeapExecArgv } from "./gateway-heap.js";
+import type { GatewayServiceCommandConfig } from "./service-types.js";
 
 type GatewayProgramArgs = {
   programArguments: string[];
   workingDirectory?: string;
 };
 
-type GatewayRuntimePreference = "auto" | "node" | "bun";
-
 export const OPENCLAW_WRAPPER_ENV_KEY = "OPENCLAW_WRAPPER";
-export const OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY = "OPENCLAW_DAEMON_RUNTIME_PATH";
 
 async function resolveCliEntrypointPathForService(): Promise<string> {
   const argv1 = process.argv[1];
@@ -30,6 +29,8 @@ async function resolveCliEntrypointPathForService(): Promise<string> {
   const resolvedPath = await resolveRealpathSafe(normalized);
   const looksLikeDist = isGatewayDistEntrypointPath(resolvedPath);
   if (looksLikeDist) {
+    // Existing installed command lines may point at versioned pnpm realpaths.
+    // Repair prefers stable package symlink paths when they still exist.
     const preferredDistEntrypoint = await findFirstAccessibleGatewayEntrypoint(
       buildGatewayDistEntrypointCandidates(normalized, resolvedPath),
       async (candidate) => {
@@ -132,6 +133,7 @@ function appendNodeModulesBinCandidates(
   if (parts[binIndex - 1] !== "node_modules") {
     return;
   }
+  // openclaw from node_modules/.bin points at the package root sibling.
   const binName = path.basename(inputPath);
   const nodeModulesDir = parts.slice(0, binIndex).join(path.sep);
   const packageRoot = path.join(nodeModulesDir, binName);
@@ -152,36 +154,6 @@ function resolveRepoRootForDev(): string {
   return parts.slice(0, srcIndex).join(path.sep);
 }
 
-async function resolveBunPath(): Promise<string> {
-  const bunPath = await resolveBinaryPath("bun");
-  return bunPath;
-}
-
-async function resolveNodePath(): Promise<string> {
-  const nodePath = await resolveBinaryPath("node");
-  return nodePath;
-}
-
-async function resolveBinaryPath(binary: string): Promise<string> {
-  const cmd = process.platform === "win32" ? "where" : "which";
-  try {
-    const output = execFileSync(cmd, [binary], { encoding: "utf8" }).trim();
-    const resolved = output.split(/\r?\n/)[0]?.trim();
-    if (!resolved) {
-      throw new Error("empty");
-    }
-    await fs.access(resolved);
-    return resolved;
-  } catch {
-    if (binary === "bun") {
-      throw new Error("Bun not found in PATH. Install bun: https://bun.sh");
-    }
-    throw new Error(
-      "Node not found in PATH. Install Node 24 (recommended) or Node 22 LTS (22.16+).",
-    );
-  }
-}
-
 export async function resolveOpenClawWrapperPath(
   inputPath: string | undefined,
 ): Promise<string | undefined> {
@@ -195,6 +167,8 @@ export async function resolveOpenClawWrapperPath(
     if (!stat.isFile()) {
       throw new Error("not a regular file");
     }
+    // Wrappers replace the runtime executable, so require execute permission up
+    // front rather than generating a service that fails at boot.
     await fs.access(resolved, fsConstants.X_OK);
   } catch (error) {
     const detail = error instanceof Error ? ` (${error.message})` : "";
@@ -206,107 +180,10 @@ export async function resolveOpenClawWrapperPath(
   return resolved;
 }
 
-function pathModuleFor(inputPath: string) {
-  return /^[A-Za-z]:[\\/]/.test(inputPath) || inputPath.includes("\\") ? path.win32 : path.posix;
-}
-
-function normalizeAbsoluteRuntimePath(inputPath: string): string {
-  const modulePath = pathModuleFor(inputPath);
-  if (!modulePath.isAbsolute(inputPath)) {
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} must be an absolute executable path: ${inputPath}`,
-    );
-  }
-  return modulePath.normalize(inputPath);
-}
-
-export function resolveOpenClawRuntimePathKind(runtimePath: string): "node" | "bun" | undefined {
-  if (isNodeRuntime(runtimePath)) {
-    return "node";
-  }
-  if (isBunRuntime(runtimePath)) {
-    return "bun";
-  }
-  return undefined;
-}
-
-function validateRuntimePathKind(
-  runtimePath: string,
-  runtime: GatewayRuntimePreference,
-): "node" | "bun" {
-  const runtimeKind = resolveOpenClawRuntimePathKind(runtimePath);
-  if (!runtimeKind) {
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} must point to a node or bun executable: ${runtimePath}`,
-    );
-  }
-  if (runtime !== "auto" && runtimeKind !== runtime) {
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} must point to a ${runtime} executable when --runtime ${runtime} is used: ${runtimePath}`,
-    );
-  }
-  return runtimeKind;
-}
-
-function validateNodeRuntimePathVersion(runtimePath: string): void {
-  let versionText = "";
-  try {
-    versionText = execFileSync(runtimePath, ["-p", "process.versions.node"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} could not run node version check for ${runtimePath}: ${detail}`,
-      { cause: error },
-    );
-  }
-
-  if (!isSupportedNodeVersion(versionText)) {
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} points to unsupported Node ${versionText || "unknown"} at ${runtimePath}; OpenClaw requires Node 22.16 or newer.`,
-    );
-  }
-}
-
-export async function resolveOpenClawRuntimePath(
-  inputPath: string | undefined,
-  runtime: GatewayRuntimePreference,
-): Promise<string | undefined> {
-  const trimmed = inputPath?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const resolved = normalizeAbsoluteRuntimePath(trimmed);
-  const runtimeKind = validateRuntimePathKind(resolved, runtime);
-  try {
-    const stat = await fs.stat(resolved);
-    if (!stat.isFile()) {
-      throw new Error("not a regular file");
-    }
-    await fs.access(resolved, fsConstants.X_OK);
-  } catch (error) {
-    const detail = error instanceof Error ? ` (${error.message})` : "";
-    throw new Error(
-      `${OPENCLAW_DAEMON_RUNTIME_PATH_ENV_KEY} must point to an executable file: ${resolved}${detail}`,
-      { cause: error },
-    );
-  }
-
-  if (runtimeKind === "node") {
-    validateNodeRuntimePathVersion(resolved);
-  }
-
-  return resolved;
-}
-
 async function resolveCliProgramArguments(params: {
   args: string[];
   dev?: boolean;
-  runtime?: GatewayRuntimePreference;
-  nodePath?: string;
+  runtime: GatewayDaemonRuntime;
   runtimePath?: string;
   wrapperPath?: string;
 }): Promise<GatewayProgramArgs> {
@@ -315,119 +192,91 @@ async function resolveCliProgramArguments(params: {
     return { programArguments: [wrapperPath, ...params.args] };
   }
 
-  const execPath = process.execPath;
-  const runtime = params.runtime ?? "auto";
-  const explicitRuntimePath = await resolveOpenClawRuntimePath(params.runtimePath, runtime);
-  const effectiveRuntime =
-    runtime === "auto" && explicitRuntimePath
-      ? resolveOpenClawRuntimePathKind(explicitRuntimePath)
-      : runtime;
-
-  if (effectiveRuntime === "node") {
-    const nodePath =
-      explicitRuntimePath ??
-      params.nodePath ??
-      (isNodeRuntime(execPath) ? execPath : await resolveNodePath());
-    const cliEntrypointPath = await resolveCliEntrypointPathForService();
-    return {
-      programArguments: [nodePath, cliEntrypointPath, ...params.args],
-    };
+  if (!params.runtimePath?.trim()) {
+    throw new Error(
+      params.runtime === "bun"
+        ? "No supported Bun runtime was selected for the daemon. Install Bun 1.4 or newer with WAL-reset-safe node:sqlite, then retry."
+        : `No supported Node runtime was selected for the daemon. Install Node ${SUPPORTED_NODE_VERSIONS}, then retry.`,
+    );
   }
+  const runtimePath = params.runtimePath;
 
-  if (effectiveRuntime === "bun") {
-    if (params.dev) {
-      const repoRoot = resolveRepoRootForDev();
-      const devCliPath = path.join(repoRoot, "src", "entry.ts");
-      await fs.access(devCliPath);
-      const bunPath =
-        explicitRuntimePath ?? (isBunRuntime(execPath) ? execPath : await resolveBunPath());
-      return {
-        programArguments: [bunPath, devCliPath, ...params.args],
-        workingDirectory: repoRoot,
-      };
-    }
-
-    const bunPath =
-      explicitRuntimePath ?? (isBunRuntime(execPath) ? execPath : await resolveBunPath());
-    const cliEntrypointPath = await resolveCliEntrypointPathForService();
+  if (params.dev) {
+    const repoRoot = resolveRepoRootForDev();
+    const devCliPath = path.join(repoRoot, "src", "entry.ts");
+    await fs.access(devCliPath);
     return {
-      programArguments: [bunPath, cliEntrypointPath, ...params.args],
-    };
-  }
-
-  if (!params.dev) {
-    try {
-      const cliEntrypointPath = await resolveCliEntrypointPathForService();
-      return {
-        programArguments: [execPath, cliEntrypointPath, ...params.args],
-      };
-    } catch (error) {
-      // If running under bun or another runtime that can execute TS directly
-      if (!isNodeRuntime(execPath)) {
-        return { programArguments: [execPath, ...params.args] };
-      }
-      throw error;
-    }
-  }
-
-  // Dev mode: use bun to run TypeScript directly
-  const repoRoot = resolveRepoRootForDev();
-  const devCliPath = path.join(repoRoot, "src", "entry.ts");
-  await fs.access(devCliPath);
-
-  // If already running under bun, use current execPath
-  if (isBunRuntime(execPath)) {
-    return {
-      programArguments: [execPath, devCliPath, ...params.args],
+      programArguments:
+        params.runtime === "bun"
+          ? [runtimePath, devCliPath, ...params.args]
+          : [runtimePath, "--import", "tsx", devCliPath, ...params.args],
       workingDirectory: repoRoot,
     };
   }
 
-  // Otherwise resolve bun from PATH
-  const bunPath = await resolveBunPath();
+  const cliEntrypointPath = await resolveCliEntrypointPathForService();
   return {
-    programArguments: [bunPath, devCliPath, ...params.args],
-    workingDirectory: repoRoot,
+    programArguments: [runtimePath, cliEntrypointPath, ...params.args],
   };
 }
 
 export async function resolveGatewayProgramArguments(params: {
   port: number;
+  allowUnconfigured?: boolean;
   dev?: boolean;
-  runtime?: GatewayRuntimePreference;
-  nodePath?: string;
+  runtime: GatewayDaemonRuntime;
   runtimePath?: string;
   wrapperPath?: string;
+  existingCommand?: GatewayServiceCommandConfig | null;
 }): Promise<GatewayProgramArgs> {
   const gatewayArgs = ["gateway", "--port", String(params.port)];
-  return resolveCliProgramArguments({
+  if (params.allowUnconfigured) {
+    gatewayArgs.push("--allow-unconfigured");
+  }
+  const result = await resolveCliProgramArguments({
     args: gatewayArgs,
     dev: params.dev,
     runtime: params.runtime,
-    nodePath: params.nodePath,
     runtimePath: params.runtimePath,
     wrapperPath: params.wrapperPath,
   });
+  if (params.runtime === "node" && !params.wrapperPath?.trim()) {
+    // Size only the managed Gateway, before Node loads its entrypoint. Keeping
+    // automatic flags out of NODE_OPTIONS leaves ordinary spawned Node children alone.
+    result.programArguments.splice(1, 0, ...resolveGatewayHeapExecArgv(params.existingCommand));
+  }
+  return result;
 }
 
 export async function resolveNodeProgramArguments(params: {
   host: string;
   port: number;
+  contextPath?: string;
   tls?: boolean;
   tlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
+  installedAppsSharing?: boolean;
+  commands?: string[];
+  allCommands?: boolean;
   dev?: boolean;
-  runtime?: GatewayRuntimePreference;
-  nodePath?: string;
+  runtime: GatewayDaemonRuntime;
   runtimePath?: string;
+  wrapperPath?: string;
 }): Promise<GatewayProgramArgs> {
   const args = ["node", "run", "--host", params.host, "--port", String(params.port)];
-  if (params.tls || params.tlsFingerprint) {
+  if (params.tls === false && !params.tlsFingerprint) {
+    // Managed services must carry plaintext explicitly; omission would let the
+    // node runtime re-inherit TLS from the operator's global Gateway config.
+    args.push("--no-tls");
+  } else if (params.tls || params.tlsFingerprint) {
     args.push("--tls");
   }
   if (params.tlsFingerprint) {
     args.push("--tls-fingerprint", params.tlsFingerprint);
+  }
+  if (params.contextPath) {
+    args.push("--context-path", params.contextPath);
   }
   if (params.nodeId) {
     args.push("--node-id", params.nodeId);
@@ -435,11 +284,19 @@ export async function resolveNodeProgramArguments(params: {
   if (params.displayName) {
     args.push("--display-name", params.displayName);
   }
+  if (params.installedAppsSharing !== undefined) {
+    args.push(params.installedAppsSharing ? "--share-installed-apps" : "--no-share-installed-apps");
+  }
+  if (params.allCommands) {
+    args.push("--all-commands");
+  } else if (params.commands !== undefined) {
+    args.push("--commands", params.commands.join(","));
+  }
   return resolveCliProgramArguments({
     args,
     dev: params.dev,
     runtime: params.runtime,
-    nodePath: params.nodePath,
     runtimePath: params.runtimePath,
+    wrapperPath: params.wrapperPath,
   });
 }

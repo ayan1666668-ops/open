@@ -1,34 +1,46 @@
+// Plugin host hook methods expose plugin UI descriptors and validate plugin
+// session action payload/result JSON against declared schemas.
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  ErrorCodes,
+  errorShape,
+  formatValidationErrors,
+  missingScopeErrorShape,
+  validatePluginsSessionActionParams,
+  validatePluginsSessionActionResult,
+  validatePluginsUiDescriptorsParams,
+  validatePluginsUiDescriptorsResult,
+} from "../../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { isPluginJsonValue } from "../../plugins/host-hooks.js";
-import { getActivePluginRegistry } from "../../plugins/runtime.js";
+import { getPluginRegistryVersion } from "../../plugins/runtime-state.js";
+import { getPluginRegistryForContext } from "../../plugins/runtime/gateway-request-scope.js";
 import {
   validateJsonSchemaValue,
   type JsonSchemaValidationError,
   type JsonSchemaValue,
 } from "../../plugins/schema-validator.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { ADMIN_SCOPE, READ_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
 import {
-  ErrorCodes,
-  errorShape,
-  formatValidationErrors,
-  validatePluginsSessionActionParams,
-  validatePluginsSessionActionResult,
-  validatePluginsUiDescriptorsParams,
-} from "../protocol/index.js";
+  listControlUiPluginDescriptors,
+  listControlUiPluginTabs,
+  listControlUiPluginWidgetKinds,
+} from "../control-ui-plugin-tabs.js";
+import { authorizeOperatorScopesForRequiredScope } from "../method-scopes.js";
+import { WRITE_SCOPE } from "../operator-scopes.js";
+import { resolveRequestedSessionAgentId } from "../session-request-agent.js";
+import { resolveStoredSessionKeyForAgentStore } from "../session-store-key.js";
 import type { GatewayRequestHandlers } from "./types.js";
+import { assertValidParams } from "./validation.js";
 
 const log = createSubsystemLogger("gateway/plugin-host-hooks");
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
 
 function formatSessionActionPayloadSchemaErrors(errors: JsonSchemaValidationError[]): string {
   return errors.map((error) => error.text).join("; ");
 }
 
+/** Ensures plugin action result extension fields stay JSON-compatible on the wire. */
 function validatePluginSessionActionJsonFields(
   result: Record<string, unknown>,
 ): string | undefined {
@@ -40,42 +52,92 @@ function validatePluginSessionActionJsonFields(
   return undefined;
 }
 
+/** Gateway handlers for plugin-declared Control UI descriptors and session actions. */
 export const pluginHostHookHandlers: GatewayRequestHandlers = {
-  "plugins.uiDescriptors": ({ params, respond }) => {
-    if (!validatePluginsUiDescriptorsParams(params)) {
+  "plugins.uiDescriptors": ({ params, respond, client, context }) => {
+    if (
+      !assertValidParams(
+        params,
+        validatePluginsUiDescriptorsParams,
+        "plugins.uiDescriptors",
+        respond,
+      )
+    ) {
+      return;
+    }
+    const methods = context.getGatewayMethodRegistry?.();
+    if (!methods) {
       respond(
         false,
         undefined,
         errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid plugins.uiDescriptors params: ${formatValidationErrors(validatePluginsUiDescriptorsParams.errors)}`,
+          ErrorCodes.UNAVAILABLE,
+          "Gateway plugin capabilities are unavailable in this runtime.",
         ),
       );
       return;
     }
-    const descriptors = (getActivePluginRegistry()?.controlUiDescriptors ?? []).map((entry) =>
-      Object.assign({}, entry.descriptor, {
-        pluginId: entry.pluginId,
-        pluginName: entry.pluginName,
+    const scopes = client?.connect.scopes ?? [];
+    const result = {
+      ok: true,
+      generation: getPluginRegistryVersion(getPluginRegistryForContext()),
+      descriptors: listControlUiPluginDescriptors(scopes),
+      methods: methods.listAdvertisedMethods(),
+      controlUiTabs: listControlUiPluginTabs(scopes, {
+        requireGatewayAuthGrant: context.getRuntimeConfig().gateway?.auth?.mode !== "none",
       }),
-    );
-    respond(true, { ok: true, descriptors }, undefined);
-  },
-  "plugins.sessionAction": async ({ params, client, respond }) => {
-    if (!validatePluginsSessionActionParams(params)) {
+      controlUiWidgetKinds: listControlUiPluginWidgetKinds(scopes),
+      pluginSurfaceUrls: client?.pluginSurfaceUrls ?? {},
+    };
+    if (!validatePluginsUiDescriptorsResult(result)) {
+      log.warn("invalid plugins.uiDescriptors result", {
+        errors: validatePluginsUiDescriptorsResult.errors,
+      });
       respond(
         false,
         undefined,
         errorShape(
-          ErrorCodes.INVALID_REQUEST,
-          `invalid plugins.sessionAction params: ${formatValidationErrors(validatePluginsSessionActionParams.errors)}`,
+          ErrorCodes.UNAVAILABLE,
+          `invalid plugins.uiDescriptors result: ${formatValidationErrors(validatePluginsUiDescriptorsResult.errors)}`,
         ),
       );
+      return;
+    }
+    respond(true, result, undefined);
+  },
+  "plugins.sessionAction": async ({ params, client, respond, context }) => {
+    if (
+      !assertValidParams(
+        params,
+        validatePluginsSessionActionParams,
+        "plugins.sessionAction",
+        respond,
+      )
+    ) {
       return;
     }
     const pluginId = normalizeOptionalString(params.pluginId);
     const actionId = normalizeOptionalString(params.actionId);
-    const sessionKey = normalizeOptionalString(params.sessionKey);
+    const rawSessionKey = normalizeOptionalString(params.sessionKey);
+    const sessionOwner = rawSessionKey
+      ? resolveRequestedSessionAgentId(
+          context.getRuntimeConfig(),
+          rawSessionKey,
+          normalizeOptionalString(params.agentId),
+        )
+      : undefined;
+    if (sessionOwner && !sessionOwner.ok) {
+      respond(false, undefined, sessionOwner.error);
+      return;
+    }
+    const sessionKey =
+      rawSessionKey && sessionOwner?.ok
+        ? resolveStoredSessionKeyForAgentStore({
+            cfg: context.getRuntimeConfig(),
+            agentId: sessionOwner.agentId,
+            sessionKey: rawSessionKey,
+          })
+        : undefined;
     if (!pluginId || !actionId) {
       respond(
         false,
@@ -87,7 +149,7 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const registry = getActivePluginRegistry();
+    const registry = getPluginRegistryForContext();
     const pluginLoaded = Boolean(
       registry?.plugins.some((plugin) => plugin.id === pluginId && plugin.status === "loaded"),
     );
@@ -106,23 +168,17 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
       return;
     }
     const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
-    const hasAdmin = scopes.includes(ADMIN_SCOPE);
     const requiredScopes =
       registration.action.requiredScopes && registration.action.requiredScopes.length > 0
         ? registration.action.requiredScopes
         : [WRITE_SCOPE];
+    // Recheck the selected registration after async router admission, using the same
+    // scope implications so the two authorization gates cannot diverge.
     const missingScope = requiredScopes.find(
-      (scope) =>
-        !hasAdmin &&
-        !scopes.includes(scope) &&
-        !(scope === READ_SCOPE && scopes.includes(WRITE_SCOPE)),
+      (scope) => !authorizeOperatorScopesForRequiredScope(scope, scopes).allowed,
     );
     if (missingScope) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, `missing scope: ${missingScope}`),
-      );
+      respond(false, undefined, missingScopeErrorShape({ missingScope, requiredScopes }));
       return;
     }
     try {
@@ -152,6 +208,8 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
           );
           return;
         }
+        // Schemas are plugin-provided data; validate their shape before passing
+        // them into the shared schema evaluator so malformed plugins fail cleanly.
         const validation = validateJsonSchemaValue({
           schema: registration.action.schema as JsonSchemaValue,
           cacheKey: `plugin-session-action:${pluginId}:${actionId}`,
@@ -173,6 +231,7 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
         pluginId,
         actionId,
         ...(sessionKey ? { sessionKey } : {}),
+        ...(sessionOwner?.ok ? { agentId: sessionOwner.agentId } : {}),
         ...(params.payload !== undefined ? { payload: params.payload } : {}),
         client: {
           ...(client?.connId ? { connId: client.connId } : {}),

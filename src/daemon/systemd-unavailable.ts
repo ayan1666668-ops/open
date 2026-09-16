@@ -1,10 +1,12 @@
-import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
+/** Classifies systemd/systemctl unavailable errors into user-facing categories. */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 export type SystemdUnavailableKind =
   | "missing_systemctl"
   | "user_bus_unavailable"
   | "generic_unavailable";
 
+// Normalizes platform command output before matching known systemd failure families.
 function normalizeDetail(detail?: string): string {
   return normalizeLowercaseStringOrEmpty(detail);
 }
@@ -27,6 +29,9 @@ export function isSystemdUserBusUnavailableDetail(detail?: string): boolean {
     normalized.includes("failed to connect to user scope bus") ||
     normalized.includes("dbus_session_bus_address") ||
     normalized.includes("xdg_runtime_dir") ||
+    normalized === "call failed: process org.freedesktop.systemd1 exited with status 1" ||
+    normalized ===
+      "call failed: the name org.freedesktop.systemd1 was not provided by any .service files" ||
     normalized.includes("enomedium") ||
     normalized.includes("no medium found")
   );
@@ -37,11 +42,11 @@ export function classifySystemdUnavailableDetail(detail?: string): SystemdUnavai
   if (!normalized) {
     return null;
   }
-  if (isSystemctlMissingDetail(normalized)) {
-    return "missing_systemctl";
-  }
   if (isSystemdUserBusUnavailableDetail(normalized)) {
     return "user_bus_unavailable";
+  }
+  if (isSystemctlMissingDetail(normalized)) {
+    return "missing_systemctl";
   }
   if (
     normalized.includes("systemctl --user unavailable") ||

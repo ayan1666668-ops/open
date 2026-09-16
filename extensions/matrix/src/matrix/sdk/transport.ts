@@ -1,3 +1,7 @@
+// Matrix plugin module implements transport behavior.
+import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { captureChannelReadAuthority } from "openclaw/plugin-sdk/fetch-runtime";
+import { parseMediaContentLength } from "openclaw/plugin-sdk/media-runtime";
 import { MatrixMediaSizeLimitError } from "../media-errors.js";
 import { readResponseWithLimit } from "./read-response-with-limit.js";
 import {
@@ -11,6 +15,16 @@ import {
 } from "./transport-runtime-api.js";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+// Default ceiling for non-raw JSON control-plane responses (whoami, receipts,
+// directory search, key-backup status, generic doRequest). Matrix homeservers
+// are untrusted, so bound the body the same way the raw media path is bounded
+// instead of buffering an unbounded stream via response.text().
+const MATRIX_JSON_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+
+// matrix-js-sdk also uses the injected fetch for raw encrypted key bundles.
+// Keep that path bounded without applying the tighter control-plane JSON cap.
+const MATRIX_SDK_RESPONSE_MAX_BYTES = 64 * 1024 * 1024;
 
 type QueryValue =
   | string
@@ -88,7 +102,7 @@ function withoutMatrixStateAfterSyncParam(rawUrl: string): string {
 
 function buildBufferedResponse(params: {
   source: Response;
-  body: ArrayBuffer;
+  body: BodyInit;
   url: string;
 }): Response {
   const response = new Response(params.body, {
@@ -107,14 +121,45 @@ function buildBufferedResponse(params: {
   return response;
 }
 
+async function enforceDeclaredResponseSize(params: {
+  response: Response;
+  maxBytes: number;
+  createError: (length: number) => Error;
+}): Promise<void> {
+  const contentLength = params.response.headers.get("content-length");
+  if (!contentLength) {
+    return;
+  }
+
+  let length: number | null;
+  try {
+    length = parseMediaContentLength(contentLength);
+  } catch (error) {
+    await params.response.body?.cancel(error).catch(() => undefined);
+    throw error;
+  }
+  if (length === null || length <= params.maxBytes) {
+    return;
+  }
+
+  const error = params.createError(length);
+  await params.response.body?.cancel(error).catch(() => undefined);
+  throw error;
+}
+
 async function fetchWithMatrixDispatcher(params: {
   url: string;
   init: MatrixDispatcherRequestInit;
+  assertCurrent?: () => void;
+  onDispatch?: () => void;
 }): Promise<Response> {
   // Keep this dispatcher-routing logic local to Matrix transport. Shared SSRF
   // fetches must stay fail-closed unless a retry path can preserve the
   // validated pinned-address binding. Route dispatcher-attached requests
   // through undici runtime fetch so the pinned dispatcher is preserved.
+  params.assertCurrent?.();
+  params.init.signal?.throwIfAborted();
+  params.onDispatch?.();
   return await fetchWithRuntimeDispatcherOrMockedGlobal(params.url, params.init);
 }
 
@@ -125,7 +170,10 @@ async function fetchWithMatrixGuardedRedirects(params: {
   timeoutMs?: number;
   ssrfPolicy?: SsrFPolicy;
   dispatcherPolicy?: PinnedDispatcherPolicy;
+  assertCurrent?: () => void;
+  beforeDispatch?: () => Promise<void> | undefined;
 }): Promise<{ response: Response; release: () => Promise<void>; finalUrl: string }> {
+  params.assertCurrent?.();
   let currentUrl = new URL(params.url);
   let method = (params.init?.method ?? "GET").toUpperCase();
   let body = params.init?.body;
@@ -139,15 +187,27 @@ async function fetchWithMatrixGuardedRedirects(params: {
     url: params.url,
   });
 
+  let dispatched = false;
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
     let dispatcher: ReturnType<typeof createPinnedDispatcher> | undefined;
     try {
+      params.assertCurrent?.();
+      signal?.throwIfAborted();
       const pinned = await resolvePinnedHostnameWithPolicy(currentUrl.hostname, {
         policy: params.ssrfPolicy,
+        signal,
       });
       dispatcher = createPinnedDispatcher(pinned, params.dispatcherPolicy, params.ssrfPolicy);
+      // The guard can persist dispatch custody, so reject stale requests before it runs.
+      params.assertCurrent?.();
+      signal?.throwIfAborted();
+      await params.beforeDispatch?.();
       const response = await fetchWithMatrixDispatcher({
         url: currentUrl.toString(),
+        assertCurrent: params.assertCurrent,
+        onDispatch: () => {
+          dispatched = true;
+        },
         init: {
           ...params.init,
           method,
@@ -212,12 +272,32 @@ async function fetchWithMatrixGuardedRedirects(params: {
         headers.delete("content-length");
       }
 
-      void response.body?.cancel();
+      void response.body?.cancel().catch(() => undefined);
       await closeDispatcher(dispatcher);
       currentUrl = nextUrl;
     } catch (error) {
       cleanup();
       await closeDispatcher(dispatcher);
+      if (!dispatched) {
+        if (error instanceof PlatformMessageNotDispatchedError) {
+          throw error;
+        }
+        // The durable callback must precede I/O, but it is not proof of I/O.
+        // Roll back its queue marker if the final fence rejects the first fetch.
+        throw new PlatformMessageNotDispatchedError(
+          error instanceof Error ? error.message : "Matrix request rejected before dispatch",
+          { cause: error },
+        );
+      }
+      if (error instanceof PlatformMessageNotDispatchedError) {
+        // A later redirect fence describes only that hop, not the earlier request.
+        // Keep an unproven branch so the queue cannot misread it as a whole-send proof.
+        throw new AggregateError(
+          [error, new Error("An earlier Matrix request crossed the fetch boundary")],
+          error.message,
+          { cause: error },
+        );
+      }
       throw error;
     }
   }
@@ -229,27 +309,56 @@ async function fetchWithMatrixGuardedRedirects(params: {
 export function createMatrixGuardedFetch(params: {
   ssrfPolicy?: SsrFPolicy;
   dispatcherPolicy?: PinnedDispatcherPolicy;
+  captureRequestAuthority?: () => (() => void) | undefined;
+  signal?: AbortSignal;
+  beforeRequest?: (resource: RequestInfo | URL, init?: RequestInit) => Promise<void> | undefined;
 }): typeof fetch {
   return (async (resource: RequestInfo | URL, init?: RequestInit) => {
+    const assertCurrent = params.captureRequestAuthority?.() ?? captureChannelReadAuthority();
+    assertCurrent?.();
     const url = withoutMatrixStateAfterSyncParam(toFetchUrl(resource));
     const { signal, ...requestInit } = init ?? {};
+    const requestSignal =
+      params.signal && signal
+        ? AbortSignal.any([params.signal, signal])
+        : (params.signal ?? signal ?? undefined);
+    const beforeRequest = params.beforeRequest;
     const { response, release } = await fetchWithMatrixGuardedRedirects({
       url,
       init: requestInit,
-      signal: signal ?? undefined,
+      signal: requestSignal,
+      assertCurrent,
       ssrfPolicy: params.ssrfPolicy,
       dispatcherPolicy: params.dispatcherPolicy,
+      // Redirects belong to the same original timeline operation and task owner.
+      beforeDispatch: beforeRequest ? () => beforeRequest(resource, init) : undefined,
     });
 
     try {
-      const body = await response.arrayBuffer();
+      await enforceDeclaredResponseSize({
+        response,
+        maxBytes: MATRIX_SDK_RESPONSE_MAX_BYTES,
+        createError: (length) =>
+          new Error(
+            `Matrix SDK response exceeds size limit (${length} bytes > ${MATRIX_SDK_RESPONSE_MAX_BYTES} bytes)`,
+          ),
+      });
+      const body = await readResponseWithLimit(response, MATRIX_SDK_RESPONSE_MAX_BYTES, {
+        onOverflow: ({ maxBytes, size }) =>
+          new Error(`Matrix SDK response exceeds size limit (${size} bytes > ${maxBytes} bytes)`),
+      });
+      assertCurrent?.();
       return buildBufferedResponse({
         source: response,
-        body,
+        body: Uint8Array.from(body),
         url,
       });
     } finally {
-      await release();
+      try {
+        await release();
+      } finally {
+        assertCurrent?.();
+      }
     }
   }) as typeof fetch;
 }
@@ -268,7 +377,11 @@ export async function performMatrixRequest(params: {
   ssrfPolicy?: SsrFPolicy;
   dispatcherPolicy?: PinnedDispatcherPolicy;
   allowAbsoluteEndpoint?: boolean;
+  assertCurrent?: () => void;
+  signal?: AbortSignal;
 }): Promise<{ response: Response; text: string; buffer: Buffer }> {
+  const assertCurrent = params.assertCurrent ?? captureChannelReadAuthority();
+  assertCurrent?.();
   const isAbsoluteEndpoint =
     params.endpoint.startsWith("http://") || params.endpoint.startsWith("https://");
   if (isAbsoluteEndpoint && params.allowAbsoluteEndpoint !== true) {
@@ -279,7 +392,7 @@ export async function performMatrixRequest(params: {
 
   const baseUrl = isAbsoluteEndpoint
     ? new URL(params.endpoint)
-    : new URL(normalizeEndpoint(params.endpoint), params.homeserver);
+    : new URL(`${params.homeserver.replace(/\/+$/u, "")}${normalizeEndpoint(params.endpoint)}`);
   applyQuery(baseUrl, params.qs);
 
   const headers = new Headers();
@@ -312,41 +425,64 @@ export async function performMatrixRequest(params: {
     timeoutMs: params.timeoutMs,
     ssrfPolicy: params.ssrfPolicy,
     dispatcherPolicy: params.dispatcherPolicy,
+    assertCurrent,
+    signal: params.signal,
   });
 
   try {
     if (params.raw) {
-      const contentLength = response.headers.get("content-length");
-      if (params.maxBytes && contentLength) {
-        const length = Number(contentLength);
-        if (Number.isFinite(length) && length > params.maxBytes) {
-          throw new MatrixMediaSizeLimitError(
-            `Matrix media exceeds configured size limit (${length} bytes > ${params.maxBytes} bytes)`,
-          );
-        }
-      }
-      const bytes = params.maxBytes
-        ? await readResponseWithLimit(response, params.maxBytes, {
-            onOverflow: ({ maxBytes, size }) =>
-              new MatrixMediaSizeLimitError(
-                `Matrix media exceeds configured size limit (${size} bytes > ${maxBytes} bytes)`,
-              ),
-            chunkTimeoutMs: params.readIdleTimeoutMs,
-          })
-        : Buffer.from(await response.arrayBuffer());
+      const rawMaxBytes = params.maxBytes ?? MATRIX_SDK_RESPONSE_MAX_BYTES;
+      await enforceDeclaredResponseSize({
+        response,
+        maxBytes: rawMaxBytes,
+        createError: (length) =>
+          new MatrixMediaSizeLimitError(
+            `Matrix media exceeds configured size limit (${length} bytes > ${rawMaxBytes} bytes)`,
+          ),
+      });
+      const bytes = await readResponseWithLimit(response, rawMaxBytes, {
+        onOverflow: ({ maxBytes, size }) =>
+          new MatrixMediaSizeLimitError(
+            `Matrix media exceeds configured size limit (${size} bytes > ${maxBytes} bytes)`,
+          ),
+        chunkTimeoutMs: params.readIdleTimeoutMs,
+      });
+      assertCurrent?.();
       return {
         response,
         text: bytes.toString("utf8"),
         buffer: bytes,
       };
     }
-    const text = await response.text();
+    const jsonMaxBytes = params.maxBytes ?? MATRIX_JSON_RESPONSE_MAX_BYTES;
+    await enforceDeclaredResponseSize({
+      response,
+      maxBytes: jsonMaxBytes,
+      createError: (length) =>
+        new Error(
+          `Matrix JSON response exceeds configured size limit (${length} bytes > ${jsonMaxBytes} bytes)`,
+        ),
+    });
+    const buffer = await readResponseWithLimit(response, jsonMaxBytes, {
+      onOverflow: ({ maxBytes, size }) =>
+        new Error(
+          `Matrix JSON response exceeds configured size limit (${size} bytes > ${maxBytes} bytes)`,
+        ),
+      chunkTimeoutMs: params.readIdleTimeoutMs,
+      onIdleTimeout: ({ chunkTimeoutMs }) =>
+        new Error(`Matrix JSON response stalled: no data received for ${chunkTimeoutMs}ms`),
+    });
+    assertCurrent?.();
     return {
       response,
-      text,
-      buffer: Buffer.from(text, "utf8"),
+      text: buffer.toString("utf8"),
+      buffer,
     };
   } finally {
-    await release();
+    try {
+      await release();
+    } finally {
+      assertCurrent?.();
+    }
   }
 }

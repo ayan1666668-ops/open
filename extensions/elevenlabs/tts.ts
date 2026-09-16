@@ -1,18 +1,10 @@
-import {
-  assertOkOrThrowProviderError,
-  assertProviderBinaryResponseContent,
-  readProviderBinaryResponse,
-} from "openclaw/plugin-sdk/provider-http";
+// Elevenlabs plugin module implements tts behavior.
 import {
   normalizeApplyTextNormalization,
   normalizeLanguageCode,
   normalizeSeed,
   requireInRange,
-} from "openclaw/plugin-sdk/speech";
-import {
-  fetchWithSsrFGuard,
-  ssrfPolicyFromHttpBaseUrlAllowedHostname,
-} from "openclaw/plugin-sdk/ssrf-runtime";
+} from "openclaw/plugin-sdk/speech-provider";
 import { isValidElevenLabsVoiceId, normalizeElevenLabsBaseUrl } from "./shared.js";
 
 function assertElevenLabsVoiceSettings(settings: {
@@ -36,6 +28,17 @@ function resolveElevenLabsAcceptHeader(outputFormat: string): string | undefined
   return undefined;
 }
 
+function normalizeElevenLabsLatencyTier(latencyTier: number | undefined): number | undefined {
+  if (latencyTier === undefined || !Number.isFinite(latencyTier)) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(latencyTier)) {
+    throw new Error("latencyTier must be an integer");
+  }
+  requireInRange(latencyTier, 0, 4, "latencyTier");
+  return latencyTier;
+}
+
 type ElevenLabsTtsRequestParams = {
   text: string;
   apiKey: string;
@@ -44,7 +47,7 @@ type ElevenLabsTtsRequestParams = {
   modelId: string;
   outputFormat: string;
   seed?: number;
-  applyTextNormalization?: "auto" | "on" | "off";
+  applyTextNormalization?: string;
   languageCode?: string;
   latencyTier?: number;
   voiceSettings: {
@@ -83,13 +86,7 @@ function prepareElevenLabsTtsRequest(params: ElevenLabsTtsRequestParams & { stre
   const normalizedNormalization = normalizeApplyTextNormalization(applyTextNormalization);
   const normalizedSeed = normalizeSeed(seed);
   const normalizedBaseUrl = normalizeElevenLabsBaseUrl(baseUrl);
-  const normalizedLatencyTier =
-    typeof latencyTier === "number" && Number.isFinite(latencyTier)
-      ? Math.trunc(latencyTier)
-      : undefined;
-  if (normalizedLatencyTier !== undefined) {
-    requireInRange(normalizedLatencyTier, 0, 4, "latencyTier");
-  }
+  const normalizedLatencyTier = normalizeElevenLabsLatencyTier(latencyTier);
   const url = new URL(
     `${normalizedBaseUrl}/v1/text-to-speech/${voiceId}${params.stream ? "/stream" : ""}`,
   );
@@ -128,6 +125,10 @@ export async function elevenLabsTTS(params: ElevenLabsTtsRequestParams): Promise
     ...params,
     stream: false,
   });
+  const { assertOkOrThrowProviderError, readProviderBinaryResponse } =
+    await import("openclaw/plugin-sdk/provider-http");
+  const { fetchWithSsrFGuard, ssrfPolicyFromHttpBaseUrlAllowedHostname } =
+    await import("openclaw/plugin-sdk/ssrf-runtime");
 
   const { response, release } = await fetchWithSsrFGuard({
     url: url.toString(),
@@ -147,7 +148,7 @@ export async function elevenLabsTTS(params: ElevenLabsTtsRequestParams): Promise
   try {
     await assertOkOrThrowProviderError(response, "ElevenLabs API error");
 
-    return Buffer.from(await readProviderBinaryResponse(response, "ElevenLabs API error", "audio"));
+    return await readProviderBinaryResponse(response, "ElevenLabs API error", "audio");
   } finally {
     await release();
   }
@@ -162,6 +163,13 @@ export async function elevenLabsTTSStream(params: ElevenLabsTtsRequestParams): P
     ...params,
     stream: true,
   });
+  const { MAX_AUDIO_BYTES } = await import("openclaw/plugin-sdk/media-runtime");
+  const { createBoundedProviderBinaryStream } =
+    await import("openclaw/plugin-sdk/provider-binary-stream");
+  const { assertOkOrThrowProviderError, assertProviderBinaryResponseContent } =
+    await import("openclaw/plugin-sdk/provider-http");
+  const { fetchWithSsrFGuard, ssrfPolicyFromHttpBaseUrlAllowedHostname } =
+    await import("openclaw/plugin-sdk/ssrf-runtime");
 
   const { response, release } = await fetchWithSsrFGuard({
     url: url.toString(),
@@ -185,10 +193,17 @@ export async function elevenLabsTTSStream(params: ElevenLabsTtsRequestParams): P
     if (!response.body) {
       throw new Error("ElevenLabs API response missing audio stream");
     }
+    const boundedStream = createBoundedProviderBinaryStream(response.body, {
+      maxBytes: MAX_AUDIO_BYTES,
+      createOverflowError: ({ maxBytes }) =>
+        new Error(`ElevenLabs API error: audio response exceeds ${maxBytes} bytes`),
+      createReleaseError: () => new Error("ElevenLabs TTS stream released"),
+      cleanup: release,
+    });
     handedOff = true;
     return {
-      audioStream: response.body,
-      release,
+      audioStream: boundedStream.stream,
+      release: boundedStream.release,
     };
   } finally {
     if (!handedOff) {

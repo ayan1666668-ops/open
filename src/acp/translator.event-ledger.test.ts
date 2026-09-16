@@ -1,15 +1,20 @@
+/** Tests ACP translator replay ledger recording and load-session replay behavior. */
 import type {
   LoadSessionRequest,
   NewSessionRequest,
   PromptRequest,
 } from "@agentclientprotocol/sdk";
+import { createInMemorySessionStore } from "@openclaw/acp-core/session";
 import { describe, expect, it, vi } from "vitest";
+import type { EventFrame } from "../../packages/gateway-protocol/src/index.js";
 import type { GatewayClient } from "../gateway/client.js";
-import type { EventFrame } from "../gateway/protocol/index.js";
-import { createInMemoryAcpEventLedger, type AcpEventLedger } from "./event-ledger.js";
-import { createInMemorySessionStore } from "./session.js";
-import { AcpGatewayAgent } from "./translator.js";
-import { createAcpConnection, createAcpGateway } from "./translator.test-helpers.js";
+import type { AcpEventLedger } from "./event-ledger.js";
+import { createTestAcpEventLedger } from "./event-ledger.test-support.js";
+import {
+  createAcpConnection,
+  createAcpGateway,
+  createAcpGatewayAgent,
+} from "./translator.test-helpers.js";
 
 vi.mock("./commands.js", () => ({
   getAvailableCommands: () => [],
@@ -90,7 +95,7 @@ async function waitForChatSend(requestMock: { mock: { calls: Array<readonly unkn
 
 describe("ACP translator event ledger replay", () => {
   it("loads complete ledger-backed sessions without the lossy Gateway transcript fallback", async () => {
-    const eventLedger = createInMemoryAcpEventLedger();
+    const eventLedger = createTestAcpEventLedger();
     const firstSessionStore = createInMemorySessionStore();
     const firstConnection = createAcpConnection();
     const firstRequestMock = vi.fn(async (method: string) => {
@@ -100,7 +105,7 @@ describe("ACP translator event ledger replay", () => {
       return { ok: true };
     });
     const firstRequest = firstRequestMock as GatewayClient["request"];
-    const firstAgent = new AcpGatewayAgent(firstConnection, createAcpGateway(firstRequest), {
+    const firstAgent = createAcpGatewayAgent(firstConnection, createAcpGateway(firstRequest), {
       eventLedger,
       sessionStore: firstSessionStore,
     });
@@ -110,10 +115,19 @@ describe("ACP translator event ledger replay", () => {
     if (!firstSession) {
       throw new Error("Expected new ACP session to be stored");
     }
-    firstConnection.__sessionUpdateMock.mockClear();
+    firstConnection["__sessionUpdateMock"].mockClear();
 
     const promptPromise = firstAgent.prompt(createPromptRequest(created.sessionId, "Question"));
     await waitForChatSend(firstRequestMock);
+    await vi.waitFor(async () => {
+      const replay = await eventLedger.readReplay({
+        sessionId: created.sessionId,
+        sessionKey: firstSession.sessionKey,
+      });
+      expect(
+        replay.events.some((event) => event.update.sessionUpdate === "user_message_chunk"),
+      ).toBe(true);
+    });
     const runId = firstSessionStore.getSession(created.sessionId)?.activeRunId;
     if (!runId) {
       throw new Error("Expected active ACP run");
@@ -161,7 +175,7 @@ describe("ACP translator event ledger replay", () => {
       return { ok: true };
     });
     const secondRequest = secondRequestMock as GatewayClient["request"];
-    const secondAgent = new AcpGatewayAgent(secondConnection, createAcpGateway(secondRequest), {
+    const secondAgent = createAcpGatewayAgent(secondConnection, createAcpGateway(secondRequest), {
       eventLedger,
       sessionStore: createInMemorySessionStore(),
     });
@@ -169,7 +183,7 @@ describe("ACP translator event ledger replay", () => {
     await secondAgent.loadSession(createLoadSessionRequest(created.sessionId));
 
     expect(secondRequestMock.mock.calls.map((call) => call[0])).not.toContain("sessions.get");
-    const replayedUpdates = secondConnection.__sessionUpdateMock.mock.calls.map(
+    const replayedUpdates = secondConnection["__sessionUpdateMock"].mock.calls.map(
       (call) => call[0]?.update,
     );
     const replayedUpdateTypes = replayedUpdates.map((update) => update?.sessionUpdate);
@@ -212,7 +226,7 @@ describe("ACP translator event ledger replay", () => {
       }
       return { ok: true };
     });
-    const listedAgent = new AcpGatewayAgent(
+    const listedAgent = createAcpGatewayAgent(
       listedConnection,
       createAcpGateway(listedRequestMock as GatewayClient["request"]),
       {
@@ -224,7 +238,7 @@ describe("ACP translator event ledger replay", () => {
     await listedAgent.loadSession(createLoadSessionRequest(firstSession.sessionKey));
 
     expect(listedRequestMock.mock.calls.map((call) => call[0])).not.toContain("sessions.get");
-    const listedReplayTypes = listedConnection.__sessionUpdateMock.mock.calls.map(
+    const listedReplayTypes = listedConnection["__sessionUpdateMock"].mock.calls.map(
       (call) => call[0]?.update?.sessionUpdate,
     );
     expect(listedReplayTypes).toEqual([
@@ -267,12 +281,10 @@ describe("ACP translator event ledger replay", () => {
     await expect(
       eventLedger.readReplayBySessionId({ sessionId: firstSession.sessionKey }),
     ).resolves.toEqual({ complete: false, events: [] });
-
-    firstSessionStore.clearAllSessionsForTest();
   });
 
   it("does not replay prompts that Gateway rejected before accepting the send", async () => {
-    const eventLedger = createInMemoryAcpEventLedger();
+    const eventLedger = createTestAcpEventLedger();
     const sessionStore = createInMemorySessionStore();
     const connection = createAcpConnection();
     const requestMock = vi.fn(async (method: string) => {
@@ -281,7 +293,7 @@ describe("ACP translator event ledger replay", () => {
       }
       return { ok: true };
     });
-    const agent = new AcpGatewayAgent(
+    const agent = createAcpGatewayAgent(
       connection,
       createAcpGateway(requestMock as GatewayClient["request"]),
       {
@@ -315,7 +327,7 @@ describe("ACP translator event ledger replay", () => {
       }
       return { ok: true };
     });
-    const loadAgent = new AcpGatewayAgent(
+    const loadAgent = createAcpGatewayAgent(
       loadConnection,
       createAcpGateway(loadRequestMock as GatewayClient["request"]),
       {
@@ -326,14 +338,14 @@ describe("ACP translator event ledger replay", () => {
 
     await loadAgent.loadSession(createLoadSessionRequest(created.sessionId));
 
-    const replayedUpdates = loadConnection.__sessionUpdateMock.mock.calls.map(
+    const replayedUpdates = loadConnection["__sessionUpdateMock"].mock.calls.map(
       (call) => call[0]?.update?.sessionUpdate,
     );
     expect(replayedUpdates).not.toContain("user_message_chunk");
   });
 
   it("marks replay incomplete when an accepted prompt cannot be recorded", async () => {
-    const innerLedger = createInMemoryAcpEventLedger();
+    const innerLedger = createTestAcpEventLedger();
     let markIncompleteResolve: ((value: unknown) => void) | undefined;
     const markIncompletePromise = new Promise((resolve) => {
       markIncompleteResolve = resolve;
@@ -351,7 +363,7 @@ describe("ACP translator event ledger replay", () => {
     const sessionStore = createInMemorySessionStore();
     const connection = createAcpConnection();
     const requestMock = vi.fn(async (_method: string) => ({ ok: true }));
-    const agent = new AcpGatewayAgent(
+    const agent = createAcpGatewayAgent(
       connection,
       createAcpGateway(requestMock as GatewayClient["request"]),
       {

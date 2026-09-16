@@ -1,8 +1,9 @@
+// Doctor config-flow include-warning tests cover config include warnings during repair.
 import { describe, expect, it, vi } from "vitest";
-import { note } from "../terminal/note.js";
-import { noteIncludeConfinementWarning } from "./doctor-config-analysis.js";
+import { note } from "../../packages/terminal-core/src/note.js";
+import { noteDoctorConfigPreflightIssues } from "./doctor-config-analysis.js";
 
-vi.mock("../terminal/note.js", () => ({
+vi.mock("../../packages/terminal-core/src/note.js", () => ({
   note: vi.fn(),
 }));
 
@@ -10,14 +11,28 @@ const noteSpy = vi.mocked(note);
 
 describe("doctor include warning", () => {
   it("surfaces include confinement hint for escaped include paths", () => {
-    noteIncludeConfinementWarning({
-      path: "/tmp/openclaw-config/openclaw.json",
-      issues: [
-        {
-          message: "Include path escapes config directory: /etc/passwd",
-        },
-      ],
-    });
+    noteDoctorConfigPreflightIssues(
+      {
+        path: "/tmp/openclaw-config/openclaw.json",
+        exists: true,
+        raw: '{"$include":"/etc/passwd"}',
+        parsed: { $include: "/etc/passwd" },
+        sourceConfig: {},
+        resolved: {},
+        runtimeConfig: {},
+        config: {},
+        valid: false,
+        warnings: [],
+        legacyIssues: [],
+        issues: [
+          {
+            path: "$include",
+            message: "Include path escapes config directory: /etc/passwd",
+          },
+        ],
+      },
+      { activeRepair: false },
+    );
 
     expect(noteSpy).toHaveBeenCalledWith(
       [

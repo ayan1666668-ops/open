@@ -1,17 +1,18 @@
+// Openrouter provider module implements model/runtime integration.
 import path from "node:path";
-import {
-  describeImageWithModel,
-  describeImagesWithModel,
-  type AudioTranscriptionRequest,
-  type AudioTranscriptionResult,
-  type MediaUnderstandingProvider,
+import type {
+  AudioTranscriptionRequest,
+  AudioTranscriptionResult,
+  MediaUnderstandingProvider,
 } from "openclaw/plugin-sdk/media-understanding";
 import {
   assertOkOrThrowHttpError,
   postJsonRequest,
+  readProviderJsonResponse,
   requireTranscriptionText,
   resolveProviderHttpRequestConfig,
 } from "openclaw/plugin-sdk/provider-http";
+import { asFiniteNumber } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { OPENROUTER_BASE_URL } from "./provider-catalog.js";
 
 const DEFAULT_OPENROUTER_AUDIO_TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo";
@@ -97,7 +98,7 @@ type OpenRouterSttResponse = {
   text?: string;
 };
 
-export async function transcribeOpenRouterAudio(
+async function transcribeOpenRouterAudio(
   params: AudioTranscriptionRequest,
 ): Promise<AudioTranscriptionResult> {
   const model = params.model?.trim() || DEFAULT_OPENROUTER_AUDIO_TRANSCRIPTION_MODEL;
@@ -123,6 +124,7 @@ export async function transcribeOpenRouterAudio(
       capability: "audio",
       transport: "media-understanding",
     });
+  const temperature = asFiniteNumber(params.query?.temperature);
 
   const { response, release } = await postJsonRequest({
     url: `${baseUrl}/audio/transcriptions`,
@@ -134,11 +136,10 @@ export async function transcribeOpenRouterAudio(
         format,
       },
       ...(params.language?.trim() ? { language: params.language.trim() } : {}),
-      ...(typeof params.query?.temperature === "number"
-        ? { temperature: params.query.temperature }
-        : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
     },
     timeoutMs: params.timeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
     fetchFn,
     allowPrivateNetwork,
     dispatcherPolicy,
@@ -147,7 +148,10 @@ export async function transcribeOpenRouterAudio(
 
   try {
     await assertOkOrThrowHttpError(response, "OpenRouter audio transcription failed");
-    const payload = (await response.json()) as OpenRouterSttResponse;
+    const payload = await readProviderJsonResponse<OpenRouterSttResponse>(
+      response,
+      "openrouter.stt",
+    );
     return {
       text: requireTranscriptionText(
         payload.text,
@@ -170,7 +174,7 @@ export const openrouterMediaUnderstandingProvider: MediaUnderstandingProvider = 
   autoPriority: {
     audio: 35,
   },
-  describeImage: describeImageWithModel,
-  describeImages: describeImagesWithModel,
+  describeImage: undefined,
+  describeImages: undefined,
   transcribeAudio: transcribeOpenRouterAudio,
 };

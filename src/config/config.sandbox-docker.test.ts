@@ -1,3 +1,4 @@
+// Verifies Docker sandbox config parsing and validation.
 import { describe, expect, it } from "vitest";
 import {
   DANGEROUS_SANDBOX_DOCKER_BOOLEAN_KEYS,
@@ -37,9 +38,8 @@ describe("sandbox docker config", () => {
             },
           },
         },
-        list: [
-          {
-            id: "main",
+        entries: {
+          main: {
             sandbox: {
               docker: {
                 image: "custom-sandbox:latest",
@@ -47,7 +47,7 @@ describe("sandbox docker config", () => {
               },
             },
           },
-        ],
+        },
       },
     });
     expect(res.ok).toBe(true);
@@ -56,11 +56,29 @@ describe("sandbox docker config", () => {
         "/home/user/source:/source:rw",
         "/var/data/myapp:/data:ro",
       ]);
-      expect(res.config.agents?.list?.[0]?.sandbox?.docker?.binds).toEqual([
+      expect(res.config.agents?.entries?.main?.sandbox?.docker?.binds).toEqual([
         "/home/user/projects:/projects:ro",
       ]);
     }
   });
+
+  it.each(["docker", "browser"] as const)(
+    "validates %s bind sources without trimming path bytes",
+    (backend) => {
+      for (const [bind, accepted] of [
+        [" /home/user/source:/data", false],
+        ["/home/user/source :/data ", true],
+      ] as const) {
+        const result = validateConfigObject({
+          agents: { defaults: { sandbox: { [backend]: { binds: [bind] } } } },
+        });
+        expect(result.ok, bind).toBe(accepted);
+        if (result.ok) {
+          expect(result.config.agents?.defaults?.sandbox?.[backend]?.binds).toEqual([bind]);
+        }
+      }
+    },
+  );
 
   it("accepts Windows drive-letter binds in sandbox.docker config", () => {
     const res = validateConfigObject({
@@ -255,7 +273,10 @@ describe("sandbox browser binds config", () => {
         defaults: {
           sandbox: {
             browser: {
-              binds: ["/home/user/.chrome-profile:/data/chrome:rw"],
+              binds: [
+                "/home/user/.chrome-profile:/data/chrome:rw",
+                "D:/data/openclaw/chrome:/data/chrome-windows:rw",
+              ],
             },
           },
         },
@@ -265,7 +286,28 @@ describe("sandbox browser binds config", () => {
     if (res.ok) {
       expect(res.config.agents?.defaults?.sandbox?.browser?.binds).toEqual([
         "/home/user/.chrome-profile:/data/chrome:rw",
+        "D:/data/openclaw/chrome:/data/chrome-windows:rw",
       ]);
+    }
+  });
+
+  it("rejects relative source paths in browser binds", () => {
+    for (const bind of [
+      "relative/profile:/data/chrome:rw",
+      "D:relative\\profile:/data/chrome:rw",
+    ]) {
+      const res = validateConfigObject({
+        agents: {
+          defaults: {
+            sandbox: {
+              browser: {
+                binds: [bind],
+              },
+            },
+          },
+        },
+      });
+      expect(res.ok, bind).toBe(false);
     }
   });
 

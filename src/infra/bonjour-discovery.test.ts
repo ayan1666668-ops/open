@@ -1,21 +1,13 @@
+// Covers Bonjour gateway beacon parsing and endpoint resolution.
 import { describe, expect, it, vi } from "vitest";
 import type { runCommandWithTimeout } from "../process/exec.js";
-import { discoverGatewayBeacons } from "./bonjour-discovery.js";
+import {
+  discoverGatewayBeacons,
+  type GatewayBonjourBeacon,
+  resolveGatewayDiscoveryEndpoint,
+} from "./bonjour-discovery.js";
 
 const WIDE_AREA_DOMAIN = "openclaw.internal.";
-
-type BeaconRecord = {
-  domain?: string;
-  instanceName?: string;
-  displayName?: string;
-  host?: string;
-  port?: number;
-  tailnetDns?: string;
-  gatewayPort?: number;
-  sshPort?: number;
-  cliPath?: string;
-  txt?: Record<string, unknown>;
-};
 
 function collectMatching<T, U>(
   items: readonly T[],
@@ -31,10 +23,22 @@ function collectMatching<T, U>(
   return matches;
 }
 
-function findBeaconByInstance(beacons: readonly BeaconRecord[], instanceName: string) {
+function findBeaconByInstance(
+  beacons: readonly GatewayBonjourBeacon[],
+  instanceName: string,
+): GatewayBonjourBeacon {
   const beacon = beacons.find((item) => item.instanceName === instanceName);
   if (!beacon) {
     throw new Error(`Expected beacon ${instanceName}`);
+  }
+  return beacon;
+}
+
+function getOnlyBeacon(beacons: readonly GatewayBonjourBeacon[]): GatewayBonjourBeacon {
+  expect(beacons).toHaveLength(1);
+  const beacon = beacons[0];
+  if (!beacon) {
+    throw new Error("Expected one beacon");
   }
   return beacon;
 }
@@ -179,13 +183,80 @@ describe("bonjour-discovery", () => {
       run: run as unknown as typeof runCommandWithTimeout,
     });
 
-    expect(beacons).toHaveLength(1);
-    const beacon = beacons[0] as BeaconRecord;
+    const beacon = getOnlyBeacon(beacons);
     expect(beacon.domain).toBe("local.");
     expect(beacon.instanceName).toBe("Studio Gateway");
     expect(beacon.displayName).toBe("Peter’s Mac Studio");
     expect(beacon.txt?.displayName).toBe("Peter’s Mac Studio");
   });
+
+  it.each(["darwin", "linux"] as const)(
+    "rejects invalid advertised ports on %s",
+    async (platform) => {
+      const run = vi.fn(async (argv: string[]) => {
+        const domain = argv[3] ?? "";
+        const txt =
+          "txtvers=1 displayName=Broken gatewayPort=70000 sshPort=22x gatewayTls=yes gatewayTlsSha256=synthetic role=gateway transport=gateway";
+        if (argv[0] === "avahi-browse") {
+          return {
+            stdout: `= eth0 IPv4 Broken Gateway _openclaw-gw._tcp local.\n hostname = [broken.local]\n port = [70000]\n txt = [${txt
+              .split(" ")
+              .map((token) => `"${token}"`)
+              .join(" ")}]`,
+            stderr: "",
+            code: 0,
+            signal: null,
+            killed: false,
+          };
+        }
+        if (argv[0] === "dns-sd" && argv[1] === "-B" && domain === "local.") {
+          return {
+            stdout: ["Add 2 3 local. _openclaw-gw._tcp. Broken Gateway", ""].join("\n"),
+            stderr: "",
+            code: 0,
+            signal: null,
+            killed: false,
+          };
+        }
+
+        if (argv[0] === "dns-sd" && argv[1] === "-L") {
+          return {
+            stdout: [
+              "Broken Gateway._openclaw-gw._tcp. can be reached at broken.local:18789abc",
+              txt,
+              "",
+            ].join("\n"),
+            stderr: "",
+            code: 0,
+            signal: null,
+            killed: false,
+          };
+        }
+
+        throw new Error(`unexpected argv: ${argv.join(" ")}`);
+      });
+
+      const beacons = await discoverGatewayBeacons({
+        platform,
+        timeoutMs: 800,
+        domains: ["local."],
+        run: run as unknown as typeof runCommandWithTimeout,
+      });
+
+      const beacon = getOnlyBeacon(beacons);
+      expect(beacon.host).toBe("broken.local");
+      expect(beacon.port).toBeUndefined();
+      expect(beacon.gatewayPort).toBeUndefined();
+      expect(beacon.sshPort).toBeUndefined();
+      expect(beacon).toMatchObject({
+        gatewayTls: true,
+        gatewayTlsFingerprintSha256: "synthetic",
+        role: "gateway",
+        transport: "gateway",
+      });
+      expect(resolveGatewayDiscoveryEndpoint(beacon)).toBeNull();
+    },
+  );
 
   it("falls back to tailnet DNS probing for wide-area when split DNS is not configured", async () => {
     const calls: Array<{ argv: string[]; timeoutMs: number }> = [];
@@ -278,8 +349,7 @@ describe("bonjour-discovery", () => {
       run: run as unknown as typeof runCommandWithTimeout,
     });
 
-    expect(beacons).toHaveLength(1);
-    const beacon = beacons[0] as BeaconRecord;
+    const beacon = getOnlyBeacon(beacons);
     expect(beacon.domain).toBe(WIDE_AREA_DOMAIN);
     expect(beacon.instanceName).toBe("studio-gateway");
     expect(beacon.displayName).toBe("Studio");

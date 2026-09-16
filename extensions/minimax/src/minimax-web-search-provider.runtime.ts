@@ -1,3 +1,4 @@
+// Minimax provider module implements model/runtime integration.
 import {
   createProviderHttpError,
   formatProviderHttpErrorMessage,
@@ -10,9 +11,10 @@ import {
   mergeScopedSearchConfig,
   readCachedSearchPayload,
   readConfiguredSecretString,
-  readNumberParam,
+  readPositiveIntegerParam,
   readProviderEnvValue,
   readStringParam,
+  MAX_SEARCH_COUNT,
   resolveProviderWebSearchPluginConfig,
   resolveSearchCacheTtlMs,
   resolveSearchCount,
@@ -55,8 +57,10 @@ type MiniMaxSearchResponse = {
 
 function resolveMiniMaxApiKey(searchConfig?: SearchConfigRecord): string | undefined {
   return (
-    readConfiguredSecretString(searchConfig?.apiKey, "tools.web.search.apiKey") ??
-    readProviderEnvValue([...MINIMAX_TOKEN_PLAN_ENV_VARS, "MINIMAX_API_KEY"])
+    readConfiguredSecretString(
+      searchConfig?.apiKey,
+      "plugins.entries.minimax.config.webSearch.apiKey",
+    ) ?? readProviderEnvValue([...MINIMAX_TOKEN_PLAN_ENV_VARS, "MINIMAX_API_KEY"])
   );
 }
 
@@ -123,6 +127,7 @@ async function runMiniMaxSearch(params: {
   apiKey: string;
   endpoint: string;
   timeoutSeconds: number;
+  signal?: AbortSignal;
 }): Promise<{
   results: Array<Record<string, unknown>>;
   relatedSearches?: string[];
@@ -131,6 +136,7 @@ async function runMiniMaxSearch(params: {
     {
       url: params.endpoint,
       timeoutSeconds: params.timeoutSeconds,
+      signal: params.signal,
       init: {
         method: "POST",
         headers: {
@@ -198,6 +204,7 @@ function missingMiniMaxKeyPayload() {
 export async function executeMiniMaxWebSearchProviderTool(
   ctx: { config?: Record<string, unknown>; searchConfig?: SearchConfigRecord },
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const searchConfig = mergeScopedSearchConfig(
     ctx.searchConfig,
@@ -214,20 +221,25 @@ export async function executeMiniMaxWebSearchProviderTool(
   const params = args;
   const query = readStringParam(params, "query", { required: true });
   const count =
-    readNumberParam(params, "count", { integer: true }) ?? searchConfig?.maxResults ?? undefined;
+    readPositiveIntegerParam(params, "count", {
+      max: MAX_SEARCH_COUNT,
+      message: `count must be an integer from 1 to ${MAX_SEARCH_COUNT}.`,
+    }) ??
+    searchConfig?.maxResults ??
+    undefined;
 
   const resolvedCount = resolveSearchCount(count, DEFAULT_SEARCH_COUNT);
   const endpoint = resolveMiniMaxEndpoint(searchConfig, config);
 
   const cacheKey = buildSearchCacheKey(["minimax", endpoint, query, resolvedCount]);
-  const cached = readCachedSearchPayload(cacheKey);
+  const cacheTtlMs = resolveSearchCacheTtlMs(searchConfig);
+  const cached = readCachedSearchPayload(cacheKey, cacheTtlMs);
   if (cached) {
     return cached;
   }
 
   const start = Date.now();
   const timeoutSeconds = resolveSearchTimeoutSeconds(searchConfig);
-  const cacheTtlMs = resolveSearchCacheTtlMs(searchConfig);
 
   const { results, relatedSearches } = await runMiniMaxSearch({
     query,
@@ -235,8 +247,10 @@ export async function executeMiniMaxWebSearchProviderTool(
     apiKey,
     endpoint,
     timeoutSeconds,
+    signal,
   });
 
+  signal?.throwIfAborted();
   const payload: Record<string, unknown> = {
     query,
     provider: "minimax",
@@ -258,12 +272,3 @@ export async function executeMiniMaxWebSearchProviderTool(
   writeCachedSearchPayload(cacheKey, payload, cacheTtlMs);
   return payload;
 }
-
-export const __testing = {
-  MINIMAX_SEARCH_ENDPOINT_GLOBAL,
-  MINIMAX_SEARCH_ENDPOINT_CN,
-  resolveMiniMaxApiKey,
-  resolveMiniMaxEndpoint,
-  resolveMiniMaxRegion,
-  readMiniMaxSearchJsonResponse: readProviderJsonResponse<MiniMaxSearchResponse>,
-} as const;

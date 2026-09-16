@@ -1,128 +1,229 @@
 ---
 name: autoreview
-description: "Autoreview closeout: local dirty changes, PR branch vs main, parallel tests."
+description: "Structured Codex, Claude, Amp, Pi, or Kimi code review when explicitly requested."
 ---
 
-# Autoreview
+# Auto Review
 
-Run Codex's built-in code review as a closeout check. This is code review (`codex review`), not Guardian `auto_review` approval routing.
+Run an independent review when the user or an owning workflow asks for one.
+This is code review, not Guardian approval routing. Let the reviewer choose how
+to analyze the change; provide the target, relevant context, and desired severity.
+Findings are advice to verify, not instructions to apply blindly.
 
-Use when:
-- user asks for Codex review / autoreview / second-model review
-- after non-trivial code edits, before final/commit/ship
-- reviewing a local branch or PR branch after fixes
+## Run
 
-## Contract
-
-- Treat review output as advisory. Never blindly apply it.
-- Verify every finding by reading the real code path and adjacent files.
-- Read dependency docs/source/types when the finding depends on external behavior.
-- Reject unrealistic edge cases, speculative risks, broad rewrites, and fixes that over-complicate the codebase.
-- Prefer small fixes at the right ownership boundary; no refactor unless it clearly improves the bug class.
-- Keep going until the selected review path returns no accepted/actionable findings.
-- If a review-triggered fix changes code, rerun focused tests and rerun the review helper.
-- Default to Codex review. If Codex is unavailable or exits with an error, the helper may fall back to `claude -p`; `pi -p` and `opencode run` are explicit reviewer/fallback options. The helper runs nested Codex review in yolo/full-access mode by default; use `--no-yolo` only when intentionally testing sandbox behavior.
-- Stop as soon as the review command/helper exits 0 with no accepted/actionable findings. Do not run an extra direct `codex review` just to get a nicer "clean" line, a second opinion, or clearer closeout wording.
-- Treat the helper's successful exit plus absence of actionable findings as the clean review result, even if the underlying Codex CLI output is terse.
-- If rejecting a finding as intentional/not worth fixing, add a brief inline code comment only when it explains a real invariant or ownership decision that future reviewers should know.
-- Do not push just to review. Push only when the user requested push/ship/PR update.
-
-## Pick Target
-
-Dirty local work:
+Use `scripts/autoreview` beside this skill. Keep its custom `codex exec` path:
+native `codex review` cannot combine explicit Git target flags with custom instructions.
+The helper combines those with evidence, severity filtering, and validated JSON;
+it leaves review judgment to Codex. For an OpenClaw checkout:
 
 ```bash
-codex review --uncommitted
+AUTOREVIEW=".agents/skills/autoreview/scripts/autoreview"
+"$AUTOREVIEW" --mode local
 ```
 
-Use this only when the patch is actually unstaged/staged/untracked in the
-current checkout. For committed, pushed, or PR work, point Codex at the commit
-or branch diff instead; do not force `--mode local` / `--uncommitted` just
-because the helper docs mention dirty work first. A clean `--uncommitted` review
-only proves there is no local patch.
+In the canonical agent-skills repo, the path is
+`skills/autoreview/scripts/autoreview`. On Windows, invoke the helper with Python.
+Use `--help` for the complete flags and environment overrides.
 
-Branch/PR work:
+Choose the Git target explicitly when the default is ambiguous:
+
+| Target                         | Arguments                      | Scope                                                       |
+| ------------------------------ | ------------------------------ | ----------------------------------------------------------- |
+| Local work                     | `--mode local`                 | HEAD → index → working tree, plus untracked files           |
+| Local candidate against a base | `--mode local --base <ref>`    | Pinned base → index → working tree, plus untracked files    |
+| Committed branch/PR            | `--mode branch --base <ref>`   | Merge-base → HEAD; excludes dirty work                      |
+| One commit                     | `--mode commit --commit <ref>` | Raw parent → commit; a root compares against the empty tree |
+
+`--mode auto` selects local work when dirty, otherwise a branch review using the
+PR base or `origin/main`. Clean main has no implicit review target.
+`--mode uncommitted` is an alias for local. The helper does not fetch refs.
+
+Registered nested linked checkouts from the same repository are outside the
+current review scope. Their presence or edits do not make the parent dirty;
+ordinary adjacent files remain included in the review. Worktree boundaries are
+revalidated without changing Git ignore rules.
+
+For a complete PR candidate **including dirty rewrites**, use local mode with
+its pinned merge base—not branch mode:
 
 ```bash
-git fetch origin
-codex review --base origin/main
+pr_base=$(gh pr view --json baseRefName --jq .baseRefName)
+merge_base=$(git merge-base HEAD "origin/$pr_base")
+"$AUTOREVIEW" --mode local --base "$merge_base"
 ```
 
-Do not pass an inline prompt with `--base`; current CLI rejects `--base` + `[PROMPT]` even though help text is ambiguous. If custom instructions are needed, run the plain base review first, then do a local/manual follow-up pass.
+When a file has both staged and unstaged changes, both states are reviewed.
+A defect in the index remains actionable even if the working tree fixes it;
+the report labels it `INDEX-only`.
+Git display settings cannot suppress context markers or add patch colors;
+repository configuration is not changed. Source paths and text retain literal
+whitespace. An empty present
+source uses line 1, column 1, and an empty excerpt; empty physical lines also
+use an empty excerpt at column 1. Source identity remains mandatory.
 
-If an open PR exists, use its actual base:
+## Context and severity
+
+Use `--prompt` for task-specific guidance, or `--prompt-file` and `--dataset` for
+repository-relative context files. Context does not expand the selected Git
+target. The reviewer cannot read unchanged repository files from its empty
+sandbox; supply relevant source or dependency evidence when the diff is insufficient.
+
+The default threshold is **P0 only**: material blockers to normal operation or
+safety. Use `--max-priority P1`, `P2`, or `P3` when the caller requests a wider
+review. Do not add unrelated redesign goals or prescribe file counts, reading
+sequences, or ritual extra passes. Historical blame requires a verified
+parent-relative patch; otherwise leave the attribution unknown.
 
 ```bash
-base=$(gh pr view --json baseRefName --jq .baseRefName)
-codex review --base "origin/$base"
+"$AUTOREVIEW" --mode local --prompt-file review-notes.md --dataset evidence.json
 ```
 
-Committed single change:
+## Engines
+
+Codex is the default: `gpt-6-astra`, high reasoning, with a `gpt-5.6-terra` retry
+only for an account-access failure. Honor explicit engine/model choices; do not
+switch because a review is slow or rate-limited.
+
+Use `--engine`, `--model`, and `--thinking` to override the defaults.
+`--codex-speed fast` selects priority service when supported. Only Claude accepts
+`--fallback-model`. Per-engine environment overrides use `AUTOREVIEW_<ENGINE>_*`.
+
+By default, Codex preserves only authentication settings from user configuration;
+provider, profile, context and catalogue settings remain ignored. To project a
+named route, select it explicitly through the existing config override:
 
 ```bash
-codex review --commit HEAD
+"$AUTOREVIEW" --mode local --codex-config 'model_provider="review_api"'
 ```
 
-or with the helper:
+The selector must match `model_provider` in the operator's external
+`CODEX_HOME/config.toml`. It accepts one bare or simply quoted identifier;
+provider definitions and other capabilities cannot be supplied through overrides.
+Projection requires Python 3.11 or `tomli`; default auth-only operation retains
+its existing fallback parser.
 
-```bash
-.agents/skills/autoreview/scripts/autoreview --mode commit --commit HEAD
+The selected route must use `https://api.openai.com/v1` and command authentication
+with an absolute external executable. Fixed arguments belong in that executable's
+wrapper; omitted or empty `auth.args` are accepted. Omitted `wire_api` and
+`requires_openai_auth` retain Codex's `responses` and `false` defaults. Optional
+auth timing and context settings keep native defaults and semantics.
+
+On POSIX, a private launcher restores the validated caller `HOME` only for the
+selected authentication executable; the engine and reviewer tools retain their
+isolated environment and filesystem access. Caller `HOME` must be an available
+absolute directory with no repository-owned path or symlink provenance. Windows
+keeps the native executable route. Command-auth runs suppress raw provider
+diagnostics and report fixed failure categories, while retaining compact progress,
+usage and assistant report streaming. An empty final report fails without exposing
+captured stdout.
+
+Catalogue and authentication working-directory paths resolve relative to the
+operator config directory and must remain outside the reviewed repository.
+A supplied catalogue is copied byte-for-byte into the private client runtime;
+retries use the same route and catalogue snapshot. Dry runs check the same
+ownership and route shape without executing authentication. Codex owns catalogue
+validation, model access and context clamping. Other custom provider forms and
+split context overrides are unsupported when projection is selected.
+
+| Optional engine | Prerequisites                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| Claude          | CLI 2.1.169+; safe mode with web-only tools                                                           |
+| Amp             | `AMP_API_KEY` for a plugin-free account; local POSIX execution, no custom endpoint or cloud/orb agent |
+| Pi              | CLI 0.79.0+; configured model; no tools or project resources                                          |
+| Kimi            | CLI 0.30.0+; configured model; Python 3.11+ or `tomli` for TOML config                                |
+
+## Runtime boundaries
+
+The helper owns reviewer isolation, sanitized authentication, process cleanup,
+Git scope, and structured result validation. Keep those controls enabled.
+Every reviewer pass must inspect its bundle for real credentials and report
+suspected credentials as P0 findings without reproducing their values. Harmless
+placeholders and test fixtures are not credentials. Autoreview does not require
+or invoke an external secret scanner. Never work around an isolation failure.
+
+### Intentional scanner-free policy
+
+Keep approved secret scanning outside autoreview; reviewer findings happen after
+transmission. Reintroducing a scanner requires an explicit maintainer decision.
+See [#240](https://github.com/openclaw/agent-skills/pull/240) for rationale and history.
+
+### Reviewer isolation
+
+On macOS, reviewer tools cannot access the shared `/tmp` and `/var/tmp` trees
+(including their `/private` aliases). Codex preflight rejects those temporary
+roots before workspace, runtime, or authentication setup; unset a shared
+`TMPDIR`/`TMP`/`TEMP` override to use macOS's private
+temporary directory. Other engines and platforms retain their normal isolation.
+Tools installed in shared scratch or requiring writes there will be denied too.
+
+Review files have no size/count cap and are never truncated. Large diffs and
+datasets are partitioned automatically. Intact instructions and required mixed
+source context must still fit the per-pass prompt budget. A failed pass does not
+produce a partial clean verdict.
+
+Do not edit inputs during a review: the helper verifies captured sources before
+sending and publishing results. Long reviews are normal; advancing heartbeats
+mean progress. Use `--stream-engine-output` for visibility, not extra reviewer
+runs. `--dry-run` checks preparation and startup without contacting a reviewer.
+
+## Results
+
+`--output`, `--json-output`, and `--status-output` paths must be outside the
+reviewed repository. When using `--status-output`, all output paths must differ;
+case-only and Unicode normalization aliases are conservatively refused on every
+platform, even when the filesystem would permit distinct files.
+
+| Exit | Meaning                                                                         |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | `scoped-clean`, or a correct verdict with only filtered lower-priority findings |
+| `1`  | Accepted findings, an incorrect provider verdict, or a failed review attempt    |
+| `2`  | Incomplete scope/attribution, or a missing required finding                     |
+
+Treat `scoped-clean` as clean only for the selected target and requested priority.
+`filtered` is not clean; resolve `incomplete` before claiming completion.
+Verify findings against the actual code and task before changing anything.
+No extra review rounds for a nicer verdict; follow the owning workflow after fixes.
+
+Use `--status-output /outside/repo/status.json` for a separate, versioned
+machine-readable outcome. It preserves the existing exit codes and
+`--json-output` validated-report format. Completed reviews report `scoped-clean`,
+`findings`, `filtered`, `incorrect`, or `incomplete`; a launched reviewer that
+fails or returns an invalid report reports `reviewer_unavailable` with exit 1.
+A failed later pass never publishes a partial review report.
+
+```json
+{
+  "schema_version": 1,
+  "status": "reviewer_unavailable",
+  "exit_code": 1,
+  "engine": "codex",
+  "report_produced": false,
+  "reason": "engine_failed",
+  "reviewer_exit_code": 124,
+  "timed_out": true
+}
 ```
 
-Use commit review for already-landed or already-pushed work on `main`. Reviewing
-clean `main` against `origin/main` is usually an empty diff after push. For a
-small stack, review each commit explicitly or review the branch before merging
-with `--base`.
+`reason` is `engine_failed`, `invalid_report`, or `runtime_validation_failed`
+for unavailable reviewers and null for completed reviews. The last reason means
+Amp's post-launch isolation attestation or private-result validation refused
+the result; it is not a transient-provider classification. These guards still
+run before report acceptance and retain their existing failure diagnostics.
+`reviewer_exit_code` is the last reviewer process's exit code when retained,
+including zero for rejected output, otherwise null. `timed_out` identifies the
+helper's deadline, not a reviewer that happens to exit 124. Completed envelopes
+have `report_produced: true`; this means a validated final report exists, not
+that its verdict is clean. `--expect-findings` changes exit codes as before;
+inspect `status` independently of `exit_code`.
 
-## Parallel Closeout
+The sidecar contains no provider logs, prompts, findings, or model identifiers.
+Existing bounded, display-safe diagnostics remain on stderr; command-auth
+diagnostic suppression remains in force. Use a fresh status path per invocation:
+after argument and output-path validation, a previous sidecar is removed before
+target selection. Dry runs, preflight refusals, pre-launch isolation failures, source mutations,
+interruptions, and output failures produce no new status. Absence means no
+outcome was published, never a clean review. No retry policy is added.
 
-Format first if formatting can change line locations. Then it is OK to run tests and review in parallel:
-
-```bash
-.agents/skills/autoreview/scripts/autoreview --parallel-tests "<focused test command>"
-```
-
-Tradeoff: tests may force code changes that stale the review. If tests or review lead to code edits, rerun the affected tests and rerun review until no accepted/actionable findings remain. Once that rerun exits cleanly, stop; do not spend another long review cycle on redundant confirmation.
-
-## Context Efficiency
-
-Codex review is usually noisy. Default to a subagent filter when subagents are available. Ask it to run the review and return only:
-- actionable findings it accepts
-- findings it rejects, with one-line reason
-- exact files/tests to rerun
-
-Run inline only for tiny changes or when subagents are unavailable.
-
-## Helper
-
-Bundled helper:
-
-```bash
-.agents/skills/autoreview/scripts/autoreview --help
-```
-
-The helper:
-- chooses dirty `--uncommitted` first
-- otherwise uses current PR base if `gh pr view` works
-- otherwise uses `origin/main` for non-main branches
-- use `--mode commit --commit <ref>` for already-committed work, especially clean `main` after landing
-- should be left in `--mode auto` or forced to `--mode branch` for PR/branch work; do not force `--mode local` after committing
-- supports `--reviewer codex|claude|pi|opencode|auto`; `auto` runs Codex first
-- supports `--fallback-reviewer claude|pi|opencode|none`; default is `claude`
-- falls back only when Codex is unavailable or exits nonzero, not when Codex reports findings
-- writes only to stdout unless `--output` or `AUTOREVIEW_OUTPUT` is set
-- supports `--dry-run`, `--parallel-tests`, and commit refs
-- runs nested review with `--dangerously-bypass-approvals-and-sandbox` by default
-- keeps accepting `--full-access`; use `--no-yolo` or `AUTOREVIEW_YOLO=0` to opt out
-- still accepts legacy `CODEX_REVIEW_*` env vars when the matching `AUTOREVIEW_*` var is unset
-- prints `autoreview clean: no accepted/actionable findings reported` when the selected review command exits 0
-
-## Final Report
-
-Include:
-- review command used
-- tests/proof run
-- findings accepted/rejected, briefly why
-- the clean review result from the final helper/review run, or why a remaining finding was consciously rejected
-
-Do not run another Codex review solely to improve the final report wording. If the final helper run exited 0 and produced no accepted/actionable findings, report that exact run as clean.
+Report material findings and status plainly. Do not add transcripts, proof
+ledgers, commits, pushes, or a new workstream unless requested.

@@ -1,6 +1,7 @@
+// Matrix helper module supports config update behavior.
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { coerceSecretRef } from "openclaw/plugin-sdk/secret-ref-runtime";
-import { normalizeSecretInputString } from "openclaw/plugin-sdk/setup";
+import { resolveOptionalIntegerOption } from "openclaw/plugin-sdk/number-runtime";
+import { coerceSecretRef, normalizeSecretInputString } from "openclaw/plugin-sdk/secret-input";
 import type { CoreConfig, MatrixConfig } from "../types.js";
 import { findMatrixAccountConfig } from "./account-config.js";
 import {
@@ -188,7 +189,12 @@ export function updateMatrixAccountConfig(
     if (patch.initialSyncLimit === null) {
       delete nextAccount.initialSyncLimit;
     } else {
-      nextAccount.initialSyncLimit = Math.max(0, Math.floor(patch.initialSyncLimit));
+      const initialSyncLimit = resolveOptionalIntegerOption(patch.initialSyncLimit, { min: 0 });
+      if (initialSyncLimit === undefined) {
+        delete nextAccount.initialSyncLimit;
+      } else {
+        nextAccount.initialSyncLimit = initialSyncLimit;
+      }
     }
   }
 

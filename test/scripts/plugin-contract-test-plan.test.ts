@@ -1,6 +1,7 @@
+// Plugin Contract Test Plan tests cover plugin contract test plan script behavior.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { createPluginContractTestShards } from "../../scripts/lib/plugin-contract-test-plan.mjs";
+import { createPluginContractTestShards } from "../../scripts/lib/plugin-contract-test-plan.mts";
 import { expectNoNodeFsScans } from "../../src/test-utils/fs-scan-assertions.js";
 import { listGitTrackedFiles } from "../../src/test-utils/repo-files.js";
 
@@ -10,12 +11,17 @@ function listContractTests(rootDir = "src/plugins/contracts"): string[] {
   return (files ?? []).filter((line) => line.endsWith(".test.ts"));
 }
 
-describe("scripts/lib/plugin-contract-test-plan.mjs", () => {
+describe("scripts/lib/plugin-contract-test-plan.mts", () => {
   it("keeps manual CI compatible with legacy target refs", () => {
     const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
 
+    // ci.yml imports the plan through the importTargetPlan fallback helper since
+    // 7ae5996bb3c so historical target refs without the module keep working.
+    expect(workflow).toContain("const pluginContractPlan = await importTargetPlan(");
+    expect(workflow).toContain('? "./scripts/lib/plugin-contract-test-plan.mts"');
+    expect(workflow).toContain(': "./scripts/lib/plugin-contract-test-plan.mjs",');
     expect(workflow).toContain(
-      'await import(\n            "./scripts/lib/plugin-contract-test-plan.mjs"',
+      'typeof pluginContractPlan.createPluginContractTestShards === "function"',
     );
     expect(workflow).toContain("checks-fast-contracts-plugins-legacy");
     expect(workflow).not.toContain(
@@ -24,7 +30,7 @@ describe("scripts/lib/plugin-contract-test-plan.mjs", () => {
   });
 
   it("splits plugin contracts into focused shards", () => {
-    const suffixes = ["a", "b", "c", "d"];
+    const suffixes = ["a", "b"];
 
     expect(
       createPluginContractTestShards().map((shard) => ({
@@ -55,14 +61,14 @@ describe("scripts/lib/plugin-contract-test-plan.mjs", () => {
       files: number;
       shards: number;
     }>(`
-      const { createPluginContractTestShards } = await import("./scripts/lib/plugin-contract-test-plan.mjs");
+      const { createPluginContractTestShards } = await import("./scripts/lib/plugin-contract-test-plan.mts");
       const shards = createPluginContractTestShards();
       return {
         files: shards.reduce((total, shard) => total + shard.includePatterns.length, 0),
         shards: shards.length,
       };
     `);
-    expect(payload.shards).toBe(4);
+    expect(payload.shards).toBe(2);
     expect(payload.files).toBeGreaterThan(0);
   });
 
@@ -71,7 +77,7 @@ describe("scripts/lib/plugin-contract-test-plan.mjs", () => {
       const registrationFiles = shard.includePatterns.filter((pattern) =>
         pattern.includes("/plugin-registration."),
       );
-      expect(registrationFiles.length).toBeLessThanOrEqual(7);
+      expect(registrationFiles.length).toBeLessThanOrEqual(14);
     }
   });
 });

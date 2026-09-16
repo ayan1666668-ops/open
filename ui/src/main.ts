@@ -1,5 +1,13 @@
+// Control UI module implements main behavior.
 import "./styles.css";
-import "./ui/app.ts";
+import "./app/app-host.ts";
+import { inferControlUiPublicAssetPath } from "./app/public-assets.ts";
+import {
+  installMissingStylesheetRecovery,
+  installStaleChunkReloadListener,
+  scheduleStaleChunkReload,
+} from "./app/stale-chunk-reload.ts";
+import { CONTROL_UI_BUILD_INFO, controlUiWorkerActivationRetires } from "./build-info.ts";
 
 type ViteImportMeta = ImportMeta & {
   readonly env?: {
@@ -7,14 +15,39 @@ type ViteImportMeta = ImportMeta & {
   };
 };
 
-declare const __OPENCLAW_CONTROL_UI_BUILD_ID__: string | undefined;
-
 const isProd = (import.meta as ViteImportMeta).env?.PROD === true;
+const currentControlUiBuildId = CONTROL_UI_BUILD_INFO.buildId;
+
+syncDocumentPublicAssetLinks();
+installStaleChunkReloadListener();
+installMissingStylesheetRecovery();
 
 if (isProd && "serviceWorker" in navigator) {
-  const swUrl = new URL("./sw.js", window.location.href);
-  swUrl.searchParams.set("v", __OPENCLAW_CONTROL_UI_BUILD_ID__ || "dev");
-  void navigator.serviceWorker.register(swUrl, { updateViaCache: "none" });
+  const swUrl = new URL(inferControlUiPublicAssetPath("sw.js"), window.location.origin);
+  swUrl.searchParams.set("v", currentControlUiBuildId);
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (controlUiWorkerActivationRetires(event.data)) {
+      void scheduleStaleChunkReload({
+        canReload: () => event.source === navigator.serviceWorker.controller,
+      });
+    }
+    if (event.data?.type === "sw-version-probe") {
+      event.ports[0]?.postMessage({ version: currentControlUiBuildId });
+    }
+  });
+  const refresh = () =>
+    import("./app/sw-refresh.runtime.ts")
+      .then(({ refreshControlUiServiceWorker }) => refreshControlUiServiceWorker())
+      .catch((error: unknown) => {
+        console.warn("OpenClaw service worker refresh failed.", error);
+      });
+  navigator.serviceWorker.addEventListener("controllerchange", () => void refresh());
+  void navigator.serviceWorker
+    .register(swUrl, { updateViaCache: "none" })
+    .then(refresh)
+    .catch((error: unknown) => {
+      console.warn("OpenClaw service worker registration failed.", error);
+    });
 } else if (!isProd && "serviceWorker" in navigator) {
   // Unregister any leftover dev SW to avoid stale cache issues.
   void navigator.serviceWorker.getRegistrations().then((registrations) => {
@@ -22,4 +55,22 @@ if (isProd && "serviceWorker" in navigator) {
       void r.unregister();
     }
   });
+}
+
+function syncDocumentPublicAssetLinks() {
+  setDocumentLinkHref('link[rel="icon"][type="image/svg+xml"]', "favicon.svg");
+  setDocumentLinkHref('link[rel="icon"][type="image/png"]', "favicon-32.png");
+  setDocumentLinkHref('link[rel="apple-touch-icon"]', "apple-touch-icon.png");
+  setDocumentLinkHref('link[rel="manifest"]', "manifest.webmanifest");
+}
+
+function setDocumentLinkHref(
+  selector: string,
+  asset: Parameters<typeof inferControlUiPublicAssetPath>[0],
+) {
+  const link = document.querySelector<HTMLLinkElement>(selector);
+  if (!link) {
+    return;
+  }
+  link.href = inferControlUiPublicAssetPath(asset);
 }

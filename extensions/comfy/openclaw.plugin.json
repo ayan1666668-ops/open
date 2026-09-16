@@ -1,12 +1,23 @@
 {
   "id": "comfy",
+  "categories": ["media"],
   "activation": {
     "onStartup": false
   },
   "enabledByDefault": true,
   "providers": ["comfy"],
-  "providerAuthEnvVars": {
-    "comfy": ["COMFY_API_KEY", "COMFY_CLOUD_API_KEY"]
+  "configContracts": {
+    "secretInputs": {
+      "paths": [{ "path": "headers.*", "expected": "string" }]
+    }
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "comfy",
+        "envVars": ["COMFY_API_KEY", "COMFY_CLOUD_API_KEY"]
+      }
+    ]
   },
   "providerAuthChoices": [
     {
@@ -191,6 +202,10 @@
       "allowPrivateNetwork": {
         "type": "boolean"
       },
+      "headers": {
+        "type": "object",
+        "additionalProperties": { "type": ["string", "object"] }
+      },
       "workflowPath": {
         "type": "string"
       },
@@ -201,6 +216,12 @@
         "type": "string"
       },
       "promptInputName": {
+        "type": "string"
+      },
+      "seedNodeId": {
+        "type": "string"
+      },
+      "seedInputName": {
         "type": "string"
       },
       "inputImageNodeId": {
@@ -228,6 +249,8 @@
           "workflow": { "type": "object" },
           "promptNodeId": { "type": "string" },
           "promptInputName": { "type": "string" },
+          "seedNodeId": { "type": "string" },
+          "seedInputName": { "type": "string" },
           "inputImageNodeId": { "type": "string" },
           "inputImageInputName": { "type": "string" },
           "outputNodeId": { "type": "string" },
@@ -243,6 +266,8 @@
           "workflow": { "type": "object" },
           "promptNodeId": { "type": "string" },
           "promptInputName": { "type": "string" },
+          "seedNodeId": { "type": "string" },
+          "seedInputName": { "type": "string" },
           "inputImageNodeId": { "type": "string" },
           "inputImageInputName": { "type": "string" },
           "outputNodeId": { "type": "string" },
@@ -258,6 +283,8 @@
           "workflow": { "type": "object" },
           "promptNodeId": { "type": "string" },
           "promptInputName": { "type": "string" },
+          "seedNodeId": { "type": "string" },
+          "seedInputName": { "type": "string" },
           "outputNodeId": { "type": "string" },
           "pollIntervalMs": { "type": "integer", "minimum": 100 },
           "timeoutMs": { "type": "integer", "minimum": 1000 }

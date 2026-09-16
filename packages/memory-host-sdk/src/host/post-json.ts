@@ -1,6 +1,10 @@
+import { createProviderHttpError, type SsrFPolicy } from "./openclaw-runtime-network.js";
 import { withRemoteHttpResponse } from "./remote-http.js";
-import type { SsrFPolicy } from "./ssrf-policy.js";
+import { readResponseJsonWithLimit } from "./response-snippet.js";
 
+// Shared JSON POST helper for guarded remote memory provider calls.
+
+/** POST JSON, parse bounded response JSON, and preserve provider error metadata. */
 export async function postJson<T>(params: {
   url: string;
   headers: Record<string, string>;
@@ -9,7 +13,7 @@ export async function postJson<T>(params: {
   signal?: AbortSignal;
   body: unknown;
   errorPrefix: string;
-  attachStatus?: boolean;
+  maxResponseBytes?: number;
   parse: (payload: unknown) => T | Promise<T>;
 }): Promise<T> {
   return await withRemoteHttpResponse({
@@ -24,24 +28,18 @@ export async function postJson<T>(params: {
     },
     onResponse: async (res) => {
       if (!res.ok) {
-        const text = await res.text();
-        const err = new Error(`${params.errorPrefix}: ${res.status} ${text}`) as Error & {
-          status?: number;
-        };
-        if (params.attachStatus) {
-          err.status = res.status;
-        }
-        throw err;
+        throw await createProviderHttpError(res, params.errorPrefix, {
+          requestHeaders: params.headers,
+          signal: params.signal,
+          maxBodyBytes: 8 * 1024,
+        });
       }
-      return await params.parse(await readJsonResponse(res, params.errorPrefix));
+      const payload = await readResponseJsonWithLimit(res, {
+        errorPrefix: params.errorPrefix,
+        maxBytes: params.maxResponseBytes,
+        signal: params.signal,
+      });
+      return await params.parse(payload);
     },
   });
-}
-
-async function readJsonResponse(res: Response, errorPrefix: string): Promise<unknown> {
-  try {
-    return await res.json();
-  } catch (cause) {
-    throw new Error(`${errorPrefix}: malformed JSON response`, { cause });
-  }
 }

@@ -1,25 +1,21 @@
-import {
-  LoginQRCallbackEventType,
-  Reactions,
-  TextStyle,
-  ThreadType,
-  type Style,
-} from "./zca-constants.js";
+import { createRequire } from "node:module";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+// Zalouser plugin module implements zca client behavior.
+import { TextStyle } from "./zca-constants.js";
 
-type ZcaJsRuntime = {
-  Zalo: unknown;
-};
-let zcaJsRuntimePromise: Promise<ZcaJsRuntime> | null = null;
+type ZcaJsRuntime = Pick<typeof import("zca-js"), "Zalo">;
 
-async function loadZcaJsRuntime(): Promise<ZcaJsRuntime> {
-  // Keep zca-js behind a runtime boundary so bundled metadata/contracts can load
-  // without resolving its optional WebSocket dependency tree.
-  zcaJsRuntimePromise ??= import("zca-js").then((mod) => mod as unknown as ZcaJsRuntime);
-  return await zcaJsRuntimePromise;
-}
+const require = createRequire(import.meta.url);
 
-export { LoginQRCallbackEventType, Reactions, TextStyle, ThreadType };
-export type { Style };
+// Keep zca-js behind a runtime boundary so bundled metadata/contracts can load
+// without resolving its optional WebSocket dependency tree. Its CommonJS export
+// supports tough-cookie 6; the ESM export still imports the removed default.
+const loadZcaJsRuntime = createLazyRuntimeModule(async () => {
+  const runtime: unknown = require("zca-js");
+  return runtime as ZcaJsRuntime;
+});
+
+export { TextStyle };
 
 export type Credentials = {
   imei: string;
@@ -108,7 +104,7 @@ export type LoginQRCallbackEvent =
       actions: null;
     };
 
-export type Listener = {
+type Listener = {
   on(event: "message", callback: (message: Message) => void): void;
   on(event: "error", callback: (error: unknown) => void): void;
   on(event: "closed", callback: (code: number, reason: string) => void): void;

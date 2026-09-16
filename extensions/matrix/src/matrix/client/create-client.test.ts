@@ -1,3 +1,4 @@
+// Matrix tests cover create client plugin behavior.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureMatrixSdkLoggingConfiguredMock = vi.hoisted(() => vi.fn());
@@ -6,6 +7,13 @@ const maybeMigrateLegacyStorageMock = vi.hoisted(() => vi.fn(async () => undefin
 const resolveMatrixStoragePathsMock = vi.hoisted(() => vi.fn());
 const writeStorageMetaMock = vi.hoisted(() => vi.fn());
 const MatrixClientMock = vi.hoisted(() => vi.fn());
+const stateRuntimeMock = vi.hoisted(() => ({
+  resolveStateDir: vi.fn(),
+}));
+
+vi.mock("../../runtime.js", () => ({
+  getMatrixRuntime: () => ({ state: stateRuntimeMock }),
+}));
 
 vi.mock("./logging.js", () => ({
   ensureMatrixSdkLoggingConfigured: ensureMatrixSdkLoggingConfiguredMock,
@@ -33,7 +41,6 @@ describe("createMatrixClient", () => {
     storagePath: "/tmp/openclaw-matrix-create-client-test/storage.json",
     recoveryKeyPath: "/tmp/openclaw-matrix-create-client-test/recovery.key",
     idbSnapshotPath: "/tmp/openclaw-matrix-create-client-test/idb.snapshot",
-    metaPath: "/tmp/openclaw-matrix-create-client-test/storage-meta.json",
     accountKey: "default",
     tokenHash: "token-hash",
   };
@@ -76,13 +83,14 @@ describe("createMatrixClient", () => {
       encryption: undefined,
       localTimeoutMs: undefined,
       initialSyncLimit: undefined,
-      storagePath: storagePaths.storagePath,
+      storageRootDir: storagePaths.rootDir,
       recoveryKeyPath: storagePaths.recoveryKeyPath,
       idbSnapshotPath: storagePaths.idbSnapshotPath,
       cryptoDatabasePrefix: "openclaw-matrix-default-token-hash",
       autoBootstrapCrypto: undefined,
       ssrfPolicy: undefined,
       dispatcherPolicy: undefined,
+      stateRuntime: stateRuntimeMock,
     });
   });
 
@@ -102,13 +110,14 @@ describe("createMatrixClient", () => {
       encryption: undefined,
       localTimeoutMs: undefined,
       initialSyncLimit: undefined,
-      storagePath: undefined,
+      storageRootDir: undefined,
       recoveryKeyPath: undefined,
       idbSnapshotPath: undefined,
       cryptoDatabasePrefix: undefined,
       autoBootstrapCrypto: undefined,
       ssrfPolicy: { allowPrivateNetwork: true },
       dispatcherPolicy: undefined,
+      stateRuntime: stateRuntimeMock,
     });
   });
 
@@ -130,13 +139,14 @@ describe("createMatrixClient", () => {
       encryption: undefined,
       localTimeoutMs: undefined,
       initialSyncLimit: undefined,
-      storagePath: undefined,
+      storageRootDir: undefined,
       recoveryKeyPath: undefined,
       idbSnapshotPath: undefined,
       cryptoDatabasePrefix: undefined,
       autoBootstrapCrypto: undefined,
       ssrfPolicy: explicitPolicy,
       dispatcherPolicy: undefined,
+      stateRuntime: stateRuntimeMock,
     });
   });
 
@@ -155,13 +165,14 @@ describe("createMatrixClient", () => {
       encryption: undefined,
       localTimeoutMs: undefined,
       initialSyncLimit: undefined,
-      storagePath: undefined,
+      storageRootDir: undefined,
       recoveryKeyPath: undefined,
       idbSnapshotPath: undefined,
       cryptoDatabasePrefix: undefined,
       autoBootstrapCrypto: undefined,
       ssrfPolicy: undefined,
       dispatcherPolicy: undefined,
+      stateRuntime: stateRuntimeMock,
     });
   });
 
@@ -182,13 +193,14 @@ describe("createMatrixClient", () => {
       encryption: undefined,
       localTimeoutMs: undefined,
       initialSyncLimit: undefined,
-      storagePath: undefined,
+      storageRootDir: undefined,
       recoveryKeyPath: undefined,
       idbSnapshotPath: undefined,
       cryptoDatabasePrefix: undefined,
       autoBootstrapCrypto: undefined,
       ssrfPolicy: undefined,
       dispatcherPolicy: undefined,
+      stateRuntime: stateRuntimeMock,
     });
   });
 });

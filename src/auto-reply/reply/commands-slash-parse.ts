@@ -1,12 +1,40 @@
-import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
+/** Shared parser for slash commands with action and argument tails. */
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
-export type SlashCommandParseResult =
+/** Parses a normalized send-policy command without importing command runtime state. */
+export function parseSendPolicyCommandBody(normalized: string): {
+  hasCommand: boolean;
+  mode?: "allow" | "deny" | "inherit";
+} {
+  const match = normalized.match(/^\/send(?:\s+([a-zA-Z]+))?\s*$/i);
+  if (!match) {
+    return { hasCommand: false };
+  }
+  const token = normalizeLowercaseStringOrEmpty(match[1]);
+  if (!token) {
+    return { hasCommand: true };
+  }
+  if (token === "inherit" || token === "default" || token === "reset") {
+    return { hasCommand: true, mode: "inherit" };
+  }
+  const mode =
+    token === "allow" || token === "on"
+      ? "allow"
+      : token === "deny" || token === "off"
+        ? "deny"
+        : undefined;
+  return { hasCommand: true, mode };
+}
+
+/** Internal parse state for slash command action extraction. */
+type SlashCommandParseResult =
   | { kind: "no-match" }
   | { kind: "empty" }
   | { kind: "invalid" }
   | { kind: "parsed"; action: string; args: string };
 
-export type ParsedSlashCommand =
+/** Public slash-command parse result returned to command handlers. */
+type ParsedSlashCommand =
   | { ok: true; action: string; args: string }
   | { ok: false; message: string };
 
@@ -14,6 +42,16 @@ function parseSlashCommandActionArgs(raw: string, slash: string): SlashCommandPa
   const trimmed = raw.trim();
   const slashLower = normalizeLowercaseStringOrEmpty(slash);
   if (!normalizeLowercaseStringOrEmpty(trimmed).startsWith(slashLower)) {
+    return { kind: "no-match" };
+  }
+  // Fix #84572: enforce a boundary after the prefix so `/config-check` does
+  // not match the `/config` handler. The character immediately after the
+  // matched prefix must be whitespace, a colon, or end-of-string. Otherwise
+  // the prefix collided with a longer command name (e.g. a skill named
+  // `config-check`) and should be treated as a non-match so the longer
+  // handler — or the skill router — gets a chance to claim it.
+  const charAfter = trimmed.charAt(slash.length);
+  if (charAfter && !/[\s:]/.test(charAfter)) {
     return { kind: "no-match" };
   }
   const rest = trimmed.slice(slash.length).trim();
@@ -29,6 +67,7 @@ function parseSlashCommandActionArgs(raw: string, slash: string): SlashCommandPa
   return { kind: "parsed", action, args };
 }
 
+/** Parses a slash command or returns null when the prefix does not match. */
 export function parseSlashCommandOrNull(
   raw: string,
   slash: string,

@@ -1,3 +1,5 @@
+// Tests private-route command persistence and timestamp bounds.
+import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -8,7 +10,10 @@ import {
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
 import type { MsgContext } from "../templating.js";
-import { resolvePrivateCommandRouteTargets } from "./commands-private-route.js";
+import {
+  buildPrivateCommandApprovalRequest,
+  resolvePrivateCommandRouteTargets,
+} from "./commands-private-route.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
 function createApprovalChannelPlugin(params: {
@@ -60,6 +65,7 @@ function createOwnerDerivedApprovalChannelPlugin(params: {
       id: params.id,
       label: params.id,
     }),
+    messaging: { targetPrefixes: params.ownerPrefixes },
     approvalCapability: {
       native: {
         describeDeliveryCapabilities: vi.fn(({ cfg }) => {
@@ -142,6 +148,23 @@ function buildApprovalRequest(): ExecApprovalRequest {
 
 afterEach(() => {
   resetPluginRuntimeStateForTest();
+});
+
+describe("buildPrivateCommandApprovalRequest", () => {
+  it.each([
+    ["a valid clock", 1_800_000_000_000, 1_800_000_300_000],
+    ["an invalid clock", Number.NaN, 0],
+    ["an overflowing clock", MAX_DATE_TIMESTAMP_MS, 0],
+  ])("bounds private route expiry with %s", (_label, createdAtMs, expiresAtMs) => {
+    const request = buildPrivateCommandApprovalRequest({
+      commandParams: buildCommandParams({}),
+      id: "diagnostics-private-route",
+      command: "openclaw gateway diagnostics export --json",
+      agentId: "main",
+      createdAtMs,
+    });
+    expect(request.expiresAtMs).toBe(expiresAtMs);
+  });
 });
 
 describe("resolvePrivateCommandRouteTargets", () => {
@@ -246,7 +269,7 @@ describe("resolvePrivateCommandRouteTargets", () => {
     ]);
   });
 
-  it("routes a Discord group command to the Telegram owner without Telegram exec approvers", async () => {
+  it("routes a Discord group command through Telegram's declared tg owner prefix", async () => {
     registerApprovalChannelPlugins([
       createApprovalChannelPlugin({
         id: "discord",
@@ -261,7 +284,7 @@ describe("resolvePrivateCommandRouteTargets", () => {
     const targets = await resolvePrivateCommandRouteTargets({
       commandParams: buildCommandParams({
         commands: {
-          ownerAllowFrom: ["telegram:849985193"],
+          ownerAllowFrom: ["tg:849985193"],
         },
         channels: {
           telegram: {
