@@ -169,6 +169,7 @@ function createPluginMetadataCache(): PluginCache["metadata"] {
     indexFacts: new WeakMap(),
     channelAdapters: new WeakMap(),
     bundledChannelCatalogs: new Map(),
+    bundledProviderPolicySurfaces: new Map(),
     staticCatalogStates: new WeakMap(),
     modelSuppressionResolvers: new WeakMap(),
   };

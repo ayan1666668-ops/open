@@ -9,6 +9,9 @@ import type {
   ProviderResolveModelRoutesContext,
   ProviderToolSearchPolicyContext,
 } from "../plugin-sdk/provider-model-types.js";
+import { resolveBundledPluginsDir } from "./bundled-dir.js";
+import { getPluginCache } from "./plugin-cache.js";
+import { getPluginValueInstance } from "./plugin-instance-scope.js";
 import type {
   ProviderApplyConfigDefaultsContext,
   ProviderNormalizeConfigContext,
@@ -20,6 +23,8 @@ import type {
   ProviderThinkingProfile,
 } from "./provider-thinking.types.js";
 import { loadBundledPluginPublicArtifactModuleFromCandidatesSync } from "./public-surface-loader.js";
+import { getPluginRegistryState, getPluginRegistryVersion } from "./runtime-state.js";
+import { getPluginRegistryForContext } from "./runtime/gateway-request-scope.js";
 
 export const PROVIDER_POLICY_ARTIFACT = "provider-policy-api.js";
 
@@ -160,9 +165,36 @@ export function resolveDirectBundledProviderPolicySurface(
   ) {
     return null;
   }
+  const registry = getPluginRegistryForContext();
+  const version = getPluginRegistryVersion(registry);
+  // Registration and unpublished registries can still change their source owners.
+  const cacheable =
+    !getPluginRegistryState()?.registrationContext && (!registry || version !== undefined);
+  const metadata = getPluginCache().metadata;
+  resolveBundledPluginsDir();
+  const selection = metadata.bundledPluginsDir;
+  const cached = cacheable ? metadata.bundledProviderPolicySurfaces.get(pluginId) : undefined;
+  if (
+    cached &&
+    cached.registry === registry &&
+    cached.version === version &&
+    cached.selection === selection
+  ) {
+    return cached.read();
+  }
   const mod = loadBundledPluginPublicArtifactModuleFromCandidatesSync<Record<string, unknown>>({
     dirName: pluginId,
     artifactCandidates: [PROVIDER_POLICY_ARTIFACT],
   });
-  return mod ? extractBundledProviderPolicySurface(mod) : null;
+  const surface = mod ? extractBundledProviderPolicySurface(mod) : null;
+  if (cacheable) {
+    const instance = mod ? getPluginValueInstance(mod) : undefined;
+    metadata.bundledProviderPolicySurfaces.set(pluginId, {
+      registry,
+      version,
+      selection,
+      read: instance ? () => instance.run(() => surface) : () => surface,
+    });
+  }
+  return surface;
 }
