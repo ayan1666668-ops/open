@@ -107,6 +107,19 @@ describe("buildSystemdUnit", () => {
     expect(execStart).toBe('ExecStart=/usr/bin/openclaw gateway --name "My Bot"');
   });
 
+  it("doubles % specifiers in Environment and ExecStart so systemd preserves them", () => {
+    const programArguments = ["/usr/bin/openclaw", "run", "tail%s%name"];
+    const unit = buildSystemdUnit({
+      description: "OpenClaw Gateway",
+      programArguments,
+      environment: { OPENCLAW_PROXY_URL: "http://proxy/%2fapi" },
+    });
+    const environmentLine = unit.split("\n").find((line) => line.startsWith("Environment="));
+    expect(environmentLine).toBe('Environment="OPENCLAW_PROXY_URL=http://proxy/%%2fapi"');
+    const execStart = unit.split("\n").find((line) => line.startsWith("ExecStart="));
+    expect(execStart).toContain("tail%%s%%name");
+  });
+
   it("drains through the main process while retaining final child-process cleanup", () => {
     const unit = buildSystemdUnit({
       description: "OpenClaw Gateway",
