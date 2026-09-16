@@ -29,9 +29,7 @@ import {
 import { renderMapField } from "./config-form.node.collection-map.ts";
 import {
   renderCollectionDefaultDescription,
-  renderFlatDefaultRow,
   renderFieldRow,
-  renderTags,
   schemaWithDefault,
   type ConfigNodeRenderer,
   type ConfigNodeRenderParams,
@@ -61,12 +59,13 @@ export function renderObject(
     onPatch,
     searchCriteria,
     rawAvailable,
+    maskSensitive,
     revealSensitive,
     isSensitivePathRevealed,
     onToggleSensitivePath,
     onRemove,
   } = params;
-  const { label, help, tags } = resolveFieldMeta(path, schema, hints);
+  const { label, help } = resolveFieldMeta(path, schema, hints);
   const selfMatched =
     searchCriteria && hasSearchCriteria(searchCriteria)
       ? matchesNodeSelf({ schema, path, hints, criteria: searchCriteria })
@@ -80,7 +79,6 @@ export function renderObject(
     fallback && typeof fallback === "object" && !Array.isArray(fallback)
       ? (fallback as Record<string, unknown>)
       : {};
-  const defaultDescription = renderCollectionDefaultDescription(params, fallback);
   const entries = objectPropertyKeys(schema)
     .map((key) => [key, objectPropertySchema(schema, key)] as const)
     .filter((entry): entry is readonly [string, ConfigNodeRenderParams["schema"]] =>
@@ -147,6 +145,7 @@ export function renderObject(
         path: [...path, propertyKey],
         hints,
         rawAvailable,
+        maskSensitive,
         unsupported,
         disabled,
         isRequired: requiredKeys.has(propertyKey),
@@ -181,7 +180,7 @@ export function renderObject(
   // Top-level objects and label-less contexts emit rows directly into the
   // surrounding settings-group so row dividers stay sibling-driven.
   if (path.length === 1 || params.showLabel === false) {
-    return html`${path.length === 1 ? renderFlatDefaultRow(defaultDescription) : nothing}${fields}`;
+    return fields;
   }
 
   // Nested objects get collapsible treatment as an indented sub-block.
@@ -191,15 +190,9 @@ export function renderObject(
         <div class="settings-row__text">
           <span class="settings-row__title">${label}</span>
           ${help ? html`<span class="settings-row__desc">${help}</span>` : nothing}
-          ${
-            schema.default !== undefined
-              ? html`<span class="settings-row__desc">${defaultDescription}</span>`
-              : nothing
-          }
-          ${renderTags(tags)}
         </div>
         <div class="settings-row__control">
-          <span class="settings-row__chevron cfg-object__chevron">${icons.chevronDown}</span>
+          <span class="settings-row__chevron cfg-object__chevron">${icons.chevronRight}</span>
         </div>
       </summary>
       <div class="settings-subrows">${fields}</div>
@@ -244,13 +237,14 @@ function renderArrayContent(
     onPatch,
     searchCriteria,
     rawAvailable,
+    maskSensitive,
     revealSensitive,
     isSensitivePathRevealed,
     onToggleSensitivePath,
   } = params;
   const showLabel = params.showLabel ?? true;
   const showHeaderMeta = params.showHeaderMeta ?? showLabel;
-  const { label, help, tags } = resolveFieldMeta(path, schema, hints);
+  const { label, help } = resolveFieldMeta(path, schema, hints);
   const selfMatched =
     searchCriteria && hasSearchCriteria(searchCriteria)
       ? matchesNodeSelf({ schema, path, hints, criteria: searchCriteria })
@@ -262,7 +256,6 @@ function renderArrayContent(
   if (!itemsSchema) {
     return renderFieldRow({
       label,
-      tags: [],
       showLabel: true,
       control: nothing,
       error: t("configForm.unsupportedArray"),
@@ -365,7 +358,6 @@ function renderArrayContent(
               ? html`<span class="settings-row__desc">${defaultDescription}</span>`
               : nothing
           }
-          ${renderTags(tags)}
         </div>
         <div class="settings-row__control">
           <span class="settings-row__value"
@@ -483,6 +475,7 @@ function renderArrayContent(
                         path: [...path, index],
                         hints,
                         rawAvailable,
+                        maskSensitive,
                         unsupported,
                         disabled,
                         isRequired: true,

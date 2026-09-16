@@ -1,6 +1,8 @@
 import type { ApplicationContext } from "../../app/context.ts";
 import { t } from "../../i18n/index.ts";
+import { registerPluginManagementEnglish } from "../../i18n/locales/en-plugin-management.ts";
 import { serializeConfigForm } from "../../lib/config-form-utils.ts";
+import type { ConfigWriteAck } from "../../lib/config/config-draft-model.ts";
 import { resolveEditableSnapshotConfig } from "../../lib/config/config-state-model.ts";
 import type { PluginDiscoveryDetailResult, PluginListResult } from "../../lib/plugins/index.ts";
 import {
@@ -17,6 +19,8 @@ import {
 import { pluginRowKey } from "./plugin-row-message.ts";
 import type { PluginsConsentController } from "./plugins-consent-controller.ts";
 
+registerPluginManagementEnglish();
+
 const INSTALL_RECONNECT_TIMEOUT_MS = 30_000;
 
 type InstallWizardControllerHost = {
@@ -26,12 +30,10 @@ type InstallWizardControllerHost = {
   getRuntimeConfig: () => ApplicationContext["runtimeConfig"];
   getConsentController: () => PluginsConsentController;
   getOwner: () => object;
-  getBootId: () => string | undefined;
   isConnected: () => boolean;
   canMutate: () => boolean;
   canEditConfig: () => boolean;
   refreshCatalog: () => Promise<void>;
-  requestRestart: (reason: string) => Promise<void>;
   onManage: (pluginId: string) => void;
 };
 
@@ -39,7 +41,6 @@ export class InstallWizardController {
   private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private attempt = 0;
   private owner: object | null = null;
-  private restartRequirement: { bootId: string } | null = null;
 
   constructor(private readonly host: InstallWizardControllerHost) {}
 
@@ -56,6 +57,7 @@ export class InstallWizardController {
   invalidate(): void {
     const state = this.host.getState();
     if (!state) {
+      this.retireAttempt();
       return;
     }
     if (!this.ownerIsCurrent()) {
@@ -74,23 +76,39 @@ export class InstallWizardController {
   }
 
   open(result: PluginDiscoveryDetailResult): void {
-    const request = installRequestForDiscoveryDetail(result);
-    if (!request) {
+    if (!installRequestForDiscoveryDetail(result)) {
       return;
     }
-    this.clearReconnectTimeout();
-    this.attempt += 1;
+    this.prepareOpen()?.open(result);
+  }
+
+  prepareOpen() {
+    if (this.busy) {
+      return null;
+    }
+    // Detail loading belongs to the same attempt as review and installation.
+    this.close();
     this.owner = this.host.getOwner();
-    this.restartRequirement = null;
-    this.host.setState({
-      catalogId: result.plugin.id,
-      detail: result,
-      request,
-      stage: "review",
-    });
-    // Prepare the canonical form before the intentional restart so setup can resume immediately.
-    void this.host.getRuntimeConfig().ensureLoaded();
-    void this.host.getRuntimeConfig().ensureSchemaLoaded();
+    const attempt = this.attempt;
+    const isCurrent = () => attempt === this.attempt && this.ownerIsCurrent();
+    return {
+      isCurrent,
+      open: (result: PluginDiscoveryDetailResult) => {
+        const request = installRequestForDiscoveryDetail(result);
+        if (!isCurrent() || !request) {
+          return;
+        }
+        this.host.setState({
+          catalogId: result.plugin.id,
+          detail: result,
+          request,
+          stage: "review",
+        });
+        // Prepare configuration while the operator reviews the package.
+        void this.host.getRuntimeConfig().ensureLoaded();
+        void this.host.getRuntimeConfig().ensureSchemaLoaded();
+      },
+    };
   }
 
   close(): void {
@@ -136,20 +154,22 @@ export class InstallWizardController {
           ...current,
           pluginId: result.plugin.id,
           stage: "reconnecting",
-          policyReason: undefined,
+          policyWarning: undefined,
           error: undefined,
         });
-        if (result.restartRequired) {
-          await this.restart(attempt, state.catalogId);
-        } else {
-          void this.resume();
-        }
+        await this.resume();
       },
-      onFailure: (error) => this.fail(attempt, state.catalogId, error),
-      onInstallPolicyWarning: (_request, reason) => {
+      onFailure: (error, pluginId) => {
+        const current = this.host.getState();
+        if (pluginId && current && this.isCurrent(attempt, state.catalogId)) {
+          this.host.setState({ ...current, pluginId, savedInstall: true });
+        }
+        this.fail(attempt, state.catalogId, error);
+      },
+      onInstallPolicyWarning: (_request, policyWarning) => {
         const current = this.host.getState();
         if (current && this.isCurrent(attempt, state.catalogId)) {
-          this.host.setState({ ...current, stage: "policy-warning", policyReason: reason });
+          this.host.setState({ ...current, stage: "policy-warning", policyWarning });
         }
       },
     });
@@ -178,9 +198,6 @@ export class InstallWizardController {
     ) {
       return;
     }
-    if (!this.consumeCompletedRestart()) {
-      return;
-    }
     this.clearReconnectTimeout();
     const plugin = installedPluginForWizard(this.host.getCatalog(), state);
     if (!plugin) {
@@ -196,7 +213,7 @@ export class InstallWizardController {
       return;
     }
     const stage = installedPluginWizardStage(plugin);
-    this.host.setState({ ...state, pluginId: plugin.id, stage });
+    this.host.setState({ ...state, pluginId: plugin.id, savedInstall: undefined, stage });
     if (stage === "configuring") {
       const runtimeConfig = this.host.getRuntimeConfig();
       if (runtimeConfig.state.connected) {
@@ -242,12 +259,15 @@ export class InstallWizardController {
             if (!config || !snapshot?.hash) {
               throw new Error(t("pluginsPage.installWizard.configSaveFailed"));
             }
-            return client.request("config.set", {
+            return client.request<ConfigWriteAck>("config.set", {
               raw: serializeConfigForm(buildPluginConfigurationSet(config, configDraft)),
               baseHash: snapshot.hash,
             });
           },
-          { canDispatch: () => this.isCurrent(attempt, state.catalogId) },
+          {
+            canDispatch: () => this.isCurrent(attempt, state.catalogId),
+            configWriteAck: (ack) => ack,
+          },
         )
       : null;
     const saved = mutation === null || mutation.ok;
@@ -291,7 +311,7 @@ export class InstallWizardController {
 
   retry(): void {
     const state = this.host.getState();
-    if (!state) {
+    if (!state || (state.savedInstall && !this.host.canMutate())) {
       return;
     }
     if (!this.ownerIsCurrent()) {
@@ -301,6 +321,7 @@ export class InstallWizardController {
         ...state,
         pluginId: undefined,
         configDraft: undefined,
+        savedInstall: undefined,
         stage: "review",
         error: undefined,
       });
@@ -312,8 +333,18 @@ export class InstallWizardController {
     }
     if (state.pluginId) {
       this.host.setState({ ...state, stage: "reconnecting", error: undefined });
-      if (this.restartRequirement && !this.consumeCompletedRestart()) {
-        void this.restart(this.attempt, state.catalogId);
+      if (state.savedInstall) {
+        const attempt = this.attempt;
+        void this.host.getConsentController().mutateInstalledPlugin(
+          state.pluginId,
+          "reload",
+          pluginRowKey(state.pluginId),
+          {},
+          {
+            onReloaded: () => this.resume(),
+            onFailure: (error) => this.fail(attempt, state.catalogId, error),
+          },
+        );
         return;
       }
       this.armReconnectTimeout(this.attempt, state.catalogId);
@@ -380,9 +411,9 @@ export class InstallWizardController {
       stage: "enabling",
       error: undefined,
     });
-    void this.host.getConsentController().updateEnabled(
+    void this.host.getConsentController().mutateInstalledPlugin(
       pluginId,
-      true,
+      "enable",
       key,
       {},
       {
@@ -402,13 +433,9 @@ export class InstallWizardController {
           this.host.setState({
             ...current,
             pluginId: result.plugin.id,
-            stage: result.restartRequired ? "reconnecting" : "success",
+            stage: "success",
           });
-          if (result.restartRequired) {
-            void this.restart(attempt, state.catalogId);
-          } else {
-            this.clearReconnectTimeout();
-          }
+          this.clearReconnectTimeout();
         },
         onFailure: (error) => this.fail(attempt, state.catalogId, error),
       },
@@ -430,47 +457,5 @@ export class InstallWizardController {
   private retireAttempt(): void {
     this.attempt += 1;
     this.owner = null;
-    this.restartRequirement = null;
-  }
-
-  private async restart(attempt: number, catalogId: string): Promise<void> {
-    if (!this.isCurrent(attempt, catalogId)) {
-      return;
-    }
-    if (!this.restartRequirement) {
-      const bootId = this.host.getBootId()?.trim();
-      if (!bootId) {
-        this.fail(attempt, catalogId, t("pluginsPage.installWizard.restartFailed"));
-        return;
-      }
-      // Restart scheduling is only acceptance. The next hello must prove that a
-      // different Gateway process loaded the new plugin inventory.
-      this.restartRequirement = { bootId };
-    }
-    try {
-      await this.host.requestRestart(t("pluginsPage.installWizard.restartReason"));
-    } catch (error) {
-      this.fail(
-        attempt,
-        catalogId,
-        error instanceof Error ? error.message : t("pluginsPage.installWizard.restartFailed"),
-      );
-      return;
-    }
-    if (this.isCurrent(attempt, catalogId)) {
-      this.armReconnectTimeout(attempt, catalogId);
-    }
-  }
-
-  private consumeCompletedRestart(): boolean {
-    if (!this.restartRequirement) {
-      return true;
-    }
-    const bootId = this.host.getBootId()?.trim();
-    if (!bootId || bootId === this.restartRequirement.bootId) {
-      return false;
-    }
-    this.restartRequirement = null;
-    return true;
   }
 }

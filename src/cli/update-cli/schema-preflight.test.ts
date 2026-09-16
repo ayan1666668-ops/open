@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { planLegacyConfigForUpdateChannel } from "../../commands/doctor/legacy-config-repair.js";
 import { createConfigIO } from "../../config/io.js";
-import { withEnvOverride, withTempHome, writeOpenClawConfig } from "../../config/test-helpers.js";
+import { withTempHome, writeOpenClawConfig } from "../../config/test-helpers.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "../../state/openclaw-agent-db-contract.js";
@@ -19,6 +19,7 @@ import {
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
+import { withEnvAsync } from "../../test-utils/env.js";
 import {
   captureTargetDatabaseSchemaContext,
   checkTargetDatabaseSchemasForContexts,
@@ -248,7 +249,7 @@ describe("planned legacy configuration admission", () => {
     "preserves original config and fences %s",
     async (scenario) => {
       await withTempHome(async (home) => {
-        await withEnvOverride({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
+        await withEnvAsync({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
           const configPath = await writeOpenClawConfig(home, {
             gateway: { $include: "gateway.json" },
           });
@@ -267,10 +268,11 @@ describe("planned legacy configuration admission", () => {
           await expect(
             captureTargetDatabaseSchemaContext(env).then(() => true),
           ).rejects.toMatchObject({
-            reason: "database-schema-preflight",
+            reason: "invalid-config",
+            message: expect.stringMatching(/gateway\.bind:[\s\S]*openclaw doctor --fix/),
           });
           // Exercise the real caller admission forwarding, without inspecting a live service.
-          const { contexts } = await withEnvOverride({ OPENCLAW_CONFIG_PATH: configPath }, () =>
+          const { contexts } = await withEnvAsync({ OPENCLAW_CONFIG_PATH: configPath }, () =>
             inspectUpdateDatabaseContexts({
               roots: [],
               updateInstallKind: "package",
@@ -298,7 +300,7 @@ describe("planned legacy configuration admission", () => {
                 { ...env, OPENCLAW_CONFIG_PATH: otherPath },
                 { legacyConfigPlan },
               ).then(() => true),
-            ).rejects.toMatchObject({ reason: "database-schema-preflight" });
+            ).rejects.toMatchObject({ reason: "invalid-config" });
           } else {
             fs.appendFileSync(scenario === "root edit" ? configPath : includePath, "\n");
             await expect(
@@ -314,6 +316,23 @@ describe("planned legacy configuration admission", () => {
 });
 
 describe("planned migration managed profile isolation", () => {
+  it("reports invalid model policy paths without disclosing their values", async () => {
+    await withTempHome(async (home) => {
+      const rejectedValue = "synthetic-private-config-value";
+      const configPath = await writeOpenClawConfig(home, {
+        agents: { defaults: { modelPolicy: { allow: [rejectedValue] } } },
+      });
+      const env = { ...process.env, OPENCLAW_CONFIG_PATH: configPath };
+      const before = fs.readFileSync(configPath);
+      const inspected = captureTargetDatabaseSchemaContext(env);
+      await expect(inspected).rejects.toMatchObject({ reason: "invalid-config" });
+      await expect(inspected).rejects.toThrow("agents.defaults.modelPolicy.allow.0:");
+      await expect(inspected).rejects.toThrow("openclaw doctor --fix");
+      await expect(inspected).rejects.not.toThrow(rejectedValue);
+      expect(fs.readFileSync(configPath)).toEqual(before);
+    });
+  });
+
   it("refuses a newly valid replacement of the planned source before admission", async () => {
     await withTempHome(async (home) => {
       const configPath = await writeOpenClawConfig(home, {
@@ -345,7 +364,7 @@ describe("planned migration managed profile isolation", () => {
     "other invalid source",
   ] as const)("admits only the owned service's config: %s", async (scenario) => {
     await withTempHome(async (home) => {
-      await withEnvOverride({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
+      await withEnvAsync({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
         const callerPath = await writeOpenClawConfig(home, {
           gateway: { mode: "local", bind: "localhost" },
         });
@@ -394,7 +413,7 @@ describe("planned migration managed profile isolation", () => {
           },
         });
         if (scenario === "other legacy source" || scenario === "other invalid source") {
-          await expect(inspected).rejects.toMatchObject({ reason: "database-schema-preflight" });
+          await expect(inspected).rejects.toMatchObject({ reason: "invalid-config" });
         } else {
           const context = await inspected;
           expect(context?.config.gateway?.bind).toBe(
@@ -413,11 +432,12 @@ describe("planned migration managed profile isolation", () => {
     });
   });
 
-  it("does not admit unrelated invalid settings alongside a migratable field", async () => {
+  it("reports invalid fields and repair guidance without admitting unrelated invalid settings", async () => {
     await withTempHome(async (home) => {
-      await withEnvOverride({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
+      await withEnvAsync({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }, async () => {
         const configPath = await writeOpenClawConfig(home, {
           gateway: { mode: "local", bind: "localhost", port: "invalid" },
+          session: { store: 42 },
         });
         const env = { ...process.env, OPENCLAW_CONFIG_PATH: configPath };
         const before = fs.readFileSync(configPath);
@@ -427,9 +447,14 @@ describe("planned migration managed profile isolation", () => {
         }).readConfigFileSnapshotForWrite();
         const legacyConfigPlan = planLegacyConfigForUpdateChannel(snapshot, writeOptions);
         expect(legacyConfigPlan).toBeUndefined();
-        await expect(
-          captureTargetDatabaseSchemaContext(env, { legacyConfigPlan }),
-        ).rejects.toMatchObject({ reason: "database-schema-preflight" });
+        const inspected = captureTargetDatabaseSchemaContext(env, { legacyConfigPlan });
+        await expect(inspected).rejects.toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining(configPath),
+        });
+        await expect(inspected).rejects.toThrow("gateway.port:");
+        await expect(inspected).rejects.toThrow("session.store:");
+        await expect(inspected).rejects.toThrow("openclaw doctor --fix");
         expect(fs.readFileSync(configPath)).toEqual(before);
       });
     });

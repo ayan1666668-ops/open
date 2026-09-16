@@ -38,6 +38,7 @@ export function renderMapField(
     path,
     hints,
     rawAvailable,
+    maskSensitive,
     unsupported,
     disabled,
     reservedKeys,
@@ -207,7 +208,6 @@ export function renderMapField(
                       anySchema
                         ? renderFieldRow({
                             label: key,
-                            tags: [],
                             showLabel: false,
                             stacked: true,
                             control: renderJsonTextareaControl({
@@ -230,6 +230,7 @@ export function renderMapField(
                             path: valuePath,
                             hints,
                             rawAvailable,
+                            maskSensitive,
                             unsupported,
                             disabled,
                             isRequired: true,

@@ -11,6 +11,7 @@ import { hasErrnoCode } from "../infra/errno.js";
 
 export function createGatewayFixtureFork(
   registerCleanup: (cleanup: () => Promise<void>) => unknown,
+  maxBytes = 4 * 1024 * 1024,
 ) {
   const lifetime = createFixtureLifetime();
   registerCleanup(() => lifetime.cleanup());
@@ -54,7 +55,7 @@ export default defineConfig({
   return function runGatewayFixtureFork(
     context: Pick<TestContext, "signal" | "onTestFinished">,
     source: (repoRoot: string, root: string) => string,
-    assertJournal: (journal: unknown, text: string) => void,
+    assertJournal?: (journal: unknown, text: string) => void,
   ): Promise<void> {
     const run = lifetime.run(async () => {
       context.signal.throwIfAborted();
@@ -97,7 +98,7 @@ export default defineConfig({
           cwd: repoRoot,
           signal: context.signal,
           timeoutMs: 90_000,
-          maxBytes: 4 * 1024 * 1024,
+          maxBytes,
           env: {
             PATH: process.env.PATH,
             OPENCLAW_VITEST_FS_MODULE_CACHE: process.env.OPENCLAW_VITEST_FS_MODULE_CACHE,
@@ -138,8 +139,10 @@ export default defineConfig({
           numFailedTests: 0,
           success: true,
         });
-        const journal = await fs.readFile(path.join(root, "journal.json"), "utf8");
-        assertJournal(JSON.parse(journal), journal);
+        if (assertJournal) {
+          const journal = await fs.readFile(path.join(root, "journal.json"), "utf8");
+          assertJournal(JSON.parse(journal), journal);
+        }
       } finally {
         if (joined) {
           await fs.rm(root, { recursive: true, force: true });
@@ -251,9 +254,13 @@ test("observes startup cleanup ownership through fixture teardown", async () => 
     if (!address || typeof address === "string") throw new Error("expected owned TCP blocker");
     const retain = metadataModule.retainGatewayPluginMetadata;
     const metadataSpy = vi.spyOn(metadataModule, "retainGatewayPluginMetadata").mockImplementation(() => {
-      const release = retain();
+      const owner = retain();
       metadataRetains++;
-      return () => { release(); metadataReleases++; };
+      return { ...owner, close: async (...args) => {
+        const result = await own(owner.close(...args));
+        metadataReleases++;
+        return result;
+      } };
     });
     restorers.push(() => metadataSpy.mockRestore());
     const prepare = lifecycleModule.prepareGatewayLifecycle;
@@ -262,7 +269,7 @@ test("observes startup cleanup ownership through fixture teardown", async () => 
       return own(preparing.then(async runtime => {
         lifecycle = runtime;
         tlsError = runtime.gatewayTls.error;
-        runtime.registerGatewayLifetimeSidecars([sidecar]);
+        runtime.registerGatewayLifetimeSidecars(sidecar);
         const close = runtime.closeOnStartupFailure;
         const closeSpy = vi.spyOn(runtime, "closeOnStartupFailure").mockImplementation(() => {
           const closing = own(close());
@@ -368,7 +375,7 @@ test("observes startup cleanup ownership through fixture teardown", async () => 
       kernelReturned: kernelResult.status === "fulfilled", listenCalls: nativeListens.length,
       probeListening: probe.listening, blockerListening: blocker.listening,
       stopCalls: stopProbe.mock.calls.length, lowerStops, metadataRetains, metadataReleases,
-      nativeOwnerRetained: lifecycle.runtimeState.gatewayLifetimeSidecars.includes(sidecar),
+      nativeOwnerRetained: lifecycle.runtimeState.gatewayLifetimeSidecars.snapshot().includes(sidecar),
       fixtureRelease, afterEach, cleanup, successorSetup, successorStarted, homeRestored,
       beforeCleanup, afterCleanup, afterSuccessor: readState(),
     };

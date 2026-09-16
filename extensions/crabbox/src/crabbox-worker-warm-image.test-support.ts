@@ -6,8 +6,11 @@ import {
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import type { SpawnResult } from "openclaw/plugin-sdk/process-runtime";
+import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, vi } from "vitest";
+import * as managedBinary from "./crabbox-managed-binary.js";
+import { crabboxState } from "./crabbox-state.test-support.js";
 import {
   createNodeBootstrapFixture,
   createWorkerArchiveFixture,
@@ -15,6 +18,8 @@ import {
 import { operationLeaseId } from "./crabbox-worker-profile.js";
 import { createCrabboxWorkerProvider } from "./crabbox-worker-provider.js";
 import type { WarmProfileRecord } from "./crabbox-worker-warm-image-store.js";
+
+export { managedBinary };
 
 export const OPERATION_ID = `provision:v2:${"0".repeat(64)}`;
 export const LEASE_ID = operationLeaseId(OPERATION_ID);
@@ -36,6 +41,7 @@ afterEach(async () => {
   providers.clear();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  await closeOpenClawStateDatabaseAsync();
   resetPluginStateStoreForTests();
 });
 
@@ -73,12 +79,20 @@ export function checkpointResult(
 export function createWarmProvider(
   command?: (call: CommandCall) => SpawnResult | Promise<SpawnResult | undefined> | undefined,
   stateDir = tempDirs.make("openclaw-crabbox-warm-image-"),
-  dependencies: Pick<Parameters<typeof createCrabboxWorkerProvider>[0], "sleep"> = {},
+  dependencies: Pick<
+    Parameters<typeof createCrabboxWorkerProvider>[0],
+    "sleep" | "warmImagePolicy"
+  > = {},
 ) {
   vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+  vi.spyOn(managedBinary, "ensureManagedCrabboxBinary").mockImplementation(async (params) => ({
+    binary: params?.binary ?? "crabbox",
+    version: "0.55.0",
+  }));
   const calls: CommandCall[] = [];
   const warn = vi.fn();
   const provider = createCrabboxWorkerProvider({
+    state: crabboxState,
     openclawRoot: path.resolve(path.sep, "workspace", "openclaw"),
     pathEnv: "",
     isExecutable: () => false,

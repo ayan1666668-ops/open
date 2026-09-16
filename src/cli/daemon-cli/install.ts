@@ -22,10 +22,15 @@ import { isNodeRuntime } from "../../daemon/runtime-binary.js";
 import { resolveNodeRuntimeInfo, resolvePreferredNodePath } from "../../daemon/runtime-paths.js";
 import { readEmbeddedGatewayToken } from "../../daemon/service-audit.js";
 import { mergeGatewayServiceEnv } from "../../daemon/service-env-merge.js";
+import { sanitizeServiceInspectionError } from "../../daemon/service-inspection-error.js";
 import {
   assertServiceDefinitionWritable,
   resolveManagedGatewayServiceCommand,
 } from "../../daemon/service-types.js";
+import {
+  assertGatewayServiceUpdateCurrent,
+  isUpdateOwnedGatewayServiceCommand,
+} from "../../daemon/service-update-authority.js";
 import { resolveGatewayService, type GatewayServiceCommandConfig } from "../../daemon/service.js";
 import { isNonFatalSystemdInstallProbeError } from "../../daemon/systemd-exec.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
@@ -130,6 +135,7 @@ export function mergeInstallInvocationEnv(params: {
       upper === "HOME" ||
       upper === "PATH" ||
       upper === "TMPDIR" ||
+      upper === "HOMEBREW_PREFIX" ||
       upper.startsWith("OPENCLAW_")
     ) {
       continue;
@@ -178,6 +184,13 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
     return;
   }
   const service = resolveGatewayService();
+  let existingServiceCommand: GatewayServiceCommandConfig | null;
+  try {
+    existingServiceCommand = await service.readCommand(process.env, { requireEffective: true });
+  } catch (error) {
+    fail(sanitizeServiceInspectionError(error).message);
+    return;
+  }
   let loaded;
   try {
     loaded = await service.isLoaded({ env: process.env });
@@ -187,13 +200,6 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
       return;
     }
     loaded = false;
-  }
-  let existingServiceCommand: GatewayServiceCommandConfig | null;
-  try {
-    existingServiceCommand = await service.readCommand(process.env, { requireEffective: true });
-  } catch {
-    fail("SERVICE_DEFINITION_UNKNOWN: Service definition cannot be safely inspected.");
-    return;
   }
   const existingManagedCommand = resolveManagedGatewayServiceCommand(existingServiceCommand);
   const existingServiceEnv = existingManagedCommand?.environment;
@@ -331,6 +337,7 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
   }
   if (loaded && !opts.force) {
     autoRefreshMessage ??= await getGatewayServiceAutoRefreshMessage({
+      allowUnconfigured: opts.allowUnconfigured,
       currentCommand: existingServiceCommand,
       env: process.env,
       installEnv,
@@ -365,6 +372,14 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
       writeOptions: {
         baseSnapshot: configSnapshot,
         ...configWriteOptions,
+        ...(isUpdateOwnedGatewayServiceCommand()
+          ? {
+              assertCurrent: () => {
+                configWriteOptions.assertCurrent?.();
+                assertGatewayServiceUpdateCurrent();
+              },
+            }
+          : {}),
         skipRuntimeSnapshotRefresh: true,
       },
       afterWrite: { mode: "auto" },
@@ -409,6 +424,7 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
 
   const { programArguments, workingDirectory, environment, environmentValueSources } =
     await buildGatewayInstallPlan({
+      allowUnconfigured: opts.allowUnconfigured,
       env: installEnv,
       port,
       runtime: runtimeRaw,
@@ -442,6 +458,7 @@ export async function runDaemonInstall(opts: DaemonInstallOptions) {
 }
 
 async function getGatewayServiceAutoRefreshMessage(params: {
+  allowUnconfigured?: boolean;
   currentCommand: GatewayServiceCommandConfig | null;
   env: Record<string, string | undefined>;
   installEnv: NodeJS.ProcessEnv;
@@ -459,6 +476,7 @@ async function getGatewayServiceAutoRefreshMessage(params: {
     }
     const getPlannedInstall = createLazyPromise(() =>
       buildGatewayInstallPlan({
+        allowUnconfigured: params.allowUnconfigured,
         env: params.installEnv,
         port: params.port,
         runtime: params.runtime,
@@ -470,6 +488,17 @@ async function getGatewayServiceAutoRefreshMessage(params: {
         config: params.config,
       }),
     );
+    const currentAllowsUnconfigured =
+      currentCommand.programArguments.includes("--allow-unconfigured");
+    if (currentAllowsUnconfigured || params.allowUnconfigured) {
+      const plannedInstall = await getPlannedInstall();
+      if (
+        currentAllowsUnconfigured !==
+        plannedInstall.programArguments.includes("--allow-unconfigured")
+      ) {
+        return "Gateway service start-mode argument differs from the current install plan; refreshing the install.";
+      }
+    }
     const currentEmbeddedToken = readEmbeddedGatewayToken(currentCommand);
     if (currentEmbeddedToken) {
       const plannedInstall = await getPlannedInstall();
