@@ -10,8 +10,8 @@ import { resolveDefaultModelForAgent, type ModelRef } from "../agents/model-sele
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { prepareSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import { executionSelectionCodecMetadata } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
+import { resolveExecutionSelectionExecutorKind } from "../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveSessionPatchModelSelection } from "./server-methods/sessions-patch-model-selection.js";
 import type { GatewaySessionTitleModelSelection } from "./session-lifecycle-preparation.js";
 
@@ -43,7 +43,7 @@ export async function resolveSessionCreateModelSelection(
   const runtime = normalizeOptionalAgentRuntimeId(
     typeof input === "string" ? undefined : input?.agentRuntime,
   );
-  const kind = runtime ? executionSelectionCodecMetadata(cfg).classifyExecutor(runtime) : undefined;
+  const kind = runtime ? resolveExecutionSelectionExecutorKind(cfg, runtime) : undefined;
   if (runtime && !kind) return null;
   const prepared = await prepareSessionExecutionSelection({
     cfg,
@@ -57,7 +57,7 @@ export async function resolveSessionCreateModelSelection(
         }
       : { kind: "initialize" },
   });
-  if (prepared.status !== "ready" || isAcpExecutionSelection(prepared.selection)) return null;
+  if (prepared.status !== "ready" || !isModelExecutionSelection(prepared.selection)) return null;
   return {
     executionSelection: prepared.selection,
     validate: prepared.validateCommit,

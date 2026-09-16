@@ -21,10 +21,13 @@ import {
   resolveSessionExecutionFallbacks,
 } from "../../model-picker/apply-session-model-selection.js";
 import {
-  executionSelectionCodecMetadata,
+  resolveExecutionSelectionExecutorKind,
   getSessionExecutionSelection,
-} from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+} from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { getPluginRuntimeGatewayRequestScope } from "./gateway-request-scope.js";
 import type { PluginRuntime } from "./types.js";
 
@@ -112,7 +115,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     const accepted = getSessionExecutionSelection(sessionEntry, config);
     const configured = resolveDefaultModelForAgent({ cfg: config, agentId });
     const selectedModel =
-      accepted && !isAcpExecutionSelection(accepted)
+      accepted && isModelExecutionSelection(accepted)
         ? accepted.model
         : { provider: configured.provider, id: configured.model };
     const runtimeId = normalizeOptionalAgentRuntimeId(
@@ -121,7 +124,7 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     const explicitRuntime =
       runtimeId && !isDefaultAgentRuntimeId(runtimeId) ? runtimeId : undefined;
     const executorKind = explicitRuntime
-      ? executionSelectionCodecMetadata(config).classifyExecutor(explicitRuntime)
+      ? resolveExecutionSelectionExecutorKind(config, explicitRuntime)
       : undefined;
     if (explicitRuntime && !executorKind) {
       throw new Error("Could not confirm support for the selected app.");

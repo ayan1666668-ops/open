@@ -80,10 +80,8 @@ import {
   isSessionAutoResetReason,
 } from "../hooks/session-auto-reset.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
-import { prepareSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { commitAcpExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import { executionSelectionTransactionChanged } from "../model-picker/execution-selection-codec.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { executionSelectionTransactionChanged } from "../model-picker/apply-session-model-selection.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { runPluginHostCleanup } from "../plugins/host-hook-cleanup.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
@@ -1428,23 +1426,6 @@ export async function performGatewaySessionReset(params: {
           error: errorShape(ErrorCodes.INVALID_REQUEST, `unknown session: ${params.key}`),
         };
       }
-      let resetSelection = getSessionExecutionSelection(entry, cfg);
-      let validateResetSelection: (() => string | undefined) | undefined;
-      if (entry && !resetSelection) {
-        const prepared = await prepareSessionExecutionSelection({
-          cfg,
-          agentId: resolveLifecycleAgentId(cfg, target.agentId),
-          sessionKey: target.canonicalKey,
-          sessionEntry: entry,
-          storePath,
-          request: { kind: "initialize" },
-        });
-        if (prepared.status !== "ready") {
-          return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, prepared.message) };
-        }
-        resetSelection = prepared.selection;
-        validateResetSelection = prepared.validateCommit;
-      }
       // Drain first so a legitimate local turn can release its claim. Retire only
       // after every non-destructive guard is rechecked; a placement race must abort
       // before hooks, runtime cleanup, or session mutation begins.
@@ -1717,14 +1698,11 @@ export async function performGatewaySessionReset(params: {
             return currentEntry;
           }
           resetBoundaryAppended = currentEntry !== undefined;
-          const selectionError = validateResetSelection?.();
-          if (selectionError) throw new Error(selectionError);
           if (currentEntry && entry && executionSelectionTransactionChanged(entry, currentEntry)) {
             throw new Error("The session selection changed. Retry the reset.");
           }
           const resetPreservedSelection = resolveResetPreservedSelection({
             entry: currentEntry,
-            selection: resetSelection,
           });
           const now = Date.now();
           const nextSessionId = currentEntry?.sessionId ?? randomUUID();

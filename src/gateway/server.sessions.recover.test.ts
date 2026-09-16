@@ -531,9 +531,11 @@ test("sessions.recover rolls over one tombstone and returns its continuation out
         status: "failed",
         abortedLastRun: true,
         agentHarnessId: "codex",
-        agentRuntimeOverride: "codex",
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-sol",
+        executionSelection: {
+          state: "accepted",
+          selection: { model: "native-managed", executor: { kind: "harness", id: "codex" } },
+          fallbackPermission: "explicit",
+        },
         modelSelectionLocked: true,
         pinnedAt: 1,
         sandbox: "required",
@@ -592,11 +594,13 @@ test("sessions.recover rolls over one tombstone and returns its continuation out
   });
   expect(loadSessionEntry({ agentId: "main", sessionKey: successorKey, storePath })).toMatchObject({
     agentHarnessId: "codex",
-    agentRuntimeOverride: "codex",
+    executionSelection: {
+      state: "accepted",
+      selection: { model: "native-managed", executor: { kind: "harness", id: "codex" } },
+      fallbackPermission: "explicit",
+    },
     modelSelectionLocked: true,
-    modelOverride: "gpt-5.6-sol",
     previousSessionId: sourceSessionId,
-    providerOverride: "openai",
     sandbox: "required",
     spawnedCwd: "/tmp/recovered-worktree",
   });

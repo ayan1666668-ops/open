@@ -26,10 +26,11 @@ import { adoptPersistedSessionSnapshot } from "../../config/sessions/session-sna
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   isAcpExecutionSelection,
-  type ModelExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
 } from "../../model-picker/execution-selection.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
@@ -56,7 +57,7 @@ type ThinkingDefaultSelection = {
 type ModelSelectionState = {
   provider: string;
   model: string;
-  executionSelection?: ModelExecutionSelection;
+  executionSelection?: ExecutionSelection;
   requestedRouteResolution: ModelFallbackRouteResolution;
   modelPolicy: ModelVisibilityPolicy;
   allowedModelKeys: Set<string>;
@@ -239,7 +240,7 @@ export async function createModelSelectionState(params: {
     acceptedSelection && !isAcpExecutionSelection(acceptedSelection)
       ? acceptedSelection
       : undefined;
-  if (executionSelection && !turnLocalSelection) {
+  if (executionSelection && isModelExecutionSelection(executionSelection) && !turnLocalSelection) {
     provider = executionSelection.model.provider;
     model = executionSelection.model.id;
   }
@@ -264,8 +265,10 @@ export async function createModelSelectionState(params: {
       throw new Error("This reply requires its bound app to prepare the model.");
     }
     executionSelection = prepared.selection;
-    provider = executionSelection.model.provider;
-    model = executionSelection.model.id;
+    if (isModelExecutionSelection(executionSelection)) {
+      provider = executionSelection.model.provider;
+      model = executionSelection.model.id;
+    }
     if (!acceptedSelection && !turnLocalSelection && sessionEntry && sessionStore && sessionKey) {
       const initialEntry = { ...sessionEntry };
       const nextEntry = { ...sessionEntry };
@@ -302,6 +305,8 @@ export async function createModelSelectionState(params: {
 
   if (
     !params.skipStoredModelOverride &&
+    executionSelection &&
+    isModelExecutionSelection(executionSelection) &&
     sessionEntry &&
     sessionStore &&
     sessionKey &&

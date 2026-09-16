@@ -17,7 +17,7 @@ import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isCronSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
 import {

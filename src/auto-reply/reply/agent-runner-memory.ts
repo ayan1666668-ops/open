@@ -221,11 +221,7 @@ type FollowupRuntimeParams = {
   followupRun: FollowupRun;
   sessionEntry?: Pick<
     SessionEntry,
-    | "agentHarnessId"
-    | "agentRuntimeOverride"
-    | "modelSelectionLocked"
-    | "pluginOwnerId"
-    | "sessionId"
+    "agentHarnessId" | "executionSelection" | "modelSelectionLocked" | "pluginOwnerId" | "sessionId"
   >;
   sessionKey?: string;
   agentHarnessId?: string;

@@ -5,7 +5,7 @@ import { consolidateLiveModelSwitchAfterRun } from "../../agents/live-model-swit
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { resolveFallbackTransition } from "../fallback-state.js";
@@ -199,7 +199,6 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     sessionId: followupRun.run.sessionId,
     chatType: typeof sessionCtx.ChatType === "string" ? sessionCtx.ChatType : undefined,
     authMode: runResult.meta?.requestShaping?.authMode ?? undefined,
-    overrideSource: activeSessionEntry?.modelOverrideSource ?? undefined,
     requestedProvider: followupRun.run.executionSelection.model.provider,
     requestedModel: followupRun.run.executionSelection.model.id,
     durationMs: Date.now() - runStartedAt,

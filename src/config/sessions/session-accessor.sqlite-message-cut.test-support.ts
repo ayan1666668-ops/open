@@ -91,9 +91,14 @@ export function useSessionMessageCutFixtures() {
       lifecycleRevision: "source-lifecycle-revision",
       lifecycleRunId: "source-run",
       lastRunId: "settled-source-run",
-      modelOverride: "gpt-5",
-      modelOverrideSource: "user",
-      providerOverride: "openai",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "qa-route", id: "qa-selected" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
       sessionId,
       updatedAt: Date.now(),
     };

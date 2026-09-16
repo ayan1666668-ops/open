@@ -1,9 +1,10 @@
 // ACP session binding helpers — conversation and thread bindings for spawned sessions.
 import {
   resolveAcpSessionCwd,
-  resolveAcpThreadSessionDetailLines,
+  resolveAcpLifecycleDetailLines,
 } from "@openclaw/acp-core/runtime/session-identifiers";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import { resolveChannelDefaultBindingPlacement } from "../../../channels/conversation-resolution.js";
 import { getChannelPlugin, normalizeChannelId } from "../../../channels/plugins/index.js";
 import {
@@ -17,7 +18,7 @@ import {
   resolveThreadBindingMaxAgeMsForChannel,
   resolveThreadBindingSpawnPolicy,
 } from "../../../channels/thread-bindings-policy.js";
-import type { SessionAcpMeta } from "../../../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { normalizeConversationRef } from "../../../infra/outbound/session-binding-normalization.js";
@@ -72,8 +73,14 @@ function buildSpawnedAcpBindingMetadata(params: {
   agentId: string;
   label: string;
   senderId: string;
-  sessionMeta?: SessionAcpMeta;
+  sessionMeta?: SessionAcpLifecycle;
 }): Record<string, unknown> {
+  const resolution = getAcpSessionManager().resolveSession({
+    cfg: params.cfg,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+  });
+  const executor = resolution.kind === "ready" ? resolution.selection.executor : undefined;
   return {
     threadName: resolveThreadBindingThreadName({
       agentId: params.agentId,
@@ -96,8 +103,9 @@ function buildSpawnedAcpBindingMetadata(params: {
         accountId: params.accountId,
       }),
       sessionCwd: resolveAcpSessionCwd(params.sessionMeta),
-      sessionDetails: resolveAcpThreadSessionDetailLines({
-        sessionKey: params.sessionKey,
+      sessionDetails: resolveAcpLifecycleDetailLines({
+        backend: executor?.backend,
+        agent: executor?.agent,
         meta: params.sessionMeta,
       }),
     }),
@@ -116,7 +124,7 @@ export async function bindSpawnedAcpSession(params: {
   agentId: string;
   label?: string;
   mode: "conversation" | "thread-here" | "thread-auto";
-  sessionMeta?: SessionAcpMeta;
+  sessionMeta?: SessionAcpLifecycle;
 }): Promise<{ ok: true; bound: SpawnedAcpSessionBinding } | { ok: false; error: string }> {
   const { commandParams } = params;
   const currentConversation = params.mode === "conversation";

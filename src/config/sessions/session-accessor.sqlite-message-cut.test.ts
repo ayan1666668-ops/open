@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionExecutionSelection } from "../../model-picker/execution-selection.js";
 import { registerOpenClawAgentDatabaseAsyncResource } from "../../state/openclaw-agent-db-resources.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
@@ -357,12 +358,52 @@ describe("SQLite session message cuts", () => {
       entryId: "user-2",
     });
     expect(result.entry).toMatchObject({
-      modelOverride: "gpt-5",
-      modelOverrideSource: "user",
-      providerOverride: "openai",
+      executionSelection: {
+        state: "accepted",
+        selection: {
+          model: { provider: "qa-route", id: "qa-selected" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
+        fallbackPermission: "explicit",
+      },
     });
     expect(loadSessionEntry(scope)?.lifecycleRevision).toBe("source-lifecycle-revision");
   });
+
+  it.each([
+    {
+      state: "deferred",
+      request: { model: { provider: "offline-route", id: "offline-choice" } },
+      fallbackPermission: "explicit",
+    },
+    {
+      state: "accepted",
+      selection: {
+        model: "native-managed",
+        executor: { kind: "harness", id: "qa-native" },
+      },
+      fallbackPermission: "configured",
+    },
+  ] satisfies SessionExecutionSelection[])(
+    "forks offline while preserving $state selection intent and fallback permission",
+    async (executionSelection) => {
+      const { env, scope } = await createSession();
+      await updateSessionEntry(scope, () => ({ executionSelection }));
+      const source = loadSessionEntry(scope);
+      const result = await forkSessionAtMessage({
+        agentId,
+        env,
+        entryId: "user-2",
+        sessionKey,
+        targetKey: `${sessionKey}:offline-fork`,
+      });
+      expect(result.status).toBe("created");
+      if (result.status !== "created") throw new Error("Expected an offline fork.");
+      expect(result.entry.executionSelection).toEqual(executionSelection);
+      expect(loadSessionEntry(scope)).toEqual(source);
+      expect(result.entry.cliSessionBindings).toBeUndefined();
+    },
+  );
 
   it.each([
     ["unknown", "missing-entry"],

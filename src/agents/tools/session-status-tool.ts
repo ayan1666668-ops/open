@@ -25,9 +25,12 @@ import {
   prepareSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
 } from "../../model-picker/apply-session-model-selection.js";
-import { executionSelectionTransactionChanged } from "../../model-picker/execution-selection-codec.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { executionSelectionTransactionChanged } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   isPluginMetadataSnapshotCompatible,
   resolvePluginMetadataSnapshot,
@@ -989,7 +992,7 @@ export function createSessionStatusTool(opts?: {
                 sessionEntry: initialEntry,
                 request: {
                   kind: "selection",
-                  selection: { ...accepted, model: model ? { id: model } : null },
+                  selection: { ...accepted, model: model ? { id: model } : "native-managed" },
                 },
                 prepareAcp: async (selection) => {
                   const { getAcpSessionManager } =
@@ -1050,7 +1053,7 @@ export function createSessionStatusTool(opts?: {
               }
               const selection = prepared.selection;
               const currentProvider =
-                accepted && !isAcpExecutionSelection(accepted)
+                accepted && isModelExecutionSelection(accepted)
                   ? accepted.model.provider
                   : resolveSessionModelRef(cfg, initialEntry, agentId).provider;
               const patchResult = await patchSessionEntryWithKey(
@@ -1148,14 +1151,15 @@ export function createSessionStatusTool(opts?: {
                 `${configured.provider}/${configured.model}`,
               );
           const statusSelection = getSessionExecutionSelection(scopedResolved.entry, cfg);
-          const selectedModel = statusSelection?.model
-            ? {
-                model: statusSelection.model.id,
-                provider: !isAcpExecutionSelection(statusSelection)
-                  ? statusSelection.model.provider
-                  : undefined,
-              }
-            : undefined;
+          const selectedModel =
+            statusSelection && statusSelection.model !== "native-managed"
+              ? {
+                  model: statusSelection.model.id,
+                  provider: isModelExecutionSelection(statusSelection)
+                    ? statusSelection.model.provider
+                    : undefined,
+                }
+              : undefined;
           const displayModel = activeModelIdentity ?? selectedModel ?? runtimeModelIdentity;
           const providerForCard = displayModel.provider ?? "";
           const defaultModelForCard = displayModel.model;
@@ -1167,7 +1171,7 @@ export function createSessionStatusTool(opts?: {
               }
             : scopedResolved.entry;
           const primaryModelLabel =
-            statusSelection && isAcpExecutionSelection(statusSelection) && !statusSelection.model
+            statusSelection?.model === "native-managed"
               ? "the app's default model"
               : providerForCard
                 ? `${providerForCard}/${defaultModelForCard}`
@@ -1234,7 +1238,7 @@ export function createSessionStatusTool(opts?: {
             taskLine && !statusText.includes(taskLine) ? `${statusText}\n${taskLine}` : statusText;
           const fullStatusText = [modelChangeMessage, statusWithTask].filter(Boolean).join("\n\n");
           const resultOverrideProvider =
-            statusSelection && !isAcpExecutionSelection(statusSelection)
+            statusSelection && isModelExecutionSelection(statusSelection)
               ? statusSelection.model.provider
               : undefined;
           const resultOverrideModel = statusSelection?.model?.id;

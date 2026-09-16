@@ -21,8 +21,7 @@ import {
 import { preserveCreationStamp } from "../../config/sessions/session-entry-provenance.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { inheritSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 
 const FRESH_CRON_CARRIED_PREFERENCE_FIELDS = [
   "chatType",
@@ -70,17 +69,6 @@ function copySessionFields(
   }
 }
 
-function preserveExecutionSelection(
-  target: SessionEntry,
-  entry: SessionEntry,
-  cfg: OpenClawConfig,
-): void {
-  const selection = getSessionExecutionSelection(entry, cfg);
-  if (selection) {
-    commitSessionExecutionSelection(target, selection, { cfg, cause: { kind: "inherit", entry } });
-  }
-}
-
 function preserveUserAuthOverride(target: SessionEntry, entry: SessionEntry): void {
   const source = resolveSessionAuthProfileOverrideSource(entry);
   if (source === "user") {
@@ -96,9 +84,9 @@ function preserveUserAuthOverride(target: SessionEntry, entry: SessionEntry): vo
 
 function sanitizeFreshCronSessionEntry(
   entry: SessionEntry,
-  options: { preserveAmbientContext: boolean; cfg: OpenClawConfig },
+  options: { preserveAmbientContext: boolean },
 ): SessionEntry {
-  const next = {} as SessionEntry;
+  const next = inheritSessionExecutionSelection(entry) as SessionEntry;
 
   copySessionFields(next, entry, FRESH_CRON_CARRIED_PREFERENCE_FIELDS);
   if (entry.skillLibrarySelections) {
@@ -109,7 +97,6 @@ function sanitizeFreshCronSessionEntry(
   if (options.preserveAmbientContext) {
     copySessionFields(next, entry, AMBIENT_SESSION_CONTEXT_FIELDS);
   }
-  preserveExecutionSelection(next, entry, options.cfg);
   preserveUserAuthOverride(next, entry);
 
   return next;
@@ -225,7 +212,6 @@ export function resolveCronSession(params: {
     ? isNewSession
       ? sanitizeFreshCronSessionEntry(entry, {
           preserveAmbientContext: !params.forceNew,
-          cfg: params.cfg,
         })
       : entry
     : undefined;

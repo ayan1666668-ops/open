@@ -22,9 +22,12 @@ import {
   prepareSessionExecutionSelection,
   commitSessionModelSelectionWithAuth,
 } from "../../model-picker/apply-session-model-selection.js";
-import { executionSelectionTransactionChanged } from "../../model-picker/execution-selection-codec.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { executionSelectionTransactionChanged } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
   ModelSelectionLockedError,
@@ -103,7 +106,7 @@ async function applySelectionToSession(params: {
     agentId,
     entry: nextSessionEntry,
     currentProvider:
-      previous && !isAcpExecutionSelection(previous)
+      previous && isModelExecutionSelection(previous)
         ? previous.model.provider
         : params.defaultProvider,
     selection: prepared.selection,

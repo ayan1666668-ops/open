@@ -1,9 +1,4 @@
-import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
-import { decodeSessionExecutionSelection } from "../../model-picker/execution-selection-codec.js";
-import {
-  executionSelectionCodecMetadata,
-  getSessionExecutionSelection,
-} from "../../model-picker/execution-selection-state.js";
+import { inheritSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { resolveSessionAuthProfileOverrideSource } from "./auth-profile-override-provenance.js";
 import type { SessionPatchProjectionSnapshot } from "./session-accessor.types.js";
 import type { InternalSessionEntry, SessionEntry } from "./types.js";
@@ -67,19 +62,8 @@ export function inheritSessionSelection(
   if (!parentEntry) {
     return {};
   }
-  const decoded = decodeSessionExecutionSelection(parentEntry, executionSelectionCodecMetadata());
   const authProfileOverrideSource = resolveSessionAuthProfileOverrideSource(parentEntry);
-  const selection = getSessionExecutionSelection(parentEntry);
-  const inherited: Partial<InternalSessionEntry> = {};
-  if (selection && selection.executor.kind !== "acp") {
-    commitSessionExecutionSelection(inherited, selection, {
-      cause: { kind: "inherit", entry: parentEntry },
-    });
-  }
-  const inheritAuthProfile =
-    !(decoded.kind === "uninitialized" && decoded.discardAutomaticAuth) ||
-    authProfileOverrideSource === "user" ||
-    authProfileOverrideSource === "user-link";
+  const inherited = inheritSessionExecutionSelection(parentEntry);
   return {
     ...inherited,
     ...(parentEntry.contextWindow ? { contextWindow: parentEntry.contextWindow } : {}),
@@ -90,10 +74,10 @@ export function inheritSessionSelection(
     ...(parentEntry.traceLevel ? { traceLevel: parentEntry.traceLevel } : {}),
     ...(parentEntry.reasoningLevel ? { reasoningLevel: parentEntry.reasoningLevel } : {}),
     ...(parentEntry.elevatedLevel ? { elevatedLevel: parentEntry.elevatedLevel } : {}),
-    ...(inheritAuthProfile && authProfileOverrideSource && parentEntry.authProfileOverride
+    ...(authProfileOverrideSource && parentEntry.authProfileOverride
       ? { authProfileOverride: parentEntry.authProfileOverride }
       : {}),
-    ...(inheritAuthProfile && authProfileOverrideSource ? { authProfileOverrideSource } : {}),
+    ...(authProfileOverrideSource ? { authProfileOverrideSource } : {}),
   };
 }
 

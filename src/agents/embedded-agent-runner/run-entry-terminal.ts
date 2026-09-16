@@ -65,10 +65,10 @@ export function canAdvanceContextEngineTurn(params: {
 export function mergeRunEntryExecutionTrace<T extends EmbeddedAgentRunResult>(params: {
   result: T;
   terminalStatus: EmbeddedAgentRunEntryTerminal["outcome"]["status"];
-  provider: string;
-  model: string;
-  requestedProvider: string;
-  requestedModel: string;
+  provider?: string;
+  model?: string;
+  requestedProvider?: string;
+  requestedModel?: string;
   fallbackAttempts: FallbackAttempt[];
   providerPolicyRetry?: {
     category: "cyber";
@@ -111,19 +111,23 @@ export function mergeRunEntryExecutionTrace<T extends EmbeddedAgentRunResult>(pa
       : []),
   ];
   const terminalReceipt = params.result.meta.agentMeta?.terminalReceipt;
-  const requested = { provider: params.requestedProvider, model: params.requestedModel };
-  const agentMeta = terminalReceipt
-    ? {
-        ...params.result.meta.agentMeta,
-        terminalReceipt: {
-          ...terminalReceipt,
-          requested,
-          rerouted:
-            terminalReceipt.rerouted ||
-            isProviderModelRerouted(requested, terminalReceipt.effective),
-        },
-      }
-    : params.result.meta.agentMeta;
+  const requested =
+    params.requestedProvider && params.requestedModel
+      ? { provider: params.requestedProvider, model: params.requestedModel }
+      : undefined;
+  const agentMeta =
+    terminalReceipt && requested
+      ? {
+          ...params.result.meta.agentMeta,
+          terminalReceipt: {
+            ...terminalReceipt,
+            requested,
+            rerouted:
+              terminalReceipt.rerouted ||
+              isProviderModelRerouted(requested, terminalReceipt.effective),
+          },
+        }
+      : params.result.meta.agentMeta;
   return {
     ...params.result,
     meta: {
@@ -146,7 +150,7 @@ export function buildRunEntryTerminal(params: {
   outcome: EmbeddedAgentRunEntryTerminal["outcome"];
   behavior: RunEntryTerminalBehavior;
   runId: string;
-  requested: { provider: string; model: string };
+  requested?: { provider: string; model: string };
   sessionId: string;
 }): EmbeddedAgentRunEntryTerminal {
   const meta = params.result.meta;
@@ -172,7 +176,10 @@ export function buildRunEntryTerminal(params: {
     normalizeAgentRunTerminalReceipt(agentMeta?.terminalReceipt) ??
     // CLI backends report delivery without an embedded model-turn receipt.
     // The entry owner supplies run identity; the tool supplied the send fact.
-    (params.result.sourceReplyDelivered && agentMeta?.provider && agentMeta.model
+    (params.requested &&
+    params.result.sourceReplyDelivered &&
+    agentMeta?.provider &&
+    agentMeta.model
       ? {
           runId: params.runId,
           sessionId: params.sessionId,

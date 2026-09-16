@@ -7,9 +7,10 @@ import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import { formatAcpRuntimeErrorText, toAcpRuntimeError } from "../../../acp/runtime/errors.js";
 import { getAcpRuntimeBackend, requireAcpRuntimeBackend } from "../../../acp/runtime/registry.js";
 import { listAcpSessionEntries, readAcpSessionEntry } from "../../../acp/runtime/session-meta.js";
-import type { SessionEntry, SessionAcpMeta } from "../../../config/sessions/types.js";
+import type { SessionEntry, SessionAcpLifecycle } from "../../../config/sessions/types.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
-import { readAcpExecutionSelection } from "../../../model-picker/execution-selection-codec.js";
+import { getCommittedSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { commandReply } from "../command-gates.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";
 import { resolveAcpCommandBindingContext } from "./context.js";
@@ -163,12 +164,13 @@ function formatAcpSessionLine(params: {
   agentId?: string;
   currentAgentId: string;
   entry: SessionEntry;
-  acp: SessionAcpMeta;
+  acp: SessionAcpLifecycle;
   currentSessionKey?: string;
   threadId?: string;
 }): string {
   const acp = params.acp;
-  const selection = readAcpExecutionSelection(acp);
+  const accepted = getCommittedSessionExecutionSelection(params.entry);
+  const selection = accepted && isAcpExecutionSelection(accepted) ? accepted : undefined;
   const marker =
     params.currentSessionKey === params.key && params.currentAgentId === params.agentId ? "*" : " ";
   const label = normalizeOptionalString(params.entry.label) || selection?.executor.agent || "ACP";

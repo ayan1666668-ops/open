@@ -12,8 +12,11 @@ import {
   commitSessionExecutionSelection,
   prepareSessionExecutionSelection,
 } from "../../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
@@ -158,7 +161,9 @@ export async function resolveEmbeddedModelSelection(params: {
     ? (params.runContext.groupId ?? sessionEntry?.groupId ?? params.runContext.currentChannelId)
     : (sessionEntry?.groupId ?? params.runContext.groupId ?? params.runContext.currentChannelId);
   const channelModelOverride =
-    params.cfg.channels?.modelByChannel && !hasExplicitRunOverride
+    params.cfg.channels?.modelByChannel &&
+    !hasExplicitRunOverride &&
+    !sessionEntry?.executionSelection
       ? resolveChannelModelOverride({
           cfg: params.cfg,
           channel: currentRunModelChannel ?? sessionDeliveryChannel(sessionEntry),
@@ -183,7 +188,7 @@ export async function resolveEmbeddedModelSelection(params: {
         params.modelManifestContext,
       )
     : null;
-  if (acceptedSelection && !isAcpExecutionSelection(acceptedSelection)) {
+  if (acceptedSelection && isModelExecutionSelection(acceptedSelection)) {
     provider = acceptedSelection.model.provider;
     model = acceptedSelection.model.id;
   } else if (normalizedChannelOverride) {
@@ -231,9 +236,11 @@ export async function resolveEmbeddedModelSelection(params: {
     requestedRouteResolution = "resolved";
   }
   const unresolvedSelectionKey = modelKey(provider, model);
-  const allowedInitialSelection = isModelSelectionLocked(sessionEntry)
-    ? { provider, model }
-    : visibilityPolicy.resolveSelection({ provider, model });
+  const allowedInitialSelection =
+    isModelSelectionLocked(sessionEntry) ||
+    (acceptedSelection?.model === "native-managed" && !hasExplicitRunOverride)
+      ? { provider, model }
+      : visibilityPolicy.resolveSelection({ provider, model });
   if (!allowedInitialSelection) {
     const policyPath = visibilityPolicy.allowConfigPath ?? "modelPolicy.allow";
     throw new Error(
@@ -269,8 +276,10 @@ export async function resolveEmbeddedModelSelection(params: {
     throw new Error("This command requires a direct execution selection.");
   }
   const executionSelection = preparedSelection.selection;
-  provider = executionSelection.model.provider;
-  model = executionSelection.model.id;
+  if (isModelExecutionSelection(executionSelection)) {
+    provider = executionSelection.model.provider;
+    model = executionSelection.model.id;
+  }
   if (
     !acceptedSelection &&
     !hasExplicitRunOverride &&
@@ -307,7 +316,7 @@ export async function resolveEmbeddedModelSelection(params: {
   });
 
   const authProfileId = sessionEntryForAttempt?.authProfileOverride;
-  if (sessionEntryForAttempt && authProfileId) {
+  if (isModelExecutionSelection(executionSelection) && sessionEntryForAttempt && authProfileId) {
     const entry = sessionEntryForAttempt;
     const authConfig = resolveModelProviderAuthConfig({
       config: params.cfg,
@@ -368,7 +377,7 @@ export async function resolveEmbeddedModelSelection(params: {
       agentDir,
       entry,
       currentProvider:
-        acceptedSelection && !isAcpExecutionSelection(acceptedSelection)
+        acceptedSelection && isModelExecutionSelection(acceptedSelection)
           ? acceptedSelection.model.provider
           : defaultProvider,
       provider: providerForAuthProfileValidation,

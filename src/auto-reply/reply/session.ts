@@ -70,8 +70,6 @@ import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import type { ExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isPluginOwnedSessionBindingRecord } from "../../plugins/conversation-binding-metadata.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookSessionEndReason } from "../../plugins/hook-types.js";
@@ -406,9 +404,8 @@ export function resolveReplySessionPreprocessingState(
 function resolveReplySessionRolloverState(
   entry: SessionEntry,
   sessionKey: string,
-  selection: ExecutionSelection,
 ): Partial<InternalSessionEntry> {
-  const preservedSelection = resolveResetPreservedSelection({ entry, selection });
+  const preservedSelection = resolveResetPreservedSelection({ entry });
   // Stable ACP rows predate durable creation stamps. Preserve their restrictions
   // fail-closed so rollover cannot turn an existing child into a root session.
   const preserveSpawnLineage = isSubagentSessionKey(sessionKey) || isAcpSessionKey(sessionKey);
@@ -888,24 +885,7 @@ async function initSessionStateAttemptLocked(
       // spawn-applied default (subagent-spawn-thinking.ts) — so unlike model
       // overrides these need no fallback-provenance filtering (#92562).
       // Explicit /new and /reset rotate CLI conversation bindings elsewhere.
-      let selection = getSessionExecutionSelection(entry, cfg);
-      if (!selection) {
-        const { prepareSessionExecutionSelection } =
-          await import("../../model-picker/apply-session-model-selection.js");
-        const prepared = await prepareSessionExecutionSelection({
-          cfg,
-          agentId,
-          sessionKey,
-          sessionEntry: entry,
-          storePath,
-          request: { kind: "initialize" },
-        });
-        if (prepared.status !== "ready") throw new Error(prepared.message);
-        const error = prepared.validateCommit();
-        if (error) throw new Error(error);
-        selection = prepared.selection;
-      }
-      preservedState = resolveReplySessionRolloverState(entry, sessionKey, selection);
+      preservedState = resolveReplySessionRolloverState(entry, sessionKey);
     }
   }
 

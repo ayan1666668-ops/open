@@ -40,7 +40,11 @@ import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import type { StopReason } from "../../llm/types.js";
 import { redactSensitiveText } from "../../logging/redact.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+  type ExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -561,7 +565,7 @@ export async function persistCliTurnTranscript(params: {
 
 export function runAgentAttempt(params: {
   preparedRunAdmission: PreparedAgentRunAdmission;
-  executionSelection: ModelExecutionSelection;
+  executionSelection: ExecutionSelection;
   modelHasVision?: boolean;
   modelThinkingCapability?: RunEmbeddedAgentInternalParams["modelThinkingCapability"];
   configuredAuthProfileId?: string;
@@ -580,8 +584,8 @@ export function runAgentAttempt(params: {
   isFallbackRetry: boolean;
   preserveCliSessionBinding?: boolean;
   classifyResult?: (result: EmbeddedAgentRunResult) => ModelFallbackResultClassification;
-  modelRoutingProvenance: ModelFallbackAttemptProvenance;
-  resolvedThinkLevel: ThinkLevel;
+  modelRoutingProvenance?: ModelFallbackAttemptProvenance;
+  resolvedThinkLevel?: ThinkLevel;
   fastMode?: FastMode;
   fastModeStartedAtMs?: number;
   fastModeAutoOnSeconds?: number;
@@ -629,6 +633,13 @@ export function runAgentAttempt(params: {
     authProfileIdSource?: "auto" | "user";
   }) => void;
 }) {
+  const executionSelection = params.executionSelection;
+  if (isAcpExecutionSelection(executionSelection)) {
+    throw new Error("This attempt requires its bound app to run through the native manager.");
+  }
+  const selectedModel = isModelExecutionSelection(executionSelection)
+    ? executionSelection.model
+    : undefined;
   const onRuntimeActivity = (info: { phase: string }) => {
     // CLI preparation and child launch do not prove a native turn. Parsed
     // assistant/tool activity does, even when the backend omits lifecycle events.
@@ -664,8 +675,8 @@ export function runAgentAttempt(params: {
       internalEvents: params.opts.internalEvents,
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
-      provider: params.executionSelection.model.provider,
-      model: params.executionSelection.model.id,
+      provider: selectedModel?.provider,
+      model: selectedModel?.id,
     });
   const trustedSubagentAnnounceHandoff =
     exactSubagentAnnounceHandoff &&
@@ -675,8 +686,8 @@ export function runAgentAttempt(params: {
       inputProvenance: params.opts.inputProvenance,
       trustedInternalHandoff: params.opts.trustedInternalHandoff,
       sessionId: params.sessionId,
-      modelProvider: params.executionSelection.model.provider,
-      modelId: params.executionSelection.model.id,
+      modelProvider: selectedModel?.provider,
+      modelId: selectedModel?.id,
     });
   const completionRequestsMessageDelivery =
     trustedSubagentAnnounceHandoff &&
@@ -697,8 +708,8 @@ export function runAgentAttempt(params: {
         sessionId: params.sessionId,
         agentId: params.sessionAgentId,
         senderId: params.runContext.senderId,
-        modelProvider: params.executionSelection.model.provider,
-        modelId: params.executionSelection.model.id,
+        modelProvider: selectedModel?.provider,
+        modelId: selectedModel?.id,
         sandboxToolPolicy: completionSandboxStatus?.sandboxed
           ? completionSandboxStatus.toolPolicy
           : undefined,
@@ -727,7 +738,8 @@ export function runAgentAttempt(params: {
     !isRawModelRun &&
     params.isFallbackRetry &&
     isClaudeCliProvider(params.originalProvider) &&
-    !isClaudeCliProvider(params.executionSelection.model.provider)
+    selectedModel !== undefined &&
+    !isClaudeCliProvider(selectedModel.provider)
       ? buildClaudeCliFallbackContextPrelude({
           cliSessionId: getCliSessionBinding(params.sessionEntry, "claude-cli")?.sessionId,
         })
@@ -758,17 +770,13 @@ export function runAgentAttempt(params: {
   const bootstrapPromptWarningSignature =
     bootstrapPromptWarningSignaturesSeen[bootstrapPromptWarningSignaturesSeen.length - 1];
   const requestedAgentHarnessId =
-    params.executionSelection.executor.kind === "harness"
-      ? params.executionSelection.executor.id
-      : undefined;
+    executionSelection.executor.kind === "harness" ? executionSelection.executor.id : undefined;
   const pinnedHarnessId = isRawModelRun
     ? undefined
     : resolveSessionPinnedHarnessId(params.sessionEntry);
   const cliExecutionProvider =
-    params.executionSelection.executor.kind === "cli"
-      ? params.executionSelection.executor.id
-      : params.executionSelection.model.provider;
-  const isCliExecutionProvider = params.executionSelection.executor.kind === "cli";
+    executionSelection.executor.kind === "cli" ? executionSelection.executor.id : undefined;
+  const isCliExecutionProvider = executionSelection.executor.kind === "cli";
   const completionRetainsRequesterTools =
     trustedSubagentAnnounceHandoff &&
     !isRawModelRun &&
@@ -827,46 +835,54 @@ export function runAgentAttempt(params: {
   const shouldForwardImagesToEmbedded =
     !params.isFallbackRetry || params.fallbackRuntimeState?.originRuntime === "cli";
   const allowCliAuthProfileForwarding =
-    isCliExecutionProvider &&
+    cliExecutionProvider !== undefined &&
     cliBackendAcceptsAuthProfileForwarding({
       provider: cliExecutionProvider,
       config: params.cfg,
       agentId: params.sessionAgentId,
     });
-  const harnessAuthSelection = resolveHarnessAuthProfileSelection({
-    config: params.cfg,
-    agentDir: params.agentDir,
-    workspaceDir: params.workspaceDir,
-    provider: params.executionSelection.model.provider,
-    authProfileProvider: params.authProfileProvider,
-    sessionAuthProfileId: selectedAuthProfile?.id,
-    sessionAuthProfileSource: selectedAuthProfile?.source,
-    harnessId: requestedAgentHarnessId,
-    harnessRuntime: params.executionSelection.executor.id,
-    ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
-    providerAuthAliasesEnabled: params.pluginsEnabled,
-    allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
-  });
-  const runtimeAuthPlan = buildAgentRuntimeAuthPlan({
-    provider: params.executionSelection.model.provider,
-    authProfileProvider: harnessAuthSelection.authProfileProvider,
-    authProfileMode: harnessAuthSelection.authProfileMode,
-    sessionAuthProfileId: harnessAuthSelection.authProfileId,
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-    ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
-    providerAuthAliasesEnabled: params.pluginsEnabled,
-    harnessId: requestedAgentHarnessId,
-    harnessRuntime: params.executionSelection.executor.id,
-    allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
-  });
+  const harnessAuthSelection = selectedModel
+    ? resolveHarnessAuthProfileSelection({
+        config: params.cfg,
+        agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
+        provider: selectedModel.provider,
+        authProfileProvider: params.authProfileProvider,
+        sessionAuthProfileId: selectedAuthProfile?.id,
+        sessionAuthProfileSource: selectedAuthProfile?.source,
+        harnessId: requestedAgentHarnessId,
+        harnessRuntime: executionSelection.executor.id,
+        ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
+        providerAuthAliasesEnabled: params.pluginsEnabled,
+        allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
+      })
+    : undefined;
+  const runtimeAuthPlan =
+    selectedModel && harnessAuthSelection
+      ? buildAgentRuntimeAuthPlan({
+          provider: selectedModel.provider,
+          authProfileProvider: harnessAuthSelection?.authProfileProvider,
+          authProfileMode: harnessAuthSelection?.authProfileMode,
+          sessionAuthProfileId: harnessAuthSelection?.authProfileId,
+          config: params.cfg,
+          workspaceDir: params.workspaceDir,
+          ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
+          providerAuthAliasesEnabled: params.pluginsEnabled,
+          harnessId: requestedAgentHarnessId,
+          harnessRuntime: executionSelection.executor.id,
+          allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
+        })
+      : undefined;
   // Explicit pins keep synchronous validation; automatic selection needs the admitted binding.
   const cliAuthNeedsSessionBinding =
     allowCliAuthProfileForwarding &&
     !isRawModelRun &&
-    (!harnessAuthSelection.authProfileId || harnessAuthSelection.authProfileIdSource === "auto");
+    (!harnessAuthSelection?.authProfileId || harnessAuthSelection?.authProfileIdSource === "auto");
   const authProfileId =
-    allowCliAuthProfileForwarding && !cliAuthNeedsSessionBinding
+    allowCliAuthProfileForwarding &&
+    cliExecutionProvider &&
+    harnessAuthSelection &&
+    !cliAuthNeedsSessionBinding
       ? resolveCliExecutionAuthProfileId({
           cliExecutionProvider,
           authProfileProvider: params.authProfileProvider,
@@ -874,18 +890,20 @@ export function runAgentAttempt(params: {
           agentDir: params.agentDir,
           selected: harnessAuthSelection,
         })
-      : runtimeAuthPlan.forwardedAuthProfileId;
-  const embeddedAgentProvider = resolveOpenAIRuntimeProvider({
-    provider: params.executionSelection.model.provider,
-    harnessRuntime: params.executionSelection.executor.id,
-    agentHarnessId: requestedAgentHarnessId,
-    authProfileProvider: runtimeAuthPlan.authProfileProviderForAuth,
-    authProfileId,
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-  });
-  const embeddedAgentHarnessOverride = params.executionSelection.executor.id;
-  if (!isRawModelRun && isCliExecutionProvider) {
+      : runtimeAuthPlan?.forwardedAuthProfileId;
+  const embeddedAgentProvider = selectedModel
+    ? resolveOpenAIRuntimeProvider({
+        provider: selectedModel.provider,
+        harnessRuntime: executionSelection.executor.id,
+        agentHarnessId: requestedAgentHarnessId,
+        authProfileProvider: runtimeAuthPlan?.authProfileProviderForAuth,
+        authProfileId,
+        config: params.cfg,
+        workspaceDir: params.workspaceDir,
+      })
+    : undefined;
+  const embeddedAgentHarnessOverride = executionSelection.executor.id;
+  if (!isRawModelRun && cliExecutionProvider && selectedModel && harnessAuthSelection) {
     const expectedLifecycleRevision = params.sessionEntry?.lifecycleRevision;
     return withLocalSessionPlacementTurnSettlement(
       {
@@ -1053,11 +1071,11 @@ export function runAgentAttempt(params: {
             config: params.cfg,
             prompt: cliPrompt,
             transcriptPrompt: cliTranscriptPrompt,
-            modelProvider: params.executionSelection.model.provider,
-            requesterModel: { provider: params.executionSelection.model.provider, model: params.executionSelection.model.id },
-            modelHasVision: params.modelHasVision,
+            modelProvider: selectedModel?.provider,
+            requesterModel: selectedModel ? { provider: selectedModel.provider, model: selectedModel.id } : undefined,
+            modelHasVision: selectedModel ? params.modelHasVision : undefined,
             provider: cliExecutionProvider,
-            model: params.executionSelection.model.id,
+            model: selectedModel?.id,
             modelRoutingProvenance: params.modelRoutingProvenance,
             thinkLevel: params.resolvedThinkLevel,
             fastMode: params.fastMode,
@@ -1296,6 +1314,7 @@ export function runAgentAttempt(params: {
 
   const embeddedRunParams: RunEmbeddedAgentInternalParams = {
     preparedRunAdmission: params.preparedRunAdmission,
+    executionSelection,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     chatType: params.sessionEntry?.chatType,
@@ -1321,7 +1340,7 @@ export function runAgentAttempt(params: {
     agentHarnessId: pinnedHarnessId,
     modelSelectionLocked: !isRawModelRun && params.sessionEntry?.modelSelectionLocked === true,
     agentHarnessRuntimeOverride: embeddedAgentHarnessOverride,
-    agentHarnessRuntimePreparationHint: params.executionSelection.executor.id,
+    agentHarnessRuntimePreparationHint: executionSelection.executor.id,
     skillsSnapshot: params.skillsSnapshot,
     prompt: effectivePrompt,
     transcriptPrompt: continuationTranscriptBody,
@@ -1332,14 +1351,14 @@ export function runAgentAttempt(params: {
     media: params.opts.media,
     clientTools: params.opts.clientTools,
     provider: embeddedAgentProvider,
-    model: params.executionSelection.model.id,
+    model: selectedModel?.id,
     modelRoutingProvenance: params.modelRoutingProvenance,
     requestedRouteResolution: "resolved",
-    modelHasVision: params.modelHasVision,
-    modelThinkingCapability: params.modelThinkingCapability,
-    modelFallbacksOverride: params.modelFallbacksOverride,
+    modelHasVision: selectedModel ? params.modelHasVision : undefined,
+    modelThinkingCapability: selectedModel ? params.modelThinkingCapability : undefined,
+    modelFallbacksOverride: selectedModel ? params.modelFallbacksOverride : undefined,
     authProfileId,
-    authProfileIdSource: authProfileId ? harnessAuthSelection.authProfileIdSource : undefined,
+    authProfileIdSource: authProfileId ? harnessAuthSelection?.authProfileIdSource : undefined,
     thinkLevel: params.resolvedThinkLevel,
     fastMode: params.fastMode,
     fastModeStartedAtMs: params.fastModeStartedAtMs,
@@ -1410,7 +1429,7 @@ export function runAgentAttempt(params: {
             authProfileId: successfulProfileId,
             authProfileIdSource: successfulProfileId
               ? successfulProfileId === authProfileId
-                ? harnessAuthSelection.authProfileIdSource
+                ? harnessAuthSelection?.authProfileIdSource
                 : "auto"
               : undefined,
           })

@@ -9,12 +9,13 @@ import {
   loadSessionEntryReadOnly,
   resolveSessionTranscriptRuntimeTarget,
 } from "../../../config/sessions/session-accessor.js";
-import type { SessionAcpMeta, SessionEntry } from "../../../config/sessions/types.js";
+import type { SessionAcpLifecycle, SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
-import { readAcpExecutionSelection } from "../../../model-picker/execution-selection-codec.js";
+import { getCommittedSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { isSubagentSessionKey, parseAgentSessionKey } from "../../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
 import { resolveRequesterOriginForChild } from "../../spawn-requester-origin.js";
@@ -172,7 +173,7 @@ export function shouldStreamAcpSpawnToParent(params: {
 }
 
 function sessionEntryMatchesAcpResumeSessionId(
-  acp: SessionAcpMeta | undefined,
+  acp: SessionAcpLifecycle | undefined,
   resumeSessionId: string,
 ): boolean {
   const identity = acp?.identity;
@@ -218,12 +219,13 @@ export function validateAcpResumeSessionOwnership(params: {
     agentId: params.targetAgentId,
   });
   for (const { sessionKey, entry } of listSessionEntriesReadOnly({ storePath, clone: false })) {
-    const acp = readAcpSessionMeta({ sessionKey, cfg: params.cfg });
+    const acp = readAcpSessionMeta({ sessionKey, cfg: params.cfg, agentId: params.targetAgentId });
+    const selection = getCommittedSessionExecutionSelection(entry);
+    if (!selection || !isAcpExecutionSelection(selection)) continue;
     // Resume identifiers are backend-local; requester ownership cannot authorize another backend.
     if (
       (configuredBackend &&
-        normalizeOptionalLowercaseString(readAcpExecutionSelection(acp)?.executor.backend) !==
-          configuredBackend) ||
+        normalizeOptionalLowercaseString(selection.executor.backend) !== configuredBackend) ||
       !sessionEntryMatchesAcpResumeSessionId(acp, resumeSessionId)
     ) {
       continue;

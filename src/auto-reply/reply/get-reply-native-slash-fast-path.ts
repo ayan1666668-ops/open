@@ -195,8 +195,7 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
       params.cfg.channels?.modelByChannel &&
       !isModelSelectionLocked(targetSessionEntry) &&
       !storedModelOverride &&
-      !normalizeOptionalString(targetSessionEntry?.modelOverride) &&
-      !normalizeOptionalString(targetSessionEntry?.providerOverride) &&
+      !targetSessionEntry?.executionSelection &&
       canApplyStoredModel;
     const deliveryChannel = normalizeMessageChannel(sessionDeliveryChannel(targetSessionEntry));
     // Shared sessions can retain another channel's peer; never let that stale

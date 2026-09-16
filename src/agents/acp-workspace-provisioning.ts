@@ -8,7 +8,7 @@
  * bootstrap behavior.
  */
 import { resolveAcpSessionCwd } from "@openclaw/acp-core/runtime/session-identifiers";
-import type { SessionAcpMeta } from "../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import {
   isImplicitAcpWorkspaceCandidate,
@@ -26,7 +26,7 @@ export async function resolveAcpAgentWorkspaceProvisioningForTurn(params: {
   /** Session key for this invocation, when already known. */
   sessionKey?: string;
   /** Live session entry carrying ACP meta, when already at hand. */
-  sessionEntry?: { acp?: SessionAcpMeta };
+  sessionEntry?: { acp?: SessionAcpLifecycle };
 }): Promise<AgentWorkspaceProvisioning> {
   if (!isImplicitAcpWorkspaceCandidate(params.cfg, params.agentId)) {
     return "standard";

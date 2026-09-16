@@ -49,6 +49,8 @@ import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveProviderChannelLoginChoice } from "../../plugins/provider-login-options.js";
 import { formatProviderLoginCommand } from "../../shared/provider-login-command.js";
 import { resolveAgentRuntimeLabel } from "../../status/agent-runtime-label.js";
@@ -72,10 +74,9 @@ type ModelsCommandSessionEntry = Partial<
     | "authProfileOverride"
     | "authProfileOverrideSource"
     | "modelProvider"
-    | "providerOverride"
     | "model"
     | "modelSelectionLocked"
-    | "agentRuntimeOverride"
+    | "executionSelection"
   >
 >;
 
@@ -232,6 +233,7 @@ async function projectPreparedModelsProviderData(
   if (!authStore) {
     throw new Error("Model catalog owner omitted its auth store");
   }
+  const selection = getSessionExecutionSelection(options.sessionEntry, cfg);
   const decisions = createModelCatalogDecisions({
     cfg,
     agentId: owner.agentId ?? agentId ?? "main",
@@ -249,8 +251,10 @@ async function projectPreparedModelsProviderData(
       options.sessionEntry?.authProfileOverrideSource === "user"
         ? options.sessionEntry.authProfileOverride
         : undefined,
-    profileProvider: options.sessionEntry?.providerOverride ?? options.sessionEntry?.modelProvider,
-    runtimeOverride: options.sessionEntry?.agentRuntimeOverride,
+    profileProvider:
+      selection && isModelExecutionSelection(selection) ? selection.model.provider : undefined,
+    runtimeOverride:
+      selection && selection.executor.kind !== "acp" ? selection.executor.id : undefined,
   });
   // Configured/default rows may remain visible without auth, but must not
   // reintroduce a model that its provider route contract rejected.

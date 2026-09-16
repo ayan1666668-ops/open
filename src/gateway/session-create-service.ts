@@ -70,10 +70,13 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
-import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
+import {
+  commitSessionExecutionSelection,
+  commitStoredSessionExecutionSelection,
+} from "../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../model-picker/execution-selection.js";
+import type { SessionExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   isIncognitoSessionKey,
   isSubagentSessionKey,
@@ -220,7 +223,7 @@ async function existingSessionSelectionWouldChange(params: {
     return true;
   }
   // An uninitialized row cannot prove a requested selection is an authorized no-op.
-  if (!accepted || isAcpExecutionSelection(accepted)) {
+  if (!accepted || !isModelExecutionSelection(accepted)) {
     return true;
   }
   const existingProfile = normalizeOptionalString(params.existingEntry.authProfileOverride);
@@ -357,8 +360,8 @@ export async function createGatewaySession(params: {
   loadGatewayModelCatalogSnapshot?: () => Promise<ModelCatalogSnapshot>;
   /** Trusted in-process initializer; never populated from public Gateway params. */
   initialEntry?: TrustedInitialSessionEntry;
-  /** Native plugin initializer supplies its already accepted model and executor together. */
-  executionSelection?: ModelExecutionSelection;
+  /** Trusted initializer supplies accepted or deferred execution intent; never a wire input. */
+  executionSelection?: SessionExecutionSelection;
   /** Keep a new ordinary session unusable until afterCreate succeeds, or roll it back. */
   atomicInitialization?: true;
   /** Public callers need admin before reconfiguring an adopted keyed session. */
@@ -584,8 +587,8 @@ export async function createGatewaySession(params: {
     params.authorizedPluginId === params.initialEntry.pluginOwnerId,
   );
   if (
-    (params.initialEntry?.pluginOwnerId || params.executionSelection) &&
-    !authorizedPluginCreation
+    (params.initialEntry?.pluginOwnerId && !authorizedPluginCreation) ||
+    (params.executionSelection && !authorizedPluginCreation && !authorizedHarnessCreation)
   ) {
     return {
       ok: false,
@@ -1080,14 +1083,15 @@ export async function createGatewaySession(params: {
         return { ok: false, error: root.error };
       }
     }
-    const titleModelSelection = await resolveSessionCreateModelSelection(
-      params.cfg,
-      target.agentId,
-      params.catalogTarget ??
-        (params.model ? { model: params.model, agentRuntime: params.agentRuntime } : undefined),
-      currentParentSessionEntry,
-      params.preparedModelSelection?.ref,
-    );
+    const titleModelSelection = params.executionSelection
+      ? null
+      : await resolveSessionCreateModelSelection(
+          params.cfg,
+          target.agentId,
+          params.catalogTarget ??
+            (params.model ? { model: params.model, agentRuntime: params.agentRuntime } : undefined),
+          currentParentSessionEntry,
+        );
     commitGuard?.();
     const preparationResult = params.prepareLifecycle
       ? await params.prepareLifecycle({
@@ -1264,6 +1268,9 @@ export async function createGatewaySession(params: {
               }),
             };
           }
+        }
+        if (params.executionSelection) {
+          commitStoredSessionExecutionSelection(targetEntry, params.executionSelection);
         }
         const patched = await projectSessionsPatchEntry({
           cfg: params.cfg,
@@ -1447,17 +1454,15 @@ export async function createGatewaySession(params: {
             cause: { kind: "reset" },
           });
         }
-        if (authorizedPluginCreation && params.executionSelection) {
-          commitSessionExecutionSelection(initializedEntry, params.executionSelection, {
-            cfg: params.cfg,
-          });
-        }
         const initialized = { ...patched, entry: initializedEntry };
         const explicitParentSessionKey =
           canonicalParentSessionKey ?? normalizeOptionalString(initializedEntry.parentSessionKey);
         const storedParentSessionKey = explicitParentSessionKey ?? dashboardParentSessionKey;
         const inheritedSelection =
-          !canonicalParentSessionKey || catalogModel || normalizeOptionalString(params.model)
+          !canonicalParentSessionKey ||
+          params.executionSelection ||
+          catalogModel ||
+          normalizeOptionalString(params.model)
             ? {}
             : inheritSessionSelection(currentParentSessionEntry);
         if (requestedToolOverrides) {

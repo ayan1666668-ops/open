@@ -26,7 +26,7 @@ import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveHeartbeatSchedulerSeed } from "../infra/heartbeat-runner.js";
 import { resolveHeartbeatPhaseMs } from "../infra/heartbeat-schedule.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { ManifestModelIdNormalizationSource } from "../plugins/manifest-model-id-normalization.js";
 import { resolveSkillWorkshopConfig } from "../skills/workshop/config.js";

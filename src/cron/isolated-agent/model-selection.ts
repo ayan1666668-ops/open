@@ -13,8 +13,8 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 /** Resolves provider/model precedence for isolated cron runs. */
 import type { AgentConfig } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
 import {
@@ -320,7 +320,7 @@ export async function resolveCronModelSelection(
 
   if (!modelOverride && !hooksGmailModelApplied) {
     const selection = getSessionExecutionSelection(params.sessionEntry, owner.config);
-    if (selection && !isAcpExecutionSelection(selection)) {
+    if (selection && isModelExecutionSelection(selection)) {
       const selected = { provider: selection.model.provider, model: selection.model.id };
       if (getModelRefStatus({ ...selectionParams, ref: selected }).allowed) {
         provider = selected.provider;

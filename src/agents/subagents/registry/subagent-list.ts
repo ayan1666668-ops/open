@@ -10,8 +10,8 @@ import { listSessionEntriesReadOnly } from "../../../config/sessions/session-acc
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatDurationCompact } from "../../../infra/format-time/format-duration.js";
-import { getSessionExecutionSelection } from "../../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import {
   formatTokenUsageDisplay,
@@ -151,8 +151,9 @@ function resolveModelRef(entry?: SessionEntry, fallbackModel?: string) {
     runtimeProvider: entry?.modelProvider,
     runtimeModel: entry?.model,
     overrideProvider:
-      selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
-    overrideModel: selection?.model?.id,
+      selection && isModelExecutionSelection(selection) ? selection.model.provider : undefined,
+    overrideModel:
+      selection && selection.model !== "native-managed" ? selection.model.id : undefined,
     fallbackModel,
   });
 }
@@ -163,8 +164,9 @@ function resolveModelDisplay(entry?: SessionEntry, fallbackModel?: string) {
     runtimeProvider: entry?.modelProvider,
     runtimeModel: entry?.model,
     overrideProvider:
-      selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
-    overrideModel: selection?.model?.id,
+      selection && isModelExecutionSelection(selection) ? selection.model.provider : undefined,
+    overrideModel:
+      selection && selection.model !== "native-managed" ? selection.model.id : undefined,
     fallbackModel,
   });
 }

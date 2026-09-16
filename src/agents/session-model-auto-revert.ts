@@ -15,7 +15,7 @@ import {
   prepareSessionExecutionSelection,
   commitSessionExecutionSelection,
 } from "../model-picker/apply-session-model-selection.js";
-import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
 import { resolveFailoverReasonFromError } from "./failover-error.js";
 import type { FailoverReason } from "./failover/signal.js";

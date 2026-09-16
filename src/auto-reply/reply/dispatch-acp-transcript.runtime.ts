@@ -5,7 +5,7 @@ import { persistAcpTurnTranscript } from "../../agents/command/attempt-execution
 import { resolveSessionStorePathCore } from "../../config/sessions.js";
 import { loadSessionEntryReadOnly } from "../../config/sessions/session-accessor.js";
 import type { PrepareAssistantTranscriptMessage } from "../../config/sessions/transcript-assistant-delivery.js";
-import type { SessionAcpMeta } from "../../config/sessions/types.js";
+import type { SessionAcpLifecycle } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import type { ReplyDispatchAssistantTranscript } from "../get-reply-options.types.js";
@@ -18,7 +18,7 @@ export async function persistAcpDispatchTranscript(params: {
   promptText: string;
   finalText: string;
   terminalOutcome: AgentRunTerminalOutcome;
-  meta?: SessionAcpMeta;
+  meta?: SessionAcpLifecycle;
   threadId?: string | number;
   userTurnTranscriptRecorder?: UserTurnTranscriptRecorder;
   prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;

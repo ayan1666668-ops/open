@@ -524,9 +524,7 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
           expectedSessionRuntimeOwnership: {
             model: "native",
             auth: nativeSessionRuntime.auth,
-            ...(nativeSessionRuntime.auth === "host"
-              ? { modelRef: nativeSessionRuntime.modelRef }
-              : {}),
+            ...(nativeSessionRuntime.modelRef ? { modelRef: nativeSessionRuntime.modelRef } : {}),
           },
         }
       : {}),

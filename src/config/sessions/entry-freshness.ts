@@ -1,5 +1,5 @@
 // Session entry reset freshness resolves the same lifecycle rule used by reply setup.
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import type { SessionConfig, SessionResetConfig } from "../types.base.js";
 import { getCliSessionBinding } from "./cli-session-binding.js";

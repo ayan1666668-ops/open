@@ -28,7 +28,7 @@ import {
   type ChannelAdmissionEvidence,
 } from "../../../channels/message-access/admission-evidence.js";
 import { updateSessionEntry } from "../../../config/sessions/session-accessor.js";
-import type { SessionAcpMeta, SessionEntry } from "../../../config/sessions/types.js";
+import type { SessionAcpLifecycle, SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
@@ -151,7 +151,7 @@ export async function handleAcpSpawnAction(
   }
 
   let initializedBackend;
-  let initializedMeta: SessionAcpMeta | undefined;
+  let initializedMeta: SessionAcpLifecycle | undefined;
   let sessionEntry: SessionEntry;
   let closeRuntimeOnFailure: () => Promise<void>;
   try {

@@ -1,5 +1,5 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { SessionEntry } from "./types.js";
 

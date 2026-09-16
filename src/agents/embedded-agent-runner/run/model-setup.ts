@@ -26,7 +26,7 @@ import {
 export type PreparedNativeSessionRuntime = {
   harness: AgentHarness;
   assertCurrent: () => Promise<void>;
-} & ({ auth: "native" } | { auth: "host"; modelRef: ModelRef });
+} & ({ auth: "native"; modelRef?: ModelRef } | { auth: "host"; modelRef: ModelRef });
 
 function prepareNativeSessionRuntime(
   runParams: RunEmbeddedAgentInternalParams,
@@ -80,14 +80,14 @@ function prepareNativeSessionRuntime(
     harness,
     ...(ownership.auth === "host"
       ? { auth: "host", modelRef: ownership.modelRef! }
-      : { auth: "native" }),
-    // Compare host-prepared auth against its exact tuple; native auth may follow its owner's model.
+      : { auth: "native", ...(ownership.modelRef ? { modelRef: ownership.modelRef } : {}) }),
+    // Materialization can resolve a native-managed model; concrete selections stay exact.
     assertCurrent: async () => {
       const current = resolveOwnership();
       if (
         current?.model !== ownership.model ||
         current.auth !== ownership.auth ||
-        (ownership.auth === "host" &&
+        (ownership.modelRef !== undefined &&
           (current.modelRef?.provider !== ownership.modelRef?.provider ||
             current.modelRef?.model !== ownership.modelRef?.model))
       ) {

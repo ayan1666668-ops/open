@@ -14,7 +14,7 @@ import { supportsModelTools } from "../../agents/model-tool-support.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { isToolAllowedByPolicyName } from "../../agents/tool-policy-match.js";
 import { resolveConfiguredModelCompat } from "../../agents/tools-effective-inventory.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { buildLearnPrompt, DEFAULT_LEARN_REQUEST } from "../../skills/workshop/learn-prompt.js";
 import { resolveSkillWorkshopToolPolicyAvailability } from "../../skills/workshop/tool-policy-diagnostic.js";
 import { applyCommandTextToParams } from "./command-context-rewrite.js";

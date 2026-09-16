@@ -12,8 +12,8 @@ import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
 import {
   sessionDeliveryChannel,
@@ -162,7 +162,7 @@ function resolveStoredModelCandidate(params: {
   sessionStore?: Record<string, SessionEntry>;
 }): HarnessDefaultCandidate | undefined {
   const selection = getSessionExecutionSelection(params.entry, params.cfg);
-  return selection && !isAcpExecutionSelection(selection)
+  return selection && isModelExecutionSelection(selection)
     ? { provider: selection.model.provider, model: selection.model.id }
     : undefined;
 }

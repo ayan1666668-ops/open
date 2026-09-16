@@ -37,8 +37,11 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  isModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isModelSelectionLocked,
@@ -872,7 +875,7 @@ export async function getReplyFromConfig(
   if (
     !hasResolvedHeartbeatModelOverride &&
     acceptedSelection &&
-    !isAcpExecutionSelection(acceptedSelection)
+    isModelExecutionSelection(acceptedSelection)
   ) {
     provider = acceptedSelection.model.provider;
     model = acceptedSelection.model.id;

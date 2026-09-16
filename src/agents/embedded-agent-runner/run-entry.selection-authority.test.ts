@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import {
-  admitSessionExecutionFallback,
-  encodeSessionExecutionSelection,
-} from "../../model-picker/execution-selection-codec.js";
+  commitSessionExecutionSelection,
+  prepareSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
 import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { runEmbeddedAgentEntry } from "./run-entry.js";
 import {
@@ -23,6 +23,14 @@ vi.mock("../harness/runtime-plugin.js", () => ({
 }));
 vi.mock("../harness/selection.js", () => ({
   selectAgentHarness: () => ({ id: "openclaw", contextEngineHostCapabilities: [] }),
+}));
+
+vi.mock("../model-runtime-choice.js", () => ({
+  evaluatePublishedModelRuntimeChoice: async (params: { provider: string; model: string }) => ({
+    kind: "ready",
+    entry: { provider: params.provider, id: params.model, name: params.model },
+    validate: () => undefined,
+  }),
 }));
 
 const primary: ModelExecutionSelection = {
@@ -44,7 +52,7 @@ describe("prepared fallback authority", () => {
     "blocks dispatch after a same-pair user selection during %s",
     async (window) => {
       const entry: SessionEntry = { sessionId: "qa-session", updatedAt: 1 };
-      encodeSessionExecutionSelection(entry, primary, { kind: "initialize" });
+      commitSessionExecutionSelection(entry, primary, { cause: { kind: "initialize" } });
       const reached = createDeferred<void>();
       const release = createDeferred<void>();
       const dispatched: ModelExecutionSelection[] = [];
@@ -106,19 +114,15 @@ describe("prepared fallback authority", () => {
               model: { provider, id: model },
               executor: primary.executor,
             };
-            return {
-              selection,
-              validateCommit: () =>
-                admitSessionExecutionFallback({
-                  entry,
-                  candidate: selection,
-                  metadata: {
-                    classifyExecutor: (id) => (id === "openclaw" ? "harness" : undefined),
-                  },
-                }).status === "admitted"
-                  ? undefined
-                  : "Current session does not permit that fallback.",
-            };
+            const prepared = await prepareSessionExecutionSelection({
+              cfg: {},
+              agentId: "qa-agent",
+              sessionEntry: entry,
+              readSessionEntry: () => entry,
+              request: { kind: "fallback", selection },
+            });
+            if (prepared.status !== "ready") throw new Error(prepared.message);
+            return { selection, validateCommit: prepared.validateCommit };
           },
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
@@ -133,12 +137,15 @@ describe("prepared fallback authority", () => {
           throw new Error("Run completed before the held boundary.");
         }),
       ]);
-      entry.modelOverrideSource = "user";
+      commitSessionExecutionSelection(entry, primary, { cause: { kind: "user" } });
       release.resolve();
-      await expect(run).rejects.toThrow("does not permit that fallback");
+      await expect(run).rejects.toThrow("The session selection changed.");
       expect(dispatched).not.toContainEqual(fallback);
-      expect(entry.modelOverride).toBe(primary.model.id);
-      expect(entry.agentRuntimeOverride).toBe(primary.executor.id);
+      expect(entry.executionSelection).toEqual({
+        state: "accepted",
+        selection: primary,
+        fallbackPermission: "explicit",
+      });
     },
   );
 });

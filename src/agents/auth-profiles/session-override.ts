@@ -2,8 +2,8 @@
 import { resolveSessionAuthProfileOverrideSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
-import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { isModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { ProviderModelRouteAuthRequirement } from "../../plugin-sdk/provider-model-types.js";
 import { resolveProviderModelRoutes } from "../../plugins/provider-model-routes.js";
 import { shouldPreserveUnavailableSessionAuthProfileOverride } from "../../sessions/auth-profile-preservation.js";
@@ -364,7 +364,7 @@ async function resolveSessionAuthProfileOverride(params: {
           entry: sessionEntry,
           store,
           currentProvider:
-            acceptedSelection && !isAcpExecutionSelection(acceptedSelection)
+            acceptedSelection && isModelExecutionSelection(acceptedSelection)
               ? acceptedSelection.model.provider
               : provider,
           provider: candidateProvider,
