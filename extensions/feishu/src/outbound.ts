@@ -477,6 +477,11 @@ async function deliverFeishuOutboundText({
   onDeliveryResult,
   signal,
 }: FeishuSendTextContext) {
+  // Core asks the cancellation question before every text unit it cuts itself, but it hands
+  // formatted text to this adapter whole and never cuts it, so the question is asked once on
+  // the way in. The chunked send below asks it again before each message it fans out; the
+  // branches that answer with a single upload or card never reach that loop.
+  signal?.throwIfAborted();
   const { replyToMessageId, replyInThread } = resolveFeishuReplyMode({
     replyToId,
     threadId,

@@ -1,4 +1,7 @@
 // Feishu tests cover cancellation during the outbound fanouts that send several messages.
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   createEmptyPluginRegistry,
   createTestRegistry,
@@ -154,6 +157,43 @@ describe("feishu outbound cancellation", () => {
     expect(deliverCommentThreadTextMock).toHaveBeenCalledTimes(1);
     expect(abortName(outcome)).toBe("AbortError");
     expect(run.delivered).toEqual(["reply_1"]);
+  });
+
+  // Core routes formatted text straight to this adapter and asks its own cancellation
+  // question only on the units it cuts itself, so the branches that answer before the
+  // chunked loop never reach one. A turn cancelled before the send still uploaded an
+  // image or posted a card.
+  it("sends nothing from the early formatted branches once the turn is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-feishu-cancelled-"));
+    const imagePath = path.join(dir, "sample.png");
+    await fs.writeFile(imagePath, "image-data");
+    const nativeCardText = JSON.stringify({
+      schema: "2.0",
+      body: { elements: [{ tag: "markdown", content: "hello" }] },
+    });
+
+    try {
+      for (const text of [imagePath, nativeCardText]) {
+        const outcome = await feishuOutbound
+          .sendFormattedText?.({
+            cfg: {} as ClawdbotConfig,
+            to: "chat_1",
+            text,
+            accountId: "main",
+            signal: controller.signal,
+          } as never)
+          .catch((error: unknown) => error);
+
+        expect(abortName(outcome)).toBe("AbortError");
+      }
+
+      expect(sendMediaFeishuMock).not.toHaveBeenCalled();
+      expect(sendCardFeishuMock).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   // A caption and its attachment are two sends inside one media delivery, and core asks
