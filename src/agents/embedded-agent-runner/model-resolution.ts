@@ -54,7 +54,7 @@ export async function resolveTieredModel(params: {
   const firstTier = await resolveCandidates({
     skipAgentDiscovery: true,
     allowBundledStaticCatalogFallback: params.staticCatalogOwnsTransport,
-    preferBundledStaticCatalogTransport: params.staticCatalogOwnsTransport,
+    staticCatalogTransportOwner: params.staticCatalogOwnsTransport ? "harness" : undefined,
     preparedModelRuntime: params.preparedModelRuntime,
   });
   if (firstTier.resolution.model || params.staticCatalogOwnsTransport) {

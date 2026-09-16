@@ -537,7 +537,7 @@ async function runIsolatedCompletionOwned(
             authProfileId: request.authProfileId,
             skipAgentDiscovery: true,
             allowBundledStaticCatalogFallback: true,
-            preferBundledStaticCatalogTransport: true,
+            staticCatalogTransportOwner: "harness",
           });
           const runtimeModel = resolution.model;
           if (!runtimeModel) {
@@ -629,7 +629,6 @@ async function runIsolatedCompletionOwned(
                     authProfileMode,
                     skipAgentDiscovery: true,
                     allowBundledStaticCatalogFallback: true,
-                    preferBundledStaticCatalogTransport: true,
                   }),
               });
               assertCurrent();

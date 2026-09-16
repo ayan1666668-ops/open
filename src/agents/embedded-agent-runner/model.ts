@@ -60,7 +60,8 @@ type AsyncModelResolutionOptions = CommonModelResolutionOptions & {
   /** Selected executable IDs must not pass through input aliases again. */
   modelIdSource?: "input" | "selected";
   allowBundledStaticCatalogFallback?: boolean;
-  preferBundledStaticCatalogTransport?: boolean;
+  /** Only harness-owned execution may replace configured transport with catalog defaults. */
+  staticCatalogTransportOwner?: "harness";
   agentRuntimeId?: string;
   skipAgentDiscovery?: boolean;
   preparedModelRuntime?: PreparedModelRuntimeSnapshot;
@@ -298,7 +299,7 @@ export async function resolveModelAsync(
         runtimeHooks,
         workspaceDir,
         preferDiscoveredModelMetadata: true,
-        preferDiscoveredTransport: options?.preferBundledStaticCatalogTransport,
+        preferDiscoveredTransport: options?.staticCatalogTransportOwner === "harness",
         staticCatalogModel: catalogModel,
       });
       return normalizeResolvedModel({

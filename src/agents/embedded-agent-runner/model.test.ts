@@ -406,7 +406,7 @@ function resolveModelAsyncForTest(
   cfg?: OpenClawConfig,
   options?: {
     allowBundledStaticCatalogFallback?: boolean;
-    preferBundledStaticCatalogTransport?: boolean;
+    staticCatalogTransportOwner?: "harness";
     runtimeHooks?: ReturnType<typeof createRuntimeHooks>;
     skipAgentDiscovery?: boolean;
   },
@@ -1355,7 +1355,7 @@ describe("resolveModel", () => {
 
     const result = await resolveModelAsync("openai", "gpt-5.3-codex", state.agentDir(), cfg, {
       allowBundledStaticCatalogFallback: true,
-      preferBundledStaticCatalogTransport: true,
+      staticCatalogTransportOwner: "harness",
       runtimeHooks: {
         ...baseRuntimeHooks,
         prepareProviderDynamicModel,
@@ -3262,7 +3262,7 @@ describe("resolveModel", () => {
       cfg,
       {
         allowBundledStaticCatalogFallback: true,
-        preferBundledStaticCatalogTransport: true,
+        staticCatalogTransportOwner: "harness",
         skipAgentDiscovery: true,
       },
     );

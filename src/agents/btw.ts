@@ -439,7 +439,6 @@ async function materializeBtwRuntimeModel(
           modelRegistry: params.modelRegistry,
           skipAgentDiscovery: true,
           allowBundledStaticCatalogFallback: true,
-          preferBundledStaticCatalogTransport: true,
           preparedModelRuntime: params.preparedModelRuntime,
           workspaceDir,
           authProfileId,
@@ -517,7 +516,8 @@ async function resolveRuntimeModel(params: {
     workspaceDir,
     skipAgentDiscovery: true,
     allowBundledStaticCatalogFallback: true,
-    preferBundledStaticCatalogTransport: true,
+    staticCatalogTransportOwner:
+      params.harnessId && params.harnessId !== "openclaw" ? "harness" : undefined,
   });
   let model = resolution.model;
   if (!model) {
