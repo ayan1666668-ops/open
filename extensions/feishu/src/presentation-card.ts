@@ -15,7 +15,7 @@ import {
 } from "openclaw/plugin-sdk/interactive-runtime";
 import { getMarkdownTableSource } from "openclaw/plugin-sdk/markdown-table-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { markdownToIRWithMeta } from "openclaw/plugin-sdk/text-chunking";
+import { convertMarkdownTables, markdownToIRWithMeta } from "openclaw/plugin-sdk/text-chunking";
 import type { OutboundIdentity, ReplyPayload } from "../runtime-api.js";
 import { createFeishuCardInteractionEnvelope } from "./card-interaction.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
@@ -512,11 +512,34 @@ function buildFeishuPresentationCardElements(params: {
   return [{ tag: "markdown", content: "" }];
 }
 
+/**
+ * A card does not draw a table inside a quote or a list item, so those rows leave the message
+ * rather than degrade, which is why the reply path sends those shapes as a post instead. A
+ * presentation cannot take that route without losing its controls, so its elements take the
+ * fallback the streamed preview takes and the rows survive as a list. The prose a fallback
+ * carries is left alone, since a post draws what a card cannot.
+ */
+function cardElementRenderer(
+  renderText?: (text: string) => string,
+): ((text: string) => string) | undefined {
+  if (!renderText) {
+    return undefined;
+  }
+  return (text: string) => {
+    const rendered = renderText(text);
+    return hasUndrawableCardTable(rendered) ? convertMarkdownTables(rendered, "bullets") : rendered;
+  };
+}
+
 export function buildFeishuPresentationCard(params: {
   presentation: NormalizedMessagePresentation;
   fallbackText?: string;
   renderText?: (text: string) => string;
 }): FeishuNativeCard {
+  const elementParams = {
+    ...params,
+    ...(params.renderText ? { renderText: cardElementRenderer(params.renderText) } : {}),
+  };
   return {
     schema: "2.0",
     config: {
@@ -531,7 +554,7 @@ export function buildFeishuPresentationCard(params: {
         }
       : {}),
     body: {
-      elements: buildFeishuPresentationCardElements(params),
+      elements: buildFeishuPresentationCardElements(elementParams),
     },
   };
 }

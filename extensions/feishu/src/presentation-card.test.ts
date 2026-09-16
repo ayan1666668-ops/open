@@ -109,6 +109,36 @@ describe("buildFeishuPresentationCard", () => {
     expect(joined).toContain("r79");
   });
 
+  // A card does not draw a table inside a quote, so those rows leave the message rather than
+  // degrade. A presentation cannot take the post path without losing its controls, so its
+  // elements take the same list the streamed preview takes.
+  it("lists a quoted table a card cannot draw and keeps the controls", () => {
+    const quoted = "> | Name | Role |\n> | --- | --- |\n> | Ada | Lead |";
+    const presentation = normalizeMessagePresentation({
+      blocks: [
+        { type: "text", text: quoted },
+        {
+          type: "buttons",
+          buttons: [{ label: "Allow", action: { type: "command", command: "/ok" } }],
+        },
+      ],
+    });
+    if (!presentation) {
+      throw new Error("expected valid presentation");
+    }
+
+    const elements = buildFeishuPresentationCard({
+      presentation,
+      // block mode leaves a table for the card to draw, which is the case this is about.
+      renderText: (text) => text,
+    }).body.elements as { tag: string; content?: string }[];
+
+    const markdown = elements.find((element) => element.tag === "markdown")?.content ?? "";
+    expect(markdown).toContain("Ada");
+    expect(markdown).not.toContain("| --- |");
+    expect(elements.some((element) => element.tag === "button")).toBe(true);
+  });
+
   // A table block carries as many rows as the producer had, and its linear form is one
   // element unless it is cut.
   it("splits a table block whose linear form outgrows the card text limit", () => {
