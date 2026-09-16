@@ -187,17 +187,12 @@ export function findUnindexedActiveTranscriptEntry(
   projection: CurrentTranscriptProjection,
   eventId: string,
 ): UnindexedActiveTranscriptNavigation | undefined {
-  if (projection.unindexedHistoryAnchor?.eventId === eventId) {
-    return projection.unindexedHistoryAnchor.entry;
-  }
   for (const row of iterateUnindexedActiveTranscriptNavigation(projection, {
     eventIds: [eventId],
   })) {
     if (typeof row.event.id === "string" && row.event.id.trim() === eventId) {
-      projection.unindexedHistoryAnchor = { eventId, entry: row };
       return row;
     }
   }
-  projection.unindexedHistoryAnchor = { eventId, entry: undefined };
   return undefined;
 }
