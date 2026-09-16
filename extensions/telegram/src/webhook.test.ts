@@ -15,6 +15,7 @@ import {
   onDiagnosticEvent,
   waitForDiagnosticEventsDrained,
 } from "openclaw/plugin-sdk/diagnostic-runtime";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import {
   logWebhookReceived,
   startDiagnosticHeartbeat,
@@ -35,6 +36,8 @@ import {
   type TelegramSpooledReplayDeferredParticipant,
   type TelegramSpooledReplaySettlementHold,
 } from "./bot-processing-outcome.js";
+import { commitTelegramMessageDispatchReplay } from "./message-dispatch-dedupe.js";
+import { monitorTelegramProvider } from "./monitor.js";
 import { setTelegramRuntime } from "./runtime.js";
 import { clearTelegramRuntimeForTest as clearTelegramRuntime } from "./runtime.test-support.js";
 import type { TelegramRuntime } from "./runtime.types.js";
@@ -1327,6 +1330,190 @@ describe("startTelegramWebhook", () => {
     expect(setStatus).toHaveBeenLastCalledWith({ mode: "webhook", connected: false });
     expectMockMessageContains(runtimeError, "telegram webhook bot stop failed");
   });
+
+  it("joins concurrent stops with abort-driven webhook cleanup", async () => {
+    const finishStop = createDeferred<void>();
+    stopSpy.mockImplementationOnce(() => finishStop.promise);
+    const abort = new AbortController();
+    const started = await startTelegramWebhook({
+      token: TELEGRAM_TOKEN,
+      port: 0,
+      secret: TELEGRAM_SECRET,
+      path: TELEGRAM_WEBHOOK_PATH,
+      spoolDir: requireWebhookSpoolDir(),
+      abortSignal: abort.signal,
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+    });
+    abort.abort();
+    let stopped = false;
+    const stopping = Promise.all([started.stop(), started.stop()]).then(() => {
+      stopped = true;
+    });
+    try {
+      await waitForWebhookState(() => expect(stopSpy).toHaveBeenCalledOnce());
+      await yieldWebhookTask();
+      expect(stopped).toBe(false);
+      expect(transportCloseSpies[0]).not.toHaveBeenCalled();
+    } finally {
+      finishStop.resolve();
+      await stopping;
+      await waitForWebhookState(() => expect(transportCloseSpies[0]).toHaveBeenCalledOnce());
+    }
+  });
+
+  it("does not dispatch queued work when the webhook provider starts aborted", async () => {
+    vi.stubEnv("OPENCLAW_STATE_DIR", webhookStateDir);
+    await writeTelegramSpooledUpdate({
+      spoolDir: requireWebhookSpoolDir(),
+      update: telegramMessageUpdate(62, "not accepted"),
+    });
+    await monitorTelegramProvider({
+      token: TELEGRAM_TOKEN,
+      accountId: "test",
+      config: {},
+      useWebhook: true,
+      webhookPort: 0,
+      webhookPath: TELEGRAM_WEBHOOK_PATH,
+      webhookSecret: TELEGRAM_SECRET,
+      abortSignal: AbortSignal.abort(new Error("account stopped")),
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+    });
+
+    expect(handleUpdateSpy).not.toHaveBeenCalled();
+    expect(setWebhookSpy).not.toHaveBeenCalled();
+    expect(stopSpy).toHaveBeenCalledOnce();
+    expect(transportCloseSpies[0]).toHaveBeenCalledOnce();
+    expect(
+      (await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).map(
+        (entry) => entry.updateId,
+      ),
+    ).toEqual([62]);
+  });
+
+  it.each(["commit", "rollback", "introduction"] as const)(
+    "joins accepted %s beyond webhook provider shutdown grace",
+    async (operation) => {
+      vi.stubEnv("OPENCLAW_STATE_DIR", webhookStateDir);
+      const abort = new AbortController();
+      const operationStarted = createDeferred<void>();
+      const releaseOperation = createDeferred<void>();
+      const recorded = new Set<string>();
+      const setStatus = vi.fn();
+      let settlement: Promise<void> | undefined;
+      handleUpdateSpy.mockImplementationOnce(async () => {
+        const participant = createTelegramSpooledReplayDeferredParticipant("held-webhook-work");
+        const hold = participant?.beginSettlementHold();
+        if (!participant || !hold) {
+          throw new Error("Expected accepted webhook settlement ownership");
+        }
+        settlement = (async () => {
+          try {
+            if (operation === "introduction") {
+              operationStarted.resolve();
+              await releaseOperation.promise;
+              recorded.add("introduction");
+            } else {
+              await commitTelegramMessageDispatchReplay({
+                requirePersistent: true,
+                guard: {
+                  claim: async () => ({ kind: "invalid" }),
+                  warmup: async () => 0,
+                  forget: async (event) => {
+                    operationStarted.resolve();
+                    await releaseOperation.promise;
+                    for (const key of "keys" in event ? (event.keys ?? []) : []) {
+                      recorded.delete(key);
+                    }
+                    return true;
+                  },
+                },
+                claims: ["first", "second"].map((key) => ({
+                  keys: [key],
+                  commit: async (options) => {
+                    if (operation === "commit" && key === "first") {
+                      operationStarted.resolve();
+                      await releaseOperation.promise;
+                    }
+                    recorded.add(key);
+                    if (operation === "rollback" && key === "second") {
+                      options?.onDiskError?.(new Error("synthetic commit failure"));
+                    }
+                    return true;
+                  },
+                  release: () => undefined,
+                })),
+              });
+            }
+            hold.release("discard-pending");
+            participant.settle({ kind: "completed" });
+          } catch (error) {
+            hold.release("replay-pending");
+            participant.settle({ kind: "failed-retryable", error });
+          }
+        })();
+        await settlement;
+      });
+      let stopped = false;
+      const provider = monitorTelegramProvider({
+        token: TELEGRAM_TOKEN,
+        accountId: "test",
+        config: {},
+        useWebhook: true,
+        webhookPort: 0,
+        webhookPath: TELEGRAM_WEBHOOK_PATH,
+        webhookSecret: TELEGRAM_SECRET,
+        abortSignal: abort.signal,
+        setStatus,
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      }).then(() => {
+        stopped = true;
+      });
+      try {
+        await waitForWebhookState(() => expect(setWebhookSpy).toHaveBeenCalledOnce());
+        const url = requireMockCall(setWebhookSpy, 0, "setWebhook")[0];
+        if (typeof url !== "string") {
+          throw new Error("Expected the isolated webhook listener URL");
+        }
+        const response = await postWebhookJson({
+          url,
+          payload: JSON.stringify(telegramMessageUpdate(61, "held webhook work")),
+          secret: TELEGRAM_SECRET,
+        });
+        expect(response.status).toBe(200);
+        await operationStarted.promise;
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        abort.abort();
+        await vi.advanceTimersByTimeAsync(16_000);
+        expect(stopped).toBe(false);
+        expect(stopSpy).toHaveBeenCalledOnce();
+        expect(transportCloseSpies[0]).toHaveBeenCalledOnce();
+      } finally {
+        releaseOperation.resolve();
+        await settlement;
+        abort.abort();
+        await provider;
+        vi.useRealTimers();
+        await waitForWebhookState(async () =>
+          expect(
+            await listTelegramSpooledUpdateClaims({ spoolDir: requireWebhookSpoolDir() }),
+          ).toEqual([]),
+        );
+      }
+      expect([...recorded]).toEqual(
+        operation === "rollback"
+          ? []
+          : operation === "introduction"
+            ? ["introduction"]
+            : ["first", "second"],
+      );
+      expect(
+        (await listTelegramSpooledUpdates({ spoolDir: requireWebhookSpoolDir() })).map(
+          (entry) => entry.updateId,
+        ),
+      ).toEqual(operation === "rollback" ? [61] : []);
+      expect(setStatus).toHaveBeenLastCalledWith({ mode: "webhook", connected: false });
+    },
+  );
 
   it("marks delivery accepted only after the durable enqueue commits", async () => {
     let releaseEnqueue: (() => void) | undefined;

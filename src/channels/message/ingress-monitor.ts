@@ -323,6 +323,9 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
           onAdoptionFinalizing: () => {
             handedOff = true;
             deferredHandoff = true;
+            if (deferredClaim && !deferredClaimSettled) {
+              deferredClaims.add(deferredClaim);
+            }
             lifecycle.onAdoptionFinalizing();
           },
           onFailed: (error) => settleDeferredLifecycle(() => lifecycle.onFailed?.(error)),
@@ -344,6 +347,10 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
         try {
           result = await delivery;
         } catch (error) {
+          if (deferredHandoff && deferredClaim && !deferredClaimSettled) {
+            await wrappedLifecycle.onFailed?.(error);
+            return { kind: "deferred" };
+          }
           if (isAborted() || lifecycle.abortSignal.aborted) {
             return { kind: "failed-retryable", error };
           }
@@ -358,6 +365,10 @@ export function createChannelIngressMonitor<TRaw, TBody, TStoredPayload, TMetada
           publishActivity();
         }
         if (result?.kind === "failed-retryable") {
+          if (deferredHandoff && deferredClaim && !deferredClaimSettled) {
+            await wrappedLifecycle.onFailed?.(result.error);
+            return { kind: "deferred" };
+          }
           return result;
         }
         // Terminal and handoff outcomes must reach the drain even when stop

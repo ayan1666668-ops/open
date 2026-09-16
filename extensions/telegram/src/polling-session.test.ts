@@ -3431,6 +3431,105 @@ describe("TelegramPollingSession", () => {
     });
   });
 
+  it.each(
+    (["buffered", "inline"] as const).flatMap((admission) =>
+      (["commit", "rollback"] as const).map((operation) => ({ admission, operation })),
+    ),
+  )(
+    "joins a held $admission replay $operation beyond polling stop grace",
+    async ({ admission, operation }) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await withTempSpool(async (spoolDir) => {
+          const abort = new AbortController();
+          const operationStarted = createDeferred<void>();
+          const releaseOperation = createDeferred<void>();
+          const recorded = new Set<string>();
+          const participants: TelegramSpooledReplayDeferredParticipant[] = [];
+          let settlement: Promise<void> | undefined;
+          await writeSpooledTestUpdates(spoolDir, [directUpdate(42, 111, "held replay write")]);
+          const { runPromise, stopWorker } = startIsolatedIngressSession({
+            abort,
+            spoolDir,
+            handleUpdate: async () => {
+              const participant = collectDeferredParticipant(participants, "held-replay-write");
+              const hold = expectDefined(participant.beginSettlementHold(), "adoption hold");
+              settlement = (async () => {
+                try {
+                  await commitTelegramMessageDispatchReplay({
+                    requirePersistent: true,
+                    guard: {
+                      claim: async () => ({ kind: "invalid" }),
+                      warmup: async () => 0,
+                      forget: async (event) => {
+                        operationStarted.resolve();
+                        await releaseOperation.promise;
+                        for (const key of "keys" in event ? (event.keys ?? []) : []) {
+                          recorded.delete(key);
+                        }
+                        return true;
+                      },
+                    },
+                    claims: ["first", "second"].map((key) => ({
+                      keys: [key],
+                      commit: async (options) => {
+                        if (operation === "commit" && key === "first") {
+                          operationStarted.resolve();
+                          await releaseOperation.promise;
+                        }
+                        recorded.add(key);
+                        if (operation === "rollback" && key === "second") {
+                          options?.onDiskError?.(new Error("synthetic commit failure"));
+                        }
+                        return true;
+                      },
+                      release: () => undefined,
+                    })),
+                  });
+                  hold.release("discard-pending");
+                  participant.settle({ kind: "completed" });
+                } catch (error) {
+                  hold.release("replay-pending");
+                  participant.settle({ kind: "failed-retryable", error });
+                }
+              })();
+              if (admission === "inline") {
+                await settlement;
+              }
+            },
+          });
+          let accountStopped = false;
+          const accountRun = runPromise.then(() => {
+            accountStopped = true;
+          });
+          try {
+            await operationStarted.promise;
+            abort.abort();
+            stopWorker();
+            await vi.advanceTimersByTimeAsync(16_000);
+            expect(accountStopped).toBe(false);
+          } finally {
+            releaseOperation.resolve();
+            await settlement;
+            abort.abort();
+            stopWorker();
+            await accountRun;
+            await waitForTelegramTestState(async () =>
+              expect(await listTelegramSpooledUpdateClaims({ spoolDir })).toEqual([]),
+            );
+          }
+          expect([...recorded]).toEqual(operation === "commit" ? ["first", "second"] : []);
+          expect(await pendingUpdateIds(spoolDir, "all")).toEqual(
+            operation === "commit" ? [] : [42],
+          );
+          expect(await failedUpdateIds(spoolDir)).toEqual([]);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("recovers orphaned spooled claims across isolated ingress restarts", async () => {
     // Core drain dispose leaves the claim for recover; the next cycle re-dispatches.
     vi.useFakeTimers({ shouldAdvanceTime: true });
