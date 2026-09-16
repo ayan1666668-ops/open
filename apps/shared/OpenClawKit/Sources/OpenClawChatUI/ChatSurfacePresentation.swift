@@ -4,7 +4,7 @@ import Foundation
 /// Hosts must not overlay a second empty, loading, or connection surface on top
 /// of this decision. iOS Chat owns gateway chrome and passes a concrete
 /// `ChatHostConnectionStatus`; macOS hosts leave it `.unmanaged`.
-public enum ChatSurfacePresentation: Equatable, Sendable {
+enum ChatSurfacePresentation: Equatable, Sendable {
     case preparing
     case loading
     case emptyIntro
@@ -24,57 +24,23 @@ public enum ChatHostConnectionStatus: Equatable, Sendable {
     case error
 }
 
-public struct ChatSurfaceState: Equatable, Sendable {
-    public var hasSession: Bool
-    public var isLoading: Bool
-    public var hasVisibleTranscript: Bool
-    public var isEmptyThread: Bool
-    public var errorText: String?
-    public var composerChromeIsClean: Bool
-    public var hasEmptyAssistantIntro: Bool
-    public var isComposerEnabled: Bool
-    public var hostConnection: ChatHostConnectionStatus
-
-    public init(
-        hasSession: Bool,
-        isLoading: Bool,
-        hasVisibleTranscript: Bool,
-        isEmptyThread: Bool,
-        errorText: String?,
-        composerChromeIsClean: Bool,
-        hasEmptyAssistantIntro: Bool,
-        isComposerEnabled: Bool,
-        hostConnection: ChatHostConnectionStatus)
-    {
-        self.hasSession = hasSession
-        self.isLoading = isLoading
-        self.hasVisibleTranscript = hasVisibleTranscript
-        self.isEmptyThread = isEmptyThread
-        self.errorText = errorText
-        self.composerChromeIsClean = composerChromeIsClean
-        self.hasEmptyAssistantIntro = hasEmptyAssistantIntro
-        self.isComposerEnabled = isComposerEnabled
-        self.hostConnection = hostConnection
-    }
+struct ChatSurfaceState: Equatable, Sendable {
+    var hasSession: Bool
+    var isLoading: Bool
+    var hasVisibleTranscript: Bool
+    var isEmptyThread: Bool
+    var errorText: String?
+    var composerChromeIsClean: Bool
+    var hasEmptyAssistantIntro: Bool
+    var isComposerEnabled: Bool
+    var hostConnection: ChatHostConnectionStatus
 }
 
-public struct ChatSurfaceDecision: Equatable, Sendable {
-    public var presentation: ChatSurfacePresentation
-    public var mountsComposer: Bool
-    public var showsInlineLoadingCapsule: Bool
-    public var showsErrorBanner: Bool
-
-    public init(
-        presentation: ChatSurfacePresentation,
-        mountsComposer: Bool,
-        showsInlineLoadingCapsule: Bool,
-        showsErrorBanner: Bool)
-    {
-        self.presentation = presentation
-        self.mountsComposer = mountsComposer
-        self.showsInlineLoadingCapsule = showsInlineLoadingCapsule
-        self.showsErrorBanner = showsErrorBanner
-    }
+struct ChatSurfaceDecision: Equatable, Sendable {
+    var presentation: ChatSurfacePresentation
+    var mountsComposer: Bool
+    var showsInlineLoadingCapsule: Bool
+    var showsErrorBanner: Bool
 }
 
 func chatSurfaceNormalizedErrorText(_ errorText: String?) -> String? {
@@ -91,7 +57,7 @@ func chatSurfaceErrorIsConnectionFailure(_ error: String) -> Bool {
     return lower.contains("not connected") || lower.contains("socket")
 }
 
-public func chatSurfaceDecision(_ state: ChatSurfaceState) -> ChatSurfaceDecision {
+func chatSurfaceDecision(_ state: ChatSurfaceState) -> ChatSurfaceDecision {
     if !state.hasSession {
         return ChatSurfaceDecision(
             presentation: .preparing,

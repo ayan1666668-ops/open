@@ -84,7 +84,7 @@ extension OpenClawChatComposer {
             } label: {
                 if inOptionsMenu {
                     Label {
-                        Text("Permissions: \(permissionLabel)")
+                        Text(String(format: String(localized: "Permissions: %@"), permissionLabel))
                             .font(OpenClawChatTypography.body)
                     } icon: {
                         Image(systemName: "shield")
@@ -103,7 +103,7 @@ extension OpenClawChatComposer {
                 !self.viewModel.composerCapabilityCatalog.permissionMutationAvailable ||
                     self.viewModel.composerCapabilityMutationDisabled)
             .accessibilityLabel(inOptionsMenu
-                ? String(localized: "Session permissions: \(permissionLabel)")
+                ? String(format: String(localized: "Session permissions: %@"), permissionLabel)
                 : String(localized: "Session permissions"))
             .accessibilityValue(
                 self.viewModel.composerPermissionMode?.displayName ?? String(localized: "Default (inherited)"))

@@ -44,7 +44,6 @@ enum CleanChatComposerMetrics {
     static let controlTouchSize: CGFloat = 44
     static let primaryVisualSize: CGFloat = 32
     static let editorInlineInset: CGFloat = 14
-    static let editorBlockInset: CGFloat = 6
     static let footerInlineInset: CGFloat = 8
     static let footerBlockInset: CGFloat = 6
     static let rowGap: CGFloat = 4

@@ -146,9 +146,7 @@ extension OpenClawChatComposer {
             self.cleanContextUsageMenu()
             // Camera switching only displaces settings in the compact iOS footer.
             #if os(macOS)
-            if self.viewModel.showsModelPicker {
-                self.cleanInlineModelPicker(compact: compactModel)
-            }
+            self.cleanInlineModelPicker(compact: compactModel)
             self.cleanInlineEffortMenu()
             #else
             if !self.cleanShowsCameraFlip {
@@ -211,7 +209,7 @@ extension OpenClawChatComposer {
         } label: {
             if inOptionsMenu {
                 Label {
-                    Text("Model: \(self.viewModel.composerInlineModelLabel)")
+                    Text(String(format: String(localized: "Model: %@"), self.viewModel.composerInlineModelLabel))
                         .font(OpenClawChatTypography.body)
                 } icon: {
                     Image(systemName: "cpu")
@@ -235,7 +233,7 @@ extension OpenClawChatComposer {
         #endif
         .help(self.cleanInlineModelDisabledHint ?? self.viewModel.composerInlineModelLabel)
         .accessibilityLabel(inOptionsMenu
-            ? String(localized: "Model: \(self.viewModel.composerInlineModelLabel)")
+            ? String(format: String(localized: "Model: %@"), self.viewModel.composerInlineModelLabel)
             : String(localized: "Model"))
         .accessibilityValue(self.viewModel.composerInlineModelLabel)
         .accessibilityHint(self.cleanInlineModelDisabledHint ?? "")
@@ -305,7 +303,7 @@ extension OpenClawChatComposer {
         } label: {
             if inOptionsMenu {
                 Label {
-                    Text("Effort: \(self.viewModel.composerInlineEffortLabel)")
+                    Text(String(format: String(localized: "Effort: %@"), self.viewModel.composerInlineEffortLabel))
                         .font(OpenClawChatTypography.body)
                 } icon: {
                     Image(systemName: "gauge.with.dots.needle.50percent")
@@ -349,7 +347,7 @@ extension OpenClawChatComposer {
         #endif
         .help(self.cleanInlineEffortDisabledHint ?? self.viewModel.composerInlineEffortLabel)
         .accessibilityLabel(inOptionsMenu
-            ? String(localized: "Effort: \(self.viewModel.composerInlineEffortLabel)")
+            ? String(format: String(localized: "Effort: %@"), self.viewModel.composerInlineEffortLabel)
             : String(localized: "Effort"))
         .accessibilityValue(self.viewModel.composerInlineEffortLabel)
         .accessibilityHint(self.cleanInlineEffortDisabledHint ?? "")
