@@ -282,7 +282,14 @@ async function sendOutboundText(params: {
       // The accepted sends carry the only text that reached the peer, and projection can
       // turn a message that fit into several of them. Without this the turn records the
       // unsent suffix as delivered, the same way the comment loop used to.
-      throw partialFeishuSendError(error, results, acceptedPostChunks.join(""));
+      // Feishu accepting a send without returning a receipt raises here rather than
+      // returning, and that text reached the peer as surely as the chunks above it, so it
+      // belongs in this content. The reply loop answers the same question the same way.
+      const acceptedChunk = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
+      const delivered = acceptedChunk
+        ? [...acceptedPostChunks, acceptedChunk.content ?? chunk]
+        : acceptedPostChunks;
+      throw partialFeishuSendError(error, results, delivered.join(""));
     }
   }
   return aggregateFeishuSendResult(results.at(-1)!, results);
