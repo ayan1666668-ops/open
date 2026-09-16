@@ -73,6 +73,56 @@ describe("plugin-owned CLI watchdog host-suspend accounting", () => {
     expect((errors[0] as Error).message).toContain("no output for 100s");
   });
 
+  it("does not re-credit the suspend span when output arrives after wake before the resumed tick", async () => {
+    vi.useFakeTimers();
+    const { context } = await createExecution({ timeoutMs: 500_000 });
+    const errors: unknown[] = [];
+    const streamStarted = createDeferred();
+    const hostResumed = createDeferred();
+    const run = runPlugin(
+      context,
+      async function* (execution) {
+        streamStarted.resolve();
+        // Park the CLI across the suspend; on wake the first output event is
+        // consumed before the overdue watchdog tick gets to run.
+        await hostResumed.promise;
+        yield { type: "system", subtype: "init" };
+        await waitUntilAborted(execution);
+        yield SUCCESS_RESULT;
+      },
+      {
+        noOutputTimeoutMs: 100_000,
+        onNoOutputTimeout: (error) => errors.push(error),
+      },
+    );
+    await streamStarted.promise;
+
+    // Active silence well within the 100s budget: no abort.
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    // The host suspends for 120s. Resolving the deferred resumes the parked
+    // generator (microtasks) before the overdue watchdog tick (a macrotask),
+    // so noteOutput records the output at the post-wake time first.
+    vi.setSystemTime(Date.now() + 120_000);
+    hostResumed.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(errors).toHaveLength(0);
+
+    // The fresh post-wake budget is 100s of active silence. The 120s freeze
+    // must not be credited a second time, so the subsequent stall still
+    // aborts on the normal budget instead of ~220s of wall time.
+    await vi.advanceTimersByTimeAsync(99_000);
+    expect(errors).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(run).resolves.toMatchObject({
+      reason: "no-output-timeout",
+      noOutputTimedOut: true,
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect((errors[0] as Error).message).toContain("no output for 100s");
+  });
+
   it("counts sub-threshold timer delays against the no-output budget", async () => {
     vi.useFakeTimers();
     const { context } = await createExecution({ timeoutMs: 500_000 });

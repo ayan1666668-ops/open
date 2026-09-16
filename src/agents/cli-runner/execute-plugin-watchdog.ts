@@ -8,7 +8,10 @@ import * as noOutputPolicy from "./no-output-timeout-policy.js";
 // recovery already detects those freezes for channels and health; the CLI
 // watchdog must not mistake frozen wall time for CLI silence, so it ticks at
 // most every second and credits overshoots past the suspend threshold back to
-// both the no-output budget and the overall run budget.
+// both the no-output budget and the overall run budget. Only the frozen span
+// overlapping the current quiet interval is credited: output consumed after
+// wake already restarted the budget at the post-wake time, so re-crediting
+// the whole span would extend the fresh budget by the suspend duration twice.
 const HOST_SUSPEND_TICK_THRESHOLD_MS = 45_000;
 const WATCHDOG_TICK_MS = 1_000;
 
@@ -69,11 +72,16 @@ export function createCliPluginWatchdog(params: {
         : 0;
     if (suspendedMs > 0) {
       // Frozen process time is not CLI silence and must not drain either
-      // budget; shift the quiet baseline and deadlines by the suspended span.
-      lastOutputAtMs += suspendedMs;
-      noOutputDeadlineMs += suspendedMs;
+      // budget; shift the quiet baseline and deadline by the frozen span that
+      // actually overlaps the quiet interval. Output consumed after wake set
+      // lastOutputAtMs to the post-wake time already, so a whole-span shift
+      // here would double-credit the suspend and defer genuine-stall recovery.
+      const frozenStartMs = nowMs - suspendedMs;
+      const creditedMs = Math.max(0, nowMs - Math.max(lastOutputAtMs, frozenStartMs));
+      lastOutputAtMs += creditedMs;
+      noOutputDeadlineMs += creditedMs;
       cliBackendLog.info(
-        `cli watchdog credited host-suspend time: provider=${params.provider} model=${params.model} suspendedMs=${Math.round(suspendedMs)}`,
+        `cli watchdog credited host-suspend time: provider=${params.provider} model=${params.model} suspendedMs=${Math.round(suspendedMs)} creditedMs=${Math.round(creditedMs)}`,
       );
     }
     const activeElapsedMs = elapsedMs - suspendedMs;
