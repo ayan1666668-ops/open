@@ -1,10 +1,11 @@
 // Exercise registered sessions_spawn through real Gateway, storage, and provider HTTP.
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import { createServer, IncomingMessage } from "node:http";
 import { Socket } from "node:net";
 import path from "node:path";
 import { json } from "node:stream/consumers";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
   writeOpenAiResponsesSse,
   writeOpenAiResponsesText,
@@ -24,6 +25,7 @@ import {
 } from "../agents/tools/gateway-caller-context.js";
 import { loadSessionEntryReadOnly } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import * as backoff from "../infra/backoff.js";
 import { extractTextFromChatContent } from "../shared/chat-content.js";
 import { setTestEnvValue } from "../test-utils/env.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
@@ -254,7 +256,20 @@ const directAgentScenarios: Scenario[] = [
 ];
 
 describe("sessions_spawn model fallback through the Gateway", () => {
-  afterAll(resetGatewayTestState);
+  let retrySleep: MockInstance<typeof backoff.sleepWithAbort>;
+  beforeAll(() => {
+    const sleepWithAbort = backoff.sleepWithAbort;
+    // Exercise every retry, including abortable waits, without real provider backoff.
+    retrySleep = vi
+      .spyOn(backoff, "sleepWithAbort")
+      .mockImplementation((ms, signal, options) =>
+        sleepWithAbort(Math.min(ms, 1), signal, options),
+      );
+  });
+  afterAll(() => {
+    retrySleep.mockRestore();
+    resetGatewayTestState();
+  });
   it.each([...scenarios, ...directAgentScenarios])(
     "$name",
     async (scenario) => {
@@ -309,9 +324,17 @@ describe("sessions_spawn model fallback through the Gateway", () => {
             gateway: { auth: { mode: "token", token } },
             hooks: { enabled: false },
           };
+          const agentDir = resolveAgentDir(cfg, "main");
+          await fs.mkdir(agentDir, { recursive: true });
+          // This proof owns model fallback, while transient retry pacing has focused coverage.
+          await fs.writeFile(
+            path.join(agentDir, "settings.json"),
+            `${JSON.stringify({ retry: { provider: { maxRetries: 0 } } })}\n`,
+            "utf8",
+          );
           if (scenario.configuredProfile || scenario.model?.includes("@")) {
             upsertAuthProfile({
-              agentDir: resolveAgentDir(cfg, "main"),
+              agentDir,
               profileId: PROFILE,
               credential: {
                 type: "api_key",
@@ -464,6 +487,7 @@ describe("sessions_spawn model fallback through the Gateway", () => {
             });
           }
           expect(childRequests).toContainEqual(expect.objectContaining({ model: "primary" }));
+          expect(childRequests.filter((request) => request.model === "primary")).toHaveLength(1);
           expect(provider.errors).toEqual([]);
           if (scenario.backup) {
             expect(childRequests.map((request) => request.model)).toContain(scenario.backup);
