@@ -1,44 +1,29 @@
 // Feishu plugin module implements outbound behavior.
-import path from "node:path";
 import { isChannelPartialDeliveryError } from "openclaw/plugin-sdk/channel-inbound";
-import {
-  createMessageReceiptFromOutboundResults,
-  createReplyToFanout,
-} from "openclaw/plugin-sdk/channel-outbound";
+import { createReplyToFanout } from "openclaw/plugin-sdk/channel-outbound";
 import {
   attachChannelToResult,
   createAttachedChannelResultAdapter,
 } from "openclaw/plugin-sdk/channel-send-result";
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
-import {
-  chunkMarkdownTextWithMode,
-  resolveChunkMode,
-  resolveTextChunkLimit,
-} from "openclaw/plugin-sdk/reply-chunking";
+import { resolveChunkMode, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-chunking";
 import {
   getReplyPayloadTtsSupplement,
   resolvePayloadMediaUrls,
   sendPayloadMediaSequenceAndFinalize,
   sendTextMediaPayload,
 } from "openclaw/plugin-sdk/reply-payload";
-import { statRegularFileSync } from "openclaw/plugin-sdk/security-runtime";
-import {
-  isRecord,
-  normalizeLowercaseStringOrEmpty,
-  normalizeStringEntries,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { isRecord, normalizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import type { ChannelOutboundAdapter } from "../runtime-api.js";
 import { resolveFeishuAccount } from "./accounts.js";
-import { createFeishuClient } from "./client.js";
-import { cleanupAmbientCommentTypingReaction } from "./comment-reaction.js";
 import { parseFeishuCommentTarget } from "./comment-target.js";
-import { deliverCommentThreadText } from "./drive.js";
+import { sendCommentThreadReply } from "./comment-thread-delivery.js";
 import { resolveFeishuIdentityHeaderTitle } from "./identity-header.js";
+import { normalizePossibleLocalImagePath } from "./local-image-path.js";
 import {
   chunkFeishuMarkdown,
   chunkFeishuPostMarkdown,
-  chunkedFencesBalance,
   postFencesSurvive,
   materializeFeishuPostMarkdownSoftBreaks,
 } from "./markdown.js";
@@ -49,6 +34,14 @@ import {
   type SendMediaResult,
 } from "./media.js";
 import { readNativeFeishuCardJson } from "./native-card.js";
+import {
+  aggregateFeishuSendResult,
+  FEISHU_TEXT_CHUNK_LIMIT,
+  partialFeishuSendError,
+  reportFeishuOutboundDelivery,
+  toFeishuOutboundResult,
+  type FeishuSendTextContext,
+} from "./outbound-send-result.js";
 import {
   assertFeishuCardWithinEnvelope,
   buildFeishuPresentationFallback,
@@ -67,11 +60,7 @@ import {
   withinCardTableLimit,
   cardCarriesWholeTable,
 } from "./presentation-card.js";
-import {
-  createFeishuPartialReplyDeliveryError,
-  createFeishuReplyDeliveryResult,
-  type FeishuReplyDeliverySource,
-} from "./reply-delivery-result.js";
+import type { FeishuReplyDeliverySource } from "./reply-delivery-result.js";
 import {
   chunkFeishuCardMarkdown,
   sendCardFeishu,
@@ -89,63 +78,11 @@ import {
 // a direct-send attachment failure visible instead of degrading to a
 // fallback-text `ok:true` receipt (issue #112244, ClawSweeper P1).
 export const FEISHU_PROPAGATE_MEDIA_UPLOAD_FAILURE_MARKER = "__openclawPropagateMediaUploadFailure";
-const FEISHU_TEXT_CHUNK_LIMIT = 4000;
-
-function normalizePossibleLocalImagePath(text: string | undefined): string | null {
-  const raw = text?.trim();
-  if (!raw) {
-    return null;
-  }
-
-  // Only auto-convert when the message is a pure path-like payload.
-  // Avoid converting regular sentences that merely contain a path.
-  const hasWhitespace = /\s/.test(raw);
-  if (hasWhitespace) {
-    return null;
-  }
-
-  // Ignore links/data URLs; those should stay in normal mediaUrl/text paths.
-  if (/^(https?:\/\/|data:|file:\/\/)/i.test(raw)) {
-    return null;
-  }
-
-  const ext = normalizeLowercaseStringOrEmpty(path.extname(raw));
-  const isImageExt = [
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".gif",
-    ".webp",
-    ".bmp",
-    ".ico",
-    ".heic",
-    ".tif",
-    ".tiff",
-  ].includes(ext);
-  if (!isImageExt) {
-    return null;
-  }
-
-  if (!path.isAbsolute(raw)) {
-    return null;
-  }
-  try {
-    const stat = statRegularFileSync(raw);
-    if (stat.missing) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  return raw;
-}
 
 type FeishuOutboundPayload = Parameters<
   NonNullable<ChannelOutboundAdapter["sendPayload"]>
 >[0]["payload"];
 type FeishuSendPayloadContext = Parameters<NonNullable<ChannelOutboundAdapter["sendPayload"]>>[0];
-type FeishuSendTextContext = Parameters<NonNullable<ChannelOutboundAdapter["sendText"]>>[0];
 
 // The Feishu sendMedia implementation accepts an optional flag the shared
 // ChannelOutboundAdapter contract does not: when true, a media-upload failure
@@ -163,52 +100,6 @@ export type FeishuOutboundSendMedia = (
     propagateMediaUploadFailure?: boolean;
   },
 ) => ReturnType<NonNullable<ChannelOutboundAdapter["sendMedia"]>>;
-
-function toFeishuOutboundResult<T extends { chatId: string }>(result: T) {
-  const { chatId, ...delivery } = result;
-  return { ...delivery, target: { kind: "chat" as const, id: chatId } };
-}
-
-async function reportFeishuOutboundDelivery<T extends { messageId: string; chatId: string }>(
-  result: T,
-  onDeliveryResult: FeishuSendTextContext["onDeliveryResult"],
-): Promise<T> {
-  await onDeliveryResult?.(attachChannelToResult("feishu", toFeishuOutboundResult(result)));
-  return result;
-}
-
-function aggregateFeishuSendResult<T extends FeishuReplyDeliverySource>(
-  result: T,
-  results: readonly FeishuReplyDeliverySource[],
-) {
-  return {
-    ...result,
-    receipt: {
-      ...createMessageReceiptFromOutboundResults({ results }),
-      // Keep the established edit/reply target while retaining every physical send.
-      primaryPlatformMessageId: result.messageId,
-    },
-  };
-}
-
-function partialFeishuSendError(
-  error: unknown,
-  results: readonly FeishuReplyDeliverySource[],
-  acceptedContent?: string,
-) {
-  if (results.length === 0 && error instanceof Error) {
-    return error;
-  }
-  const accepted = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
-  return createFeishuPartialReplyDeliveryError(error, {
-    ...accepted,
-    ...createFeishuReplyDeliveryResult({
-      results: [...results, accepted],
-      visibleReplySent: results.length > 0 || accepted !== undefined,
-    }),
-    ...(acceptedContent ? { content: acceptedContent } : {}),
-  });
-}
 
 // Reads (without consuming) the direct-send upload-failure policy stamped on
 // the payload by the presentation-fallback branch. Unlike the presentation
@@ -242,105 +133,6 @@ export function resolveFeishuReplyMode(params: {
         replyToMessageId: undefined,
         replyInThread: false,
       };
-}
-
-async function sendCommentThreadReply(params: {
-  cfg: Parameters<typeof sendMessageFeishu>[0]["cfg"];
-  to: string;
-  text: string;
-  replyId?: string;
-  accountId?: string;
-  onDeliveryResult?: FeishuSendTextContext["onDeliveryResult"];
-}) {
-  const target = parseFeishuCommentTarget(params.to);
-  if (!target) {
-    return null;
-  }
-  const account = resolveFeishuAccount({ cfg: params.cfg, accountId: params.accountId });
-  const client = createFeishuClient(account);
-  // Comments have no native table renderer, so block falls back to code here.
-  const requestedTableMode = resolveMarkdownTableMode({
-    cfg: params.cfg,
-    channel: "feishu",
-    accountId: account.accountId,
-    supportsBlockTables: false,
-  });
-  const commentLimit = resolveTextChunkLimit(params.cfg, "feishu", account.accountId, {
-    fallbackLimit: FEISHU_TEXT_CHUNK_LIMIT,
-  });
-  const commentChunkMode = resolveChunkMode(params.cfg, "feishu", account.accountId);
-  const requestedContent = convertMarkdownTables(params.text, requestedTableMode);
-  // Comments this text cannot be cut into without stranding a fence would arrive as an
-  // unterminated code block, so the table is left as it arrived instead.
-  const tableMode =
-    requestedTableMode === "code" &&
-    !chunkedFencesBalance(requestedContent, commentLimit, commentChunkMode)
-      ? "off"
-      : requestedTableMode;
-  const content =
-    tableMode === requestedTableMode
-      ? requestedContent
-      : convertMarkdownTables(params.text, tableMode);
-  // Core chunks raw text before channel rendering, so the conversion above can push
-  // a unit past the limit it was cut to. Re-chunk after the expansion, the way the
-  // post path below and the inbound comment dispatcher already do, so a fence is
-  // closed and reopened rather than cut in half.
-  const chunks = chunkMarkdownTextWithMode(content, commentLimit, commentChunkMode);
-  const replyId = params.replyId?.trim();
-  try {
-    const results: Awaited<ReturnType<typeof deliverCommentThreadText>>[] = [];
-    const sources: FeishuReplyDeliverySource[] = [];
-    const acceptedChunks: string[] = [];
-    for (const chunk of chunks.length ? chunks : [content]) {
-      try {
-        const result = await deliverCommentThreadText(client, {
-          file_token: target.fileToken,
-          file_type: target.fileType,
-          comment_id: target.commentId,
-          content: chunk,
-        });
-        // Record acceptance before a callback or later chunk can fail.
-        results.push(result);
-        acceptedChunks.push(chunk);
-        const messageId =
-          (result.delivery_mode === "reply_comment" ? result.reply_id : result.comment_id) ?? "";
-        sources.push({ messageId });
-        // Every physical reply is reported, the way the post path reports each of
-        // its chunks, so a later one is not missing from delivery tracking.
-        await reportFeishuOutboundDelivery(
-          { messageId, chatId: target.commentId },
-          params.onDeliveryResult,
-        );
-      } catch (error) {
-        // The accepted comments carry the only text that reached the thread. Without it
-        // the turn records the whole answer as delivered, because the shared lifecycle
-        // falls back to the authored payload when a partial result has no content.
-        throw partialFeishuSendError(error, sources, acceptedChunks.join(""));
-      }
-    }
-    return aggregateFeishuSendResult(
-      {
-        // The first reply anchors the thread, which is the identity the shared merge
-        // helper keeps when several sends carry one answer. The receipt below still
-        // holds every one of them.
-        messageId: sources[0]?.messageId ?? "",
-        chatId: target.commentId,
-        result: results[0]!,
-      },
-      sources,
-    );
-  } finally {
-    if (replyId) {
-      void cleanupAmbientCommentTypingReaction({
-        client,
-        deliveryContext: {
-          channel: "feishu",
-          to: params.to,
-          threadId: replyId,
-        },
-      });
-    }
-  }
 }
 
 async function sendOutboundText(params: {

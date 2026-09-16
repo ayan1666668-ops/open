@@ -62,6 +62,10 @@ import {
   resolveFeishuAccount,
   resolveFeishuRuntimeAccount,
 } from "./accounts.js";
+import {
+  buildFeishuActionPresentationCard,
+  deliverableFeishuActionCard,
+} from "./action-presentation-card.js";
 import { feishuApprovalAuth } from "./approval-auth.js";
 import { FEISHU_CARD_INTERACTION_VERSION } from "./card-interaction.js";
 import { normalizeFeishuChatType, resolveFeishuChatType } from "./chat-type.js";
@@ -86,17 +90,13 @@ import { messageActionTargetAliases } from "./message-action-contract.js";
 import { readNativeFeishuCardJson } from "./native-card.js";
 import {
   FEISHU_PROPAGATE_MEDIA_UPLOAD_FAILURE_MARKER,
-  presentationTextRenderer,
   resolveFeishuReplyMode,
   type FeishuOutboundSendMedia,
 } from "./outbound.js";
 import { resolveFeishuGroupToolPolicy } from "./policy.js";
 import {
   assertFeishuCardWithinEnvelope,
-  buildFeishuPresentationCard,
-  feishuCardWithinTableLimit,
   FEISHU_PRESENTATION_CAPABILITIES,
-  isFeishuCardWithinEnvelope,
   resolveFeishuRichReply,
 } from "./presentation-card.js";
 import {
@@ -1261,26 +1261,15 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
             if (textCard && !presentation) {
               assertFeishuCardWithinEnvelope(textCard, "Feishu native card");
             }
-            const generatedCard = presentation
-              ? buildFeishuPresentationCard({
-                  presentation,
-                  // This action builds the card itself, so it owns the table mode
-                  // the presentation fallback below gets from `sendPayload`.
-                  renderText: presentationTextRenderer({
-                    cfg: ctx.cfg,
-                    accountId: ctx.accountId ?? undefined,
-                  }),
-                  fallbackText: textCard
-                    ? undefined
-                    : resolveLegacyInteractiveTextFallback({ text, interactive }),
-                })
-              : undefined;
-            const presentationCard =
-              generatedCard &&
-              feishuCardWithinTableLimit(generatedCard) &&
-              isFeishuCardWithinEnvelope(generatedCard)
-                ? generatedCard
-                : undefined;
+            const generatedCard = buildFeishuActionPresentationCard({
+              presentation,
+              cfg: ctx.cfg,
+              accountId: ctx.accountId ?? undefined,
+              fallbackText: textCard
+                ? undefined
+                : resolveLegacyInteractiveTextFallback({ text, interactive }),
+            });
+            const presentationCard = deliverableFeishuActionCard(generatedCard);
             const presentationFellBack = Boolean(generatedCard && !presentationCard);
             const card = presentation ? presentationCard : textCard;
             if (card && mediaUrl) {

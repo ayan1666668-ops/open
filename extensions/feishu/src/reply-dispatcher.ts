@@ -17,8 +17,6 @@ import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   getReplyPayloadTtsSupplement,
   resolveSendableOutboundReplyParts,
-  resolveTextChunksWithFallback,
-  sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
 import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import type { ClawdbotConfig, OutboundIdentity, ReplyPayload, RuntimeEnv } from "../runtime-api.js";
@@ -26,18 +24,11 @@ import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { resolveConfiguredHttpTimeoutMs } from "./client-timeout.js";
 import { createFeishuClient } from "./client.js";
 import { resolveFeishuIdentityEmoji } from "./identity-header.js";
-import {
-  chunkFeishuPostMarkdown,
-  materializeFeishuPostMarkdownSoftBreaks,
-  postFencesSurvive,
-} from "./markdown.js";
-import { buildFeishuMediaFallbackText } from "./media-fallback.js";
-import { sendMediaFeishu, shouldSuppressFeishuTextForVoiceMedia } from "./media.js";
+import { shouldSuppressFeishuTextForVoiceMedia } from "./media.js";
 import type { MentionTarget } from "./mention-target.types.js";
 import {
   consumeFeishuPresentationFallbackMarker,
   hasCardMarkdownTable,
-  hasUndrawableCardTable,
   renderFeishuReplyPayload,
   cardCarriesWholeTable,
   shouldUseCard,
@@ -50,9 +41,9 @@ import {
   noVisibleFeishuReplyDelivery,
   type FeishuReplyDeliveryResult,
   type FeishuReplyDeliveryResultWithFinalization,
-  type FeishuReplyDeliverySource,
 } from "./reply-delivery-result.js";
 import { streamingStartBackoffUntilByAccount } from "./reply-dispatcher-state.js";
+import { createFeishuReplySenders } from "./reply-senders.js";
 import { getFeishuRuntime } from "./runtime.js";
 import {
   chunkFeishuCardMarkdown,
@@ -66,6 +57,7 @@ import {
   FeishuStreamingSession,
   mergeStreamingText,
 } from "./streaming-card.js";
+import { createFeishuTableRouting } from "./table-routing.js";
 import { resolveReceiveIdType } from "./targets.js";
 import { addTypingIndicator, removeTypingIndicator, type TypingIndicatorState } from "./typing.js";
 
@@ -297,45 +289,13 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // mode applies in auto mode, to a presentation card's own markdown, and to the text a
   // streaming card commits. Streamed reasoning shares that card, so it converts on
   // arrival and carries one representation to every flush and to the close. Partial
-  // answer previews stream raw text, so the preview dedupe compares payload text, while
-  // streamed content enters the ownership state (closing record, settlement, delivered
-  // finals) and every comparison against a final in this one rendered form. The closing
-  // record and the settlement lookup take the answer rather than the reasoning preview.
-  // An unmatched off close is the exception, since it posts reasoning and answer
-  // combined and records that combined body as a delivered final. Off conversion returns
-  // its input, so that key holds the value it held before this change.
-  const nativeTables = tableMode === "block";
-  const postTableMode = nativeTables ? "code" : tableMode;
-  const renderTables = (value: string): string =>
-    nativeTables ? value : core.channel.text.convertMarkdownTables(value, tableMode);
-  // off has no card representation, since a card renderer parses the pipes, so text
-  // that still carries a table takes the post path. The card renderer's own parser
-  // answers what counts as a table, so pipe-less GFM counts and a fenced sample that
-  // only looks like one does not.
-  const tableNeedsPostPath = (value: string): boolean =>
-    tableMode === "off" && hasCardMarkdownTable(value);
-  // A card draws a native table, but reasoning is blockquoted before it reaches one and a
-  // card does not draw a quoted table, so those rows vanish from the preview. A quoted
-  // bullet list is not a table at all, so nothing about it is undrawable and the rows
-  // survive. The close path takes the same fallback for the same reason.
-  const previewReasoningText = (value: string): string => {
-    const converted =
-      nativeTables && hasCardMarkdownTable(value)
-        ? core.channel.text.convertMarkdownTables(value, "bullets")
-        : renderTables(value);
-    // The answer preview answers to this limit and the reasoning shares the card, so a
-    // conversion that outgrows it gives way to the text as authored rather than making a
-    // card carry more than the message it settles into.
-    return converted !== value && converted.length > textChunkLimit ? value : converted;
-  };
-  // block keeps its tables raw for a card to draw, so answer text carrying a shape
-  // the card renderer is not expected to draw takes the post path instead. A card
-  // that cannot draw a table drops those rows from the message rather than
-  // degrading them. This asks about the answer alone: reasoning is wrapped in a
-  // blockquote before it reaches the card, which is a separate limitation that
-  // predates this change.
-  const answerTableNeedsPostPath = (value: string): boolean =>
-    nativeTables && hasUndrawableCardTable(value);
+  const tableRouting = createFeishuTableRouting({
+    convertMarkdownTables: core.channel.text.convertMarkdownTables,
+    tableMode,
+    textChunkLimit,
+  });
+  const { nativeTables, postTableMode, renderTables, previewReasoningText } = tableRouting;
+  const { tableNeedsPostPath, answerTableNeedsPostPath } = tableRouting;
   const renderMode = account.config?.renderMode ?? "auto";
   // Streaming cards cannot attach native mention recipients. Bot-authored ingress
   // therefore uses normal cards/posts so every emitted unit reaches the peer bot.
@@ -937,318 +897,39 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     return false;
   };
 
-  const sendChunkedTextReply = async (paramsLocal: {
-    text: string;
-    /** The text before this branch converted it, for a conversion the cut cannot carry. */
-    authoredText?: string;
-    useCard: boolean;
-    infoKind?: string;
-    firstChunkMentions?: MentionTarget[];
-    chunkMentions?: MentionTarget[];
-    header?: CardHeaderConfig;
-    note?: string;
-    sendChunk: (params: {
-      chunk: string;
-      isFirst: boolean;
-      mentions?: MentionTarget[];
-    }) => Promise<FeishuReplyDeliverySource>;
-  }): Promise<FeishuReplyDeliveryResult> => {
-    const convertedPostText = materializeFeishuPostMarkdownSoftBreaks(
-      core.channel.text.convertMarkdownTables(paramsLocal.text, postTableMode),
-    );
-    // The shared fence scanner reads no quote prefix, so a converted blockquoted table
-    // cannot be closed and reopened at a cut and its two markers land in different
-    // messages. The outbound post path asks the same question of the same chunker. The
-    // text can arrive converted already, since the payload is rendered before delivery, so
-    // the question is whether the cut carries the markers rather than whether this step is
-    // the step that produced them.
-    const chunkSource = paramsLocal.useCard
-      ? paramsLocal.text
-      : postFencesSurvive(convertedPostText, {
-            text: convertedPostText,
-            limit: textChunkLimit,
-            mode: chunkMode,
-            firstChunkMentions: paramsLocal.firstChunkMentions,
-            chunkMentions: paramsLocal.chunkMentions,
-          })
-        ? convertedPostText
-        : materializeFeishuPostMarkdownSoftBreaks(paramsLocal.authoredText ?? paramsLocal.text);
-    const initialChunks = core.channel.text.chunkMarkdownTextWithMode(
-      chunkSource,
-      textChunkLimit,
-      chunkMode,
-    );
-    const chunkOptions = {
-      text: chunkSource,
-      limit: textChunkLimit,
-      mode: chunkMode,
-      firstChunkMentions: paramsLocal.firstChunkMentions,
-      chunkMentions: paramsLocal.chunkMentions,
-      initialChunks,
-    };
-    const chunks = resolveTextChunksWithFallback(
-      chunkSource,
-      paramsLocal.useCard
-        ? chunkFeishuCardMarkdown({
-            ...chunkOptions,
-            header: paramsLocal.header,
-            note: paramsLocal.note,
-          })
-        : chunkFeishuPostMarkdown(chunkOptions),
-    );
-    const results: FeishuReplyDeliverySource[] = [];
-    const acceptedChunks: string[] = [];
-    for (const [index, chunk] of chunks.entries()) {
-      const mentions = [
-        ...(paramsLocal.chunkMentions ?? []),
-        ...(index === 0 ? (paramsLocal.firstChunkMentions ?? []) : []),
-      ];
-      try {
-        const result = await paramsLocal.sendChunk({
-          chunk,
-          isFirst: index === 0,
-          mentions: mentions.length > 0 ? mentions : undefined,
-        });
-        results.push(result);
-        acceptedChunks.push(chunk);
-        markVisibleReplySent();
-      } catch (error: unknown) {
-        const acceptedChunk = isChannelPartialDeliveryError(error)
-          ? error.deliveryResult
-          : undefined;
-        if (acceptedChunk) {
-          acceptedChunks.push(acceptedChunk.content ?? chunk);
-          markVisibleReplySent();
-        }
-        throw createFeishuPartialReplyDeliveryError(error, {
-          ...acceptedChunk,
-          ...createFeishuReplyDeliveryResult({
-            results,
-            visibleReplySent: results.length > 0 || acceptedChunk !== undefined,
-            content: acceptedChunks.join(""),
-            kind: paramsLocal.useCard ? "card" : "text",
-          }),
-        });
-      }
-    }
-    if (paramsLocal.infoKind === "final") {
-      deliveredFinalTexts.add(paramsLocal.text);
-    }
-    return createFeishuReplyDeliveryResult({
-      results,
-      visibleReplySent: results.length > 0,
-      // What was cut and sent, which is the authored text whenever the conversion could not
-      // survive the cut. Reporting the requested text would record prose nobody received.
-      content: chunkSource,
-      kind: paramsLocal.useCard ? "card" : "text",
-    });
-  };
-
-  const sendPostReply = (
-    text: string,
-    infoKind?: string,
-    firstChunkMentions?: MentionTarget[],
-    options?: { blockAnswerText?: string; authoredText?: string },
-  ) => {
-    const blockAnswerText = options?.blockAnswerText ?? text;
-    // Block receipts are keyed by the rendered answer, never the reasoning preview
-    // added by close. Keep that key separate from an unmatched close's post body.
-    const matchingBlock =
-      infoKind === "final" &&
-      (tableNeedsPostPath(blockAnswerText) || answerTableNeedsPostPath(blockAnswerText))
-        ? blockPostDeliveries.get(blockAnswerText)
-        : undefined;
-    const send = () =>
-      sendChunkedTextReply({
-        text,
-        ...(options?.authoredText === undefined ? {} : { authoredText: options.authoredText }),
-        useCard: false,
-        infoKind,
-        firstChunkMentions,
-        chunkMentions: requiredMentionTargets,
-        sendChunk: ({ chunk, mentions }) =>
-          sendMessageFeishu({
-            cfg,
-            to: sendTarget,
-            text: chunk,
-            replyToMessageId: sendReplyToMessageId,
-            replyInThread: effectiveReplyInThread,
-            allowTopLevelReplyFallback,
-            accountId,
-            // The chunker above already converted, or deliberately did not when the
-            // generated markers would not survive the cut. Without this the sender
-            // converts a second time and rebuilds the table the guard just declined.
-            preparedPostText: true,
-            ...(mentions ? { mentions } : {}),
-          }),
-      });
-    if (matchingBlock) {
-      return matchingBlock.catch((error: unknown) => {
-        // A partial failure still owns accepted chunks. Retrying the whole text
-        // would duplicate them, and the error does not identify a retryable suffix.
-        if (isChannelPartialDeliveryError(error)) {
-          throw error;
-        }
-        return send();
-      });
-    }
-    const delivery = send();
-    if (infoKind === "block") {
-      // Idle may overlap the send. Its matching preview inherits this post's
-      // acceptance and receipt instead of starting a second delivery.
-      const previousDelivery = blockPostDeliveries.get(text);
-      const retainedDelivery = delivery.catch((error: unknown) => {
-        // A later failed attempt cannot erase an earlier accepted post.
-        if (previousDelivery) {
-          return previousDelivery;
-        }
-        throw error;
-      });
-      blockPostDeliveries.set(text, retainedDelivery);
-      void retainedDelivery.catch((error: unknown) => {
-        if (
-          !isChannelPartialDeliveryError(error) &&
-          blockPostDeliveries.get(text) === retainedDelivery
-        ) {
-          blockPostDeliveries.delete(text);
-        }
-      });
-    }
-    return delivery;
-  };
-
-  const sendMediaReplies = async (
-    payload: ReplyPayload,
-    options?: { fallbackText?: string },
-  ): Promise<FeishuReplyDeliveryResult> => {
-    const mediaUrls = resolveSendableOutboundReplyParts(payload).mediaUrls;
-    let sentFallbackText = false;
-    let degradedVoiceFallbackText: string | undefined;
-    const results: FeishuReplyDeliveryResult[] = [];
-    try {
-      await sendMediaWithLeadingCaption({
-        mediaUrls,
-        caption: "",
-        send: async ({ mediaUrl }) => {
-          const result = await sendMediaFeishu({
-            cfg,
-            to: sendTarget,
-            mediaUrl,
-            replyToMessageId: sendReplyToMessageId,
-            replyInThread: effectiveReplyInThread,
-            allowTopLevelReplyFallback,
-            accountId,
-            ...(payload.audioAsVoice === true ? { audioAsVoice: true } : {}),
-          });
-          results.push(
-            createFeishuReplyDeliveryResult({
-              results: [result],
-              visibleReplySent: true,
-              kind: result?.voiceIntentDegradedToFile ? "media" : undefined,
-            }),
-          );
-          markVisibleReplySent();
-          if (result?.voiceIntentDegradedToFile && options?.fallbackText && !sentFallbackText) {
-            degradedVoiceFallbackText = options.fallbackText;
-          }
-        },
-        onError:
-          options?.fallbackText === undefined
-            ? undefined
-            : async ({ error, mediaUrl }) => {
-                if (isChannelPartialDeliveryError(error)) {
-                  // The attachment is already visible; text recovery would duplicate delivery.
-                  markVisibleReplySent();
-                  throw toFeishuError(error);
-                }
-                const fallbackText = await buildFeishuMediaFallbackText({
-                  text: sentFallbackText ? undefined : options.fallbackText,
-                  mediaUrl,
-                });
-                sentFallbackText = true;
-                results.push(await sendPostReply(fallbackText, "final"));
-              },
-      });
-      if (degradedVoiceFallbackText && !sentFallbackText) {
-        sentFallbackText = true;
-        results.push(await sendPostReply(degradedVoiceFallbackText, "final"));
-      }
-    } catch (error: unknown) {
-      const partial = isChannelPartialDeliveryError(error) ? error.deliveryResult : undefined;
-      if (partial) {
-        markVisibleReplySent();
-      }
-      throw createFeishuPartialReplyDeliveryError(
-        error,
-        mergeFeishuReplyDeliveryResults([...results, ...(partial ? [partial] : [])]),
-      );
-    }
-    return mergeFeishuReplyDeliveryResults(results);
-  };
-
-  const ensureNoVisibleReplyFallback = async (reason: string): Promise<boolean> => {
-    await idleSideEffectsPromise;
-    if (visibleReplySent) {
-      return false;
-    }
-    if (
-      replyOutcome?.kind === "suppressed" ||
-      (replyOutcome?.kind === "skipped" && replyOutcome.reason === "silent")
-    ) {
-      params.runtime.log?.(
-        `feishu[${account.accountId}]: no-visible-reply fallback skipped for ${replyOutcome.reason} (${reason})`,
-      );
-      return false;
-    }
-    await sendMessageFeishu({
-      cfg,
-      to: sendTarget,
-      text: NO_VISIBLE_REPLY_FALLBACK_TEXT,
-      replyToMessageId: sendReplyToMessageId,
-      replyInThread: effectiveReplyInThread,
-      allowTopLevelReplyFallback,
-      accountId,
-      ...(requiredMentionTargets?.length ? { mentions: requiredMentionTargets } : {}),
-    });
-    markVisibleReplySent();
-    params.runtime.error?.(
-      `feishu[${account.accountId}]: sent no-visible-reply fallback (${reason})`,
-    );
-    return true;
-  };
-
-  const claimClosedStreamingResult = (
-    generation: number | undefined,
-    content: string | undefined,
-  ): ClosedStreamingSettlement | undefined => {
-    if (generation !== undefined) {
-      // Several logical payloads can share one CardKit session, and media can delay each
-      // completion until after close. The per-turn generation settlement is immutable so every
-      // owner can reuse the same provider identity without emitting a duplicate fallback.
-      const settlement = closedStreamingSettlements.get(generation);
-      if (settlement) {
-        settlement.contentClaimed = true;
-      }
-      return settlement;
-    }
-    let latestKey: number | undefined;
-    for (const [key, settlement] of closedStreamingSettlements) {
-      if (
-        settlement.contentClaimed !== true &&
-        (content === undefined || settlement.content === content)
-      ) {
-        latestKey = key;
-      }
-    }
-    if (latestKey === undefined) {
-      return undefined;
-    }
-    const result = closedStreamingSettlements.get(latestKey);
-    if (result) {
-      result.contentClaimed = true;
-    }
-    return result;
-  };
+  const {
+    sendChunkedTextReply,
+    sendPostReply,
+    sendMediaReplies,
+    ensureNoVisibleReplyFallback,
+    claimClosedStreamingResult,
+  } = createFeishuReplySenders({
+    core,
+    cfg,
+    account,
+    accountId,
+    sendTarget,
+    sendReplyToMessageId,
+    effectiveReplyInThread,
+    allowTopLevelReplyFallback,
+    textChunkLimit,
+    chunkMode,
+    postTableMode,
+    requiredMentionTargets,
+    markVisibleReplySent,
+    deliveredFinalTexts,
+    blockPostDeliveries,
+    closedStreamingSettlements,
+    tableNeedsPostPath,
+    answerTableNeedsPostPath,
+    readIdleSideEffects: () => idleSideEffectsPromise,
+    readVisibleReplySent: () => visibleReplySent,
+    readReplyOutcome: () => replyOutcome,
+    toFeishuError,
+    noVisibleReplyFallbackText: NO_VISIBLE_REPLY_FALLBACK_TEXT,
+    ...(params.runtime.log ? { log: params.runtime.log } : {}),
+    ...(params.runtime.error ? { error: params.runtime.error } : {}),
+  });
 
   const markClosedStreamingContentClaimed = (generation: number | undefined): void => {
     if (generation !== undefined) {

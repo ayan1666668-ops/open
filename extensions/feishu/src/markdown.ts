@@ -14,13 +14,43 @@ import type { MentionTarget } from "./mention-target.types.js";
  * reading as a marker and suppressing a table that would have converted safely. A closer
  * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
-const FEISHU_FENCE_OPENER = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,})[^`]*$/u;
-const FEISHU_FENCE_CLOSER = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,})[ \t]*\r?$/u;
+// `.` skips a carriage return, so the info string is matched as everything but the feed.
+const FEISHU_FENCE_LINE = /^((?: {0,3}(?:>[ \t]?)+)?) {0,3}(`{3,}|~{3,})([^\n]*)$/u;
+
+type FeishuFenceLine = { depth: string; marker: string; info: string };
 
 /** A quote prefix marks the container a fence lives in, and one optional space inside it
  * is decoration rather than depth. */
 function fenceDepth(prefix: string): string {
   return prefix.replaceAll(/[ \t]/gu, "");
+}
+
+/**
+ * Both fence characters open a block, and only the one that opened it can close it. A
+ * backtick fence carries no backtick in its info string, which is what keeps an inline run
+ * from reading as a marker; a tilde fence carries anything, so a sample of backticks inside
+ * one is content rather than a block of its own.
+ */
+function readFenceLine(line: string): FeishuFenceLine | undefined {
+  const match = FEISHU_FENCE_LINE.exec(line);
+  const marker = match?.[2];
+  if (!match || !marker) {
+    return undefined;
+  }
+  const info = match[3] ?? "";
+  if (marker.startsWith("`") && info.includes("`")) {
+    return undefined;
+  }
+  return { depth: fenceDepth(match[1] ?? ""), marker, info };
+}
+
+function closesFence(open: FeishuFenceLine, line: FeishuFenceLine): boolean {
+  return (
+    line.info.trim() === "" &&
+    line.marker[0] === open.marker[0] &&
+    line.marker.length >= open.marker.length &&
+    line.depth === open.depth
+  );
 }
 
 /**
@@ -32,30 +62,25 @@ function fenceDepth(prefix: string): string {
  * and closes nothing.
  */
 function fencesBalance(chunk: string): boolean {
-  let openMarkerLength = 0;
-  let openDepth = "";
+  let open: FeishuFenceLine | undefined;
   for (const line of chunk.split("\n")) {
-    if (openMarkerLength === 0) {
-      const opener = FEISHU_FENCE_OPENER.exec(line);
-      openMarkerLength = opener?.[2]?.length ?? 0;
-      openDepth = fenceDepth(opener?.[1] ?? "");
+    const fence = readFenceLine(line);
+    if (!fence) {
       continue;
     }
-    const closer = FEISHU_FENCE_CLOSER.exec(line);
-    const marker = closer?.[2];
-    if (
-      marker &&
-      marker.length >= openMarkerLength &&
-      fenceDepth(closer?.[1] ?? "") === openDepth
-    ) {
-      openMarkerLength = 0;
+    if (!open) {
+      open = fence;
+      continue;
+    }
+    if (closesFence(open, fence)) {
+      open = undefined;
     }
   }
-  return openMarkerLength === 0;
+  return open === undefined;
 }
 
 function isFenceMarkerLine(line: string): boolean {
-  return FEISHU_FENCE_OPENER.test(line) || FEISHU_FENCE_CLOSER.test(line);
+  return readFenceLine(line) !== undefined;
 }
 
 /**
