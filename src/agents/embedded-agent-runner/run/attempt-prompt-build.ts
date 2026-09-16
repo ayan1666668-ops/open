@@ -527,7 +527,7 @@ export async function prepareEmbeddedAttemptPromptContext(input: {
       : await buildRuntimeFactsContext({
           capabilityToolNames: input.capabilityToolNames,
           cfg: attempt.config ?? {},
-          scopeKey: attempt.execOverrides?.scopeKey,
+          scopeKey: attempt.processScopeKey ?? attempt.execOverrides?.scopeKey,
           sessionKey: attempt.sessionKey,
           sessionId: attempt.sessionId,
           agentId: input.sessionAgentId,
