@@ -687,7 +687,21 @@ export async function dispatchCronDelivery(
     ) {
       return finishSilentReplyDelivery("silent");
     }
-    synthesizedText = normalizedSynthesizedText.text;
+    if (requiresCurrentSessionCompletion) {
+      const normalizedPayloads = normalizeDirectCronDeliveryPayloads({
+        deliveryPayloads,
+        outputText,
+        summary,
+        synthesizedText,
+      });
+      if (normalizedPayloads.kind === "suppress") {
+        return finishSilentReplyDelivery(normalizedPayloads.reason);
+      }
+      deliveryPayloads = normalizedPayloads.payload;
+    }
+    synthesizedText = normalizedSynthesizedText.strippedTrailingSilentToken
+      ? undefined
+      : normalizedSynthesizedText.text;
     if (synthesizedText) {
       outputText = synthesizedText;
     }
