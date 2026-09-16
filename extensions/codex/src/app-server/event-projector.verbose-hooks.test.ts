@@ -314,7 +314,7 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
     expect(JSON.stringify(result.messagesSnapshot)).not.toContain("Codex plan:");
   });
 
-  it("fires before_compaction and after_compaction hooks for codex compaction items", async () => {
+  it("projects repeated Codex compaction completion once", async () => {
     const agentHookContext = {
       runId: "run-1",
       sessionId: "session-1",
@@ -328,8 +328,10 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
         chat: { id: "chat-a" },
       },
     };
+    const onContextCompacted = vi.fn();
     const { projector, beforeCompaction, afterCompaction } = await createProjectorWithHooks({
       agentHookContext,
+      onContextCompacted,
     });
     const openSpy = vi.spyOn(SessionManager, "open");
 
@@ -343,7 +345,16 @@ describe("CodexAppServerEventProjector verbose output and hook projection", () =
         item: { type: "contextCompaction", id: "compact-1" },
       }),
     );
+    await projector.handleNotification(
+      forCurrentTurn("item/completed", {
+        item: { type: "contextCompaction", id: "compact-1" },
+      }),
+    );
     expect(openSpy).not.toHaveBeenCalled();
+    expect(projector.buildResult(buildEmptyToolTelemetry()).compactionCount).toBe(1);
+    expect(onContextCompacted).toHaveBeenCalledOnce();
+    expect(beforeCompaction).toHaveBeenCalledOnce();
+    expect(afterCompaction).toHaveBeenCalledOnce();
 
     const beforePayload = requireRecord(
       mockCallArg(beforeCompaction, 0, 0, "beforeCompaction"),
