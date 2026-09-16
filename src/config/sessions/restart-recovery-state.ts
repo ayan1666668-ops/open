@@ -302,11 +302,20 @@ function normalizeRestartRecoveryTerminalDeliveryEvidence(
           ? rawContext.threadId
           : normalizeRunId(rawContext?.threadId),
     });
+    const rawFinalReceipt = isRecord(item.durableFinalReceipt)
+      ? item.durableFinalReceipt
+      : undefined;
+    const intentId = normalizeRunId(rawFinalReceipt?.intentId);
+    const deliveryId = normalizeRunId(rawFinalReceipt?.deliveryId);
+    const platformMessageId = normalizeRunId(rawFinalReceipt?.platformMessageId);
     evidence.push({
       runId,
       ...result,
       ...(transcriptRunId ? { transcriptRunId } : {}),
       ...(harnessCompletion?.sourceRunId === runId ? { harnessCompletion, deliveryContext } : {}),
+      ...(harnessCompletion?.sourceRunId === runId && intentId && deliveryId && platformMessageId
+        ? { durableFinalReceipt: { intentId, deliveryId, platformMessageId } }
+        : {}),
     });
   }
   const bounded = evidence.slice(-MAX_TERMINAL_RUN_IDS);
@@ -475,7 +484,7 @@ export function normalizeRestartRecoveryEntryFields(
   );
 }
 
-function mergeRestartRecoveryTerminalDeliveryEvidence(
+export function mergeRestartRecoveryTerminalDeliveryEvidence(
   current: unknown,
   appended: unknown,
 ): RestartRecoveryTerminalDeliveryEvidence[] | undefined {

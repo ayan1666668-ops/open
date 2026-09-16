@@ -33,11 +33,15 @@ import {
   rotateAgentEventLifecycleGeneration,
 } from "../../infra/agent-events.js";
 import { registerAgentRunContext } from "../../infra/agent-run-registry.js";
+import { loadDeliveryQueueEntryInDatabase } from "../../infra/delivery-queue-sqlite-bound.js";
 import {
   loadDeliveryQueueEntry,
-  moveDeliveryQueueEntryToFailed,
   upsertDeliveryQueueEntry,
 } from "../../infra/delivery-queue-sqlite.js";
+import {
+  prepareDeliveryQueueTerminalEntry,
+  terminalizePendingDeliveryQueueEntryInDatabase,
+} from "../../infra/delivery-queue-sqlite.kernel.js";
 import { OUTBOUND_DELIVERY_QUEUE_NAME } from "../../infra/outbound/delivery-queue-media-staging.js";
 import { ackDelivery, enqueueDeliveryOnce } from "../../infra/outbound/delivery-queue-storage.js";
 import { createAgentHarnessTaskRuntime } from "../../plugin-sdk/agent-harness-task-runtime.js";
@@ -72,7 +76,10 @@ import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../../state/openclaw-state-db.js";
 import { captureHarnessCompletionRecovery } from "../../tasks/agent-harness-completion-recovery.js";
 import { createAgentHarnessTaskRuntimeScope } from "../../tasks/agent-harness-task-runtime-scope.js";
 import { markTaskTerminalById } from "../../tasks/task-registry.js";
@@ -3304,7 +3311,28 @@ describe("main-session-restart-recovery", () => {
             stateDir: tmpDir,
           });
         } else if (ownerStatus === "failed") {
-          moveDeliveryQueueEntryToFailed(OUTBOUND_DELIVERY_QUEUE_NAME, deliveryId, tmpDir);
+          const database = openOpenClawStateDatabase({
+            env: { ...process.env, OPENCLAW_STATE_DIR: tmpDir },
+          });
+          const entry = loadDeliveryQueueEntryInDatabase(
+            database,
+            OUTBOUND_DELIVERY_QUEUE_NAME,
+            deliveryId,
+            "pending",
+          );
+          if (!entry) {
+            throw new Error("Expected the seeded outbound delivery to remain pending");
+          }
+          expect(
+            terminalizePendingDeliveryQueueEntryInDatabase(
+              database,
+              prepareDeliveryQueueTerminalEntry({
+                queueName: OUTBOUND_DELIVERY_QUEUE_NAME,
+                id: deliveryId,
+                entry,
+              }),
+            ),
+          ).toMatchObject({ status: "terminalized" });
         } else if (ownerStatus === "completed") {
           await ackDelivery(deliveryId, tmpDir);
         }

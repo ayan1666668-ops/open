@@ -221,6 +221,7 @@ export type CronState = {
   cronJobsSortBy: CronJobsSortBy;
   cronJobsSortDir: CronSortDir;
   cronAgentId: string | null;
+  cronSessionFilter?: { sessionKey: string; sessionAgentId: string };
   cronStatus: CronStatus | null;
   cronScopedTotal: number | null;
   cronScopedNextWakeAtMs: number | null;
@@ -689,7 +690,7 @@ export async function loadCronJobsPage(
   try {
     const offset = append ? Math.max(0, state.cronJobsNextOffset ?? state.cronJobs.length) : 0;
     const res = await state.client.request<CronJobsListResult>("cron.list", {
-      ...(state.cronAgentId ? { agentId: state.cronAgentId } : {}),
+      ...(state.cronSessionFilter ?? (state.cronAgentId ? { agentId: state.cronAgentId } : {})),
       includeDisabled: state.cronJobsEnabledFilter === "all",
       includeDeliveryPreviews: false,
       limit: state.cronJobsLimit,
@@ -1048,7 +1049,9 @@ function buildCronPayload(form: CronFormState, source: CronPayload | null, isUpd
     ...(thinking !== undefined ? { thinking } : {}),
     ...(timeoutRaw && Number.isFinite(timeoutSeconds) && timeoutSeconds >= 0
       ? { timeoutSeconds }
-      : {}),
+      : isUpdate && original?.timeoutSeconds !== undefined
+        ? { timeoutSeconds: null }
+        : {}),
     ...(lightContext !== undefined ? { lightContext } : {}),
     ...restrictions,
     ...(cloned?.fallbacks ? { fallbacks: [...cloned.fallbacks] } : {}),
@@ -1240,6 +1243,15 @@ export async function addCronJob(state: CronState): Promise<CronSaveResult> {
     };
     if (schedule) {
       job.schedule = schedule;
+    }
+    if (sourceJob?.pacing) {
+      if (schedule?.kind === "every" || schedule?.kind === "cron") {
+        if (!editingJob) {
+          job.pacing = { ...sourceJob.pacing };
+        }
+      } else if (editingJob && schedule) {
+        job.pacing = null;
+      }
     }
     if (payload) {
       job.payload = payload;
@@ -1473,6 +1485,11 @@ export async function loadCronRuns(
     append,
   };
   activeCronRunsRequests.set(state, request);
+  // Retained rows cannot authorize an append until their replacement page arrives.
+  if (!append) {
+    state.cronRunsHasMore = false;
+    state.cronRunsNextOffset = null;
+  }
   state.cronRunsLoadingMore = append;
   try {
     const res = await client.request<CronRunsResult>("cron.runs", {

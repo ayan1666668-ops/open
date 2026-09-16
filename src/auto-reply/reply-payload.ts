@@ -8,6 +8,7 @@ import type { HarnessCompletionRecovery } from "../config/sessions/restart-recov
 import type { ReplyToMode } from "../config/types.base.js";
 import type { AssistantDeliveryTtsFacts } from "../llm/types.js";
 import type { ReplyPayload, ReplyPayloadTtsSupplement } from "../shared/reply-payload.types.js";
+import type { BlockReplySource } from "./reply/block-reply-source.types.js";
 
 export type {
   ReplyMediaAttachment,
@@ -201,6 +202,8 @@ export type ReplyPayloadMetadata = {
   assistantMessageIndex?: number;
   /** Visible source represented by this block, excluding synthetic chunk wrappers. */
   blockSourceText?: string;
+  /** Live source receipts retained until final text recovery settles. */
+  blockReplySources?: readonly BlockReplySource[];
   /** Persisted assistant speech facts; never serialized into channel payloads. */
   tts?: AssistantDeliveryTtsFacts;
   /** Structured message-tool speech is an explicit request, independent of auto-TTS mode. */

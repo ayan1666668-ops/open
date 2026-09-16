@@ -212,40 +212,7 @@ export async function deliverAgentHarnessTaskCompletion(params: {
   const announceType = params.announceType?.trim() || "Agent harness task";
   const statusLabel = params.statusLabel?.trim() || params.status;
   const eventStatus = mapHarnessCompletionStatus(params.status);
-  const requesterIsSubagent = isInternalAnnounceRequesterSession(requesterSessionKey);
-  let directOrigin = scope.requesterOrigin;
-  if (!requesterIsSubagent) {
-    const { entry } = loadRequesterSessionEntry(requesterSessionKey);
-    directOrigin = resolveAnnounceOrigin(entry, scope.requesterOrigin);
-  }
-  const completionDirectOrigin =
-    requesterIsSubagent || !directOrigin
-      ? directOrigin
-      : await resolveSubagentCompletionOrigin({
-          childSessionKey,
-          requesterSessionKey,
-          requesterOrigin: directOrigin,
-          childRunId: childSessionKey,
-          spawnMode: "run",
-          expectsCompletionMessage: true,
-        });
-  const internalEvents: AgentInternalEvent[] = [
-    {
-      type: AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION,
-      source: "subagent",
-      childSessionKey,
-      childSessionId,
-      announceType,
-      taskLabel,
-      status: eventStatus,
-      statusLabel,
-      result: params.result,
-      replyInstruction:
-        params.replyInstruction?.trim() ||
-        "Use the completed harness task result to continue or wrap up the parent task. If this is a channel session, send the visible response with the message tool instead of only writing a transcript final answer.",
-    },
-  ];
-  const prompt = formatAgentInternalEventsForPrompt(internalEvents);
+  // Capture completion ownership before origin resolution can yield to a new task.
   const readOwnedTasks = () =>
     listTaskRecords().filter(
       (task) =>
@@ -281,6 +248,40 @@ export async function deliverAgentHarnessTaskCompletion(params: {
     );
   };
   const isSourceSessionEffectsAllowed = () => isRequesterCurrent() && isTaskCurrent();
+  const requesterIsSubagent = isInternalAnnounceRequesterSession(requesterSessionKey);
+  let directOrigin = scope.requesterOrigin;
+  if (!requesterIsSubagent) {
+    const { entry } = loadRequesterSessionEntry(requesterSessionKey);
+    directOrigin = resolveAnnounceOrigin(entry, scope.requesterOrigin);
+  }
+  const completionDirectOrigin =
+    requesterIsSubagent || !directOrigin
+      ? directOrigin
+      : await resolveSubagentCompletionOrigin({
+          childSessionKey,
+          requesterSessionKey,
+          requesterOrigin: directOrigin,
+          childRunId: childSessionKey,
+          spawnMode: "run",
+          expectsCompletionMessage: true,
+        });
+  const internalEvents: AgentInternalEvent[] = [
+    {
+      type: AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION,
+      source: "subagent",
+      childSessionKey,
+      childSessionId,
+      announceType,
+      taskLabel,
+      status: eventStatus,
+      statusLabel,
+      result: params.result,
+      replyInstruction:
+        params.replyInstruction?.trim() ||
+        "Use the completed harness task result to continue or wrap up the parent task. If this is a channel session, send the visible response with the message tool instead of only writing a transcript final answer.",
+    },
+  ];
+  const prompt = formatAgentInternalEventsForPrompt(internalEvents);
   const deliver = async (): Promise<AgentHarnessCompletionDelivery> => {
     if (ownedTasks.length > 1 || readOwnedTasks().length > 1) {
       return {
@@ -335,13 +336,10 @@ export async function deliverAgentHarnessTaskCompletion(params: {
     return await deliverSubagentAnnouncement({
       requesterSessionKey,
       isSourceSessionEffectsAllowed,
-      announceId: params.announceId,
       triggerMessage: prompt,
       steerMessage: prompt,
       internalEvents,
-      summaryLine: taskLabel,
       requesterSessionOrigin: scope.requesterOrigin,
-      requesterOrigin: completionDirectOrigin ?? directOrigin,
       completionDirectOrigin: completionDirectOrigin ?? directOrigin,
       directOrigin,
       sourceSessionKey: childSessionKey,

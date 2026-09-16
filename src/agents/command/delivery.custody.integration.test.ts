@@ -29,6 +29,7 @@ import { getTaskById, markTaskTerminalById } from "../../tasks/task-registry.js"
 import { resetTaskRegistryForTests } from "../../tasks/task-registry.test-support.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { reconcileHarnessCompletionDelivery } from "../agent-harness-completion-delivery.js";
 import { persistPendingFinalDeliveryMarker } from "../pending-final-delivery-marker.js";
 import { deliverAgentCommandResult } from "./delivery.js";
 
@@ -276,12 +277,41 @@ describe("native completion final-send custody", () => {
             });
           } else {
             release.resolve();
-            expect((await delivery).ok).toBe(outcome === "unchanged");
+            const settled = await delivery;
+            if (boundary === "reply hook" && outcome !== "unchanged") {
+              // Revocation before queue admission retires the unsent intent.
+              expect(settled.ok).toBe(true);
+              if (!settled.ok) {
+                throw settled.error;
+              }
+              expect(settled.value.deliveryStatus).toMatchObject({
+                status: "suppressed",
+                reason: "no_visible_result",
+                resultCount: 0,
+              });
+            } else {
+              expect(settled.ok).toBe(outcome === "unchanged");
+            }
           }
           expect(writes).toEqual(outcome === "unchanged" ? ["The completed child result"] : []);
           // Revocation must not leave a queued stale reply for a later drain.
           expect(await loadPendingDeliveries(state.stateDir)).toEqual([]);
-          expect(getTaskById(task.taskId)?.deliveryStatus).toBe("pending");
+          expect(getTaskById(task.taskId)?.deliveryStatus).toBe(
+            outcome === "unchanged" ? "delivered" : "pending",
+          );
+          if (outcome === "unchanged") {
+            // Reopen task state as startup would: queue acknowledgment must not
+            // be the only copy of the exact harness completion receipt.
+            resetTaskRegistryForTests({ persist: false });
+            expect(
+              reconcileHarnessCompletionDelivery({
+                ...target,
+                sourceRunId: source,
+                taskRunId: child,
+              }),
+            ).toBe("delivered");
+            expect(getTaskById(task.taskId)?.deliveryStatus).toBe("delivered");
+          }
         });
       },
     );

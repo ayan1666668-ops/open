@@ -5,7 +5,7 @@ import { loadExactSessionEntry } from "../config/sessions/session-accessor.js";
 import { everySessionTranscriptUserInputFrom } from "../config/sessions/session-accessor.sqlite-active-events.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { normalizeInputProvenance } from "../sessions/input-provenance.js";
-import { canOwnerAccessTask } from "./task-owner-access.js";
+import { getTaskByIdForOwner } from "./task-owner-access.js";
 import { updateTask } from "./task-registry-mutation.js";
 import { getTaskById } from "./task-registry-query.js";
 import {
@@ -41,7 +41,8 @@ function findSoleHarnessCompletionTask(params: {
       Boolean(task.taskKind) &&
       task.runId === params.taskRunId &&
       task.requesterSessionKey === params.requesterSessionKey &&
-      canOwnerAccessTask(task, {
+      getTaskByIdForOwner({
+        taskId: task.taskId,
         callerOwnerKey: params.requesterSessionKey,
         callerAgentId: params.requesterAgentId,
       }),

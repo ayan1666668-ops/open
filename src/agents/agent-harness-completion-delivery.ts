@@ -29,8 +29,8 @@ import {
   readAdmittedHarnessCompletionInput,
   settleHarnessCompletionTask,
 } from "../tasks/agent-harness-completion-recovery.js";
-import { canOwnerAccessTask } from "../tasks/task-owner-access.js";
-import { getTaskById, listTaskRecords } from "../tasks/task-registry-query.js";
+import { getTaskByIdForOwner } from "../tasks/task-owner-access.js";
+import { listTaskRecords } from "../tasks/task-registry-query.js";
 import { resolveTaskSessionAgentId } from "../tasks/task-session-identity.js";
 
 const log = createSubsystemLogger("agents/harness-completion-recovery");
@@ -148,15 +148,15 @@ export function reconcileHarnessCompletionDelivery(
   ) {
     return "blocked";
   }
-  const task = getTaskById(claim.taskId);
+  const task = getTaskByIdForOwner({
+    taskId: claim.taskId,
+    callerOwnerKey: claim.requesterSessionKey,
+    callerAgentId: claim.requesterAgentId,
+  });
   if (
     !task ||
     task.runId !== claim.taskRunId ||
-    task.requesterSessionKey !== claim.requesterSessionKey ||
-    !canOwnerAccessTask(task, {
-      callerOwnerKey: claim.requesterSessionKey,
-      callerAgentId: claim.requesterAgentId,
-    })
+    task.requesterSessionKey !== claim.requesterSessionKey
   ) {
     return "blocked";
   }

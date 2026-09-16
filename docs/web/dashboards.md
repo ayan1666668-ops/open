@@ -25,7 +25,8 @@ core feature, owned by the thread, stored with the agent, and they survive
 
 Open `/dashboards` to browse dashboard-enabled threads as a card gallery. Search
 by thread or author, filter by author, and sort by recent activity or title.
-Select a card to open its owning task using your personal presentation override
+Stored sessions without a matching task URL remain visible as previews without an open link.
+Select a linked card to open its owning task using your personal presentation override
 or the dashboard’s shared default. In fullscreen, choose **Restore split** to
 bring the side panel alongside it. An open Dashboards page updates as threads
 are renamed, archived, or deleted, including
@@ -230,11 +231,15 @@ from custom HTML widgets and does not loosen their sandbox or network grants.
 
 ## Share a browser dashboard with your agent
 
-Use a **Browser dashboard** when you want your agent to read and interact with
-the same page you see:
+Ask for a **Browser dashboard** when you want a saved dashboard where your agent
+can read and interact with the same page you see:
 
 > Open this HTTP status app as a fullscreen dashboard. Pin this session as
 > Service Status, and use that same page when I ask you to change its filters.
+
+To show the browser beside chat, ask to open the
+[Browser side panel](/web/control-ui/panels#browser-panel). That opens the
+existing panel without creating a dashboard widget or expanding the board.
 
 The Browser plugin's `browser:dashboard` widget presents a tab in a local
 OpenClaw-managed browser. The Control UI streams that tab, so HTTP apps also
