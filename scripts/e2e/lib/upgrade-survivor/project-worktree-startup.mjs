@@ -456,8 +456,10 @@ export function assertProjectWorktreeStartupLog(log, start) {
     ),
   ].map((match) => Number(match[1]));
   assert.deepEqual(backfills, start === "first" ? [1] : [], "Unexpected startup migration count");
-  assert.match(log, /shutdown completed cleanly in \d+ms/);
-  assert(!/shutdown completed in \d+ms with warnings:/.test(log));
+  assert.match(log, /(?:\[shutdown\]|shutdown) completed cleanly in \d+ms/);
+  assert(
+    !/(?:\[shutdown\]|shutdown) (?:completed in \d+ms with warnings:|failed in \d+ms)/.test(log),
+  );
   return { backfills, cleanShutdown: true };
 }
 

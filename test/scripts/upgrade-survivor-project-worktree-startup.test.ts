@@ -129,9 +129,22 @@ describe("published project-worktree startup evidence", () => {
     ).toThrow();
   });
 
-  it("requires first-start backfill and real clean shutdown, then no second backfill", () => {
-    const migration = "session: recorded canonical workspaces for 1 managed-worktree session(s)";
-    const closed = "shutdown completed cleanly in 42ms";
+  it.each([
+    {
+      format: "raw message",
+      migration: "session: recorded canonical workspaces for 1 managed-worktree session(s)",
+      shutdownPrefix: "shutdown",
+    },
+    {
+      format: "rendered console",
+      migration:
+        "2026-09-16T15:10:34.169+00:00 [gateway] session: recorded canonical workspaces for 1 managed-worktree session(s)",
+      shutdownPrefix: "2026-09-16T15:10:35.584+00:00 [shutdown]",
+    },
+  ])("requires backfill and clean shutdown from $format logs", ({ migration, shutdownPrefix }) => {
+    const closed = `${shutdownPrefix} completed cleanly in 19ms`;
+    const warned = `${shutdownPrefix} completed in 19ms with warnings: database drain`;
+    const failed = `${shutdownPrefix} failed in 19ms`;
     expect(assertProjectWorktreeStartupLog(`${migration}\n${closed}`, "first")).toEqual({
       backfills: [1],
       cleanShutdown: true,
@@ -144,7 +157,10 @@ describe("published project-worktree startup evidence", () => {
       "gateway ready",
       migration,
       closed,
-      `${migration}\nshutdown completed in 42ms with warnings: database drain`,
+      `${migration}\n${warned}`,
+      `${migration}\n${failed}`,
+      `${migration}\n${closed}\n${warned}`,
+      `${migration}\n${closed}\n${failed}`,
     ]) {
       expect(() => assertProjectWorktreeStartupLog(log, "first")).toThrow();
     }
