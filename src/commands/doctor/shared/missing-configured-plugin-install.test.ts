@@ -335,7 +335,10 @@ vi.mock("../../../plugins/plugin-metadata-snapshot.js", () => ({
 
 vi.mock("../../../plugins/manifest-contract-eligibility.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../plugins/manifest-contract-eligibility.js")>()),
-  loadManifestMetadataSnapshot: mocks.loadPluginMetadataSnapshot,
+  loadManifestMetadataSnapshot: () => ({
+    ...mocks.loadPluginMetadataSnapshot(),
+    index: mocks.loadInstalledPluginIndex(),
+  }),
 }));
 
 vi.mock("../../../plugins/official-external-plugin-catalog.js", async (importOriginal) => ({
