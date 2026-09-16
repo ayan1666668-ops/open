@@ -3,6 +3,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/state/agent-provenance.test.ts",
   "src/commands/agents.commands.list.worker.test.ts",
   "src/state/openclaw-agent-worker-store.test.ts",
+  "src/state/openclaw-state-worker-context.env-capture.test.ts",
   "src/sessions/session-state-events.test.ts",
   "packages/memory-host-sdk/src/host/session-memory-sync.test.ts",
   "src/agents/harness/native-hook-relay-store.test.ts",
