@@ -34,6 +34,17 @@ function systemdEscapeArg(value: string): string {
 }
 
 /**
+ * Scalar directives (WorkingDirectory, EnvironmentFile paths) take the raw
+ * value directly: systemd expands specifiers there but does not strip shell
+ * quotes, so quoting a path makes the unit invalid. Double % so specifiers
+ * survive, and leave everything else byte-for-byte.
+ */
+function systemdEscapeScalarPath(value: string): string {
+  assertNoSystemdLineBreaks(value, "Systemd unit values");
+  return value.replaceAll("%", "%%");
+}
+
+/**
  * Re-renders a key/value pair parsed back from an existing unit line. The value
  * is already in serialized form (%% encoded, intentional %h intact), so % must
  * be preserved verbatim — re-escaping would corrupt preserved settings during
@@ -68,7 +79,7 @@ function renderEnvironmentFileLines(environmentFiles: string[] | undefined): str
   }
   return normalizeStringEntries(environmentFiles).map((entry) => {
     assertNoSystemdLineBreaks(entry, "Systemd EnvironmentFile values");
-    return `EnvironmentFile=-${systemdEscapeArg(entry)}`;
+    return `EnvironmentFile=-${systemdEscapeScalarPath(entry)}`;
   });
 }
 
@@ -84,7 +95,7 @@ export function buildSystemdUnit({
   assertNoSystemdLineBreaks(descriptionValue, "Systemd Description");
   const descriptionLine = `Description=${descriptionValue}`;
   const workingDirLine = workingDirectory
-    ? `WorkingDirectory=${systemdEscapeArg(workingDirectory)}`
+    ? `WorkingDirectory=${systemdEscapeScalarPath(workingDirectory)}`
     : null;
   const envLines = renderEnvLines(environment);
   const environmentFileLines = renderEnvironmentFileLines(environmentFiles);
