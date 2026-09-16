@@ -2262,6 +2262,10 @@ function installControlUiMockGateway(
         return {
           ...configuredConfig,
           config: parsedConfig,
+          // Editable projections describe this saved revision, not the initial
+          // fixture; stale aliases undo acknowledged edits during applied polling.
+          ...(hasOwn(configuredConfig, "sourceConfig") ? { sourceConfig: parsedConfig } : {}),
+          ...(hasOwn(configuredConfig, "resolved") ? { resolved: parsedConfig } : {}),
           hash: mockConfigHash(),
           configRevisionHash: mockConfigHash(),
           appliedConfigHash: mockAppliedConfigHash(),
