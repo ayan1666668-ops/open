@@ -6,12 +6,13 @@
 // with a projection cursor, and buildPromptContextForMessage) and pins it to
 // the fixture, so the seeded shape cannot drift from what Telegram ingress
 // actually assembles.
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "grammy/types";
 import {
   closeOpenClawStateDatabaseForTest,
+  createPluginStateKeyedStoreForTests,
   openOpenClawStateDatabase,
   resetPluginStateStoreForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
@@ -123,21 +124,37 @@ describe("telegram rewind chat-window fixture", () => {
       ownerAgentId: "main",
     });
     if (!recordedReply) {
-      // The boolean wrapper swallows the real error into the verbose log; open
-      // the state database directly so the failure carries the underlying
-      // cause chain and the path that was actually resolved.
-      let detail = `state-dir=${process.env.OPENCLAW_STATE_DIR ?? "<unset>"}`;
-      try {
-        openOpenClawStateDatabase({ env: process.env });
-        detail += " manual-open=ok";
-      } catch (error) {
+      // The boolean wrapper swallows the real error into the verbose log; probe
+      // the open and the keyed-store register directly so the failure carries
+      // the underlying cause chain and the path that was actually resolved.
+      let detail =
+        `state-dir=${process.env.OPENCLAW_STATE_DIR ?? "<unset>"}` +
+        ` tmpdir=${process.env.TMPDIR ?? "<unset>"}` +
+        ` state-dir-exists=${existsSync(process.env.OPENCLAW_STATE_DIR ?? "")}`;
+      const describe = (error: unknown): string => {
         const chain: string[] = [];
         let cursor: unknown = error;
         while (cursor instanceof Error && chain.length < 5) {
           chain.push(`${cursor.name}: ${cursor.message}`);
           cursor = (cursor as { cause?: unknown }).cause;
         }
-        detail += ` manual-open-chain=${chain.join(" <= ")}`;
+        return chain.join(" <= ");
+      };
+      try {
+        openOpenClawStateDatabase({ env: process.env });
+        detail += " manual-open=ok";
+      } catch (error) {
+        detail += ` manual-open-chain=${describe(error)}`;
+      }
+      try {
+        const probe = createPluginStateKeyedStoreForTests("telegram", {
+          namespace: "telegram.message-cache",
+          maxEntries: 3000,
+        });
+        await probe.register("rewind-fixture-diagnostic", { probe: true });
+        detail += " replay-register=ok";
+      } catch (error) {
+        detail += ` replay-register-chain=${describe(error)}`;
       }
       throw new Error(detail);
     }
