@@ -516,10 +516,16 @@ describe("Codex supervision catalog", () => {
       ).toBe(true);
       const reloadedDiscoveryCount = stat.mock.calls.length;
 
-      expect(await resolver.forAgent("beta")).toEqual(betaHomes);
+      const warmHomes = await resolver.forAgent("beta");
+      expect(warmHomes).toHaveLength(betaHomes.length);
+      for (const [index, home] of warmHomes.entries()) {
+        expect(home).toEqual({ ...betaHomes[index], assertCurrent: expect.any(Function) });
+      }
+      expect(() => warmHomes[0]!.assertCurrent()).not.toThrow();
       expect(stat).toHaveBeenCalledTimes(reloadedDiscoveryCount);
 
       runtimeConfig = { ...configA };
+      expect(() => warmHomes[0]!.assertCurrent()).toThrow("configuration changed");
       expect(await resolver.forAgent("beta")).toEqual([]);
       const remaining = await resolver.forAgent("alpha");
       expect(remaining.some((home) => home.appServer.start.env?.CODEX_HOME === betaCodexHome)).toBe(

@@ -213,7 +213,7 @@ export function createCodexCatalogHomeResolver(params: {
       const sourceHomeId = codexCatalogHomeIdFromCanonicalPath(candidate.codexHome);
       const primary = homes.length === 0;
       homes.push({
-        assertCurrent: snapshot.assertCurrent,
+        assertCurrent: snapshot.assertCurrent.bind(snapshot),
         sourceHomeId,
         hostId: primary
           ? CODEX_LOCAL_SESSION_HOST_ID
@@ -290,7 +290,7 @@ export function createCodexCatalogHomeResolver(params: {
         env,
       });
       return {
-        assertCurrent: snapshot.assertCurrent,
+        assertCurrent: snapshot.assertCurrent.bind(snapshot),
         sourceHomeId: codexCatalogHomeIdFromCanonicalPath(codexHome),
         codexHome,
         localSessionsRoot: path.join(codexHome, "sessions"),

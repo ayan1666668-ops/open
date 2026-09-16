@@ -3,26 +3,23 @@ import { AgentHarnessPreflightError } from "openclaw/plugin-sdk/agent-harness-re
 import type { EmbeddedRunAttemptParamsV2 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import type { CodexCatalogHome } from "../session-catalog-types.js";
-import { resolveCodexAppServerLocalHomeDir } from "./auth-start-options.js";
 import type { CodexAppServerRuntimeOptions } from "./config-contracts.js";
-import { readCodexPluginConfig } from "./config-parsing.js";
-import {
-  resolveCodexAppServerRuntimeOptions,
-  resolveCodexSupervisionAppServerRuntimeOptions,
-} from "./config-runtime.js";
-import { buildCodexAppServerConnectionFingerprint } from "./plugin-app-cache-key.js";
+import type { resolveCodexAppServerRuntimeOptions } from "./config-runtime.js";
 import type { CodexAppServerThreadBinding } from "./session-binding.js";
 
-const catalogHomes = createPluginRuntimeStore<
-  (agentDir: string) => Promise<readonly CodexCatalogHome[]>
->({ key: "codex:catalog-home-resolver", errorMessage: "Codex catalog homes are unavailable" });
+export type CodexCatalogHomeDiscovery = (agentDir: string) => Promise<readonly CodexCatalogHome[]>;
+
+const catalogHomes = createPluginRuntimeStore<CodexCatalogHomeDiscovery>({
+  key: "codex:catalog-home-resolver",
+  errorMessage: "Codex catalog homes are unavailable",
+});
 export const setCodexCatalogConnectionHomeResolver = catalogHomes.setRuntime;
 
 type CodexAppServerRuntimeOptionsParams = NonNullable<
   Parameters<typeof resolveCodexAppServerRuntimeOptions>[0]
 >;
 
-type CodexBindingAppServerConnection = {
+export type CodexBindingAppServerConnection = {
   appServer: CodexAppServerRuntimeOptions;
   usesSupervisionConnection: boolean;
   requestAuthProfileId: string | undefined;
@@ -89,91 +86,19 @@ export function requireCodexSupervisionModelSelection(
   return { model, modelProvider };
 }
 
-/** Resolves connection and auth ownership exclusively from the private thread binding. */
+export type CodexBindingAppServerConnectionParams = CodexAppServerRuntimeOptionsParams & {
+  binding?: Pick<
+    CodexAppServerThreadBinding,
+    "appServerRuntimeFingerprint" | "connectionScope" | "pendingSupervisionBranch"
+  >;
+  authProfileId?: string;
+  assertCurrent?: () => void;
+};
+
+/** Registration publishes the resolver; connection policy loads only for an actual request. */
 export async function resolveCodexBindingAppServerConnection(
-  params: CodexAppServerRuntimeOptionsParams & {
-    binding?: Pick<
-      CodexAppServerThreadBinding,
-      "appServerRuntimeFingerprint" | "connectionScope" | "pendingSupervisionBranch"
-    >;
-    authProfileId?: string;
-    assertCurrent?: () => void;
-  },
+  params: CodexBindingAppServerConnectionParams,
 ): Promise<CodexBindingAppServerConnection> {
-  const { binding, authProfileId, assertCurrent, ...runtimeParams } = params;
-  assertCurrent?.();
-  const usesSupervisionConnection = binding?.connectionScope === "supervision";
-  if (
-    usesSupervisionConnection &&
-    readCodexPluginConfig(runtimeParams.pluginConfig).supervision?.enabled !== true
-  ) {
-    throw new Error(
-      "Codex supervision is disabled; refusing to open a native user-home supervised session",
-    );
-  }
-  const resolveRuntimeOptions = usesSupervisionConnection
-    ? resolveCodexSupervisionAppServerRuntimeOptions
-    : resolveCodexAppServerRuntimeOptions;
-  let appServer = resolveRuntimeOptions(runtimeParams);
-  if (usesSupervisionConnection) {
-    // Thread ids are connection-local. Every binding-owned operation must reject
-    // config drift before a copied id can reach another native Codex store.
-    const persistedFingerprint =
-      binding.pendingSupervisionBranch?.connectionFingerprint ??
-      binding.appServerRuntimeFingerprint;
-    let currentFingerprint = buildCodexAppServerConnectionFingerprint(
-      appServer,
-      runtimeParams.agentDir,
-    );
-    if (
-      persistedFingerprint &&
-      currentFingerprint !== persistedFingerprint &&
-      runtimeParams.agentDir
-    ) {
-      const homes = await catalogHomes.tryGetRuntime()?.(runtimeParams.agentDir);
-      const home = homes?.find(
-        (source) =>
-          source.appServer.start.transport === "stdio" &&
-          buildCodexAppServerConnectionFingerprint(source.appServer, source.agentDir) ===
-            persistedFingerprint,
-      );
-      if (home) {
-        home.assertCurrent();
-        assertCurrent?.();
-        // A miss stays rejected; a match keeps current policy and selects only its native store.
-        appServer = resolveRuntimeOptions(runtimeParams);
-        appServer = {
-          ...appServer,
-          start: {
-            ...appServer.start,
-            homeScope: "user",
-            env: {
-              ...appServer.start.env,
-              CODEX_HOME: resolveCodexAppServerLocalHomeDir(
-                home.appServer.start,
-                home.agentDir,
-                runtimeParams.env,
-              ),
-            },
-          },
-        };
-        currentFingerprint = buildCodexAppServerConnectionFingerprint(
-          appServer,
-          runtimeParams.agentDir,
-        );
-      }
-    }
-    if (!persistedFingerprint || persistedFingerprint !== currentFingerprint) {
-      throw new Error(
-        "Codex supervision connection changed; refusing to operate on its bound native thread",
-      );
-    }
-  }
-  assertCurrent?.();
-  return {
-    appServer,
-    usesSupervisionConnection,
-    requestAuthProfileId: usesSupervisionConnection ? undefined : authProfileId,
-    clientAuthProfileId: usesSupervisionConnection ? null : authProfileId,
-  };
+  const runtime = await import("./binding-connection.runtime.js");
+  return runtime.resolveCodexBindingAppServerConnection(params, catalogHomes.tryGetRuntime());
 }
