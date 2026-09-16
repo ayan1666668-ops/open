@@ -505,5 +505,27 @@ describe("shouldRelocateRuntimeContextCarrierToTail", () => {
         },
       }),
     ).toBe(false);
+
+    // Hosted public cloud endpoint serving open-weights models relocates to tail
+    expect(
+      shouldRelocateRuntimeContextCarrierToTail({
+        provider: "groq",
+        model: {
+          id: "openai/gpt-oss-120b",
+          baseUrl: "https://api.groq.com/openai/v1",
+        },
+      }),
+    ).toBe(true);
+
+    // LiteLLM proxying open-weights models over local base URL classifies as self-hosted
+    expect(
+      shouldRelocateRuntimeContextCarrierToTail({
+        provider: "litellm",
+        model: {
+          id: "openai/gpt-oss-120b",
+          baseUrl: "http://127.0.0.1:4000/v1",
+        },
+      }),
+    ).toBe(false);
   });
 });

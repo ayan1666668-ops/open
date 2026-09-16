@@ -533,13 +533,14 @@ export function shouldRelocateRuntimeContextCarrierToTail(
   }
 
   // Cloud models behind local proxies (e.g. bundled LiteLLM route, Anthropic/OpenAI on localhost)
-  // preserve prompt cache tail placement
+  // preserve prompt cache tail placement. LiteLLM routes to open-weights models (e.g. gpt-oss)
+  // classify as self-hosted because local execution wins on ambiguity and those endpoints do not bill prompt cache.
   const normalizedModelId = modelId?.trim().toLowerCase();
   const isSelfHostedModel =
     normalizedModelId &&
     (normalizedModelId.includes("gpt-oss") ||
-      isSelfHostedProviderId(modelId) ||
-      isSelfHostedProviderId(modelId.split("/")[0]) ||
+      isSelfHostedProviderId(normalizedModelId) ||
+      isSelfHostedProviderId(normalizedModelId.split("/")[0]) ||
       normalizedModelId.startsWith("ollama/") ||
       normalizedModelId.startsWith("vllm/") ||
       normalizedModelId.startsWith("sglang/") ||
