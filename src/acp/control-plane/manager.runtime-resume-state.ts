@@ -16,6 +16,7 @@ import type {
   SessionAcpMeta,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
+import { requireAcpExecutionSelection } from "./manager.utils.js";
 
 /** Detects acpx exits that are safe to retry with a fresh runtime handle. */
 export function isRecoverableManagerAcpxExitError(message: string): boolean {
@@ -146,8 +147,7 @@ async function clearPersistedRuntimeResumeState(params: {
         lastUpdatedAt: now,
       };
       return {
-        backend: base.backend,
-        agent: base.agent,
+        ...base,
         runtimeSessionName: base.runtimeSessionName,
         identity: nextIdentity,
         mode: base.mode,
@@ -198,8 +198,7 @@ export async function discardPersistedManagerRuntimeState(params: {
           }
         : undefined;
       return {
-        backend: base.backend,
-        agent: base.agent,
+        ...base,
         runtimeSessionName: base.runtimeSessionName,
         ...(nextIdentity ? { identity: nextIdentity } : {}),
         mode: base.mode,
@@ -228,7 +227,7 @@ export async function tryPrepareFreshManagerRuntimeSession(params: {
   logPrefix: string;
   missingBackendError?: unknown;
 }): Promise<void> {
-  const configuredBackend = (params.meta.backend || params.cfg.acp?.backend || "").trim();
+  const configuredBackend = requireAcpExecutionSelection(params.meta).executor.backend;
   try {
     const backend = params.deps.getRuntimeBackend(configuredBackend || undefined);
     if (!backend) {

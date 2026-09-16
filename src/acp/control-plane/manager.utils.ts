@@ -2,6 +2,8 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { toErrorObject } from "../../infra/errors.js";
+import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 /** Shared ACP manager normalization, resolution, and error helpers. */
 import { ACP_ERROR_CODES, AcpRuntimeError } from "../runtime/errors.js";
@@ -39,9 +41,29 @@ export function resolveAcpSessionResolutionError(
   );
 }
 
-/** Returns ready ACP metadata or throws the matching resolution error. */
+export const ACP_SELECTION_REPAIR_MESSAGE =
+  "The app did not confirm the last change. Start a new session, or repair this session before sending another message.";
+
+export function requireAcpExecutionSelection(meta: SessionAcpMeta): AcpExecutionSelection {
+  const selection = readAcpExecutionSelection(meta);
+  if (!selection) {
+    throw new AcpRuntimeError(
+      "ACP_SESSION_INIT_FAILED",
+      "The session execution selection is incomplete. Reinitialize this session.",
+    );
+  }
+  return selection;
+}
+
+/** Returns ready metadata; an uncertain external write must remain paused after restart. */
 export function requireReadySessionMeta(resolution: AcpSessionResolution): SessionAcpMeta {
   if (resolution.kind === "ready") {
+    if (
+      resolution.meta.state === "error" &&
+      resolution.meta.lastError === ACP_SELECTION_REPAIR_MESSAGE
+    ) {
+      throw new AcpRuntimeError("ACP_SESSION_INIT_FAILED", ACP_SELECTION_REPAIR_MESSAGE);
+    }
     return resolution.meta;
   }
   throw toErrorObject(resolveAcpSessionResolutionError(resolution), "Non-Error thrown");

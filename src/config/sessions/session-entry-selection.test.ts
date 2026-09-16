@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 import { inheritSessionSelection, SessionLabelOwnerIndex } from "./session-entry-selection.js";
 import type { SessionEntry } from "./types.js";
 
@@ -30,14 +31,19 @@ describe("inheritSessionSelection", () => {
     expect(automatic.authProfileOverrideCompactionCount).toBeUndefined();
   });
 
-  it("inherits an explicit configured-default selection", () => {
-    expect(
-      inheritSessionSelection({
-        sessionId: "explicit-default",
-        updatedAt: 1,
-        modelOverrideSource: "default",
-      }),
-    ).toMatchObject({ modelOverrideSource: "default" });
+  it("inherits the complete accepted configured-default pair", () => {
+    const inherited = inheritSessionSelection({
+      sessionId: "explicit-default",
+      updatedAt: 1,
+      providerOverride: "qa-route",
+      modelOverride: "qa-configured",
+      agentRuntimeOverride: "openclaw",
+      modelOverrideRouteResolution: "resolved",
+    });
+    expect(getSessionExecutionSelection(inherited)).toEqual({
+      model: { provider: "qa-route", id: "qa-configured" },
+      executor: { kind: "harness", id: "openclaw" },
+    });
   });
   it.each([
     { source: "auto" as const, profile: "google-vertex:fallback", inheritedProfile: undefined },

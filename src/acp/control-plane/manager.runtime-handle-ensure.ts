@@ -12,6 +12,7 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
+import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import { toAcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
 import {
@@ -24,7 +25,7 @@ import type {
   SessionAcpMeta,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { hasLegacyAcpIdentityProjection, resolveAcpAgentFromSessionKey } from "./manager.utils.js";
+import { hasLegacyAcpIdentityProjection, requireAcpExecutionSelection } from "./manager.utils.js";
 import {
   normalizeRuntimeOptions,
   normalizeText,
@@ -43,19 +44,15 @@ export async function ensureManagerRuntimeHandle(params: {
   runtimeHandles: ManagerRuntimeHandleCache;
   writeSessionMeta: WriteManagerSessionMeta;
 }): Promise<{ runtime: AcpRuntime; handle: AcpRuntimeHandle; meta: SessionAcpMeta }> {
-  const agent =
-    normalizeText(params.meta.agent) || resolveAcpAgentFromSessionKey(params.sessionKey, "main");
+  const selection = requireAcpExecutionSelection(params.meta);
+  const agent = selection.executor.agent;
   const mode = params.meta.mode;
   const runtimeOptions = resolveRuntimeOptionsFromMeta(params.meta);
   const cwd = runtimeOptions.cwd ?? normalizeText(params.meta.cwd);
   const model = normalizeText(runtimeOptions.model);
   const thinking = normalizeText(runtimeOptions.thinking);
-  const configuredBackend = (
-    params.selectedBackend ||
-    params.meta.backend ||
-    params.cfg.acp?.backend ||
-    ""
-  ).trim();
+  const configuredBackend = params.selectedBackend || selection.executor.backend;
+  const turnLocal = configuredBackend !== selection.executor.backend;
   const configSignature = resolveRuntimeConfigCacheKey(params.cfg);
   const backend = params.deps.requireRuntimeBackend(configuredBackend || undefined);
   const runtime = backend.runtime;
@@ -100,7 +97,7 @@ export async function ensureManagerRuntimeHandle(params: {
   const previousMeta = params.meta;
   const persistedIdentity = resolveSessionIdentityFromMeta(previousMeta);
   // Identifiers belong to their persisted backend; a new backend may recover its own named session.
-  const backendOwnsPreviousIdentity = previousMeta.backend === backend.id;
+  const backendOwnsPreviousIdentity = selection.executor.backend === backend.id;
   const previousIdentity = backendOwnsPreviousIdentity ? persistedIdentity : undefined;
   const persistedHandle = backendOwnsPreviousIdentity
     ? persistedAcpRuntimeHandle(params, previousMeta)
@@ -200,27 +197,26 @@ export async function ensureManagerRuntimeHandle(params: {
       ? { agentSessionId: nextHandleIdentifiers.agentSessionId }
       : {}),
   };
-  const nextMeta: SessionAcpMeta = {
-    backend: ensured.backend || backend.id,
-    agent,
-    runtimeSessionName: ensured.runtimeSessionName,
-    ...(nextIdentity ? { identity: nextIdentity } : {}),
-    mode: params.meta.mode,
-    ...(Object.keys(nextRuntimeOptions).length > 0 ? { runtimeOptions: nextRuntimeOptions } : {}),
-    ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-    state: previousMeta.state,
-    lastActivityAt: now,
-    ...(previousMeta.lastError ? { lastError: previousMeta.lastError } : {}),
-  };
+  const nextMeta = commitAcpExecutionSelection(
+    {
+      runtimeSessionName: ensured.runtimeSessionName,
+      ...(nextIdentity ? { identity: nextIdentity } : {}),
+      mode: params.meta.mode,
+      ...(Object.keys(nextRuntimeOptions).length > 0 ? { runtimeOptions: nextRuntimeOptions } : {}),
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+      state: previousMeta.state,
+      lastActivityAt: now,
+      ...(previousMeta.lastError ? { lastError: previousMeta.lastError } : {}),
+    },
+    { ...selection, executor: { ...selection.executor, backend: ensured.backend || backend.id } },
+  );
   const shouldPersistMeta =
-    previousMeta.backend !== nextMeta.backend ||
     previousMeta.runtimeSessionName !== nextMeta.runtimeSessionName ||
     !identityEquals(persistedIdentity, nextIdentity) ||
-    previousMeta.agent !== nextMeta.agent ||
     previousMeta.cwd !== nextMeta.cwd ||
     !runtimeOptionsEqual(previousMeta.runtimeOptions, nextMeta.runtimeOptions) ||
     hasLegacyAcpIdentityProjection(previousMeta);
-  if (shouldPersistMeta) {
+  if (shouldPersistMeta && !turnLocal) {
     await params.writeSessionMeta({
       cfg: params.cfg,
       sessionKey: params.sessionKey,

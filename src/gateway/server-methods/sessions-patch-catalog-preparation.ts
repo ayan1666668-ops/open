@@ -72,7 +72,7 @@ export function createSessionPatchCatalogPreparation(
       if (!params.catalog.ok) {
         throw params.catalog.error;
       }
-      return { kind: "complete", result: projection.finish(params.catalog.value) };
+      return { kind: "complete", result: await projection.finish(params.catalog.value) };
     },
   };
 }

@@ -3,6 +3,10 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { buildSessionCreationStamp } from "../../../config/sessions/session-entry-provenance.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import {
+  commitSessionExecutionSelection,
+  prepareSessionExecutionSelection,
+} from "../../../model-picker/apply-session-model-selection.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../../state/openclaw-agent-db.js";
 import { resolveUserPath } from "../../../utils.js";
 import {
@@ -84,27 +88,6 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
   if (patch.swarmOutputSchema && typeof patch.swarmOutputSchema === "object") {
     entry.swarmOutputSchema = patch.swarmOutputSchema as Record<string, unknown>;
   }
-  if (typeof patch.model === "string" && patch.model.trim()) {
-    const { provider, model } = splitModelRef(patch.model.trim());
-    if (model) {
-      entry.model = model;
-      entry.modelOverride = model;
-      entry.modelOverrideSource = patch.modelOverrideSource === "auto" ? "auto" : "user";
-      entry.modelOverrideRouteResolution = "resolved";
-      const fallbackOriginProvider = normalizeOptionalString(
-        patch.modelOverrideFallbackOriginProvider,
-      );
-      const fallbackOriginModel = normalizeOptionalString(patch.modelOverrideFallbackOriginModel);
-      if (fallbackOriginProvider && fallbackOriginModel) {
-        entry.modelOverrideFallbackOriginProvider = fallbackOriginProvider;
-        entry.modelOverrideFallbackOriginModel = fallbackOriginModel;
-      }
-      if (provider) {
-        entry.modelProvider = provider;
-        entry.providerOverride = provider;
-      }
-    }
-  }
   return entry;
 }
 
@@ -177,13 +160,30 @@ export async function createInitialSubagentSession(params: {
           cfg: params.cfg,
           key: params.childSessionKey,
         });
+    const childPatch = buildDirectChildSessionPatch(initialChildSessionPatch);
+    const requestedModel =
+      typeof params.modelPatch.model === "string" ? params.modelPatch.model.trim() : undefined;
+    const requestedRef = requestedModel ? splitModelRef(requestedModel) : undefined;
+    const preparedSelection = await prepareSessionExecutionSelection({
+      cfg: params.cfg,
+      agentId: params.targetAgentId,
+      sessionEntry: undefined,
+      request:
+        requestedRef?.provider && requestedRef.model
+          ? { kind: "model", model: { provider: requestedRef.provider, id: requestedRef.model } }
+          : { kind: "reset" },
+    });
+    if (preparedSelection.status !== "ready") {
+      return { status: "error", error: preparedSelection.message };
+    }
+    commitSessionExecutionSelection(childPatch, preparedSelection.selection);
     const entry = await upsertSessionEntryCore(
       {
         storePath: target.storePath,
         sessionKey: target.canonicalKey,
       },
       {
-        ...buildDirectChildSessionPatch(initialChildSessionPatch),
+        ...childPatch,
         // Native spawn keeps agent RPC label semantics, not sessions.patch's uniqueness policy.
         ...(params.label ? { label: params.label } : {}),
         ...(params.sessionPermissionPolicy
@@ -210,6 +210,10 @@ export async function createInitialSubagentSession(params: {
       {
         assertCommitAllowed: () => {
           params.assertActive?.();
+          const selectionError = preparedSelection.validateCommit?.();
+          if (selectionError) {
+            throw new Error(selectionError);
+          }
           if (parentEntry?.skillLibrarySelections) {
             const latest = loadSessionEntry({
               storePath: parentTarget.storePath,

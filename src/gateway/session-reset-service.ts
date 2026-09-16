@@ -13,6 +13,7 @@ import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import { isAcpOwnerRepairRequired } from "../acp/control-plane/manager.runtime-owner.js";
 import { tryPrepareFreshManagerRuntimeSession } from "../acp/control-plane/manager.runtime-resume-state.js";
+import { requireAcpExecutionSelection } from "../acp/control-plane/manager.utils.js";
 import { resolveAcpSessionTarget } from "../acp/control-plane/manager.utils.js";
 import { getAcpRuntimeBackend } from "../acp/runtime/registry.js";
 import { buildAcpDatabaseSessionKey } from "../acp/runtime/session-meta-keys.js";
@@ -79,6 +80,7 @@ import {
   isSessionAutoResetReason,
 } from "../hooks/session-auto-reset.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
+import { commitAcpExecutionSelection } from "../model-picker/apply-session-model-selection.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { runPluginHostCleanup } from "../plugins/host-hook-cleanup.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
@@ -689,17 +691,17 @@ function buildPendingAcpMeta(base: SessionAcpMeta, now: number): SessionAcpMeta 
         lastUpdatedAt: now,
       }
     : undefined;
-  return {
-    backend: base.backend,
-    agent: base.agent,
-    runtimeSessionName: base.runtimeSessionName,
-    ...(nextIdentity ? { identity: nextIdentity } : {}),
-    mode: base.mode,
-    ...(base.runtimeOptions ? { runtimeOptions: base.runtimeOptions } : {}),
-    ...(base.cwd ? { cwd: base.cwd } : {}),
-    state: "idle",
-    lastActivityAt: now,
-  };
+  const next = commitAcpExecutionSelection(
+    {
+      ...base,
+      identity: nextIdentity,
+      state: "idle",
+      lastActivityAt: now,
+    },
+    requireAcpExecutionSelection(base),
+  );
+  delete next.lastError;
+  return next;
 }
 
 async function ensureFreshAcpResetState(params: {

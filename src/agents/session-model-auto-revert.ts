@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 /** One-run rollback for agent-selected session models. */
 import {
   appendTranscriptMessage,
@@ -9,6 +10,12 @@ import {
   type AgentPatchedSessionModelFallback,
 } from "../config/sessions/session-model-fallback.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  prepareSessionExecutionSelection,
+  commitSessionExecutionSelection,
+} from "../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { resolveSessionAgentId } from "./agent-scope.js";
 import { resolveFailoverReasonFromError } from "./failover-error.js";
 import type { FailoverReason } from "./failover/signal.js";
 import { resolveSessionModelRef } from "./session-model-ref.js";
@@ -44,9 +51,35 @@ async function reconcileAgentPatchedSessionModel(params: {
     return "kept";
   }
 
+  const rollbackEntry = !params.outcome.success
+    ? loadSessionEntry({
+        agentId: params.agentId,
+        sessionKey: params.sessionKey,
+        storePath: params.storePath,
+        readConsistency: "latest",
+      })
+    : undefined;
+  const rollbackMarker = rollbackEntry?.modelFallback;
+  const rollback =
+    rollbackMarker?.source === "agent-patch"
+      ? await prepareSessionExecutionSelection({
+          cfg: params.cfg,
+          agentId: resolveSessionAgentId({
+            config: params.cfg,
+            sessionKey: params.sessionKey,
+            agentId: params.agentId,
+          }),
+          sessionKey: params.sessionKey,
+          sessionEntry: rollbackEntry,
+          request: {
+            kind: "model",
+            model: { provider: rollbackMarker.prevProvider, id: rollbackMarker.prevModel },
+          },
+        })
+      : undefined;
   let note: string | undefined;
   let sessionId: string | undefined;
-  let result: "cleared" | "promoted" | "reverted" | "none" = "none";
+  let result: "cleared" | "promoted" | "reverted" | "kept" | "none" = "none";
   await patchSessionEntryCore(
     {
       agentId: params.agentId,
@@ -81,18 +114,30 @@ async function reconcileAgentPatchedSessionModel(params: {
         result = "cleared";
         return { modelFallback: undefined };
       }
-      const failed = resolveSessionModelRef(params.cfg, entry, params.agentId);
+      if (
+        !rollback ||
+        rollback.status !== "ready" ||
+        !rollbackEntry ||
+        rollbackMarker?.ts !== marker.ts ||
+        !isDeepStrictEqual(
+          getSessionExecutionSelection(entry, params.cfg),
+          getSessionExecutionSelection(rollbackEntry, params.cfg),
+        )
+      ) {
+        result = "kept";
+        note = rollback?.status === "rejected" ? rollback.message : undefined;
+        return null;
+      }
+      const selectionError = rollback.validateCommit?.();
+      if (selectionError) {
+        throw new Error(selectionError);
+      }
+      const next = { ...entry };
+      commitSessionExecutionSelection(next, rollback.selection, { cfg: params.cfg });
       result = "reverted";
-      note = `System note: model ${failed.provider}/${failed.model} failed; reverted to ${marker.prevProvider}/${marker.prevModel}.`;
+      note = rollback.message;
       return {
-        model: marker.prevModel,
-        modelProvider: marker.prevProvider,
-        modelOverride: marker.prevModelOverride,
-        providerOverride: marker.prevProviderOverride,
-        modelOverrideSource: marker.prevModelOverrideSource,
-        modelOverrideRouteResolution: marker.prevModelOverrideRouteResolution,
-        modelOverrideFallbackOriginProvider: marker.prevModelOverrideFallbackOriginProvider,
-        modelOverrideFallbackOriginModel: marker.prevModelOverrideFallbackOriginModel,
+        ...next,
         authProfileOverride: marker.prevAuthProfileOverride,
         authProfileOverrideSource: marker.prevAuthProfileOverrideSource,
         authProfileOverrideCompactionCount: marker.prevAuthProfileOverrideCompactionCount,

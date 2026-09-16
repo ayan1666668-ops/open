@@ -12,6 +12,8 @@ import {
 import { isCliProvider, type CliProviderClassifier } from "../agents/model-selection.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveSessionPinnedHarnessId } from "../sessions/agent-harness-session-key.js";
 
 // Status runtime labels turn harness/provider/session state into a short
@@ -26,33 +28,28 @@ const AGENT_RUNTIME_LABELS: Readonly<Record<string, string>> = {
 
 type AgentRuntimeLabelArgs = {
   config?: OpenClawConfig;
-  sessionEntry?: Pick<
-    SessionEntry,
-    | "acp"
-    | "agentRuntimeOverride"
-    | "agentHarnessId"
-    | "modelProvider"
-    | "modelSelectionLocked"
-    | "pluginOwnerId"
-    | "providerOverride"
-  >;
+  sessionEntry?: Partial<SessionEntry>;
   resolvedHarness?: string;
   fallbackProvider?: string;
   classifyCliProvider?: CliProviderClassifier;
 };
 
 export function resolveAgentRuntimeLabel(args: AgentRuntimeLabelArgs): string {
-  const acpAgentRaw = normalizeOptionalString(args.sessionEntry?.acp?.agent);
+  const selection = getSessionExecutionSelection(args.sessionEntry, args.config);
+  const acp = selection && isAcpExecutionSelection(selection) ? selection : undefined;
+  const acpAgentRaw = normalizeOptionalString(acp?.executor.agent);
   const acpAgent = acpAgentRaw ? sanitizeTerminalText(acpAgentRaw) : undefined;
   // ACP sessions own their displayed runtime because the backend can differ
   // from the normal model/provider selection path.
   if (acpAgent) {
-    const backendRaw = normalizeOptionalString(args.sessionEntry?.acp?.backend);
+    const backendRaw = normalizeOptionalString(acp?.executor.backend);
     const backend = backendRaw ? sanitizeTerminalText(backendRaw) : undefined;
     return backend ? `${acpAgent} (acp/${backend})` : `${acpAgent} (acp)`;
   }
 
-  const runtimeRaw = normalizeOptionalString(args.resolvedHarness);
+  const runtimeRaw = normalizeOptionalString(
+    selection && !isAcpExecutionSelection(selection) ? selection.executor.id : args.resolvedHarness,
+  );
   const runtime = normalizeOptionalLowercaseString(runtimeRaw);
   let label: string;
   if (runtime && runtime !== "auto" && runtime !== "default") {
@@ -60,7 +57,9 @@ export function resolveAgentRuntimeLabel(args: AgentRuntimeLabelArgs): string {
   } else {
     const providerRaw =
       normalizeOptionalString(args.sessionEntry?.modelProvider) ??
-      normalizeOptionalString(args.sessionEntry?.providerOverride) ??
+      normalizeOptionalString(
+        selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+      ) ??
       normalizeOptionalString(args.fallbackProvider);
     const provider = providerRaw ? sanitizeTerminalText(providerRaw) : undefined;
     const providerRuntime = normalizeOptionalLowercaseString(providerRaw);

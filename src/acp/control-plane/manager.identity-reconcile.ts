@@ -121,16 +121,9 @@ export async function reconcileManagerRuntimeSessionIdentifiers(params: {
     };
   }
   const nextMeta: SessionAcpMeta = {
-    backend: params.meta.backend,
-    agent: params.meta.agent,
-    runtimeSessionName: params.meta.runtimeSessionName,
-    ...(nextIdentity ? { identity: nextIdentity } : {}),
-    mode: params.meta.mode,
-    ...(params.meta.runtimeOptions ? { runtimeOptions: params.meta.runtimeOptions } : {}),
-    ...(params.meta.cwd ? { cwd: params.meta.cwd } : {}),
+    ...params.meta,
+    identity: nextIdentity,
     lastActivityAt: now,
-    state: params.meta.state,
-    ...(params.meta.lastError ? { lastError: params.meta.lastError } : {}),
   };
   if (!identityEquals(currentIdentity, nextIdentity)) {
     const currentAgentSessionId = currentIdentity?.agentSessionId ?? "<none>";
@@ -159,16 +152,9 @@ export async function reconcileManagerRuntimeSessionIdentifiers(params: {
         return null;
       }
       return {
-        backend: base.backend,
-        agent: base.agent,
-        runtimeSessionName: base.runtimeSessionName,
-        ...(nextIdentity ? { identity: nextIdentity } : {}),
-        mode: base.mode,
-        ...(base.runtimeOptions ? { runtimeOptions: base.runtimeOptions } : {}),
-        ...(base.cwd ? { cwd: base.cwd } : {}),
-        state: base.state,
+        ...base,
+        identity: nextIdentity,
         lastActivityAt: now,
-        ...(base.lastError ? { lastError: base.lastError } : {}),
       };
     },
   });

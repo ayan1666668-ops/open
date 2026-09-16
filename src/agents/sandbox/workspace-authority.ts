@@ -101,10 +101,7 @@ function resolveWorkspaceToolPolicies(params: {
 function resolveWorkspaceAuthorityModel(params: {
   config: OpenClawConfig;
   agentId: string;
-  sessionEntry?: Pick<
-    SessionEntry,
-    "model" | "modelProvider" | "modelOverride" | "providerOverride"
-  >;
+  sessionEntry?: Partial<SessionEntry>;
   modelProvider?: string;
   modelId?: string;
 }): { provider: string; model: string } {
@@ -139,10 +136,7 @@ export function resolveSandboxWorkspaceAuthority(params: {
   config: OpenClawConfig;
   agentId?: string;
   sessionKey: string;
-  sessionEntry?: Pick<
-    SessionEntry,
-    "execHost" | "execNode" | "model" | "modelProvider" | "modelOverride" | "providerOverride"
-  >;
+  sessionEntry?: Partial<SessionEntry>;
   confinedToolNames?: readonly string[];
   requiredToolNames?: readonly string[];
   modelProvider?: string;

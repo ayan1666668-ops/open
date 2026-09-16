@@ -3,6 +3,11 @@ import { resolveSessionAuthProfileOverrideSource } from "../../config/sessions/a
 import { clearAgentRunTerminalWriteContext } from "../../infra/agent-run-terminal-writes.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
+  commitSessionExecutionSelection,
+  prepareSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
+import {
   MODEL_SELECTION_LOCKED_MESSAGE,
   ModelSelectionLockedError,
   isModelSelectionLocked,
@@ -14,12 +19,7 @@ import {
 } from "../../tasks/task-status-access.js";
 import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
 import { resolveMessageChannel } from "../../utils/message-channel.js";
-import {
-  clearAutoFallbackPrimaryProbeSelection,
-  entryMatchesAutoFallbackPrimaryProbe,
-  markAutoFallbackPrimaryProbe,
-  resolveEffectiveModelFallbacks,
-} from "../agent-scope.js";
+import { resolveEffectiveModelFallbacks } from "../agent-scope.js";
 import { isHeartbeatLifecycleRunKind } from "../bootstrap-mode.js";
 import {
   runEmbeddedAgentEntry,
@@ -38,19 +38,16 @@ import {
   isAgentRunRestartAbortReason,
   resolveAgentRunErrorLifecycleFields,
 } from "../run-termination.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../session-runtime-compat.js";
 import { measureAgentStartup } from "../startup-timing.js";
 import {
   normalizeThinkingCatalogProviders,
   resolveCandidateThinkingLevel,
-  resolveEffectiveAgentRuntime,
   needsThinkHydration,
 } from "../thinking-runtime.js";
 import {
   createAgentAttemptLifecycleCallbacks,
   type AgentAttemptLifecycleState,
 } from "./attempt-callbacks.js";
-import { persistAgentSession } from "./attempt-execution.shared.js";
 import { createCommandCompactionAccounting } from "./compaction-accounting.js";
 import { createAgentCommandLifecycle } from "./lifecycle.js";
 import type { RunEmbeddedAgentAttemptParams } from "./run-embedded-attempt.types.js";
@@ -86,20 +83,15 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
     defaultProvider,
     defaultModel,
     configuredDefaultAuthProfileId,
-    hasExplicitRunOverride,
-    storedProviderOverride,
-    hasStoredAutoFallbackProvenance,
-    autoFallbackPrimaryProbe,
     immutableThinkLevel,
     sessionFile,
   } = params.modelSelection;
   let {
+    executionSelection,
     provider,
     model,
     providerForAuthProfileValidation,
     sessionEntryForAttempt,
-    storedModelOverride,
-    storedModelOverrideSource,
     effectiveTurnThinkLevel,
   } = params.modelSelection;
   const thinkingCatalog = params.modelSelection.thinkingCatalog;
@@ -219,7 +211,6 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
   let fallbackExhausted = false;
   let terminal: EmbeddedAgentRunEntryTerminal;
   let liveSwitchRetries = 0;
-  let autoFallbackPrimaryProbeInterruptedByLiveSwitch = false;
   const fastModeStartedAtMs = Date.now();
   const fallbackTrajectoryRecorder = createTrajectoryRuntimeRecorder({
     cfg,
@@ -254,13 +245,8 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             cfg,
             agentId: sessionAgentId,
             sessionKey,
-            hasSessionModelOverride:
-              hasExplicitRunOverride || Boolean(storedProviderOverride || storedModelOverride),
-            modelOverrideSource: hasExplicitRunOverride ? "user" : storedModelOverrideSource,
+            selection: executionSelection,
             subagentSpawnLineage: (sessionEntry?.spawnDepth ?? 0) > 0,
-            hasAutoFallbackProvenance: hasExplicitRunOverride
-              ? false
-              : hasStoredAutoFallbackProvenance,
           }));
 
       const fallbackRuntimeState: { originRuntime?: "cli" | "embedded" } = {};
@@ -294,56 +280,41 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           workspaceDir,
           sessionKey,
           preparation: { kind: "direct" },
-          resolveRuntimeOverride: (candidateProvider) =>
-            resolveSessionRuntimeOverrideForProvider({
-              provider: candidateProvider,
-              entry: sessionEntryForAttempt,
+          prepareExecutionSelection: async (candidateProvider, candidateModel) => {
+            const turnEntry = {
+              ...(sessionEntryForAttempt ?? { sessionId, updatedAt: Date.now() }),
+            };
+            commitSessionExecutionSelection(turnEntry, executionSelection, { cfg });
+            const prepared = await prepareSessionExecutionSelection({
               cfg,
-            }),
+              agentId: sessionAgentId,
+              sessionEntry: turnEntry,
+              request: {
+                kind: "model",
+                model: { provider: candidateProvider, id: candidateModel },
+              },
+            });
+            if (prepared.status !== "ready") {
+              throw new Error(prepared.message);
+            }
+            if (isAcpExecutionSelection(prepared.selection)) {
+              throw new Error("This turn requires a direct execution selection.");
+            }
+            return prepared.selection;
+          },
         },
         behavior: {
           kind: "command-rpc",
           hasCommittedSideEffect: currentAttemptCommittedCronMedia,
         },
-        sessionOverride: {
-          kind: "reconcile-completed",
-          reconcile: async ({ provider: winnerProvider, model: winnerModel }) => {
-            if (
-              !autoFallbackPrimaryProbe ||
-              autoFallbackPrimaryProbeInterruptedByLiveSwitch ||
-              !sessionEntry ||
-              !sessionStore ||
-              !sessionKey ||
-              isModelSelectionLocked(sessionEntry) ||
-              params.suppressVisibleSessionEffects ||
-              params.preserveUserFacingSessionModelState ||
-              !entryMatchesAutoFallbackPrimaryProbe(sessionEntry, autoFallbackPrimaryProbe) ||
-              winnerProvider !== autoFallbackPrimaryProbe.provider ||
-              winnerModel !== autoFallbackPrimaryProbe.model
-            ) {
-              return;
-            }
-            const nextSessionEntry = { ...sessionEntry };
-            clearAutoFallbackPrimaryProbeSelection(nextSessionEntry);
-            sessionEntry = await persistAgentSession({
-              sessionStore,
-              sessionKey,
-              storePath,
-              initialEntry: sessionEntry,
-              entry: nextSessionEntry,
-              shouldPersist: (current) =>
-                Boolean(
-                  current &&
-                  entryMatchesAutoFallbackPrimaryProbe(current, autoFallbackPrimaryProbe),
-                ),
-            });
-          },
-        },
+        sessionOverride: { kind: "preserve" },
         abortSignal: deferredLifecycle.signal,
         onFallbackStep: (step) => {
           fallbackTrajectoryRecorder?.recordEvent("model.fallback_step", step);
         },
-        runCandidate: async (providerOverride, modelOverride, runOptions) => {
+        runCandidate: async (candidateSelection, runOptions) => {
+          const providerOverride = candidateSelection.model.provider;
+          const modelOverride = candidateSelection.model.id;
           clearAgentRunTerminalWriteContext(params.preparedRunAdmission.operationalRunInstance);
           const candidateAccounting = compactionAccounting.beginCandidate(deferredLifecycle.signal);
           maintenanceAuthProfile = undefined;
@@ -353,19 +324,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           attemptLifecycleState.lifecycleError = undefined;
           attemptLifecycleState.lifecycleFinishing = false;
           attemptLifecycleState.lifecycleEnded = false;
-          const isAutoFallbackPrimaryProbeCandidate =
-            autoFallbackPrimaryProbe &&
-            providerOverride === autoFallbackPrimaryProbe.provider &&
-            modelOverride === autoFallbackPrimaryProbe.model;
-          const attemptSessionEntry =
-            autoFallbackPrimaryProbe &&
-            providerOverride === autoFallbackPrimaryProbe.fallbackProvider &&
-            !isAutoFallbackPrimaryProbeCandidate
-              ? sessionEntry
-              : sessionEntryForAttempt;
-          if (isAutoFallbackPrimaryProbeCandidate) {
-            markAutoFallbackPrimaryProbe({ probe: autoFallbackPrimaryProbe, sessionKey });
-          }
+          const attemptSessionEntry = sessionEntryForAttempt;
           await params.opts.onActiveModelSelected?.({
             provider: providerOverride,
             model: modelOverride,
@@ -382,19 +341,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
             providerOverride === defaultProvider && modelOverride === defaultModel
               ? configuredDefaultAuthProfileId
               : undefined;
-          const agentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-            provider: providerOverride,
-            entry: attemptSessionEntry,
-            cfg,
-          });
-          const candidateRuntime = resolveEffectiveAgentRuntime({
-            cfg,
-            provider: providerOverride,
-            modelId: modelOverride,
-            agentId: sessionAgentId,
-            sessionKey,
-            sessionEntry: attemptSessionEntry,
-          });
+          const candidateRuntime = candidateSelection.executor.id;
           const candidateConfiguredThinkLevel =
             immutableThinkLevel ??
             resolveConfiguredThinkingDefault({
@@ -460,8 +407,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           try {
             return await attemptExecutionRuntime.runAgentAttempt({
               preparedRunAdmission: params.preparedRunAdmission,
-              providerOverride,
-              modelOverride,
+              executionSelection: candidateSelection,
               ...prepareModelRunCapabilities(
                 [candidateThinkingCatalog, params.prepared.configuredThinkingCatalog],
                 [providerOverride, modelOverride, candidateRuntime],
@@ -471,7 +417,6 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
               originalProvider: provider,
               cfg,
               sessionEntry: attemptSessionEntry,
-              agentHarnessRuntimeOverride,
               sessionId: attemptSessionTarget?.sessionId ?? sessionId,
               sessionKey,
               ...(attemptSessionTarget ? { sessionTarget: attemptSessionTarget } : {}),
@@ -601,23 +546,13 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
           throw new Error(retryLimitMessage, { cause: err });
         }
         // The session writer already admitted this selection; retrying does not make a new choice.
-        if (storedModelOverride || err.model !== model || err.provider !== provider) {
-          storedModelOverride = err.model;
-          storedModelOverrideSource = "user";
-        }
-        if (autoFallbackPrimaryProbe) {
-          autoFallbackPrimaryProbeInterruptedByLiveSwitch = true;
-        }
-        provider = err.provider;
-        model = err.model;
-        providerForAuthProfileValidation = err.provider;
+        executionSelection = err.selection;
+        provider = err.selection.model.provider;
+        model = err.selection.model.id;
+        providerForAuthProfileValidation = err.selection.model.provider;
         if (sessionEntry) {
           sessionEntry = { ...sessionEntry };
-          if (err.agentRuntimeOverride) {
-            sessionEntry.agentRuntimeOverride = err.agentRuntimeOverride;
-          } else {
-            delete sessionEntry.agentRuntimeOverride;
-          }
+          commitSessionExecutionSelection(sessionEntry, err.selection);
           sessionEntry.authProfileOverride = err.authProfileId;
           sessionEntry.authProfileOverrideSource = err.authProfileId
             ? err.authProfileIdSource
@@ -627,7 +562,7 @@ export async function runEmbeddedAgentAttempt(params: RunEmbeddedAgentAttemptPar
         }
         attemptLifecycleState.lifecycleEnded = false;
         log.info(
-          `Live session model switch in subagent run ${runId}: switching to ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}`,
+          `Live session model switch in subagent run ${runId}: switching to ${sanitizeForLog(err.selection.model.provider)}/${sanitizeForLog(err.selection.model.id)}`,
         );
         continue;
       }

@@ -162,7 +162,7 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
       return;
     }
     void params
-      .onModelSelect(entry.commitValue, params.sessionKey, entry.runtimeOverride ?? null)
+      .onModelSelect(entry.commitValue, params.sessionKey, entry.runtimeOverride)
       .finally(() => params.onRequestUpdate?.());
     params.onRequestUpdate?.();
   };

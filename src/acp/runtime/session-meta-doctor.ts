@@ -9,6 +9,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { PluginDoctorRepairAuthority } from "../../infra/state-migrations.types.js";
+import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
 import type {
   PluginDoctorAcpSessionClaim,
   PluginDoctorStateMigrationContext,
@@ -126,7 +127,10 @@ export function updateAcpSessionIdentityForDoctor(
 ): void {
   authority.assertCurrent();
   const { claim } = input;
-  if (claim.meta.backend !== scope.pluginId || !claim.meta.identity) {
+  if (
+    readAcpExecutionSelection(claim.meta)?.executor.backend !== scope.pluginId ||
+    !claim.meta.identity
+  ) {
     throw new Error("ACP identity repair requires a matching backend claim and existing identity");
   }
   const key = buildAcpDatabaseSessionKey(claim.sessionKey, claim.agentId);

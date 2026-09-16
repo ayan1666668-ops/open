@@ -309,6 +309,9 @@ type RunAgentAttemptOverrides = Omit<
   | "sessionKey"
   | "workspaceDir"
 > & {
+  providerOverride?: string;
+  modelOverride?: string;
+  agentHarnessRuntimeOverride?: string;
   agentDir: RunAgentAttemptParams["agentDir"];
   modelRoutingProvenance?: ModelFallbackAttemptProvenance;
   sessionEntry: NonNullable<RunAgentAttemptParams["sessionEntry"]>;
@@ -330,9 +333,16 @@ function makeRunAgentAttemptParams(overrides: RunAgentAttemptOverrides): RunAgen
       stage: isFallbackRetry ? "fallback" : "initial",
     };
   return {
-    providerOverride: provider,
+    executionSelection: overrides.executionSelection ?? {
+      model: { provider, id: model },
+      executor:
+        overrides.opts?.modelRun || overrides.opts?.promptMode === "none"
+          ? { kind: "harness", id: "openclaw" }
+          : provider === "claude-cli" || provider === "codex-cli"
+            ? { kind: "cli", id: provider }
+            : { kind: "harness", id: overrides.agentHarnessRuntimeOverride ?? "openclaw" },
+    },
     originalProvider: provider,
-    modelOverride: model,
     cfg: {} as OpenClawConfig,
     sessionId: overrides.sessionEntry.sessionId,
     sessionAgentId: "main",

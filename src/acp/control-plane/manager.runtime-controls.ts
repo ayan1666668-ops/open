@@ -16,7 +16,7 @@ import {
 import type { CachedRuntimeState } from "./manager.runtime-handle-cache.js";
 import { isAcpOwnerRepairRequired } from "./manager.runtime-owner.js";
 import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "./manager.types.js";
-import { createUnsupportedControlError } from "./manager.utils.js";
+import { requireAcpExecutionSelection, createUnsupportedControlError } from "./manager.utils.js";
 import {
   buildRuntimeConfigOptionPairs,
   buildRuntimeControlSignature,
@@ -189,7 +189,8 @@ export async function applyManagerRuntimeControls(params: {
     handle: params.handle,
     includeStatusConfigOptionKeys: needsConfigOptionKeys,
   });
-  const backend = params.handle.backend || params.meta.backend;
+  const backend =
+    params.handle.backend || requireAcpExecutionSelection(params.meta).executor.backend;
   const runtimeMode = normalizeText(options.runtimeMode);
   const configOptions = buildRuntimeConfigOptionPairs(options, capabilities.configOptionKeys);
   const thinkingConfigKey = options.thinking

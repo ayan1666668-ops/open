@@ -23,7 +23,7 @@ describe("AcpSessionManager backend failover", () => {
   ) {
     const primaryRuntime = createRuntime();
     const fallbackRuntime = createRuntime();
-    const sessionKey = "agent:codex:acp:session-1";
+    const sessionKey = "agent:main:acp:session-1";
     const initialBackend = params.initialBackend ?? "primary-backend";
     let currentMeta = readySessionMeta({
       backend: initialBackend,
@@ -98,7 +98,7 @@ describe("AcpSessionManager backend failover", () => {
     };
   }
 
-  it("starts later failover turns on the configured primary backend", async () => {
+  it("retains the accepted backend when configured policy changes", async () => {
     const harness = setupFailoverBackends({ initialBackend: "fallback-backend" });
 
     const manager = new AcpSessionManager();
@@ -111,13 +111,13 @@ describe("AcpSessionManager backend failover", () => {
       requestId: "r-primary",
     });
 
-    expect(hoisted.requireAcpRuntimeBackendMock).toHaveBeenCalledWith("primary-backend");
-    expect(harness.primaryRuntime.runTurn).toHaveBeenCalledTimes(1);
-    expect(harness.fallbackRuntime.runTurn).not.toHaveBeenCalled();
-    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(hoisted.requireAcpRuntimeBackendMock).toHaveBeenCalledWith("fallback-backend");
+    expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledTimes(1);
+    expect(harness.primaryRuntime.runTurn).not.toHaveBeenCalled();
+    expect(harness.currentMeta.backend).toBe("fallback-backend");
   });
 
-  it("closes cached fallback handles before returning later turns to the primary backend", async () => {
+  it("closes turn-local fallback handles before returning and retains the primary selection", async () => {
     const harness = setupFailoverBackends();
     harness.primaryRuntime.runTurn.mockImplementationOnce(async function* () {
       if (Date.now() < 0) {
@@ -135,8 +135,11 @@ describe("AcpSessionManager backend failover", () => {
       mode: "prompt",
       requestId: "r-fallback",
     });
-    expect(harness.currentMeta.backend).toBe("fallback-backend");
+    expect(harness.currentMeta.backend).toBe("primary-backend");
     expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledTimes(1);
+    expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "turn-local-fallback-complete" }),
+    );
 
     harness.fallbackRuntime.close.mockClear();
     await manager.runTurn({
@@ -148,13 +151,36 @@ describe("AcpSessionManager backend failover", () => {
       requestId: "r-primary",
     });
 
-    expect(harness.fallbackRuntime.close).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reason: "runtime-handle-replaced",
-      }),
-    );
+    expect(harness.fallbackRuntime.close).not.toHaveBeenCalled();
     expect(harness.primaryRuntime.runTurn).toHaveBeenCalledTimes(2);
     expect(harness.currentMeta.backend).toBe("primary-backend");
+  });
+
+  it("pauses a reopened session when fallback cleanup cannot be confirmed", async () => {
+    const harness = setupFailoverBackends({
+      primaryUnavailableError: new AcpRuntimeError(
+        "ACP_BACKEND_UNAVAILABLE",
+        "primary backend unavailable",
+      ),
+    });
+    harness.fallbackRuntime.close.mockRejectedValueOnce(new Error("fallback close result lost"));
+    const input = {
+      cfg: harness.cfg,
+      sessionKey: harness.sessionKey,
+      provenance: "system" as const,
+      text: "continue",
+      mode: "prompt" as const,
+      requestId: "uncertain-fallback",
+    };
+    await expect(new AcpSessionManager().runTurn(input)).rejects.toThrow(
+      "fallback close result lost",
+    );
+    expect(harness.currentMeta.backend).toBe("primary-backend");
+    expect(harness.currentMeta.runtimeSessionName).toBe("primary-runtime");
+    await expect(
+      new AcpSessionManager().runTurn({ ...input, requestId: "after-restart" }),
+    ).rejects.toThrow("app did not confirm the last change");
+    expect(harness.fallbackRuntime.runTurn).toHaveBeenCalledOnce();
   });
 
   it("closes the previous persistent handle before switching fallback backends", async () => {

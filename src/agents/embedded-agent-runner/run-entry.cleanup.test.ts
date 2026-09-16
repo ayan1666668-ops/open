@@ -51,7 +51,10 @@ it.each(cleanupCases)(
           harness: {
             workspaceDir: process.cwd(),
             preparation: { kind: "direct" },
-            resolveRuntimeOverride: () => "openclaw",
+            prepareExecutionSelection: async (provider: string, model: string) => ({
+              model: { provider, id: model },
+              executor: { kind: "harness" as const, id: "openclaw" },
+            }),
           },
           behavior:
             kind === "command-rpc"
@@ -65,7 +68,7 @@ it.each(cleanupCases)(
                   }),
                 },
           sessionOverride: { kind: "preserve" },
-          runCandidate: async (provider, model) => ({
+          runCandidate: async ({ model: { provider, id: model } }) => ({
             payloads: [{ text: "Completed answer" }],
             meta: {
               durationMs: 1,

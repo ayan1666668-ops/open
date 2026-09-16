@@ -97,19 +97,13 @@ describe("AcpSessionManager configured bindings", () => {
       expect(
         await ensureConfiguredAcpBindingSession({
           cfg: baseCfg,
-          spec: { ...spec, model: "openai/gpt-5.6-luna", thinking: "high" },
+          spec: { ...spec, model: "fixture/qa-other", thinking: "high" },
         }),
       ).toEqual({ ok: true, sessionKey });
       expect(
         runtimeState.setConfigOption.mock.calls.map(([input]) => [input.key, input.value]),
-      ).toEqual([
-        ["model", "openai/gpt-5.6-luna"],
-        ["thinking", "high"],
-      ]);
-      expect(currentMeta?.runtimeOptions).toEqual({
-        model: "openai/gpt-5.6-luna",
-        thinking: "high",
-      });
+      ).toEqual([]);
+      expect(currentMeta?.runtimeOptions).toEqual({ thinking: "high" });
     } finally {
       getManager.mockRestore();
     }

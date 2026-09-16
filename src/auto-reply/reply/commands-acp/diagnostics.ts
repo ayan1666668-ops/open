@@ -9,6 +9,7 @@ import { getAcpRuntimeBackend, requireAcpRuntimeBackend } from "../../../acp/run
 import { listAcpSessionEntries, readAcpSessionEntry } from "../../../acp/runtime/session-meta.js";
 import type { SessionEntry, SessionAcpMeta } from "../../../config/sessions/types.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
+import { readAcpExecutionSelection } from "../../../model-picker/execution-selection-codec.js";
 import { commandReply } from "../command-gates.js";
 import type { CommandHandlerResult, HandleCommandsParams } from "../commands-types.js";
 import { resolveAcpCommandBindingContext } from "./context.js";
@@ -167,11 +168,12 @@ function formatAcpSessionLine(params: {
   threadId?: string;
 }): string {
   const acp = params.acp;
+  const selection = readAcpExecutionSelection(acp);
   const marker =
     params.currentSessionKey === params.key && params.currentAgentId === params.agentId ? "*" : " ";
-  const label = normalizeOptionalString(params.entry.label) || acp.agent;
+  const label = normalizeOptionalString(params.entry.label) || selection?.executor.agent || "ACP";
   const threadText = params.threadId ? `, thread:${params.threadId}` : "";
-  return `${marker} ${label} (${acp.mode}, ${acp.state}, backend:${acp.backend}${params.agentId ? `, owner:${params.agentId}` : ""}${threadText}) -> ${params.key}`;
+  return `${marker} ${label} (${acp.mode}, ${acp.state}, backend:${selection?.executor.backend ?? ""}${params.agentId ? `, owner:${params.agentId}` : ""}${threadText}) -> ${params.key}`;
 }
 
 export async function handleAcpSessionsAction(

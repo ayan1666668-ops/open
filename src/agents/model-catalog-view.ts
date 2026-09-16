@@ -372,7 +372,7 @@ type StatusModelCatalogViewRequest = {
   agentDir: string;
   workspaceDir?: string;
   entries: readonly Pick<ModelCatalogEntry, "provider" | "id">[];
-  sessionEntry?: Pick<SessionEntry, "agentHarnessId" | "agentRuntimeOverride">;
+  sessionEntry?: Partial<SessionEntry>;
 };
 
 type StatusModelCatalogView = ReturnType<typeof prepareModelCatalogView> & {

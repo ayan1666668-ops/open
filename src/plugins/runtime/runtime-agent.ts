@@ -158,6 +158,9 @@ async function createSessionEntry(
     { resolveGatewaySessionStoreTarget },
     { readAcpSessionMetaForEntry, upsertAcpSessionMeta },
     { resolveSandboxedSessionCreation },
+    { commitAcpExecutionSelection },
+    { readAcpExecutionSelection },
+    { getSessionExecutionSelection },
   ] = await Promise.all([
     import("../../gateway/session-create-service.js"),
     import("../../gateway/session-utils.js"),
@@ -165,6 +168,9 @@ async function createSessionEntry(
     // in transitively, so a separate import here would only duplicate the edge.
     import("../../acp/runtime/session-meta.js"),
     import("../../gateway/operator-role-policy.js"),
+    import("../../model-picker/apply-session-model-selection.js"),
+    import("../../model-picker/execution-selection-codec.js"),
+    import("../../model-picker/execution-selection-state.js"),
   ]);
   assertCreationOwner();
   const requiredCreation = resolveSandboxedSessionCreation(
@@ -191,21 +197,22 @@ async function createSessionEntry(
   }
   const initialAcpMeta = (now: number): SessionAcpMeta | undefined =>
     acpInitial
-      ? {
-          backend: acpBackendId!,
-          agent: acpAgentId!,
-          runtimeSessionName: target.canonicalKey,
-          identity: {
-            state: "resolved",
-            agentSessionId: agentSessionId!,
-            source: "ensure",
-            lastUpdatedAt: now,
+      ? commitAcpExecutionSelection(
+          {
+            runtimeSessionName: target.canonicalKey,
+            identity: {
+              state: "resolved",
+              agentSessionId: agentSessionId!,
+              source: "ensure",
+              lastUpdatedAt: now,
+            },
+            mode: "persistent",
+            ...(params.spawnedCwd?.trim() ? { cwd: params.spawnedCwd.trim() } : {}),
+            state: "idle",
+            lastActivityAt: now,
           },
-          mode: "persistent",
-          ...(params.spawnedCwd?.trim() ? { cwd: params.spawnedCwd.trim() } : {}),
-          state: "idle",
-          lastActivityAt: now,
-        }
+          { executor: { kind: "acp", backend: acpBackendId!, agent: acpAgentId! }, model: null },
+        )
       : undefined;
   const persistedAcpBinding = acpInitial
     ? { acpBackendId: acpBackendId!, acpAgentId: acpAgentId!, agentSessionId: agentSessionId! }
@@ -213,8 +220,8 @@ async function createSessionEntry(
   const acpMetaMatches = (meta: SessionAcpMeta | undefined): boolean =>
     Boolean(
       meta &&
-      meta.backend === acpBackendId &&
-      meta.agent === acpAgentId &&
+      readAcpExecutionSelection(meta)?.executor.backend === acpBackendId &&
+      readAcpExecutionSelection(meta)?.executor.agent === acpAgentId &&
       meta.runtimeSessionName === target.canonicalKey &&
       meta.identity?.state === "resolved" &&
       meta.identity.agentSessionId === agentSessionId &&
@@ -344,8 +351,10 @@ async function createSessionEntry(
             matchingEntry.pluginOwnerId === pluginInitial?.pluginOwnerId &&
             matchingEntry.modelSelectionLocked === params.initialEntry.modelSelectionLocked &&
             (!cliInitial ||
-              (matchingEntry.providerOverride === cliInitial.cliBackendId &&
-                matchingEntry.modelOverride === cliInitial.model &&
+              (isDeepStrictEqual(getSessionExecutionSelection(matchingEntry, params.cfg), {
+                model: { provider: cliInitial.cliBackendId, id: cliInitial.model },
+                executor: { kind: "cli", id: cliInitial.cliBackendId },
+              }) &&
                 isDeepStrictEqual(
                   matchingEntry.cliSessionBindings?.[cliInitial.cliBackendId],
                   cliInitial.cliSessionBinding,
@@ -394,15 +403,20 @@ async function createSessionEntry(
               : {}),
             ...(params.execNode !== undefined ? { execNode: params.execNode } : {}),
             ...(params.execCwd !== undefined ? { execCwd: params.execCwd } : {}),
+            ...(cliInitial
+              ? {
+                  executionSelection: {
+                    model: { provider: cliInitial.cliBackendId, id: cliInitial.model },
+                    executor: { kind: "cli" as const, id: cliInitial.cliBackendId },
+                  },
+                }
+              : {}),
             initialEntry: {
               color: params.initialEntry.color,
               ...(harnessInitial ? { agentHarnessId: harnessInitial.agentHarnessId } : {}),
               ...(cliInitial
                 ? {
                     pluginOwnerId: cliInitial.pluginOwnerId,
-                    providerOverride: cliInitial.cliBackendId,
-                    modelOverride: cliInitial.model,
-                    modelOverrideRouteResolution: "resolved",
                     cliSessionBindings: {
                       [cliInitial.cliBackendId]: cliInitial.cliSessionBinding,
                     },

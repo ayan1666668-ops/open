@@ -232,19 +232,6 @@ export function resolveFallbackOriginModel(params: {
   if (params.runtimeModelSelection) {
     return { ...params.runtimeModelSelection, persistedAutoFallback: false };
   }
-  const entry = params.fallbackStateEntry;
-  const isAutoFallbackOverride =
-    entry?.modelOverrideSource === "auto" ||
-    (entry !== undefined &&
-      entry.modelOverrideSource === undefined &&
-      hasSessionAutoModelFallbackProvenance(entry));
-  if (isAutoFallbackOverride && entry !== undefined) {
-    const originProvider = normalizeOptionalString(entry.modelOverrideFallbackOriginProvider);
-    const originModel = normalizeOptionalString(entry.modelOverrideFallbackOriginModel);
-    if (originProvider && originModel) {
-      return { provider: originProvider, model: originModel, persistedAutoFallback: true };
-    }
-  }
   return {
     provider: params.run.provider,
     model: params.run.model,

@@ -10,6 +10,7 @@ import type { SessionEntry } from "../config/sessions.js";
 import { sessionEntryForkedFromParent } from "../config/sessions/session-entry-lineage.js";
 import type { SessionActor } from "../config/sessions/session-entry-provenance.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
 
 /** Converts a persisted session entry into the shared display row shape. */
 export function toSessionDisplayRow(key: string, entry: SessionEntry) {
@@ -53,8 +54,7 @@ export function toSessionDisplayRow(key: string, entry: SessionEntry) {
     totalTokensVersion: entry?.totalTokensVersion,
     model: entry?.model,
     modelProvider: entry?.modelProvider,
-    providerOverride: entry?.providerOverride,
-    modelOverride: entry?.modelOverride,
+    executionSelection: getSessionExecutionSelection(entry),
     contextTokens: entry?.contextTokens,
   };
 }

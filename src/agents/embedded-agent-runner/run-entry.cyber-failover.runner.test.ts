@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { isProfileInCooldown, markAuthProfileFailure } from "../auth-profiles/usage.js";
 import { FailoverError } from "../failover-error.js";
@@ -115,11 +116,14 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
         harness: {
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
-          resolveRuntimeOverride: () => undefined,
+          prepareExecutionSelection: async (provider: string, model: string) => ({
+            model: { provider, id: model },
+            executor: { kind: "harness" as const, id: "openclaw" },
+          }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => delivered },
         sessionOverride: { kind: "preserve" },
-        runCandidate: async (provider, model) => {
+        runCandidate: async ({ model: { provider, id: model } }) => {
           if (model === "gpt-daybreak-blue-latest") {
             delivered = true;
             throw failure;
@@ -168,8 +172,7 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
       let primaryAttempts = 0;
 
       const runCandidate = async (
-        provider: string,
-        model: string,
+        { model: { provider, id: model } }: ModelExecutionSelection,
         options: { authProfileFailurePolicy?: AuthProfileFailurePolicy },
       ) => {
         authFailurePolicies.push(options.authProfileFailurePolicy);
@@ -206,7 +209,10 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
         harness: {
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
-          resolveRuntimeOverride: () => undefined,
+          prepareExecutionSelection: async (provider: string, model: string) => ({
+            model: { provider, id: model },
+            executor: { kind: "harness" as const, id: "openclaw" },
+          }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },
@@ -228,7 +234,10 @@ describe("runEmbeddedAgentEntry cyber failover against the real fallback runner"
         harness: {
           workspaceDir: "/tmp/workspace",
           preparation: { kind: "direct" as const },
-          resolveRuntimeOverride: () => undefined,
+          prepareExecutionSelection: async (provider: string, model: string) => ({
+            model: { provider, id: model },
+            executor: { kind: "harness" as const, id: "openclaw" },
+          }),
         },
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },

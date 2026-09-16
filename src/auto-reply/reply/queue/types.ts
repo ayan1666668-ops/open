@@ -1,7 +1,6 @@
 import type { FastMode } from "@openclaw/normalization-core/string-coerce";
 // Shared queue type contracts for admission, drain, and fallback handling.
 import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
-import type { AutoFallbackPrimaryProbe } from "../../../agents/agent-scope.js";
 import type { ExecToolDefaults } from "../../../agents/bash-tools.js";
 import type { CliSessionBindingFacts } from "../../../agents/cli-runner/types.js";
 import type {
@@ -237,7 +236,6 @@ export type FollowupRun = {
     hasAutoFallbackProvenance?: boolean;
     /** Session belongs to a spawn-owned child; applies the subagent fallback ladder. */
     subagentSpawnLineage?: boolean;
-    autoFallbackPrimaryProbe?: AutoFallbackPrimaryProbe;
     authProfileId?: string;
     authProfileIdSource?: "auto" | "user";
     /** Prepared model metadata reused when fallbacks revalidate the immutable thinking request. */

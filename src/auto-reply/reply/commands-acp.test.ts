@@ -9,7 +9,9 @@ import { resolveSessionStorePathForAcp } from "../../acp/runtime/session-meta-st
 import { configureExecutionIdentityAdmissionSink } from "../../audit/execution-identity-admission.js";
 import { configureChannelAdmissionEvidenceCollection } from "../../channels/message-access/admission-evidence.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import type { SessionAcpMeta, SessionEntry } from "../../config/sessions/types.js";
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createChannelTestPluginBase,
@@ -1041,10 +1043,10 @@ describe("/acp command", () => {
           meta,
         };
       },
-      resolveSession: (input: { sessionKey: string }) => {
+      resolveSession: (input: { sessionKey: string; agentId?: string }) => {
         const entry = hoisted.readAcpSessionEntryMock({
           sessionKey: input.sessionKey,
-        }) as { acp?: Record<string, unknown> } | null;
+        }) as { acp?: SessionAcpMeta; entry?: SessionEntry } | null;
         const meta =
           entry?.acp ??
           ({
@@ -1058,6 +1060,8 @@ describe("/acp command", () => {
         return {
           kind: "ready" as const,
           sessionKey: input.sessionKey,
+          agentId: input.agentId ?? "codex",
+          entry: entry?.entry,
           meta,
         };
       },
@@ -1107,6 +1111,27 @@ describe("/acp command", () => {
       setSessionRuntimeMode: async (input: { sessionKey: string; runtimeMode: string }) => {
         const options = await hoisted.setModeMock(input);
         return options ?? { runtimeMode: input.runtimeMode };
+      },
+      setExecutionSelection: async (input: {
+        cfg: OpenClawConfig;
+        sessionKey: string;
+        agentId?: string;
+        selection: AcpExecutionSelection;
+      }) => {
+        const { selection, ...target } = input;
+        const options = await hoisted.setConfigOptionMock({
+          ...target,
+          key: "model",
+          value: selection.model?.id,
+        });
+        return {
+          ...selection,
+          model: options
+            ? typeof options.model === "string"
+              ? { id: options.model }
+              : null
+            : selection.model,
+        };
       },
       setSessionConfigOption: async (input: { key: string; value: string }) => {
         const options = await hoisted.setConfigOptionMock(input);
@@ -2366,12 +2391,14 @@ describe("/acp command", () => {
   it("updates ACP config options and keeps cwd local when using /acp set", async () => {
     mockBoundThreadSession();
 
-    const setModel = await runThreadAcpCommand("/acp set model gpt-5.4", baseCfg);
+    const setModel = await runThreadAcpCommand("/acp set model qa-next", baseCfg);
     expectMockCallFields(hoisted.setConfigOptionMock, {
       key: "model",
-      value: "gpt-5.4",
+      value: "qa-next",
     });
-    expect(setModel?.reply?.text).toContain("Updated ACP config option");
+    expect(setModel?.reply?.text).toBe(
+      "Model changed to the selected model. Still using the selected app.",
+    );
 
     hoisted.setConfigOptionMock.mockClear();
     const setCwd = await runThreadAcpCommand("/acp set cwd /tmp/worktree", baseCfg);
@@ -2414,11 +2441,11 @@ describe("/acp command", () => {
     },
     {
       action: "model",
-      command: "/acp model openai/gpt-5.5",
-      effectiveOptions: { model: "openai/gpt-5.5" },
+      command: "/acp model qa-next",
+      effectiveOptions: { model: "qa-accepted" },
       managerMock: hoisted.setConfigOptionMock,
-      managerInput: { key: "model", value: "openai/gpt-5.5" },
-      expectedText: `✅ Updated ACP model for ${defaultAcpSessionKey}: openai/gpt-5.5. Effective options: model=openai/gpt-5.5`,
+      managerInput: { key: "model", value: "qa-next" },
+      expectedText: "Model changed to the selected model. Still using the selected app.",
     },
   ])("updates ACP $action through the dedicated runtime-option action", async (testCase) => {
     mockBoundThreadSession();
@@ -2453,7 +2480,7 @@ describe("/acp command", () => {
     const result = await runThreadAcpCommand(command, baseCfg);
 
     expect(result?.reply?.text).toBe(
-      `ACP error (ACP_TURN_FAILED): Could not update ACP ${label}.\nnext: Retry, or use \`/acp cancel\` and send the message again.`,
+      `ACP error (ACP_TURN_FAILED): ${label === "model" ? "Could not change models." : `Could not update ACP ${label}.`}\nnext: Retry, or use \`/acp cancel\` and send the message again.`,
     );
   });
 

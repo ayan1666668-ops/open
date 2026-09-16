@@ -71,10 +71,7 @@ export function resolveEffectiveAgentRuntime(
     modelId: string;
     modelApi?: string | null;
     modelBaseUrl?: unknown;
-    sessionEntry?: Pick<
-      SessionEntry,
-      "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked"
-    >;
+    sessionEntry?: Partial<SessionEntry>;
   } & AgentRuntimePolicyScope,
 ): string {
   const sessionRuntime = resolveSessionRuntimeOverrideForProvider({
@@ -119,7 +116,7 @@ export function resolveCandidateThinkingLevel(params: {
   catalog?: ThinkingCatalogEntry[];
   agentId?: string;
   sessionKey?: string;
-  sessionEntry?: Pick<SessionEntry, "agentHarnessId" | "agentRuntimeOverride">;
+  sessionEntry?: Partial<SessionEntry>;
   /** Concrete harness already selected by the caller, when selection is pinned. */
   agentRuntime?: string | null;
 }): ThinkLevel | undefined {

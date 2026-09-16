@@ -7,12 +7,7 @@ import { formatThinkingLevels } from "../../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { splitTrailingAuthProfile } from "../../model-ref-profile.js";
-import {
-  type ModelRef,
-  resolveDefaultModelForAgent,
-  resolveSubagentConfiguredModelSelection,
-  resolveSubagentSpawnModelSelection,
-} from "../../model-selection.js";
+import { type ModelRef, resolveSubagentSpawnModelSelection } from "../../model-selection.js";
 import { resolveSubagentThinkingOverride } from "./subagent-spawn-thinking.js";
 
 /** Splits a provider/model ref while preserving model-only refs. */
@@ -93,29 +88,6 @@ export function resolveSubagentModelAndThinkingPlan(params: {
     };
   }
 
-  const modelOverrideSource = params.modelOverride?.trim() ? "user" : "auto";
-  const hasSelectedAutoModel =
-    modelOverrideSource === "auto" &&
-    Boolean(
-      params.inheritedModel ??
-      resolveSubagentConfiguredModelSelection({
-        cfg: params.cfg,
-        agentId: params.targetAgentId,
-      }),
-    );
-  const configuredModelRef = hasSelectedAutoModel ? splitModelRef(resolvedModel) : undefined;
-  const modelOrigin = configuredModelRef?.model
-    ? {
-        provider:
-          configuredModelRef.provider ??
-          resolveDefaultModelForAgent({
-            cfg: params.cfg,
-            agentId: params.targetAgentId,
-          }).provider,
-        model: configuredModelRef.model,
-      }
-    : undefined;
-
   return {
     status: "ok" as const,
     resolvedModel,
@@ -123,20 +95,7 @@ export function resolveSubagentModelAndThinkingPlan(params: {
     modelApplied: Boolean(resolvedModel),
     thinkingOverride: thinkingPlan.thinkingOverride,
     initialSessionPatch: {
-      ...(resolvedModel
-        ? {
-            model: resolvedModel,
-            modelOverrideSource,
-            ...(modelOrigin
-              ? {
-                  // Selected child models are session overrides, not legacy fallback residue.
-                  // Self-origin metadata keeps cleanup from discarding them before first use.
-                  modelOverrideFallbackOriginProvider: modelOrigin.provider,
-                  modelOverrideFallbackOriginModel: modelOrigin.model,
-                }
-              : {}),
-          }
-        : {}),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(authProfileId
         ? {
             authProfileOverride: authProfileId,

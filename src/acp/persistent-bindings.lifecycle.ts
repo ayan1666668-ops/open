@@ -6,6 +6,10 @@ import { logVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { getAcpSessionManager } from "./control-plane/manager.js";
 import {
+  requireAcpExecutionSelection,
+  requireReadySessionMeta,
+} from "./control-plane/manager.utils.js";
+import {
   buildConfiguredAcpSessionKey,
   normalizeText,
   type ConfiguredAcpBindingSpec,
@@ -25,7 +29,9 @@ function sessionStructurallyMatchesConfiguredBinding(params: {
   const desiredAgent = normalizeLowercaseStringOrEmpty(
     params.spec.acpAgentId ?? params.spec.agentId,
   );
-  const currentAgent = normalizeLowercaseStringOrEmpty(params.meta.agent);
+  const currentAgent = normalizeLowercaseStringOrEmpty(
+    requireAcpExecutionSelection(params.meta).executor.agent,
+  );
   if (!currentAgent || currentAgent !== desiredAgent) {
     return false;
   }
@@ -37,7 +43,7 @@ function sessionStructurallyMatchesConfiguredBinding(params: {
   const desiredBackend =
     normalizeText(params.spec.backend) ?? normalizeText(params.cfg.acp?.backend) ?? "";
   if (desiredBackend) {
-    const currentBackend = (params.meta.backend ?? "").trim();
+    const currentBackend = requireAcpExecutionSelection(params.meta).executor.backend;
     if (!currentBackend || currentBackend !== desiredBackend) {
       return false;
     }
@@ -70,6 +76,9 @@ export async function ensureConfiguredAcpBindingSession(params: {
       agentId: params.spec.agentId,
       sessionKey,
     });
+    if (resolution.kind === "ready") {
+      requireReadySessionMeta(resolution);
+    }
     if (
       resolution.kind === "ready" &&
       sessionStructurallyMatchesConfiguredBinding({
@@ -78,10 +87,9 @@ export async function ensureConfiguredAcpBindingSession(params: {
         meta: resolution.meta,
       })
     ) {
-      // Apply before persisting: rejected controls must not overwrite accepted options.
-      // Model precedes effort; omission retains the selection because ACP has no unset.
+      // Configured model preferences initialize once; the accepted model survives later ensures.
       let currentOptions = resolution.meta.runtimeOptions;
-      for (const key of ["model", "thinking"] as const) {
+      for (const key of ["thinking"] as const) {
         const value = runtimeOptions[key];
         if (value !== undefined && normalizeText(currentOptions?.[key]) !== value) {
           currentOptions = await acpManager.setSessionConfigOption({

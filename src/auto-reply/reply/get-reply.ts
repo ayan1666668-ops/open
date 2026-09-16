@@ -3,8 +3,6 @@ import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isImplicitAcpWorkspaceCandidate } from "../../agents/agent-scope-config.js";
 import {
-  hasLegacyAutoFallbackWithoutOrigin,
-  resolveAutoFallbackPrimaryProbe,
   resolveAgentConfig,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -39,6 +37,8 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ApplyMediaUnderstandingResult } from "../../media-understanding/apply.js";
 import type { ExtractedFileImage } from "../../media-understanding/extracted-file-images.js";
 import { hasStagedMediaFacts, normalizeMediaFacts } from "../../media/media-facts.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   isModelSelectionLocked,
@@ -869,62 +869,16 @@ export async function getReplyFromConfig(
       : null;
   const primaryProvider = resolvedChannelModelOverride?.ref.provider ?? defaultProvider;
   const primaryModel = resolvedChannelModelOverride?.ref.model ?? defaultModel;
-  const hasSessionModelOverride = Boolean(
-    normalizeOptionalString(sessionEntry.modelOverride) ||
-    normalizeOptionalString(sessionEntry.providerOverride),
-  );
-  const storedModelOverride = resolveStoredModelOverride({
-    sessionEntry,
-    sessionStore,
-    sessionKey,
-    parentSessionKey:
-      sessionEntry.parentSessionKey ??
-      sessionCtx.ModelParentSessionKey ??
-      sessionCtx.ParentSessionKey,
-    defaultProvider,
-  });
-  const staleHeartbeatAutoFallbackOverride =
-    !sessionModelSelectionLocked &&
-    isStaleHeartbeatAutoFallbackOverride({
-      isHeartbeat: opts?.isHeartbeat === true,
-      hasResolvedHeartbeatModelOverride,
-      sessionEntry,
-      storedOverride: storedModelOverride,
-      defaultProvider,
-      defaultModel,
-      primaryProvider,
-      primaryModel,
-    });
-  const staleLegacyAutoFallbackWithoutOrigin =
-    !sessionModelSelectionLocked &&
-    storedModelOverride?.source === "session" &&
-    hasLegacyAutoFallbackWithoutOrigin(sessionEntry);
+  const acceptedSelection = getSessionExecutionSelection(sessionEntry, cfg);
+  const hasEffectiveStoredModelOverride = acceptedSelection !== undefined;
   if (
-    storedModelOverride?.model &&
     !hasResolvedHeartbeatModelOverride &&
-    !staleHeartbeatAutoFallbackOverride &&
-    !staleLegacyAutoFallbackWithoutOrigin
+    acceptedSelection &&
+    !isAcpExecutionSelection(acceptedSelection)
   ) {
-    provider = storedModelOverride.provider ?? defaultProvider;
-    model = storedModelOverride.model;
-  }
-  const canApplyAutoFallbackPrimaryProbe =
-    !sessionModelSelectionLocked &&
-    !hasResolvedHeartbeatModelOverride &&
-    !staleHeartbeatAutoFallbackOverride;
-  const autoFallbackPrimaryProbe = canApplyAutoFallbackPrimaryProbe
-    ? resolveAutoFallbackPrimaryProbe({
-        entry: sessionEntry,
-        sessionKey,
-        primaryProvider,
-        primaryModel,
-      })
-    : undefined;
-  const hasEffectiveStoredModelOverride =
-    Boolean(storedModelOverride || hasSessionModelOverride) &&
-    !staleHeartbeatAutoFallbackOverride &&
-    !staleLegacyAutoFallbackWithoutOrigin;
-  if (
+    provider = acceptedSelection.model.provider;
+    model = acceptedSelection.model.id;
+  } else if (
     !hasResolvedHeartbeatModelOverride &&
     !hasEffectiveStoredModelOverride &&
     resolvedChannelModelOverride
@@ -1109,83 +1063,10 @@ export async function getReplyFromConfig(
   const queueModeOverride = inlineActionResult.queueModeOverride;
   const preparedReplyOpts = withExtractedFileImages(resolvedOpts, extractedFileImages);
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
-  const runAutoFallbackPrimaryProbe = directives.hasModelDirective
-    ? undefined
-    : autoFallbackPrimaryProbe;
-  const runProvider = runAutoFallbackPrimaryProbe?.provider ?? provider;
-  const runModel = runAutoFallbackPrimaryProbe?.model ?? model;
-  let runModelState = modelState;
-  let resolveRunModelLevels = resolveModelLevels;
-  if (runAutoFallbackPrimaryProbe) {
-    try {
-      runModelState = await createModelSelectionState({
-        cfg,
-        agentId,
-        agentCfg,
-        sessionEntry,
-        sessionStore,
-        sessionKey,
-        parentSessionKey:
-          sessionEntry.parentSessionKey ??
-          sessionCtx.ModelParentSessionKey ??
-          sessionCtx.ParentSessionKey,
-        storePath,
-        defaultProvider,
-        defaultModel,
-        primaryProvider,
-        primaryModel,
-        provider: runProvider,
-        model: runModel,
-        hasModelDirective: false,
-        skipStoredModelOverride: true,
-        hasResolvedHeartbeatModelOverride,
-        isHeartbeat: opts?.isHeartbeat === true,
-        preparedModelCatalog,
-      });
-    } catch (error) {
-      if (
-        !(error instanceof ModelSelectionLockedError) &&
-        !isSessionWorkStartInvalidatedError(error)
-      ) {
-        throw error;
-      }
-      typing.cleanup();
-      if (error instanceof ModelSelectionLockedError) {
-        recordReplyPreRunRejection(resolveReplyOperationRunState(opts), "model-selection-locked");
-      }
-      return { text: error.message };
-    }
-    const thinkingLevelOverride = normalizeThinkLevel(resolvedOpts?.thinkingLevelOverride);
-    const hasTurnOrSessionThinkLevel =
-      thinkingLevelOverride !== undefined ||
-      directives.thinkLevel !== undefined ||
-      (!directives.clearThinkLevel && sessionEntry.thinkingLevel !== undefined);
-    const hasExplicitThinkLevel =
-      hasTurnOrSessionThinkLevel ||
-      configuredThinkingDefault !== undefined ||
-      runModelState.hasConfiguredThinkingDefault === true;
-    const rawSessionReasoningLevel = sessionEntry.reasoningLevel;
-    const hasExplicitReasoningLevel =
-      directives.reasoningLevel !== undefined ||
-      rawSessionReasoningLevel != null ||
-      agentEntry?.reasoningDefault != null ||
-      agentCfg?.reasoningDefault != null;
-    resolveRunModelLevels = createReplyModelLevelResolver({
-      modelState: runModelState,
-      selection: {
-        provider: runModelState.provider,
-        model: runModelState.model,
-        thinkLevel: hasTurnOrSessionThinkLevel
-          ? (await resolveModelLevels()).resolvedThinkLevel
-          : undefined,
-        thinkingExplicit: hasExplicitThinkLevel,
-        reasoningLevel: hasExplicitReasoningLevel
-          ? (await resolveModelLevels()).resolvedReasoningLevel
-          : "off",
-        reasoningExplicit: hasExplicitReasoningLevel,
-      },
-    });
-  }
+  const runProvider = provider;
+  const runModel = model;
+  const runModelState = modelState;
+  const resolveRunModelLevels = resolveModelLevels;
   const { resolvedThinkLevel, resolvedReasoningLevel } = await resolveRunModelLevels();
 
   let stagedAttachmentPaths = hasStagedMediaFacts(finalized.media)
@@ -1302,7 +1183,6 @@ export async function getReplyFromConfig(
       workspaceDir,
       abortedLastRun,
       explicitSkillSelections,
-      autoFallbackPrimaryProbe: runAutoFallbackPrimaryProbe,
     }),
   );
   if (profilerEnabled) {

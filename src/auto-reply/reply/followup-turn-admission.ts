@@ -12,7 +12,6 @@ import { readPendingUserTurnTranscriptAdmission } from "../../sessions/user-turn
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
-import { resolveRunAfterAutoFallbackPrimaryProbeRecheck } from "./agent-runner-auto-fallback.js";
 import { resolveAdmittedRunSessionFile } from "./agent-runner-core.js";
 import { buildPreflightCompactionFailureText } from "./agent-runner-failure-reply.js";
 import { runSessionCompactionIfNeeded } from "./agent-runner-memory.js";
@@ -180,7 +179,6 @@ export async function admitFollowupTurn(params: {
         sessionId: operation.sessionId,
         sessionFile: resolveRunSessionFile(run, operation.sessionId),
         cliSessionBindingFacts: undefined,
-        autoFallbackPrimaryProbe: undefined,
         modelSelectionLocked: false,
       };
     }
@@ -242,16 +240,10 @@ export async function admitFollowupTurn(params: {
         ...(lifecycleRevisionChanged
           ? {
               cliSessionBindingFacts: undefined,
-              autoFallbackPrimaryProbe: undefined,
             }
           : {}),
       };
     }
-    run = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
-      run,
-      entry: activeEntry,
-      sessionKey: replySessionKey,
-    });
     const queued: FollowupRun = { ...params.queued, run };
     const sessionEntryHandle = createReplySessionEntryHandle({
       sessionEntry: activeEntry,
@@ -331,7 +323,6 @@ export async function admitFollowupTurn(params: {
             sessionId: entry.sessionId,
             sessionFile: resolveRunSessionFile(turn.queued.run, entry.sessionId),
             cliSessionBindingFacts: undefined,
-            autoFallbackPrimaryProbe: undefined,
             modelSelectionLocked: entry.modelSelectionLocked === true,
           },
         };

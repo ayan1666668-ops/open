@@ -110,11 +110,15 @@ describe("markCronSessionPreRun", () => {
 });
 
 describe("syncCronSessionLiveSelection", () => {
-  it("clears model-derived state when only the agent runtime changes", () => {
+  it("records a turn-local executor without changing the accepted selection", () => {
     const entry = makeSessionEntry({
-      modelProvider: "openai",
-      model: "gpt-5.6-luna",
+      modelProvider: "fixture",
+      model: "first",
+      providerOverride: "fixture",
+      modelOverride: "first",
       agentRuntimeOverride: "openclaw",
+      modelOverrideRouteResolution: "resolved",
+      agentHarnessId: "openclaw",
       contextTokens: 272_000,
       contextTokensSource: "runtime",
       contextBudgetStatus: {} as NonNullable<SessionEntry["contextBudgetStatus"]>,
@@ -123,13 +127,18 @@ describe("syncCronSessionLiveSelection", () => {
     syncCronSessionLiveSelection({
       entry,
       liveSelection: {
-        provider: "openai",
-        model: "gpt-5.6-luna",
-        agentRuntimeOverride: "codex",
+        selection: {
+          model: { provider: "fixture", id: "second" },
+          executor: { kind: "harness", id: "codex" },
+        },
       },
     });
 
-    expect(entry.agentRuntimeOverride).toBe("codex");
+    expect(entry.agentRuntimeOverride).toBe("openclaw");
+    expect(entry.providerOverride).toBe("fixture");
+    expect(entry.modelOverride).toBe("first");
+    expect(entry.agentHarnessId).toBe("codex");
+    expect(entry.model).toBe("second");
     expect(entry.contextTokens).toBeUndefined();
     expect(entry.contextTokensSource).toBeUndefined();
     expect(entry.contextBudgetStatus).toBeUndefined();
@@ -144,8 +153,10 @@ describe("syncCronSessionLiveSelection", () => {
     syncCronSessionLiveSelection({
       entry,
       liveSelection: {
-        provider: "openai",
-        model: "gpt-5.4",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.4" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
         authProfileId: "openai:work",
       },
     });
@@ -161,8 +172,10 @@ describe("syncCronSessionLiveSelection", () => {
     syncCronSessionLiveSelection({
       entry,
       liveSelection: {
-        provider: "openai",
-        model: "gpt-5.4",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.4" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
         authProfileId: "openai:fallback",
         authProfileIdSource: "auto",
       },
@@ -183,8 +196,10 @@ describe("syncCronSessionLiveSelection", () => {
     syncCronSessionLiveSelection({
       entry,
       liveSelection: {
-        provider: "openai",
-        model: "gpt-5.4",
+        selection: {
+          model: { provider: "openai", id: "gpt-5.4" },
+          executor: { kind: "harness", id: "openclaw" },
+        },
         authProfileId: "openai:fallback",
       },
     });

@@ -8,17 +8,11 @@ const state = vi.hoisted(() => ({
   buildPreflightFailureText: vi.fn(),
   loadEntry: vi.fn(),
   preflight: vi.fn(),
-  recheckFallbackProbe: vi.fn(),
   refreshGoal: vi.fn(),
   resolveConfig: vi.fn(),
   resolveSendPolicy: vi.fn(),
   sendPolicy: "allow" as "allow" | "deny",
   shouldNotifyCompaction: false,
-}));
-
-vi.mock("./agent-runner-auto-fallback.js", () => ({
-  resolveRunAfterAutoFallbackPrimaryProbeRecheck: (...args: unknown[]) =>
-    state.recheckFallbackProbe(...args),
 }));
 
 vi.mock("./agent-runner-memory.js", () => ({
@@ -117,7 +111,6 @@ beforeEach(() => {
   state.resolveConfig.mockImplementation(async (config) => config);
   state.buildPreflightFailureText.mockReturnValue("preflight failed");
   state.preflight.mockImplementation(async ({ sessionEntry }) => sessionEntry);
-  state.recheckFallbackProbe.mockImplementation(({ run }) => run);
   state.admitLifecycle.mockResolvedValue(undefined);
   state.refreshGoal.mockImplementation((context) => context);
 });
@@ -272,7 +265,6 @@ describe("admitFollowupTurn", () => {
     state.loadEntry.mockReturnValue(admittedEntry);
     const queued = createRun();
     queued.run.cliSessionBindingFacts = { provider: "claude-cli" } as never;
-    queued.run.autoFallbackPrimaryProbe = { provider: "anthropic", model: "claude" } as never;
 
     const result = await admitFollowupTurn({
       queued,
@@ -282,7 +274,6 @@ describe("admitFollowupTurn", () => {
     expect(result.kind).toBe("admitted");
     if (result.kind === "admitted") {
       expect(result.turn.queued.run.cliSessionBindingFacts).toBeUndefined();
-      expect(result.turn.queued.run.autoFallbackPrimaryProbe).toBeUndefined();
     }
   });
 
@@ -515,9 +506,6 @@ describe("admitFollowupTurn", () => {
       expect(sessionStore.main).toBe(freshEntry);
     }
     expect(state.refreshGoal).toHaveBeenCalledWith(undefined, freshEntry);
-    expect(state.recheckFallbackProbe).toHaveBeenCalledWith(
-      expect.objectContaining({ entry: freshEntry, sessionKey: "main" }),
-    );
   });
 
   it("adopts a session generation rotated by owned preflight compaction", async () => {
@@ -534,7 +522,6 @@ describe("admitFollowupTurn", () => {
 
     const queued = createRun();
     queued.run.cliSessionBindingFacts = { provider: "claude-cli" } as never;
-    queued.run.autoFallbackPrimaryProbe = { provider: "anthropic", model: "claude" } as never;
     queued.run.modelSelectionLocked = true;
     const result = await admitFollowupTurn({
       queued,
@@ -550,7 +537,6 @@ describe("admitFollowupTurn", () => {
       });
       expect(result.turn.queued.run.sessionFile).toBe("main");
       expect(result.turn.queued.run.cliSessionBindingFacts).toBeUndefined();
-      expect(result.turn.queued.run.autoFallbackPrimaryProbe).toBeUndefined();
       expect(result.turn.preflightCompactionApplied).toBe(true);
     }
     expect(operation.updateSessionId).toHaveBeenCalledWith("compacted-session");

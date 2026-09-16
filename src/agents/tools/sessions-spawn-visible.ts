@@ -278,13 +278,9 @@ export async function maybeSpawnVisibleSession(params: {
   const resolvedModelRef = authProfileOverride
     ? `${resolvedModel}@${authProfileOverride}`
     : resolvedModel;
-  const spawnModelAutoSelection =
-    initialSessionPatch.modelOverrideSource === "auto"
-      ? {
-          model: resolvedModelRef,
-          hasFallbackOrigin: initialSessionPatch.modelOverrideFallbackOriginModel !== undefined,
-        }
-      : undefined;
+  const spawnModelAutoSelection = !modelOverride
+    ? { model: resolvedModelRef, hasFallbackOrigin: true }
+    : undefined;
   const runTimeoutSeconds = resolveConfiguredSubagentRunTimeoutSeconds({
     cfg,
     runTimeoutSeconds: params.runTimeoutSeconds,

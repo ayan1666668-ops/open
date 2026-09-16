@@ -7,6 +7,7 @@ import {
   normalizeOptionalString as normalizeText,
 } from "@openclaw/normalization-core/string-coerce";
 import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "../../config/sessions/types.js";
+import { readAcpRuntimeOptions } from "../../model-picker/execution-selection-codec.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 
 export { normalizeOptionalString as normalizeText } from "@openclaw/normalization-core/string-coerce";
@@ -235,7 +236,11 @@ export function validateRuntimeOptionPatch(
       const extras: Record<string, string> = {};
       for (const [entryKey, entryValue] of entries) {
         const { key, value } = validateRuntimeConfigOptionInput(entryKey, entryValue);
-        extras[key] = value;
+        if (normalizeLowercaseStringOrEmpty(key) === "model") {
+          next.model = validateRuntimeModelInput(value);
+        } else {
+          extras[key] = value;
+        }
       }
       next.backendExtras = Object.keys(extras).length > 0 ? extras : undefined;
     }
@@ -296,13 +301,25 @@ export function isThinkingConfigKey(key: string): boolean {
   );
 }
 
-/** Reconcile only selected thinking; backend defaults must not become new session overrides. */
+/** Backend defaults remain unselected; accepted selections own subsequent replay. */
 export function reconcileAcceptedRuntimeOptions(
   options: AcpSessionRuntimeOptions,
   result: AcpRuntimeConfigOptionResult | void,
   pendingThinking?: string,
 ): AcpSessionRuntimeOptions {
-  if (!result || !options.thinking) {
+  if (!result) {
+    return options;
+  }
+  const model = result.configOptions.find(
+    (option) => option.category === "model" || option.id === "model",
+  );
+  if (options.model) {
+    options = normalizeRuntimeOptions({
+      ...options,
+      model: typeof model?.currentValue === "string" ? model.currentValue : undefined,
+    });
+  }
+  if (!options.thinking) {
     return options;
   }
   const thinking = result.configOptions.find(
@@ -327,7 +344,7 @@ export function reconcileAcceptedRuntimeOptions(
 }
 
 export function resolveRuntimeOptionsFromMeta(meta: SessionAcpMeta): AcpSessionRuntimeOptions {
-  const normalized = normalizeRuntimeOptions(meta.runtimeOptions);
+  const normalized = normalizeRuntimeOptions(readAcpRuntimeOptions(meta));
   if (normalized.cwd || !meta.cwd) {
     return normalized;
   }
@@ -391,7 +408,10 @@ export function buildRuntimeConfigOptionPairs(
   }
   for (const [key, value] of Object.entries(normalized.backendExtras ?? {})) {
     const wireKey = resolveRuntimeConfigOptionKey(key, advertisedConfigOptionKeys);
-    if (!pairs.has(wireKey)) {
+    if (
+      wireKey !== resolveRuntimeConfigOptionKey("model", advertisedConfigOptionKeys) &&
+      !pairs.has(wireKey)
+    ) {
       pairs.set(wireKey, value);
     }
   }

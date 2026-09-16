@@ -9,20 +9,22 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import {
   inferUniqueProviderFromConfiguredModels,
   isCliProvider,
-  normalizeStoredOverrideModel,
   parseModelRef,
   resolvePersistedSelectedModelRef,
   type CliProviderClassifier,
 } from "../agents/model-selection.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  isAcpExecutionSelection,
+  type ExecutionSelection,
+} from "../model-picker/execution-selection.js";
 
 type SessionDisplayModelRow = {
   key: string;
   model?: string;
   modelProvider?: string;
-  modelOverride?: string;
-  providerOverride?: string;
+  executionSelection?: ExecutionSelection;
 };
 
 type SessionDisplayDefaults = {
@@ -123,23 +125,21 @@ export function resolveSessionDisplayModelRef(
   const agentId =
     ownerAgentId ?? (row.key.startsWith("agent:") ? row.key.split(":")[1] : undefined);
   const defaultRef = resolveDefaultModelRef(cfg, agentId);
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: row.providerOverride,
-    modelOverride: row.modelOverride,
-  });
+  if (row.executionSelection && !isAcpExecutionSelection(row.executionSelection)) {
+    return {
+      provider: row.executionSelection.model.provider,
+      model: row.executionSelection.model.id,
+    };
+  }
   const persistedRef = resolvePersistedSelectedModelRef({
     defaultProvider: defaultRef.provider,
     runtimeProvider: row.modelProvider,
     runtimeModel: row.model,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
     allowManifestNormalization: false,
     allowPluginNormalization: false,
   });
   if (!persistedRef) {
     return defaultRef;
   }
-  return normalizedOverride.modelOverride
-    ? persistedRef
-    : normalizeCliRuntimeDisplayRef(cfg, agentId, persistedRef, defaultRef, classifyCliProvider);
+  return normalizeCliRuntimeDisplayRef(cfg, agentId, persistedRef, defaultRef, classifyCliProvider);
 }

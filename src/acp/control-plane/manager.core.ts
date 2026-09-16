@@ -8,6 +8,7 @@ import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js"
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { toErrorObject } from "../../infra/errors.js";
+import type { AcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isAcpSessionKey } from "../../sessions/session-key-utils.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 import {
@@ -53,10 +54,13 @@ import {
   type TurnLatencyStats,
 } from "./manager.types.js";
 import {
+  ACP_SELECTION_REPAIR_MESSAGE,
   resolveAcpSessionTarget,
   normalizeAcpErrorCode,
   acpSessionActorKey,
   resolveMissingMetaError,
+  requireAcpExecutionSelection,
+  requireReadySessionMeta,
 } from "./manager.utils.js";
 import {
   normalizeText,
@@ -249,6 +253,51 @@ export class AcpSessionManager {
         runtimeMode,
         ...this.runtimeOptionCommandServices(),
       });
+    });
+  }
+
+  async setExecutionSelection(params: {
+    cfg: OpenClawConfig;
+    sessionKey: string;
+    agentId?: string;
+    selection: AcpExecutionSelection;
+    commit?: (accepted: AcpExecutionSelection) => Promise<void>;
+  }): Promise<AcpExecutionSelection> {
+    const target = resolveAcpSessionTarget(params);
+    return await this.withSessionActor(target, async () => {
+      const current = requireAcpExecutionSelection(
+        requireReadySessionMeta(this.resolveSession({ ...params, ...target })),
+      );
+      if (
+        current.executor.backend !== params.selection.executor.backend ||
+        current.executor.agent !== params.selection.executor.agent
+      ) {
+        throw new AcpRuntimeError(
+          "ACP_BACKEND_UNSUPPORTED_CONTROL",
+          "Changing apps requires a new conversation.",
+        );
+      }
+      if (current.model?.id === params.selection.model?.id) {
+        await params.commit?.(current);
+        return current;
+      }
+      if (!params.selection.model) {
+        throw new AcpRuntimeError(
+          "ACP_BACKEND_UNSUPPORTED_CONTROL",
+          "This app cannot restore its default model in the current conversation. Select a model explicitly.",
+        );
+      }
+      await runSetManagerSessionConfigOption({
+        cfg: params.cfg,
+        ...target,
+        key: "model",
+        value: params.selection.model.id,
+        commitSelection: params.commit,
+        ...this.runtimeOptionCommandServices(),
+      });
+      return requireAcpExecutionSelection(
+        requireReadySessionMeta(this.resolveSession({ ...params, ...target })),
+      );
     });
   }
 
@@ -447,17 +496,13 @@ export class AcpSessionManager {
         if (!base) {
           return null;
         }
+        if (base.state === "error" && base.lastError === ACP_SELECTION_REPAIR_MESSAGE) {
+          return base;
+        }
         const next: SessionAcpMeta = {
-          backend: base.backend,
-          agent: base.agent,
-          runtimeSessionName: base.runtimeSessionName,
-          ...(base.identity ? { identity: base.identity } : {}),
-          mode: base.mode,
-          ...(base.runtimeOptions ? { runtimeOptions: base.runtimeOptions } : {}),
-          ...(base.cwd ? { cwd: base.cwd } : {}),
+          ...base,
           state: params.state,
           lastActivityAt: Date.now(),
-          ...(base.lastError ? { lastError: base.lastError } : {}),
         };
         const lastError = normalizeText(params.lastError);
         if (lastError) {

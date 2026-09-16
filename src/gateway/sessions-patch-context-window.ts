@@ -7,6 +7,8 @@ import {
   type ModelCatalogSnapshot,
 } from "../agents/model-catalog.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 
 export function* applySessionContextWindowPatch(params: {
   defaultModel: string;
@@ -48,8 +50,12 @@ export function* applySessionContextWindowPatch(params: {
     delete params.next.contextWindow;
     return { ok: true };
   }
-  const provider = params.next.providerOverride ?? params.defaultProvider;
-  const model = params.next.modelOverride ?? params.defaultModel;
+  const selection = getSessionExecutionSelection(params.next);
+  const provider =
+    selection && !isAcpExecutionSelection(selection)
+      ? selection.model.provider
+      : params.defaultProvider;
+  const model = selection?.model?.id ?? params.defaultModel;
   const catalog = yield* params.loadModelCatalog();
   const logical = catalog
     ? findModelCatalogEntry(catalog, { provider, modelId: model })

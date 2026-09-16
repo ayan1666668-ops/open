@@ -125,8 +125,4 @@ export type AgentFallbackCycleParams = {
   modelPatch: AgentFallbackModelPatch;
   shouldSurfaceToControlUi: boolean;
   commitTerminalOutcome: () => void;
-  clearRecoveredAutoFallbackPrimaryProbe: (candidate: {
-    provider: string;
-    model: string;
-  }) => Promise<void>;
 };

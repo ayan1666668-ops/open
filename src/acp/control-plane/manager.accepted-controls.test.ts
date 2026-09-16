@@ -1,5 +1,5 @@
 /** Accepted backend controls, not stale requests, own subsequent session replay. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AcpRuntimeError,
   AcpSessionManager,
@@ -11,14 +11,14 @@ import {
   type SessionAcpMeta,
 } from "./manager.test-helpers.js";
 
-const sessionKey = "agent:codex:acp:accepted-controls";
-const model = "openai/gpt-5.6-luna";
+const sessionKey = "agent:main:acp:accepted-controls";
+const model = "fixture/qa-model";
 
 function acceptedOptions(thinking?: string, choices = thinking ? [thinking] : [], grouped = false) {
   const options = choices.map((value) => ({ value, name: value }));
   return {
     configOptions: [
-      { id: "model", category: "model", currentValue: "gpt-5.6-luna" },
+      { id: "model", category: "model", currentValue: model },
       ...(thinking
         ? [
             {
@@ -34,10 +34,13 @@ function acceptedOptions(thinking?: string, choices = thinking ? [thinking] : []
   };
 }
 
-function setupSession(thinking?: string, initialModel = model) {
+function setupSession(thinking?: string, initialModel: string | null = model) {
   const runtimeState = createRuntime();
   let meta = readySessionMeta({
-    runtimeOptions: { model: initialModel, ...(thinking ? { thinking } : {}) },
+    runtimeOptions: {
+      ...(initialModel ? { model: initialModel } : {}),
+      ...(thinking ? { thinking } : {}),
+    },
   });
   hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
     id: "acpx",
@@ -46,6 +49,9 @@ function setupSession(thinking?: string, initialModel = model) {
   hoisted.readAcpSessionEntryMock.mockImplementation(() => ({
     sessionKey,
     storeSessionKey: sessionKey,
+    cfg: baseCfg,
+    agentId: "main",
+    entry: { sessionId: "accepted-controls", updatedAt: Date.now() },
     acp: meta,
   }));
   hoisted.upsertAcpSessionMetaMock.mockImplementation(
@@ -80,6 +86,189 @@ async function runTurn(manager: AcpSessionManager, requestId: string) {
 describe("AcpSessionManager accepted controls", () => {
   installAcpSessionManagerTestLifecycle();
 
+  it("returns the accepted model and uses it after reopening", async () => {
+    const state = setupSession();
+    state.setConfigOption.mockResolvedValue({
+      configOptions: [{ id: "model", category: "model", currentValue: "qa-normalized" }],
+    });
+    const selection = await state.manager.setExecutionSelection({
+      cfg: baseCfg,
+      sessionKey,
+      selection: {
+        executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
+        model: { id: "qa-requested" },
+      },
+    });
+    expect(selection.model).toEqual({ id: "qa-normalized" });
+    await runTurn(new AcpSessionManager(), "accepted-model-reopen");
+    expect(state.ensureSession.mock.lastCall?.[0].model).toBe("qa-normalized");
+  });
+
+  it("accepts an empty backend snapshot as its agent-managed default", async () => {
+    const state = setupSession();
+    state.setConfigOption.mockResolvedValue({ configOptions: [] });
+    const selection = await state.manager.setExecutionSelection({
+      cfg: baseCfg,
+      sessionKey,
+      selection: {
+        executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
+        model: { id: "qa-requested" },
+      },
+    });
+    expect(selection.model).toBeNull();
+    await runTurn(new AcpSessionManager(), "accepted-default-reopen");
+    expect(state.ensureSession.mock.lastCall?.[0].model).toBeUndefined();
+  });
+
+  it("keeps the next turn behind an outstanding control", async () => {
+    const state = setupSession();
+    let resolveControl: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      resolveControl = resolve;
+    });
+    state.setConfigOption.mockImplementationOnce(async () => await pending);
+    const change = state.manager.setSessionConfigOption({
+      cfg: baseCfg,
+      sessionKey,
+      key: "model",
+      value: "qa-next",
+    });
+    await vi.waitFor(() => expect(state.setConfigOption).toHaveBeenCalledOnce());
+    const next = runTurn(state.manager, "queued-after-control");
+    await expect(runTurn(new AcpSessionManager(), "reopened-during-control")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
+    expect(state.runTurn).not.toHaveBeenCalled();
+    resolveControl?.();
+    await change;
+    await next;
+    expect(state.runTurn).toHaveBeenCalledOnce();
+  });
+
+  it("pauses both this manager and a reopened manager after unconfirmed application", async () => {
+    const state = setupSession();
+    state.setConfigOption.mockRejectedValueOnce(new Error("control result lost"));
+    await expect(
+      state.manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey,
+        key: "model",
+        value: "qa-next",
+      }),
+    ).rejects.toThrow("control result lost");
+    expect(state.readMeta().runtimeOptions?.model).toBe(model);
+    await expect(runTurn(state.manager, "paused-current")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
+    await expect(runTurn(new AcpSessionManager(), "paused-reopened")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
+    expect(state.runTurn).not.toHaveBeenCalled();
+  });
+
+  it("restores the committed model when application succeeded but persistence failed", async () => {
+    const state = setupSession();
+    const persist = hoisted.upsertAcpSessionMetaMock.getMockImplementation()!;
+    hoisted.upsertAcpSessionMetaMock.mockImplementation(
+      async (params) =>
+        await persist({
+          ...params,
+          mutate: (current: SessionAcpMeta, entry: { acp: SessionAcpMeta }) => {
+            const next = params.mutate(current, entry);
+            if (next?.runtimeOptions?.model === "qa-next")
+              throw new Error("selection commit failed");
+            return next;
+          },
+        }),
+    );
+    await expect(
+      state.manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey,
+        key: "model",
+        value: "qa-next",
+      }),
+    ).rejects.toThrow("selection commit failed");
+    expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
+      "qa-next",
+      model,
+    ]);
+    expect(state.readMeta().runtimeOptions?.model).toBe(model);
+    expect(state.readMeta().state).toBe("idle");
+    await runTurn(new AcpSessionManager(), "restored-model-reopen");
+    expect(state.ensureSession.mock.lastCall?.[0].model).toBe(model);
+  });
+
+  it("restores the last committed pair when the caller transaction rejects", async () => {
+    const state = setupSession();
+    const commit = vi.fn(async () => {
+      throw new Error("caller transaction rejected");
+    });
+    await expect(
+      state.manager.setExecutionSelection({
+        cfg: baseCfg,
+        sessionKey,
+        selection: {
+          executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
+          model: { id: "qa-next" },
+        },
+        commit,
+      }),
+    ).rejects.toThrow("caller transaction rejected");
+    expect(commit).toHaveBeenCalledWith({
+      executor: { kind: "acp", backend: "acpx", agent: state.readMeta().agent },
+      model: { id: "qa-next" },
+    });
+    expect(state.setConfigOption.mock.calls.map(([input]) => input.value)).toEqual([
+      "qa-next",
+      model,
+    ]);
+    expect(state.readMeta().runtimeOptions?.model).toBe(model);
+    await runTurn(new AcpSessionManager(), "caller-rollback-reopen");
+    expect(state.ensureSession.mock.lastCall?.[0].model).toBe(model);
+  });
+
+  it("keeps the default selection paused when failed persistence cannot be restored", async () => {
+    const state = setupSession(undefined, null);
+    const persist = hoisted.upsertAcpSessionMetaMock.getMockImplementation()!;
+    hoisted.upsertAcpSessionMetaMock.mockImplementation(
+      async (params) =>
+        await persist({
+          ...params,
+          mutate: (current: SessionAcpMeta, entry: { acp: SessionAcpMeta }) => {
+            const next = params.mutate(current, entry);
+            if (next?.runtimeOptions?.model === "qa-next")
+              throw new Error("selection commit failed");
+            return next;
+          },
+        }),
+    );
+    await expect(
+      state.manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey,
+        key: "model",
+        value: "qa-next",
+      }),
+    ).rejects.toThrow("selection commit failed");
+    expect(state.readMeta().runtimeOptions?.model).toBeUndefined();
+    expect(state.setConfigOption).toHaveBeenCalledOnce();
+    await expect(runTurn(new AcpSessionManager(), "default-restore-unavailable")).rejects.toThrow(
+      "app did not confirm the last change",
+    );
+    expect(state.runTurn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a default reset before mutating a conversation with an explicit model", async () => {
+    const state = setupSession();
+    await expect(
+      state.manager.resetSessionRuntimeOptions({ cfg: baseCfg, sessionKey }),
+    ).rejects.toThrow("cannot restore its default model");
+    expect(state.setConfigOption).not.toHaveBeenCalled();
+    expect(state.close).not.toHaveBeenCalled();
+    expect(state.readMeta().runtimeOptions?.model).toBe(model);
+  });
+
   it.each([
     { name: "clamped thinking", selected: "high", accepted: "medium", expected: "medium" },
     {
@@ -95,7 +284,7 @@ describe("AcpSessionManager accepted controls", () => {
       expected: undefined,
     },
   ])("persists $name after an explicit model change", async ({ selected, accepted, expected }) => {
-    const state = setupSession(selected, "openai/gpt-5.6-sol");
+    const state = setupSession(selected, "fixture/qa-original");
     state.setConfigOption.mockResolvedValue(acceptedOptions(accepted, ["low", "medium", "high"]));
     const result = await state.manager.setSessionConfigOption({
       cfg: baseCfg,

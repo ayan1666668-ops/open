@@ -7,6 +7,7 @@ import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { AcpRuntimeError } from "../runtime/errors.js";
 import type { AcpSessionTarget } from "./manager.types.js";
+import { ACP_SELECTION_REPAIR_MESSAGE, requireAcpExecutionSelection } from "./manager.utils.js";
 
 /** Old backends can isolate qualified keys, but silently ignore an added owner field. */
 export function assertAcpRuntimeOwnerSupport(runtime: AcpRuntime, target: AcpSessionTarget): void {
@@ -24,7 +25,11 @@ export function isAcpOwnerRepairRequired(error: unknown): boolean {
   let current = error;
   for (let depth = 0; current instanceof Error && depth < 8; depth++) {
     const detail = "detailCode" in current ? current.detailCode : undefined;
-    if (detail === "SESSION_OWNER_MIGRATION_REQUIRED" || detail === "SESSION_OWNER_UNSUPPORTED") {
+    if (
+      current.message === ACP_SELECTION_REPAIR_MESSAGE ||
+      detail === "SESSION_OWNER_MIGRATION_REQUIRED" ||
+      detail === "SESSION_OWNER_UNSUPPORTED"
+    ) {
       return true;
     }
     current = current.cause;
@@ -40,7 +45,7 @@ export function persistedAcpRuntimeHandle(
   return {
     sessionKey: target.sessionKey,
     agentId: target.agentId,
-    backend: meta.backend,
+    backend: requireAcpExecutionSelection(meta).executor.backend,
     runtimeSessionName: meta.runtimeSessionName,
     cwd: meta.cwd,
     acpxRecordId: identity?.acpxRecordId,

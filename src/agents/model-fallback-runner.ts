@@ -105,6 +105,7 @@ type RunWithModelFallbackParams<T> = {
     agentHarnessRuntimeOverride?: string;
   }) => Promise<void> | void;
   prepareCandidateChain?: (candidates: readonly ModelFallbackCandidate[]) => Promise<void> | void;
+  prepareCandidate?: (provider: string, model: string) => Promise<void>;
   lane?: string;
   agentDir?: string;
   /** Optional explicit fallbacks list; when provided (even empty), replaces agents.defaults.model.fallbacks. */
@@ -272,6 +273,13 @@ async function runWithModelFallbackInternal<T>(
     });
     const nextCandidate = candidates[nextCandidateIndex];
     const hasRemainingCandidate = nextCandidate !== undefined;
+    try {
+      await params.prepareCandidate?.(candidate.provider, candidate.model);
+    } catch (error) {
+      appendFailedCandidateAttempt({ attempts, candidate, error });
+      lastError = error;
+      continue;
+    }
     const candidateHarnessAuth = await resolveModelFallbackCandidateHarnessAuthPrecheck({
       cfg: params.cfg,
       agentId: params.agentId,

@@ -7,6 +7,8 @@ import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/ty
 import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
+import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { readAcpExecutionSelection } from "../../model-picker/execution-selection-codec.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { AcpRuntimeError, withAcpRuntimeErrorBoundary } from "../runtime/errors.js";
 import type { ManagerRuntimeHandleCache } from "./manager.runtime-handle-cache.js";
@@ -21,6 +23,7 @@ import type {
   SessionEntry,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
+import { requireReadySessionMeta } from "./manager.utils.js";
 import {
   normalizeRuntimeOptions,
   normalizeText,
@@ -54,6 +57,9 @@ export async function runManagerInitializeSession(params: {
   const requestedModel = initialRuntimeOptions.model;
   const requestedThinking = initialRuntimeOptions.thinking;
   const previousMeta = params.deps.loadSessionEntry({ cfg: input.cfg, sessionKey, agentId })?.acp;
+  if (previousMeta) {
+    requireReadySessionMeta({ kind: "ready", sessionKey, agentId, meta: previousMeta });
+  }
   input.assertActive?.();
   const ensured = await withAcpRuntimeErrorBoundary({
     run: async () =>
@@ -61,7 +67,7 @@ export async function runManagerInitializeSession(params: {
         sessionKey,
         agentId,
         persistedHandle:
-          previousMeta?.backend === backend.id
+          previousMeta && readAcpExecutionSelection(previousMeta)?.executor.backend === backend.id
             ? persistedAcpRuntimeHandle(params, previousMeta)
             : undefined,
         agent,
@@ -110,19 +116,23 @@ export async function runManagerInitializeSession(params: {
       source: "ensure",
       lastUpdatedAt: identityNow,
     } as const);
-  const meta: SessionAcpMeta = {
-    backend: handle.backend || backend.id,
-    agent,
-    runtimeSessionName: handle.runtimeSessionName,
-    identity: initializedIdentity,
-    mode: input.mode,
-    ...(Object.keys(effectiveRuntimeOptions).length > 0
-      ? { runtimeOptions: effectiveRuntimeOptions }
-      : {}),
-    cwd: effectiveCwd,
-    state: "idle",
-    lastActivityAt: Date.now(),
-  };
+  const meta = commitAcpExecutionSelection(
+    {
+      runtimeSessionName: handle.runtimeSessionName,
+      identity: initializedIdentity,
+      mode: input.mode,
+      ...(Object.keys(effectiveRuntimeOptions).length > 0
+        ? { runtimeOptions: effectiveRuntimeOptions }
+        : {}),
+      cwd: effectiveCwd,
+      state: "idle",
+      lastActivityAt: Date.now(),
+    },
+    {
+      executor: { kind: "acp", backend: handle.backend || backend.id, agent },
+      model: effectiveRuntimeOptions.model ? { id: effectiveRuntimeOptions.model } : null,
+    },
+  );
 
   const persisted = await persistInitializedSessionMeta({
     cfg: input.cfg,

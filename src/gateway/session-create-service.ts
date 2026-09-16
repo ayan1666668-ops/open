@@ -70,6 +70,8 @@ import {
   triggerInternalHook,
 } from "../hooks/internal-hooks.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { commitSessionExecutionSelection } from "../model-picker/apply-session-model-selection.js";
+import type { ModelExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   isIncognitoSessionKey,
   isSubagentSessionKey,
@@ -276,9 +278,6 @@ type TrustedInitialSessionEntry = {
   agentHarnessId?: NonNullable<SessionEntry["agentHarnessId"]>;
   color?: string;
   pluginOwnerId?: string;
-  providerOverride?: string;
-  modelOverride?: string;
-  modelOverrideRouteResolution?: "resolved";
   cliSessionBindings?: SessionEntry["cliSessionBindings"];
   initializationPending?: true;
   modelSelectionLocked?: true;
@@ -373,6 +372,8 @@ export async function createGatewaySession(params: {
   loadGatewayModelCatalogSnapshot?: () => Promise<ModelCatalogSnapshot>;
   /** Trusted in-process initializer; never populated from public Gateway params. */
   initialEntry?: TrustedInitialSessionEntry;
+  /** Native plugin initializer supplies its already accepted model and executor together. */
+  executionSelection?: ModelExecutionSelection;
   /** Keep a new ordinary session unusable until afterCreate succeeds, or roll it back. */
   atomicInitialization?: true;
   /** Public callers need admin before reconfiguring an adopted keyed session. */
@@ -597,7 +598,10 @@ export async function createGatewaySession(params: {
     params.initialEntry?.pluginOwnerId &&
     params.authorizedPluginId === params.initialEntry.pluginOwnerId,
   );
-  if (params.initialEntry?.pluginOwnerId && !authorizedPluginCreation) {
+  if (
+    (params.initialEntry?.pluginOwnerId || params.executionSelection) &&
+    !authorizedPluginCreation
+  ) {
     return {
       ok: false,
       error: errorShape(
@@ -1434,15 +1438,6 @@ export async function createGatewaySession(params: {
           ...(createdNewEntry && params.authorizedPluginId && !params.catalogTarget
             ? { pluginOwnerId: params.authorizedPluginId }
             : {}),
-          ...(authorizedPluginCreation && params.initialEntry?.providerOverride
-            ? { providerOverride: params.initialEntry.providerOverride }
-            : {}),
-          ...(authorizedPluginCreation && params.initialEntry?.modelOverride
-            ? { modelOverride: params.initialEntry.modelOverride }
-            : {}),
-          ...(authorizedPluginCreation && params.initialEntry?.modelOverrideRouteResolution
-            ? { modelOverrideRouteResolution: params.initialEntry.modelOverrideRouteResolution }
-            : {}),
           // Seeded CLI bindings ride only the plugin-authorized creation path;
           // harness creations must never smuggle pre-bound CLI session ids.
           ...(authorizedPluginCreation && params.initialEntry?.cliSessionBindings
@@ -1480,6 +1475,11 @@ export async function createGatewaySession(params: {
             : {}),
           ...(existingEntry === undefined && incognito ? { incognito: true as const } : {}),
         };
+        if (authorizedPluginCreation && params.executionSelection) {
+          commitSessionExecutionSelection(initializedEntry, params.executionSelection, {
+            cfg: params.cfg,
+          });
+        }
         const initialized = { ...patched, entry: initializedEntry };
         const explicitParentSessionKey =
           canonicalParentSessionKey ?? normalizeOptionalString(initializedEntry.parentSessionKey);

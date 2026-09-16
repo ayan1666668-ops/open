@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { recordModelFallbackStop } from "../failover-error.js";
 import { resetFallbackSkipCacheForTest } from "../fallback-skip-cache.test-support.js";
 import { runEmbeddedAgentEntry } from "./run-entry.js";
-import { initialAttemptOptions, type FallbackRunnerParams } from "./run-entry.test-support.js";
+import {
+  prepareFallbackRunner,
+  initialAttemptOptions,
+  type FallbackRunnerParams,
+} from "./run-entry.test-support.js";
 import type { EmbeddedAgentRunResult } from "./types.js";
 
 const state = vi.hoisted(() => ({
@@ -47,7 +51,10 @@ function createDirectHarness() {
   return {
     workspaceDir: "/tmp/workspace",
     preparation: { kind: "direct" as const },
-    resolveRuntimeOverride: () => undefined,
+    prepareExecutionSelection: async (provider: string, model: string) => ({
+      model: { provider, id: model },
+      executor: { kind: "harness" as const, id: "openclaw" },
+    }),
   };
 }
 
@@ -66,6 +73,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
     }> = [];
     const reconciled: Array<{ provider: string; model: string }> = [];
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       const candidate = await params.run(
         params.provider,
         params.model,
@@ -98,7 +106,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
           reconciled.push(candidate);
         },
       },
-      runCandidate: async (provider, model, options) => {
+      runCandidate: async ({ model: { provider, id: model } }, options) => {
         candidateCalls.push({
           provider,
           model,
@@ -157,6 +165,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
   it("preserves the original refusal and cools off an unauthorized Daybreak target", async () => {
     const searchedModels: string[] = [];
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       searchedModels.push(params.model);
       if (params.model === "gpt-daybreak-blue-latest") {
         throw Object.assign(new Error("401 unauthorized"), { status: 401 });
@@ -188,7 +197,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },
-        runCandidate: async (provider, model) => ({
+        runCandidate: async ({ model: { provider, id: model } }) => ({
           ...makeResult({ provider, model }),
           payloads: [{ text: "policy refusal", isError: true }],
           meta: {
@@ -215,6 +224,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
 
   it("keeps a failed Daybreak attempt that already committed work", async () => {
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       const candidate = await params.run(
         params.provider,
         params.model,
@@ -242,7 +252,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       sessionOverride: { kind: "preserve" },
-      runCandidate: async (provider, model) => {
+      runCandidate: async ({ model: { provider, id: model } }) => {
         if (model === "gpt-daybreak-blue-latest") {
           // The retry executed a tool and only then failed, so it is not
           // interchangeable with the replay-safe refusal it replaced.
@@ -301,6 +311,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
   ])("propagates $name thrown by the Daybreak retry", async ({ makeError }) => {
     const thrown = makeError();
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       if (params.model === "gpt-daybreak-blue-latest") {
         throw thrown;
       }
@@ -332,7 +343,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },
-        runCandidate: async (provider, model) => ({
+        runCandidate: async ({ model: { provider, id: model } }) => ({
           ...makeResult({ provider, model }),
           payloads: [{ text: "policy refusal", isError: true }],
           meta: {
@@ -353,6 +364,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
   it("does not escalate a preliminary refusal replaced by a successful final result", async () => {
     const searchedModels: string[] = [];
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       searchedModels.push(params.model);
       const candidate = await params.run(
         params.provider,
@@ -381,7 +393,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       sessionOverride: { kind: "preserve" },
-      runCandidate: async (provider, model, options) => {
+      runCandidate: async ({ model: { provider, id: model } }, options) => {
         const preliminary = {
           ...makeResult({ provider, model }),
           payloads: [{ text: "preliminary refusal", isError: true }],
@@ -416,6 +428,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
   ])("preserves a returned Daybreak result with $name", async ({ targetMeta, commit }) => {
     let committed = false;
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       const candidate = await params.run(
         params.provider,
         params.model,
@@ -443,7 +456,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => committed },
       sessionOverride: { kind: "preserve" },
-      runCandidate: async (provider, model) => {
+      runCandidate: async ({ model: { provider, id: model } }) => {
         if (model === "gpt-daybreak-blue-latest") {
           committed = commit;
           return {
@@ -476,6 +489,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
 
   it("keeps a recovered Daybreak answer alongside a replay-safe tool warning", async () => {
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       const candidate = await params.run(
         params.provider,
         params.model,
@@ -503,7 +517,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       sessionOverride: { kind: "preserve" },
-      runCandidate: async (provider, model) =>
+      runCandidate: async ({ model: { provider, id: model } }) =>
         model === "gpt-daybreak-blue-latest"
           ? {
               ...makeResult({ provider, model }),
@@ -535,6 +549,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
   it("keeps a cyber refusal terminal for a strict model selection", async () => {
     const searchedModels: string[] = [];
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       searchedModels.push(params.model);
       const candidate = await params.run(
         params.provider,
@@ -570,7 +585,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
       harness: createDirectHarness(),
       behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
       sessionOverride: { kind: "preserve" },
-      runCandidate: async (provider, model) => ({
+      runCandidate: async ({ model: { provider, id: model } }) => ({
         ...makeResult({ provider, model }),
         payloads: [{ text: "policy refusal", isError: true }],
         meta: {
@@ -608,6 +623,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         messageId: "assistant-error",
       });
     state.runWithModelFallback.mockImplementation(async (params: FallbackRunnerParams) => {
+      await prepareFallbackRunner(params);
       const candidate = await params.run(
         params.provider,
         params.model,
@@ -635,7 +651,7 @@ describe("runEmbeddedAgentEntry cyber failover", () => {
         harness: createDirectHarness(),
         behavior: { kind: "command-rpc", hasCommittedSideEffect: () => false },
         sessionOverride: { kind: "preserve" },
-        runCandidate: async (provider, model, options) => {
+        runCandidate: async ({ model: { provider, id: model } }, options) => {
           options.assistantErrorTranscript.record(
             makeAssistantMessageFixture({
               provider,

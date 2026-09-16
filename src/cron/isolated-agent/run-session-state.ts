@@ -505,21 +505,15 @@ export function syncCronSessionLiveSelection(params: {
   entry: MutableCronSessionEntry;
   liveSelection: CronLiveSelection;
 }) {
-  const previousRuntime = normalizeOptionalAgentRuntimeId(params.entry.agentRuntimeOverride);
-  const nextRuntime = normalizeOptionalAgentRuntimeId(params.liveSelection.agentRuntimeOverride);
   setCronSessionRuntimeModel({
     entry: params.entry,
-    provider: params.liveSelection.provider,
-    model: params.liveSelection.model,
+    provider: params.liveSelection.selection.model.provider,
+    model: params.liveSelection.selection.model.id,
   });
-  if (previousRuntime !== nextRuntime) {
-    clearCronContextOwnerState(params.entry);
-  }
-  if (params.liveSelection.agentRuntimeOverride) {
-    params.entry.agentRuntimeOverride = params.liveSelection.agentRuntimeOverride;
-  } else {
-    delete params.entry.agentRuntimeOverride;
-  }
+  setCronSessionAgentHarnessId({
+    entry: params.entry,
+    agentHarnessId: params.liveSelection.selection.executor.id,
+  });
   if (params.liveSelection.authProfileId) {
     const source =
       params.liveSelection.authProfileIdSource ??

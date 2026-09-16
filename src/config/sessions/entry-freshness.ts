@@ -1,5 +1,5 @@
 // Session entry reset freshness resolves the same lifecycle rule used by reply setup.
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import type { SessionConfig, SessionResetConfig } from "../types.base.js";
 import { getCliSessionBinding } from "./cli-session-binding.js";
@@ -46,8 +46,18 @@ type ResolvedSessionEntryResetFreshness =
     };
 
 export function hasProviderOwnedSession(entry: SessionEntry | undefined): boolean {
-  const provider = normalizeOptionalString(entry?.providerOverride ?? entry?.modelProvider);
-  return Boolean(provider && getCliSessionBinding(entry, provider));
+  const selection = getSessionExecutionSelection(entry);
+  if (selection) {
+    return (
+      selection.executor.kind === "cli" &&
+      Boolean(getCliSessionBinding(entry, selection.executor.id))
+    );
+  }
+  // An older uninitialized row must not lose a native transcript before its first prepared turn.
+  return [
+    ...Object.keys(entry?.cliSessionBindings ?? {}),
+    ...Object.keys(entry?.cliSessionIds ?? {}),
+  ].some((runtime) => Boolean(getCliSessionBinding(entry, runtime)));
 }
 
 /** Resolves one session entry's reset freshness using the runtime lifecycle rules. */

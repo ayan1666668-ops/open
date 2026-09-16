@@ -46,10 +46,6 @@ import {
   getPluginRuntimeGatewayRequestScope,
 } from "../../plugins/runtime/gateway-request-scope.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
-import {
-  clearRecoveredAutoFallbackPrimaryProbeSelection,
-  resolveRunAfterAutoFallbackPrimaryProbeRecheck,
-} from "./agent-runner-auto-fallback.js";
 import { handleAgentExecutionError } from "./agent-runner-error-handler.js";
 import { recordAgentTurnExecutionOutcome } from "./agent-runner-execution-outcome.js";
 import type {
@@ -130,14 +126,7 @@ async function executeAgentTurnInternalLoop(
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
   const directBlockDeliveries: DirectBlockDelivery[] = [];
-  const runnableRun = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
-    run: params.followupRun.run,
-    entry: params.activeSessionStore?.[params.sessionKey ?? ""] ?? params.getActiveSessionEntry(),
-    sessionKey: params.sessionKey,
-  });
-  if (runnableRun !== params.followupRun.run) {
-    params.followupRun.run = runnableRun;
-  }
+  const runnableRun = params.followupRun.run;
   const runtimeConfig = resolveQueuedReplyRuntimeConfig(runnableRun.config);
   const effectiveRun =
     runtimeConfig === runnableRun.config
@@ -322,18 +311,6 @@ async function executeAgentTurnInternalLoop(
       params.getActiveSessionEntry()?.systemPromptReport,
     ),
   };
-  const clearRecoveredAutoFallbackPrimaryProbe = async (paramsForClear: {
-    provider: string;
-    model: string;
-  }): Promise<void> =>
-    clearRecoveredAutoFallbackPrimaryProbeSelection({
-      run: effectiveRun,
-      ...paramsForClear,
-      sessionKey: params.sessionKey,
-      activeSessionStore: params.activeSessionStore,
-      getActiveSessionEntry: params.getActiveSessionEntry,
-      storePath: params.storePath,
-    });
 
   while (true) {
     try {
@@ -364,7 +341,6 @@ async function executeAgentTurnInternalLoop(
         modelPatch,
         shouldSurfaceToControlUi,
         commitTerminalOutcome,
-        clearRecoveredAutoFallbackPrimaryProbe,
       });
       lifecycleGeneration = fallbackCycleState.lifecycleGeneration;
       if (cycle.kind === "aborted") {

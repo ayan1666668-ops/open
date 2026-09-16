@@ -2,6 +2,8 @@
 import { resolveSessionAuthProfileOverrideSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { ProviderModelRouteAuthRequirement } from "../../plugin-sdk/provider-model-types.js";
 import { resolveProviderModelRoutes } from "../../plugins/provider-model-routes.js";
 import { shouldPreserveUnavailableSessionAuthProfileOverride } from "../../sessions/auth-profile-preservation.js";
@@ -353,6 +355,7 @@ async function resolveSessionAuthProfileOverride(params: {
         "This session's personal model account is unavailable. Select another account for this session, or reconnect your account and start a new session.",
       );
     }
+    const acceptedSelection = getSessionExecutionSelection(sessionEntry, cfg);
     if (
       providers.some((candidateProvider) =>
         shouldPreserveUnavailableSessionAuthProfileOverride({
@@ -360,7 +363,10 @@ async function resolveSessionAuthProfileOverride(params: {
           agentDir,
           entry: sessionEntry,
           store,
-          currentProvider: sessionEntry.providerOverride ?? provider,
+          currentProvider:
+            acceptedSelection && !isAcpExecutionSelection(acceptedSelection)
+              ? acceptedSelection.model.provider
+              : provider,
           provider: candidateProvider,
         }),
       )

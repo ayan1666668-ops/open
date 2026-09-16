@@ -6,6 +6,7 @@ import {
   emitAgentEventForRunContext,
 } from "../../infra/agent-events.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
+import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import { requireActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   createAssistantErrorTranscript,
@@ -31,6 +32,7 @@ import type {
   ModelFallbackAttemptProvenance,
   ModelFallbackRouteResolution,
 } from "../model-fallback.types.js";
+import { modelKey } from "../model-ref-shared.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import {
@@ -103,6 +105,7 @@ type EmbeddedAgentRunEntryResult<T extends EmbeddedAgentRunResult> = {
   attempts: FallbackAttempt[];
   terminal: EmbeddedAgentRunEntryTerminal;
   settleSessionOverride: () => Promise<void>;
+  selection: ModelExecutionSelection;
 };
 
 type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
@@ -126,10 +129,12 @@ type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
     workspaceDir: string;
     sessionKey?: string;
     preparation: RunEntryHarnessPreparation;
-    resolveRuntimeOverride: (provider: string, model: string) => string | undefined;
-    resolveContextEngineHost?: (
+    prepareExecutionSelection: (
       provider: string,
       model: string,
+    ) => Promise<ModelExecutionSelection>;
+    resolveContextEngineHost?: (
+      selection: ModelExecutionSelection,
     ) => ContextEngineHostSupport | undefined;
   };
   behavior: RunEntryBehavior;
@@ -138,7 +143,10 @@ type EmbeddedAgentRunEntryParams<T extends EmbeddedAgentRunResult> = {
   onFallbackStep?: (step: ModelFallbackStepFields) => void | Promise<void>;
   /** Runs once after the successful winner is accepted, before post-turn context commit. */
   onAcceptedTerminal?: () => void | (() => void) | Promise<void | (() => void)>;
-  runCandidate: (provider: string, model: string, options: RunEntryCandidateOptions) => Promise<T>;
+  runCandidate: (
+    selection: ModelExecutionSelection,
+    options: RunEntryCandidateOptions,
+  ) => Promise<T>;
 };
 
 const PRESERVED_FOLLOWUP_RESULT_CODES = new Set([
@@ -255,6 +263,17 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         }
       : undefined;
   const hasCommittedSideEffect = canFallback ? () => !canFallback() : undefined;
+  const preparedSelections = new Map<string, ModelExecutionSelection | Error>();
+  const readPreparedSelection = (provider: string, model: string): ModelExecutionSelection => {
+    const prepared = preparedSelections.get(modelKey(provider, model));
+    if (!prepared) {
+      throw new Error("Execution selection was not prepared before dispatch.");
+    }
+    if (prepared instanceof Error) {
+      throw prepared;
+    }
+    return prepared;
+  };
   const canFallbackAfterError = canFallback;
   try {
     let capturedCyberRefusal: { provider: string; model: string } | undefined;
@@ -266,23 +285,36 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         ...selection,
         ...params.identity,
         abortSignal: params.abortSignal,
-        resolveAgentHarnessRuntimeOverride: params.harness.resolveRuntimeOverride,
+        resolveAgentHarnessRuntimeOverride: (provider, model) =>
+          readPreparedSelection(provider, model).executor.id,
+        prepareCandidate: async (provider, model) => {
+          readPreparedSelection(provider, model);
+        },
         prepareCandidateChain: async (candidates) => {
           for (const candidate of candidates) {
             try {
-              const agentHarnessRuntimeOverride = params.harness.resolveRuntimeOverride(
+              const prepared = await params.harness.prepareExecutionSelection(
                 candidate.provider,
                 candidate.model,
               );
+              preparedSelections.set(modelKey(candidate.provider, candidate.model), prepared);
+            } catch (error) {
+              preparedSelections.set(
+                modelKey(candidate.provider, candidate.model),
+                error instanceof Error ? error : new Error(String(error)),
+              );
+            }
+          }
+          for (const candidate of candidates) {
+            try {
+              const preparedSelection = readPreparedSelection(candidate.provider, candidate.model);
+              const agentHarnessRuntimeOverride = preparedSelection.executor.id;
               await prepareHarnessRuntime({
                 provider: candidate.provider,
                 model: candidate.model,
                 ...(agentHarnessRuntimeOverride ? { agentHarnessRuntimeOverride } : {}),
               });
-              const resolvedHost = params.harness.resolveContextEngineHost?.(
-                candidate.provider,
-                candidate.model,
-              );
+              const resolvedHost = params.harness.resolveContextEngineHost?.(preparedSelection);
               const host =
                 resolvedHost ??
                 (() => {
@@ -401,7 +433,7 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
             return classified.value;
           };
           try {
-            const result = await params.runCandidate(provider, model, {
+            const result = await params.runCandidate(readPreparedSelection(provider, model), {
               assistantErrorTranscript,
               // The original OpenAI refusal proves this turn's credential already
               // reached the provider. Keep a target-only entitlement rejection from
@@ -694,7 +726,12 @@ export async function runEmbeddedAgentEntry<T extends EmbeddedAgentRunResult>(
         });
       }
     };
-    return { ...settledResult, terminal, settleSessionOverride };
+    return {
+      ...settledResult,
+      selection: readPreparedSelection(settledResult.provider, settledResult.model),
+      terminal,
+      settleSessionOverride,
+    };
   } finally {
     if (unsettledContextEngineTurnAttempt) {
       discardContextEngineTurnAttemptIntent({

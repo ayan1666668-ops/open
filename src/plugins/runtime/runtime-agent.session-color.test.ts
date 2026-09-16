@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { createRuntimeAgent } from "./runtime-agent.js";
 
@@ -22,7 +23,7 @@ describe("plugin runtime session creation colors", () => {
           initialEntry: {
             cliBackendId: "claude-cli",
             color,
-            model: "claude-opus-4-8",
+            model: "qa-native-model",
             modelSelectionLocked: true,
             pluginOwnerId: "anthropic",
             cliSessionBinding: {
@@ -37,6 +38,10 @@ describe("plugin runtime session creation colors", () => {
           },
         });
         expect(created.entry.color).toBe(expectedColor);
+        expect(getSessionExecutionSelection(created.entry, {})).toEqual({
+          executor: { kind: "cli", id: "claude-cli" },
+          model: { provider: "claude-cli", id: "qa-native-model" },
+        });
         expect(
           runtime.session.getSessionEntry({ sessionKey: key, readConsistency: "latest" }),
         ).toEqual(created.entry);
@@ -46,9 +51,6 @@ describe("plugin runtime session creation colors", () => {
           createdActor: { type: "system", id: "anthropic" },
           createdAt: expect.any(Number),
           pluginOwnerId: "anthropic",
-          providerOverride: "claude-cli",
-          modelOverride: "claude-opus-4-8",
-          modelOverrideRouteResolution: "resolved",
           modelSelectionLocked: true,
           execHost: "node",
           execNode: "node-a",

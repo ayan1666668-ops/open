@@ -1,5 +1,10 @@
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { decodeSessionExecutionSelection } from "../../model-picker/execution-selection-codec.js";
+import {
+  executionSelectionCodecMetadata,
+  getSessionExecutionSelection,
+} from "../../model-picker/execution-selection-state.js";
 import { resolveSessionAuthProfileOverrideSource } from "./auth-profile-override-provenance.js";
-import { hasSessionActiveAutoModelFallback } from "./model-override-provenance.js";
 import type { SessionPatchProjectionSnapshot } from "./session-accessor.types.js";
 import type { InternalSessionEntry, SessionEntry } from "./types.js";
 
@@ -62,28 +67,19 @@ export function inheritSessionSelection(
   if (!parentEntry) {
     return {};
   }
+  const decoded = decodeSessionExecutionSelection(parentEntry, executionSelectionCodecMetadata());
   const authProfileOverrideSource = resolveSessionAuthProfileOverrideSource(parentEntry);
-  const inheritModelSelection = !hasSessionActiveAutoModelFallback(parentEntry);
+  const selection = getSessionExecutionSelection(parentEntry);
+  const inherited: Partial<InternalSessionEntry> = {};
+  if (selection && selection.executor.kind !== "acp") {
+    commitSessionExecutionSelection(inherited, selection);
+  }
   const inheritAuthProfile =
-    inheritModelSelection ||
+    !(decoded.kind === "uninitialized" && decoded.discardAutomaticAuth) ||
     authProfileOverrideSource === "user" ||
     authProfileOverrideSource === "user-link";
   return {
-    ...(inheritModelSelection && parentEntry.providerOverride
-      ? { providerOverride: parentEntry.providerOverride }
-      : {}),
-    ...(inheritModelSelection && parentEntry.modelOverride
-      ? { modelOverride: parentEntry.modelOverride }
-      : {}),
-    ...(inheritModelSelection && parentEntry.modelOverrideSource
-      ? { modelOverrideSource: parentEntry.modelOverrideSource }
-      : {}),
-    ...(inheritModelSelection && parentEntry.modelOverrideRouteResolution
-      ? { modelOverrideRouteResolution: parentEntry.modelOverrideRouteResolution }
-      : {}),
-    ...(inheritModelSelection && parentEntry.agentRuntimeOverride
-      ? { agentRuntimeOverride: parentEntry.agentRuntimeOverride }
-      : {}),
+    ...inherited,
     ...(parentEntry.contextWindow ? { contextWindow: parentEntry.contextWindow } : {}),
     ...(parentEntry.thinkingLevel ? { thinkingLevel: parentEntry.thinkingLevel } : {}),
     ...(parentEntry.fastMode !== undefined ? { fastMode: parentEntry.fastMode } : {}),

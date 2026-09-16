@@ -4,14 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import type { SessionEntry } from "../config/sessions.js";
 import { withEnv } from "../test-utils/env.js";
 import { findOverlappingWorkspaceAgentIds } from "./agent-delete-safety.js";
 import type { ModelFallbackAvailability } from "./agent-scope.js";
 import {
-  clearAutoFallbackPrimaryProbeSelection,
-  hasLegacyAutoFallbackWithoutOrigin,
-  markAutoFallbackPrimaryProbe,
   resolveAgentConfig,
   resolveDefaultAgentDir,
   resolveAgentDir,
@@ -27,11 +23,15 @@ import {
   resolveAgentWorkspaceDir,
   resolveAgentRunCwd,
   resolveAgentWorkspaceProvisioning,
-  resolveAutoFallbackPrimaryProbe,
   resolveAgentIdByWorkspacePath,
   resolveAgentModelPrimaryWriteTarget,
   setAgentEffectiveModelPrimary,
 } from "./agent-scope.js";
+
+const acceptedSelection = {
+  model: { provider: "fixture", id: "primary" },
+  executor: { kind: "harness" as const, id: "openclaw" },
+};
 
 describe("resolveAgentConfig", () => {
   it("should return undefined when agent id does not exist", () => {
@@ -190,40 +190,15 @@ describe("resolveAgentConfig", () => {
 
     it.each([
       {
-        name: "uses auto fallback provenance",
+        name: "disables configured fallbacks for every accepted selection",
         params: {
-          hasSessionModelOverride: true,
-          modelOverrideSource: "auto" as const,
-        },
-        expected: {
-          kind: "active" as const,
-          models: ["anthropic/claude-sonnet-4-6"],
-          source: "explicit" as const,
-        },
-      },
-      {
-        name: "recovers auto fallback provenance without a source marker",
-        params: {
-          hasSessionModelOverride: true,
-          hasAutoFallbackProvenance: true,
-        },
-        expected: {
-          kind: "active" as const,
-          models: ["anthropic/claude-sonnet-4-6"],
-          source: "explicit" as const,
-        },
-      },
-      {
-        name: "disables configured fallbacks for a user model override",
-        params: {
-          hasSessionModelOverride: true,
-          modelOverrideSource: "user" as const,
+          selection: acceptedSelection,
         },
         expected: { kind: "disabled_by_model_override" as const },
       },
       {
         name: "reports no configured fallbacks",
-        params: { hasSessionModelOverride: false },
+        params: {},
         expected: { kind: "none_configured" as const, source: "inherited" as const },
       },
     ])("$name", ({ params, expected }) => {
@@ -244,8 +219,7 @@ describe("resolveAgentConfig", () => {
       const availability = resolveModelFallbackAvailability({
         cfg: cfgWithFallbacks,
         agentId: "main",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "user",
+        selection: acceptedSelection,
       });
 
       expect(availability).toEqual({ kind: "disabled_by_model_override" });
@@ -338,7 +312,6 @@ describe("resolveAgentConfig", () => {
       resolveEffectiveModelFallbacks({
         cfg: cfgNoOverride,
         agentId: "linus",
-        hasSessionModelOverride: false,
       }),
     ).toStrictEqual([]);
 
@@ -374,14 +347,6 @@ describe("resolveAgentConfig", () => {
     expect(resolveAgentModelFallbacksOverride(cfgStrictAgentWithDefaultFallbacks, "linus")).toEqual(
       [],
     );
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg: cfgStrictAgentWithDefaultFallbacks,
-        agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toStrictEqual([]);
 
     // Explicit empty list disables global fallbacks for that agent.
     const cfgDisable: OpenClawConfig = {
@@ -403,54 +368,36 @@ describe("resolveAgentConfig", () => {
       resolveEffectiveModelFallbacks({
         cfg,
         agentId: "linus",
-        hasSessionModelOverride: false,
       }),
     ).toEqual(["openai/gpt-5.4"]);
+
     expect(
       resolveEffectiveModelFallbacks({
         cfg,
         agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toEqual(["openai/gpt-5.4"]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "user",
+        selection: acceptedSelection,
       }),
     ).toStrictEqual([]);
     expect(
       resolveEffectiveModelFallbacks({
         cfg,
         agentId: "linus",
-        hasSessionModelOverride: true,
+        selection: acceptedSelection,
       }),
     ).toStrictEqual([]);
+
     expect(
       resolveEffectiveModelFallbacks({
         cfg,
         agentId: "linus",
-        hasSessionModelOverride: true,
-        hasAutoFallbackProvenance: true,
-      }),
-    ).toEqual(["openai/gpt-5.4"]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "user",
-        hasAutoFallbackProvenance: true,
+        selection: acceptedSelection,
       }),
     ).toStrictEqual([]);
     expect(
       resolveEffectiveModelFallbacks({
         cfg: cfgNoOverride,
         agentId: "linus",
-        hasSessionModelOverride: true,
+        selection: acceptedSelection,
       }),
     ).toStrictEqual([]);
 
@@ -464,22 +411,6 @@ describe("resolveAgentConfig", () => {
         list: [{ id: "linus" }],
       },
     };
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg: cfgInheritDefaultsWithoutAgentModel,
-        agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toEqual(["openai/gpt-5.4"]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg: cfgDisable,
-        agentId: "linus",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toStrictEqual([]);
   });
 
   it("updates the effective model primary at the winning config layer", () => {
@@ -589,309 +520,6 @@ describe("resolveAgentConfig", () => {
         sessionKey: "agent:support:session",
       }),
     ).toEqual(["openai/gpt-5.4"]);
-  });
-
-  it("resolves throttled primary probes for auto fallback selections", () => {
-    const probeState = new Map<string, number>();
-    const entry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: 1,
-      providerOverride: "google",
-      modelOverride: "gemini-3-pro",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      authProfileOverride: "google:fallback",
-      authProfileOverrideSource: "auto",
-    };
-
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry,
-        sessionKey: "agent:main:session",
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        now: 1_000,
-        minIntervalMs: 60_000,
-        probeState,
-      }),
-    ).toMatchObject({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      fallbackAuthProfileId: "google:fallback",
-      fallbackAuthProfileIdSource: "auto",
-    });
-    markAutoFallbackPrimaryProbe({
-      probe: {
-        provider: "anthropic",
-        model: "claude-sonnet-4-6",
-        fallbackProvider: "google",
-        fallbackModel: "gemini-3-pro",
-      },
-      sessionKey: "agent:main:session",
-      now: 1_000,
-      probeState,
-    });
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry,
-        sessionKey: "agent:main:session",
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        now: 30_000,
-        minIntervalMs: 60_000,
-        probeState,
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: {
-          ...entry,
-          providerOverride: "openai",
-          modelOverride: "gpt-5.4",
-        },
-        sessionKey: "agent:main:session",
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        now: 30_000,
-        minIntervalMs: 60_000,
-        probeState,
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry,
-        sessionKey: "agent:main:session",
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        now: 70_000,
-        minIntervalMs: 60_000,
-        probeState,
-      }),
-    ).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4-6" });
-  });
-
-  it("prunes stale and excess primary probe throttle entries", () => {
-    const probeState = new Map<string, number>();
-    const probe = {
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      fallbackProvider: "google",
-      fallbackModel: "gemini-3-pro",
-    };
-    markAutoFallbackPrimaryProbe({
-      probe,
-      sessionKey: "old",
-      now: 1_000,
-      minIntervalMs: 100,
-      maxTrackedProbeKeys: 3,
-      probeState,
-    });
-    for (let index = 0; index < 4; index += 1) {
-      markAutoFallbackPrimaryProbe({
-        probe,
-        sessionKey: `new-${index}`,
-        now: 2_000 + index,
-        minIntervalMs: 100,
-        maxTrackedProbeKeys: 3,
-        probeState,
-      });
-    }
-
-    expect(probeState.size).toBe(3);
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: {
-          providerOverride: "google",
-          modelOverride: "gemini-3-pro",
-          modelOverrideSource: "auto",
-          modelOverrideFallbackOriginProvider: "anthropic",
-          modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-        },
-        sessionKey: "old",
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        now: 2_004,
-        minIntervalMs: 100,
-        maxTrackedProbeKeys: 3,
-        probeState,
-      }),
-    ).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4-6" });
-  });
-
-  it("skips primary probes for strict or stale fallback selections", () => {
-    const baseEntry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: 1,
-      providerOverride: "google",
-      modelOverride: "gemini-3-pro",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-    };
-
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: { ...baseEntry, modelOverrideSource: "user" },
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        probeState: new Map(),
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: baseEntry,
-        primaryProvider: "openai",
-        primaryModel: "gpt-5.4",
-        probeState: new Map(),
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: {
-          ...baseEntry,
-          providerOverride: "anthropic",
-          modelOverride: "claude-sonnet-4-6",
-        },
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        probeState: new Map(),
-      }),
-    ).toBeUndefined();
-  });
-
-  it("identifies legacy auto fallback overrides without origin metadata", () => {
-    expect(
-      hasLegacyAutoFallbackWithoutOrigin({
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "anthropic",
-        modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      }),
-    ).toBe(false);
-    expect(
-      hasLegacyAutoFallbackWithoutOrigin({
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: " ",
-        modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      }),
-    ).toBe(true);
-    expect(
-      hasLegacyAutoFallbackWithoutOrigin({
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "anthropic",
-      }),
-    ).toBe(true);
-    expect(
-      hasLegacyAutoFallbackWithoutOrigin({
-        modelOverrideSource: "user",
-      }),
-    ).toBe(false);
-    expect(hasLegacyAutoFallbackWithoutOrigin({})).toBe(false);
-    expect(hasLegacyAutoFallbackWithoutOrigin(undefined)).toBe(false);
-  });
-
-  it("recognizes recovered auto fallback provenance without a source marker", () => {
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: {
-          providerOverride: "google",
-          modelOverride: "gemini-3-pro",
-          modelOverrideFallbackOriginProvider: "anthropic",
-          modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-        },
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        probeState: new Map(),
-      }),
-    ).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4-6" });
-  });
-
-  it("preserves legacy auto auth provenance on primary probes", () => {
-    expect(
-      resolveAutoFallbackPrimaryProbe({
-        entry: {
-          providerOverride: "google",
-          modelOverride: "gemini-3-pro",
-          modelOverrideSource: "auto",
-          modelOverrideFallbackOriginProvider: "anthropic",
-          modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-          authProfileOverride: "fallback-key",
-          authProfileOverrideCompactionCount: 1,
-        },
-        primaryProvider: "anthropic",
-        primaryModel: "claude-sonnet-4-6",
-        probeState: new Map(),
-      }),
-    ).toMatchObject({
-      fallbackAuthProfileId: "fallback-key",
-      fallbackAuthProfileIdSource: "auto",
-    });
-  });
-
-  it("clears only auto-owned fallback selection state for a primary probe", () => {
-    const entry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: 1,
-      providerOverride: "google",
-      modelOverride: "gemini-3-pro",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      authProfileOverride: "fallback-key",
-      authProfileOverrideSource: "auto",
-      authProfileOverrideCompactionCount: 1,
-      fallbackNotice: {
-        kind: "active",
-        selectedModel: "google/gemini-3-pro",
-        activeModel: "google/gemini-3-pro",
-        reason: "rate_limit",
-      },
-    };
-
-    clearAutoFallbackPrimaryProbeSelection(entry, 2);
-
-    expect(entry).toEqual({ sessionId: "session", updatedAt: 2 });
-  });
-
-  it("clears legacy auto auth selection when clearing primary probe state", () => {
-    const entry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: 1,
-      providerOverride: "google",
-      modelOverride: "gemini-3-pro",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      authProfileOverride: "fallback-key",
-      authProfileOverrideCompactionCount: 1,
-    };
-
-    clearAutoFallbackPrimaryProbeSelection(entry, 2);
-
-    expect(entry).toEqual({ sessionId: "session", updatedAt: 2 });
-  });
-
-  it("preserves user-owned auth selection when clearing primary probe state", () => {
-    const entry: SessionEntry = {
-      sessionId: "session",
-      updatedAt: 1,
-      providerOverride: "google",
-      modelOverride: "gemini-3-pro",
-      modelOverrideSource: "auto",
-      modelOverrideFallbackOriginProvider: "anthropic",
-      modelOverrideFallbackOriginModel: "claude-sonnet-4-6",
-      authProfileOverride: "selected-key",
-      authProfileOverrideSource: "user",
-    };
-
-    clearAutoFallbackPrimaryProbeSelection(entry, 2);
-
-    expect(entry).toEqual({
-      sessionId: "session",
-      updatedAt: 2,
-      authProfileOverride: "selected-key",
-      authProfileOverrideSource: "user",
-    });
   });
 
   it("resolves subagent model fallbacks from the selected subagent model source", () => {
@@ -1016,28 +644,9 @@ describe("resolveAgentConfig", () => {
         cfg,
         agentId: "research",
         sessionKey: "agent:research:subagent:child",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toEqual(["openai/gpt-5.4", "zai/glm-5"]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "research",
-        sessionKey: "agent:research:subagent:child",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "user",
+        selection: acceptedSelection,
       }),
     ).toStrictEqual([]);
-    expect(
-      resolveEffectiveModelFallbacks({
-        cfg,
-        agentId: "fallback-only-subagent",
-        sessionKey: "agent:fallback-only-subagent:subagent:child",
-        hasSessionModelOverride: true,
-        modelOverrideSource: "auto",
-      }),
-    ).toEqual(["zai/glm-5"]);
   });
 
   it("should return agent-specific sandbox config", () => {

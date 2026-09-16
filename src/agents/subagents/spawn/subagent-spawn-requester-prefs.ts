@@ -1,12 +1,10 @@
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
 import { resolveFastModeState } from "../../fast-mode.js";
-import {
-  normalizeStoredOverrideModel,
-  resolveDefaultModelForAgent,
-  resolvePersistedSelectedModelRef,
-} from "../../model-selection.js";
+import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import { resolveThinkingDefault } from "../../model-thinking-default.js";
 import { loadSessionEntry, resolveGatewaySessionStoreTarget } from "./subagent-spawn.runtime.js";
 
@@ -41,19 +39,11 @@ function resolveRequesterModel(params: RequesterPreferencesContext, entry?: Sess
   if (!entry) {
     return { defaultModel, selectedModel: undefined };
   }
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: entry.providerOverride,
-    modelOverride: entry.modelOverride,
-    routeResolution: entry.modelOverrideRouteResolution,
-  });
-  const selectedModel = resolvePersistedSelectedModelRef({
-    defaultProvider: defaultModel.provider,
-    runtimeProvider: entry.modelProvider,
-    runtimeModel: entry.model,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
-    overrideRouteResolution: entry.modelOverrideRouteResolution,
-  });
+  const selection = getSessionExecutionSelection(entry, params.cfg);
+  const selectedModel =
+    selection && !isAcpExecutionSelection(selection)
+      ? { provider: selection.model.provider, model: selection.model.id }
+      : undefined;
   return { defaultModel, selectedModel };
 }
 

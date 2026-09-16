@@ -40,6 +40,7 @@ import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import type { StopReason } from "../../llm/types.js";
 import { redactSensitiveText } from "../../logging/redact.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { ModelExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
@@ -97,12 +98,9 @@ import { runEmbeddedAgent, type EmbeddedAgentRunResult } from "../embedded-agent
 import type { ContextEngineLogicalTurnLease } from "../harness/context-engine-logical-turn.js";
 import type { ContextEngineTurnAttemptFacts } from "../harness/context-engine-turn-attempt.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../harness/hook-helpers.js";
-import { resolveAvailableAgentHarnessPolicy } from "../harness/selection.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
 import type { ModelFallbackResultClassification } from "../model-fallback-attempt.js";
 import type { ModelFallbackAttemptProvenance } from "../model-fallback.types.js";
-import { resolveCliRuntimeExecutionProvider } from "../model-runtime-aliases.js";
-import { isCliProvider } from "../model-selection.js";
 import { resolveOpenAIRuntimeProvider } from "../openai-routing.js";
 import type { PreparedModelRuntimePluginGeneration } from "../prepared-model-runtime.types.js";
 import { hasVerifiedRequesterCompletionHandoff } from "../requester-tool-policy.js";
@@ -563,15 +561,13 @@ export async function persistCliTurnTranscript(params: {
 
 export function runAgentAttempt(params: {
   preparedRunAdmission: PreparedAgentRunAdmission;
-  providerOverride: string;
-  modelOverride: string;
+  executionSelection: ModelExecutionSelection;
   modelHasVision?: boolean;
   modelThinkingCapability?: RunEmbeddedAgentInternalParams["modelThinkingCapability"];
   configuredAuthProfileId?: string;
   originalProvider: string;
   cfg: OpenClawConfig;
   sessionEntry: SessionEntry | undefined;
-  agentHarnessRuntimeOverride?: string;
   sessionId: string;
   sessionKey: string | undefined;
   sessionTarget?: SessionTranscriptRuntimeTarget;
@@ -668,8 +664,8 @@ export function runAgentAttempt(params: {
       internalEvents: params.opts.internalEvents,
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
-      provider: params.providerOverride,
-      model: params.modelOverride,
+      provider: params.executionSelection.model.provider,
+      model: params.executionSelection.model.id,
     });
   const trustedSubagentAnnounceHandoff =
     exactSubagentAnnounceHandoff &&
@@ -679,8 +675,8 @@ export function runAgentAttempt(params: {
       inputProvenance: params.opts.inputProvenance,
       trustedInternalHandoff: params.opts.trustedInternalHandoff,
       sessionId: params.sessionId,
-      modelProvider: params.providerOverride,
-      modelId: params.modelOverride,
+      modelProvider: params.executionSelection.model.provider,
+      modelId: params.executionSelection.model.id,
     });
   const completionRequestsMessageDelivery =
     trustedSubagentAnnounceHandoff &&
@@ -701,8 +697,8 @@ export function runAgentAttempt(params: {
         sessionId: params.sessionId,
         agentId: params.sessionAgentId,
         senderId: params.runContext.senderId,
-        modelProvider: params.providerOverride,
-        modelId: params.modelOverride,
+        modelProvider: params.executionSelection.model.provider,
+        modelId: params.executionSelection.model.id,
         sandboxToolPolicy: completionSandboxStatus?.sandboxed
           ? completionSandboxStatus.toolPolicy
           : undefined,
@@ -731,7 +727,7 @@ export function runAgentAttempt(params: {
     !isRawModelRun &&
     params.isFallbackRetry &&
     isClaudeCliProvider(params.originalProvider) &&
-    !isClaudeCliProvider(params.providerOverride)
+    !isClaudeCliProvider(params.executionSelection.model.provider)
       ? buildClaudeCliFallbackContextPrelude({
           cliSessionId: getCliSessionBinding(params.sessionEntry, "claude-cli")?.sessionId,
         })
@@ -761,35 +757,18 @@ export function runAgentAttempt(params: {
   );
   const bootstrapPromptWarningSignature =
     bootstrapPromptWarningSignaturesSeen[bootstrapPromptWarningSignaturesSeen.length - 1];
-  const requestedAgentHarnessId = isRawModelRun ? "openclaw" : undefined;
-  const sessionRuntimeOverride = isRawModelRun ? undefined : params.agentHarnessRuntimeOverride;
+  const requestedAgentHarnessId =
+    params.executionSelection.executor.kind === "harness"
+      ? params.executionSelection.executor.id
+      : undefined;
   const pinnedHarnessId = isRawModelRun
     ? undefined
     : resolveSessionPinnedHarnessId(params.sessionEntry);
-  const locksSessionRuntimeOverride =
-    pinnedHarnessId !== undefined && sessionRuntimeOverride === pinnedHarnessId;
-  const sessionCliRuntime =
-    sessionRuntimeOverride &&
-    !locksSessionRuntimeOverride &&
-    isCliProvider(sessionRuntimeOverride, params.cfg)
-      ? sessionRuntimeOverride
-      : undefined;
-  const configuredCliRuntime =
-    !isRawModelRun && !sessionRuntimeOverride
-      ? resolveCliRuntimeExecutionProvider({
-          provider: params.providerOverride,
-          cfg: params.cfg,
-          agentId: params.sessionAgentId,
-          modelId: params.modelOverride,
-          authProfileId: selectedAuthProfile?.id,
-        })
-      : undefined;
-  const cliExecutionProvider = isRawModelRun
-    ? params.providerOverride
-    : (sessionCliRuntime ?? configuredCliRuntime ?? params.providerOverride);
-  const isCliExecutionProvider = sessionRuntimeOverride
-    ? sessionCliRuntime !== undefined
-    : isCliProvider(cliExecutionProvider, params.cfg);
+  const cliExecutionProvider =
+    params.executionSelection.executor.kind === "cli"
+      ? params.executionSelection.executor.id
+      : params.executionSelection.model.provider;
+  const isCliExecutionProvider = params.executionSelection.executor.kind === "cli";
   const completionRetainsRequesterTools =
     trustedSubagentAnnounceHandoff &&
     !isRawModelRun &&
@@ -854,33 +833,22 @@ export function runAgentAttempt(params: {
       config: params.cfg,
       agentId: params.sessionAgentId,
     });
-  const agentHarnessPolicy = isRawModelRun
-    ? ({ runtime: "openclaw", runtimeSource: "model" } as const)
-    : sessionRuntimeOverride
-      ? ({ runtime: sessionRuntimeOverride, runtimeSource: "model" } as const)
-      : resolveAvailableAgentHarnessPolicy({
-          provider: params.providerOverride,
-          modelId: params.modelOverride,
-          config: params.cfg,
-          agentId: params.sessionAgentId,
-          sessionKey: params.sessionKey ?? params.sessionId,
-        });
   const harnessAuthSelection = resolveHarnessAuthProfileSelection({
     config: params.cfg,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,
-    provider: params.providerOverride,
+    provider: params.executionSelection.model.provider,
     authProfileProvider: params.authProfileProvider,
     sessionAuthProfileId: selectedAuthProfile?.id,
     sessionAuthProfileSource: selectedAuthProfile?.source,
     harnessId: requestedAgentHarnessId,
-    harnessRuntime: agentHarnessPolicy.runtime,
+    harnessRuntime: params.executionSelection.executor.id,
     ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
     providerAuthAliasesEnabled: params.pluginsEnabled,
     allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
   });
   const runtimeAuthPlan = buildAgentRuntimeAuthPlan({
-    provider: params.providerOverride,
+    provider: params.executionSelection.model.provider,
     authProfileProvider: harnessAuthSelection.authProfileProvider,
     authProfileMode: harnessAuthSelection.authProfileMode,
     sessionAuthProfileId: harnessAuthSelection.authProfileId,
@@ -889,7 +857,7 @@ export function runAgentAttempt(params: {
     ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
     providerAuthAliasesEnabled: params.pluginsEnabled,
     harnessId: requestedAgentHarnessId,
-    harnessRuntime: agentHarnessPolicy.runtime,
+    harnessRuntime: params.executionSelection.executor.id,
     allowHarnessAuthProfileForwarding: !isCliExecutionProvider,
   });
   // Explicit pins keep synchronous validation; automatic selection needs the admitted binding.
@@ -908,20 +876,15 @@ export function runAgentAttempt(params: {
         })
       : runtimeAuthPlan.forwardedAuthProfileId;
   const embeddedAgentProvider = resolveOpenAIRuntimeProvider({
-    provider: params.providerOverride,
-    harnessRuntime: agentHarnessPolicy.runtime,
+    provider: params.executionSelection.model.provider,
+    harnessRuntime: params.executionSelection.executor.id,
     agentHarnessId: requestedAgentHarnessId,
     authProfileProvider: runtimeAuthPlan.authProfileProviderForAuth,
     authProfileId,
     config: params.cfg,
     workspaceDir: params.workspaceDir,
   });
-  const embeddedAgentHarnessOverride =
-    requestedAgentHarnessId ??
-    sessionRuntimeOverride ??
-    (agentHarnessPolicy.runtime === "openclaw" && agentHarnessPolicy.runtimeSource !== "implicit"
-      ? "openclaw"
-      : undefined);
+  const embeddedAgentHarnessOverride = params.executionSelection.executor.id;
   if (!isRawModelRun && isCliExecutionProvider) {
     const expectedLifecycleRevision = params.sessionEntry?.lifecycleRevision;
     return withLocalSessionPlacementTurnSettlement(
@@ -1090,11 +1053,11 @@ export function runAgentAttempt(params: {
             config: params.cfg,
             prompt: cliPrompt,
             transcriptPrompt: cliTranscriptPrompt,
-            modelProvider: params.providerOverride,
-            requesterModel: { provider: params.providerOverride, model: params.modelOverride },
+            modelProvider: params.executionSelection.model.provider,
+            requesterModel: { provider: params.executionSelection.model.provider, model: params.executionSelection.model.id },
             modelHasVision: params.modelHasVision,
             provider: cliExecutionProvider,
-            model: params.modelOverride,
+            model: params.executionSelection.model.id,
             modelRoutingProvenance: params.modelRoutingProvenance,
             thinkLevel: params.resolvedThinkLevel,
             fastMode: params.fastMode,
@@ -1358,8 +1321,7 @@ export function runAgentAttempt(params: {
     agentHarnessId: pinnedHarnessId,
     modelSelectionLocked: !isRawModelRun && params.sessionEntry?.modelSelectionLocked === true,
     agentHarnessRuntimeOverride: embeddedAgentHarnessOverride,
-    agentHarnessRuntimePreparationHint:
-      agentHarnessPolicy.runtimeSource !== "implicit" ? agentHarnessPolicy.runtime : undefined,
+    agentHarnessRuntimePreparationHint: params.executionSelection.executor.id,
     skillsSnapshot: params.skillsSnapshot,
     prompt: effectivePrompt,
     transcriptPrompt: continuationTranscriptBody,
@@ -1370,7 +1332,7 @@ export function runAgentAttempt(params: {
     media: params.opts.media,
     clientTools: params.opts.clientTools,
     provider: embeddedAgentProvider,
-    model: params.modelOverride,
+    model: params.executionSelection.model.id,
     modelRoutingProvenance: params.modelRoutingProvenance,
     requestedRouteResolution: "resolved",
     modelHasVision: params.modelHasVision,

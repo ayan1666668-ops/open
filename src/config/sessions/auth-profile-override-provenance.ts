@@ -1,15 +1,9 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { SessionEntry } from "./types.js";
 
-type ProviderLoginSessionEntry = Pick<
-  SessionEntry,
-  | "sessionId"
-  | "providerOverride"
-  | "modelProvider"
-  | "authProfileOverride"
-  | "authProfileOverrideSource"
-  | "authProfileOverrideCompactionCount"
->;
+type ProviderLoginSessionEntry = Partial<SessionEntry>;
 
 type ProviderLoginSessionAdoption =
   | { status: "unchanged" }
@@ -59,7 +53,10 @@ function matchesLoginSnapshot(
 }
 
 function resolvePersistedModelProvider(entry: ProviderLoginSessionEntry): string | undefined {
-  const provider = normalizeLowercaseStringOrEmpty(entry.providerOverride ?? entry.modelProvider);
+  const selection = getSessionExecutionSelection(entry);
+  const provider = normalizeLowercaseStringOrEmpty(
+    selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+  );
   return provider || undefined;
 }
 

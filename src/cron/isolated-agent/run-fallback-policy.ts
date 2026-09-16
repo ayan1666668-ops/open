@@ -50,8 +50,6 @@ export function resolveCronFallbacksOverride(params: {
   return resolveEffectiveModelFallbacks({
     cfg: params.cfg,
     agentId: params.agentId,
-    hasSessionModelOverride: hasCronPayloadModelOverride,
-    modelOverrideSource: hasCronPayloadModelOverride ? "auto" : undefined,
   });
 }
 

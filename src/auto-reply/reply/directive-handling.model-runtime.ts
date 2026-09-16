@@ -26,17 +26,6 @@ export function resolveModelRuntimeDirective(params: {
 }): ModelRuntimeDirectiveResolution {
   const rawRuntime = params.rawRuntime?.trim();
   if (!rawRuntime) {
-    const persistedRuntime = params.sessionEntry?.agentRuntimeOverride?.trim();
-    if (
-      persistedRuntime &&
-      !resolveSessionRuntimeOverrideForProvider({
-        provider: params.provider,
-        entry: params.sessionEntry,
-        cfg: params.cfg,
-      })
-    ) {
-      return { kind: "clear" };
-    }
     return { kind: "unchanged" };
   }
 
@@ -60,22 +49,4 @@ export function resolveModelRuntimeDirective(params: {
     runtime: rawRuntime,
     errorText: `Runtime "${rawRuntime}" is not supported for ${provider || params.provider}.`,
   };
-}
-
-/** Applies a validated runtime choice without disturbing existing pins when no choice was given. */
-export function applyModelRuntimeDirective(
-  entry: Pick<SessionEntry, "agentRuntimeOverride">,
-  resolution: ModelRuntimeDirectiveResolution,
-): { updated: boolean } {
-  if (resolution.kind === "clear") {
-    const updated = entry.agentRuntimeOverride !== undefined;
-    delete entry.agentRuntimeOverride;
-    return { updated };
-  }
-  if (resolution.kind === "set") {
-    const updated = entry.agentRuntimeOverride !== resolution.runtime;
-    entry.agentRuntimeOverride = resolution.runtime;
-    return { updated };
-  }
-  return { updated: false };
 }

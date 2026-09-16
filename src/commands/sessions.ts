@@ -32,6 +32,9 @@ import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
 import { info } from "../globals.js";
+import { executionSelectionModelOverrideProjection } from "../model-picker/execution-selection-codec.js";
+import { readAcpExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import type { ExecutionSelection } from "../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 import { classifySessionKind, type SessionKind } from "../sessions/classify-session-kind.js";
@@ -174,13 +177,18 @@ function resolveSessionStoreDisplayPath(target: { agentId: string; storePath: st
   }).path;
 }
 
-function toJsonSessionRow<T extends { displayModelRef: unknown; runtimeLabel: string }>(
-  row: T,
-): Omit<T, "displayModelRef" | "runtimeLabel"> {
-  const { displayModelRef, runtimeLabel, ...jsonRow } = row;
+function toJsonSessionRow<
+  T extends {
+    displayModelRef: unknown;
+    runtimeLabel: string;
+    executionSelection?: ExecutionSelection;
+  },
+>(row: T): Omit<T, "displayModelRef" | "runtimeLabel" | "executionSelection"> {
+  const { displayModelRef, runtimeLabel, executionSelection, ...jsonRow } = row;
+
   void displayModelRef;
   void runtimeLabel;
-  return jsonRow;
+  return { ...jsonRow, ...executionSelectionModelOverrideProjection(executionSelection) };
 }
 
 function stripChannelRecipientPrefix(
@@ -345,7 +353,7 @@ export async function sessionsCommand(
       model: modelRef.model,
       sessionKey: acpSessionKey,
       acpRuntime,
-      acpBackend: acpMeta?.backend,
+      acpBackend: readAcpExecutionSelection(acpMeta)?.executor.backend,
     });
     const hasPersistedContextTokens =
       typeof entry.contextTokens === "number" && entry.contextTokens > 0;

@@ -466,7 +466,6 @@ async function runEmbeddedAgentInternal(
                   cfg: params.config ?? EMPTY_EMBEDDED_AGENT_CONFIG,
                   agentId: workspaceResolution.agentId,
                   sessionKey: normalizedSessionKey,
-                  hasSessionModelOverride: false,
                   modelFallbacksOverride: params.modelFallbacksOverride,
                 });
               const fallbackConfigured = modelFallbackAvailability.kind === "active";

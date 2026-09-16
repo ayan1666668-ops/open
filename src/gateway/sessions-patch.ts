@@ -9,20 +9,11 @@ import {
 } from "../../packages/gateway-protocol/src/index.js";
 import { readAcpSessionMetaForEntry } from "../acp/runtime/session-meta.js";
 import {
-  resolveAgentDir,
-  resolveAgentWorkspaceDir,
-  resolveDefaultAgentId,
-} from "../agents/agent-scope.js";
-import {
-  requiresAgentHarnessPluginSelection,
-  resolveAgentHarnessOwnerPluginIds,
-} from "../agents/harness/runtime-plugin-load-plan.js";
+isDefaultAgentRuntimeId, normalizeOptionalAgentRuntimeId,
+} from "../agents/agent-runtime-id.js";
+import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { selectModelCatalogRuntimeEntry } from "../agents/model-catalog-view.js";
-import {
-  findModelCatalogEntry,
-  type ModelCatalogEntry,
-  type ModelCatalogSnapshot,
-} from "../agents/model-catalog.js";
+import { findModelCatalogEntry, type ModelCatalogEntry, type ModelCatalogSnapshot } from "../agents/model-catalog.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import {
   type ModelRef,
@@ -31,10 +22,6 @@ import {
 } from "../agents/model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
-import {
-  applyModelRuntimeDirective,
-  resolveModelRuntimeDirective,
-} from "../auto-reply/reply/directive-handling.model-runtime.js";
 import {
   normalizeElevatedLevel,
   normalizeFastMode,
@@ -53,6 +40,18 @@ import { isPinnableSessionEntry } from "../config/sessions/session-pin-policy.js
 import { projectCanonicalSessionEntryShape } from "../config/sessions/store-entry-shape.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeExecTarget } from "../infra/exec-approvals.js";
+import {
+  commitSessionModelSelectionWithAuth,
+  prepareSessionExecutionSelection,
+  type ExecutionSelectionRequest,
+  type PreparedSessionExecutionSelection,
+} from "../model-picker/apply-session-model-selection.js";
+import { readAcpExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import {
+  executionSelectionCodecMetadata,
+  getSessionExecutionSelection,
+} from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
   isSubagentSessionKey,
@@ -63,7 +62,6 @@ import {
   isAgentHarnessSessionKeyOwnedBy,
   resolveMissingAgentHarnessSessionError,
 } from "../sessions/agent-harness-session-key.js";
-import { applyModelOverrideWithAuthProfileCompatibility } from "../sessions/auth-profile-preservation.js";
 import {
   applyTraceOverride,
   applyVerboseOverride,
@@ -117,17 +115,22 @@ type SessionPatchProjectionParams = {
   personalModelSelection?: UserModelAccountSelection;
   /** Resolved spawn identity supplied only by the trusted creation owner. */
   preparedModelSelection?: ModelRef;
+  preparedExecution?: Extract<PreparedSessionExecutionSelection, { status: "ready" }>;
 };
 
 type SessionPatchProjectionResult =
-  | { ok: true; entry: SessionEntry }
+  | {
+      ok: true;
+      entry: SessionEntry;
+      execution?: Extract<PreparedSessionExecutionSelection, { status: "ready" }>;
+    }
   | { ok: false; error: ErrorShape };
 
 type SessionPatchPreparation =
   | { kind: "complete"; result: SessionPatchProjectionResult }
   | {
       kind: "model-catalog";
-      finish: (catalog: ModelCatalogSnapshot | undefined) => SessionPatchProjectionResult;
+      finish: (catalog: ModelCatalogSnapshot | undefined) => Promise<SessionPatchProjectionResult>;
     };
 
 /** Stop at the first actual catalog use without committing or acquiring runtime effects. */
@@ -137,16 +140,37 @@ export function prepareSessionsPatchEntry(
   const projection = projectSessionPatchSteps(params);
   const first = projection.next();
   if (first.done) {
+    if ("request" in first.value) {
+      throw new Error("Execution selection requires catalog preparation");
+    }
     return { kind: "complete", result: first.value };
   }
   return {
     kind: "model-catalog",
-    finish: (catalog) => {
+    finish: async (catalog) => {
       const completed = projection.next(catalog);
       if (!completed.done) {
         throw new Error("Session patch preparation requested the catalog more than once");
       }
-      return completed.value;
+      if (!("request" in completed.value)) {
+        return completed.value;
+      }
+      const prepared = await prepareSessionExecutionSelection({
+        cfg: params.cfg,
+        agentId: completed.value.agentId,
+        sessionKey: params.storeKey,
+        sessionEntry: completed.value.entry,
+        modelCatalog: catalog?.entries,
+        request: completed.value.request,
+      });
+      if (prepared.status !== "ready") {
+        return invalid(prepared.message);
+      }
+      return projectSessionsPatchEntry({
+        ...params,
+        preparedExecution: prepared,
+        loadGatewayModelCatalogSnapshot: catalog ? async () => catalog : undefined,
+      });
     },
   };
 }
@@ -170,7 +194,12 @@ export async function projectSessionsPatchEntry(
 
 function* projectSessionPatchSteps(
   params: SessionPatchProjectionParams,
-): Generator<void, SessionPatchProjectionResult, ModelCatalogSnapshot | undefined> {
+): Generator<
+  void,
+  | SessionPatchProjectionResult
+  | { request: ExecutionSelectionRequest; entry: SessionEntry; agentId: string },
+  ModelCatalogSnapshot | undefined
+> {
   const { cfg, storeKey, patch, creation } = params;
   if ("execSecurity" in patch || "execAsk" in patch) {
     return invalid(
@@ -226,7 +255,7 @@ function* projectSessionPatchSteps(
     });
     return (
       params.preparedAgentRuntime ??
-      acpMeta?.backend ??
+      readAcpExecutionSelection(acpMeta)?.executor.backend ??
       resolveEffectiveAgentRuntime({
         cfg,
         provider,
@@ -410,8 +439,8 @@ function* projectSessionPatchSteps(
     const normalized = normalizeThinkLevel(rawThinking);
     if (!normalized) {
       const hintProvider =
-        normalizeOptionalString(existing?.providerOverride) || resolvedDefault.provider;
-      const hintModel = normalizeOptionalString(existing?.modelOverride) || resolvedDefault.model;
+        (() => { const selection = getSessionExecutionSelection(existing, cfg); return selection && !isAcpExecutionSelection(selection) ? selection.model.provider : resolvedDefault.provider; })();
+      const hintModel = getSessionExecutionSelection(existing, cfg)?.model?.id ?? resolvedDefault.model;
       const profile = yield* loadThinkingProfileForPatch(hintProvider, hintModel, existing);
       return invalid(
         `invalid thinkingLevel (use ${profile.levels.map(({ label }) => label).join("|")})`,
@@ -545,10 +574,7 @@ function* projectSessionPatchSteps(
   ) {
     return invalid("Runtime selection is owned by this ACP session.");
   }
-  if (patch.agentRuntime === null) {
-    applyModelRuntimeDirective(next, { kind: "clear" });
-  }
-  if ("model" in patch) {
+  if (patch.model !== undefined || patch.agentRuntime !== undefined) {
     const agentModelFallback = isAgentSessionModelPatchOrigin()
       ? next.modelFallback?.source === "agent-patch"
         ? { ...next.modelFallback, ts: Math.max(now, next.modelFallback.ts + 1) }
@@ -556,15 +582,20 @@ function* projectSessionPatchSteps(
       : undefined;
     delete next.modelFallback;
     const raw = patch.model;
-    let selection: (ModelRef & { profile?: string; isDefault: boolean }) | undefined;
-    if (raw === null) {
+    if (typeof raw === "string" && !normalizeOptionalString(raw)) {
+      return invalid("invalid model: empty");
+    }
+    const catalog = yield* loadPreparedModelCatalogForPatch();
+    let selection:
+      | { provider: string; model: string; profile?: string; isDefault: boolean }
+      | undefined;
+    if (raw === null || patch.agentRuntime === null) {
       selection = { ...resolvedDefault, isDefault: true };
     } else if (raw !== undefined) {
       const trimmed = normalizeOptionalString(raw) ?? "";
       if (!trimmed) {
         return invalid("invalid model: empty");
       }
-      const catalog = yield* loadPreparedModelCatalogForPatch();
       if (!catalog) {
         return {
           ok: false,
@@ -596,20 +627,10 @@ function* projectSessionPatchSteps(
         ) {
           return invalid("agentRuntime requires an explicit canonical provider/model selection");
         }
-        const runtime = resolveModelRuntimeDirective({
-          cfg,
-          provider: selection.provider,
-          rawRuntime: patch.agentRuntime,
-          sessionEntry: next,
-        });
-        if (runtime.kind !== "set" || runtime.runtime !== patch.agentRuntime) {
-          return invalid(
-            runtime.kind === "invalid"
-              ? runtime.errorText
-              : "Use a canonical agentRuntime id, or null to follow configured routing",
-          );
+        const runtime = normalizeOptionalAgentRuntimeId(patch.agentRuntime);
+        if (runtime !== patch.agentRuntime || isDefaultAgentRuntimeId(runtime)) {
+          return invalid("Use a canonical agentRuntime id, or null to reset configured routing");
         }
-        applyModelRuntimeDirective(next, runtime);
       }
       if (selection.profile && isUserModelAuthProfileId(selection.profile)) {
         if (params.personalModelSelection?.authProfileId !== selection.profile) {
@@ -623,45 +644,64 @@ function* projectSessionPatchSteps(
         }
         params.personalModelSelection.assertCurrent();
       }
-      // Catalog membership does not guarantee an activatable harness. Reject before
-      // committing the session so sticky defaults cannot retain an unusable selection.
-      const harnessSelection = {
-        provider: selection.provider,
-        modelId: selection.model,
-        runtime: resolveThinkingRuntime(selection.provider, selection.model, next),
-        agentId: sessionAgentId,
-      };
-      if (
-        !readAcpSessionMetaForEntry({
-          sessionKey: storeKey,
-          agentId: sessionAgentId,
-          entry: next,
-        }) &&
-        requiresAgentHarnessPluginSelection(harnessSelection, cfg) &&
-        resolveAgentHarnessOwnerPluginIds({
-          ...harnessSelection,
-          config: cfg,
-          workspaceDir: resolveAgentWorkspaceDir(cfg, sessionAgentId),
-        }).length === 0
-      ) {
+      const runtimeId =
+        typeof patch.agentRuntime === "string" ? patch.agentRuntime : params.preparedAgentRuntime;
+      const executorKind = runtimeId
+        ? executionSelectionCodecMetadata(cfg).classifyExecutor(runtimeId)
+        : undefined;
+      if (runtimeId && !executorKind) {
         return invalid(
-          `Model ${selection.provider}/${selection.model} requires agent harness "${harnessSelection.runtime}", but no enabled plugin provides it. Install and enable its plugin, restart the Gateway, then select the model again.`,
+          "Could not confirm support for the selected app. Your selection is unchanged.",
         );
       }
-      applyModelOverrideWithAuthProfileCompatibility({
+      if (!params.preparedExecution) {
+        return {
+          entry: selection.profile
+            ? {
+                ...next,
+                authProfileOverride: selection.profile,
+                authProfileOverrideSource: "user",
+                authProfileOverrideCompactionCount: undefined,
+              }
+            : next,
+          agentId: sessionAgentId,
+          request:
+            raw === null || patch.agentRuntime === null
+              ? { kind: "reset" }
+              : {
+                  kind: "model",
+                  model: { provider: selection.provider, id: selection.model },
+                  ...(runtimeId && executorKind
+                    ? { executor: { kind: executorKind, id: runtimeId } }
+                    : {}),
+                },
+        };
+      }
+      const prepared = params.preparedExecution;
+      const validationError = prepared.validateCommit?.();
+      if (validationError) {
+        return invalid(validationError);
+      }
+      if (isAcpExecutionSelection(prepared.selection)) {
+        return invalid("Model selection must be applied through this session's app.");
+      }
+      const before = getSessionExecutionSelection(existing, cfg);
+      commitSessionModelSelectionWithAuth({
         cfg,
-        agentDir: resolveAgentDir(cfg, sessionAgentId),
+        agentId: sessionAgentId,
         entry: next,
-        currentProvider: next.providerOverride ?? next.modelProvider ?? resolvedDefault.provider,
-        selection,
-        explicitDefaultSelection: raw === null,
+        currentProvider:
+          before && !isAcpExecutionSelection(before)
+            ? before.model.provider
+            : resolvedDefault.provider,
+        selection: prepared.selection,
         profileOverride: selection.profile,
         ...(params.providerAuthMetadataSnapshot
           ? { metadataSnapshot: params.providerAuthMetadataSnapshot }
           : {}),
-        markLiveSwitchPending: raw !== null,
+        markLiveSwitchPending: raw !== null && patch.agentRuntime !== null,
       });
-      if (raw === null) {
+      if (raw === null || patch.agentRuntime === null) {
         delete next.liveModelSwitchPending;
       }
     }
@@ -671,8 +711,12 @@ function* projectSessionPatchSteps(
   }
 
   if ("thinkingLevel" in patch || "model" in patch || "agentRuntime" in patch) {
-    const effectiveProvider = next.providerOverride ?? resolvedDefault.provider;
-    const effectiveModel = next.modelOverride ?? resolvedDefault.model;
+    const accepted = getSessionExecutionSelection(next, cfg);
+    const effectiveProvider =
+      accepted && !isAcpExecutionSelection(accepted)
+        ? accepted.model.provider
+        : resolvedDefault.provider;
+    const effectiveModel = accepted?.model?.id ?? resolvedDefault.model;
     const thinkingLevel = normalizeThinkLevel(next.thinkingLevel);
     if (!thinkingLevel) {
       delete next.thinkingLevel;
@@ -740,18 +784,26 @@ function* projectSessionPatchSteps(
     }
   }
 
-  if ("agentRuntime" in patch && existing?.agentRuntimeOverride !== next.agentRuntimeOverride) {
-    delete next.contextTokens;
-    delete next.contextTokensSource;
-    delete next.contextBudgetStatus;
-    next.liveModelSwitchPending = true;
-  }
-
   // Fresh rows and placeholder aliases have no running model to replace. Model
   // and context-window initialization must not queue a switch on their first turn.
   if (!existing?.sessionId) {
     delete next.liveModelSwitchPending;
   }
 
-  return { ok: true, entry: next };
+  const execution = params.preparedExecution;
+  return {
+    ok: true,
+    entry: next,
+    ...(execution
+      ? {
+          execution: {
+            ...execution,
+            validateCommit: () => {
+              params.personalModelSelection?.assertCurrent();
+              return execution.validateCommit?.();
+            },
+          },
+        }
+      : {}),
+  };
 }

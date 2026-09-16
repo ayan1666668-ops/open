@@ -10,6 +10,8 @@ import { listSessionEntriesReadOnly } from "../../../config/sessions/session-acc
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatDurationCompact } from "../../../infra/format-time/format-duration.js";
+import { getSessionExecutionSelection } from "../../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../../model-picker/execution-selection.js";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import {
   formatTokenUsageDisplay,
@@ -144,21 +146,25 @@ function buildLatestSubagentRunIndex(
 }
 
 function resolveModelRef(entry?: SessionEntry, fallbackModel?: string) {
+  const selection = getSessionExecutionSelection(entry);
   return resolveModelDisplayRef({
     runtimeProvider: entry?.modelProvider,
     runtimeModel: entry?.model,
-    overrideProvider: entry?.providerOverride,
-    overrideModel: entry?.modelOverride,
+    overrideProvider:
+      selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+    overrideModel: selection?.model?.id,
     fallbackModel,
   });
 }
 
 function resolveModelDisplay(entry?: SessionEntry, fallbackModel?: string) {
+  const selection = getSessionExecutionSelection(entry);
   return resolveModelDisplayName({
     runtimeProvider: entry?.modelProvider,
     runtimeModel: entry?.model,
-    overrideProvider: entry?.providerOverride,
-    overrideModel: entry?.modelOverride,
+    overrideProvider:
+      selection && !isAcpExecutionSelection(selection) ? selection.model.provider : undefined,
+    overrideModel: selection?.model?.id,
     fallbackModel,
   });
 }

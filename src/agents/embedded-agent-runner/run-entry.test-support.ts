@@ -96,3 +96,22 @@ export function makeResult(params: {
     },
   };
 }
+
+export async function prepareFallbackRunner(
+  params: FallbackRunnerParams,
+  extra: Array<{ provider: string; model: string }> = [],
+) {
+  await params.prepareCandidateChain?.([
+    {
+      provider: params.provider,
+      model: params.model,
+      routeOrigin: "requested",
+      routeResolution: "resolved",
+    },
+    ...extra.map((candidate) => ({
+      ...candidate,
+      routeOrigin: "configured-fallback" as const,
+      routeResolution: "resolved" as const,
+    })),
+  ]);
+}

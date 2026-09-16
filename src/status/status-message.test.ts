@@ -480,7 +480,8 @@ describe("buildStatusMessage context window", () => {
         updatedAt: 0,
         providerOverride: "ollama-cloud",
         modelOverride: "glm-5.1",
-        modelOverrideSource: "user",
+        agentRuntimeOverride: "openclaw",
+        modelOverrideRouteResolution: "resolved",
         modelProvider: "ollama-cloud",
         model: "deepseek-v4-pro",
         totalTokens: 128_393,
@@ -494,7 +495,7 @@ describe("buildStatusMessage context window", () => {
     });
 
     expect(text).toContain("Model: ollama-cloud/glm-5.1");
-    expect(text).toContain("pinned session; config primary ollama-cloud/deepseek-v4-pro");
+    expect(text).toContain("session selection; config primary ollama-cloud/deepseek-v4-pro");
     expect(text).toContain("Context: 128k/200k");
     expect(text).not.toContain("Context: 128k/1.0m");
     expect(text).not.toContain("live switch pending");
@@ -512,7 +513,8 @@ describe("buildStatusMessage context window", () => {
         updatedAt: 0,
         providerOverride: "openai",
         modelOverride: "gpt-5.5",
-        modelOverrideSource: "user",
+        agentRuntimeOverride: "openclaw",
+        modelOverrideRouteResolution: "resolved",
         liveModelSwitchPending: true,
       },
       sessionKey: "agent:main:main",
@@ -588,59 +590,59 @@ describe("buildStatusMessage context window", () => {
     expect(text).not.toContain("Context: 36k/200k");
   });
 
-  it("shows auto-fallback override label when model differs from configured default", () => {
+  it("reports an active fallback without replacing the accepted selection", () => {
+    const selected = { provider: "qa-route", model: "qa-primary" };
+    const active = { provider: "qa-route", model: "qa-fallback" };
     const text = buildStatusMessage({
-      modelRefs: statusModelRefs(
-        { provider: "ollama-cloud", model: "qwen3.6-blue" },
-        { provider: "ollama-cloud", model: "deepseek-v4-pro" },
-      ),
+      modelRefs: statusModelRefs(selected, active),
       config: {
         models: {
           providers: {
-            "ollama-cloud": {
-              baseUrl: "https://ollama.com",
+            "qa-route": {
+              baseUrl: "http://localhost",
               models: [
-                statusTestModel("deepseek-v4-pro", "DeepSeek V4 Pro", 1_000_000),
-                statusTestModel("qwen3.6-blue", "Qwen 3.6 Blue", 128_000),
+                statusTestModel("qa-primary", "Primary", 200_000),
+                statusTestModel("qa-fallback", "Fallback", 128_000),
               ],
             },
           },
         },
       },
-      agent: {
-        model: "ollama-cloud/deepseek-v4-pro",
-      },
-      configuredDefaultModelLabel: "ollama-cloud/deepseek-v4-pro",
+      agent: { model: "qa-route/qa-primary" },
+      configuredDefaultModelLabel: "qa-route/qa-primary",
       runtimeContextTokens: 128_000,
       sessionEntry: {
-        sessionId: "auto-fallback-qwen",
+        sessionId: "active-fallback",
         updatedAt: 0,
-        providerOverride: "ollama-cloud",
-        modelOverride: "qwen3.6-blue",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "ollama-cloud",
-        modelOverrideFallbackOriginModel: "deepseek-v4-pro",
-        modelProvider: "ollama-cloud",
-        model: "deepseek-v4-pro",
+        providerOverride: "qa-route",
+        modelOverride: "qa-primary",
+        agentRuntimeOverride: "openclaw",
+        modelOverrideRouteResolution: "resolved",
+        modelProvider: "qa-route",
+        model: "qa-fallback",
         agentHarnessId: "openclaw",
+        fallbackNotice: {
+          kind: "active",
+          selectedModel: "qa-route/qa-primary",
+          activeModel: "qa-route/qa-fallback",
+          reason: "unavailable",
+        },
         contextTokens: 128_000,
         contextTokensSource: "runtime",
         totalTokens: 50_000,
         totalTokensFresh: true,
         totalTokensVersion: 1,
       },
-      sessionKey: "agent:main:telegram:direct:auto-fallback",
+      sessionKey: "agent:main:qa-fallback",
       sessionScope: "per-sender",
       queue: { mode: "steer", depth: 0 },
       modelAuth: "api-key",
       resolvedHarness: "openclaw",
     });
-
-    expect(text).toContain("Model: ollama-cloud/qwen3.6-blue");
-    expect(text).toContain("auto fallback; config primary ollama-cloud/deepseek-v4-pro");
-    expect(text).toContain("check provider");
-    expect(text).not.toContain("pinned session");
+    expect(text).toContain("Model: qa-route/qa-primary");
+    expect(text).toContain("qa-route/qa-fallback");
     expect(text).toContain("Context: 50k/128k");
+    expect(text).not.toContain("session selection; config primary");
   });
 
   it("does not label a configured subagent model as auto fallback", () => {
@@ -666,9 +668,8 @@ describe("buildStatusMessage context window", () => {
         updatedAt: 0,
         providerOverride: "ollama-cloud",
         modelOverride: "qwen3.6-blue",
-        modelOverrideSource: "auto",
-        modelOverrideFallbackOriginProvider: "ollama-cloud",
-        modelOverrideFallbackOriginModel: "qwen3.6-blue",
+        agentRuntimeOverride: "openclaw",
+        modelOverrideRouteResolution: "resolved",
       },
       sessionKey: "agent:worker:subagent:configured",
       sessionScope: "per-sender",

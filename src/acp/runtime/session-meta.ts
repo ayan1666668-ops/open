@@ -19,6 +19,10 @@ import {
   legacyAcpMigrationBindingMatches,
   recordLegacyAcpMigrationCompletion,
 } from "../../infra/legacy-acp-migration-source.js";
+import {
+  decodeAcpExecutionSelectionStorage,
+  encodeAcpExecutionSelectionStorage,
+} from "../../model-picker/execution-selection-codec.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../state/openclaw-state-db-readonly.js";
 import {
   type OpenClawStateDatabaseOptions,
@@ -64,12 +68,10 @@ export function rowToAcpSessionMeta(row: AcpSessionRow): SessionAcpMeta {
     | AcpSessionRuntimeOptions
     | undefined;
   return {
-    backend: row.backend,
-    agent: row.agent,
+    ...decodeAcpExecutionSelectionStorage(row, runtimeOptions),
     runtimeSessionName: row.runtime_session_name,
     ...(identity ? { identity } : {}),
     mode: row.mode === "oneshot" ? "oneshot" : "persistent",
-    ...(runtimeOptions ? { runtimeOptions } : {}),
     ...(row.cwd != null ? { cwd: row.cwd } : {}),
     state: row.state === "running" || row.state === "error" ? row.state : "idle",
     lastActivityAt: row.last_activity_at,
@@ -89,14 +91,10 @@ function bindAcpSessionMeta(params: {
     // Kept in the existing column for schema neutrality. New rows prefer the
     // lifecycle revision; pre-revision entries retain the session-id fence.
     session_id: params.lifecycleRevision ?? params.sessionId ?? null,
-    backend: params.meta.backend,
-    agent: params.meta.agent,
+    ...encodeAcpExecutionSelectionStorage(params.meta),
     runtime_session_name: params.meta.runtimeSessionName,
     identity_json: params.meta.identity ? JSON.stringify(params.meta.identity) : null,
     mode: params.meta.mode,
-    runtime_options_json: params.meta.runtimeOptions
-      ? JSON.stringify(params.meta.runtimeOptions)
-      : null,
     cwd: params.meta.cwd ?? null,
     state: params.meta.state,
     last_activity_at: params.meta.lastActivityAt,

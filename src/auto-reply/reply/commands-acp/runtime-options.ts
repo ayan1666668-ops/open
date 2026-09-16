@@ -4,6 +4,7 @@ import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coer
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import type { AcpSessionTarget } from "../../../acp/control-plane/manager.types.js";
+import { requireReadySessionMeta } from "../../../acp/control-plane/manager.utils.js";
 import {
   parseRuntimeTimeoutSecondsInput,
   validateRuntimeConfigOptionInput,
@@ -13,6 +14,7 @@ import {
   validateRuntimePermissionProfileInput,
 } from "../../../acp/control-plane/runtime-options.js";
 import type { AcpSessionRuntimeOptions } from "../../../config/sessions/types.js";
+import { prepareSessionExecutionSelection } from "../../../model-picker/apply-session-model-selection.js";
 import { findLatestTaskForRelatedSessionKeyForOwner } from "../../../tasks/task-owner-access.js";
 import { sanitizeTaskStatusText } from "../../../tasks/task-status.js";
 import { commandReply } from "../command-gates.js";
@@ -273,6 +275,9 @@ export async function handleAcpSetAction(
         };
       }
       const validated = validateRuntimeConfigOptionInput(key, value);
+      if (lowerKey === "model") {
+        return { text: await selectAcpModel(params, target, validateRuntimeModelInput(value)) };
+      }
       const options = await getAcpSessionManager().setSessionConfigOption({
         cfg: params.cfg,
         ...target,
@@ -347,16 +352,16 @@ export async function handleAcpModelAction(
   params: HandleCommandsParams,
   restTokens: string[],
 ): Promise<CommandHandlerResult> {
-  return await handleSingleRuntimeOptionAction(params, restTokens, {
+  return await withSingleTargetValue({
+    commandParams: params,
+    restTokens,
     usage: ACP_MODEL_USAGE,
-    optionLabel: "model",
-    parseValue: validateRuntimeModelInput,
-    update: async (target, value) =>
-      await getAcpSessionManager().setSessionConfigOption({
-        cfg: params.cfg,
-        ...target,
-        key: "model",
-        value,
+    run: async ({ target, value }) =>
+      await withAcpCommandErrorBoundary({
+        run: async () => await selectAcpModel(params, target, validateRuntimeModelInput(value)),
+        fallbackCode: "ACP_TURN_FAILED",
+        fallbackMessage: "Could not change models.",
+        onSuccess: (message) => commandReply(message),
       }),
   });
 }
@@ -384,4 +389,23 @@ export async function handleAcpResetOptionsAction(
     fallbackMessage: "Could not reset ACP runtime options.",
     onSuccess: () => commandReply(`✅ Reset ACP runtime options for ${target.sessionKey}.`),
   });
+}
+
+async function selectAcpModel(
+  params: HandleCommandsParams,
+  target: AcpSessionTarget,
+  model: string,
+): Promise<string> {
+  const manager = getAcpSessionManager();
+  const resolution = manager.resolveSession({ cfg: params.cfg, ...target });
+  const meta = requireReadySessionMeta(resolution);
+  const prepared = await prepareSessionExecutionSelection({
+    cfg: params.cfg,
+    ...target,
+    sessionEntry: { ...(resolution.kind === "ready" ? resolution.entry : undefined), acp: meta },
+    request: { kind: "model", model: { provider: params.provider, id: model } },
+    prepareAcp: async (selection) =>
+      await manager.setExecutionSelection({ cfg: params.cfg, ...target, selection }),
+  });
+  return prepared.message;
 }

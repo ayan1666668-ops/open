@@ -112,7 +112,6 @@ describe("chat model runtime choices", () => {
         expect(host.request).toHaveBeenCalledWith("sessions.patch", {
           key: "main",
           model: "openai/gpt-5.6-sol",
-          ...(runtimeLocked ? {} : { agentRuntime: null }),
         });
         expect(
           Array.from(
@@ -159,7 +158,6 @@ describe("chat model runtime choices", () => {
         expect(patches.at(-1)?.[1]).toEqual({
           key: "main",
           model: "openai/gpt-5.6-sol",
-          agentRuntime: null,
         });
       } finally {
         host.sessions.dispose();
@@ -312,7 +310,6 @@ describe("chat model runtime choices", () => {
         expect(host.request).toHaveBeenCalledWith("sessions.patch", {
           key: "main",
           model: null,
-          agentRuntime: null,
         });
       } finally {
         host.sessions.dispose();

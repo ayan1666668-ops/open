@@ -1,7 +1,6 @@
+import { expectDefined } from "@openclaw/normalization-core";
 // Builds the status summary used by human and JSON status output.
 // It aggregates sessions, tasks, heartbeat, channel summary, and model/runtime metadata.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import type { SystemInfoResult } from "../../packages/gateway-protocol/src/schema/system-info.js";
 import { withAgentRosterFactsBatch } from "../agents/agent-scope-config.js";
 import { resolveAgentConfig } from "../agents/agent-scope.js";
@@ -11,10 +10,6 @@ import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.j
 import { getRuntimeConfig } from "../config/config.js";
 import { resolveProjectedSessionContextTokens } from "../config/sessions/context-token-provenance.js";
 import { resolveCanonicalMainSessionKey } from "../config/sessions/main-session-key.js";
-import {
-  hasSessionActiveAutoModelFallback,
-  hasUserPinnedModelSelection,
-} from "../config/sessions/model-override-provenance.js";
 import {
   loadExactSessionEntryReadOnly,
   type SessionEntrySummary,
@@ -31,6 +26,7 @@ import { resolveHeartbeatSummariesForAgents } from "../infra/heartbeat-summary-p
 import { hasResolvableHeartbeatOwnerRoute } from "../infra/outbound/targets.js";
 import { readStartupMigrationWarning } from "../infra/state-migrations.messages.js";
 import { peekSystemEvents } from "../infra/system-events.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
 import {
   listActiveDegradedPlugins,
   toPublicPluginVerificationDiagnostic,
@@ -259,7 +255,7 @@ async function prepareSessionStatusDetails(cfg: OpenClawConfig, now: number) {
           configuredSessionModelComparisonLabel != null &&
           selectedModelComparisonLabel !== configuredSessionModelComparisonLabel &&
           !runtimeMatchesConfiguredModel &&
-          (hasUserPinnedModelSelection(entry) || hasSessionActiveAutoModelFallback(entry));
+          Boolean(getSessionExecutionSelection(entry, cfg));
         // Session rows show the live selected model and warn for user-pinned
         // differences as well as runtime fallback selections (#96126).
         const resolvedContextTokens = resolveContextTokensForModel({

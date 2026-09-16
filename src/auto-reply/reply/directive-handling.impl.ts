@@ -13,7 +13,13 @@ import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
-import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
+import {
+  prepareSessionExecutionSelection,
+  commitSessionExecutionSelection,
+  commitSessionModelSelectionWithAuth,
+} from "../../model-picker/apply-session-model-selection.js";
+import { executionSelectionCodecMetadata } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import {
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
@@ -27,7 +33,7 @@ import {
 } from "../thinking.js";
 import type { ReplyPayload } from "../types.js";
 import { maybeHandleUnexpectedDirectiveArguments } from "./directive-handling.arguments.js";
-import { applyModelRuntimeDirective } from "./directive-handling.model-runtime.js";
+import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime.js";
 import { resolveModelSelectionFromDirective } from "./directive-handling.model-selection.js";
 import { maybeHandleModelDirectiveInfo } from "./directive-handling.model.js";
 import type { HandleDirectiveOnlyParams } from "./directive-handling.params.js";
@@ -53,10 +59,7 @@ import {
 } from "./directive-handling.shared.js";
 import { resolveDirectiveRuntimeContext } from "./directive-runtime-context.js";
 import type { ReasoningLevel, ThinkLevel } from "./directives.js";
-import {
-  findSelectedCatalogEntry,
-  prepareModelSelectionRuntime,
-} from "./model-runtime-normalization.js";
+import { findSelectedCatalogEntry } from "./model-runtime-normalization.js";
 import { refreshQueuedFollowupSession } from "./queue.js";
 
 /** Handles inline directives that can be acknowledged without a model turn. */
@@ -168,29 +171,69 @@ export async function handleDirectiveOnly(
     return rejectModelTransaction(MODEL_SELECTION_LOCKED_MESSAGE);
   }
 
-  const resolvedProvider = modelSelection?.provider ?? provider;
-  const resolvedModel = modelSelection?.model ?? model;
+  let resolvedProvider = modelSelection?.provider ?? provider;
+  let resolvedModel = modelSelection?.model ?? model;
+  const runtimeRequest = resolveModelRuntimeDirective({
+    cfg: params.cfg,
+    provider: resolvedProvider,
+    rawRuntime: directives.rawModelRuntime,
+  });
+  if (runtimeRequest.kind === "invalid") {
+    return rejectModelTransaction(runtimeRequest.errorText);
+  }
+  const kind =
+    runtimeRequest.kind === "set"
+      ? executionSelectionCodecMetadata(params.cfg).classifyExecutor(runtimeRequest.runtime)
+      : undefined;
+  if (runtimeRequest.kind === "set" && !kind) {
+    return rejectModelTransaction(
+      "Could not confirm support for the selected model. Your selection is unchanged.",
+    );
+  }
   const preparedModel = modelSelection
-    ? await prepareModelSelectionRuntime({
+    ? await prepareSessionExecutionSelection({
         cfg: params.cfg,
         agentId: activeAgentId,
-        workspaceDir: params.workspaceDir,
-        provider: resolvedProvider,
-        model: resolvedModel,
-        catalog: thinkingCatalog ?? [],
-        rawRuntime: directives.rawModelRuntime,
-        sessionEntry,
-        profileOverride,
+        sessionKey,
+        sessionEntry: profileOverride
+          ? {
+              ...sessionEntry,
+              authProfileOverride: profileOverride,
+              authProfileOverrideSource: "user",
+            }
+          : sessionEntry,
+        profileProvider: profileOverride ? resolvedProvider : undefined,
+        modelCatalog: thinkingCatalog ?? [],
+        request:
+          runtimeRequest.kind === "clear"
+            ? { kind: "reset" }
+            : {
+                kind: "model",
+                model: { provider: resolvedProvider, id: resolvedModel },
+                ...(runtimeRequest.kind === "set" && kind
+                  ? { executor: { kind, id: runtimeRequest.runtime } }
+                  : {}),
+              },
       })
     : undefined;
   if (preparedModel?.status === "rejected") {
     return rejectModelTransaction(preparedModel.message);
   }
-  thinkingCatalog = preparedModel?.catalog ?? thinkingCatalog;
-  const modelRuntimeResolution = preparedModel?.runtime ?? { kind: "unchanged" as const };
-  const validateRuntimeSelection = preparedModel?.validateRuntimeSelection;
+  if (preparedModel && !isAcpExecutionSelection(preparedModel.selection)) {
+    resolvedProvider = preparedModel.selection.model.provider;
+    resolvedModel = preparedModel.selection.model.id;
+    if (modelSelection) {
+      modelSelection.provider = resolvedProvider;
+      modelSelection.model = resolvedModel;
+    }
+  }
+  const validateRuntimeSelection = preparedModel?.validateCommit;
   const prospectiveSessionEntry = { ...sessionEntry };
-  applyModelRuntimeDirective(prospectiveSessionEntry, modelRuntimeResolution);
+  if (preparedModel) {
+    commitSessionExecutionSelection(prospectiveSessionEntry, preparedModel.selection, {
+      cfg: params.cfg,
+    });
+  }
   const selectedCatalogEntry = findSelectedCatalogEntry({
     catalog: thinkingCatalog,
     provider: resolvedProvider,
@@ -480,18 +523,18 @@ export async function handleDirectiveOnly(
       sessionEntry.thinkingLevel = remappedUnsupportedThinkLevel;
     }
     if (modelSelection) {
-      const applied = applyModelOverrideWithAuthProfileCompatibility({
+      if (!preparedModel || isAcpExecutionSelection(preparedModel.selection)) {
+        return rejectModelTransaction("This selection must be applied by its connected app.");
+      }
+      modelSelectionUpdated = commitSessionModelSelectionWithAuth({
         cfg: params.cfg,
-        agentDir,
+        agentId: activeAgentId,
         entry: sessionEntry,
         currentProvider: provider,
-        selection: modelSelection,
-        explicitDefaultSelection: modelSelection.isDefault,
+        selection: preparedModel.selection,
         profileOverride,
         markLiveSwitchPending: true,
-      });
-      const appliedRuntime = applyModelRuntimeDirective(sessionEntry, modelRuntimeResolution);
-      modelSelectionUpdated = applied.updated || appliedRuntime.updated;
+      }).changed;
     }
     sessionEntry.updatedAt = Date.now();
     sessionStore[sessionKey] = sessionEntry;
@@ -661,23 +704,11 @@ export async function handleDirectiveOnly(
   if (modelSelection) {
     const label = `${modelSelection.provider}/${modelSelection.model}`;
     const labelWithAlias = modelSelection.alias ? `${modelSelection.alias} (${label})` : label;
-    parts.push(
-      formatModelSelectionScopeAck({
-        isDefault: modelSelection.isDefault,
-        label: labelWithAlias,
-        configuredDefaultUpdate,
-        ...(params.stickyModelSelectionTarget
-          ? { stickyModelSelectionTarget: params.stickyModelSelectionTarget }
-          : {}),
-      }),
-    );
-    if (profileOverride) {
-      parts.push(`Auth profile set to ${profileOverride}.`);
+    if (preparedModel) {
+      parts.push(preparedModel.message);
     }
-    if (modelRuntimeResolution.kind === "clear") {
-      parts.push("Runtime reset to configured policy.");
-    } else if (modelRuntimeResolution.kind === "set") {
-      parts.push(`Runtime set to ${modelRuntimeResolution.runtime} for this session.`);
+    if (profileOverride) {
+      parts.push("Selected account updated.");
     }
   }
   // Report the model change before the thinking remap it triggered: the remap is a

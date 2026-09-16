@@ -42,11 +42,6 @@ import {
   type SessionScope,
 } from "../config/sessions.js";
 import { resolveSessionLifecycleTimestamps } from "../config/sessions/lifecycle.js";
-import {
-  hasSessionActiveAutoModelFallback,
-  hasSessionAutoModelFallbackProvenance,
-  hasUserPinnedModelSelection,
-} from "../config/sessions/model-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readRecentSessionUsageFromTranscript } from "../gateway/session-transcript-usage.js";
 import { formatDurationCompact } from "../infra/format-time/format-duration.ts";
@@ -61,6 +56,7 @@ import {
   summarizeDecisionReason,
 } from "../media-understanding/runner.entries.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { formatFastModeStatusValue } from "../shared/fast-mode.js";
 import { resolveStatusTtsSnapshot } from "../tts/status-config.js";
@@ -511,10 +507,7 @@ function resolveChannelModelNote(params: {
   if (!params.config || !params.entry) {
     return undefined;
   }
-  if (
-    normalizeOptionalString(params.entry.modelOverride) ||
-    normalizeOptionalString(params.entry.providerOverride)
-  ) {
+  if (getSessionExecutionSelection(params.entry, params.config)) {
     return undefined;
   }
   const channelOverride = resolveChannelModelOverride({
@@ -759,9 +752,7 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
     }),
   });
   const runtimeSnapshotHasFallbackProvenance =
-    initialFallbackState.active ||
-    hasSessionAutoModelFallbackProvenance(entry) ||
-    runtimeAliasModelEquivalent;
+    initialFallbackState.active || runtimeAliasModelEquivalent;
   // A transcript-derived previous model must not pin a newly selected model to
   // its old window. Once fallback provenance is established, the shared
   // projector owns authored caps, runtime telemetry, and locked-session state.
@@ -946,19 +937,18 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
 
   const modelNote = channelModelNote ? ` · ${channelModelNote}` : "";
   const configuredDefaultModelLabel = normalizeOptionalString(args.configuredDefaultModelLabel);
-  const sessionHasPersistedModelSelection = hasUserPinnedModelSelection(entry);
-  const sessionHasAutoFallback = hasSessionActiveAutoModelFallback(entry);
+  const sessionHasPersistedModelSelection = Boolean(
+    getSessionExecutionSelection(entry, args.config),
+  );
   const configDefaultDiffersFromSession =
-    (sessionHasPersistedModelSelection || sessionHasAutoFallback) &&
+    sessionHasPersistedModelSelection &&
     configuredDefaultModelLabel &&
     selectedModelLabel !== configuredDefaultModelLabel &&
     !areRuntimeModelRefsEquivalent(selectedModelLabel, configuredDefaultModelLabel, {
       config: args.config,
     });
   const overrideLabel = configDefaultDiffersFromSession
-    ? sessionHasPersistedModelSelection
-      ? ` · pinned session; config primary ${configuredDefaultModelLabel} · clear /model default`
-      : ` · auto fallback; config primary ${configuredDefaultModelLabel} · check provider`
+    ? ` · session selection; config primary ${configuredDefaultModelLabel} · reset /model default`
     : "";
   // A user-driven live switch that no completed turn has applied yet: surface
   // it so /status does not imply the new selection is already running.

@@ -1,26 +1,14 @@
+import {
+  SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+  executionSelectionRouteChanged,
+  executionSelectionTransactionChanged,
+  copyExecutionSelectionTransaction,
+} from "../../model-picker/execution-selection-codec.js";
+export { SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS } from "../../model-picker/execution-selection-codec.js";
 import { isDeepStrictEqual } from "node:util";
 import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 type SessionEntryRecord = Partial<Record<keyof SessionEntry, unknown>>;
-
-export const SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS = [
-  "providerOverride",
-  "modelOverride",
-  "agentRuntimeOverride",
-  "modelOverrideSource",
-  "modelOverrideRouteResolution",
-  "modelOverrideFallbackOriginProvider",
-  "modelOverrideFallbackOriginModel",
-  "authProfileOverride",
-  "authProfileOverrideSource",
-  "authProfileOverrideCompactionCount",
-] as const satisfies ReadonlyArray<keyof SessionEntry>;
-
-const MODEL_ROUTE_OVERRIDE_FIELDS = [
-  "providerOverride",
-  "modelOverride",
-  "agentRuntimeOverride",
-] as const satisfies ReadonlyArray<keyof SessionEntry>;
 
 const MODEL_OVERRIDE_RUNTIME_FIELDS = [
   "modelProvider",
@@ -46,14 +34,6 @@ const MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS = [
   "restartRecoveryRuns",
   "mainRestartRecovery",
 ] as const satisfies ReadonlyArray<keyof SessionEntry>;
-
-function anySessionFieldChanged(
-  before: SessionEntryRecord,
-  after: SessionEntryRecord,
-  fields: ReadonlyArray<keyof SessionEntry>,
-): boolean {
-  return fields.some((field) => !isDeepStrictEqual(before[field], after[field]));
-}
 
 function mainSessionRecoveryTransactionChanged(before: SessionEntry, after: SessionEntry): boolean {
   const beforeState = before.mainRestartRecovery;
@@ -135,27 +115,16 @@ export function projectSessionSnapshotChanges(params: {
     ...(Object.keys(params.next) as Array<keyof SessionEntry>),
   ]);
 
-  const modelOverrideChanged = anySessionFieldChanged(
-    initial,
-    next,
-    SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
-  );
-  const modelRouteOverrideChanged = anySessionFieldChanged(
-    initial,
-    next,
-    MODEL_ROUTE_OVERRIDE_FIELDS,
-  );
-  const modelOverrideChangedConcurrently = anySessionFieldChanged(
-    initial,
-    current,
-    SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
+  const modelOverrideChanged = executionSelectionTransactionChanged(params.initial, params.next);
+  const modelRouteOverrideChanged = executionSelectionRouteChanged(params.initial, params.next);
+  const modelOverrideChangedConcurrently = executionSelectionTransactionChanged(
+    params.initial,
+    params.current,
   );
   if (modelOverrideChanged && !modelOverrideChangedConcurrently) {
     // Model, provenance, and auth overrides form one selection transaction.
     // Project the whole family or none of it so concurrent switches cannot hybridize rows.
-    for (const field of SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS) {
-      patchRecord[field] = Object.hasOwn(params.next, field) ? next[field] : undefined;
-    }
+    copyExecutionSelectionTransaction(params.next, patch);
     if (modelRouteOverrideChanged) {
       // A winning route switch invalidates any runtime facts written for the
       // old model, including facts that appeared after this snapshot began.
@@ -361,17 +330,15 @@ export function sessionModelOverrideChangesApplied(params: {
   const changedDependentFields = [...MODEL_OVERRIDE_DEPENDENT_FIELDS].filter(
     (field) => !isDeepStrictEqual(initial[field], next[field]),
   );
-  const modelRouteOverrideChanged = anySessionFieldChanged(
-    initial,
-    next,
-    MODEL_ROUTE_OVERRIDE_FIELDS,
-  );
+  const modelRouteOverrideChanged = executionSelectionRouteChanged(params.initial, params.next);
   const fields = [
-    ...SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS,
     ...(modelRouteOverrideChanged ? MODEL_OVERRIDE_RUNTIME_FIELDS : []),
     ...changedDependentFields,
   ];
-  if (fields.some((field) => !isDeepStrictEqual(current[field], next[field]))) {
+  if (
+    executionSelectionTransactionChanged(params.current, params.next) ||
+    fields.some((field) => !isDeepStrictEqual(current[field], next[field]))
+  ) {
     return false;
   }
   return !params.reassertLiveModelSwitchPending || params.current.liveModelSwitchPending === true;

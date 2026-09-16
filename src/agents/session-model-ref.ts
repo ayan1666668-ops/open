@@ -1,8 +1,10 @@
 // Resolves persisted session model metadata without loading Gateway projections.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { resolveSessionModelOverrideRouteResolution } from "../config/sessions/model-override-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { decodeSessionExecutionSelection } from "../model-picker/execution-selection-codec.js";
+import { executionSelectionCodecMetadata } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   inferUniqueProviderFromConfiguredModels,
@@ -14,18 +16,7 @@ import {
   resolvePersistedSelectedModelRef,
 } from "./model-selection.js";
 
-type SessionModelEntry =
-  | SessionEntry
-  | Pick<
-      SessionEntry,
-      | "model"
-      | "modelProvider"
-      | "modelOverride"
-      | "providerOverride"
-      | "modelOverrideRouteResolution"
-      | "modelOverrideFallbackOriginProvider"
-      | "modelOverrideFallbackOriginModel"
-    >;
+type SessionModelEntry = Partial<SessionEntry>;
 
 /** Keep prepared host metadata outside the published session-model resolver contract. */
 export function resolveSessionModelRef(
@@ -45,54 +36,23 @@ export function resolveSessionModelRefCore(
   agentId?: string,
   options?: ModelManifestNormalizationContext & { allowPluginNormalization?: boolean },
 ): { provider: string; model: string } {
-  const overrideRouteResolution = resolveSessionModelOverrideRouteResolution(entry);
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: entry?.providerOverride,
-    modelOverride: entry?.modelOverride,
-    routeResolution: overrideRouteResolution,
-  });
-  if (normalizedOverride.providerOverride && normalizedOverride.modelOverride) {
-    return resolvePersistedSelectedModelRef({
-      defaultProvider: normalizedOverride.providerOverride,
-      overrideProvider: normalizedOverride.providerOverride,
-      overrideModel: normalizedOverride.modelOverride,
-      overrideRouteResolution,
-      allowPluginNormalization: options?.allowPluginNormalization,
-      manifestPlugins: options?.manifestPlugins,
-    })!;
-  }
-  const runtimeProvider = normalizeOptionalString(entry?.modelProvider);
-  const runtimeModel = normalizeOptionalString(entry?.model);
-
-  const resolved = agentId
-    ? resolveDefaultModelForAgent({
-        cfg,
-        agentId,
-        allowPluginNormalization: options?.allowPluginNormalization,
-        manifestPlugins: options?.manifestPlugins,
-      })
-    : resolveConfiguredModelRef({
-        cfg,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
-        allowPluginNormalization: options?.allowPluginNormalization,
-        manifestPlugins: options?.manifestPlugins,
-      });
-
-  const persisted = resolvePersistedSelectedModelRef({
-    defaultProvider: resolved.provider || DEFAULT_PROVIDER,
-    // Runtime fields record the previous run. Agent-scoped selection must use
-    // current config or an explicit override; legacy callers without an agent
-    // still use the persisted pair as their fallback selection context.
-    runtimeProvider: agentId ? undefined : runtimeProvider,
-    runtimeModel: agentId ? undefined : runtimeModel,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
-    overrideRouteResolution,
+  const configured = resolveDefaultModelForAgent({
+    cfg,
+    agentId,
     allowPluginNormalization: options?.allowPluginNormalization,
     manifestPlugins: options?.manifestPlugins,
   });
-  return persisted ?? resolved;
+  const decoded = decodeSessionExecutionSelection(
+    entry,
+    executionSelectionCodecMetadata(cfg, configured.provider),
+  );
+  if (decoded.kind === "initialized" && !isAcpExecutionSelection(decoded.selection)) {
+    return { provider: decoded.selection.model.provider, model: decoded.selection.model.id };
+  }
+  if (decoded.kind === "uninitialized" && decoded.model) {
+    return { provider: decoded.model.provider ?? configured.provider, model: decoded.model.id };
+  }
+  return configured;
 }
 
 export function resolveSessionModelIdentityRef(

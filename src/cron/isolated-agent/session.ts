@@ -8,7 +8,6 @@ import {
   resolveSessionLifecycleTimestamps,
   resolveSessionWorkStartError,
 } from "../../config/sessions/lifecycle.js";
-import { hasSessionAutoModelFallbackProvenance } from "../../config/sessions/model-override-provenance.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import {
   evaluateSessionFreshness,
@@ -22,6 +21,8 @@ import {
 import { preserveCreationStamp } from "../../config/sessions/session-entry-provenance.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { commitSessionExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 
 const FRESH_CRON_CARRIED_PREFERENCE_FIELDS = [
   "chatType",
@@ -69,33 +70,14 @@ function copySessionFields(
   }
 }
 
-function preserveNonAutoModelOverride(target: SessionEntry, entry: SessionEntry): void {
-  if (entry.modelOverrideSource === "default") {
-    target.modelOverrideSource = "default";
-    return;
-  }
-  const recoveredAutoFallbackOverride =
-    entry.modelOverrideSource === undefined && hasSessionAutoModelFallbackProvenance(entry);
-  if (entry.modelOverrideSource !== "auto" && !recoveredAutoFallbackOverride) {
-    let preservedModelSelection = false;
-    if (entry.modelOverride !== undefined) {
-      target.modelOverride = entry.modelOverride;
-      preservedModelSelection = true;
-    }
-    if (entry.providerOverride !== undefined) {
-      target.providerOverride = entry.providerOverride;
-    }
-    if (entry.modelOverrideSource !== undefined) {
-      target.modelOverrideSource = entry.modelOverrideSource;
-    }
-    if (entry.modelOverrideRouteResolution !== undefined) {
-      target.modelOverrideRouteResolution = entry.modelOverrideRouteResolution;
-    }
-    // Runtime overrides qualify an explicit model selection; carrying one alone
-    // would pin a fresh cron session to a stale engine after its model resets.
-    if (preservedModelSelection && entry.agentRuntimeOverride !== undefined) {
-      target.agentRuntimeOverride = entry.agentRuntimeOverride;
-    }
+function preserveExecutionSelection(
+  target: SessionEntry,
+  entry: SessionEntry,
+  cfg: OpenClawConfig,
+): void {
+  const selection = getSessionExecutionSelection(entry, cfg);
+  if (selection) {
+    commitSessionExecutionSelection(target, selection);
   }
 }
 
@@ -114,7 +96,7 @@ function preserveUserAuthOverride(target: SessionEntry, entry: SessionEntry): vo
 
 function sanitizeFreshCronSessionEntry(
   entry: SessionEntry,
-  options: { preserveAmbientContext: boolean },
+  options: { preserveAmbientContext: boolean; cfg: OpenClawConfig },
 ): SessionEntry {
   const next = {} as SessionEntry;
 
@@ -127,7 +109,7 @@ function sanitizeFreshCronSessionEntry(
   if (options.preserveAmbientContext) {
     copySessionFields(next, entry, AMBIENT_SESSION_CONTEXT_FIELDS);
   }
-  preserveNonAutoModelOverride(next, entry);
+  preserveExecutionSelection(next, entry, options.cfg);
   preserveUserAuthOverride(next, entry);
 
   return next;
@@ -241,7 +223,10 @@ export function resolveCronSession(params: {
 
   const baseEntry = entry
     ? isNewSession
-      ? sanitizeFreshCronSessionEntry(entry, { preserveAmbientContext: !params.forceNew })
+      ? sanitizeFreshCronSessionEntry(entry, {
+          preserveAmbientContext: !params.forceNew,
+          cfg: params.cfg,
+        })
       : entry
     : undefined;
 

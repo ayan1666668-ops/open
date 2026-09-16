@@ -496,6 +496,7 @@ export async function executeSessionPatchMutations(params: {
                           agentId: target.targetAgentId,
                           patch: target.fullPatch,
                           entry: projected.entry,
+                          execution: projected.execution,
                           placement: { context: params.context, sessionKey: primaryKey },
                         });
                         if (!runtimeSelection.ok) {

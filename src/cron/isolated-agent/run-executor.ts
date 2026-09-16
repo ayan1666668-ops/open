@@ -25,13 +25,11 @@ import { AgentHarnessPreflightError } from "../../agents/harness/errors.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import { findModelInCatalog, modelSupportsInput } from "../../agents/model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { resolveConfiguredThinkingDefault } from "../../agents/model-thinking-default.js";
 import { rootedAgentRunParams } from "../../agents/rooted-run-params.js";
 import { wrapUntrustedPromptDataBlock } from "../../agents/sanitize-for-prompt.js";
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
 import { withLocalSessionPlacementTurnSettlement } from "../../agents/session-placement-admission.js";
-import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { needsThinkHydration } from "../../agents/thinking-runtime.js";
 import { withPostAdmissionExecutionOwnerBinding } from "../../audit/execution-owner-binding.js";
 import {
@@ -45,6 +43,14 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { buildGenericCliContextEngineHostSupport } from "../../context-engine/host-compat.js";
 import { registerCronRunExecSource } from "../../infra/cron-run-exec-source.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
+import {
+  prepareSessionExecutionSelection,
+  commitSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
+import {
+  isAcpExecutionSelection,
+  type ModelExecutionSelection,
+} from "../../model-picker/execution-selection.js";
 import {
   createUserTurnTranscriptRecorder,
   type UserTurnTranscriptRecorder,
@@ -68,7 +74,6 @@ import { resolveCronPayloadOutcome } from "./helpers.js";
 import { appendCronDeliveryInstruction } from "./run-delivery-trace.js";
 import {
   getCliSessionBinding,
-  isCliProvider,
   LiveSessionModelSwitchError,
   logWarn,
   normalizeVerboseLevel,
@@ -89,7 +94,7 @@ import {
   setCronSessionRuntimeModel,
   syncCronSessionLiveSelection,
 } from "./run-session-state.js";
-import { resolveEffectiveAgentRuntime, resolveThinkingDefault } from "./run.runtime.js";
+import { resolveThinkingDefault } from "./run.runtime.js";
 import { isLikelyInterimCronMessage } from "./subagent-followup-hints.js";
 
 type AgentTurnPayload = Extract<CronJob["payload"], { kind: "agentTurn" }> | null;
@@ -400,28 +405,12 @@ function createCronPromptExecutor(
   const currentAttemptCommittedMedia = () =>
     hasNewGeneratedMediaTaskForSessionKey(params.runSessionKey, attemptMediaTaskIds);
 
-  const resolveCandidateExecution = (provider: string, model: string) => {
-    const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-      provider,
-      entry: params.cronSession.sessionEntry,
-      cfg: params.cfgWithAgentDefaults,
-    });
-    const executionProvider = sessionRuntimeOverride
-      ? isCliProvider(sessionRuntimeOverride, params.cfgWithAgentDefaults)
-        ? sessionRuntimeOverride
-        : provider
-      : (resolveCliRuntimeExecutionProvider({
-          provider,
-          cfg: params.cfgWithAgentDefaults,
-          agentId: params.agentId,
-          modelId: model,
-        }) ?? provider);
-    return {
-      sessionRuntimeOverride,
-      executionProvider,
-      cliExecution: isCliProvider(executionProvider, params.cfgWithAgentDefaults),
-    };
-  };
+  const resolveCandidateExecution = (selection: ModelExecutionSelection) => ({
+    sessionRuntimeOverride: selection.executor.id,
+    executionProvider:
+      selection.executor.kind === "cli" ? selection.executor.id : selection.model.provider,
+    cliExecution: selection.executor.kind === "cli",
+  });
 
   return async (promptText: string, runStartedAt: number): Promise<CronCompletedPromptRun> => {
     // A retry can fail during preparation, before any backend start callback.
@@ -491,8 +480,8 @@ function createCronPromptExecutor(
     const fallbackResult = await runEmbeddedAgentEntry({
       selection: {
         cfg: params.cfgWithAgentDefaults,
-        provider: params.liveSelection.provider,
-        model: params.liveSelection.model,
+        provider: params.liveSelection.selection.model.provider,
+        model: params.liveSelection.selection.model.id,
         requestedRouteResolution: "resolved",
         agentDir: params.agentDir,
         userLockedAuthProfileId:
@@ -512,10 +501,27 @@ function createCronPromptExecutor(
         workspaceDir: params.executionRoot ?? params.workspaceDir,
         sessionKey: params.runSessionKey,
         preparation: { kind: "direct" },
-        resolveRuntimeOverride: (provider, model) =>
-          resolveCandidateExecution(provider, model).sessionRuntimeOverride,
-        resolveContextEngineHost: (provider, model) => {
-          const { executionProvider, cliExecution } = resolveCandidateExecution(provider, model);
+        prepareExecutionSelection: async (provider, model) => {
+          const turnEntry = { ...params.cronSession.sessionEntry };
+          commitSessionExecutionSelection(turnEntry, params.liveSelection.selection, {
+            cfg: params.cfgWithAgentDefaults,
+          });
+          const prepared = await prepareSessionExecutionSelection({
+            cfg: params.cfgWithAgentDefaults,
+            agentId: params.agentId,
+            sessionEntry: turnEntry,
+            request: { kind: "model", model: { provider, id: model } },
+          });
+          if (prepared.status !== "ready") {
+            throw new Error(prepared.message);
+          }
+          if (isAcpExecutionSelection(prepared.selection)) {
+            throw new Error("This automation requires a direct execution selection.");
+          }
+          return prepared.selection;
+        },
+        resolveContextEngineHost: (selection) => {
+          const { executionProvider, cliExecution } = resolveCandidateExecution(selection);
           if (!cliExecution) {
             return undefined;
           }
@@ -533,7 +539,9 @@ function createCronPromptExecutor(
       behavior: { kind: "command-rpc", hasCommittedSideEffect: currentAttemptCommittedMedia },
       sessionOverride: { kind: "preserve" },
       abortSignal: params.abortSignal,
-      runCandidate: async (providerOverride, modelOverride, runOptions) => {
+      runCandidate: async (candidateSelection, runOptions) => {
+        const providerOverride = candidateSelection.model.provider;
+        const modelOverride = candidateSelection.model.id;
         params.lifecycle.beginAttempt();
         const notifyExecutionStarted = (info?: { lifecycleGeneration?: string }) =>
           onExecutionStarted({
@@ -556,15 +564,8 @@ function createCronPromptExecutor(
           throw new Error(params.abortReason());
         }
         const { sessionRuntimeOverride, executionProvider, cliExecution } =
-          resolveCandidateExecution(providerOverride, modelOverride);
-        const candidateRuntime = resolveEffectiveAgentRuntime({
-          cfg: params.cfgWithAgentDefaults,
-          provider: providerOverride,
-          modelId: modelOverride,
-          agentId: params.agentId,
-          sessionKey: params.runSessionKey,
-          sessionEntry: params.cronSession.sessionEntry,
-        });
+          resolveCandidateExecution(candidateSelection);
+        const candidateRuntime = candidateSelection.executor.id;
         const candidateConfiguredThinkLevel =
           params.immutableThinkLevel ??
           resolveConfiguredThinkingDefault({
@@ -943,8 +944,6 @@ function createCronPromptExecutor(
     } else {
       params.lifecycle.capture("end", fallbackResult.result);
     }
-    params.liveSelection.provider = fallbackResult.provider;
-    params.liveSelection.model = fallbackResult.model;
     setCronSessionRuntimeModel({
       entry: params.cronSession.sessionEntry,
       provider: fallbackResult.provider,
@@ -1009,9 +1008,7 @@ export async function executeCronRun(params: CronRunExecutionParams): Promise<Cr
         );
         throw err;
       }
-      params.liveSelection.provider = err.provider;
-      params.liveSelection.model = err.model;
-      params.liveSelection.agentRuntimeOverride = err.agentRuntimeOverride;
+      params.liveSelection.selection = err.selection;
       params.liveSelection.authProfileId = err.authProfileId;
       params.liveSelection.authProfileIdSource = err.authProfileId
         ? err.authProfileIdSource

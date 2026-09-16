@@ -13,6 +13,12 @@ import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveCreatorSandbox } from "../../gateway/operator-role-policy.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
+import {
+  commitSessionExecutionSelection,
+  prepareSessionExecutionSelection,
+} from "../../model-picker/apply-session-model-selection.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import { isCronSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   AGENT_HARNESS_SESSION_ID_LOCKED_MESSAGE,
@@ -80,7 +86,6 @@ import {
   resolveAgentDir,
   resolveAgentTimeoutMs,
   resolveAgentWorkspaceDir,
-  resolveEffectiveAgentRuntime,
   resolveCronStyleNow,
   resolveHookExternalContentSource,
   isThinkingLevelSupported,
@@ -292,6 +297,13 @@ export async function prepareCronRunContext(params: {
   });
 
   let preparedModelRuntimeLease: PreparedModelRuntimeLease | undefined;
+  let validateInitialSelection: (() => string | undefined) | undefined;
+  const validateSelectionCommit = () => {
+    const error = validateInitialSelection?.();
+    if (error) {
+      throw new CronSessionLifecycleClaimError(agentSessionKey, error);
+    }
+  };
   try {
     const persistCronSessionRow: CronSessionRowWriter = async ({
       storePath,
@@ -312,19 +324,27 @@ export async function prepareCronRunContext(params: {
             {
               sessionKey,
               resetBoundary,
-              buildEntry: ({ currentEntry }) => update(currentEntry),
+              buildEntry: ({ currentEntry }) => {
+                validateSelectionCommit();
+                return update(currentEntry);
+              },
             },
           ],
           skipMaintenance: true,
         });
+        validateInitialSelection = undefined;
         return;
       }
       // Guarded replace reads the freshest row so lifecycle claims reject stale owners.
       await patchSessionEntryCore(
         { storePath, sessionKey, agentId },
-        (_entry, context) => update(context.existingEntry),
+        (_entry, context) => {
+          validateSelectionCommit();
+          return update(context.existingEntry);
+        },
         { fallbackEntry, replaceEntry: true, assertCommitAllowed },
       );
+      validateInitialSelection = undefined;
     };
     const persistSessionEntry = createPersistCronSessionEntry({
       cronSession,
@@ -347,6 +367,24 @@ export async function prepareCronRunContext(params: {
       cronSession.sessionEntry.label = `Automation: ${labelSuffix}`;
     }
 
+    const selectionSource = sourceEntry ?? cronSession.initialSessionEntry;
+    if (selectionSource && !getSessionExecutionSelection(cronSession.sessionEntry, runtimeCfg)) {
+      const initialSelection = await prepareSessionExecutionSelection({
+        cfg: runtimeCfg,
+        agentId,
+        sessionKey: agentSessionKey,
+        sessionEntry: selectionSource,
+        modelCatalog: modelOwner.modelCatalog.entries,
+        request: { kind: "initialize" },
+      });
+      if (initialSelection.status !== "ready") {
+        throw new Error(initialSelection.message);
+      }
+      commitSessionExecutionSelection(cronSession.sessionEntry, initialSelection.selection, {
+        cfg: runtimeCfg,
+      });
+      validateInitialSelection = initialSelection.validateCommit;
+    }
     const resolvedModelSelection = await resolveCronModelSelection({
       cfg: runtimeCfg,
       owner: modelOwner,
@@ -410,24 +448,36 @@ export async function prepareCronRunContext(params: {
       };
     }
     const { provider, model, modelFallbacksOverride, runtimePluginCandidates } = preflight;
-    const effectiveAgentRuntime = resolveEffectiveAgentRuntime({
-      cfg: cfgWithAgentDefaults,
-      provider,
-      modelId: model,
-      agentId: modelOwner.agentId,
-      sessionKey: agentSessionKey,
-      sessionEntry: cronSession.sessionEntry,
-    });
     const thinkingSelection = await resolveCronThinkingSelection({
       cfg: cfgWithAgentDefaults,
       owner: modelOwner,
       provider,
       model,
-      agentRuntime: effectiveAgentRuntime,
       jobThinking: input.job.payload.kind === "agentTurn" ? input.job.payload.thinking : undefined,
       hookThinking: isGmailHook ? runtimeCfg.hooks?.gmail?.thinking : undefined,
       sessionThinking: cronSession.sessionEntry.thinkingLevel,
     });
+    const preparedSelection = await prepareSessionExecutionSelection({
+      cfg: cfgWithAgentDefaults,
+      agentId: modelOwner.agentId,
+      sessionEntry: cronSession.sessionEntry,
+      modelCatalog: modelOwner.modelCatalog.entries,
+      request: { kind: "model", model: { provider, id: model } },
+    });
+    if (preparedSelection.status !== "ready") {
+      throw new Error(preparedSelection.message);
+    }
+    if (isAcpExecutionSelection(preparedSelection.selection)) {
+      throw new Error("This automation requires a direct execution selection.");
+    }
+    const executionSelection = preparedSelection.selection;
+    if (!getSessionExecutionSelection(cronSession.sessionEntry, cfgWithAgentDefaults)) {
+      commitSessionExecutionSelection(cronSession.sessionEntry, executionSelection, {
+        cfg: cfgWithAgentDefaults,
+      });
+      validateInitialSelection = preparedSelection.validateCommit;
+    }
+    const effectiveAgentRuntime = executionSelection.executor.id;
     let requestedThinkLevel = thinkingSelection.requestedThinkLevel;
     if (!requestedThinkLevel) {
       requestedThinkLevel = resolveThinkingDefault({
@@ -625,13 +675,7 @@ export async function prepareCronRunContext(params: {
     });
     const authProfileId = authSelection?.profileId;
     const liveSelection: CronLiveSelection = {
-      provider,
-      model,
-      agentRuntimeOverride: resolveSessionRuntimeOverrideForProvider({
-        provider,
-        entry: cronSession.sessionEntry,
-        cfg: cfgWithAgentDefaults,
-      }),
+      selection: executionSelection,
       authProfileId,
       authProfileIdSource: authSelection?.source,
     };

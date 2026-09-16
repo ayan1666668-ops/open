@@ -1,10 +1,7 @@
 import crypto from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentConfig, resolveAgentRunCwd } from "../../agents/agent-scope-config.js";
-import {
-  hasLegacyAutoFallbackWithoutOrigin,
-  hasSessionAutoModelFallbackProvenance,
-} from "../../agents/agent-scope.js";
+import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
 import {
   createCronCreatorAuthorityCapability,
   runWithCronCreatorAuthorityCapability,
@@ -23,6 +20,7 @@ import { getRuntimeConfig } from "../../config/config.js";
 import { conversationIdentityFromMsgContext } from "../../config/sessions/conversation-identity.js";
 import { resolveGroupSessionKey } from "../../config/sessions/group.js";
 import { normalizeMediaFacts } from "../../media/media-facts.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
 import { MEDIA_ONLY_USER_TEXT } from "../../sessions/user-turn-media.js";
 import {
   createUserTurnTranscriptRecorder,
@@ -145,24 +143,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
     elevatedAllowed,
   } = params;
 
-  const runHasStoredSessionModelOverride = Boolean(
-    preparedSessionState.sessionEntry?.modelOverrideSource !== "default" &&
-    (normalizeOptionalString(preparedSessionState.sessionEntry?.modelOverride) ||
-      normalizeOptionalString(preparedSessionState.sessionEntry?.providerOverride)),
+  const runExecutionSelection = getSessionExecutionSelection(
+    preparedSessionState.sessionEntry,
+    cfg,
   );
-  const runHasLegacyAutoFallbackWithoutOrigin =
-    runHasStoredSessionModelOverride &&
-    hasLegacyAutoFallbackWithoutOrigin(preparedSessionState.sessionEntry);
-  const runHasSessionModelOverride =
-    runHasStoredSessionModelOverride && !runHasLegacyAutoFallbackWithoutOrigin;
-  const runModelOverrideSource = runHasSessionModelOverride
-    ? preparedSessionState.sessionEntry?.modelOverrideSource === "default"
-      ? undefined
-      : preparedSessionState.sessionEntry?.modelOverrideSource
-    : undefined;
-  const runHasAutoFallbackProvenance =
-    runHasSessionModelOverride &&
-    hasSessionAutoModelFallbackProvenance(preparedSessionState.sessionEntry);
   const originatingThreadId = resolveRoutedDeliveryThreadId({ ctx, sessionKey });
   // Abort-signal attachment for queued followups:
   // - room_event: always inherit (source admission fence / ambient cancel).
@@ -483,14 +467,12 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       provider,
       model,
       requestedRouteResolution,
+      executionSelection: runExecutionSelection,
       modelSelectionLocked: preparedSessionState.sessionEntry?.modelSelectionLocked === true,
-      hasSessionModelOverride: runHasSessionModelOverride,
-      modelOverrideSource: runModelOverrideSource,
       hasAutoFallbackProvenance: runHasAutoFallbackProvenance || undefined,
       // Visible spawn children keep dashboard keys; declared spawn lineage routes
       // them to the subagent fallback ladder like hidden subagent sessions.
       subagentSpawnLineage: (preparedSessionState.sessionEntry?.spawnDepth ?? 0) > 0,
-      autoFallbackPrimaryProbe: params.autoFallbackPrimaryProbe,
       authProfileId,
       authProfileIdSource,
       thinkingCatalog,

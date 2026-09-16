@@ -14,6 +14,7 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { getSessionBindingService } from "../../../infra/outbound/session-binding-service.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
+import { readAcpExecutionSelection } from "../../../model-picker/execution-selection-codec.js";
 import { isSubagentSessionKey, parseAgentSessionKey } from "../../../routing/session-key.js";
 import { normalizeDeliveryContext } from "../../../utils/delivery-context.shared.js";
 import { resolveRequesterOriginForChild } from "../../spawn-requester-origin.js";
@@ -220,7 +221,9 @@ export function validateAcpResumeSessionOwnership(params: {
     const acp = readAcpSessionMeta({ sessionKey, cfg: params.cfg });
     // Resume identifiers are backend-local; requester ownership cannot authorize another backend.
     if (
-      (configuredBackend && normalizeOptionalLowercaseString(acp?.backend) !== configuredBackend) ||
+      (configuredBackend &&
+        normalizeOptionalLowercaseString(readAcpExecutionSelection(acp)?.executor.backend) !==
+          configuredBackend) ||
       !sessionEntryMatchesAcpResumeSessionId(acp, resumeSessionId)
     ) {
       continue;

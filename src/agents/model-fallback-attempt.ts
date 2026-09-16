@@ -609,7 +609,10 @@ export function resolveLiveSessionModelSwitchRedirectIndex(params: {
   candidates: ModelCandidate[];
   currentIndex: number;
 }): number | null {
-  const targetKey = modelKey(params.error.provider, params.error.model);
+  const targetKey = modelKey(
+    params.error.selection.model.provider,
+    params.error.selection.model.id,
+  );
   const targetIndex = params.candidates.findIndex(
     (candidate) => modelKey(candidate.provider, candidate.model) === targetKey,
   );
@@ -629,7 +632,7 @@ export function hasDifferentLiveSessionRuntimeSelection(params: {
   };
   return (
     normalizeRuntime(params.currentAgentHarnessRuntimeOverride) !==
-    normalizeRuntime(params.error.agentRuntimeOverride)
+    normalizeRuntime(params.error.selection.executor.id)
   );
 }
 

@@ -9,9 +9,12 @@ import {
 } from "../../agents/thinking-runtime.js";
 import { normalizeThinkLevel, type ThinkLevel } from "../../auto-reply/thinking.js";
 import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
 /** Resolves provider/model precedence for isolated cron runs. */
 import type { AgentConfig } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getSessionExecutionSelection } from "../../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../../model-picker/execution-selection.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
 import {
@@ -30,11 +33,6 @@ import {
   type ResolvedPublishedModelCatalogOwner,
 } from "./run-model-selection.runtime.js";
 
-type CronSessionModelOverrides = {
-  modelOverride?: string;
-  providerOverride?: string;
-};
-
 type CronModelSelectionSource = "default" | "subagent" | "agent" | "hook" | "payload" | "session";
 
 type CronModelSelectionOwner = Pick<
@@ -46,7 +44,7 @@ type ResolveCronModelSelectionParams = {
   cfg: OpenClawConfig;
   owner?: CronModelSelectionOwner;
   agentConfigOverride?: Pick<AgentConfig, "model" | "subagents">;
-  sessionEntry: CronSessionModelOverrides;
+  sessionEntry: Partial<SessionEntry>;
   payload: CronJob["payload"];
   isGmailHook: boolean;
   agentId?: string;
@@ -321,19 +319,12 @@ export async function resolveCronModelSelection(
   }
 
   if (!modelOverride && !hooksGmailModelApplied) {
-    const sessionModelOverride = params.sessionEntry.modelOverride?.trim();
-    if (sessionModelOverride) {
-      // Stored session overrides are lowest precedence so explicit cron payload
-      // and hook-specific models can intentionally move a run away from history.
-      const sessionProviderOverride =
-        params.sessionEntry.providerOverride?.trim() || resolvedDefault.provider;
-      const resolvedSessionOverride = resolveAllowedModelRefCore({
-        ...selectionParams,
-        raw: `${sessionProviderOverride}/${sessionModelOverride}`,
-      });
-      if (!("error" in resolvedSessionOverride)) {
-        provider = resolvedSessionOverride.ref.provider;
-        model = resolvedSessionOverride.ref.model;
+    const selection = getSessionExecutionSelection(params.sessionEntry, owner.config);
+    if (selection && !isAcpExecutionSelection(selection)) {
+      const selected = { provider: selection.model.provider, model: selection.model.id };
+      if (getModelRefStatus({ ...selectionParams, ref: selected }).allowed) {
+        provider = selected.provider;
+        model = selected.model;
         modelSource = "session";
         configuredProfileId = undefined;
       }

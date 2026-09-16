@@ -481,23 +481,9 @@ export async function applyInlineDirectiveOverrides(params: {
         // Model change first, then the thinking remap it triggered: the remap is a
         // consequence of the model switch, so the cause is announced before the effect.
         const parts = [
-          formatModelSelectionScopeAck({
-            isDefault: modelSelection.isDefault,
-            label: labelWithAlias,
-            configuredDefaultUpdate: applied.configuredDefaultUpdate,
-            ...(stickyModelSelectionTarget ? { stickyModelSelectionTarget } : {}),
-          }),
-          applied.thinkingRemap
-            ? `Thinking level set to ${applied.thinkingRemap.to} (${applied.thinkingRemap.from} not supported for ${applied.thinkingRemap.provider}/${applied.thinkingRemap.model}).`
-            : undefined,
-          applied.runtimeChange?.kind === "clear"
-            ? "Runtime reset to configured policy."
-            : applied.runtimeChange?.kind === "set"
-              ? `Runtime set to ${applied.runtimeChange.runtime} for this session.`
-              : undefined,
-          modelResolution.profileOverride
-            ? `Auth profile set to ${modelResolution.profileOverride}.`
-            : undefined,
+          applied.message,
+          applied.thinkingRemap ? `Thinking level set to ${applied.thinkingRemap.to}.` : undefined,
+          modelResolution.profileOverride ? "Selected account updated." : undefined,
         ].filter(Boolean);
         typing.cleanup();
         return { kind: "reply", reply: { text: parts.join(" ") } };

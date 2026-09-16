@@ -5,18 +5,13 @@ import {
   resolvePrimaryStringValue,
 } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
-import {
-  resolveCollapsedSessionAuthPinSource,
-  resolveSessionAuthProfileOverrideSource,
-} from "../config/sessions/auth-profile-override-provenance.js";
-import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import { resolvePersistedSessionStoreOwnerForKey } from "../config/sessions/session-store-owner.js";
-import type { SessionEntry } from "../config/sessions/types.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { AgentModelConfig } from "../config/types.agents-shared.js";
 import type { AgentConfig } from "../config/types.agents.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { isPathInside } from "../infra/path-guards.js";
+import type { ExecutionSelection } from "../model-picker/execution-selection.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
@@ -36,7 +31,6 @@ import {
   withAgentRosterFactsBatch,
 } from "./agent-scope-config.js";
 import { resolveCanonicalWorkspacePath } from "./workspace-state-identity.js";
-export { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 export {
   listAgentEntries,
   listAgentEntriesWithSource,
@@ -61,247 +55,6 @@ export {
   tryResolveDefaultAgentId,
   AgentSelectionRequiredError,
 } from "./agent-scope-config.js";
-
-const AUTO_FALLBACK_PRIMARY_PROBE_INTERVAL_MS = 5 * 60 * 1000;
-const AUTO_FALLBACK_PRIMARY_PROBE_MAX_KEYS = 4096;
-const autoFallbackPrimaryProbeState = new Map<string, number>();
-
-function autoFallbackPrimaryProbeStateKey(params: {
-  sessionKey?: string | null;
-  primaryProvider: string;
-  primaryModel: string;
-}): string {
-  return [
-    normalizeOptionalString(params.sessionKey) ?? "",
-    `${params.primaryProvider}/${params.primaryModel}`,
-  ].join("\0");
-}
-
-function pruneAutoFallbackPrimaryProbeState(params: {
-  state: Map<string, number>;
-  now: number;
-  minIntervalMs: number;
-  maxKeys?: number;
-}): void {
-  const maxKeys = Math.max(1, Math.trunc(params.maxKeys ?? AUTO_FALLBACK_PRIMARY_PROBE_MAX_KEYS));
-  const staleBefore = params.now - params.minIntervalMs;
-  for (const [key, lastProbeAt] of params.state) {
-    if (!Number.isFinite(lastProbeAt) || lastProbeAt < staleBefore) {
-      params.state.delete(key);
-    }
-  }
-  if (params.state.size <= maxKeys) {
-    return;
-  }
-  const removeCount = params.state.size - maxKeys;
-  let removed = 0;
-  for (const key of params.state.keys()) {
-    params.state.delete(key);
-    removed += 1;
-    if (removed >= removeCount) {
-      break;
-    }
-  }
-}
-
-/** Primary model probe metadata used to validate auto-fallback recovery. */
-export type AutoFallbackPrimaryProbe = {
-  provider: string;
-  model: string;
-  fallbackProvider: string;
-  fallbackModel: string;
-  fallbackAuthProfileId?: string;
-  fallbackAuthProfileIdSource?: "auto" | "user";
-};
-
-/** Detects old auto-fallback session entries that lack primary-origin metadata. */
-export function hasLegacyAutoFallbackWithoutOrigin(
-  entry:
-    | Pick<
-        SessionEntry,
-        | "modelOverrideSource"
-        | "modelOverrideFallbackOriginProvider"
-        | "modelOverrideFallbackOriginModel"
-      >
-    | null
-    | undefined,
-): boolean {
-  return (
-    entry?.modelOverrideSource === "auto" &&
-    (!normalizeOptionalString(entry.modelOverrideFallbackOriginProvider) ||
-      !normalizeOptionalString(entry.modelOverrideFallbackOriginModel))
-  );
-}
-
-export function resolveAutoFallbackPrimaryProbe(params: {
-  entry:
-    | Pick<
-        SessionEntry,
-        | "providerOverride"
-        | "modelOverride"
-        | "modelOverrideSource"
-        | "modelOverrideFallbackOriginProvider"
-        | "modelOverrideFallbackOriginModel"
-        | "authProfileOverride"
-        | "authProfileOverrideSource"
-        | "authProfileOverrideCompactionCount"
-      >
-    | null
-    | undefined;
-  sessionKey?: string | null;
-  primaryProvider: string;
-  primaryModel: string;
-  now?: number;
-  minIntervalMs?: number;
-  maxTrackedProbeKeys?: number;
-  probeState?: Map<string, number>;
-}): AutoFallbackPrimaryProbe | undefined {
-  const entry = params.entry;
-  if (!entry) {
-    return undefined;
-  }
-  const recoveredAutoFallbackOverride =
-    entry.modelOverrideSource === undefined && hasSessionAutoModelFallbackProvenance(entry);
-  if (entry.modelOverrideSource !== "auto" && !recoveredAutoFallbackOverride) {
-    return undefined;
-  }
-
-  const originProvider = normalizeOptionalString(entry.modelOverrideFallbackOriginProvider);
-  const originModel = normalizeOptionalString(entry.modelOverrideFallbackOriginModel);
-  const overrideProvider = normalizeOptionalString(entry.providerOverride);
-  const overrideModel = normalizeOptionalString(entry.modelOverride);
-  const primaryProvider = normalizeOptionalString(params.primaryProvider);
-  const primaryModel = normalizeOptionalString(params.primaryModel);
-  if (!originProvider || !originModel || !overrideProvider || !overrideModel) {
-    return undefined;
-  }
-  if (!primaryProvider || !primaryModel) {
-    return undefined;
-  }
-  if (originProvider !== primaryProvider || originModel !== primaryModel) {
-    return undefined;
-  }
-  if (overrideProvider === originProvider && overrideModel === originModel) {
-    return undefined;
-  }
-
-  const now = params.now ?? Date.now();
-  const minIntervalMs = params.minIntervalMs ?? AUTO_FALLBACK_PRIMARY_PROBE_INTERVAL_MS;
-  const state = params.probeState ?? autoFallbackPrimaryProbeState;
-  pruneAutoFallbackPrimaryProbeState({
-    state,
-    now,
-    minIntervalMs,
-    maxKeys: params.maxTrackedProbeKeys,
-  });
-  const key = autoFallbackPrimaryProbeStateKey({
-    sessionKey: params.sessionKey,
-    primaryProvider: originProvider,
-    primaryModel: originModel,
-  });
-  const lastProbeAt = state.get(key);
-  if (
-    typeof lastProbeAt === "number" &&
-    Number.isFinite(lastProbeAt) &&
-    now - lastProbeAt < minIntervalMs
-  ) {
-    return undefined;
-  }
-  const fallbackAuthProfileId = normalizeOptionalString(entry.authProfileOverride);
-  const fallbackAuthProfileIdSource = resolveCollapsedSessionAuthPinSource(entry);
-  return {
-    provider: originProvider,
-    model: originModel,
-    fallbackProvider: overrideProvider,
-    fallbackModel: overrideModel,
-    ...(fallbackAuthProfileId
-      ? {
-          fallbackAuthProfileId,
-          ...(fallbackAuthProfileIdSource ? { fallbackAuthProfileIdSource } : {}),
-        }
-      : {}),
-  };
-}
-
-export function markAutoFallbackPrimaryProbe(params: {
-  probe: AutoFallbackPrimaryProbe;
-  sessionKey?: string | null;
-  now?: number;
-  minIntervalMs?: number;
-  maxTrackedProbeKeys?: number;
-  probeState?: Map<string, number>;
-}): void {
-  const now = params.now ?? Date.now();
-  const minIntervalMs = params.minIntervalMs ?? AUTO_FALLBACK_PRIMARY_PROBE_INTERVAL_MS;
-  const state = params.probeState ?? autoFallbackPrimaryProbeState;
-  pruneAutoFallbackPrimaryProbeState({
-    state,
-    now,
-    minIntervalMs,
-    maxKeys: params.maxTrackedProbeKeys,
-  });
-  const key = autoFallbackPrimaryProbeStateKey({
-    sessionKey: params.sessionKey,
-    primaryProvider: params.probe.provider,
-    primaryModel: params.probe.model,
-  });
-  state.set(key, now);
-  pruneAutoFallbackPrimaryProbeState({
-    state,
-    now,
-    minIntervalMs,
-    maxKeys: params.maxTrackedProbeKeys,
-  });
-}
-
-export function entryMatchesAutoFallbackPrimaryProbe(
-  entry:
-    | Pick<
-        SessionEntry,
-        | "providerOverride"
-        | "modelOverride"
-        | "modelOverrideSource"
-        | "modelOverrideFallbackOriginProvider"
-        | "modelOverrideFallbackOriginModel"
-      >
-    | null
-    | undefined,
-  probe: AutoFallbackPrimaryProbe,
-): boolean {
-  if (!entry) {
-    return false;
-  }
-  const recoveredAutoFallbackOverride =
-    entry.modelOverrideSource === undefined && hasSessionAutoModelFallbackProvenance(entry);
-  if (entry.modelOverrideSource !== "auto" && !recoveredAutoFallbackOverride) {
-    return false;
-  }
-  return (
-    normalizeOptionalString(entry.providerOverride) === probe.fallbackProvider &&
-    normalizeOptionalString(entry.modelOverride) === probe.fallbackModel &&
-    normalizeOptionalString(entry.modelOverrideFallbackOriginProvider) === probe.provider &&
-    normalizeOptionalString(entry.modelOverrideFallbackOriginModel) === probe.model
-  );
-}
-
-export function clearAutoFallbackPrimaryProbeSelection(
-  entry: SessionEntry,
-  now = Date.now(),
-): void {
-  delete entry.providerOverride;
-  delete entry.modelOverride;
-  delete entry.modelOverrideSource;
-  delete entry.modelOverrideRouteResolution;
-  delete entry.modelOverrideFallbackOriginProvider;
-  delete entry.modelOverrideFallbackOriginModel;
-  if (resolveSessionAuthProfileOverrideSource(entry) === "auto") {
-    delete entry.authProfileOverride;
-    delete entry.authProfileOverrideSource;
-    delete entry.authProfileOverrideCompactionCount;
-  }
-  delete entry.fallbackNotice;
-  entry.updatedAt = now;
-}
 
 export { resolveAgentIdFromSessionKey };
 
@@ -649,9 +402,7 @@ export function resolveModelFallbackAvailability(params: {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey?: string | null;
-  hasSessionModelOverride: boolean;
-  modelOverrideSource?: "auto" | "user";
-  hasAutoFallbackProvenance?: boolean;
+  selection?: ExecutionSelection;
   modelSelectionLocked?: boolean;
   modelFallbacksOverride?: string[];
   /** Declared child lineage includes visible sessions with dashboard keys. */
@@ -663,25 +414,16 @@ export function resolveModelFallbackAvailability(params: {
   if (params.modelFallbacksOverride !== undefined) {
     return modelFallbackAvailabilityFromModels(params.modelFallbacksOverride, "explicit");
   }
-  const canUseConfiguredFallbacks =
-    params.modelOverrideSource === "auto" ||
-    (params.modelOverrideSource === undefined && params.hasAutoFallbackProvenance === true);
-  if (params.hasSessionModelOverride && !canUseConfiguredFallbacks) {
+  if (params.selection) {
     return { kind: "disabled_by_model_override" };
   }
-  const hiddenSubagent = isSubagentSessionKey(params.sessionKey);
-  // Hidden children without an effective override retain their existing agent policy.
-  const useSubagentFallbacks = params.hasSessionModelOverride
-    ? hiddenSubagent || params.subagentSpawnLineage === true
-    : !hiddenSubagent &&
-      params.subagentSpawnLineage === true &&
-      params.modelOverrideSource !== "user";
+  const useSubagentFallbacks =
+    !isSubagentSessionKey(params.sessionKey) && params.subagentSpawnLineage === true;
   const fallbacksOverride = useSubagentFallbacks
     ? resolveSubagentSpawnModelFallbacksOverride(params.cfg, params.agentId)
     : resolveAgentModelFallbacksOverride(params.cfg, params.agentId);
   // Auto overrides consume an explicit list, preventing a configured-primary append.
-  const source =
-    fallbacksOverride !== undefined || params.hasSessionModelOverride ? "explicit" : "inherited";
+  const source = fallbacksOverride !== undefined ? "explicit" : "inherited";
   return modelFallbackAvailabilityFromModels(
     fallbacksOverride ?? resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model),
     source,
@@ -692,9 +434,7 @@ export function resolveEffectiveModelFallbacks(params: {
   cfg: OpenClawConfig;
   agentId: string;
   sessionKey?: string | null;
-  hasSessionModelOverride: boolean;
-  modelOverrideSource?: "auto" | "user";
-  hasAutoFallbackProvenance?: boolean;
+  selection?: ExecutionSelection;
   subagentSpawnLineage?: boolean;
 }): string[] | undefined {
   return modelFallbackOverrideFromAvailability(resolveModelFallbackAvailability(params));

@@ -30,13 +30,14 @@ import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
 import { normalizeThinkLevel } from "../auto-reply/thinking.shared.js";
 import { toAgentModelListLike } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions.js";
-import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
   resolveUsageProviderId,
 } from "../infra/provider-usage.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { resolveActiveProviderThinkingProfile } from "../plugins/provider-thinking-active.js";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
@@ -317,11 +318,11 @@ export async function buildStatusReplyParts(
     params.workspaceDir ??
     sessionEntry?.spawnedWorkspaceDir ??
     resolveAgentWorkspaceDir(cfg, statusAgentId);
-  const selectedProvider = sessionEntry?.providerOverride?.trim() ?? provider;
-  const selectedModel = sessionEntry?.modelOverride?.trim() ?? model;
-  const parseSelectedProvider = Boolean(
-    sessionEntry?.modelOverride?.trim() && !sessionEntry?.providerOverride?.trim(),
-  );
+  const selection = getSessionExecutionSelection(sessionEntry, cfg);
+  const selectedProvider =
+    selection && !isAcpExecutionSelection(selection) ? selection.model.provider : provider;
+  const selectedModel = selection?.model?.id ?? model;
+  const parseSelectedProvider = false;
   const modelParams = { selectedProvider, selectedModel, sessionEntry, parseSelectedProvider };
   const activeModel = readSessionFallbackModel({
     ...modelParams,
@@ -422,10 +423,7 @@ export async function buildStatusReplyParts(
     selectedModelAuth = activeModelAuth;
   }
   const activeRuntimeIsAuthoritative =
-    !modelRefs.activeDiffers ||
-    fallbackState.active ||
-    hasSessionAutoModelFallbackProvenance(sessionEntry) ||
-    runtimeAliasModelEquivalent;
+    !modelRefs.activeDiffers || fallbackState.active || runtimeAliasModelEquivalent;
   const usageAuthLabel = activeRuntimeIsAuthoritative ? activeModelAuth : selectedModelAuth;
   const usageStatusProvider = activeRuntimeIsAuthoritative
     ? activeStatusProvider

@@ -1,6 +1,3 @@
-// Runtime helpers for building status summaries.
-// Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
-
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -10,6 +7,8 @@ import {
   readAcpSessionMetaForEntry,
   resolveSessionStorePathForAcp,
 } from "../acp/runtime/session-meta.js";
+// Runtime helpers for building status summaries.
+// Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
 import { resolveCurrentSessionAgentRuntimeMetadata } from "../agents/agent-runtime-metadata.js";
 import { resolveAgentConfig } from "../agents/agent-scope-config.js";
 import { resolveConfiguredProviderFallback } from "../agents/configured-provider-fallback.js";
@@ -19,11 +18,13 @@ import {
 } from "../agents/context-resolution.js";
 import { waitForContextWindowCacheLoad } from "../agents/context.js";
 import { DEFAULT_PROVIDER } from "../agents/defaults.js";
-import { parseModelRef, resolvePersistedSelectedModelRef } from "../agents/model-selection.js";
+import { parseModelRef } from "../agents/model-selection.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
+import { getSessionExecutionSelection } from "../model-picker/execution-selection-state.js";
+import { isAcpExecutionSelection } from "../model-picker/execution-selection.js";
 import { classifySessionKind } from "../sessions/classify-session-kind.js";
 import { resolveAgentRuntimeLabel } from "./agent-runtime-label.js";
 
@@ -107,26 +108,6 @@ function resolveConfiguredStatusModelRef(params: {
   return { provider: params.defaultProvider, model: params.defaultModel };
 }
 
-function resolveProviderlessPersistedStatusModelRef(params: {
-  defaultProvider: string;
-  provider?: unknown;
-  model?: unknown;
-}): { provider: string; model: string } | null {
-  const provider = normalizeOptionalString(params.provider);
-  const model = normalizeOptionalString(params.model);
-  if (
-    !model ||
-    provider ||
-    model.includes("/") ||
-    normalizeLowercaseStringOrEmpty(model) === "openrouter:auto"
-  ) {
-    return null;
-  }
-  // Status rows report the persisted session text. Shared ref parsing still
-  // canonicalizes provider-local aliases, which would rewrite this display.
-  return { provider: params.defaultProvider, model };
-}
-
 function resolveStatusModelLookupRef(params: {
   provider?: unknown;
   model?: unknown;
@@ -158,37 +139,12 @@ function resolveStatusModelComparisonLabel(params: {
 
 function resolveSessionModelRef(
   resolved: { provider: string; model: string },
-  entry?:
-    | SessionEntry
-    | Pick<SessionEntry, "model" | "modelProvider" | "modelOverride" | "providerOverride">,
+  entry?: Partial<SessionEntry>,
 ): { provider: string; model: string } {
-  const defaultProvider = resolved.provider || DEFAULT_PROVIDER;
-  const providerlessPersisted =
-    resolveProviderlessPersistedStatusModelRef({
-      defaultProvider,
-      provider: entry?.providerOverride,
-      model: entry?.modelOverride,
-    }) ??
-    resolveProviderlessPersistedStatusModelRef({
-      defaultProvider,
-      provider: entry?.modelProvider,
-      model: entry?.model,
-    });
-  if (providerlessPersisted) {
-    return providerlessPersisted;
-  }
-  return (
-    // Persisted selected model or overrides describe the active session, not just current config.
-    resolvePersistedSelectedModelRef({
-      defaultProvider,
-      runtimeProvider: entry?.modelProvider,
-      runtimeModel: entry?.model,
-      overrideProvider: entry?.providerOverride,
-      overrideModel: entry?.modelOverride,
-      allowManifestNormalization: false,
-      allowPluginNormalization: false,
-    }) ?? resolved
-  );
+  const selection = getSessionExecutionSelection(entry);
+  return selection && !isAcpExecutionSelection(selection)
+    ? { provider: selection.model.provider, model: selection.model.id }
+    : resolved;
 }
 
 function resolveSessionRuntime(params: {

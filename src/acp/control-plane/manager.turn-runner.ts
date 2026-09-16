@@ -1,7 +1,9 @@
 /** Runs ACP turns, failover, timeout cleanup, and detached-task progress mirroring. */
+import { isDeepStrictEqual } from "node:util";
 import type { AcpRuntime, AcpRuntimeHandle } from "@openclaw/acp-core/runtime/types";
 import { expectDefined } from "@openclaw/normalization-core";
 import { logVerbose } from "../../globals.js";
+import { commitAcpExecutionSelection } from "../../model-picker/apply-session-model-selection.js";
 import {
   recordSessionHumanDirectMessage,
   recordSubagentTerminalState,
@@ -47,7 +49,12 @@ import type {
   SessionAcpMeta,
   WriteManagerSessionMeta,
 } from "./manager.types.js";
-import { acpSessionActorKey, requireReadySessionMeta } from "./manager.utils.js";
+import {
+  ACP_SELECTION_REPAIR_MESSAGE,
+  requireAcpExecutionSelection,
+  acpSessionActorKey,
+  requireReadySessionMeta,
+} from "./manager.utils.js";
 
 const ACP_TURN_TIMEOUT_GRACE_MS = 1_000;
 const ACP_COMPLETION_EVIDENCE_MAX_BYTES = 100 * 1024;
@@ -117,8 +124,7 @@ export async function runManagerTurn(params: {
       ? (initialResolution.entry?.spawnedBy ?? initialResolution.entry?.parentSessionKey)
       : undefined;
   const { candidateBackends, describeBackendCandidate } = resolveBackendCandidatePlan({
-    configuredPrimaryBackend: input.cfg.acp?.backend,
-    resolvedPrimaryBackend: initialMeta.backend,
+    resolvedPrimaryBackend: requireAcpExecutionSelection(initialMeta).executor.backend,
     fallbackBackends: input.cfg.acp?.fallbacks,
   });
   const backendAttempts: BackendAttempt[] = [];
@@ -179,6 +185,8 @@ export async function runManagerTurn(params: {
 
   try {
     for (const [backendIdx, currentBackend] of candidateBackends.entries()) {
+      const turnLocal =
+        currentBackend !== requireAcpExecutionSelection(initialMeta).executor.backend;
       if (backendIdx > 0) {
         await params.runtimeHandles.close({
           sessionKey,
@@ -205,6 +213,24 @@ export async function runManagerTurn(params: {
                 agentId,
               });
         const resolvedMeta = requireReadySessionMeta(resolution);
+        if (turnLocal) {
+          const reserved = await params.writeSessionMeta({
+            cfg: input.cfg,
+            sessionKey,
+            agentId,
+            mutate: (current, entry) =>
+              current && entry
+                ? { ...current, state: "error", lastError: ACP_SELECTION_REPAIR_MESSAGE }
+                : null,
+            failOnError: true,
+          });
+          if (!reserved?.acp) {
+            throw new AcpRuntimeError(
+              "ACP_SESSION_INIT_FAILED",
+              "Could not reserve the temporary app selection.",
+            );
+          }
+        }
         let runtime: AcpRuntime | undefined;
         let handle: AcpRuntimeHandle | undefined;
         let meta: SessionAcpMeta | undefined;
@@ -247,14 +273,24 @@ export async function runManagerTurn(params: {
               meta,
               getCachedRuntimeState: () => params.runtimeHandles.get(params),
               onOptionsChanged: async (runtimeOptions) => {
-                await params.writeSessionMeta({
-                  cfg: input.cfg,
-                  sessionKey,
-                  agentId,
-                  mutate: (current) => (current ? { ...current, runtimeOptions } : null),
-                  failOnError: true,
-                });
-                meta = { ...ensured.meta, runtimeOptions };
+                const selection = requireAcpExecutionSelection(ensured.meta);
+                const accepted = {
+                  ...selection,
+                  model: runtimeOptions.model ? { id: runtimeOptions.model } : null,
+                };
+                if (!turnLocal) {
+                  await params.writeSessionMeta({
+                    cfg: input.cfg,
+                    sessionKey,
+                    agentId,
+                    mutate: (current) =>
+                      current
+                        ? commitAcpExecutionSelection({ ...current, runtimeOptions }, accepted)
+                        : null,
+                    failOnError: true,
+                  });
+                }
+                meta = commitAcpExecutionSelection({ ...ensured.meta, runtimeOptions }, accepted);
               },
             });
           }
@@ -420,19 +456,21 @@ export async function runManagerTurn(params: {
               ? "ACP turn failed before completion."
               : "Could not initialize ACP session runtime.",
           });
-          retryFreshHandle = await prepareFreshManagerRuntimeHandleRetry({
-            attempt,
-            cfg: input.cfg,
-            sessionKey,
-            agentId,
-            error: acpError,
-            promptStarted,
-            sawTurnOutput,
-            runtime,
-            meta,
-            runtimeHandles: params.runtimeHandles,
-            writeSessionMeta: params.writeSessionMeta,
-          });
+          retryFreshHandle =
+            !turnLocal &&
+            (await prepareFreshManagerRuntimeHandleRetry({
+              attempt,
+              cfg: input.cfg,
+              sessionKey,
+              agentId,
+              error: acpError,
+              promptStarted,
+              sawTurnOutput,
+              runtime,
+              meta,
+              runtimeHandles: params.runtimeHandles,
+              writeSessionMeta: params.writeSessionMeta,
+            }));
           if (retryFreshHandle) {
             continue;
           }
@@ -463,7 +501,14 @@ export async function runManagerTurn(params: {
           if (activeTurn && params.activeTurnBySession.get(actorKey) === activeTurn) {
             params.activeTurnBySession.delete(actorKey);
           }
-          if (!retryFreshHandle && !skipPostTurnCleanup && runtime && handle && meta) {
+          if (
+            !turnLocal &&
+            !retryFreshHandle &&
+            !skipPostTurnCleanup &&
+            runtime &&
+            handle &&
+            meta
+          ) {
             ({ handle, meta } = await params.reconcileRuntimeSessionIdentifiers({
               cfg: input.cfg,
               sessionKey,
@@ -474,7 +519,35 @@ export async function runManagerTurn(params: {
               failOnStatusError: false,
             }));
           }
+          if (turnLocal && runtime && handle) {
+            // A fallback binding never replaces the accepted conversation's native identifiers.
+            await runtime.close({ handle, reason: "turn-local-fallback-complete" });
+            params.runtimeHandles.clear(params);
+            await params.writeSessionMeta({
+              cfg: input.cfg,
+              sessionKey,
+              agentId,
+              mutate: (current, entry) => {
+                if (!current || !entry) return null;
+                if (
+                  current.lastError !== ACP_SELECTION_REPAIR_MESSAGE ||
+                  current.runtimeSessionName !== resolvedMeta.runtimeSessionName ||
+                  !isDeepStrictEqual(
+                    requireAcpExecutionSelection(current),
+                    requireAcpExecutionSelection(resolvedMeta),
+                  )
+                ) {
+                  return current;
+                }
+                const next = { ...current, state: "idle" as const };
+                delete next.lastError;
+                return next;
+              },
+              failOnError: true,
+            });
+          }
           if (
+            !turnLocal &&
             !retryFreshHandle &&
             !skipPostTurnCleanup &&
             runtime &&
