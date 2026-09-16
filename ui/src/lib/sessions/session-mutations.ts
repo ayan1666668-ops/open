@@ -499,7 +499,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       // turn a failed refresh into an apparent rollback of the committed patch.
       let refreshOutcome: SessionRefreshOutcome = { status: "refreshed" };
       if (!options.deferListRefresh) {
-        if (managesModelOverride || Object.hasOwn(patchParams, "permissionMode")) {
+        if (Object.hasOwn(patchParams, "permissionMode")) {
           refreshOutcome = await host.reconcileMutation(
             options.agentId,
             permissionProjection?.isCurrent,

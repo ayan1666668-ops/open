@@ -224,7 +224,7 @@ describe("session model override lifecycle", () => {
       const sessions = createTestSessionCapability(gateway);
       await sessions.refresh({ force: true });
       failReads = true;
-      const result = await sessions.patch(key, {
+      await sessions.patch(key, {
         model: selection === "default" ? null : "openai/gpt-5.5",
       });
       expect(sessions.state.result?.sessions[0]).toMatchObject({
@@ -233,7 +233,7 @@ describe("session model override lifecycle", () => {
         modelOverrideSource: selection === "default" ? null : "user",
       });
       expect(sessions.state.modelOverrides).toEqual({});
-      expect(result?.listRefreshError).toContain("roster unavailable");
+      expect(sessions.state.error).toContain("roster unavailable");
       expect(sessions.state.result?.sessions[0]).toMatchObject(
         selection === "selected"
           ? {
