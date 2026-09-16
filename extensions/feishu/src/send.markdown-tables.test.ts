@@ -5,6 +5,7 @@ import {
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig } from "../runtime-api.js";
 
@@ -91,6 +92,51 @@ describe("feishu markdown table mode per account", () => {
 
     expect(postText(update.mock.calls[0]?.[0])).toBe(tableMarkdown);
     expect(postText(update.mock.calls[1]?.[0])).toBe(tableBullets);
+  });
+
+  // An edit is one message and cannot fan out, so a conversion that pads the text past
+  // the 30 KB envelope would fail the edit outright rather than deliver less of it.
+  it("edits with the authored table when the conversion leaves the post envelope", async () => {
+    const codeCfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          appId: "cli_a1",
+          appSecret: "local-test-placeholder", // pragma: allowlist secret
+          markdown: { tables: "off" },
+          accounts: { work: { markdown: { tables: "code" } } },
+        },
+      },
+    };
+    const rows = Array.from({ length: 70 }, (_entry, index) => `| row${index} | d |`);
+    const padded = [
+      "| name | detail |",
+      "| --- | --- |",
+      ...rows,
+      `| wide | ${"w".repeat(600)} |`,
+    ].join("\n");
+    // The case only means anything while the authored edit fits the envelope and every
+    // cell padded out to the widest one does not.
+    expect(Buffer.byteLength(padded, "utf8")).toBeLessThan(30 * 1024);
+    expect(Buffer.byteLength(convertMarkdownTables(padded, "code"), "utf8")).toBeGreaterThan(
+      30 * 1024,
+    );
+
+    await editMessageFeishu({
+      cfg: codeCfg,
+      messageId: "om_edit",
+      text: padded,
+      accountId: "work",
+    });
+    // A table the conversion keeps inside the envelope still arrives converted.
+    await editMessageFeishu({
+      cfg: codeCfg,
+      messageId: "om_edit",
+      text: tableMarkdown,
+      accountId: "work",
+    });
+
+    expect(postText(update.mock.calls[0]?.[0])).toBe(padded);
+    expect(postText(update.mock.calls[1]?.[0])).toBe(convertMarkdownTables(tableMarkdown, "code"));
   });
 
   it("follows defaultAccount when the account id is omitted", async () => {

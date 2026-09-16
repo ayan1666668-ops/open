@@ -3079,6 +3079,44 @@ describe("feishuOutbound.sendText replyToId forwarding", () => {
     expect(contents).toEqual(chunking.chunkMarkdownTextWithMode(backtickedTable, 10, "length"));
   });
 
+  // A quoted marker inside a top-level block is content, not a closer. Reading it as one
+  // left the real closer looking like a second opener, and the comment then arrived as
+  // raw rows a comment cannot draw.
+  it("converts a comment whose code sample quotes a fence marker", async () => {
+    const sample = [
+      "| Name | Role |",
+      "| --- | --- |",
+      "| Ada | Lead |",
+      "",
+      "```js",
+      "const sample = [",
+      "> ```",
+      "];",
+      "```",
+    ].join("\n");
+    await sendText({
+      cfg: {
+        channels: {
+          feishu: {
+            accounts: {
+              main: { markdown: { tables: "code" } },
+            },
+          },
+        },
+      },
+      to: "comment:docx:doxcn123:7623358762119646411",
+      text: sample,
+      accountId: "main",
+    });
+
+    const delivered = String(commentThreadParams(0)?.content ?? "");
+    // The case only means anything while the sample still quotes a marker inside a block
+    // of its own.
+    expect(sample).toContain("> ```");
+    expect(delivered).toBe(convertMarkdownTables(sample, "code"));
+    expect(delivered).toContain("| ---- | ---- |");
+  });
+
   it("chunks a converted comment at the account the request resolves to", async () => {
     await sendText({
       cfg: {

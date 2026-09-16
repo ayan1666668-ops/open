@@ -14,24 +14,40 @@ import type { MentionTarget } from "./mention-target.types.js";
  * reading as a marker and suppressing a table that would have converted safely. A closer
  * keeps the carriage return of a CRLF source, since the line split is on the feed alone.
  */
-const FEISHU_FENCE_OPENER = /^(?:>[ \t]?)* {0,3}(`{3,})[^`]*$/u;
-const FEISHU_FENCE_CLOSER = /^(?:>[ \t]?)* {0,3}(`{3,})[ \t]*\r?$/u;
+const FEISHU_FENCE_OPENER = /^((?:>[ \t]?)*) {0,3}(`{3,})[^`]*$/u;
+const FEISHU_FENCE_CLOSER = /^((?:>[ \t]?)*) {0,3}(`{3,})[ \t]*\r?$/u;
+
+/** A quote prefix marks the container a fence lives in, and one optional space inside it
+ * is decoration rather than depth. */
+function fenceDepth(prefix: string): string {
+  return prefix.replaceAll(/[ \t]/gu, "");
+}
 
 /**
  * A chunk that opens a fence nothing closes renders worse than the table it replaced, so
  * the conversion only runs when every chunk closes what it opened. A run shorter than the
  * one that opened the block is body text, which is how a cell carrying its own backticks
- * survives inside the longer marker the conversion gave it.
+ * survives inside the longer marker the conversion gave it. A marker in a different
+ * container is body text too: a quoted line inside a top-level block belongs to the block
+ * and closes nothing.
  */
 function fencesBalance(chunk: string): boolean {
   let openMarkerLength = 0;
+  let openDepth = "";
   for (const line of chunk.split("\n")) {
     if (openMarkerLength === 0) {
-      openMarkerLength = FEISHU_FENCE_OPENER.exec(line)?.[1]?.length ?? 0;
+      const opener = FEISHU_FENCE_OPENER.exec(line);
+      openMarkerLength = opener?.[2]?.length ?? 0;
+      openDepth = fenceDepth(opener?.[1] ?? "");
       continue;
     }
-    const closer = FEISHU_FENCE_CLOSER.exec(line)?.[1];
-    if (closer && closer.length >= openMarkerLength) {
+    const closer = FEISHU_FENCE_CLOSER.exec(line);
+    const marker = closer?.[2];
+    if (
+      marker &&
+      marker.length >= openMarkerLength &&
+      fenceDepth(closer?.[1] ?? "") === openDepth
+    ) {
       openMarkerLength = 0;
     }
   }
@@ -134,8 +150,12 @@ export function buildFeishuPostMessageContent(params: {
   });
 }
 
+export function feishuPostWithinEnvelope(content: string): boolean {
+  return Buffer.byteLength(content, "utf8") <= FEISHU_POST_MAX_BYTES;
+}
+
 export function assertFeishuPostWithinEnvelope(content: string, label: string): void {
-  if (Buffer.byteLength(content, "utf8") > FEISHU_POST_MAX_BYTES) {
+  if (!feishuPostWithinEnvelope(content)) {
     throw new Error(`${label} exceeds the 30 KB rich-post API limit`);
   }
 }
