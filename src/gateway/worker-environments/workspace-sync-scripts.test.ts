@@ -15,7 +15,7 @@ import { createWorkerWorkspaceQuiescence } from "./workspace-quiescence.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-async function fixture(probeClock?: "exhaust" | "census" | "identity") {
+async function fixture(probeClock?: "exhaust" | "census" | "identity" | "recovery") {
   const root = tempDirs.make("openclaw-quiescence-test-");
   const home = path.join(root, "home");
   let workspace = path.join(root, "workspace");
@@ -44,7 +44,16 @@ const mode = ${JSON.stringify(probeClock)};
 let elapsed = 0;
 let slowProbePending = true;
 Object.defineProperty(performance, "now", { value: () => now() + elapsed });
+if (mode === "recovery") {
+  const schedule = setTimeout;
+  global.setTimeout = (callback, delay, ...args) => schedule(callback, Math.min(delay, 10), ...args);
+}
 childProcess.execFileSync = (command, args, options) => {
+  if (mode === "recovery" && command === "ps" && args[1] === "lstart=" && require("node:fs").existsSync(${JSON.stringify(path.join(root, "stall-identity"))})) {
+    elapsed += options.timeout;
+    require("node:fs").appendFileSync(${JSON.stringify(path.join(root, "recovery-probes"))}, elapsed + "\\n");
+    throw Object.assign(new Error("simulated unavailable ps"), { code: "ETIMEDOUT", status: null, signal: options.killSignal });
+  }
   const selected = command === "ps" &&
     (mode === "census" ? args[0] === "-axo" : mode === "identity" && args[1] === "lstart=");
   if (selected && slowProbePending) {
@@ -777,6 +786,84 @@ exec "$(dirname "$0")/healthy-ps" "$@"
       await Promise.all(workers.map(stopIdleWorker));
     }
   }, 100_000);
+
+  it("ends recovery within the total budget when every identity probe times out", async () => {
+    const input = await fixture("recovery");
+    const workers = Array.from({ length: 8 }, () => spawnIdleWorker());
+    const owner = new AbortController();
+    const stallPath = path.join(input.home, "..", "stall-identity");
+    const probesPath = path.join(input.home, "..", "recovery-probes");
+    let watchdogPid: number | undefined;
+    try {
+      await fs.writeFile(input.extraProcessPath, workers.map((worker) => worker.pid).join(","));
+      const acquire = createWorkerWorkspaceQuiescence({
+        ownerSignal: owner.signal,
+        sharedHost: false,
+        runWorkspaceCommand: (command) =>
+          runCommandWithTimeout([process.execPath, ...command.argv.slice(1)], {
+            timeoutMs: 10_000,
+            baseEnv: input.env,
+          }),
+      });
+      const quiescence = await acquire(input.workspace);
+      const directory = path.join(input.home, ".openclaw-worker", "quiescence");
+      const leaseFile = path.join(directory, (await fs.readdir(directory))[0]!);
+      const lease = JSON.parse(await fs.readFile(leaseFile, "utf8")) as {
+        processes: Array<{ pid: number; start: string }>;
+        watchdog: { pid: number };
+        expiresAtMs: number;
+      };
+      watchdogPid = lease.watchdog.pid;
+      expect(lease.processes).toHaveLength(workers.length);
+      await fs.writeFile(stallPath, "");
+      // Publish expiry atomically, like the owner: the watchdog must never see partial JSON.
+      const expiredLeaseFile = `${leaseFile}.expired`;
+      await fs.writeFile(
+        expiredLeaseFile,
+        JSON.stringify({ ...lease, expiresAtMs: Date.now() - 1 }),
+      );
+      await fs.rename(expiredLeaseFile, leaseFile);
+      let probeElapsed = 0;
+      await vi.waitFor(async () => {
+        const trace = await fs.readFile(probesPath, "utf8").catch(() => "0");
+        probeElapsed = Number(trace.trim().split("\n").at(-1));
+        // Stop the pre-fix proof at its first excess pass, without waiting forever.
+        expect(probeElapsed > 120_000 || /^(?:Z|$)/u.test(await processState(watchdogPid!))).toBe(
+          true,
+        );
+      });
+      expect(probeElapsed).toBeLessThanOrEqual(120_000);
+      expect(await processState(watchdogPid)).toMatch(/^(?:Z|$)/u);
+      const exhausted = JSON.parse(await fs.readFile(leaseFile, "utf8")) as {
+        recoveryError: string;
+        processes: typeof lease.processes;
+      };
+      expect(exhausted.processes).toEqual(lease.processes);
+      expect(exhausted.recoveryError).toContain("recovery exhausted after 4 probe passes");
+      expect(exhausted.recoveryError).toContain("retry workspace recovery");
+      for (const entry of lease.processes) {
+        expect(exhausted.recoveryError).toContain(JSON.stringify(entry));
+        expect(await processState(entry.pid)).toMatch(/^T/u);
+      }
+      await expect(quiescence.resume()).rejects.toThrow(exhausted.recoveryError);
+      await fs.unlink(stallPath);
+      await quiescence.resume();
+      await expect(fs.stat(leaseFile)).rejects.toThrow();
+      for (const worker of workers) {
+        expect(await processState(worker.pid!)).not.toMatch(/^T/u);
+      }
+    } finally {
+      owner.abort();
+      if (watchdogPid !== undefined) {
+        try {
+          process.kill(watchdogPid, "SIGTERM");
+        } catch {
+          /* Already retired. */
+        }
+      }
+      await Promise.all(workers.map(stopIdleWorker));
+    }
+  });
 
   it("recovers a frozen worker once a stalled ps answers again after lease expiry", async () => {
     const input = await fixture("exhaust");
