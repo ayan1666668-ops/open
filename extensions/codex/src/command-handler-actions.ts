@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from "node:util";
 import {
   MODEL_SELECTION_LOCKED_MESSAGE,
   resolvePersistedSessionRuntimeId,
-  resolveSessionModelRef,
 } from "openclaw/plugin-sdk/model-session-runtime";
 import type { PluginCommandContext } from "openclaw/plugin-sdk/plugin-entry";
 import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
@@ -375,7 +374,7 @@ export async function setConversationModel(
         : undefined;
     const selectedModel =
       currentSession && currentSession.sessionId === authority.sessionId
-        ? resolveSessionModelRef(ctx.config, currentSession, target.agentId).model
+        ? (currentSession.modelOverride ?? currentSession.model)
         : undefined;
     authority.assertCurrent();
     // Direct sessions report their desired selection; bound conversations

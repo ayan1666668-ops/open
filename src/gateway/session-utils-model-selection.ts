@@ -64,8 +64,6 @@ export function resolveSessionSelectedModelRef(
     sessionKey: params.sessionKey,
     parentSessionKey: params.source.entry?.parentSessionKey,
     defaultProvider: configuredDefault.provider,
-    allowPluginNormalization: params.allowPluginNormalization,
-    manifestPlugins: params.manifestPlugins,
   });
   if (!storedOverride) {
     return { ...configuredDefault, storedOverrideSource: null };

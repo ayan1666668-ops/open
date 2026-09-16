@@ -123,17 +123,14 @@ export function resolveStoredModelOverride(params: {
 }
 
 /** Canonical session intent for core views; observed output never supplies selection. */
-export function resolveStoredModelOverrideCore(
-  params: {
-    loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
-    sessionEntry?: SessionEntry;
-    sessionStore?: Record<string, SessionEntry>;
-    sessionKey?: string;
-    parentSessionKey?: string;
-    defaultProvider: string;
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
-): StoredModelOverride | null {
+export function resolveStoredModelOverrideCore(params: {
+  loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
+  sessionEntry?: SessionEntry;
+  sessionStore?: Record<string, SessionEntry>;
+  sessionKey?: string;
+  parentSessionKey?: string;
+  defaultProvider: string;
+}): StoredModelOverride | null {
   const project = (
     entry: SessionEntry | undefined,
     source: StoredModelOverride["source"],

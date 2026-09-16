@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { SessionAcpMeta, SessionAcpLifecycle } from "@openclaw/acp-core/types";
+import type { SessionAcpLifecycle } from "@openclaw/acp-core/types";
 import { stableStringify } from "@openclaw/normalization-core";
 import { z } from "zod";
 import type { SessionEntry } from "../config/sessions/types.js";
@@ -46,7 +46,7 @@ export function prepareLegacyAcpMigrationSource(params: {
   sourceSessionKey: string;
   sessionId?: string;
   lifecycleRevision?: string;
-  meta: SessionAcpMeta | SessionAcpLifecycle;
+  meta: SessionAcpLifecycle;
 }): LegacyAcpMigrationSource {
   const serialized = stableStringify({ ...sourceBinding(params), meta: params.meta });
   return {
