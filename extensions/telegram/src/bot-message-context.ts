@@ -312,7 +312,7 @@ export const buildTelegramMessageContext = async ({
     effectiveGroupAllow,
     senderId,
     senderUsername,
-    enforceAllowOverride: !commandAuthorizedByConfig,
+    enforceAllowOverride: true,
     requireSenderForAllowOverride: false,
   });
   if (!baseAccess.allowed) {

@@ -305,6 +305,66 @@ describe("createTelegramBot typed command pipeline", () => {
     expect(apiCalls.mock.calls.filter(([method]) => method === "sendMessage")).toEqual([]);
   });
 
+  it.each(
+    (["group", "topic", "direct"] as const).flatMap((scope) =>
+      (["command allowlist", "owner"] as const).flatMap((grant) =>
+        [true, false].flatMap((included) =>
+          ["/status", "/think"].map((command) => ({ scope, grant, included, command })),
+        ),
+      ),
+    ),
+  )(
+    "enforces $scope sender scope for $grant: included=$included command=$command",
+    async ({ scope, grant, included, command }) => {
+      const allowFrom = [included ? String(from.id) : "99999"];
+      const scopedConfig = scope === "topic" ? { topics: { "99": { allowFrom } } } : { allowFrom };
+      const bot = createBot(true, true, {
+        commands: {
+          native: true,
+          ...(grant === "owner"
+            ? { ownerAllowFrom: [`telegram:${from.id}`] }
+            : { allowFrom: { telegram: [String(from.id)] } }),
+        },
+        channels: {
+          telegram: {
+            dmPolicy: "pairing",
+            groupPolicy: "allowlist",
+            groupAllowFrom: ["99999"],
+            streaming: { mode: "off" },
+            ...(scope === "direct"
+              ? { direct: { [String(chat.id)]: scopedConfig } }
+              : {
+                  groups: {
+                    [String(groupChat.id)]: { requireMention: false, ...scopedConfig },
+                  },
+                }),
+          },
+        },
+      });
+      await bot.handleUpdate({
+        update_id: 1016,
+        message: scope === "direct" ? commandMessage(command) : groupCommand(command),
+      });
+      if (included && command === "/status") {
+        expect(harness.replySpy).toHaveBeenCalledTimes(1);
+      } else {
+        expect(harness.replySpy).not.toHaveBeenCalled();
+      }
+      const menuReply = [
+        "sendMessage",
+        expect.objectContaining({
+          reply_markup: expect.objectContaining({ inline_keyboard: expect.any(Array) }),
+        }),
+      ];
+      if (included && command === "/think") {
+        expect(apiCalls.mock.calls).toContainEqual(menuReply);
+      } else {
+        expect(apiCalls.mock.calls).not.toContainEqual(menuReply);
+      }
+      expect(harness.getUpsertChannelPairingRequestMock()).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps an explicit command allowlist authoritative for an owner", async () => {
     const bot = createBot(true, true, {
       commands: {

@@ -561,7 +561,7 @@ function shouldSkipTelegramGroupMessage(
     effectiveGroupAllow,
     senderId,
     senderUsername,
-    enforceAllowOverride: !params.commandAuthorized,
+    enforceAllowOverride: true,
     requireSenderForAllowOverride: true,
   });
   if (!baseAccess.allowed) {

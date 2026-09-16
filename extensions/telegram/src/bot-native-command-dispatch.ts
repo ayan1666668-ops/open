@@ -216,7 +216,7 @@ async function resolveTelegramCommandAuth(params: {
     effectiveGroupAllow,
     senderId,
     senderUsername,
-    enforceAllowOverride: requireAuth && !preContextCommandAccess.authorizedByConfig,
+    enforceAllowOverride: requireAuth,
     requireSenderForAllowOverride: true,
   });
   if (!baseAccess.allowed) {
